@@ -61,7 +61,7 @@ bool? incrementalMode = null; // if null, the mode is not set
 TapeHowToHandleExisting handleExisting = TapeHowToHandleExisting.KeepBoth;
 TapeHashAlgorithm hashAlgorithm = TapeHashAlgorithm.None;
 
-var blockSizesKB = new ReadOnlyCollection<uint>([0U, 1U, 2U, 4U, 8U, 16U, 32U, 64U, defaultBlockSizeKB]); // 0 = the drive's default
+var blockSizesKB = new ReadOnlyCollection<uint>([0U, 1U, 2U, 4U, 8U, 16U, 32U, 64U, defaultBlockSizeKB]); // 0 = use the drive's default
 
 Dictionary<string, TapeHashAlgorithm> hashAlgorithmMap = new(StringComparer.OrdinalIgnoreCase)
 {
