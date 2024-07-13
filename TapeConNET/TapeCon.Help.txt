@@ -1,0 +1,444 @@
+﻿iii tapecon - Tape Backup Utility
+  Based on TapeNET library. Distributed under the MIT License.
+  Copyright © 2023-2024 avk1im. All rights reserved.
+
+Usage:
+  tapecon -<flag1> [<option>..] [-<flag2> [<option>..] ..]
+
+Task flags:                         Mode flags (specify before task):
+  -help       : Display help.         -quiet          : Run in quiet mode.
+  -drive      : Specify tape drive.   -blocksize      : Set block size.
+  -format     : Format the tape.      -subdirectories : Include subdirectories.
+  -eject      : Eject the tape.       -crc            : Include data integrity hash.
+  -backup     : Perform backup.       -append         : Append to backup sets.
+  -restore    : Restore files.        -incremental    : Incremental backup.
+  -list       : List files.           -target         : Specify target directory.
+  -validate   : Validate files.       -existing       : Handle existing files.
+  -verify     : Verify files.         -filemarks      : Use filemarks (advanced).
+                                      -capacity       : Limit tape capacity (advanced).
+
+For instructions on a flag:
+  tapecon -help <flag_without_dash>
+
+For explanation of backup set indexing:
+  tapecon -help index
+
+For more information, refer to the user guide tapecon.pdf.
+
+For bug reports, feature requests, or other inquiries, please visit tapecon repository:
+  https://github.com/avk1im/tapecon
+Thank you for using tapecon!
+
+
+##help|h|?##
+
+Help task flag : -help [<flag_without_dash>..]
+  Display help for specific flags or all flags.
+
+Alternative names: -h, -?
+
+Arguments:
+  <flag_without_dash> : Optionally specify flags (without leading dash) to display help for.
+                        Specify index to display help for backup set indexing.
+						If not specified, general help will be displayed.
+
+Examples:
+  tapecon -help drive
+  tapecon -? b r
+  tapecon -h
+  tapecon -help index
+
+
+##drive|d##
+
+Drive selection task flag: -drive <tape_drive>
+  Specify the tape drive to use.
+
+Alternative name: -d
+
+Arguments:
+  <tape_drive> : The tape drive number to use. Must be a valid tape drive number.
+
+Examples:
+  tapecon -drive 0
+  tapecon -d:1
+
+
+##format##
+
+Format task flag: -format [single]
+  Format the tape before performing a backup.
+
+Arguments:
+  single : Format the tape with a single partition for both content and the TOC.
+
+Use with optional mode flags:
+  -quiet : Run in quiet mode. CAUTION: no prompt for confirmation!
+
+Examples:
+  tapecon -drive 0 -format
+  tapecon -d:0 -format single
+
+
+##eject|j##
+
+Eject task flag: -eject
+  Eject the tape after the task is complete.
+
+Alternative name: -j
+
+Examples:
+  tapecon -drive 0 -backup -verify -eject
+  tapecon -d:0 -r -j
+
+
+##backup|b##
+
+Backup task flag: -backup <files>..
+  Perform a backup operation creating a new backup set.
+
+Alternative name: -b
+
+Arguments:
+  <files> : The files or directories to backup. Must be valid file or directory paths.
+            May contain wildcard symbols * and ?.
+
+Use with optional mode flags:
+  -quiet          : Run in quiet mode. CAUTION: no prompt to confirm data overwrite!
+  -blocksize      : Set block size.
+  -subdirectories : Include subdirectories.
+  -incremental    : Perform an incremental backup creating an incremental backup set.
+  -crc            : Include data integrity verification hash.
+  -append         : Append to existing backup sets.
+  -filemarks      : Use filemarks (advanced).
+  -capacity       : Limit tape capacity (advanced).
+
+Examples:
+  tapecon -drive 0 -append:OFF -backup C:\Data
+  tapecon -d 0 -subdir -inc -backup C:\Data
+  tapecon -d:0 -s -z 8 -b "D:\My Documents\*.txt" "D:\My Documents\*.doc*" -j
+
+
+##restore|r##
+
+Restore task flag: -restore [<set_index>] [<files>..]
+  Restore files from a backup set.
+
+Alternative name: -r
+
+Arguments:
+  <set_index> : The index of the backup set to restore from. Must be a valid backup set index.
+                None specified will restore from the latest backup set.
+  <files>     : The files or directories to restore. Must be valid file or directory paths.
+				May contain wildcard symbols * and ?.
+
+Use with optional mode flags:
+  -quiet          : Run in quiet mode.
+  -subdirectories : Restore subdirectories for the restored files.
+  -target         : Specify the target directory to restore files to.
+  -existing       : Specify how to handle existing files.
+  -incremental    : Set to off to disable restoring the up-to-date files across all incremental
+                    backup sets, instead restore from the specified backup set only
+
+For explanation of backup set indexing:
+  tapecon -help index
+
+Examples:
+  tapecon -drive 0 -restore
+  tapecon -d 0 -target "C:\Restored Files" -subdir -restore
+  tapecon -d:0 -t "D:\My Documents" -s -e:skip -r -1 *.txt *.doc*
+
+
+##list|l##
+
+List task flag:  list [<set_index_from> [<set_index_to>]] [<files>..]
+  List files in a backup set.
+
+Alternative name: -l
+
+Arguments:
+  <set_index_from> : The index of the backup set to list files from. Must be a valid backup set index.
+  <set_index_to>   : The index of the backup set to list files to. Must be a valid backup set index.
+					 One index specified will list files from the specified backup set.
+					 No index specified will list files from all backup sets on the tape.
+  <files>          : The files or directories to list. Must be valid file or directory paths.
+					 May contain wildcard symbols * and ?.
+
+Use with optional mode flags:
+  -quiet          : Run in quiet mode.
+  -subdirectories : Lsit files with directory path information.
+  -incremental    : Set to off to list all files from incremental backup sets, not just up-to-date files.
+
+For explanation of backup set indexing:
+  tapecon -help index
+
+Examples:
+  tapecon -drive 0 -list
+  tapecon -d 0 -list -1
+  tapecon -d:0 -s -l -2 0 *.txt *.doc*
+
+
+##validate|v##
+
+Validate task flag: -validate [<set_index>] [<files>..]
+  Validate files in a backup set using data integrity hash.
+
+Alternative name: -v
+
+Arguments:
+  <set_index> : The index of the backup set to validate. Must be a valid backup set index.
+				None specified will validate the latest backup set.
+  <files>     : The files or directories to validate. Must be valid file or directory paths.
+				May contain wildcard symbols * and ?.
+
+Use with optional mode flags:
+  -quiet       : Run in quiet mode.
+  -incremental : Set to off to disable validating the up-to-date files across all incremental
+                 backup sets, instead validate the specified backup set only
+
+For explanation of backup set indexing:
+  tapecon -help index
+
+Examples:
+  tapecon -drive 0 -validate
+  tapecon  d:0 -subdir -backup "C:\My Data" -validate
+  tapecon -d:0 -v -2 *.txt *.doc*
+
+
+##verify|y##
+
+Verify task flag: -verify [<set_index>] [<files>..]
+  Verify files in a backup set by comparing with original files.
+
+Alternative name: -y
+
+Arguments:
+  <set_index> : The index of the backup set to verify. Must be a valid backup set index.
+				None specified will verify the latest backup set.
+  <files>     : The files or directories to verify. Must be valid file or directory paths.
+				May contain wildcard symbols * and ?.
+
+Use with optional mode flags:
+  -quiet       : Run in quiet mode.
+  -incremental : Set to off to disable verifying the up-to-date files across all incremental
+				 backup sets, instead verify the specified backup set only
+
+For explanation of backup set indexing:
+  tapecon -help index
+
+Examples:
+  tapecon -drive 0 -verify
+  tapecon  d:0 -subdir -backup "C:\My Data" -verify
+  tapecon -d:0 -y -2 *.txt *.doc*
+
+
+##quitemode|q##
+
+Quiet mode flag: -quiet [on|off]
+  Run in quiet mode without prompting for confirmation - always assume "yes".
+
+Alternative name: -q
+
+Default setting: off
+
+Can specify before task flags:
+  -format, -backup, -restore, -list, -validate, -verify
+
+CAUTION: No prompt for confirming data overwrite or other actions!
+
+Examples:
+  tapecon -drive 0 -quiet -format
+  tapecon -d:0 -q -b "C:\Data"
+
+
+##blocksize|block|z##
+
+Preferred block size mode flag: -blocksize <block_size>
+  Set the preferred block size for the next backup task.
+
+Alternative names: -block, -z
+
+Arguments:
+  <block_size> : The preferred block size to use. Assumed in bytes if >= 1,024
+                 and in KBytes if < 1,024. 0 means use the drive's default.
+				 Actual size used will depend on the tape drive.
+
+Default setting: 16 KBytes
+
+Can specify before task flags:
+  -backup
+
+Examples:
+  tapecon -drive 0 -blocksize 64 -backup "C:\Data"
+  tapecon -d:0 -z 4096 -b "D:\My Documents\*.txt" "D:\My Documents\*.doc*"
+
+
+##subdirectories|subdir|s##
+
+Include subdirectories mode flag: -subdirectories [on|off]
+  Include subdirectories when backing up, restoring, or listing files.
+
+Alternative names: -subdir, -s
+
+Default setting: off
+
+Can specify before task flags:
+  -backup  : recurse subdirectories
+  -restore : restore the directory structure for restored files
+  -list    : list files with directory path information
+
+Examples:
+  tapecon -drive 0 -subdirectories -backup "C:\Data"
+  tapecon -d:0 -subdir -target "C:\Restored Files" -r
+  tapecon -d 0 -s -list -1
+
+
+##incremental|inc|i##
+
+Incremental backup mode flag: -incremental [on|off]
+  Perform an incremental backup creating an incremental backup set.
+
+Alternative names: -inc, -i
+
+Default setting: off
+
+Can specify before task flags:
+  -backup   : perform an incremental backup creating an incremental backup set
+  -restore  : set to off to restore from the specified backup set only instead of
+              restoring up-to-date files across all incremental backup sets
+  -validate : set to off to validate the specified backup set only instead of
+			  validating up-to-date files across all incremental backup sets
+  -verify   : set to off to verify the specified backup set only instead of
+              verifying up-to-date files across all incremental backup sets
+  -list	    : set to off to list all files from incremental backup sets, not
+              just up-to-date files across all incremental backup sets
+
+Examples:
+  tapecon -drive 0 -incremental -backup "C:\Data"
+  tapecon -d:0 -inc:off -restore -1 *.txt *.doc*
+  tapecon -d 0 -i- -l
+
+
+##target|t##
+
+Target directory mode flag: -target [<target_directory>]
+  Specify the target directory to restore files to.
+
+Alternative name: -t
+
+Arguments:
+  <target_directory> : The target directory to restore files to. Must be a valid
+                       directory path. If not specified, files will be restored to
+					   their original locations.
+
+Default setting: none specified -> restore to original locations
+
+Can specify before task flags:
+  -restore
+
+Examples:
+  tapecon -drive 0 -target "C:\Restored Files" -restore
+  tapecon -d:0 -s -t "D:\My Documents" -r *.txt *.doc*
+
+
+##existing|e##
+
+Existing files handling mode flag: -existing [<how_to_handle>]
+  Specify how to handle existing files when restoring.
+
+Alternative name: -e
+
+Argument values:
+  overwrite | o : Overwrite existing files with restored files.
+  skip | s      : Skip restoring files that already exist.
+  keepboth | keep | both | k | rename | <none specified> :
+                  Keep both files by renaming restored files.
+
+Default setting: keepboth
+
+Can specify before task flags:
+  -restore
+
+CAUTION: If set to overwrite, existing files will be overwritten without confirmation!
+
+Examples:
+  tapecon -drive 0 -existing keep -restore
+  tapecon -d:0 -e:s -r *.txt *.doc*
+
+
+##append|a##
+
+Append mode flag: -append [on|off|<after_set_index>]
+  Append new backup set after existing backup sets.
+
+Alternative name: -a
+
+Argument values:
+  on                : Append the new backup set after the latest backup set.
+  off               : Overwrite any existing content on the tape with the new backup set
+  <after_set_index> : Append new backup set after the specified backup set.
+  <none specified>  : Append new backup set after the latest backup set.
+
+Default setting: on
+
+Can specify before task flags:
+  -backup
+
+CAUTION: If set to off, existing content on the tape will be overwritten!
+CAUTION: If set to an index, the backup sets after the specified will be overwritten!
+
+For explanation of backup set indexing:
+  tapecon -help index
+
+Examples:
+  tapecon -drive 0 -append -backup C:\Data
+  tapecon  d:0 -a -2 -b C:\Data
+
+
+##filemarks|f##
+
+Filemarks mode flag: -filemarks [on|off]
+  Use filemarks when recording backup set (advanced).
+
+Alternative name: -fm
+
+Default setting: off
+
+Can specify before task flags:
+  -backup
+
+
+##capacity|c##
+
+Tape capacity mode flag: -capacity [off|<capacity>]
+  Limit the tape capacity for the backup operation (advanced).
+
+Alternative name: -cap
+
+Arguments:
+  <capacity> : The tape capacity limit. Assumed in MBytes if < 1,024x1,024
+			   and in bytes otherwise. -1 means no limit.
+  off:       : Do not limit tape capacity.
+  <none specified> : Do not limit tape capacity.
+
+Default setting: off
+
+Can specify before task flags:
+  -backup
+
+
+##index|indexes|indexing##
+
+Backup set indexing:
+  There are two equivalent ways to index the backup sets:
+  - From the oldest to the latest: 1, 2, 3, ...
+  - From the latest to the oldest: 0, -1, -2, -3, ...
+
+The latter way may be convenient to identify recently recorded backup sets.
+  E.g. the latest backup is always at index 0, the second latest -1, etc.
+
+Illustration for three backup sets:
+
+begin|<------ set #1 ----->|<------ set #2 ----->|<------ set #3 ----->| end
+of   | file1 | file2 | ... | file1 | file2 | ... | file1 | file2 | ... | of
+tape |<------ set #-2 ---->|<------ set #-1 ---->|<------ set #0 ----->| tape
