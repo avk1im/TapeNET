@@ -303,6 +303,12 @@ static string? LookupSection(string content, string? section, string separator =
     return content[startIndex..endIndex].Trim();
 }
 
+static string FormatSetIndex(TapeTOC toc, int setIndex)
+{
+    setIndex = toc.SetIndexToStd(setIndex);
+    return $"{setIndex} | {toc.SetIndexToAlt(setIndex)}";
+}
+
 #endregion // Static functions
 
 
@@ -318,7 +324,7 @@ void OnNonFatalError(string msg, int exitCode = -1)
         return;
     }
 
-    if (GetConsoleKey(msg + "\nPress 'C' to continue or any other key to abort: ") == ConsoleKey.C)
+    if (GetConsoleKey(msg + "\n ?? Press 'C' to continue or any other key to abort: ") == ConsoleKey.C)
     {
         Console.WriteLine(" -> Continuing...");
     }
@@ -337,7 +343,7 @@ bool MessageYesNoCancel(string msg, int exitCode = -1)
         return true;
     }
 
-    switch (GetConsoleKey(msg + "\nPress 'Y' for Yes, 'N' for No, or any other key to abort: "))
+    switch (GetConsoleKey(msg + "\n ?? Press 'Y' for Yes, 'N' for No, or any other key to abort: "))
     {
         case ConsoleKey.Y:
             Console.WriteLine(" -> Yes");
@@ -477,7 +483,7 @@ bool SetCurrentSetFromArgument(TapeFileAgent agent, List<string> values, string 
 
 void WriteDriveInformation()
 {
-    Console.WriteLine($"Device name: {tapeDrive.DriveDeviceName}");
+    Console.WriteLine($" ii Device name: >{tapeDrive.DriveDeviceName}<");
 
     if (!tapeDrive.IsDriveOpen)
     {
@@ -485,61 +491,55 @@ void WriteDriveInformation()
         return;
     }
 
-    Console.WriteLine("Supports multiple partitions: " + (tapeDrive.SupportsMultiplePartitions ? "Yes" : "No"));
-    Console.WriteLine("Supports setmarks: " + (tapeDrive.SupportsSetmarks ? "Yes" : "No"));
-    Console.WriteLine("Supports sequential filemarks: " + (tapeDrive.SupportsSeqFilemarks ? "Yes" : "No"));
-    Console.WriteLine("Block size [min..default..max]: " +
+    Console.WriteLine(" ii Supports multiple partitions: " + (tapeDrive.SupportsMultiplePartitions ? "Yes" : "No"));
+    Console.WriteLine(" ii Supports setmarks: " + (tapeDrive.SupportsSetmarks ? "Yes" : "No"));
+    Console.WriteLine(" ii Supports sequential filemarks: " + (tapeDrive.SupportsSeqFilemarks ? "Yes" : "No"));
+    Console.WriteLine(" ii Block size [min..default..max]: " +
         $"[{Helpers.BytesToString(tapeDrive.MinimumBlockSize)}..{Helpers.BytesToString(tapeDrive.DefaultBlockSize)}..{Helpers.BytesToString(tapeDrive.MaximumBlockSize)}]");
 
     if (tapeDrive.IsMediaLoaded)
     {
-        Console.WriteLine("Media loaded: Yes");
-        Console.WriteLine($"Partition count: {tapeDrive.PartitionCount}");
-        Console.WriteLine($"Capacity: {Helpers.BytesToStringLong(tapeDrive.Capacity)}");
-        Console.WriteLine($"Remaining capacity: {Helpers.BytesToStringLong(tapeDrive.GetRemainingCapacity())}");
+        Console.WriteLine(" ii Media loaded: Yes");
+        Console.WriteLine($" ii Partition count: {tapeDrive.PartitionCount}");
+        Console.WriteLine($" ii Capacity: {Helpers.BytesToStringLong(tapeDrive.Capacity)}");
+        Console.WriteLine($" ii Remaining capacity: {Helpers.BytesToStringLong(tapeDrive.GetRemainingCapacity())}");
     }
     else
     {
-        Console.WriteLine("Media loaded: No");
+        Console.WriteLine(" ii Media loaded: No");
     }
 } // WriteDriveInformation()
 
 void WriteMediaInformation(TapeTOC toc)
 {
-    Console.WriteLine($"Name: >{toc.Description}<");
-    Console.WriteLine($"Created on: {toc.CreationTime}");
-    Console.WriteLine($"Last saved: {toc.LastSaveTime}");
-    Console.WriteLine($"Backup sets: {toc.Count}");
-    Console.WriteLine($"Capacity: {Helpers.BytesToStringLong(tapeDrive.Capacity)}");
+    Console.WriteLine($" ii Name: >{toc.Description}<");
+    Console.WriteLine($" ii Created on: {toc.CreationTime}");
+    Console.WriteLine($" ii Last saved: {toc.LastSaveTime}");
+    Console.WriteLine($" ii Backup sets: {toc.Count}");
+    Console.WriteLine($" ii Capacity: {Helpers.BytesToStringLong(tapeDrive.Capacity)}");
     var remaining = tapeDrive.GetRemainingCapacity();
-    Console.WriteLine($"Remaining: {Helpers.BytesToStringLong(remaining)}");
-    Console.WriteLine($"Used: {Helpers.BytesToStringLong(tapeDrive.Capacity - remaining)}");
-    Console.WriteLine((tapeDrive.PartitionCount > 1) ? "TOC in partition" : "TOC in set");
-    Console.WriteLine($"Volume #{toc.Volume}");
-    Console.WriteLine($"Continued on next volume? {(toc.ContinuedOnNextVolume ? "Yes" : "No")}");
+    Console.WriteLine($" ii Used: {Helpers.BytesToStringLong(tapeDrive.Capacity - remaining)}");
+    Console.WriteLine($" ii Remaining: {Helpers.BytesToStringLong(remaining)}");
+    Console.WriteLine($" ii TOC placement: {((tapeDrive.PartitionCount > 1) ? "partition" : "set")}");
+    Console.WriteLine($" ii Volume #{toc.Volume}");
+    Console.WriteLine($" ii Continued on next volume? {(toc.ContinuedOnNextVolume ? "Yes" : "No")}");
 }
 
 static void WriteCurrentSetInformation(TapeTOC toc)
 {
     var setTOC = toc.CurrentSetTOC;
-    Console.WriteLine($"Name: >{setTOC.Description}<");
-    Console.WriteLine($"Files: {setTOC.Count}");
-    Console.WriteLine($"Created on: {setTOC.CreationTime}");
-    Console.WriteLine($"Last saved: {setTOC.LastSaveTime}");
-    Console.WriteLine($"Block size: {Helpers.BytesToStringLong(setTOC.BlockSize)}");
-    Console.WriteLine($"Filemarks: {(setTOC.FmksMode ? "ON" : "OFF")}"); // Filemarks = !BlobMode
-    Console.WriteLine($"Hash algorithm: {setTOC.HashAlgorithm}");
-    Console.WriteLine($"Incremental: {(setTOC.Incremental ? "Yes" : "No")}");
-    Console.WriteLine($"Volume: #{setTOC.Volume}");
-    Console.WriteLine($"Continued from previous volume: {(toc.IsCurrentSetContFromPrevVolume ? "Yes, directly" :
+    Console.WriteLine($" ii Name: >{setTOC.Description}<");
+    Console.WriteLine($" ii Files: {setTOC.Count}");
+    Console.WriteLine($" ii Created on: {setTOC.CreationTime}");
+    Console.WriteLine($" ii Last saved: {setTOC.LastSaveTime}");
+    Console.WriteLine($" ii Block size: {Helpers.BytesToStringLong(setTOC.BlockSize)}");
+    Console.WriteLine($" ii Filemarks: {(setTOC.FmksMode ? "ON" : "OFF")}"); // Filemarks = !BlobMode
+    Console.WriteLine($" ii Hash algorithm: {setTOC.HashAlgorithm}");
+    Console.WriteLine($" ii Incremental: {(setTOC.Incremental ? "Yes" : "No")}");
+    Console.WriteLine($" ii Volume: #{setTOC.Volume}");
+    Console.WriteLine($" ii Continued from previous volume: {(toc.IsCurrentSetContFromPrevVolume ? "Yes, directly" :
         toc.IsCurrentSetContFromPrevVolumeInc ? "Yes, incrementally" : "No")}");
-    Console.WriteLine($"Continued on next volume: {(toc.IsCurrentSetContOnNextVolume ? "Yes" : "No")}");
-}
-
-string FormatSetIndex(TapeTOC toc, int setIndex)
-{
-    setIndex = toc.SetIndexToStd(setIndex);
-    return $"{setIndex} | {toc.SetIndexToAlt(setIndex)}";
+    Console.WriteLine($" ii Continued on next volume: {(toc.IsCurrentSetContOnNextVolume ? "Yes" : "No")}");
 }
 
 string FormatFileInfo(TapeFileInfo tfi)
@@ -1464,7 +1464,7 @@ void HandleList(List<string> values)
             {
                 IEnumerable<TapeFileInfo> tfis = tfisBySets[i] ?? (IEnumerable<TapeFileInfo>)toc[setIndex - i]; // null means all files in the set
                 if (incremental || tfisBySets.Length > 1)
-                    Console.WriteLine($"ii from set #{FormatSetIndex(toc, setIndex - i)} " +
+                    Console.WriteLine($" ii from set #{FormatSetIndex(toc, setIndex - i)} " +
                         $"on Volume #{toc[setIndex - i].Volume}: " +
                         $"{((!tfis.Any()) ? "none" : $"{tfis.Count()} file(s):")}");
                 if (toc.CurrentSetTOC.FmksMode)
@@ -1515,13 +1515,13 @@ void HandleList(List<string> values)
 delegate void FlagHandler(List<string> values);
 
 // The base class for our implementations of ITapeFileNotifiable
-//  Does not need to declare methods override, since we always use explicit classes
+//  Does not need to declare methods as override, since we always use explicit classes
 abstract class OnFileEventProcessor(TapeTOC toc) : ITapeFileNotifiable
 {
     public int SetIndex { get; set; } = 0; // set index for the current backup set
     public int SucceededCount { get; private set; } = 0; // accumulated by PostProcessFile()
     public int ProcessedCount { get; private set; } = 0; // reported by BatchEndStatistics()
-    public int FailedCount { get; private set; } = 0; // accumulated by OnFileError() (also reported by BatchEndStatistics())
+    public int FailedCount { get; private set; } = 0; // reported by BatchEndStatistics()
     public int CompletedCount => ProcessedCount - FailedCount;
     public int SkippedCount => CompletedCount - SucceededCount;
     public long BytesProcessed { get; private set; } = 0; // reported by BatchEndStatistics()
@@ -1546,7 +1546,7 @@ abstract class OnFileEventProcessor(TapeTOC toc) : ITapeFileNotifiable
     {
         stopwatch.Stop();
         ProcessedCount = filesProcessed;
-        //FailedCount = filesFailed;
+        FailedCount = filesFailed;
         BytesProcessed = bytesProcessed;
         SetIndex = set;
 
@@ -1558,10 +1558,10 @@ abstract class OnFileEventProcessor(TapeTOC toc) : ITapeFileNotifiable
         if (ProcessedCount != 0)
         {
             Console.WriteLine($"iii Of {ProcessedCount} file(s) processed for/from backup set #{SetIndex}:");
-            Console.WriteLine($"ii Completed:\t{CompletedCount} ~ {100.0 * CompletedCount / ProcessedCount:F2}%");
-            Console.WriteLine($"ii Succeeded:\t{SucceededCount} ~ {100.0 * SucceededCount / ProcessedCount:F2}%");
-            Console.WriteLine($"ii Skipped:\t{SkippedCount} ~ {100.0 * SkippedCount / ProcessedCount:F2}%");
-            Console.WriteLine($"ii Failed:\t{FailedCount} ~ {100.0 * FailedCount / ProcessedCount:F2}%");
+            Console.WriteLine($" ii Completed:\t{CompletedCount} ~ {100.0 * CompletedCount / ProcessedCount:F2}%");
+            Console.WriteLine($" ii Succeeded:\t{SucceededCount} ~ {100.0 * SucceededCount / ProcessedCount:F2}%");
+            Console.WriteLine($" ii Skipped:\t{SkippedCount} ~ {100.0 * SkippedCount / ProcessedCount:F2}%");
+            Console.WriteLine($" ii Failed:\t{FailedCount} ~ {100.0 * FailedCount / ProcessedCount:F2}%");
 
             Console.Write($"iii Processed {Helpers.BytesToString(BytesProcessed)} in {ElapsedSeconds} sec");
             Console.WriteLine($" --> throughput {Helpers.BytesToString((long)(BytesProcessed / ElapsedSeconds))}/s");
@@ -1572,7 +1572,7 @@ abstract class OnFileEventProcessor(TapeTOC toc) : ITapeFileNotifiable
 
     public virtual bool PreProcessFile(ref TapeFileDescriptor fileDescr)
     {
-        Console.Write($"Processing file >{fileDescr.FullName}< : {Helpers.BytesToString(fileDescr.Length)} ");
+        Console.Write($" ii Processing file >{fileDescr.FullName}< : {Helpers.BytesToString(fileDescr.Length)} ");
         return true;
         
     }
@@ -1589,8 +1589,8 @@ abstract class OnFileEventProcessor(TapeTOC toc) : ITapeFileNotifiable
     // called when a file error occurs during restoring the file
     public virtual void OnFileFailed(TapeFileDescriptor fileDescr, Exception ex)
     {
-        Console.WriteLine($"Failure >{Path.GetFileName(fileDescr.FullName)}<. Exception: {ex}");
-        FailedCount++;
+        Console.WriteLine($"Failed >{Path.GetFileName(fileDescr.FullName)}<. Exception: {ex}");
+        // FailedCount++; // <-- needn't do it here since failed count is reported by BatchEndStatistics()
     }
     public virtual void OnFileSkipped(TapeFileDescriptor fileDescr)
     {
@@ -1608,11 +1608,11 @@ class OnFileBackupProcessor(TapeTOC toc) : OnFileEventProcessor(toc)
         FileInfo fileInfo = new(fileDescr.FullName);
         if (!fileInfo.Exists) // just for illustration -- the agent will check if file exists anyways
         {
-            Console.WriteLine($"!! >{fileDescr.FullName}< file not found -> skipping");
+            Console.WriteLine($" !! >{fileDescr.FullName}< file not found -> skipping");
             return false;
         }
 
-        Console.Write($"Backing up file >{fileDescr.FullName}< : {Helpers.BytesToString(fileInfo.Length)} ");
+        Console.Write($" ii Backing up file >{fileDescr.FullName}< : {Helpers.BytesToString(fileInfo.Length)} ");
 
         return true;
     }
@@ -1623,103 +1623,16 @@ class OnFileRestoreProcessor(TapeTOC toc) : OnFileEventProcessor(toc)
     // called for a chance to modify the fileDescr before restoring the file. If returns false, skip the file
     public override bool PreProcessFile(ref TapeFileDescriptor fileDescr)
     {
-        Console.Write($"Restoring file >{fileDescr.FullName}< : {Helpers.BytesToString(fileDescr.Length)} ");
-        return true;
-    } // PreProcessFile()
-
-} // class OnFileRestoreProcessor
-
-#if UNNEEDED
-class OnFileRestoreProcessor(TapeTOC toc, string? targetDir, bool recurseSubdirectories, TapeHowToHandleExisting handleExisting) : OnFileEventProcessor(toc)
-{
-    // called for a chance to modify the fileDescr before restoring the file. If returns false, skip the file
-    public override bool PreProcessFile(ref TapeFileDescriptor fileDescr)
-    {
-        Console.Write($"Restoring file >{fileDescr.FullName}< : {Helpers.BytesToString(fileDescr.Length)} ");
-
-        if (!string.IsNullOrEmpty(targetDir))
-        {
-            if (recurseSubdirectories)
-            {
-                // replace the root of the fileDescr.FullName with targetDir
-                if (Path.IsPathRooted(fileDescr.FullName))
-                {
-                    // fileDescr.FullName is an absolute path, replace the root with targetDir
-                    fileDescr.FullName = Path.Combine(targetDir, Path.GetRelativePath(Path.GetPathRoot(fileDescr.FullName) !, fileDescr.FullName));
-                }
-                else
-                {
-                    // fileDescr.FullName is a relative path, just combine it with targetDir
-                    fileDescr.FullName = Path.Combine(targetDir, fileDescr.FullName);
-                }
-
-            }
-            else
-            {
-                // replace the directory part of the fileDescr.FullName with targetDir
-                fileDescr.FullName = Path.Combine(targetDir, Path.GetFileName(fileDescr.FullName));
-            }
-        }
-
-        // ensure that fileDescr.FullName is a fully qualified path name
-        fileDescr.FullName = Path.GetFullPath(fileDescr.FullName);
-
-        // create the directory if it doesn't exist
-        //  Since we have the full path name in fileDescr.FullName, we can assume Path.GetDirectoryName() is not null
-        string directoryName = Path.GetDirectoryName(fileDescr.FullName) ! ;
-        Debug.Assert(!string.IsNullOrEmpty(directoryName));
-
-        if (!Directory.Exists(directoryName))
-        {
-            try
-            {
-                Directory.CreateDirectory(directoryName);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine();
-                Console.WriteLine($"!!! Couldn't create directory >{directoryName}<. Exception: {ex}");
-                return false;
-            }
-        }
-
-        if (handleExisting != TapeHowToHandleExisting.Overwrite && File.Exists(fileDescr.FullName))
-        {
-            switch (handleExisting)
-            {
-                case TapeHowToHandleExisting.Skip:
-                    Console.WriteLine();
-                    Console.WriteLine($"iii file >{fileDescr.FullName}< already exists -> SKIPPED");
-                    return false;
-
-                case TapeHowToHandleExisting.KeepBoth:
-                    string newFileName;
-                    uint counter = 1;
-                    do
-                    {
-                        newFileName = Path.Combine(directoryName,
-                            Path.GetFileNameWithoutExtension(fileDescr.FullName) + $"({counter})" + Path.GetExtension(fileDescr.FullName));
-                        counter++;
-                    }
-                    while (File.Exists(newFileName));
-                    
-                    fileDescr.FullName = newFileName;
-                    break;
-            }
-        }
-
-        Console.Write($"to >{fileDescr.FullName}< ...");
-
+        Console.Write($" ii Restoring file >{fileDescr.FullName}< : {Helpers.BytesToString(fileDescr.Length)} ");
         return true;
     } // PreProcessFile()
 } // class OnFileRestoreProcessor
-#endif
 
 class OnFileValidateProcessor(TapeTOC toc) : OnFileEventProcessor(toc)
 {
     public override bool PreProcessFile(ref TapeFileDescriptor fileDescr)
     {
-        Console.Write($"Validating file >{fileDescr.FullName}< : {Helpers.BytesToString(fileDescr.Length)} ");
+        Console.Write($" ii Validating file >{fileDescr.FullName}< : {Helpers.BytesToString(fileDescr.Length)} ");
         return true;
     }
 }
@@ -1728,7 +1641,7 @@ class OnFileVerifyProcessor(TapeTOC toc) : OnFileEventProcessor(toc)
 {
     public override bool PreProcessFile(ref TapeFileDescriptor fileDescr)
     {
-        Console.Write($"Verifying file >{fileDescr.FullName}< : {Helpers.BytesToString(fileDescr.Length)} ");
+        Console.Write($" ii Verifying file >{fileDescr.FullName}< : {Helpers.BytesToString(fileDescr.Length)} ");
         return true;
     }
 }

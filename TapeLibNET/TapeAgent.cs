@@ -50,7 +50,7 @@ namespace TapeNET
         {
             get
             {
-                int toBegin = TOC.CurrentSetIndex - TOC.FirstSetOnVolume; // same as m_toc.CurrentSetIndexOnVolume
+                int toBegin = TOC.CurrentSetIndexOnVolume; // same as TOC.CurrentSetIndex - TOC.FirstSetOnVolume
                 if (toBegin == 0)
                     return 0; // the first content set on volume should always be accessed from the beginning
 
@@ -58,13 +58,12 @@ namespace TapeNET
                 int toCurr; // use to determine if current set is closer to Navigator's current position than to begin or end
                 if (Navigator.CurrentContentSet != TapeNavigator.UnknownSet && Navigator.CurrentContentSet != TapeNavigator.InTOCSet)
                 {
-                    // translate Navigator.CurrentContentSet to TOC index
-                    int navCurr = (Navigator.CurrentContentSet >= 0) ? Navigator.CurrentContentSet + 1 :
-                        TOC.SetIndexToStd(Navigator.CurrentContentSet + 2); // consider (-2)-based index
+                    // translate Navigator.CurrentContentSet to the index on volume
+                    int navCurr = (Navigator.CurrentContentSet >= 0) ? Navigator.CurrentContentSet :
+                        TOC.SetIndexToStd(Navigator.CurrentContentSet + 2) - TOC.FirstSetOnVolume; // consider (-2)-based index
                     Debug.Assert(navCurr > 0);
-                    navCurr++; // assume that Manager will advance automatically to next content set
 
-                    toCurr = Math.Abs(navCurr - TOC.CurrentSetIndex);
+                    toCurr = Math.Abs(navCurr - toBegin); // notice here toBegin == TOC.CurrentSetIndexOnVolume
                 }
                 else
                     toCurr = int.MaxValue;
@@ -73,8 +72,9 @@ namespace TapeNET
 
                 if (toCurr <= toBegin && toCurr <= toEnd)
                 {
-                    // do NOT use toCurr directly, much rather use the sign of Navigator.CurrentContentSet
-                    //  to ensure that Navigator will move based on Navigator.CurrentContentSet
+                    // do NOT use toCurr directly, much rather retain the sign of Navigator.CurrentContentSet
+                    //  to ensure that Navigator will move based on Navigator.CurrentContentSet:
+                    //  if it was 0 or positive, continue counting from the beginning, if negative - from the end
                     return (Navigator.CurrentContentSet >= 0)? toBegin : -2 - toEnd; // remember (-2)-based index
                 }
 
@@ -145,6 +145,9 @@ namespace TapeNET
 
         private TapeWriteStream? OpenWriteTOCStream()
         {
+            // If we were reading or writing, end it first - before setting the new parameters
+            Manager.EndReadWrite();
+
             Drive.SetBlockSize(c_fixedTOCBlockSize);
 
             return Manager.ProduceWriteTOCStream();
@@ -217,6 +220,9 @@ namespace TapeNET
 
         private TapeReadStream? OpenReadTOCStream()
         {
+            // If we were reading or writing, end it first - before setting the new parameters
+            Manager.EndReadWrite();
+
             Drive.SetBlockSize(c_fixedTOCBlockSize);
 
             return Manager.ProduceReadTOCStream(textFileMode: false, lengthLimit: -1);

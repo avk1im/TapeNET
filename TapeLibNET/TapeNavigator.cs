@@ -45,7 +45,7 @@ namespace TapeNET
         //  InTOCSet means the current position is in the TOC area
         // Notice we never rely on that we know the number of content sets on the tape!
         //  -> we always count either from the beginning or the end of content.
-        public int CurrentContentSet { get; private set; } = UnknownSet;
+        public int CurrentContentSet { get; protected set; } = UnknownSet;
         public static int UnknownSet => int.MinValue;
         public static int InTOCSet => UnknownSet + 1;
         internal void ResetContentSet() => CurrentContentSet = UnknownSet;
@@ -178,7 +178,7 @@ namespace TapeNET
             return WentOK;
         }
 
-        public bool MoveToTargetContentSet()
+        public virtual bool MoveToTargetContentSet()
         {
             m_logger.LogTrace("Drive #{Drive}: Moving to target content set {Set}", DriveNumber, TargetContentSet);
 
@@ -289,7 +289,8 @@ namespace TapeNET
                 CurrentContentSet += count;
 
             if (WentOK)
-                m_logger.LogTrace("Drive #{Drive}: Moved by {Count} content setmarks", DriveNumber, count);
+                m_logger.LogTrace("Drive #{Drive}: Moved by {Count} content setmarks -> CurrentContentSet = {Set}",
+                    DriveNumber, count, CurrentContentSet);
             else
                 LogErrorAsDebug("Failed to move to next content setmark(s)");
 
@@ -581,6 +582,40 @@ namespace TapeNET
             return base.MoveToEndOfContent();
         }
 
+        // optimized version for the case when we're inside TOC
+        public override bool MoveToTargetContentSet()
+        {
+            ResetError();
+
+            if (TargetContentSet < 0 && CurrentContentSet == InTOCSet)
+            {
+                m_logger.LogTrace("Drive #{Drive}: Moving to target content set {Set}; optimized case 'TOC to from-content-end'",
+                    DriveNumber, TargetContentSet);
+
+                // [set0][SM]..[setN-2][SM][setN-1][SM][setN][SM][toc]
+                //             -4          -3          -2        -1
+                
+                // Since we're inside TOC, we only need to move back by TargetContentSet setmarks, then forward by 1
+                MoveToNextContentSetmark(TargetContentSet); // moves to just before the target SM
+                if (WentOK)
+                    MoveToNextContentSetmark(); // move to just after the correct setmark -- the beginning of the target set
+
+                if (WentOK)
+                    CurrentContentSet = TargetContentSet;
+                else
+                    ResetContentSet(); // since we don't know where we ended up
+
+                if (WentOK)
+                    m_logger.LogTrace("Drive #{Drive}: Moved to target content set {Set}", DriveNumber, TargetContentSet);
+                else
+                    LogErrorAsDebug("Failed to move to target content set");
+
+                return WentOK;
+            }
+
+            // for all other cases, use the base class implementation
+            return base.MoveToTargetContentSet();
+        }
 
         #endregion // Content positioning
 

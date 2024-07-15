@@ -14,14 +14,17 @@ namespace TapeNET
         }
         private bool BeginWriteContentForCurrentSet(bool newSet)
         {
-            // Try to set filemark mode -- the manager has the final say.
+            // If we were reading or writing, end it first - before setting the new set's parameters
+            Manager.EndReadWrite();
+
+            // Try to set filemark mode -- Navigator has the final say.
             Navigator.FmksMode = TOC.CurrentSetTOC.FmksMode;
             if (TOC.CurrentSetTOC.FmksMode != Navigator.FmksMode)
                 m_logger.LogWarning("Failed to set filemark mode to {Mode0} in {Method}; proceeding with {Mode1}",
                     TOC.CurrentSetTOC.FmksMode, nameof(BeginWriteContentForCurrentSet), Navigator.FmksMode);
             TOC.CurrentSetTOC.FmksMode = Navigator.FmksMode; // in any case, ensure the set has what the manager has
 
-            // Try to set block size -- the manager has the final say.
+            // Try to set block size -- Drive has the final say.
             if (!Drive.SetBlockSize(TOC.CurrentSetTOC.BlockSize))
                 m_logger.LogWarning("Failed to set block size to {Size0} in {Method}; proceeding with {Size1}",
                     TOC.CurrentSetTOC.BlockSize, nameof(BeginWriteContentForCurrentSet), Drive.BlockSize);

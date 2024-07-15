@@ -17,6 +17,9 @@ namespace TapeNET
         }
         private bool BeginReadContentForCurrentSet()
         {
+            // If we were reading or writing, end it first - before setting the new set's parameters
+            Manager.EndReadWrite();
+
             // set the filemarks and block size from the set to the manager
             Navigator.FmksMode = TOC.CurrentSetTOC.FmksMode;
             Drive.SetBlockSize(TOC.CurrentSetTOC.BlockSize);
@@ -389,12 +392,6 @@ namespace TapeNET
                 if (!RestoreTOC())
                 {
                     LogErrorAsWarning("Failed to restore TOC for new volume");
-                    return false;
-                }
-                // To determine is the new volume is from the right series, check TOC creation time
-                if (TOC.CreationTime != orgTOC.CreationTime)
-                {
-                    LogErrorAsWarning("Wrong volume series for new volume");
                     return false;
                 }
                 // Check if the new volume has the right volume number

@@ -109,6 +109,7 @@ namespace TapeNET
         }
     }
 
+    // The on-tape information about a file. Used as both TOC entry and on-tape file header
     public class TapeFileInfo(TypeUID UID, long block, TapeFileDescriptor fileDescr) : ITapeSerializable
     {
         public TypeUID UID { get; } = UID;
@@ -169,8 +170,9 @@ namespace TapeNET
 
     } // struct TapeFileInfo
 
-
-    // While the class is accessible externally, new instances only created via class TapeTOC.AddNewSetTOC()
+    
+    // Manages a list of TapeFileInfo
+    //  While the class is accessible externally, new instances only created via TapeTOC.AddNewSetTOC()
     public class TapeSetTOC : ITapeSerializable, IReadOnlyList<TapeFileInfo>
     {
         private readonly List<TapeFileInfo> m_tapeFileInfos;
@@ -430,7 +432,8 @@ namespace TapeNET
 
     } // class TapeSetTOC
 
-    // manages the list of SetTOCs
+
+    // Manages a list of SetTOCs
     public class TapeTOC : ITapeSerializable, IEnumerable<TapeSetTOC>
     {
         private readonly List<TapeSetTOC> m_setTOCs;
@@ -551,7 +554,7 @@ namespace TapeNET
                 // shortcut if the last set is on current Volume
                 if (this[Count - 1].Volume == Volume)
                     return Count - 1;
-                
+
                 int lastOnVolume = m_currSetInternal;
                 for (int i = m_currSetInternal; i < Count; i++)
                 {
@@ -654,7 +657,7 @@ namespace TapeNET
                 return; // current is the last set; nothing to do
 
             m_setTOCs.RemoveRange(m_currSetInternal + 1, Count - m_currSetInternal - 1);
-            Debug.Assert(m_currSetInternal == Count -1); // the current set is now the last set
+            Debug.Assert(m_currSetInternal == Count - 1); // the current set is now the last set
         }
 
         public void RemoveAllSets() // CAUTION!
@@ -673,7 +676,8 @@ namespace TapeNET
             m_setTOCs = setTOCs;
         }
 
-        // ITapeSerializable {
+        #region ITapeSerializable
+
         public void SerializeTo(TapeSerializer serializer)
         {
             serializer.SerializeSignature();
@@ -708,10 +712,12 @@ namespace TapeNET
                 ContinuedOnNextVolume = deserializer.DeserializeBoolean(),
             };
         }
-        // } ITapeSerializable
+        
+        #endregion // ITapeSerializable
 
 
-        // IEnumerable<TapeSetTOC> {
+        #region IEnumerable<TapeSetTOC> 
+
         // Implementation of the generic IEnumerable<T> interface
         public IEnumerator<TapeSetTOC> GetEnumerator()
         {
@@ -729,10 +735,11 @@ namespace TapeNET
         {
             return GetEnumerator(); // Just call the generic version
         }
-        // } IEnumerable<TapeSetTOC>
+        
+        #endregion IEnumerable<TapeSetTOC>
 
 
-        // File selection methods
+        #region *** File selection methods ***
 
         // Find the latest non-incremental set -- returns internal index
         private int LastNonIncSetInternal
@@ -760,7 +767,7 @@ namespace TapeNET
 
         public int LastNonIncSet => InternalToSetIndex(LastNonIncSetInternal);
 
-         public bool IsFileUptodateInc(FileInfo fileInfo)
+        public bool IsFileUptodateInc(FileInfo fileInfo)
         {
             // check if the same or newer version of the file is already backed up in the current set
             //  or in any of the previous incremental sets
@@ -775,7 +782,7 @@ namespace TapeNET
             return false;
         }
 
-       // Considering incremental sets, select files from the current and previous set(s) that match the given patterns
+        // Considering incremental sets, select files from the current and previous set(s) that match the given patterns
         //  null patterns means consider all files
         //  Reurn an array of lists of files from the latest set, 2nd latest, 3rd latest, etc.
         //  A null list means all files from the corresponding set
@@ -871,6 +878,7 @@ namespace TapeNET
             }
         }
 #endif
+        #endregion // File selection methods
 
     } // class TapeTOC
 

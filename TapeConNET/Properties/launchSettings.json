@@ -5,7 +5,7 @@
       //"commandLineArgs": "-d=0 -format single",
       //"commandLineArgs": "-d=0 -c:crc32 -s -append:OFF -filemarks:OFF -block 16 -backup E:\\Temp\\Source.ABC -list",
       //"commandLineArgs": "-d=0 -c:crc32 -s -append:ON -filemarks:OFF -block 4 -backup E:\\Temp\\Source.SMALL.A -list",
-      //"commandLineArgs": "-d=0 -capacity 540 MB -c:crc64 -s -append:ON -filemarks:OFF -block 64 KB -backup E:\\Temp\\Source.MED2 -list",
+      //"commandLineArgs": "-d=0 -c:crc64 -s -inc:ON -block 64 -backup E:\\Temp\\Source.MED2 -list -inc:OFF -list",
       //"commandLineArgs": "-d=0 -c:crc32 -s -append:ON -filemarks:OFF -block 64 -backup E:\\Temp\\Source.LRG1 -list",
       //"commandLineArgs": "-d=0 -capacity 140 MB -c:crc32 -s -incremental -filemarks:OFF -block 32 KB -backup E:\\Temp\\Source.MED2 -list",
       //"commandLineArgs": "-d=0 -c:crc32 -s -append:ON -filemarks:OFF -block 64 -backup E:\\Temp\\Source\\*.mp4 -list",
@@ -16,10 +16,9 @@
       //"commandLineArgs": "-d=0 -target E:\\Temp\\Destination -s -e:keep -verify -1",
       //"commandLineArgs": "-d=0 -verify -1",
       //"commandLineArgs": "-d=0 -s -inc:ON -list -inc:OFF -list",
-      //"commandLineArgs": "-d=0 -list",
       //"commandLineArgs": "-d=0 -eject",
       //"commandLineArgs": "-help index",
-      "workingDirectory": "D:\\Documents.DEV\\Projects\\TapeConMFC\\TapeConNET"
+      "workingDirectory": "D:\\Documents.DEV\\Projects\\TapeNET\\TapeConNET"
     }
   }
 }
