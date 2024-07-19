@@ -7,16 +7,16 @@ Usage:
 
 Task flags:                         Mode flags (specify before task):
   -help       : Display help.         -quiet          : Run in quiet mode.
-  -drive      : Specify tape drive.   -blocksize      : Set block size.
-  -format     : Format the tape.      -subdirectories : Include subdirectories.
-  -eject      : Eject the tape.       -crc            : Include data integrity hash.
-  -backup     : Perform backup.       -append         : Append to backup sets.
-  -restore    : Restore files.        -incremental    : Incremental backup.
-  -list       : List files.           -target         : Specify target directory.
-  -validate   : Validate files.       -existing       : Handle existing files.
-  -verify     : Verify files.         -filemarks      : Use filemarks (advanced).
+  -drive      : Specify tape drive.   -description    : Set backup set description.
+  -format     : Format the tape.      -blocksize      : Set block size.
+  -eject      : Eject the tape.       -subdirectories : Include subdirectories.
+  -backup     : Perform backup.       -crc            : Include data integrity hash.
+  -restore    : Restore files.        -append         : Append to backup sets.
+  -list       : List files.           -incremental    : Perform incremental backup.
+  -validate   : Validate files.       -target         : Specify target directory.
+  -verify     : Verify files.         -existing       : Handle existing files.
+                                      -filemarks      : Use filemarks (advanced).
                                       -capacity       : Limit tape capacity (advanced).
-
 For instructions on a flag:
   tapecon -help <flag_without_dash>
 

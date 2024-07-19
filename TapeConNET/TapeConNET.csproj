@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <None Remove="TapeCon.Help.txt" />
+    <None Remove="~%24apecon.docx" />
     <None Remove="~%24mmand Line Interface.docx" />
     <None Remove="~WRL0003.tmp" />
   </ItemGroup>

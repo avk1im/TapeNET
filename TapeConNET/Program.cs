@@ -9,9 +9,7 @@ using Windows.Win32.System.SystemServices;
 using Windows.Win32.Security;
 using Windows.Win32.Storage.FileSystem;
 
-using System.Text.Json;
-
-using Microsoft.Win32.SafeHandles;
+using System.Text;
 using System.ComponentModel;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -48,6 +46,7 @@ const string helpTextResourceName = $"{projectName}.TapeCon.Help.txt";
 
 // Mode seetings -- controlled by mode flags
 bool quiteMode = false;
+string? setDescription = null;
 bool filemarksMode = false;
 const uint defaultBlockSizeKB = 16U;
 uint blockSizeKB = defaultBlockSizeKB;
@@ -118,6 +117,42 @@ Dictionary<string, FlagHandler> flagHandlers = new()
     {"-quietmode", HandleQuiet},
         {"-quiet", HandleQuiet},
         {"-q", HandleQuiet},
+    {"-description", HandleDescription},
+        {"-desc", HandleDescription},
+        {"-name", HandleDescription },
+        {"-n", HandleDescription},
+    {"-filemarks", HandleFilemarks},
+        {"-fm", HandleFilemarks},
+    {"-blocksize", HandleBlocksize},
+        {"-block", HandleBlocksize},
+        {"-z", HandleBlocksize},
+    {"-capacity", HandleCapacity},
+        {"-cap", HandleCapacity},
+    {"-subdirectories", HandleSubdirectories},
+        {"-subfolders", HandleSubdirectories},
+        {"-subdir", HandleSubdirectories},
+        {"-s", HandleSubdirectories},
+    {"-crc", HandleHash},
+        {"-c", HandleHash},
+    {"-append", HandleAppend},
+        {"-a", HandleAppend},
+    {"-incremental", HandleIncremental},
+        {"-inc", HandleIncremental},
+        {"-i", HandleIncremental},
+    {"-backup", HandleBackup},
+        {"-b", HandleBackup},
+    {"-target", HandleTarget},
+        {"-t", HandleTarget},
+    {"-existing", HandleExisting},
+        {"-e", HandleExisting},
+    {"-restore", HandleRestore},
+        {"-r", HandleRestore},
+    {"-list", HandleList},
+        { "-l", HandleList},
+    {"-validate", HandleValidate},
+        { "-v", HandleValidate},
+    {"-verify", HandleVerify},
+        { "-y", HandleVerify},
     {"-filemarks", HandleFilemarks},
         {"-fm", HandleFilemarks},
     {"-blocksize", HandleBlocksize},
@@ -766,6 +801,24 @@ void HandleQuiet(List<string> values)
     Console.WriteLine($"vvv Quiet mode is {(quiteMode ? "ON" : "OFF")}");
 }
 
+void HandleDescription(List<string> values)
+{
+    if (values.Count == 0)
+    {
+        setDescription = null;
+        Console.WriteLine("vvv Backup set description set to standard");
+        return;
+    }
+
+    // concatenate all values into a single string delimated by spaces
+    StringBuilder sb = new(values[0]);
+    for (int i = 1; i < values.Count; i++)
+        sb.Append(' ').Append(values[i]);
+    setDescription = sb.ToString();
+    
+    Console.WriteLine($"vvv Backup set description set to >{setDescription}<");
+}
+
 void HandleFilemarks(List<string> values)
 {
     bool filemarks = EvaluateOnOffFlag(values, "Filemarks", false, out bool flagSet);
@@ -1040,7 +1093,7 @@ void HandleBackup(List<string> values)
         }
         Debug.Assert(toc.CurrentSetTOC.Count == 0); // the current set TOC has no file entries 
 
-        toc.CurrentSetTOC.Description = $"Backup set created {DateTime.Now}";
+        toc.CurrentSetTOC.Description = setDescription ?? $"Backup set created {DateTime.Now}";
         toc.CurrentSetTOC.HashAlgorithm = hashAlgorithm;
         toc.CurrentSetTOC.BlockSize = blockSizeKB * 1024;
         toc.CurrentSetTOC.FmksMode = filemarksMode;
