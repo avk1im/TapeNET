@@ -251,6 +251,27 @@ Examples:
   tapecon -d:0 -q -b "C:\Data"
 
 
+##description|desc|name|n##
+
+Backup set description mode flag: -description [<description>]
+  Set the description for the backup set.
+
+Alternative names: -desc, -name, -n
+
+Arguments:
+  <description> : The description for the backup set. Use quotes for multi-word
+                  descriptions.
+
+Default setting: none specified -> use standrad description
+
+Can specify before task flags:
+  -backup
+
+Examples:
+  tapecon -drive 0 -description "Data Backup Set #1" -backup "C:\Data"
+  tapecon -d:0 -n "My Documents Backup" -b "D:\My Documents\*.txt" "D:\My Documents\*.doc*"
+
+
 ##blocksize|block|z##
 
 Preferred block size mode flag: -blocksize <block_size>

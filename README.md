@@ -1,5 +1,10 @@
 **TapeNET README file**
 
+Revision 1.0 July 2024
+Copyright © 2023, 2024 by [avkl1m](https://github.com/avk1im)
+*All third-party brand names, trademarks, and registered trademarks are the property of their respective owners. Their use here does not imply any endorsement, affiliation, or sponsorship by the owners.
+
+
 # TapeNET Introduction
 
 TapeNET is a software package that allows to back up files to and restore from a tape drive. TapeNET features include:
@@ -13,11 +18,13 @@ TapeNET is a software package that allows to back up files to and restore from a
 
 # TapeNET Content
 
-Currently TapeNET includes *tapenet* library for using tape drives under Microsoft* Windows and .NET*, and *tapecon* command line application. 
+Currently TapeNET includes:
+* *tapelib* library for using tape drives under Microsoft* Windows* and .NET*, and
+* *tapecon* command line application for Microsoft Windows. 
 
-*tapecon* is a full-featured backup utility that also illustrates the usage of *tapenet* library. *tapecon* can run under Microsoft Windows 10 and Windows 11. For more information on using *tapecon*, refer to tapecon.pdf User Guide.
+*tapecon* is a full-featured backup utility that also illustrates the usage of *tapelib* library. *tapecon* can run under Microsoft Windows 10 and 11. For more information on using *tapecon*, refer to tapecon.pdf User Guide.
 
-*tapecon* application and *tapenet* library are free, open-source software distributed under MIT license. Refer to the license file LICENSE.txt for more information.
+TapeNET is free, open-source software distributed under MIT license. Refer to the license file LICENSE.txt for more information.
 
 **CAUTION**: When using *tapecon*, it’s advisable to follow best backup practices, including employing multiple backup methods, not relying solely on this tool, and verifying or validating the backups regularly.
 
