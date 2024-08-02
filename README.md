@@ -2,6 +2,7 @@
 
 Revision 1.0 July 2024
 Copyright © 2023, 2024 by [avkl1m](https://github.com/avk1im)
+
 *All third-party brand names, trademarks, and registered trademarks are the property of their respective owners. Their use here does not imply any endorsement, affiliation, or sponsorship by the owners.
 
 
