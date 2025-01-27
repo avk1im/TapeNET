@@ -5,7 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.IO.Hashing;
 
-namespace TapeNET
+namespace TapeLibNET
 {
 
     public abstract class FilterStream(Stream inner, bool disposeInnerToo = false) : Stream

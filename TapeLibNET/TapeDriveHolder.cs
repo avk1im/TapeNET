@@ -4,8 +4,7 @@ using System.ComponentModel;
 using Microsoft.Extensions.Logging;
 using System.Runtime.CompilerServices;
 
-
-namespace TapeNET
+namespace TapeLibNET
 {
     public interface IErrorMangeable
     {
@@ -42,7 +41,7 @@ namespace TapeNET
 
         public TapeDrive Drive => drive;
         public uint DriveNumber => Drive.DriveNumber;
-        private List<IErrorMangeable> ErrorSources { get; init; } = [ drive ];
+        private List<IErrorMangeable> ErrorSources { get; init; } = [drive];
 
         #endregion // Properties
 
@@ -75,8 +74,8 @@ namespace TapeNET
         }
         internal void SetError(Exception ex, string? message = null)
         {
-            WIN32_ERROR error = (ex is IOException ioex) ? (WIN32_ERROR)ioex.HResult :
-                (ex is Win32Exception w32ex) ? (WIN32_ERROR)w32ex.NativeErrorCode :
+            WIN32_ERROR error = ex is IOException ioex ? (WIN32_ERROR)ioex.HResult :
+                ex is Win32Exception w32ex ? (WIN32_ERROR)w32ex.NativeErrorCode :
                     WIN32_ERROR.ERROR_UNHANDLED_EXCEPTION;
 
             SetError(error, message ?? ex.Message);

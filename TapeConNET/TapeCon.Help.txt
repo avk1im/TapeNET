@@ -1,6 +1,6 @@
 ﻿iii tapecon - Tape Backup Utility
-  Based on TapeNET library. Distributed under the MIT License.
-  Copyright © 2023-2024 avk1im. All rights reserved.
+  Based on TapeLibNET library. Distributed under the MIT License.
+  Copyright © 2023-2025 by avk1im. All rights reserved.
 
 Usage:
   tapecon -<flag1> [<option>..] [-<flag2> [<option>..] ..]
@@ -23,10 +23,8 @@ For instructions on a flag:
 For explanation of backup set indexing:
   tapecon -help index
 
-For more information, refer to the user guide tapecon.pdf.
-
-For bug reports, feature requests, or other inquiries, please visit tapecon repository:
-  https://github.com/avk1im/tapecon
+For more information, refer to the user guide tapecon.pdf. For bug reports, feature requests,
+  or other inquiries, please visit tapecon repository: https://github.com/avk1im/tapecon
 Thank you for using tapecon!
 
 
@@ -39,7 +37,7 @@ Alternative names: -h, -?
 
 Arguments:
   <flag_without_dash> : Optionally specify flags (without leading dash) to display help for.
-                        Specify index to display help for backup set indexing.
+                        Specify 'index' to display help for backup set indexing.
 						If not specified, general help will be displayed.
 
 Examples:

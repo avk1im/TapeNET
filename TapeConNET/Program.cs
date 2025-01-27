@@ -18,13 +18,14 @@ using System.Diagnostics.Metrics;
 using System.Collections.Generic;
 
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Debug; // for DebugLoggerProvider
+//using Microsoft.Extensions.Logging.Debug; // for DebugLoggerProvider
+using Microsoft.Extensions.Logging.Abstractions; // for NullLoggerFactory
 
 using System.Collections.ObjectModel;
 using System.Reflection;
 using System.Diagnostics.CodeAnalysis;
 
-using TapeNET;
+using TapeLibNET;
 
 
 
@@ -32,13 +33,26 @@ using TapeNET;
 
 #region *** Global program variables ***
 
+#if DEBUG
 ILoggerFactory factory = LoggerFactory.Create(builder =>
 {
     builder
         .AddDebug()
         .SetMinimumLevel(LogLevel.Trace);
+//        .SetMinimumLevel(LogLevel.Information);
 });
+#else
+ILoggerFactory factory = Debugger.IsAttached ?
+    LoggerFactory.Create(builder =>
+    {
+        builder
+            .AddDebug()
+            .SetMinimumLevel(LogLevel.Information);
+    }) :
+    NullLoggerFactory.Instance;
+#endif
 using TapeDrive tapeDrive = new(factory);
+
 TapeTOC? legacyTOC = null;
 Windows.Win32.System.SystemServices.Stopwatch stopwatch = new();
 const string projectName = "TapeConNET";
@@ -121,38 +135,6 @@ Dictionary<string, FlagHandler> flagHandlers = new()
         {"-desc", HandleDescription},
         {"-name", HandleDescription },
         {"-n", HandleDescription},
-    {"-filemarks", HandleFilemarks},
-        {"-fm", HandleFilemarks},
-    {"-blocksize", HandleBlocksize},
-        {"-block", HandleBlocksize},
-        {"-z", HandleBlocksize},
-    {"-capacity", HandleCapacity},
-        {"-cap", HandleCapacity},
-    {"-subdirectories", HandleSubdirectories},
-        {"-subfolders", HandleSubdirectories},
-        {"-subdir", HandleSubdirectories},
-        {"-s", HandleSubdirectories},
-    {"-crc", HandleHash},
-        {"-c", HandleHash},
-    {"-append", HandleAppend},
-        {"-a", HandleAppend},
-    {"-incremental", HandleIncremental},
-        {"-inc", HandleIncremental},
-        {"-i", HandleIncremental},
-    {"-backup", HandleBackup},
-        {"-b", HandleBackup},
-    {"-target", HandleTarget},
-        {"-t", HandleTarget},
-    {"-existing", HandleExisting},
-        {"-e", HandleExisting},
-    {"-restore", HandleRestore},
-        {"-r", HandleRestore},
-    {"-list", HandleList},
-        { "-l", HandleList},
-    {"-validate", HandleValidate},
-        { "-v", HandleValidate},
-    {"-verify", HandleVerify},
-        { "-y", HandleVerify},
     {"-filemarks", HandleFilemarks},
         {"-fm", HandleFilemarks},
     {"-blocksize", HandleBlocksize},
@@ -672,11 +654,10 @@ void HandleHelp(List<string> values)
     {
         display = LookupSection(content, null);
 
-        if (display == null)
-        {
-            Console.WriteLine("!!! Help message not found");
-            return;
-        }
+        if (display != null)
+            Console.WriteLine(display);
+        else
+            Console.WriteLine("!!! General help message not found");
     }
     else
     {

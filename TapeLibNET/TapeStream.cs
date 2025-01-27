@@ -2,7 +2,7 @@
 using System.Diagnostics;
 
 
-namespace TapeNET
+namespace TapeLibNET
 {
 
     public abstract class TapeStream : Stream

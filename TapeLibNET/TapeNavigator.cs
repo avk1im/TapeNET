@@ -5,9 +5,10 @@ using Windows.Win32;
 using Windows.Win32.Foundation;
 
 using Microsoft.Extensions.Logging;
+using TapeLibNET;
 
 
-namespace TapeNET
+namespace TapeLibNET
 {
     // Handles the positioning of the tape
     //  Supports the notion of "content" area with "content sets" and a "TOC" area

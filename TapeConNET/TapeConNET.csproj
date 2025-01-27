@@ -6,8 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-	<!--The following sets the name of the output application, e.g. "tapecon" for "tapecon.exe"-->
-	<AssemblyName>tapecon</AssemblyName>
+    <!--The following sets the name of the output application, e.g. "tapecon" for "tapecon.exe"-->
+    <AssemblyName>tapecon</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
@@ -31,8 +31,8 @@
     <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="8.0.0" />
     <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.106">
-	    <!-- <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets> -->
-	    <PrivateAssets>all</PrivateAssets>
+      <!-- <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets> -->
+      <PrivateAssets>all</PrivateAssets>
     </PackageReference>
   </ItemGroup>
 
@@ -41,9 +41,61 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="tapecon.pdf">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    <None Update="tapecon.docx">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </None>
+    <None Update="ConvertDocxToPdf.ps1">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </None>
   </ItemGroup>
 
+  <!-- New version with Inputs and Outputs -->
+  <Target Name="ConvertDocxToPdf" Inputs="@(None->'%(FullPath)')" Outputs="$(MSBuildProjectDirectory)\tapecon.pdf" AfterTargets="Build">
+    <PropertyGroup>
+      <PowerShellPath>$(SystemRoot)\System32\WindowsPowerShell\v1.0\powershell.exe</PowerShellPath>
+      <DocxFile>$(MSBuildProjectDirectory)\tapecon.docx</DocxFile>
+      <PdfFile>$(MSBuildProjectDirectory)\tapecon.pdf</PdfFile>
+      <ScriptFile>$(MSBuildProjectDirectory)\ConvertDocxToPdf.ps1</ScriptFile>
+    </PropertyGroup>
+
+    <Exec Command="&quot;$(PowerShellPath)&quot; -ExecutionPolicy Bypass -File &quot;$(ScriptFile)&quot; &quot;$(DocxFile)&quot;" />
+  </Target>
+
+  <Target Name="CopyPdfToOutput" Inputs="$(PdfFile)" Outputs="$(OutputPath)tapecon.pdf" AfterTargets="ConvertDocxToPdf">
+    <Copy SourceFiles="$(PdfFile)" DestinationFolder="$(OutputPath)" />
+  </Target>
+
+  <!-- Version with manual comparisons commented out -->
+  <!--
+  <PropertyGroup>
+    <IsRebuild>false</IsRebuild>
+  </PropertyGroup>
+
+  <Target Name="SetIsRebuild" BeforeTargets="BeforeRebuild">
+    <PropertyGroup>
+      <IsRebuild>true</IsRebuild>
+    </PropertyGroup>
+  </Target>
+
+  <Target Name="ConvertDocxToPdf" AfterTargets="Build">
+    <PropertyGroup>
+      <PowerShellPath>$(SystemRoot)\System32\WindowsPowerShell\v1.0\powershell.exe</PowerShellPath>
+      <DocxFile>$(MSBuildProjectDirectory)\tapecon.docx</DocxFile>
+      <PdfFile>$(MSBuildProjectDirectory)\tapecon.pdf</PdfFile>
+      <ScriptFile>$(MSBuildProjectDirectory)\ConvertDocxToPdf.ps1</ScriptFile>
+      <DocxFileTime>$([System.IO.File]::GetLastWriteTime('$(DocxFile)').Ticks)</DocxFileTime>
+      <PdfFileTime>$([System.IO.File]::GetLastWriteTime('$(PdfFile)').Ticks)</PdfFileTime>
+    </PropertyGroup>
+
+    <Exec Command="&quot;$(PowerShellPath)&quot; -ExecutionPolicy Bypass -File &quot;$(ScriptFile)&quot; &quot;$(DocxFile)&quot;" Condition="!Exists('$(PdfFile)') OR ('$(DocxFileTime)' > '$(PdfFileTime)') OR '$(IsRebuild)' == 'true'" />
+  </Target>
+
+  <Target Name="CopyPdfToOutput" AfterTargets="ConvertDocxToPdf">
+    <PropertyGroup>
+      <OutputPdfFile>$(OutputPath)tapecon.pdf</OutputPdfFile>
+      <OutputPdfFileTime>$([System.IO.File]::GetLastWriteTime('$(OutputPdfFile)').Ticks)</OutputPdfFileTime>
+    </PropertyGroup>
+    <Copy SourceFiles="$(PdfFile)" DestinationFolder="$(OutputPath)" Condition="!Exists('$(OutputPdfFile)') OR ('$(PdfFileTime)' > '$(OutputPdfFileTime)') OR '$(IsRebuild)' == 'true'" />
+  </Target>
+  -->
 </Project>

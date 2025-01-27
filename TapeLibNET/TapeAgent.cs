@@ -9,9 +9,10 @@ using System.Diagnostics;
 using Windows.Win32.Foundation;
 using Microsoft.Extensions.Logging;
 using System.Buffers.Text;
+using TapeLibNET;
 
 
-namespace TapeNET
+namespace TapeLibNET
 {
 
     public interface ITapeFileNotifiable

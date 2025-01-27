@@ -2,9 +2,10 @@
 using Windows.Win32.Foundation;
 using Microsoft.Extensions.Logging;
 using Windows.Win32.System.SystemServices;
+using TapeLibNET;
 
 
-namespace TapeNET
+namespace TapeLibNET
 {
     public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileAgent(drive, legacyTOC)
     {

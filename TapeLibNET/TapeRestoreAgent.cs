@@ -2,9 +2,10 @@
 using System.IO.Hashing;
 using Windows.Win32.Foundation;
 using Microsoft.Extensions.Logging;
+using TapeLibNET;
 
 
-namespace TapeNET
+namespace TapeLibNET
 {
     public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileAgent(drive, legacyTOC)
     {

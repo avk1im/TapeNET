@@ -1,7 +1,7 @@
 ﻿using System.Runtime.CompilerServices;
 using System.Text;
 
-namespace TapeNET
+namespace TapeLibNET
 {
     public interface ITapeSerializable
     {

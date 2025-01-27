@@ -10,10 +10,10 @@ using Windows.Win32.Storage.FileSystem;
 
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions; // for NullLoggerFactory
-using System.Runtime.CompilerServices; // for [CallerMemberName]
+using System.Runtime.CompilerServices;
 
 
-namespace TapeNET
+namespace TapeLibNET
 {
     // Encapsulates all the calls to Win32 Tape API
     //  Implements low-level direct read-write operations
@@ -135,7 +135,7 @@ namespace TapeNET
 
         internal WIN32_ERROR LastStickyErrorWin32 => m_stickyError;
         internal uint LastStickyError => (uint)LastStickyErrorWin32;
-        internal WIN32_ERROR LastSignificantErrorWin32 => (LastErrorWin32 == WIN32_ERROR.NO_ERROR) ? LastStickyErrorWin32 : LastErrorWin32;
+        internal WIN32_ERROR LastSignificantErrorWin32 => LastErrorWin32 == WIN32_ERROR.NO_ERROR ? LastStickyErrorWin32 : LastErrorWin32;
         public uint LastSignificantError => (uint)LastSignificantErrorWin32;
         private void FillPInvokeError() => LastError = (uint)Marshal.GetLastWin32Error();
         public void ResetError() => LastErrorWin32 = WIN32_ERROR.NO_ERROR;
@@ -478,9 +478,9 @@ namespace TapeNET
             driveParamsToSet.ReportSetmarks =
                 m_driveParams.Value.HasFeature(TAPE_GET_DRIVE_PARAMETERS_FEATURES_HIGH.TAPE_DRIVE_SET_REPORT_SMKS);
             driveParamsToSet.EOTWarningZoneSize =
-                (m_driveParams.Value.HasFeature(TAPE_GET_DRIVE_PARAMETERS_FEATURES_LOW.TAPE_DRIVE_PADDING) ||
+                m_driveParams.Value.HasFeature(TAPE_GET_DRIVE_PARAMETERS_FEATURES_LOW.TAPE_DRIVE_PADDING) ||
                     m_driveParams.Value.HasFeature(TAPE_GET_DRIVE_PARAMETERS_FEATURES_LOW.TAPE_DRIVE_SET_EOT_WZ_SIZE)
-                ) ?
+                 ?
                     m_driveParams.Value.DefaultBlockSize * 4 : 0;
 
             unsafe
@@ -712,7 +712,7 @@ namespace TapeNET
                     {
                         retryCount++;
                         m_logger.LogWarning("Retrying upon error: 0x{Error:X8} >{ErrorMessage}<; retry count: {Count}", LastError, LastErrorMessage, retryCount);
-                        System.Threading.Thread.Sleep(c_retryDelayMs); // delay in ms
+                        Thread.Sleep(c_retryDelayMs); // delay in ms
                         // then go retry the function
                     }
                     else

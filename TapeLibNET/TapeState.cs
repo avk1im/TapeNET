@@ -1,6 +1,6 @@
 ﻿using System.Collections.ObjectModel;
 
-namespace TapeNET
+namespace TapeLibNET
 {
 
     public enum TapeState

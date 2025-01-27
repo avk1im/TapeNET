@@ -7,6 +7,12 @@
     <AssemblyName>tapelib</AssemblyName>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Compile Remove="Excluded Files\**" />
+    <EmbeddedResource Remove="Excluded Files\**" />
+    <None Remove="Excluded Files\**" />
+  </ItemGroup>
+
 	<ItemGroup>
 		<AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
 			<_Parameter1>windows5.1.2600</_Parameter1>

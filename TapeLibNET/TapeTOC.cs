@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 using Windows.Win32.Foundation;
 
 
-namespace TapeNET
+namespace TapeLibNET
 {
     using TypeUID = ulong;
 

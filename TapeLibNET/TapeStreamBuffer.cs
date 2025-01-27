@@ -3,7 +3,7 @@ using System.Collections;
 using System.IO;
 
 
-namespace TapeNET
+namespace TapeLibNET
 {
     // Keeps specified number of lists of values of specified length
     class LRUDictionary<TKey, TValue> : IEnumerable<KeyValuePair<TKey, TValue?>>

@@ -6,9 +6,10 @@ using Windows.Win32.Foundation;
 
 using Microsoft.Extensions.Logging;
 using System.Runtime.InteropServices;
+using TapeLibNET;
 
 
-namespace TapeNET
+namespace TapeLibNET
 {
     // Implements the high-level tape stream provisioning
     //  Handles read-write state management for a degree of fool proofness

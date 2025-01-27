@@ -1,8 +1,9 @@
 ﻿using System.Diagnostics;
 using Windows.Win32.Foundation;
 using Microsoft.Extensions.Logging;
+using TapeLibNET;
 
-namespace TapeNET
+namespace TapeLibNET
 {
     public enum TapeHowToHandleExisting
     {
