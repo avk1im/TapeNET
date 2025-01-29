@@ -1,5 +1,4 @@
-﻿iii tapecon - Tape Backup Utility
-  Based on TapeLibNET library. Distributed under the MIT License.
+﻿iii tapecon is based on TapeLibNET library. Distributed under the MIT License.
   Copyright © 2023-2025 by avk1im. All rights reserved.
 
 Usage:

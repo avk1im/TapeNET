@@ -1,7 +1,7 @@
-**TapeNET README file**
+**TapeNET 1.0 README file**
 
-Revision 1.0 July 2024
-Copyright © 2023, 2024 by [avkl1m](https://github.com/avk1im)
+Revision 1.0.1 January 2025
+Copyright © 2023-2025 by [avkl1m](https://github.com/avk1im)
 
 *All third-party brand names, trademarks, and registered trademarks are the property of their respective owners. Their use here does not imply any endorsement, affiliation, or sponsorship by the owners.
 
@@ -46,3 +46,17 @@ The popular USB-connectable tape drives, such as Sony AIT, DAT 320 (DDS7), or DL
 
 However, the selection of the backup software that could use the drives has been rather modest. Most contemporary backup applications either do not support tape drives at all, or only work with the expensive professional LTO* tape systems. TapeNET and *tapecon* close this gap by providing a free, open-source backup application for tape drives.
 
+
+# License
+
+TapeNET is licensed under the MIT License. See the LICENSE.txt file for details.
+
+# Redistribution of Microsoft DLLs
+
+This software includes the following Microsoft DLLs as dependencies:
+- Microsoft.Extensions.*.dll
+- System.IO.Hashing.dll
+
+These DLLs are part of the .NET runtime and libraries, which are covered by the .NET Library License. You have the right to redistribute these files as part of this software, provided that you comply with the terms of the .NET Library License.
+
+For more information, please refer to the [Microsoft .NET Library License](https://dotnet.microsoft.com/en/dotnet_library_license.htm).

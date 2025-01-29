@@ -498,6 +498,20 @@ bool SetCurrentSetFromArgument(TapeFileAgent agent, List<string> values, string 
 
 #region *** Output and format helpers ***
 
+void WriteBanner()
+{
+    // Get the version information
+    var version = Assembly.GetExecutingAssembly().GetName().Version;
+    var versionString = version?.ToString() ?? "<unknown version>";
+
+    // Get the TapeLibNET version information
+    version = typeof(TapeDrive).Assembly.GetName().Version;
+    var versionLibString = version?.ToString() ?? "<unknown version>";
+
+    // format: iii tapecon - Tape Backup Utility v. x.x.x.xxxx - TapeLibNET v. x.x.x.xxxx
+    Console.WriteLine($"iii tapecon Tape Backup Utility v. {versionString} - TapeLibNET v. {versionLibString}");
+}
+
 void WriteDriveInformation()
 {
     Console.WriteLine($" ii Device name: >{tapeDrive.DriveDeviceName}<");
@@ -608,6 +622,8 @@ bool RestoreTOC(TapeFileAgent agent)
 
 
 #region *** Main program loop ***
+
+WriteBanner();
 
 List<List<string>> flagValuesList = ParseCommandLine(args);
 

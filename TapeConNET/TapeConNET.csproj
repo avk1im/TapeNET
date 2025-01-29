@@ -10,6 +10,8 @@
     <AssemblyName>tapecon</AssemblyName>
   </PropertyGroup>
 
+  <Import Project="..\Versioning.targets" />
+
   <ItemGroup>
     <Compile Remove="Excluded Files\**" />
     <EmbeddedResource Remove="Excluded Files\**" />
@@ -21,6 +23,7 @@
     <None Remove="~%24apecon.docx" />
     <None Remove="~%24mmand Line Interface.docx" />
     <None Remove="~WRL0003.tmp" />
+    <None Remove="BuildNumber.txt" />
   </ItemGroup>
 
   <ItemGroup>

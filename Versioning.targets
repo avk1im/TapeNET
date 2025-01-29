@@ -1,0 +1,22 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <!--Versioning and build number support-->
+  <PropertyGroup>
+    <BuildNumber>0</BuildNumber>
+    <BuildNumberFile>$(MSBuildProjectDirectory)\BuildNumber.txt</BuildNumberFile>
+    <BuildNumber Condition="Exists('$(BuildNumberFile)')">$([System.IO.File]::ReadAllText($(BuildNumberFile)).Trim())</BuildNumber>
+    <BuildNumber Condition="!Exists('$(BuildNumberFile)')">0</BuildNumber>
+    <Version>1.0.$(BuildNumber).0</Version>
+    <AssemblyVersion>1.0.$(BuildNumber).0</AssemblyVersion>
+    <FileVersion>1.0.$(BuildNumber).0</FileVersion>
+  </PropertyGroup>
+
+  <Target Name="IncrementBuildNumber" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+    <PropertyGroup>
+      <BuildNumber>$([MSBuild]::Add($(BuildNumber), 1))</BuildNumber>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(BuildNumberFile)" Lines="$(BuildNumber)" Overwrite="true" />
+  </Target>
+  <!-- End versioning and build number support -->
+
+</Project>
