@@ -703,7 +703,7 @@ void HandleDrive(List<string> values)
 
     if (driveNumber < 0)
     {
-        if (!MessageYesNoCancel("!!! Invalid or missing drive number. Proceed with number 0 ?"))
+        if (!MessageYesNoCancel("!!! Invalid or missing drive number. Proceed with drive number 0 ?"))
             return;
         driveNumber = 0;
     }
@@ -721,7 +721,9 @@ void HandleDrive(List<string> values)
 
     if (!tapeDrive.ReloadMedia())
     {
-        Console.WriteLine(tapeDrive.ToString());
+        Console.WriteLine("iii Drive information:");
+        WriteDriveInformation();
+
         OnFatalError("!!! Couldn't load media. Error: " + tapeDrive.LastErrorMessage);
     }
 
@@ -730,7 +732,7 @@ void HandleDrive(List<string> values)
     filemarksMode = false; // fill the default filemarks mode
     blockSizeKB = tapeDrive.BlockSize / 1024U; // fill the drive's default block size
 
-    Console.WriteLine("iii Drive information:");
+    Console.WriteLine("iii Drive & media information:");
     WriteDriveInformation();
 }
 
@@ -769,7 +771,7 @@ void HandleFormat(List<string> values)
     Console.WriteLine("vvv Media loaded ok");
 
     Console.WriteLine("iii Drive & media information:");
-    Console.WriteLine(tapeDrive.ToString());
+    WriteDriveInformation();
 }
 
 
@@ -1566,7 +1568,7 @@ delegate void FlagHandler(List<string> values);
 
 // The base class for our implementations of ITapeFileNotifiable
 //  Does not need to declare methods as override, since we always use explicit classes
-abstract class OnFileEventProcessor(TapeTOC toc) : ITapeFileNotifiable
+abstract class OnFileEventProcessor(TapeTOC toc, string processingName = "Processing") : ITapeFileNotifiable
 {
     public int SetIndex { get; set; } = 0; // set index for the current backup set
     public int SucceededCount { get; private set; } = 0; // accumulated by PostProcessFile()
@@ -1622,7 +1624,7 @@ abstract class OnFileEventProcessor(TapeTOC toc) : ITapeFileNotifiable
 
     public virtual bool PreProcessFile(ref TapeFileDescriptor fileDescr)
     {
-        Console.Write($" ii Processing file >{fileDescr.FullName}< : {Helpers.BytesToString(fileDescr.Length)} ");
+        Console.Write($" ii {processingName} >{fileDescr.FullName}< : {Helpers.BytesToString(fileDescr.Length)} ");
         return true;
         
     }
@@ -1651,7 +1653,7 @@ abstract class OnFileEventProcessor(TapeTOC toc) : ITapeFileNotifiable
 
 } // class OnFileEventProcessor
 
-class OnFileBackupProcessor(TapeTOC toc) : OnFileEventProcessor(toc)
+class OnFileBackupProcessor(TapeTOC toc) : OnFileEventProcessor(toc, "Backing up")
 {
     public override bool PreProcessFile(ref TapeFileDescriptor fileDescr)
     {
@@ -1662,39 +1664,22 @@ class OnFileBackupProcessor(TapeTOC toc) : OnFileEventProcessor(toc)
             return false;
         }
 
-        Console.Write($" ii Backing up file >{fileDescr.FullName}< : {Helpers.BytesToString(fileInfo.Length)} ");
-
-        return true;
+        return base.PreProcessFile(ref fileDescr); // call the base class method
     }
-}
+} // class OnFileBackupProcessor
 
-class OnFileRestoreProcessor(TapeTOC toc) : OnFileEventProcessor(toc)
+class OnFileRestoreProcessor(TapeTOC toc) : OnFileEventProcessor(toc, "Restoring")
 {
-    // called for a chance to modify the fileDescr before restoring the file. If returns false, skip the file
-    public override bool PreProcessFile(ref TapeFileDescriptor fileDescr)
-    {
-        Console.Write($" ii Restoring file >{fileDescr.FullName}< : {Helpers.BytesToString(fileDescr.Length)} ");
-        return true;
-    } // PreProcessFile()
 } // class OnFileRestoreProcessor
 
-class OnFileValidateProcessor(TapeTOC toc) : OnFileEventProcessor(toc)
+class OnFileValidateProcessor(TapeTOC toc) : OnFileEventProcessor(toc, "Validating")
 {
-    public override bool PreProcessFile(ref TapeFileDescriptor fileDescr)
-    {
-        Console.Write($" ii Validating file >{fileDescr.FullName}< : {Helpers.BytesToString(fileDescr.Length)} ");
-        return true;
-    }
-}
+} // class OnFileValidateProcessor
 
-class OnFileVerifyProcessor(TapeTOC toc) : OnFileEventProcessor(toc)
+class OnFileVerifyProcessor(TapeTOC toc) : OnFileEventProcessor(toc, "Verifying")
 {
-    public override bool PreProcessFile(ref TapeFileDescriptor fileDescr)
-    {
-        Console.Write($" ii Verifying file >{fileDescr.FullName}< : {Helpers.BytesToString(fileDescr.Length)} ");
-        return true;
-    }
-}
+} // class OnFileVerifyProcessor
+
 
 static class StringHelpers
 {

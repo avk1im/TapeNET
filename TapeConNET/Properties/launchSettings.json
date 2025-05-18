@@ -4,7 +4,7 @@
       "commandName": "Project",
       //"commandLineArgs": "-d=0 -format single",
       //"commandLineArgs": "-d=0 -c:crc32 -s -append:ON -filemarks:OFF -block 64 -backup E:\\Temp\\Source -list",
-      //"commandLineArgs": "-d=0 -c:crc32 -s -append:OFF -filemarks:OFF -block 16 -backup E:\\Temp\\Source.ABC -list",
+      "commandLineArgs": "-d=0 -c:crc32 -s -append:ON -1 -filemarks:OFF -block 16 -backup E:\\Temp\\Source.ABC -list",
       //"commandLineArgs": "-d=0 -c:crc32 -s -append:ON -filemarks:OFF -block 4 -backup E:\\Temp\\Source.SMALL.A -list",
       //"commandLineArgs": "-d=0 -c:crc64 -s -inc:ON -block 64 -backup E:\\Temp\\Source.MED2 -list -inc:OFF -list",
       //"commandLineArgs": "-d=0 -c:crc32 -s -append:ON -filemarks:OFF -block 64 -backup E:\\Temp\\Source.LRG1 -list",
@@ -19,6 +19,7 @@
       //"commandLineArgs": "-d=0 -s -inc:ON -list -inc:OFF -list",
       //"commandLineArgs": "-d=0 -eject",
       //"commandLineArgs": "-help index",
+      //"commandLineArgs": "-d",
       "workingDirectory": "D:\\Documents.DEV\\Projects\\TapeNET\\TapeConNET"
     }
   }

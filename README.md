@@ -49,9 +49,9 @@ However, the selection of the backup software that could use the drives has been
 
 # License
 
-TapeNET is licensed under the MIT License. See the LICENSE.txt file for details.
+TapeNET is free, open-source software distributed under MIT license. Refer to the license file LICENSE.txt for more information.
 
-# Redistribution of Microsoft DLLs
+## Redistribution of Microsoft DLLs
 
 This software includes the following Microsoft DLLs as dependencies:
 - Microsoft.Extensions.*.dll
