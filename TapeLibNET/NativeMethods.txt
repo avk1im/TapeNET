@@ -1,3 +1,4 @@
+
 CreateFile
 
 GetTapeParameters
@@ -18,6 +19,7 @@ ReadFile
 QueryPerformanceCounter
 QueryPerformanceFrequency
 
+
 TAPE_GET_DRIVE_PARAMETERS
 TAPE_GET_MEDIA_PARAMETERS
 
@@ -32,3 +34,4 @@ WIN32_ERROR
 GENERIC_ACCESS_RIGHTS
 //GENERIC_READ
 //GENERIC_WRITE
+

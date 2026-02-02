@@ -1,0 +1,41 @@
+<Window x:Class="TapeWinNET.AboutWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="About TapeWin"
+        Width="380" Height="230"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False">
+    <Grid Margin="20">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Custom Icon -->
+        <Image x:Name="AboutIcon" 
+               Grid.Column="0" 
+               Width="48" Height="48" 
+               VerticalAlignment="Top"
+               Margin="0,0,16,0" />
+
+        <!-- Text Content -->
+        <StackPanel Grid.Column="1">
+            <TextBlock Text="TapeWin" FontSize="18" FontWeight="Bold" />
+            <TextBlock Text="Tape Backup Manager for Windows" Margin="0,4,0,12" />
+            <TextBlock x:Name="VersionText" Margin="0,0,0,4" />
+            <TextBlock x:Name="LibVersionText" Margin="0,0,0,12" />
+            <TextBlock Text="Based on TapeLibNET library. Distributed under the MIT License. Copyright &#169; 2023-2026 by avk1im. All rights reserved." 
+                       TextWrapping="Wrap" Width="191" HorizontalAlignment="Left" FontSize="8" Height="70" />
+        </StackPanel>
+
+        <!-- OK Button -->
+        <Button Content="OK" 
+                Grid.ColumnSpan="2"
+                Width="80" Height="28"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                IsDefault="True"
+                Click="OkButton_Click" />
+    </Grid>
+</Window>

@@ -90,20 +90,7 @@ namespace TapeLibNET
             return true;
         } // BackupFile()
 
-
-        // Make file pattern-related methods public
-        //  so that the clients can determine in advance what files will be backed up
-        public static bool HasWildcards(string pattern)
-        {
-            return pattern.Contains('*') || pattern.Contains('?');
-        }
-
-        public static bool IsDirectory(string pattern)
-        {
-            return pattern.TrimEnd().EndsWith('\\') || Directory.Exists(pattern);
-        }
-
-        public List<string> BuildFileNameList(List<string> fileAndDirectoryPatterns, bool recursive)
+        private List<string> BuildFileNameList(List<string> fileAndDirectoryPatterns, bool recursive)
         {
             List<string> fileNames = [];
 
@@ -111,7 +98,7 @@ namespace TapeLibNET
             {
                 try
                 {
-                    if (HasWildcards(pattern))
+                    if (pattern.Contains('*') || pattern.Contains('?'))
                     {
                         // Split name into dirname and filename with wildcards
                         var directoryName = Path.GetDirectoryName(pattern);
@@ -128,7 +115,7 @@ namespace TapeLibNET
                         }
                         // else non-existing directory -> ignore
                     }
-                    else if (IsDirectory(pattern))
+                    else if (pattern.TrimEnd().EndsWith('\\') || Directory.Exists(pattern))
                     {
                         // If it's a directory, add files (recursively if requested)
                         var directoryPath = Path.GetFullPath(pattern);
@@ -152,10 +139,10 @@ namespace TapeLibNET
         }
 
         // The context with which we can resume backup on the next volume
-        private struct TapeBackupContext(List<string> fileList, bool ignoreFailures, ITapeFileNotifiable? fileNotify)
+        private struct TapeBackupContext(List<string> fileList, bool recurseSubdirs, bool ignoreFailures, ITapeFileNotifiable? fileNotify)
         {
             internal readonly List<string> fileList = fileList;
-            //internal readonly bool recurseSubdirs = recurseSubdirs; // don't need this since we have complete file list
+            internal readonly bool recurseSubdirs = recurseSubdirs;
             internal readonly bool ignoreFailures = ignoreFailures;
             internal readonly ITapeFileNotifiable? fileNotify = fileNotify;
 
@@ -230,9 +217,6 @@ namespace TapeLibNET
 
                 try
                 {
-                    // first check for abort request
-                    ThrowIfAbortRequested(nameof(BackupFileListToCurrentSet));
-
                     if (bc.fileNotify != null)
                     {
                         if (!NotifyPreProcessFile(bc.fileNotify, ref fileDescr))
@@ -290,9 +274,7 @@ namespace TapeLibNET
                         bc.filesProcessed++;
                         bc.filesFailed++;
 
-                        if (NotifyFileFailed(bc.fileNotify, fileDescr, ex) == FileFailedAction.Abort)
-                            break;
-                        // it makes no sense to retry the file if the media is at the end
+                        NotifyFileFailed(bc.fileNotify, fileDescr, ex);
                         NotifyBatchEndStatistics(bc.fileNotify, bc.filesProcessed, bc.filesFailed, bc.bytesProcessed);
 
                         TOC.ContinuedOnNextVolume = true;
@@ -303,16 +285,7 @@ namespace TapeLibNET
                     bc.overallSuccess = false;
                     bc.filesFailed++;
 
-                    var retryAction = NotifyFileFailed(bc.fileNotify, fileDescr, ex);
-                    if (retryAction == FileFailedAction.Abort)
-                        break;
-                    else if (retryAction == FileFailedAction.Retry)
-                    {
-                        bc.fileIndex--; // decrement to retry same file
-                        bc.filesProcessed--; // don't double-count
-                        continue;
-                    }
-                    // else Skip - continue to next file
+                    NotifyFileFailed(bc.fileNotify, fileDescr, ex);
 
                     if (!bc.ignoreFailures)
                         break;
@@ -333,12 +306,6 @@ namespace TapeLibNET
         {
             var fileList = BuildFileNameList(fileAndDirectoryPatterns, recurseSubdirs);
 
-            return BackupFileListToCurrentSet(newSet, fileList, ignoreFailures, fileNotify);
-        } // BackupFilesToCurrentSet()
-
-        public bool BackupFileListToCurrentSet(bool newSet, List<string> fileList, bool ignoreFailures = true,
-            ITapeFileNotifiable? fileNotify = null)
-        {
             if (fileList.Count == 0)
             {
                 m_logger.LogWarning("No files found to backup in {Method}", nameof(BackupFilesToCurrentSet));
@@ -351,7 +318,7 @@ namespace TapeLibNET
             if (TOC.CurrentSetTOC.Incremental)
                 m_logger.LogTrace("Performing incremental backup to incremental set #{Set}", TOC.CurrentSetIndex);
 
-            MultiVolumeContext = new(fileList, ignoreFailures, fileNotify);
+            MultiVolumeContext = new(fileList, recurseSubdirs, ignoreFailures, fileNotify);
 
             return BackupFilesToCurrentSet(newSet);
         } // BackupFilesToCurrentSet()

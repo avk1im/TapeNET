@@ -15,23 +15,11 @@ using TapeLibNET;
 namespace TapeLibNET
 {
 
-    /// <summary>
-    /// Exception thrown when user requests to abort a tape operation.
-    /// </summary>
-    public class TapeAbortRequestedException(string? message = null) :
-        OperationCanceledException(message ?? "Operation aborted by user request.")
-    {
-    }
-
-    public enum FileFailedAction { Skip, Retry, Abort }
-
     public interface ITapeFileNotifiable
     {
         public void BatchStartStatistics(int set, int filesFound);
         public void BatchEndStatistics(int set, int filesProcessed, int filesFailed, long bytesProcessed);
-
-        // The following methos may throw TapeOperationAbortException to abort the entire operation (not just the file)
-
+        
         // called for a chance to modify the fileDescr before restoring the file. If returns false, skip the file
         public bool PreProcessFile(ref TapeFileDescriptor fileDescr);
         
@@ -39,8 +27,7 @@ namespace TapeLibNET
         public bool PostProcessFile(ref TapeFileDescriptor fileDescr);
         
         // called when an error occurs during file restore
-        //  returns how the caller wishes to proceed: skip file, retry the same file, abort entire operation
-        public FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex);
+        public void OnFileFailed(TapeFileDescriptor fileDescr, Exception ex);
         public void OnFileSkipped(TapeFileDescriptor fileDescr);
     }
 
@@ -59,10 +46,6 @@ namespace TapeLibNET
 
         public long BytesBackedup { get; protected set; } = 0L;
         public long BytesRestored { get; protected set; } = 0L;
-
-        // checked periodically if the entire operation should be aborted
-        public bool IsAbortRequested { get; set; }
-
 
         protected int CurrentSetAsNavigatorContentSet // used by both backup and restore agents
         {
@@ -179,8 +162,6 @@ namespace TapeLibNET
                 if (wstream == null)
                     return false;
 
-                ThrowIfAbortRequested($"after openning TOC in {nameof(BackupTOCCore)}");
-
                 var hasher = CreateHasher(c_hashForTOC);
 
                 if (hasher == null)
@@ -203,7 +184,7 @@ namespace TapeLibNET
             }
             catch (Exception ex)
             {
-                m_logger.LogWarning("Exception {Exception} in {Method}", ex, nameof(BackupTOCCore));
+                m_logger.LogWarning("Exception {Exception} in {Method}", ex, nameof(BackupTOC));
                 return false;
             }
         }
@@ -258,8 +239,6 @@ namespace TapeLibNET
                     m_logger.LogWarning("Failed to open TOC read stream in {Method}", nameof(RestoreTOCCore));
                     return false;
                 }
-
-                ThrowIfAbortRequested($"after openning TOC in {nameof(RestoreTOCCore)}");
 
                 var hasher = CreateHasher(c_hashForTOC);
 
@@ -337,8 +316,6 @@ namespace TapeLibNET
 
 
         // Safe calls to ITapeFileNotifiable
-        //  All exceptions are caught and logged as warnings -- except for TapeAbortRequestedException, which is rethrown
-
         protected void NotifyBatchStartStatistics(ITapeFileNotifiable? fileNotify, int filesFound)
         {
             if (fileNotify != null)
@@ -349,7 +326,6 @@ namespace TapeLibNET
                 }
                 catch (Exception ex2)
                 {
-                    // in statistics notification, we don't rethrow TapeAbortRequestedException
                     m_logger.LogWarning("Exception {Exception} while notifying batch start statistics", ex2);
                 }
             }
@@ -364,12 +340,10 @@ namespace TapeLibNET
                 }
                 catch (Exception ex2)
                 {
-                    // in statistics notification, we don't rethrow TapeAbortRequestedException
                     m_logger.LogWarning("Exception {Exception} while notifying batch end statistics", ex2);
                 }
             }
         }
-
         protected bool NotifyPreProcessFile(ITapeFileNotifiable? fileNotify, ref TapeFileDescriptor fileDescr)
         {
             if (fileNotify != null)
@@ -377,11 +351,6 @@ namespace TapeLibNET
                 try
                 {
                     return fileNotify.PreProcessFile(ref fileDescr);
-                }
-                catch (TapeAbortRequestedException ex1)
-                {
-                    m_logger.LogInformation("Abort requested while notifying pre-process file: {Exception}", ex1);
-                    throw; // rethrow to abort the entire operation
                 }
                 catch (Exception ex2)
                 {
@@ -398,11 +367,6 @@ namespace TapeLibNET
                 {
                     return fileNotify.PostProcessFile(ref fileDescr);
                 }
-                catch (TapeAbortRequestedException ex1)
-                {
-                    m_logger.LogInformation("Abort requested while notifying pre-process file: {Exception}", ex1);
-                    throw; // rethrow to abort the entire operation
-                }
                 catch (Exception ex2)
                 {
                     m_logger.LogWarning("Exception {Exception} while notifying post-process file", ex2);
@@ -410,33 +374,19 @@ namespace TapeLibNET
             }
             return true;
         }
-
-        // Returns true to signal abort of entire operation
-        //  Since we may call this method outside of try block, do not rethrow TapeAbortRequestedException here --
-        //  return the action request instead
-        protected FileFailedAction NotifyFileFailed(ITapeFileNotifiable? fileNotify, TapeFileDescriptor fileDescr, Exception ex)
+        protected void NotifyFileFailed(ITapeFileNotifiable? fileNotify, TapeFileDescriptor fileDescr, Exception ex)
         {
-            FileFailedAction result = FileFailedAction.Skip;
-
             if (fileNotify != null)
             {
                 try
                 {
-                    result = fileNotify.OnFileFailed(fileDescr, ex);
-                }
-                catch (TapeAbortRequestedException ex1)
-                {
-                    m_logger.LogInformation("Abort requested while notifying pre-process file: {Exception}", ex1);
-                    return FileFailedAction.Abort; // signal to abort the entire operation
+                    fileNotify.OnFileFailed(fileDescr, ex);
                 }
                 catch (Exception ex2)
                 {
                     m_logger.LogWarning("Exception {Exception} while notifying file failure", ex2);
-                    return FileFailedAction.Skip; // do not abort the operation
                 }
             }
-
-            return result;
         }
         protected void NotifyFileSkipped(ITapeFileNotifiable? fileNotify, TapeFileDescriptor fileDescr)
         {
@@ -446,22 +396,11 @@ namespace TapeLibNET
                 {
                     fileNotify.OnFileSkipped(fileDescr);
                 }
-                catch (TapeAbortRequestedException ex1)
-                {
-                    m_logger.LogInformation("Abort requested while notifying pre-process file: {Exception}", ex1);
-                    throw; // rethrow to abort the entire operation
-                }
                 catch (Exception ex2)
                 {
                     m_logger.LogWarning("Exception {Exception} while notifying file skipped", ex2);
                 }
             }
-        }
-
-        protected void ThrowIfAbortRequested(string where)
-        {
-            if (IsAbortRequested)
-                throw new TapeAbortRequestedException($"Abort requested in {where}");
         }
 
     } // class TapeFileAgent

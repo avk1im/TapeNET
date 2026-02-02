@@ -239,7 +239,7 @@ static ConsoleKey GetConsoleKey(string prompt)
     Console.Write(prompt);
     var keyInfo = Console.ReadKey(intercept: true);
 
-    // output the pressed key if representable
+    // output the pressed key if reprentable
     if (keyInfo.KeyChar >= 32 && keyInfo.KeyChar <= 126)
         Console.Write(keyInfo.KeyChar);
 
@@ -992,7 +992,7 @@ void HandleBackup(List<string> values)
         var toc = agent.TOC;
         agent.Manager.ContentCapacityLimit = contentCapacityLimit;
         TapeTOC? backupTOC = null;
-        OnFileBackupProcessor proc = new(toc, quiteMode);
+        OnFileBackupProcessor proc = new(toc);
 
         if (values.Count == 0)
         {
@@ -1384,7 +1384,7 @@ void HandleRestore(List<string> values)
 {
     var agent = new TapeFileRestoreAgentEx(tapeDrive, targetDir, subdirectoriesMode, handleExisting, legacyTOC);
     var toc = agent.TOC;
-    var proc = new OnFileRestoreProcessor(toc, quiteMode);
+    var proc = new OnFileRestoreProcessor(toc);
     UniversalRestore(values, agent, proc, "Restoring");
 }
 
@@ -1392,7 +1392,7 @@ void HandleValidate(List<string> values)
 {
     var agent = new TapeFileValidateAgent(tapeDrive, legacyTOC);
     var toc = agent.TOC;
-    var proc = new OnFileValidateProcessor(toc, quiteMode);
+    var proc = new OnFileValidateProcessor(toc);
     UniversalRestore(values, agent, proc, "Validating");
 }
 
@@ -1400,7 +1400,7 @@ void HandleVerify(List<string> values)
 {
     var agent = new TapeFileVerifyAgent(tapeDrive, legacyTOC);
     var toc = agent.TOC;
-    var proc = new OnFileVerifyProcessor(toc, quiteMode);
+    var proc = new OnFileVerifyProcessor(toc);
     UniversalRestore(values, agent, proc, "Verifying");
 }
 
@@ -1568,7 +1568,7 @@ delegate void FlagHandler(List<string> values);
 
 // The base class for our implementations of ITapeFileNotifiable
 //  Does not need to declare methods as override, since we always use explicit classes
-abstract class OnFileEventProcessor(TapeTOC toc, bool quiteMode, string processingName = "Processing") : ITapeFileNotifiable
+abstract class OnFileEventProcessor(TapeTOC toc, string processingName = "Processing") : ITapeFileNotifiable
 {
     public int SetIndex { get; set; } = 0; // set index for the current backup set
     public int SucceededCount { get; private set; } = 0; // accumulated by PostProcessFile()
@@ -1622,43 +1622,6 @@ abstract class OnFileEventProcessor(TapeTOC toc, bool quiteMode, string processi
             Console.WriteLine($"iii No files processed for/from backup set #{SetIndex}");
     }
 
-    protected static ConsoleKey GetConsoleKey(string prompt)
-    {
-        // empty keyboard buffer
-        while (Console.KeyAvailable)
-            Console.ReadKey(intercept: true);
-
-        Console.Write(prompt);
-        var keyInfo = Console.ReadKey(intercept: true);
-
-        // output the pressed key if representable
-        if (keyInfo.KeyChar >= 32 && keyInfo.KeyChar <= 126)
-            Console.Write(keyInfo.KeyChar);
-
-        return keyInfo.Key;
-    }
-    protected FileFailedAction MessageGetFileAction(string msg)
-    {
-        if (quiteMode)
-        {
-            Console.WriteLine(msg + " -> Quite mode -> Assuming Skip");
-            return FileFailedAction.Skip;
-        }
-
-        switch (GetConsoleKey(msg + "\n ?? Press 'R' for Retry, 'A' for Abort, or any other key to Skip: "))
-        {
-            case ConsoleKey.R:
-                Console.WriteLine(" -> Retrying");
-                return FileFailedAction.Retry;
-            case ConsoleKey.A:
-                Console.WriteLine(" -> Aborting!");
-                return FileFailedAction.Abort;
-            default:
-                Console.WriteLine(" -> Skipping");
-                return FileFailedAction.Skip;
-        }
-    }
-
     public virtual bool PreProcessFile(ref TapeFileDescriptor fileDescr)
     {
         Console.Write($" ii {processingName} >{fileDescr.FullName}< : {Helpers.BytesToString(fileDescr.Length)} ");
@@ -1676,12 +1639,10 @@ abstract class OnFileEventProcessor(TapeTOC toc, bool quiteMode, string processi
     }
 
     // called when a file error occurs during restoring the file
-    public virtual FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex)
+    public virtual void OnFileFailed(TapeFileDescriptor fileDescr, Exception ex)
     {
-        Console.WriteLine($"!!! Failed {processingName} file >{Path.GetFileName(fileDescr.FullName)}<. Exception: {ex}");
+        Console.WriteLine($"Failed >{Path.GetFileName(fileDescr.FullName)}<. Exception: {ex}");
         // FailedCount++; // <-- needn't do it here since failed count is reported by BatchEndStatistics()
-
-        return MessageGetFileAction("??? Retry the file?");
     }
     public virtual void OnFileSkipped(TapeFileDescriptor fileDescr)
     {
@@ -1692,7 +1653,7 @@ abstract class OnFileEventProcessor(TapeTOC toc, bool quiteMode, string processi
 
 } // class OnFileEventProcessor
 
-class OnFileBackupProcessor(TapeTOC toc, bool quiteMode) : OnFileEventProcessor(toc, quiteMode, "Backing up")
+class OnFileBackupProcessor(TapeTOC toc) : OnFileEventProcessor(toc, "Backing up")
 {
     public override bool PreProcessFile(ref TapeFileDescriptor fileDescr)
     {
@@ -1707,15 +1668,15 @@ class OnFileBackupProcessor(TapeTOC toc, bool quiteMode) : OnFileEventProcessor(
     }
 } // class OnFileBackupProcessor
 
-class OnFileRestoreProcessor(TapeTOC toc, bool quiteMode) : OnFileEventProcessor(toc, quiteMode, "Restoring")
+class OnFileRestoreProcessor(TapeTOC toc) : OnFileEventProcessor(toc, "Restoring")
 {
 } // class OnFileRestoreProcessor
 
-class OnFileValidateProcessor(TapeTOC toc, bool quiteMode) : OnFileEventProcessor(toc, quiteMode, "Validating")
+class OnFileValidateProcessor(TapeTOC toc) : OnFileEventProcessor(toc, "Validating")
 {
 } // class OnFileValidateProcessor
 
-class OnFileVerifyProcessor(TapeTOC toc, bool quiteMode) : OnFileEventProcessor(toc, quiteMode, "Verifying")
+class OnFileVerifyProcessor(TapeTOC toc) : OnFileEventProcessor(toc, "Verifying")
 {
 } // class OnFileVerifyProcessor
 

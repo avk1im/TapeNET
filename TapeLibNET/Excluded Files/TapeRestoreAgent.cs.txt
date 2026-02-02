@@ -3,7 +3,6 @@ using System.IO.Hashing;
 using Windows.Win32.Foundation;
 using Microsoft.Extensions.Logging;
 using TapeLibNET;
-using System.Net.Http.Headers;
 
 
 namespace TapeLibNET
@@ -55,34 +54,16 @@ namespace TapeLibNET
             LastFileSkipped = true;
         }
 
-        // Returns true if success, false if failure.
-        //  Sets fileFailedAction to true only if the caller should abort entire operation, otherwise doesn't modify fileFailedAction
-        private bool RestoreNextFile(TapeFileInfo tfi, ref FileFailedAction fileFailedAction, ITapeFileNotifiable? fileNotify = null)
+        private bool RestoreNextFile(TapeFileInfo tfi, ITapeFileNotifiable? fileNotify = null)
         {
             try
             {
-                // first check if abort requested
-                if (IsAbortRequested)
-                {
-                    fileFailedAction = FileFailedAction.Abort;
-                    m_logger.LogTrace("Abort requested before restoring file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreNextFile));
-                    return false;
-                }
-
                 // Important: we must get the content read stream first, since this will reset the BlockCounter
                 //  when changing to content read mode -- BlockCounter can be used laster to move to tfi.Block
                 using var rstream = OpenReadContentStream();
                 if (rstream == null)
                 {
                     m_logger.LogWarning("Failed to open content read stream in {Method}", nameof(RestoreNextFile));
-                    return false;
-                }
-
-                // check for abort requested again, since openning file stream might've taken time
-                if (IsAbortRequested)
-                {
-                    fileFailedAction = FileFailedAction.Abort;
-                    m_logger.LogTrace("Abort requested after opening file stream before restoring file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreNextFile));
                     return false;
                 }
 
@@ -150,7 +131,7 @@ namespace TapeLibNET
             {
                 SetError(ex); // we've already set the right error code & message in the exception
 
-                fileFailedAction = NotifyFileFailed(fileNotify, tfi.FileDescr, ex);
+                NotifyFileFailed(fileNotify, tfi.FileDescr, ex);
 
                 m_logger.LogWarning("Exception {Exception} while processing file >{File}<", ex, tfi.FileDescr.FullName);
 
@@ -178,7 +159,6 @@ namespace TapeLibNET
             m_logger.LogTrace("Starting restoring {Count} select files from current set #{Set}", tfis.Count, TOC.CurrentSetIndex);
 
             bool overallSuccess = true;
-            FileFailedAction fileFailedAction;
             int filesProcessed = 0;
             int filesFailed = 0;
             long bytesProcessed = BytesRestored;
@@ -192,9 +172,6 @@ namespace TapeLibNET
 
                 foreach (int index in indexes)
                 {
-                RETRY:
-                    fileFailedAction = FileFailedAction.Skip; // reset to skip to avoid infinite loop
-
                     var tfi = tfis[index];
                     filesProcessed++;
 
@@ -211,15 +188,15 @@ namespace TapeLibNET
                     {
                         if (!Navigator.MoveToNextContentFilemark(moveBy))
                         {
-                            m_logger.LogWarning("Failed to move to filemark for file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
+                            m_logger.LogWarning("Failed to move to filemark for file >{File} in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
                             goto FAILURE;
                         }
                     }
                     lastIndex = index;
 
-                    if (!RestoreNextFile(tfi, ref fileFailedAction, fileNotify))
+                    if (!RestoreNextFile(tfi, fileNotify))
                     {
-                        m_logger.LogWarning("Failed to restore file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
+                        m_logger.LogWarning("Failed to restore file >{File} in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
                         goto FAILURE;
                     }
 
@@ -229,27 +206,10 @@ namespace TapeLibNET
                     continue;
 
                 FAILURE:
-                    if (fileFailedAction == FileFailedAction.Retry && tfi != null && tfi.IsValid)
-                    {
-                        m_logger.LogTrace("Retrying file >{File}< as per file failed action", tfi.FileDescr.FullName);
-
-                        if (Navigator.MoveToNextContentFilemark(-1)) // FIXME: should we move by -2? and then by +1?
-                        {
-                            // retry the same file without incrementing filesProcessed
-                            filesProcessed--; // don't doublecount
-                            goto RETRY;
-                        }
-                        else
-                        {
-                            m_logger.LogWarning("Failed to move back to filemark for retrying file >{File}< in {Method}",
-                                tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
-                        }
-                    }
-
                     overallSuccess = false;
                     filesFailed++;
                     
-                    if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
+                    if (ignoreFailures)
                         continue;
                     else
                         break;
@@ -262,9 +222,6 @@ namespace TapeLibNET
 
                 foreach (var tfi in tfis)
                 {
-                RETRY:
-                    fileFailedAction = FileFailedAction.Skip; // reset to skip to avoid infinite loop
-
                     filesProcessed++;
 
                     if (tfi == null || !tfi.IsValid)
@@ -283,7 +240,7 @@ namespace TapeLibNET
                     {
                         if (!Drive.MoveToBlock(tfi.Block))
                         {
-                            m_logger.LogWarning("Failed to move to block {Block} for file >{File}< in {Method}",
+                            m_logger.LogWarning("Failed to move to block {Block} for file >{File} in {Method}",
                                 tfi.Block, tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
                             goto FAILURE;
                         }
@@ -291,32 +248,25 @@ namespace TapeLibNET
                     if (index >= 0)
                         lastIndex = index;
 
-                    if (!RestoreNextFile(tfi, ref fileFailedAction, fileNotify))
+                    if (!RestoreNextFile(tfi, fileNotify))
                     {
-                        m_logger.LogWarning("Failed to restore file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
+                        m_logger.LogWarning("Failed to restore file >{File} in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
                         goto FAILURE;
                     }
  
                     // success
                     lastFileFailed = false;
+
                     m_logger.LogTrace("File >{File}< restored ok", tfi.FileDescr.FullName);
+                    
                     continue;
 
                 FAILURE:
-                   lastFileFailed = true; // must indicate this so that the tape moves back if we retry
-
-                   if (fileFailedAction == FileFailedAction.Retry && tfi != null && tfi.IsValid)
-                   {
-                        m_logger.LogTrace("Retrying file >{File}< as per file failed action", tfi.FileDescr.FullName);
-                        // retry the same file without incrementing filesProcessed
-                        filesProcessed--; // don't doublecount
-                        goto RETRY;
-                   }
-
                     overallSuccess = false;
                     filesFailed++;
+                    lastFileFailed = true;
 
-                    if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
+                    if (ignoreFailures)
                         continue;
                     else
                         break;
@@ -329,7 +279,7 @@ namespace TapeLibNET
             return overallSuccess;
         } // RestoreFilesFromCurrentSet(List<TapeFileInfo>)
 
-        // Restore ALL files from the current set
+        // Restore all files from the current set
         private bool RestoreFilesFromCurrentSet(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             NotifyBatchStartStatistics(fileNotify, TOC.CurrentSetTOC.Count);
@@ -342,7 +292,6 @@ namespace TapeLibNET
             m_logger.LogTrace("Starting restoring all files from current set #{Set}", TOC.CurrentSetIndex);
 
             bool overallSuccess = true;
-            FileFailedAction fileFailedAction;
             int filesProcessed = 0;
             int filesFailed = 0;
             long bytesProcessed = BytesRestored;
@@ -351,9 +300,6 @@ namespace TapeLibNET
 
             foreach (var tfi in TOC.CurrentSetTOC)
             {
-            RETRY:
-                fileFailedAction = FileFailedAction.Skip; // reset to skip to avoid infinite loop
-
                 filesProcessed++;
 
                 if (tfi == null || !tfi.IsValid)
@@ -369,46 +315,28 @@ namespace TapeLibNET
                 {
                     if (!Drive.MoveToBlock(tfi.Block))
                     {
-                        m_logger.LogWarning("Failed to move to block {Block} for file >{File}< in {Method}",
+                        m_logger.LogWarning("Failed to move to block {Block} for file >{File} in {Method}",
                             tfi.Block, tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
                         goto FAILURE;
                     }
                 }
 
-                if (!RestoreNextFile(tfi, ref fileFailedAction, fileNotify))
+                if (!RestoreNextFile(tfi, fileNotify))
                 {
-                    m_logger.LogWarning("Failed to restore file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
+                    m_logger.LogWarning("Failed to restore file >{File} in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
                     goto FAILURE;
                 }
 
                 // success
-                lastFileFailed = false;
                 m_logger.LogTrace("File >{File}< restored ok", tfi.FileDescr.FullName);
                 continue;
 
             FAILURE:
-                lastFileFailed = true; // must indicate this so that the tape moves back if we retry
-
-                if (fileFailedAction == FileFailedAction.Retry && tfi != null && tfi.IsValid)
-                {
-                    m_logger.LogTrace("Retrying file >{File}< as per file failed action", tfi.FileDescr.FullName);
-
-                    if (!Navigator.FmksMode || Navigator.MoveToNextContentFilemark(-1)) // FIXME: should we move by -2? and then by +1?
-                    {
-                        filesProcessed--; // don't doublecount
-                        goto RETRY;
-                    }
-                    else
-                    {
-                        m_logger.LogWarning("Failed to move back to filemark for retrying file >{File}< in {Method}",
-                            tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
-                    }
-                }
-
                 overallSuccess = false;
                 filesFailed++;
+                lastFileFailed = true;
 
-                if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
+                if (ignoreFailures)
                     continue;
                 else
                     break;

@@ -12,7 +12,6 @@ namespace TapeLibNET
         KeepBoth
     }
 
-    /*
     public class TapeFileNotifiableCollection(params ITapeFileNotifiable[] first) : ITapeFileNotifiable
     {
         protected readonly List<ITapeFileNotifiable> m_notifiables = new(first);
@@ -54,11 +53,10 @@ namespace TapeLibNET
                 notifiable.BatchStartStatistics(set, filesFound);
         }
 
-        public FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex)
+        public void OnFileFailed(TapeFileDescriptor fileDescr, Exception ex)
         {
             foreach (var notifiable in m_notifiables)
                 notifiable.OnFileFailed(fileDescr, ex);
-            // FIXME: the behavior of the loop & return value
         }
 
         public void OnFileSkipped(TapeFileDescriptor fileDescr)
@@ -99,7 +97,7 @@ namespace TapeLibNET
 
         #endregion // ITapeFileNotifiable implementation
     } // class TapeFileNotifiableCollection
-    */
+
 
     public class TapeFileRestoreAgentEx(TapeDrive drive,
         string? targetDir, bool recurseSubdirs, TapeHowToHandleExisting handleExisting,

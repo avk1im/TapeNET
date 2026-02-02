@@ -251,7 +251,7 @@ namespace TapeLibNET
             bool bOK;
             unsafe
             {
-                bOK = (bool)PInvoke.WriteFile(m_driveHandle, buffer.AsSpan(offset, toWrite), &written, null);
+                bOK = PInvoke.WriteFile(m_driveHandle, buffer.AsSpan(offset, toWrite), out written, ref Unsafe.NullRef<System.Threading.NativeOverlapped>());
             }
             if (bOK)
                 ResetError();
@@ -305,7 +305,7 @@ namespace TapeLibNET
             bool bOK;
             unsafe
             {
-                bOK = (bool)PInvoke.ReadFile(m_driveHandle, buffer.AsSpan(offset, toRead), &read, null);
+                bOK = PInvoke.ReadFile(m_driveHandle, buffer.AsSpan(offset, toRead), out read, ref Unsafe.NullRef<System.Threading.NativeOverlapped>());
             }
             if (bOK)
                 ResetError();
@@ -506,7 +506,8 @@ namespace TapeLibNET
             unsafe
             {
                 retSize = (uint)sizeof(TAPE_GET_DRIVE_PARAMETERS);
-                LastError = PInvoke.GetTapeParameters(m_driveHandle, GET_TAPE_DRIVE_PARAMETERS_OPERATION.GET_TAPE_DRIVE_INFORMATION, ref retSize, &driveParams);
+                LastError = PInvoke.GetTapeParameters(m_driveHandle, GET_TAPE_DRIVE_PARAMETERS_OPERATION.GET_TAPE_DRIVE_INFORMATION,
+                    ref retSize, new Span<byte>(&driveParams, (int)retSize));
             }
 
             if (WentOK)
@@ -532,7 +533,8 @@ namespace TapeLibNET
             unsafe
             {
                 retSize = (uint)sizeof(TAPE_GET_MEDIA_PARAMETERS);
-                LastError = PInvoke.GetTapeParameters(m_driveHandle, GET_TAPE_DRIVE_PARAMETERS_OPERATION.GET_TAPE_MEDIA_INFORMATION, ref retSize, &mediaParams);
+                LastError = PInvoke.GetTapeParameters(m_driveHandle, GET_TAPE_DRIVE_PARAMETERS_OPERATION.GET_TAPE_MEDIA_INFORMATION,
+                    ref retSize, new Span<byte>(&mediaParams, (int)retSize));
             }
 
             if (WentOK)
