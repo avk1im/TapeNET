@@ -1,0 +1,58 @@
+<Window x:Class="TapeWinNET.FileErrorDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="File Backup Error"
+        Width="500" Height="260"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False">
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Icon and Title -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
+            <TextBlock Text="??" FontSize="24" Margin="0,0,12,0" VerticalAlignment="Center"/>
+            <TextBlock Text="File Backup Error" FontSize="16" FontWeight="Bold" VerticalAlignment="Center"/>
+        </StackPanel>
+
+        <!-- File Path and Error Message -->
+        <StackPanel Grid.Row="1">
+            <TextBlock Text="File:" FontWeight="SemiBold" Margin="0,0,0,4"/>
+            <TextBox x:Name="FilePathTextBox" 
+                     IsReadOnly="True" 
+                     TextWrapping="Wrap"
+                     Background="Transparent"
+                     BorderThickness="0"
+                     Margin="0,0,0,12"/>
+
+            <TextBlock Text="Error:" FontWeight="SemiBold" Margin="0,0,0,4"/>
+            <TextBox x:Name="ErrorMessageTextBox" 
+                     IsReadOnly="True" 
+                     TextWrapping="Wrap"
+                     Background="Transparent"
+                     BorderThickness="0"
+                     MaxHeight="60"
+                     VerticalScrollBarVisibility="Auto"/>
+        </StackPanel>
+
+        <!-- Apply to all checkbox -->
+        <CheckBox Grid.Row="2" 
+                  x:Name="ApplyToAllCheckBox"
+                  Content="Apply this choice to all future errors" 
+                  Margin="0,12,0,0"/>
+
+        <!-- Buttons -->
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Skip File" Width="80" Margin="0,0,8,0" Click="SkipButton_Click"/>
+            <Button Content="Retry" Width="80" Margin="0,0,8,0" Click="RetryButton_Click"/>
+            <Button Content="Skip All Errors" Width="100" Margin="0,0,8,0" Click="SkipAllButton_Click"/>
+            <Button Content="Abort" Width="80" Click="AbortButton_Click" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

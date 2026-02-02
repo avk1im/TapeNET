@@ -74,8 +74,13 @@
                 <Separator />
                 <MenuItem Header="E_xit" Command="{Binding ExitCommand}" />
             </MenuItem>
-            <MenuItem Header="_Tape">
+            <MenuItem Header="_Media">
+                <MenuItem Header="_New Backup..." Command="{Binding NewBackupCommand}" />
+                <Separator />
                 <MenuItem Header="_Eject" Command="{Binding EjectCommand}" />
+                <Separator />
+                <MenuItem Header="_Abort Backup" Command="{Binding AbortBackupCommand}"
+                          Visibility="{Binding IsBackupInProgress, Converter={StaticResource BoolToVis}}" />
             </MenuItem>
             <MenuItem Header="_View">
                 <MenuItem Header="Show _Full Pathname" 
@@ -218,6 +223,48 @@
                         </ListView>
                     </Grid>
                 </GroupBox>
+                
+                <!-- Backup Progress Overlay (covers only tree + content, not log pane) -->
+                <Grid Grid.RowSpan="3" 
+                      Background="#80000000"
+                      Visibility="{Binding IsBackupInProgress, Converter={StaticResource BoolToVis}}">
+                    <Border Background="White" 
+                            CornerRadius="8"
+                            Padding="24"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            MinWidth="350">
+                        <StackPanel>
+                            <TextBlock Text="{Binding BusyMessage}" 
+                                       FontSize="14"
+                                       FontWeight="SemiBold"
+                                       HorizontalAlignment="Center"
+                                       Margin="0,0,0,12"/>
+                            
+                            <ProgressBar Value="{Binding BackupProgressPercent}" 
+                                         Maximum="100"
+                                         Height="24" 
+                                         Margin="0,0,0,8"/>
+                            
+                            <TextBlock Text="{Binding BackupProgressText}"
+                                       HorizontalAlignment="Center"
+                                       Margin="0,0,0,4"/>
+                            
+                            <TextBlock Text="{Binding CurrentBackupFile}"
+                                       HorizontalAlignment="Center"
+                                       Foreground="Gray"
+                                       FontSize="11"
+                                       TextTrimming="CharacterEllipsis"
+                                       MaxWidth="300"
+                                       Margin="0,0,0,16"/>
+                            
+                            <Button Content="Abort Backup" 
+                                    Command="{Binding AbortBackupCommand}"
+                                    HorizontalAlignment="Center"
+                                    Width="100"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
             </Grid>
         </Grid>
         
@@ -273,13 +320,13 @@
             </StatusBarItem>
         </StatusBar>
         
-        <!-- Busy Overlay -->
+        <!-- General Busy Overlay (only for non-backup operations) -->
         <Grid Grid.RowSpan="5" 
               Background="#40000000"
-              Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}">
+              Visibility="{Binding IsGeneralBusy, Converter={StaticResource BoolToVis}}">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                 <!-- Notice: IsIndeterminate bound to IsBusy - stops animation when overlay is hidden -->
-                <ProgressBar IsIndeterminate="{Binding IsBusy}" Width="200" Height="20" />
+                <ProgressBar IsIndeterminate="{Binding IsGeneralBusy}" Width="200" Height="20" />
                 <TextBlock Text="{Binding BusyMessage}" 
                            Foreground="White" 
                            FontSize="14"

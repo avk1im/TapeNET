@@ -11,6 +11,8 @@ using Windows.Win32.UI.Shell;
 using System.Runtime.InteropServices;
 using Windows.Win32.System.SystemServices;
 
+using TapeWinNET.Models;
+
 
 namespace TapeWinNET;
 
@@ -111,4 +113,58 @@ public static class TapeIcons
     {
         return IconLoader.LoadStockIcon(SHSTOCKICONID.SIID_DOCNOASSOC, large);
     }
+}
+
+/// <summary>
+/// Icons for backup source entries (Files to Backup list).
+/// </summary>
+public static class BackupSourceIcons
+{
+    private static BitmapSource? _singleFileIcon;
+    private static BitmapSource? _singleFolderIcon;
+    private static BitmapSource? _filePatternIcon;
+    private static bool _iconsLoaded;
+
+    static BackupSourceIcons()
+    {
+        LoadIcons();
+    }
+
+    private static void LoadIcons()
+    {
+        if (_iconsLoaded)
+            return;
+
+        try
+        {
+            // Single file: document icon (same as TapeIcons.GetTapeFileIcon)
+            _singleFileIcon = TapeIcons.GetTapeFileIcon(large: false);
+            _singleFileIcon?.Freeze();
+
+            // Single folder: folder icon (loaded separately for potential future customization)
+            _singleFolderIcon = IconLoader.LoadStockIcon(SHSTOCKICONID.SIID_FOLDER, large: false);
+            _singleFolderIcon?.Freeze();
+
+            // File pattern: stack icon for multiple files
+            _filePatternIcon = IconLoader.LoadStockIcon(SHSTOCKICONID.SIID_STACK, large: false);
+            _filePatternIcon?.Freeze();
+        }
+        catch
+        {
+            // If icon loading fails, icons will be null
+        }
+
+        _iconsLoaded = true;
+    }
+
+    /// <summary>
+    /// Gets the appropriate icon for the given backup source type.
+    /// </summary>
+    public static BitmapSource? GetIcon(BackupSourceType type) => type switch
+    {
+        BackupSourceType.SingleFile => _singleFileIcon,
+        BackupSourceType.SingleFolder => _singleFolderIcon,
+        BackupSourceType.FilePattern => _filePatternIcon,
+        _ => _singleFileIcon
+    };
 }
