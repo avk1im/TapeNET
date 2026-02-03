@@ -17,7 +17,7 @@ namespace TapeLibNET
 {
     // Encapsulates all the calls to Win32 Tape API
     //  Implements low-level direct read-write operations
-    public class TapeDrive(ILoggerFactory loggerFactory) : IDisposable, IErrorMangeable
+    public class TapeDrive(ILoggerFactory loggerFactory) : IDisposable, IErrorManageable
     {
         #region *** Private fields ***
 

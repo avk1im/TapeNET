@@ -6,7 +6,7 @@ using System.Runtime.CompilerServices;
 
 namespace TapeLibNET
 {
-    public interface IErrorMangeable
+    public interface IErrorManageable
     {
         public uint LastError { get; }
 
@@ -15,7 +15,7 @@ namespace TapeLibNET
         void ResetError();
     }
 
-    public class TapeDriveHolder<T>(TapeDrive drive) : IErrorMangeable
+    public class TapeDriveHolder<T>(TapeDrive drive) : IErrorManageable
     {
         #region *** Private fields ***
 
@@ -41,7 +41,7 @@ namespace TapeLibNET
 
         public TapeDrive Drive => drive;
         public uint DriveNumber => Drive.DriveNumber;
-        private List<IErrorMangeable> ErrorSources { get; init; } = [drive];
+        private List<IErrorManageable> ErrorSources { get; init; } = [drive];
 
         #endregion // Properties
 
@@ -81,12 +81,12 @@ namespace TapeLibNET
             SetError(error, message ?? ex.Message);
         }
 
-        protected void AddErrorSource(IErrorMangeable source) // add only if not present yet
+        protected void AddErrorSource(IErrorManageable source) // add only if not present yet
         {
-            if (ErrorSources.Contains(source))
+            if (!ErrorSources.Contains(source))
                 ErrorSources.Add(source);
         }
-        protected void RemoveErrorSource(IErrorMangeable source)
+        protected void RemoveErrorSource(IErrorManageable source)
         {
             ErrorSources.Remove(source);
         }
