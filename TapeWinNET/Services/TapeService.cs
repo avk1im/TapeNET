@@ -2,6 +2,10 @@ using System.IO; // <-- Add this at the top with other using directives
 using Windows.Win32.System.SystemServices; // for Helpers
 
 using Microsoft.Extensions.Logging;
+#if !DEBUG
+using Microsoft.Extensions.Logging.Abstractions; // for NullLoggerFactory
+#endif
+
 using TapeLibNET;
 
 namespace TapeWinNET.Services;
@@ -24,10 +28,21 @@ public class TapeService : IDisposable
 
     public TapeService()
     {
+#if DEBUG
         _loggerFactory = LoggerFactory.Create(builder =>
         {
-            builder.AddDebug().SetMinimumLevel(LogLevel.Information);
+            builder.AddDebug().SetMinimumLevel(LogLevel.Trace);
         });
+#else
+        _loggerFactory = Debugger.IsAttached ?
+            LoggerFactory.Create(builder =>
+            {
+                builder
+                    .AddDebug()
+                    .SetMinimumLevel(LogLevel.Information);
+            }) :
+            NullLoggerFactory.Instance;
+#endif
     }
 
     #region Properties
@@ -40,13 +55,14 @@ public class TapeService : IDisposable
     public TapeTOC? TOC => _toc;
     
     // Drive information properties
-    public bool SupportsMultiplePartitions => _tapeDrive?.SupportsMultiplePartitions ?? false;
+    public bool SupportsInitiatorPartition => _tapeDrive?.SupportsInitiatorPartition ?? false;
     public bool SupportsSetmarks => _tapeDrive?.SupportsSetmarks ?? false;
     public bool SupportsSeqFilemarks => _tapeDrive?.SupportsSeqFilemarks ?? false;
     public uint MinimumBlockSize => _tapeDrive?.MinimumBlockSize ?? 0;
     public uint DefaultBlockSize => _tapeDrive?.DefaultBlockSize ?? 0;
     public uint MaximumBlockSize => _tapeDrive?.MaximumBlockSize ?? 0;
     public uint PartitionCount => _tapeDrive?.PartitionCount ?? 0;
+    public bool HasInitiatorPartition => _tapeDrive?.HasInitiatorPartition ?? false;
     public long Capacity => _tapeDrive?.Capacity ?? 0;
     
     public long GetRemainingCapacity()
@@ -78,7 +94,7 @@ public class TapeService : IDisposable
                     _toc = null;
                     _tapeDrive?.Dispose();
 
-                    _tapeDrive = new TapeDrive(_loggerFactory);
+                    _tapeDrive = TapeDrive.CreateWin32(_loggerFactory);
                     
                     if (!_tapeDrive.ReopenDrive((uint)driveNumber))
                     {

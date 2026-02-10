@@ -19,7 +19,9 @@ using System.Collections.Generic;
 
 using Microsoft.Extensions.Logging;
 //using Microsoft.Extensions.Logging.Debug; // for DebugLoggerProvider
+#if !DEBUG
 using Microsoft.Extensions.Logging.Abstractions; // for NullLoggerFactory
+#endif
 
 using System.Collections.ObjectModel;
 using System.Reflection;
@@ -51,7 +53,7 @@ ILoggerFactory factory = Debugger.IsAttached ?
     }) :
     NullLoggerFactory.Instance;
 #endif
-using TapeDrive tapeDrive = new(factory);
+using TapeDrive tapeDrive = TapeDrive.CreateWin32(factory);
 
 TapeTOC? legacyTOC = null;
 Windows.Win32.System.SystemServices.Stopwatch stopwatch = new();
@@ -522,7 +524,7 @@ void WriteDriveInformation()
         return;
     }
 
-    Console.WriteLine(" ii Supports multiple partitions: " + (tapeDrive.SupportsMultiplePartitions ? "Yes" : "No"));
+    Console.WriteLine(" ii Supports multiple partitions: " + (tapeDrive.SupportsInitiatorPartition ? "Yes" : "No"));
     Console.WriteLine(" ii Supports setmarks: " + (tapeDrive.SupportsSetmarks ? "Yes" : "No"));
     Console.WriteLine(" ii Supports sequential filemarks: " + (tapeDrive.SupportsSeqFilemarks ? "Yes" : "No"));
     Console.WriteLine(" ii Block size [min..default..max]: " +
@@ -533,7 +535,7 @@ void WriteDriveInformation()
         Console.WriteLine(" ii Media loaded: Yes");
         Console.WriteLine($" ii Partition count: {tapeDrive.PartitionCount}");
         Console.WriteLine($" ii Capacity: {Helpers.BytesToStringLong(tapeDrive.Capacity)}");
-        Console.WriteLine($" ii Remaining capacity: {Helpers.BytesToStringLong(tapeDrive.GetRemainingCapacity())}");
+        Console.WriteLine($" ii Remaining (may be inaccurate): {Helpers.BytesToStringLong(tapeDrive.GetRemainingCapacity())}");
     }
     else
     {
@@ -548,19 +550,24 @@ void WriteMediaInformation(TapeTOC toc)
     Console.WriteLine($" ii Last saved: {toc.LastSaveTime}");
     Console.WriteLine($" ii Backup sets: {toc.Count}");
     Console.WriteLine($" ii Capacity: {Helpers.BytesToStringLong(tapeDrive.Capacity)}");
-    var remaining = tapeDrive.GetRemainingCapacity();
-    Console.WriteLine($" ii Used: {Helpers.BytesToStringLong(tapeDrive.Capacity - remaining)}");
+    var used = toc.ComputeTotalFileSizeOnTape(tapeDrive.DefaultBlockSize);
+    if (!tapeDrive.HasInitiatorPartition)
+        used += TapeNavigator.TOCCapacity; // if TOC is in set, it consumes content space
+    var remaining = tapeDrive.Capacity - used; //tapeDrive.GetRemainingCapacity();
+    Console.WriteLine($" ii Used: {Helpers.BytesToStringLong(used)}");
     Console.WriteLine($" ii Remaining: {Helpers.BytesToStringLong(remaining)}");
+    Console.WriteLine($" ii Remaining (drive reported): {Helpers.BytesToStringLong(tapeDrive.GetRemainingCapacity())}");
     Console.WriteLine($" ii TOC placement: {((tapeDrive.PartitionCount > 1) ? "partition" : "set")}");
     Console.WriteLine($" ii Volume #{toc.Volume}");
     Console.WriteLine($" ii Continued on next volume? {(toc.ContinuedOnNextVolume ? "Yes" : "No")}");
 }
 
-static void WriteCurrentSetInformation(TapeTOC toc)
+void WriteCurrentSetInformation(TapeTOC toc)
 {
     var setTOC = toc.CurrentSetTOC;
     Console.WriteLine($" ii Name: >{setTOC.Description}<");
     Console.WriteLine($" ii Files: {setTOC.Count}");
+    Console.WriteLine($" ii Total file size on tape: {Helpers.BytesToStringLong(setTOC.ComputeTotalFileSizeOnTape(tapeDrive.DefaultBlockSize))}");
     Console.WriteLine($" ii Created on: {setTOC.CreationTime}");
     Console.WriteLine($" ii Last saved: {setTOC.LastSaveTime}");
     Console.WriteLine($" ii Block size: {Helpers.BytesToStringLong(setTOC.BlockSize)}");
@@ -1320,6 +1327,16 @@ void UniversalRestore(List<string> values, TapeFileRestoreBaseAgent agent, OnFil
         // Check if any file matching patterns have been specified
         //  Notice that if values[0] is a number, it's interpreted as a set index, not a file pattern
         List<string> patterns = (values.Count > 0 && int.TryParse(values[0], out _)) ? values[1..] : values;
+        // Output patterns if any
+        if (patterns.Count > 0)
+        {
+            Console.Write($"iii {restoringName} file patterns: ");
+            foreach (var pattern in patterns)
+                Console.Write($">{pattern}< ");
+            Console.WriteLine();
+        }
+        else
+            Console.WriteLine($"iii {restoringName} all files in the current set");
 
         bool result = incremental ?
         (
@@ -1522,10 +1539,11 @@ void HandleList(List<string> values)
                 if (toc.CurrentSetTOC.FmksMode)
                 {
                     var indexes = toc[setIndex - i].RefsToIndexes(tfis);
-                    for (int j = 0; j < indexes.Count; j++)
+
+                    foreach (var index in indexes)
                     {
-                        var tfi = toc.CurrentSetTOC[indexes[j]];
-                        Console.WriteLine(FormatFileInfoIndex(tfi, indexes[j]));
+                        var tfi = toc.CurrentSetTOC[index];
+                        Console.WriteLine(FormatFileInfoIndex(tfi, index));
                         setFiles++;
                         setSize += tfi.FileDescr.Length;
                     }

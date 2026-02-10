@@ -160,14 +160,19 @@ namespace TapeLibNET
             return hasher;
         }
 
+        #region *** TOC Backup ***
 
-        private TapeWriteStream? OpenWriteTOCStream()
+        private bool BeginWriteTOC()
         {
-            // If we were reading or writing, end it first - before setting the new parameters
+            // If we were reading or writing, end it first - before setting the parameters for TOC writing
             Manager.EndReadWrite();
 
             Drive.SetBlockSize(c_fixedTOCBlockSize);
 
+            return Manager.BeginWriteTOC();
+        }
+        private TapeWriteStream? OpenWriteTOCStream()
+        {
             return Manager.ProduceWriteTOCStream();
         }
 
@@ -196,6 +201,13 @@ namespace TapeLibNET
                     var serializer = new TapeSerializer(hashingStream);
                     serializer.Serialize(TOC);
                     serializer.Serialize(hasher.GetCurrentHash()); // notice the hash bytes themselves aren't added to the hash!
+
+/*#if DEBUG
+                    // TEST FIXME: serialize a 55 MB dummy array
+                    m_logger.LogTrace("***** Serializing dummy TOC array");
+                    byte[] dummy = new byte[55 * 1024 * 1024];
+                    serializer.Serialize(dummy);
+#endif*/
                 }
 
                 BytesBackedup += wstream.Length;
@@ -220,6 +232,12 @@ namespace TapeLibNET
                 m_logger.LogTrace("Enforcing TOC backup by resetting content set");
             }
 
+            if (!BeginWriteTOC())
+            {
+                m_logger.LogError("Failed to begin TOC write in {Method}", nameof(BackupTOC));
+                return false;
+            }
+
             // To ensure TOC integrity, backup TOC twice
             bool result1 = BackupTOCCore();
             if (result1)
@@ -234,17 +252,25 @@ namespace TapeLibNET
             else
                 m_logger.LogWarning("TOC 2nd copy backup failed");
 
-            return result1 && result2;
+            return result1 || result2;
         }
 
+#endregion // *** TOC Backup ***
 
-        private TapeReadStream? OpenReadTOCStream()
+        #region *** TOC Restore ***
+
+        private bool BeginReadTOC()
         {
-            // If we were reading or writing, end it first - before setting the new parameters
+            // If we were reading or writing, end it first - before setting the parameters for TOC reading
             Manager.EndReadWrite();
 
+            // set the filemarks and block size from the set to the manager
             Drive.SetBlockSize(c_fixedTOCBlockSize);
 
+            return Manager.BeginReadTOC();
+        }
+        private TapeReadStream? OpenReadTOCStream()
+        {
             return Manager.ProduceReadTOCStream(textFileMode: false, lengthLimit: -1);
         }
 
@@ -294,6 +320,11 @@ namespace TapeLibNET
                             // CRC check passed
                             TOC.CopyFrom(toc);
                             BytesRestored += rstream.Length;
+/*#if DEBUG
+                            // TEST FIXME: deserialize a 55 MB dummy array
+                            m_logger.LogTrace("***** Deserializing dummy TOC array");
+                            byte[]? dummy = deserializer.DeserializeBytes(55 * 1024 * 1024);
+#endif*/
                             return true;
                         }
                         else
@@ -305,6 +336,7 @@ namespace TapeLibNET
                         m_logger.LogWarning("Failed to deserialize TOC in {Method}", nameof(RestoreTOCCore));
                         return false;
                     }
+
                 }
             }
             catch (Exception ex)
@@ -318,6 +350,13 @@ namespace TapeLibNET
         {
             // Since TOC is stored twice, if the first attempt fails, try again
             m_logger.LogTrace("Restoring TOC from 1st copy");
+
+            if (!BeginReadTOC())
+            {
+                m_logger.LogError("Failed to begin TOC read in {Method}", nameof(RestoreTOC));
+                return false;
+            }
+
             bool result = RestoreTOCCore();
 
             if (result)
@@ -325,16 +364,33 @@ namespace TapeLibNET
             else
             {
                 m_logger.LogWarning("TOC restore from 1st copy failed. Trying 2nd copy");
+                // Notice we now must be at the beginning of the 2nd copy, as Manager calls Navigator.MoveToNextTOCFilemark()
+                //  from Manager.EndReadFile() when disposing the 1st read TOC sytream
                 result = RestoreTOCCore();
                 if (result)
                     m_logger.LogTrace("TOC restored from 2nd copy");
                 else
                     m_logger.LogError("TOC restore from 2nd copy failed");
+
+                if (!result)
+                {
+                    // Last try: BeginReadTOC() again, then immediately move to the filemark for the 2nd copy
+                    m_logger.LogTrace("Attempting to skip to 2nd TOC copy directly");
+                    result = BeginReadTOC() && Navigator.MoveToNextTOCFilemark() && RestoreTOCCore();
+
+                    if (result)
+                        m_logger.LogTrace("TOC restored directly from 2nd copy");
+                    else
+                        m_logger.LogError("TOC restore directly from 2nd copy failed");
+                }
             }
 
             return result;
         }
 
+        #endregion // *** TOC Restore ***
+
+        #region *** Notification wrappers ***
 
         // Safe calls to ITapeFileNotifiable
         //  All exceptions are caught and logged as warnings -- except for TapeAbortRequestedException, which is rethrown
@@ -457,6 +513,8 @@ namespace TapeLibNET
                 }
             }
         }
+
+        #endregion // *** Notification wrappers ***
 
         protected void ThrowIfAbortRequested(string where)
         {

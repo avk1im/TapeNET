@@ -6,6 +6,7 @@ using System.IO.Hashing;
 using System.Linq;
 using System.Runtime.Serialization;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Windows.Win32.Foundation;
@@ -107,6 +108,19 @@ namespace TapeLibNET
             FillFrom(fsi as FileSystemInfo);
             Length = fsi.Length;
         }
+
+        // Estimate serialized size
+        public int EstimateSerializedSize()
+        {
+            // string length (4 bytes) + UTF8 bytes
+            int size = sizeof(int) + Encoding.UTF8.GetByteCount(FullName);
+            unsafe // for size(DateTime)
+            {
+                // Length (8) + Attributes (4) + 3x DateTime (8 each)
+                size += sizeof(long) + sizeof(FileAttributes) + 3 * sizeof(DateTime);
+            }
+            return size;
+        }
     }
 
     // The on-tape information about a file. Used as both TOC entry and on-tape file header
@@ -151,11 +165,36 @@ namespace TapeLibNET
         }
         // } ITapeSerializable
 
+        public int EstimateSerializedSize()
+        {
+            // Signature: 2 bytes + Version: 2 bytes
+            int size = TapeSerializer.Signature.Length + sizeof(ushort);
+            // UID: 8 bytes (ulong)
+            size += sizeof(TypeUID);
+            // Block: 8 bytes (long)
+            size += sizeof(long);
+            // FileDescr
+            size += FileDescr.EstimateSerializedSize();
+            // Hash: length prefix (4 bytes) + optional bytes
+            size += sizeof(int) + (Hash?.Length ?? 0);
+
+            return size;
+        }
+
         // serailize only minimal information necessary to check file match on tape 
         public void SerializeHeaderTo(TapeSerializer serializer)
         {
             serializer.SerializeSignature();
             serializer.Serialize((ulong)UID);
+        }
+
+        public static int EstimateSerializedHeaderSize()
+        {
+            // Signature: 2 bytes + Version: 2 bytes
+            int size = TapeSerializer.Signature.Length + sizeof(ushort);
+            // UID: 8 bytes (ulong)
+            size += sizeof(TypeUID);
+            return size;
         }
 
         // deserailize header and check if it matches this file info
@@ -208,7 +247,7 @@ namespace TapeLibNET
         // deserialization constructor
         private TapeSetTOC(List<TapeFileInfo> fileInfos) => m_tapeFileInfos = fileInfos;
 
-        // ITapeSerializable {
+        #region ITapeSerializable
         public void SerializeTo(TapeSerializer serializer)
         {
             serializer.SerializeSignature();
@@ -247,7 +286,7 @@ namespace TapeLibNET
                 ContinuedFromPrevVolume = deserializer.DeserializeBoolean(),
             };
         }
-        // } ITapeSerializable
+        #endregion // } ITapeSerializable
 
 
         public int Count => m_tapeFileInfos.Count;
@@ -430,6 +469,24 @@ namespace TapeLibNET
             return filesSelected; // don't use "null means all files" shortcut since the list might need editing
         }
 
+        // Compute the size of all files in the set on tape, consideing the block size
+        public long ComputeTotalFileSizeOnTape(uint defaultBlockSize = 0)
+        {
+            if (Count == 0)
+                return 0L;
+            long totalSize = 0L;
+            uint blockSize = (BlockSize > 0) ? BlockSize : defaultBlockSize;
+            if (blockSize == 0)
+                blockSize = 1; // don't round up if block size is not specified
+            foreach (var tfi in this)
+            {
+                long fileSize = tfi.FileDescr.Length + TapeFileInfo.EstimateSerializedHeaderSize();
+                long blocks = (fileSize + blockSize - 1) / blockSize; // round up to next block
+                totalSize += blocks * blockSize;
+            }
+            return totalSize;
+        }
+
     } // class TapeSetTOC
 
 
@@ -492,6 +549,7 @@ namespace TapeLibNET
                 return setIndex - 1;
         }
         private static int InternalToSetIndex(int setInternal) => setInternal + 1;
+        // convert standard index to alternative one, or vice versa
         public int SetIndexToAlt(int setIndex)
         {
             if (setIndex <= 0)
@@ -518,6 +576,7 @@ namespace TapeLibNET
 
             get => InternalToSetIndex(m_currSetInternal);
         }
+
         public void MakeLastSetCurrent() => CurrentSetIndex = 0;
         private void SetCurrentSetInternal(int setInternal)
         {
@@ -622,6 +681,7 @@ namespace TapeLibNET
         }
         public void CloneCurrentSetTOC(bool contFromPrevVolume = false) => CloneSetTOC(CurrentSetIndex, contFromPrevVolume);
 
+        // Deep copy the content of the given TOC to this TOC, replacing the whole content of this TOC
         public void CopyFrom(TapeTOC toc) // Replaces the whole content -> use with CAUTION!
         {
             m_setTOCs.Clear();
@@ -829,6 +889,32 @@ namespace TapeLibNET
 
                 return filesSelected;
             }
+        }
+
+        // Compute total file size on tape -- considering block sizes per set
+        // onVolumeOnly : if true, only compute for sets on the current volume; otherwise, compute for all sets
+        public long ComputeTotalFileSizeOnTape(uint defaultBlockSize = 0, bool onVolumeOnly = true)
+        {
+            if (Count == 0)
+                return 0L;
+
+            long totalSize = 0L;
+            if (onVolumeOnly)
+            {
+                for (int i = FirstSetInternalOnVolume; i <= LastSetInternalOnVolume; i++)
+                {
+                    totalSize += m_setTOCs[i].ComputeTotalFileSizeOnTape(defaultBlockSize);
+                }
+            }
+            else
+            {
+                foreach (var setTOC in m_setTOCs)
+                {
+                    totalSize += setTOC.ComputeTotalFileSizeOnTape(defaultBlockSize);
+                }
+            }
+
+            return totalSize;
         }
 
 #if OLD

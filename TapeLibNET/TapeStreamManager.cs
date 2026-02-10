@@ -178,7 +178,7 @@ namespace TapeLibNET
         public bool BeginReadTOC() => State == TapeState.ReadingTOC ||
             BeginReadWrite(TapeState.ReadingTOC);
         
-        public bool BeginWriteContent()
+        public bool BeginWriteContent(long remainingCapacity)
         {
             ResetError();
 
@@ -191,7 +191,7 @@ namespace TapeLibNET
                 Navigator.OnBeginWriteContent();
 
             if (WentOK)
-                BeginWriteContentSet();
+                BeginWriteContentSet(remainingCapacity);
 
             if (WentBad)
                 Navigator.ResetContentSet(); // since we don't know where we ended up
@@ -364,29 +364,12 @@ namespace TapeLibNET
             return WentOK;
         }
 
-        // Checking remaining tape capacity is not precise. Therefore, we only do it
-        //  if TOC is in a set, because only then it's crictial that we leave room for the TOC.
-        //  If TOC is in a partition, we can let writing last file potentially fail
-        private bool CheckContentCapacity(long length)
-        {
-            long remaining = Navigator.GetRemainingContentCapacity();
-
-            if (ContentCapacityLimit > 0L)
-                remaining = Math.Min(remaining, ContentCapacityLimit);
-
-            return length <= remaining;
-        }
-
-        private bool BeginWriteFile(long length = -1)
+        private bool BeginWriteFile()
         {
             ResetError();
 
             if (!State.IsOneOf(TapeState.WritingTOC, TapeState.WritingContent))
                 LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
-
-            if (WentOK)
-                if (length >= 0 && State == TapeState.WritingContent && !CheckContentCapacity(length))
-                    LastErrorWin32 = WIN32_ERROR.ERROR_END_OF_MEDIA;
 
             if (WentOK)
                 m_logger.LogTrace("Drive #{Drive}: Began writing file", DriveNumber);
@@ -451,15 +434,21 @@ namespace TapeLibNET
             return WentOK;
         }
 
-        private bool BeginWriteContentSet()
+        private long CapacityForCurrentSet { get; set; } = -1; // unknow
+
+        private bool BeginWriteContentSet(long remainingCapacity)
         {
             ResetError();
 
             if (State != TapeState.WritingContent)
                 LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
+            
+            if (WentOK)
+                CapacityForCurrentSet = remainingCapacity;
 
             if (WentOK)
-                m_logger.LogTrace("Drive #{Drive}: Began writing set", DriveNumber);
+                m_logger.LogTrace("Drive #{Drive}: Began writing set; remaining capacity {Capacity} B",
+                    DriveNumber, CapacityForCurrentSet);
             else
                 LogErrorAsDebug("Failed to begin writing set");
 
@@ -476,6 +465,9 @@ namespace TapeLibNET
             if (WentOK)
                 if (Navigator.WriteContentSetmark())
                     Navigator.OnContentWritten(); // we're surely at the end of the content!
+
+            if (WentOK)
+                CapacityForCurrentSet = -1; // reset
 
             if (WentOK)
                 m_logger.LogTrace("Drive #{Drive}: Ended writing set", DriveNumber);
@@ -537,22 +529,49 @@ namespace TapeLibNET
             return (TapeWriteStream)Stream;
         }
 
-        public TapeWriteStream? ProduceWriteContentStream(long length = -1)
+        // Checking remaining tape capacity is not precise. Therefore, we only do it
+        //  if TOC is in a set, because only then it's crictial that we leave room for the TOC.
+        //  If TOC is in a partition, we can let writing last file fail if end of media is hit.
+        private bool CheckContentCapacity(long length, long writtenSoFar)
+        {
+            if (CapacityForCurrentSet < 0)
+            {
+                // unknown remaining capacity -> can't check except for ContentCapacityLimit, if any
+                if (ContentCapacityLimit > 0L)
+                    return length <= ContentCapacityLimit;
+                else
+                    return true;
+            }
+
+            long remaining = CapacityForCurrentSet - writtenSoFar;
+
+            if (ContentCapacityLimit > 0L)
+                remaining = Math.Min(remaining, ContentCapacityLimit);
+
+            return length <= remaining;
+        }
+
+        public TapeWriteStream? ProduceWriteContentStream(long length, long writtenSoFar)
         {
             if (IsStreamInUse)
                 return (State == TapeState.WritingContent) ? Stream as TapeWriteStream : null;
 
-            if (!BeginWriteContent())
+            if (!BeginWriteContent(-1)) // Notice we don't offer content capacity checking for implicitly started content writing
                 return null;
 
             Debug.Assert(State == TapeState.WritingContent);
 
-            if (!BeginWriteFile(length))
+            if (WentOK)
+                if (length >= 0 && !CheckContentCapacity(length, writtenSoFar))
+                    LastErrorWin32 = WIN32_ERROR.ERROR_END_OF_MEDIA;
+
+            if (!BeginWriteFile())
                 return null;
 
             Stream = new TapeWriteStream(this);
 
-            m_logger.LogTrace("Drive #{Drive}: Write content stream produced", DriveNumber);
+            m_logger.LogTrace("Drive #{Drive}: Write content stream produced for {Length} B",
+                DriveNumber, length);
 
             return (TapeWriteStream)Stream;
         }

@@ -10,6 +10,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
 using TapeWinNET.ViewModels;
+using TapeWinNET.Models;
 
 namespace TapeWinNET
 {
@@ -115,6 +116,16 @@ namespace TapeWinNET
             dataView.SortDescriptions.Clear();
             dataView.SortDescriptions.Add(new SortDescription(sortBy, direction));
             dataView.Refresh();
+        }
+
+        private void BackupSetList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            // Ensure click was on an item, not empty space
+            if (e.OriginalSource is FrameworkElement element && 
+                element.DataContext is BackupSetListItem)
+            {
+                _viewModel.NavigateToBackupSetCommand.Execute(null);
+            }
         }
     }
 }

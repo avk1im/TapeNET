@@ -53,11 +53,12 @@ public class MainViewModel : ViewModelBase
         _tapeService.StatusChanged += OnStatusChanged;
 
         // Initialize commands
-        OpenDriveCommand = new AsyncRelayCommand(OpenDriveAsync, param => !IsBusy);
+        OpenDriveCommand = new AsyncRelayCommand(OpenDriveAsync, _ => !IsBusy);
         RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         EjectCommand = new AsyncRelayCommand(EjectAsync, () => !IsBusy && _tapeService.IsMediaLoaded);
-        NewBackupCommand = new RelayCommand(ShowNewBackupWindow, param => !IsBusy && _tapeService.IsMediaLoaded);
-        AbortBackupCommand = new RelayCommand(AbortBackup, param => IsBackupInProgress);
+        NewBackupCommand = new RelayCommand(ShowNewBackupWindow, _ => !IsBusy && _tapeService.IsMediaLoaded);
+        AbortBackupCommand = new RelayCommand(AbortBackup, _ => IsBackupInProgress);
+        NavigateToBackupSetCommand = new RelayCommand(NavigateToSelectedBackupSet, _ => SelectedBackupSet != null);
         ExitCommand = new RelayCommand(Exit);
         AboutCommand = new RelayCommand(ShowAbout);
     }
@@ -176,14 +177,8 @@ public class MainViewModel : ViewModelBase
     public BackupSetListItem? SelectedBackupSet
     {
         get => _selectedBackupSet;
-        set
-        {
-            if (SetProperty(ref _selectedBackupSet, value) && value != null)
-            {
-                // When a backup set is selected in the table, navigate to it
-                OnBackupSetSelectedInTable(value);
-            }
-        }
+        set => SetProperty(ref _selectedBackupSet, value);
+        // Navigation now triggered by double-click or Enter, not selection change
     }
 
     public ContentPaneType ContentType
@@ -224,6 +219,7 @@ public class MainViewModel : ViewModelBase
     public ICommand EjectCommand { get; }
     public ICommand NewBackupCommand { get; }
     public ICommand AbortBackupCommand { get; }
+    public ICommand NavigateToBackupSetCommand { get; }
     public ICommand ExitCommand { get; }
     public ICommand AboutCommand { get; }
 
@@ -461,7 +457,7 @@ public class MainViewModel : ViewModelBase
         previewWindow.ShowDialog();
     }
 
-    private List<string> BuildFileListFromPatterns(List<string> patterns, bool includeSubdirectories)
+    private static List<string> BuildFileListFromPatterns(List<string> patterns, bool includeSubdirectories)
     {
         var fileList = new List<string>();
 
@@ -726,9 +722,9 @@ public class MainViewModel : ViewModelBase
         var tapeItem = TapeTreeItemViewModel.CreateTapeItem(toc, driveItem);
         driveItem.Children.Add(tapeItem);
 
-        // Add backup sets (from oldest to newest for proper ordering in tree)
+        // Add backup sets (from latest to oldest for consistency with alt index display)
         int totalSets = toc.Count;
-        for (int i = 1; i <= totalSets; i++)
+        for (int i = totalSets; i >= 1; i--)
         {
             var setTOC = toc[i];
             var setItem = TapeTreeItemViewModel.CreateBackupSetItem(setTOC, i, totalSets, tapeItem);
@@ -741,15 +737,15 @@ public class MainViewModel : ViewModelBase
 
     private void SelectMostRecentSet()
     {
-        // Find and select the most recent (last) backup set
+        // Find and select the most recent (first) backup set
         if (TreeItems.Count > 0 && TreeItems[0].Children.Count > 0)
         {
             var tapeNode = TreeItems[0].Children[0];
             if (tapeNode.Children.Count > 0)
             {
-                var lastSet = tapeNode.Children[^1];
-                lastSet.IsSelected = true;
-                OnTreeItemSelected(lastSet);
+                var firstSet = tapeNode.Children[0]; // Changed from [^1] to [0]
+                firstSet.IsSelected = true;
+                OnTreeItemSelected(firstSet);
             }
             else
             {
@@ -781,7 +777,7 @@ public class MainViewModel : ViewModelBase
         if (_tapeService.IsDriveOpen)
         {
             PropertyList.Add(new PropertyItem("Supports Multiple Partitions", 
-                _tapeService.SupportsMultiplePartitions ? "Yes" : "No"));
+                _tapeService.SupportsInitiatorPartition ? "Yes" : "No"));
             PropertyList.Add(new PropertyItem("Supports Setmarks", 
                 _tapeService.SupportsSetmarks ? "Yes" : "No"));
             PropertyList.Add(new PropertyItem("Supports Sequential Filemarks", 
@@ -802,7 +798,7 @@ public class MainViewModel : ViewModelBase
                     _tapeService.PartitionCount.ToString()));
                 PropertyList.Add(new PropertyItem("Capacity", 
                     Helpers.BytesToStringLong(_tapeService.Capacity)));
-                PropertyList.Add(new PropertyItem("Remaining Capacity", 
+                PropertyList.Add(new PropertyItem("Remaining Capacity (est.)", 
                     Helpers.BytesToStringLong(_tapeService.GetRemainingCapacity())));
             }
         }
@@ -834,13 +830,16 @@ public class MainViewModel : ViewModelBase
         PropertyList.Add(new PropertyItem("Backup Sets", toc.Count.ToString()));
         PropertyList.Add(new PropertyItem("Capacity", 
             Helpers.BytesToStringLong(_tapeService.Capacity)));
-        
-        var remaining = _tapeService.GetRemainingCapacity();
-        var used = _tapeService.Capacity - remaining;
+
+        var used = toc.ComputeTotalFileSizeOnTape(_tapeService.DefaultBlockSize);
+        if (!_tapeService.HasInitiatorPartition)
+            used += TapeNavigator.TOCCapacity; // if TOC is in set, it consumes content space
+        var remaining = _tapeService.Capacity - used; //_tapeService.GetRemainingCapacity();
+
         PropertyList.Add(new PropertyItem("Used", Helpers.BytesToStringLong(used)));
         PropertyList.Add(new PropertyItem("Remaining", Helpers.BytesToStringLong(remaining)));
         PropertyList.Add(new PropertyItem("TOC Placement", 
-            _tapeService.PartitionCount > 1 ? "Partition" : "Set"));
+            _tapeService.HasInitiatorPartition ? "Partition" : "Set"));
         PropertyList.Add(new PropertyItem("Volume", $"#{toc.Volume}"));
         PropertyList.Add(new PropertyItem("Continued on Next Volume", 
             toc.ContinuedOnNextVolume ? "Yes" : "No"));
@@ -891,8 +890,10 @@ public class MainViewModel : ViewModelBase
 
             // Populate backup set properties
             PropertyList.Add(new PropertyItem("Name", setTOC.Description ?? "(unnamed)"));
-            PropertyList.Add(new PropertyItem("Set Index", $"{setIndex} | {altIndex}"));
+            PropertyList.Add(new PropertyItem("Set Index", $"#{setIndex} | {altIndex}"));
             PropertyList.Add(new PropertyItem("Files", setTOC.Count.ToString("N0")));
+            PropertyList.Add(new PropertyItem("Total File Size on Tape",
+                Helpers.BytesToStringLong(setTOC.ComputeTotalFileSizeOnTape(_tapeService.DefaultBlockSize))));
             PropertyList.Add(new PropertyItem("Created On", setTOC.CreationTime.ToString("G")));
             PropertyList.Add(new PropertyItem("Last Saved", setTOC.LastSaveTime.ToString("G")));
             PropertyList.Add(new PropertyItem("Block Size", Helpers.BytesToStringLong(setTOC.BlockSize)));
@@ -945,6 +946,14 @@ public class MainViewModel : ViewModelBase
         }
     }
 
+    private void NavigateToSelectedBackupSet(object? parameter)
+    {
+        if (SelectedBackupSet != null)
+        {
+            OnBackupSetSelectedInTable(SelectedBackupSet);
+        }
+    }
+    
     private void OnBackupSetSelectedInTable(BackupSetListItem backupSetItem)
     {
         // Find the corresponding tree node and select it
@@ -952,12 +961,15 @@ public class MainViewModel : ViewModelBase
         {
             var tapeNode = TreeItems[0].Children[0];
             var setIndex = backupSetItem.SetIndex;
-            if (setIndex >= 1 && setIndex <= tapeNode.Children.Count)
+            int totalSets = tapeNode.Children.Count;
+            // Convert setIndex to tree position (reversed order)
+            int treeIndex = totalSets - setIndex;
+            if (treeIndex >= 0 && treeIndex < totalSets)
             {
-                var setNode = tapeNode.Children[setIndex - 1];
+                var setNode = tapeNode.Children[treeIndex];
                 setNode.IsSelected = true;
                 // Don't call OnTreeItemSelected here to avoid recursion;
-                //  the TreeView selection changed event will handle it
+                //  the TreeView selection changed event will handle it            }
             }
         }
     }

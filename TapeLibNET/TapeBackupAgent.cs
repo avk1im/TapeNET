@@ -9,10 +9,10 @@ namespace TapeLibNET
 {
     public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileAgent(drive, legacyTOC)
     {
-        private TapeWriteStream? OpenWriteContentStream(long length)
-        {
-            return Manager.ProduceWriteContentStream(length);
-        }
+        // bytes backed up so far before we start writing a new set
+        private long BytesBackedupMarker { get; set; } = 0L;
+        private long BytesBackedupInCurrentSet => BytesBackedup - BytesBackedupMarker;
+
         private bool BeginWriteContentForCurrentSet(bool newSet)
         {
             // If we were reading or writing, end it first - before setting the new set's parameters
@@ -33,7 +33,17 @@ namespace TapeLibNET
 
             Navigator.TargetContentSet = newSet ? ((TOC.CurrentSetIndexOnVolume > 0) ? -1 : 0) : CurrentSetAsNavigatorContentSet;
 
-            return Manager.BeginWriteContent();
+            var remainingCapacity = Drive.Capacity - TOC.ComputeTotalFileSizeOnTape();
+            if (!Drive.HasInitiatorPartition)
+                remainingCapacity -= TapeNavigator.TOCCapacity; // if TOC is in a content set, reserve space for it
+
+            BytesBackedupMarker = BytesBackedup; // important in case of multi-volume backup continuation
+
+            return Manager.BeginWriteContent(remainingCapacity);
+        }
+        private TapeWriteStream? OpenWriteContentStream(long length)
+        {
+            return Manager.ProduceWriteContentStream(length, BytesBackedupInCurrentSet);
         }
 
 
@@ -217,8 +227,6 @@ namespace TapeLibNET
             m_logger.LogTrace("Continuing (multi-volume) backup from file #{Number} >{File}<",
                 bc.fileIndex + 1, bc.fileList[bc.fileIndex]);
 
-            long bytesBackedupMarker = BytesBackedup;
-
             // The main loop thru the file list
             for (; bc.fileIndex < bc.fileList.Count; bc.fileIndex++) // use for int instead if foreach to know the index for multi-volume backup
             {
@@ -280,7 +288,8 @@ namespace TapeLibNET
                     {
                         // Set up continuation on the next volume for multi-volume backup
                         m_logger.LogTrace("Setting up multi-volume backup from file #{Number} >{File}<", bc.filesProcessed, bc.fileList[bc.fileIndex]);
-                        bc.bytesProcessed += BytesBackedup - bytesBackedupMarker; // update statistics
+                        bc.bytesProcessed += BytesBackedupInCurrentSet; // update statistics
+                        BytesBackedupMarker = BytesBackedup;
 
                         // do not count the failed file in multi-volumen context -- as it will be re-tried on next volume
                         bc.filesProcessed--;
@@ -320,7 +329,8 @@ namespace TapeLibNET
 
             } // foreach fileName
 
-            bc.bytesProcessed += BytesBackedup - bytesBackedupMarker; // update statistics
+            bc.bytesProcessed += BytesBackedupInCurrentSet; // update statistics
+            BytesBackedupMarker = BytesBackedup;
             NotifyBatchEndStatistics(bc.fileNotify, bc.filesProcessed, bc.filesFailed, bc.bytesProcessed);
 
             MultiVolumeContext = null; // clear multi-volume context -- if we got here we're done with [multi-volume] backup

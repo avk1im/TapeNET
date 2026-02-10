@@ -8,6 +8,9 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!--The following sets the name of the output application, e.g. "tapecon" for "tapecon.exe"-->
     <AssemblyName>tapecon</AssemblyName>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <AssemblyVersion>1.2.0.$(BuildNumber)</AssemblyVersion>
+    <FileVersion>1.2.0.$(BuildNumber)</FileVersion>
   </PropertyGroup>
 
   <Import Project="..\Versioning.targets" />
@@ -28,6 +31,13 @@
 
   <ItemGroup>
     <EmbeddedResource Include="TapeCon.Help.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
   </ItemGroup>
 
   <ItemGroup>

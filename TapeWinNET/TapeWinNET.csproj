@@ -11,6 +11,12 @@
 	<AssemblyName>TapeWin</AssemblyName>
   </PropertyGroup>
 
+  <Import Project="..\Versioning.targets" />
+
+  <ItemGroup>
+    <None Remove="4nxbxwuu.xfh~" />
+  </ItemGroup>
+	
   <ItemGroup>
     <ProjectReference Include="..\TapeLibNET\TapeLibNET.csproj" />
   </ItemGroup>

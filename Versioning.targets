@@ -6,9 +6,9 @@
     <BuildNumberFile>$(MSBuildProjectDirectory)\BuildNumber.txt</BuildNumberFile>
     <BuildNumber Condition="Exists('$(BuildNumberFile)')">$([System.IO.File]::ReadAllText($(BuildNumberFile)).Trim())</BuildNumber>
     <BuildNumber Condition="!Exists('$(BuildNumberFile)')">0</BuildNumber>
-    <Version>1.0.$(BuildNumber).0</Version>
-    <AssemblyVersion>1.0.$(BuildNumber).0</AssemblyVersion>
-    <FileVersion>1.0.$(BuildNumber).0</FileVersion>
+    <Version>1.2.0.$(BuildNumber)</Version>
+    <AssemblyVersion>1.2.0.$(BuildNumber)</AssemblyVersion>
+    <FileVersion>1.2.0.$(BuildNumber)</FileVersion>
   </PropertyGroup>
 
   <Target Name="IncrementBuildNumber" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">

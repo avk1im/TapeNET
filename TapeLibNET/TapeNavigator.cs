@@ -28,9 +28,6 @@ namespace TapeLibNET
         public static bool UseTOCMark { get; set; } = true; // only used if TOC is in set w/o setmarks
         public virtual bool TOCInvalidated { get; protected set; } = false;
 
-        public virtual long GetRemainingContentCapacity() => Drive.GetRemainingCapacity(); // in bytes
-            // Valid only from the current position -> navigate to the end of the content first
-
         // The content set next to read. Can be counted either from the beginning or the end of content.
         //  0 means the first (oldest written) content set; 1 the second oldest, etc.
         //  -1 means "the end of content" -- must be set e.g. for writing a new content set
@@ -66,7 +63,7 @@ namespace TapeLibNET
             if (!drive.IsMediaLoaded)
                 return null;
 
-            if (drive.PartitionCount > 1U)
+            if (drive.HasInitiatorPartition)
                 return new TapeNavigatorTOCInPartition(drive);
 
             if (drive.SupportsSetmarks)
@@ -392,8 +389,8 @@ namespace TapeLibNET
         #region *** Constants ***
 
         // Notice TOC in partition 2 ("initiator partition"), content in partition 1
-        private const int TOCPartition = 2;
-        private const int ContentPartition = 1;
+        //private const int TOCPartition = 2;
+        //private const int ContentPartition = 1;
 
         #endregion // Constants
 
@@ -420,7 +417,10 @@ namespace TapeLibNET
 
             ResetError();
 
-            Drive.MoveToPartition(TOCPartition);
+            Drive.MoveToPartition(MediaPartition.Initiator); // TOCPartition
+
+            m_logger.LogTrace("Drive #{Drive}: Current partition after moving to Initiator is >{Partition}<",
+                DriveNumber, Drive.GetCurrentPartition());
 
             return base.MoveToBeginOfTOC();
         } // MoveToBeginOfTOC
@@ -440,9 +440,12 @@ namespace TapeLibNET
                 return true;
             }
 
-            Drive.MoveToPartition(ContentPartition);
+            Drive.MoveToPartition(MediaPartition.Content); // ContentPartition
 
-            return base.MoveToEndOfContent();
+            m_logger.LogTrace("Drive #{Drive}: Current partition after moving to Content is >{Partition}<",
+                DriveNumber, Drive.GetCurrentPartition());
+
+            return base.MoveToBeginOfContent();
         }
 
         public override bool MoveToEndOfContent()
@@ -455,7 +458,28 @@ namespace TapeLibNET
                 return true;
             }
 
-            Drive.FastforwardToEnd(partition: ContentPartition);
+            Drive.MoveToPartition(MediaPartition.Content); // ContentPartition
+
+            m_logger.LogTrace("Drive #{Drive}: Current partition after moving to Content is >{Partition}<",
+                DriveNumber, Drive.GetCurrentPartition());
+
+            Drive.FastforwardToEnd(partition: MediaPartition.Current); // ContentPartition
+
+            m_logger.LogTrace("Drive #{Drive}: Current partition after ffwd'ing to end is >{Partition}<",
+                DriveNumber, Drive.GetCurrentPartition());
+
+            // [content][SM][EOM] <-- we're here
+            if (WentOK)
+                MoveToNextContentSetmark(-1); // this will bring us to right before the last setmark
+            if (WentOK)
+            {
+                MoveToNextContentSetmark(1); // Finally go 1 setmark forward to after the setmark -- the to-be-written content data
+            }
+            else
+            {
+                // assume there's no data written yet -- we must be at the begining of the content partion, as we wish
+                ResetError();
+            }
 
             return base.MoveToEndOfContent();
         }
@@ -469,15 +493,12 @@ namespace TapeLibNET
     {
         #region *** Constants ***
 
-        protected const int CommonPartition = 1;
+        //protected const int CommonPartition = 1;
 
         #endregion // Constants
 
 
         #region *** Properties ***
-
-        public override long GetRemainingContentCapacity() => base.GetRemainingContentCapacity() - TOCCapacity; // in bytes
-            // Valid only from the current position -> navigate to the end of the content first
 
         public override bool TOCInvalidated { get; protected set; } = true;
 
@@ -559,7 +580,7 @@ namespace TapeLibNET
         private void MoveToEndOfContentInternal()
         {
             // First move to the end of the data in the partition. Notice this will fail if TOC hasn't been written yet
-            Drive.FastforwardToEnd(partition: CommonPartition);
+            Drive.FastforwardToEnd(partition: MediaPartition.Content); // CommonPartition
 
             // The TOC is in the last set of the only partion [content][SM][toc1][FM][toc1][FM] -> next move to before the last setmark (indicating end of content)
             if (WentOK)
@@ -662,7 +683,7 @@ namespace TapeLibNET
             Drive.Rewind();
 
             // First move to the end of the data in the partition. Notice the following will produce an error if TOC hasn't been written yet
-            Drive.FastforwardToEnd(partition: CommonPartition);
+            Drive.FastforwardToEnd(partition: MediaPartition.Content); // CommonPartition
             
             // Next move to before the filemark before first TOC file
             if (WentOK)
@@ -804,7 +825,7 @@ namespace TapeLibNET
             //  [content][FM][gap][FM][FM][toc1][FM][toc2][FM]
 
             if (CurrentContentSet == UnknownSet)
-                Drive.FastforwardToEnd(partition: CommonPartition);
+                Drive.FastforwardToEnd(partition: MediaPartition.Content); // CommonPartition
             else if (CurrentContentSet != InTOCSet)
                 SeekForwardPastTOCMark();
             // else we're in TOC area, that is already past the TOC marker

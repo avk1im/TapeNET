@@ -193,11 +193,15 @@
                                   GridViewColumnHeader.Click="GridViewColumnHeader_Click"
                                   VirtualizingPanel.IsVirtualizing="True"
                                   VirtualizingPanel.VirtualizationMode="Recycling"
-                                  Visibility="{Binding IsBackupSetTableVisible, Converter={StaticResource BoolToVis}}">
+                                  Visibility="{Binding IsBackupSetTableVisible, Converter={StaticResource BoolToVis}}"
+                                  MouseDoubleClick="BackupSetList_MouseDoubleClick">
+                            <ListView.InputBindings>
+                                <KeyBinding Key="Enter" Command="{Binding NavigateToBackupSetCommand}" />
+                            </ListView.InputBindings>
                             <ListView.View>
                                 <GridView>
                                     <!-- Icon column for backup sets -->
-                                    <GridViewColumn Width="30">
+                                    <GridViewColumn Width="32">
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
                                                 <Image Width="16" Height="16" Source="{Binding Icon}" />
