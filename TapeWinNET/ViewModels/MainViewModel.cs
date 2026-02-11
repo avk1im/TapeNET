@@ -798,7 +798,7 @@ public class MainViewModel : ViewModelBase
                     _tapeService.PartitionCount.ToString()));
                 PropertyList.Add(new PropertyItem("Capacity", 
                     Helpers.BytesToStringLong(_tapeService.Capacity)));
-                PropertyList.Add(new PropertyItem("Remaining Capacity (est.)", 
+                PropertyList.Add(new PropertyItem("Remaining (est.)", 
                     Helpers.BytesToStringLong(_tapeService.GetRemainingCapacity())));
             }
         }

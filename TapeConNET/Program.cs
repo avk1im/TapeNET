@@ -534,8 +534,10 @@ void WriteDriveInformation()
     {
         Console.WriteLine(" ii Media loaded: Yes");
         Console.WriteLine($" ii Partition count: {tapeDrive.PartitionCount}");
+        if (tapeDrive.PartitionCount > 1)
+            Console.WriteLine($" ii Current partition: {tapeDrive.GetCurrentPartition()}");
         Console.WriteLine($" ii Capacity: {Helpers.BytesToStringLong(tapeDrive.Capacity)}");
-        Console.WriteLine($" ii Remaining (may be inaccurate): {Helpers.BytesToStringLong(tapeDrive.GetRemainingCapacity())}");
+        Console.WriteLine($" ii Remaining (est.): {Helpers.BytesToStringLong(tapeDrive.GetRemainingCapacity())}");
     }
     else
     {
@@ -556,8 +558,8 @@ void WriteMediaInformation(TapeTOC toc)
     var remaining = tapeDrive.Capacity - used; //tapeDrive.GetRemainingCapacity();
     Console.WriteLine($" ii Used: {Helpers.BytesToStringLong(used)}");
     Console.WriteLine($" ii Remaining: {Helpers.BytesToStringLong(remaining)}");
-    Console.WriteLine($" ii Remaining (drive reported): {Helpers.BytesToStringLong(tapeDrive.GetRemainingCapacity())}");
-    Console.WriteLine($" ii TOC placement: {((tapeDrive.PartitionCount > 1) ? "partition" : "set")}");
+    Console.WriteLine($" ii Remaining (est.): {Helpers.BytesToStringLong(tapeDrive.GetRemainingCapacity())}");
+    Console.WriteLine($" ii TOC placement: {((tapeDrive.HasInitiatorPartition) ? "partition" : "set")}");
     Console.WriteLine($" ii Volume #{toc.Volume}");
     Console.WriteLine($" ii Continued on next volume? {(toc.ContinuedOnNextVolume ? "Yes" : "No")}");
 }
@@ -736,10 +738,13 @@ void HandleDrive(List<string> values)
 
     Console.WriteLine("vvv Media loaded ok");
 
+    if (tapeDrive.HasInitiatorPartition)
+        tapeDrive.MoveToPartition(MediaPartition.Content); // to get correct Capacity information
+
     filemarksMode = false; // fill the default filemarks mode
     blockSizeKB = tapeDrive.BlockSize / 1024U; // fill the drive's default block size
 
-    Console.WriteLine("iii Drive & media information:");
+    Console.WriteLine("iii Drive information:");
     WriteDriveInformation();
 }
 
@@ -1442,6 +1447,9 @@ void HandleList(List<string> values)
         if (legacyTOC == null && !RestoreTOC(agent))
             return;
         tocSize = agent.BytesRestored - tocSize;
+
+        if (tapeDrive.HasInitiatorPartition)
+            tapeDrive.MoveToPartition(MediaPartition.Content); // to get correct Capacity information
 
         Console.WriteLine("iii Media information:");
         WriteMediaInformation(toc);

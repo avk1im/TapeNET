@@ -570,8 +570,8 @@ namespace TapeLibNET
 
             Stream = new TapeWriteStream(this);
 
-            m_logger.LogTrace("Drive #{Drive}: Write content stream produced for {Length} B",
-                DriveNumber, length);
+            m_logger.LogTrace("Drive #{Drive}: Write content stream produced for {L} B, written so far {WSF} B, remaining {R} B",
+                DriveNumber, length, writtenSoFar, CapacityForCurrentSet - writtenSoFar);
 
             return (TapeWriteStream)Stream;
         }

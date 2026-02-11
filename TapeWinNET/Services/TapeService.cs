@@ -143,6 +143,18 @@ public class TapeService : IDisposable
                         return false;
                     }
 
+                    // if multiple partitions, move to content partition to load correct media params
+                    if (_tapeDrive.HasInitiatorPartition)
+                    {
+                        Log(">>> Moving to content partition...");
+                        if (!_tapeDrive.MoveToPartition(MediaPartition.Content))
+                        {
+                            LastError = _tapeDrive.LastErrorMessage;
+                            Log($"!!! Couldn't move to content partition. Error: {LastError}");
+                            return false;
+                        }
+                    }
+
                     Log("vvv Media loaded successfully");
                     LogMediaInfo();
                     Status("Media loaded");

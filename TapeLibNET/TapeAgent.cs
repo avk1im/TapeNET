@@ -385,6 +385,16 @@ namespace TapeLibNET
                 }
             }
 
+            if (result)
+            {
+                // Optimization for the case of TOC in a partition:
+                //  Now that we've restored TOC, we're likely to start restoring content ->
+                //  move to the beginning of content. Besides, in case of TOC in a partition,
+                //  this will ensure the drive reports the media capacity for Content partition
+                if (Drive.HasInitiatorPartition)
+                    Navigator.MoveToBeginOfContent();
+            }
+
             return result;
         }
 

@@ -441,6 +441,7 @@ namespace TapeLibNET
             }
 
             Drive.MoveToPartition(MediaPartition.Content); // ContentPartition
+            // Drive will refresh MediaParams for the new partition, esp. Capacity
 
             m_logger.LogTrace("Drive #{Drive}: Current partition after moving to Content is >{Partition}<",
                 DriveNumber, Drive.GetCurrentPartition());

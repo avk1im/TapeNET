@@ -459,7 +459,8 @@ public class TapeDriveWin32Backend : TapeDriveBackend
             return false;
         }
 
-        SetError(PInvoke.SetTapePosition(m_driveHandle, TAPE_POSITION_METHOD.TAPE_REWIND, 0, 0, 0, false));
+        SetError(PInvoke.SetTapePosition(m_driveHandle,
+            TAPE_POSITION_METHOD.TAPE_REWIND, 0 /*partition ignored*/, 0, 0, false));
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Rewound", LogPrefix);
@@ -469,7 +470,7 @@ public class TapeDriveWin32Backend : TapeDriveBackend
         return WentOK;
     }
 
-    public override bool SeekToEnd(MediaPartition partition)
+    public override bool SeekToEnd(MediaPartition partition = MediaPartition.Current)
     {
         if (!HasMedia)
         {
@@ -478,7 +479,8 @@ public class TapeDriveWin32Backend : TapeDriveBackend
         }
 
         uint win32Partition = MapPartitionToWin32(partition);
-        SetError(PInvoke.SetTapePosition(m_driveHandle, TAPE_POSITION_METHOD.TAPE_SPACE_END_OF_DATA, win32Partition, 0, 0, false));
+        SetError(PInvoke.SetTapePosition(m_driveHandle,
+            TAPE_POSITION_METHOD.TAPE_SPACE_END_OF_DATA, win32Partition, 0, 0, false));
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Seeked to end of partition {Partition}", LogPrefix, partition);
@@ -670,7 +672,17 @@ public class TapeDriveWin32Backend : TapeDriveBackend
         }
 
         if (WentOK)
+        {
+            // QUIRK on AIT drives: Capacity may be smaller than Remaining. Check & fix
+            if (mediaParams.Capacity < mediaParams.Remaining)
+            {
+                m_logger.LogTrace("Media parameters quirk detected: Remaining ({Remaining}) > Capacity ({Capacity}) - adjusted Capcity",
+                    Helpers.BytesToStringLong(mediaParams.Remaining), Helpers.BytesToStringLong(mediaParams.Capacity));
+                mediaParams.Capacity = mediaParams.Remaining;
+            }
+
             m_mediaParams = mediaParams;
+        }
         else
             LogErrorAsDebug("Failed to get media parameters");
 
@@ -684,7 +696,7 @@ public class TapeDriveWin32Backend : TapeDriveBackend
 
         if (HasInitiatorPartition)
         {
-            // partition 1 = initiator, partition 2 = content
+            // In Win32 partition 2 = initiator, partition 1 = content
             return (partition == MediaPartition.Initiator) ? 2U : 1U;
         }
 
@@ -694,7 +706,7 @@ public class TapeDriveWin32Backend : TapeDriveBackend
                 nameof(MapPartitionToWin32));
         }
 
-        // partition 1 = common
+        // In Win32 partition 1 = common
         return 1U;
 
         /*
@@ -716,14 +728,14 @@ public class TapeDriveWin32Backend : TapeDriveBackend
 
     private MediaPartition MapWin32ToPartition(uint win32Partition)
     {
-        if (win32Partition == 0)
+        if (win32Partition == 0U)
             return MediaPartition.Current;
         if (HasInitiatorPartition)
         {
-            // partition 1 = initiator, partition 2 = content
-            return (win32Partition == 2) ? MediaPartition.Initiator : MediaPartition.Content;
+            // In Win32 partition 2 = initiator, partition 1 = content
+            return (win32Partition == 2U) ? MediaPartition.Initiator : MediaPartition.Content;
         }
-        // partition 1 = common
+        // In Win32 partition 1 = common
         return MediaPartition.Content;
     }
 

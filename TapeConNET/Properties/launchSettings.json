@@ -2,10 +2,11 @@
   "profiles": {
     "TapeConNET": {
       "commandName": "Project",
+      //"commandLineArgs": "-d=0",
       //"commandLineArgs": "-d=0 -format",
       //"commandLineArgs": "-d=0 -format single",
       //"commandLineArgs": "-d=0 -c:crc32 -s -append:OFF -block 64 -backup E:\\Temp\\Source.MED2 -list",
-      //"commandLineArgs": "-d=0 -c:crc64 -s -append:ON -block 64 -backup E:\\Temp\\Source.LRG1 -list",
+      "commandLineArgs": "-d=0 -c:crc64 -s -append:ON -block 64 -backup E:\\Temp\\Source.LRG1 -list",
       //"commandLineArgs": "-d=0 -c:crc32 -s -append:ON -1 -filemarks:OFF -block 16 -backup E:\\Temp\\Source.ABC -list",
       //"commandLineArgs": "-d=0 -c:crc32 -s -append:ON -block 4 -backup E:\\Temp\\Source.SMALL.A -list",
       //"commandLineArgs": "-d=0 -c:crc64 -s -inc:ON -block 64 -backup E:\\Temp\\Source.MED2 -list -inc:OFF -list",
@@ -14,7 +15,7 @@
       //"commandLineArgs": "-d=0 -c:crc32 -s -append:ON -filemarks:OFF -block 64 -backup E:\\Temp\\Source\\*.mp4 -list",
       //"commandLineArgs": "-d=0 -c:crc64 -s -append:ON -block 32 -backup E:\\Temp\\Source.MED -list",
       //"commandLineArgs": "-d=0 -c:crc64 -s -incremental -filemarks:OFF -block 64 -backup E:\\Temp\\Source.MED -list",
-      "commandLineArgs": "-d=0 -target E:\\Temp\\Destination -s -e:keep -restore -restore -1 -restore -2",
+      //"commandLineArgs": "-d=0 -target E:\\Temp\\Destination -s -e:keep -restore -restore -1 -restore -2",
       //"commandLineArgs": "-d=0 -target E:\\Temp\\Destination\\SMALL -s -e:keep -restore *.APS *.opt Sony*.* Quantum*.*",
       //"commandLineArgs": "-d=0 -target E:\\Temp\\Destination -s -e:keep -verify -1",
       //"commandLineArgs": "-d=0 -verify -2",

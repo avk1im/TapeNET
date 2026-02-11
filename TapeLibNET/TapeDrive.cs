@@ -601,7 +601,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         return WentOK;
     }
 
-    private bool RefreshMediaParams()
+    internal bool RefreshMediaParams()
     {
         m_backend.FillMediaParameters(out MediaParameters mediaParams);
         SyncErrorFrom(m_backend);
