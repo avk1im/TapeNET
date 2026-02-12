@@ -1,20 +1,14 @@
 ﻿// See https://aka.ms/new-console-template for more information
 
-using System.Runtime.InteropServices;
 using System.Diagnostics;
 
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices;
-using Windows.Win32.Security;
-using Windows.Win32.Storage.FileSystem;
 
 using System.Text;
-using System.ComponentModel;
 using System.IO;
 using System.Text.RegularExpressions;
-using System.Linq.Expressions;
-using System.Diagnostics.Metrics;
 using System.Collections.Generic;
 
 using Microsoft.Extensions.Logging;
@@ -28,6 +22,7 @@ using System.Reflection;
 using System.Diagnostics.CodeAnalysis;
 
 using TapeLibNET;
+using TapeLibNET.Virtual;
 
 
 
@@ -53,7 +48,9 @@ ILoggerFactory factory = Debugger.IsAttached ?
     }) :
     NullLoggerFactory.Instance;
 #endif
-using TapeDrive tapeDrive = TapeDrive.CreateWin32(factory);
+
+// THE tape drive instance used throughout the program
+TapeDrive? tapeDrive = null;
 
 TapeTOC? legacyTOC = null;
 Windows.Win32.System.SystemServices.Stopwatch stopwatch = new();
@@ -174,7 +171,7 @@ Dictionary<string, FlagHandler> flagHandlers = new()
 #endregion // Global program variables
 
 
-#region *** Static functions ***
+#region *** Static helpers ***
 
 static List<List<string>> ParseCommandLine(string[] args)
 {
@@ -328,7 +325,7 @@ static string FormatSetIndex(TapeTOC toc, int setIndex)
     return $"{setIndex} | {toc.SetIndexToAlt(setIndex)}";
 }
 
-#endregion // Static functions
+#endregion // Static helpers
 
 
 #region *** Local functions ***
@@ -516,28 +513,30 @@ void WriteBanner()
 
 void WriteDriveInformation()
 {
-    Console.WriteLine($" ii Device name: >{tapeDrive.DriveDeviceName}<");
+    var drive = EnsureDrive();
 
-    if (!tapeDrive.IsDriveOpen)
+    Console.WriteLine($" ii Device name: >{drive.DriveDeviceName}<");
+
+    if (!drive.IsDriveOpen)
     {
         Console.WriteLine("!!! Drive is not open");
         return;
     }
 
-    Console.WriteLine(" ii Supports multiple partitions: " + (tapeDrive.SupportsInitiatorPartition ? "Yes" : "No"));
-    Console.WriteLine(" ii Supports setmarks: " + (tapeDrive.SupportsSetmarks ? "Yes" : "No"));
-    Console.WriteLine(" ii Supports sequential filemarks: " + (tapeDrive.SupportsSeqFilemarks ? "Yes" : "No"));
+    Console.WriteLine(" ii Supports multiple partitions: " + (drive.SupportsInitiatorPartition ? "Yes" : "No"));
+    Console.WriteLine(" ii Supports setmarks: " + (drive.SupportsSetmarks ? "Yes" : "No"));
+    Console.WriteLine(" ii Supports sequential filemarks: " + (drive.SupportsSeqFilemarks ? "Yes" : "No"));
     Console.WriteLine(" ii Block size [min..default..max]: " +
-        $"[{Helpers.BytesToString(tapeDrive.MinimumBlockSize)}..{Helpers.BytesToString(tapeDrive.DefaultBlockSize)}..{Helpers.BytesToString(tapeDrive.MaximumBlockSize)}]");
+        $"[{Helpers.BytesToString(drive.MinimumBlockSize)}..{Helpers.BytesToString(drive.DefaultBlockSize)}..{Helpers.BytesToString(drive.MaximumBlockSize)}]");
 
-    if (tapeDrive.IsMediaLoaded)
+    if (drive.IsMediaLoaded)
     {
         Console.WriteLine(" ii Media loaded: Yes");
-        Console.WriteLine($" ii Partition count: {tapeDrive.PartitionCount}");
-        if (tapeDrive.PartitionCount > 1)
-            Console.WriteLine($" ii Current partition: {tapeDrive.GetCurrentPartition()}");
-        Console.WriteLine($" ii Capacity: {Helpers.BytesToStringLong(tapeDrive.Capacity)}");
-        Console.WriteLine($" ii Remaining (est.): {Helpers.BytesToStringLong(tapeDrive.GetRemainingCapacity())}");
+        Console.WriteLine($" ii Partition count: {drive.PartitionCount}");
+        if (drive.PartitionCount > 1)
+            Console.WriteLine($" ii Current partition: {drive.GetCurrentPartition()}");
+        Console.WriteLine($" ii Capacity: {Helpers.BytesToStringLong(drive.Capacity)}");
+        Console.WriteLine($" ii Remaining (est.): {Helpers.BytesToStringLong(drive.GetRemainingCapacity())}");
     }
     else
     {
@@ -547,29 +546,32 @@ void WriteDriveInformation()
 
 void WriteMediaInformation(TapeTOC toc)
 {
+    var drive = EnsureDrive();
+
     Console.WriteLine($" ii Name: >{toc.Description}<");
     Console.WriteLine($" ii Created on: {toc.CreationTime}");
     Console.WriteLine($" ii Last saved: {toc.LastSaveTime}");
     Console.WriteLine($" ii Backup sets: {toc.Count}");
-    Console.WriteLine($" ii Capacity: {Helpers.BytesToStringLong(tapeDrive.Capacity)}");
-    var used = toc.ComputeTotalFileSizeOnTape(tapeDrive.DefaultBlockSize);
-    if (!tapeDrive.HasInitiatorPartition)
+    Console.WriteLine($" ii Capacity: {Helpers.BytesToStringLong(drive.Capacity)}");
+    var used = toc.ComputeTotalFileSizeOnTape(drive.DefaultBlockSize);
+    if (!drive.HasInitiatorPartition)
         used += TapeNavigator.TOCCapacity; // if TOC is in set, it consumes content space
-    var remaining = tapeDrive.Capacity - used; //tapeDrive.GetRemainingCapacity();
+    var remaining = drive.Capacity - used; //drive.GetRemainingCapacity();
     Console.WriteLine($" ii Used: {Helpers.BytesToStringLong(used)}");
     Console.WriteLine($" ii Remaining: {Helpers.BytesToStringLong(remaining)}");
-    Console.WriteLine($" ii Remaining (est.): {Helpers.BytesToStringLong(tapeDrive.GetRemainingCapacity())}");
-    Console.WriteLine($" ii TOC placement: {((tapeDrive.HasInitiatorPartition) ? "partition" : "set")}");
+    Console.WriteLine($" ii Remaining (est.): {Helpers.BytesToStringLong(drive.GetRemainingCapacity())}");
+    Console.WriteLine($" ii TOC placement: {((drive.HasInitiatorPartition) ? "partition" : "set")}");
     Console.WriteLine($" ii Volume #{toc.Volume}");
     Console.WriteLine($" ii Continued on next volume? {(toc.ContinuedOnNextVolume ? "Yes" : "No")}");
 }
 
 void WriteCurrentSetInformation(TapeTOC toc)
 {
+    var drive = EnsureDrive();
     var setTOC = toc.CurrentSetTOC;
     Console.WriteLine($" ii Name: >{setTOC.Description}<");
     Console.WriteLine($" ii Files: {setTOC.Count}");
-    Console.WriteLine($" ii Total file size on tape: {Helpers.BytesToStringLong(setTOC.ComputeTotalFileSizeOnTape(tapeDrive.DefaultBlockSize))}");
+    Console.WriteLine($" ii Total file size on tape: {Helpers.BytesToStringLong(setTOC.ComputeTotalFileSizeOnTape(drive.DefaultBlockSize))}");
     Console.WriteLine($" ii Created on: {setTOC.CreationTime}");
     Console.WriteLine($" ii Last saved: {setTOC.LastSaveTime}");
     Console.WriteLine($" ii Block size: {Helpers.BytesToStringLong(setTOC.BlockSize)}");
@@ -601,9 +603,17 @@ string FormatFileInfoIndex(TapeFileInfo tfi, int index)
 
 #region *** Common core functionality ***
 
+// Helper to ensure drive is available
+TapeDrive EnsureDrive()
+{
+    if (tapeDrive == null)
+        OnFatalError("!!! No drive initialized. Use -drive first.");
+    return tapeDrive!;
+}
+
 void CheckDrive()
 {
-    if (!tapeDrive.IsDriveOpen)
+    if (tapeDrive == null || !tapeDrive.IsDriveOpen)
     {
         if (!MessageYesNoCancel("!!! No drive open. Proceed with opening drive 0 ?"))
             return;
@@ -660,6 +670,8 @@ foreach (var flagValues in flagValuesList)
     }
 }
 
+tapeDrive?.Dispose();
+
 return 0;
 
 #endregion // Main program loop
@@ -705,6 +717,15 @@ void HandleHelp(List<string> values)
 
 void HandleDrive(List<string> values)
 {
+    // Check if first argument looks like a file path (not a number)
+    if (values.Count >= 1 && !uint.TryParse(values[0], out _))
+    {
+        // Assume it's a virtual drive with file path(s)
+        HandleVirtualDrive(values);
+        return;
+    }
+
+    // Original Win32 drive handling
     int driveNumber = -1;
 
     if (values.Count == 1)
@@ -717,7 +738,11 @@ void HandleDrive(List<string> values)
         driveNumber = 0;
     }
 
-    Console.WriteLine($"\n>>> Openning drive {driveNumber} ...");
+    Console.WriteLine($"\n>>> Opening Win32 tape drive {driveNumber} ...");
+
+    // Dispose previous drive if any
+    tapeDrive?.Dispose();
+    tapeDrive = TapeDrive.CreateWin32(factory);
 
     if (!tapeDrive.ReopenDrive((uint)driveNumber))
         OnFatalError("!!! Couldn't open drive. Error: " + tapeDrive.LastErrorMessage);
@@ -748,6 +773,74 @@ void HandleDrive(List<string> values)
     WriteDriveInformation();
 }
 
+void HandleVirtualDrive(List<string> values)
+{
+    if (values.Count < 1)
+    {
+        OnFatalError("!!! Virtual drive requires at least one file path for content partition");
+        return;
+    }
+
+    string contentFilePath = values[0];
+    string? initiatorFilePath = values.Count > 1 ? values[1] : null;
+
+    // Determine capabilities based on whether initiator partition is specified
+    var capabilities = initiatorFilePath != null
+        ? VirtualTapeDriveCapabilities.WithPartitions
+        : VirtualTapeDriveCapabilities.WithSetmarks;
+
+    Console.WriteLine($"\n>>> Opening virtual tape drive...");
+    Console.WriteLine($" ii Content file: >{contentFilePath}<");
+    if (initiatorFilePath != null)
+        Console.WriteLine($" ii Initiator file: >{initiatorFilePath}<");
+
+    try
+    {
+        // Dispose previous drive if any
+        tapeDrive?.Dispose();
+
+        var backend = VirtualTapeDriveBackend.CreateFileBacked(
+            factory,
+            contentFilePath,
+            initiatorFilePath,
+            capabilities);
+
+        tapeDrive = new TapeDrive(factory, backend);
+
+        // Virtual drives don't need ReopenDrive - just open with drive number 0
+        if (!tapeDrive.ReopenDrive(0))
+            OnFatalError("!!! Couldn't open virtual drive. Error: " + tapeDrive.LastErrorMessage);
+
+        Console.WriteLine("vvv Virtual drive opened ok");
+
+        legacyTOC = null;
+
+        Console.WriteLine("\n>>> Loading virtual media...");
+
+        if (!tapeDrive.ReloadMedia())
+        {
+            Console.WriteLine("iii Drive information:");
+            WriteDriveInformation();
+
+            OnFatalError("!!! Couldn't load virtual media. Error: " + tapeDrive.LastErrorMessage);
+        }
+
+        Console.WriteLine("vvv Virtual media loaded ok");
+
+        if (tapeDrive.HasInitiatorPartition)
+            tapeDrive.MoveToPartition(MediaPartition.Content);
+
+        filemarksMode = false;
+        blockSizeKB = tapeDrive.BlockSize / 1024U;
+
+        Console.WriteLine("iii Virtual drive information:");
+        WriteDriveInformation();
+    }
+    catch (Exception ex)
+    {
+        OnFatalError($"!!! Couldn't create virtual drive. Exception: {ex.Message}");
+    }
+}
 
 void HandleFormat(List<string> values)
 {
@@ -756,6 +849,7 @@ void HandleFormat(List<string> values)
     Console.WriteLine("\n>>> Formatting media...");
 
     CheckDrive();
+    var drive = EnsureDrive();
 
     bool enforceSinglePartition = false;
 
@@ -765,20 +859,20 @@ void HandleFormat(List<string> values)
         Console.WriteLine("iii Enforcing single partition format");
     }
 
-    if (!tapeDrive.FormatMedia(enforceSinglePartition ? -1 : TapeNavigator.TOCCapacity))
+    if (!drive.FormatMedia(enforceSinglePartition ? -1 : TapeNavigator.TOCCapacity))
     {
-        OnNonFatalError("!!! Couldn't format media. Error: " + tapeDrive.LastErrorMessage);
+        OnNonFatalError("!!! Couldn't format media. Error: " + drive.LastErrorMessage);
         return;
     }
     else
-        Console.WriteLine($"vvv Media formatted ok with TOC in {((tapeDrive.PartitionCount > 1)? "partition" : "set")}");
+        Console.WriteLine($"vvv Media formatted ok with TOC in {((drive.PartitionCount > 1)? "partition" : "set")}");
 
     legacyTOC = null; // no TOC after formatting
 
     Console.WriteLine("\n>>> Loading media...");
 
-    if (!tapeDrive.ReloadMedia())
-        OnFatalError("!!! Couldn't load media. Error: " + tapeDrive.LastErrorMessage);
+    if (!drive.ReloadMedia())
+        OnFatalError("!!! Couldn't load media. Error: " + drive.LastErrorMessage);
 
     Console.WriteLine("vvv Media loaded ok");
 
@@ -789,13 +883,16 @@ void HandleFormat(List<string> values)
 
 void HandleEject(List<string> values)
 {
+    CheckDrive();
+    var drive = EnsureDrive();
+
     if (!MessageYesNoCancel("!!! WARNING: Ejecting media will stop the current operation. Proceed?"))
         return;
 
     Console.WriteLine("\n>>> Ejecting media...");
 
-    if (!tapeDrive.UnloadMedia())
-        OnNonFatalError("!!! Couldn't eject media. Error: " + tapeDrive.LastErrorMessage);
+    if (!drive.UnloadMedia())
+        OnNonFatalError("!!! Couldn't eject media. Error: " + drive.LastErrorMessage);
     else
         Console.WriteLine("vvv Media ejected ok");
 }
@@ -837,9 +934,10 @@ void HandleFilemarks(List<string> values)
         return;
 
     CheckDrive();
+    var drive = EnsureDrive();
 
     // filemarks mode only if drive supports setmarks
-    filemarksMode = tapeDrive.SupportsSetmarks && filemarks;
+    filemarksMode = drive.SupportsSetmarks && filemarks;
 
     if (filemarksMode != filemarks)
     {
@@ -876,8 +974,6 @@ void HandleBlocksize(List<string> values)
 
 void HandleCapacity(List<string> values)
 {
-    CheckDrive();
-
     if (values.Count == 0)
     {
         contentCapacityLimit = -1L;
@@ -991,16 +1087,17 @@ void HandleBackup(List<string> values)
     Console.WriteLine("\n>>> Backing up files...");
 
     CheckDrive();
+    var drive = EnsureDrive();
 
-    if (!tapeDrive.PrepareMedia())
-        OnFatalError("!!! Couldn't prepare media. Error: " + tapeDrive.LastErrorMessage);
+    if (!drive.PrepareMedia())
+        OnFatalError("!!! Couldn't prepare media. Error: " + drive.LastErrorMessage);
 
     try
     {
         bool append = appendMode || (incrementalMode ?? false); // if incremental, must append
         bool incremental = (incrementalMode ?? false);
 
-        using var agent = new TapeFileBackupAgent(tapeDrive, append ? legacyTOC : null);
+        using var agent = new TapeFileBackupAgent(drive, append ? legacyTOC : null);
         var toc = agent.TOC;
         agent.Manager.ContentCapacityLimit = contentCapacityLimit;
         TapeTOC? backupTOC = null;
@@ -1207,7 +1304,7 @@ void HandleBackup(List<string> values)
 
             Console.WriteLine($"vvv Backed up {proc.ProcessedCount} file(s) incl. TOC ~ {Helpers.BytesToString(agent.BytesBackedup)} in " + stopwatch.ElapsedTimeSpan +
                 $" --> throughput {Helpers.BytesToString((long)(agent.BytesBackedup / stopwatch.ElapsedSeconds))}/s");
-            Console.WriteLine($"iii Remaining media capacity: {Helpers.BytesToStringLong(tapeDrive.GetRemainingCapacity())}");
+            Console.WriteLine($"iii Remaining media capacity: {Helpers.BytesToStringLong(drive.GetRemainingCapacity())}");
 
             // Check if we can proceed with the next volume
             if (!agent.CanResumeToNextVolume)
@@ -1217,16 +1314,16 @@ void HandleBackup(List<string> values)
             if (!MessageYesNoCancel("??? Proceed with backup to the next volume?"))
                 break;
             Console.WriteLine(">>> Unloading media...");
-            if (!tapeDrive.UnloadMedia())
+            if (!drive.UnloadMedia())
                 OnNonFatalError("!!! Couldn't unload media. Error: " + agent.LastErrorMessage);
             Console.WriteLine($">>> Please remove media with Volume #{toc.Volume} and insert a formatted media for Volume #{toc.Volume + 1}");
             if (!MessageYesNoCancel($"??? Is the media for Volume #{toc.Volume + 1} in the drive?"))
                 break;
             if (!MessageYesNoCancel($"!!! WARNING: ALL data on the media for Volume #{toc.Volume + 1} will be erased. Proceed with backup?"))
                 break;
-            if (!tapeDrive.ReloadMedia())
+            if (!drive.ReloadMedia())
                 OnFatalError("!!! Couldn't load media. Error: " + agent.LastErrorMessage);
-            if (!tapeDrive.PrepareMedia())
+            if (!drive.PrepareMedia())
                 OnFatalError("!!! Couldn't prepare media. Error: " + agent.LastErrorMessage);
             Console.WriteLine("vvv Media loaded ok");
             // carry on to resume backup
@@ -1294,9 +1391,10 @@ void UniversalRestore(List<string> values, TapeFileRestoreBaseAgent agent, OnFil
     Console.WriteLine($"\n>>> {restoringName} files...");
 
     CheckDrive();
+    var drive = EnsureDrive();
 
-    if (!tapeDrive.PrepareMedia())
-        OnFatalError("!!! Couldn't prepare media. Error: " + tapeDrive.LastErrorMessage);
+    if (!drive.PrepareMedia())
+        OnFatalError("!!! Couldn't prepare media. Error: " + drive.LastErrorMessage);
 
     var toc = agent.TOC;
 
@@ -1365,15 +1463,15 @@ void UniversalRestore(List<string> values, TapeFileRestoreBaseAgent agent, OnFil
                 if (!MessageYesNoCancel($"??? {restoringName}: Proceed with Volume #{agent.VolumeToResumeFrom}?"))
                     break;
                 Console.WriteLine(">>> Unloading media...");
-                if (!tapeDrive.UnloadMedia())
-                    OnNonFatalError("!!! Couldn't unload media. Error: " + tapeDrive.LastErrorMessage);
+                if (!drive.UnloadMedia())
+                    OnNonFatalError("!!! Couldn't unload media. Error: " + drive.LastErrorMessage);
                 Console.WriteLine($">>> Please remove media with Volume #{toc.Volume} and insert media with Volume #{agent.VolumeToResumeFrom}");
                 if (!MessageYesNoCancel($"??? Is the media for Volume #{agent.VolumeToResumeFrom} in the drive?"))
                     break;
                 Console.WriteLine(">>> Loading media...");
-                if (!tapeDrive.ReloadMedia())
+                if (!drive.ReloadMedia())
                     OnFatalError("!!! Couldn't load media. Error: " + agent.LastErrorMessage);
-                if (!tapeDrive.PrepareMedia())
+                if (!drive.PrepareMedia())
                     OnFatalError("!!! Couldn't prepare media. Error: " + agent.LastErrorMessage);
                 Console.WriteLine("vvv Media loaded ok");
 
@@ -1393,7 +1491,7 @@ void UniversalRestore(List<string> values, TapeFileRestoreBaseAgent agent, OnFil
     }
     catch (Exception ex)
     {
-        OnNonFatalError($"!!! {restoringName}: Couldn't process set of files. Exception: " + ex + "\n Error: " + tapeDrive.LastErrorMessage);
+        OnNonFatalError($"!!! {restoringName}: Couldn't process set of files. Exception: " + ex + "\n Error: " + drive.LastErrorMessage);
         return;
     }
 
@@ -1404,7 +1502,8 @@ void UniversalRestore(List<string> values, TapeFileRestoreBaseAgent agent, OnFil
 
 void HandleRestore(List<string> values)
 {
-    var agent = new TapeFileRestoreAgentEx(tapeDrive, targetDir, subdirectoriesMode, handleExisting, legacyTOC);
+    var drive = EnsureDrive();
+    var agent = new TapeFileRestoreAgentEx(drive, targetDir, subdirectoriesMode, handleExisting, legacyTOC);
     var toc = agent.TOC;
     var proc = new OnFileRestoreProcessor(toc, quiteMode);
     UniversalRestore(values, agent, proc, "Restoring");
@@ -1412,7 +1511,8 @@ void HandleRestore(List<string> values)
 
 void HandleValidate(List<string> values)
 {
-    var agent = new TapeFileValidateAgent(tapeDrive, legacyTOC);
+    var drive = EnsureDrive();
+    var agent = new TapeFileValidateAgent(drive, legacyTOC);
     var toc = agent.TOC;
     var proc = new OnFileValidateProcessor(toc, quiteMode);
     UniversalRestore(values, agent, proc, "Validating");
@@ -1420,7 +1520,8 @@ void HandleValidate(List<string> values)
 
 void HandleVerify(List<string> values)
 {
-    var agent = new TapeFileVerifyAgent(tapeDrive, legacyTOC);
+    var drive = EnsureDrive();
+    var agent = new TapeFileVerifyAgent(drive, legacyTOC);
     var toc = agent.TOC;
     var proc = new OnFileVerifyProcessor(toc, quiteMode);
     UniversalRestore(values, agent, proc, "Verifying");
@@ -1434,11 +1535,12 @@ void HandleList(List<string> values)
     Console.WriteLine("\n>>> Listing media content...");
 
     CheckDrive();
+    var drive = EnsureDrive();
 
-    if (!tapeDrive.PrepareMedia())
-        OnFatalError("!!! Couldn't prepare media. Error: " + tapeDrive.LastErrorMessage);
+    if (!drive.PrepareMedia())
+        OnFatalError("!!! Couldn't prepare media. Error: " + drive.LastErrorMessage);
 
-    using var agent = new TapeFileAgent(tapeDrive, legacyTOC); // since we only work with TOC, the base agent is enough
+    using var agent = new TapeFileAgent(drive, legacyTOC); // since we only work with TOC, the base agent is enough
     var toc = agent.TOC;
 
     try
@@ -1448,8 +1550,8 @@ void HandleList(List<string> values)
             return;
         tocSize = agent.BytesRestored - tocSize;
 
-        if (tapeDrive.HasInitiatorPartition)
-            tapeDrive.MoveToPartition(MediaPartition.Content); // to get correct Capacity information
+        if (drive.HasInitiatorPartition)
+            drive.MoveToPartition(MediaPartition.Content); // to get correct Capacity information
 
         Console.WriteLine("iii Media information:");
         WriteMediaInformation(toc);
@@ -1581,7 +1683,7 @@ void HandleList(List<string> values)
     }
     catch (Exception ex)
     {
-        OnNonFatalError("!!! Error listing backup sets. Exception: " + ex + "\n Error: " + tapeDrive.LastErrorMessage);
+        OnNonFatalError("!!! Error listing backup sets. Exception: " + ex + "\n Error: " + drive.LastErrorMessage);
     }
 } // HandleList()
 

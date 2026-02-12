@@ -36,7 +36,7 @@ public readonly record struct VirtualTapeDriveCapabilities
         Capacity = 100 * 1024 * 1024 // 100 MB
     };
 
-    /// <summary>Simulates a drive with setmarks (like DLT).</summary>
+    /// <summary>Simulates a drive with setmarks (like AIT or DAT).</summary>
     public static VirtualTapeDriveCapabilities WithSetmarks => Basic with
     {
         SupportsSetmarks = true,
@@ -54,7 +54,7 @@ public readonly record struct VirtualTapeDriveCapabilities
     public static VirtualTapeDriveCapabilities WithPartitions => WithSetmarks with
     {
         SupportsInitiatorPartition = true,
-        InitiatorPartitionCapacity = 16 * 1024 * 1024, // 16 MB
+        InitiatorPartitionCapacity = 24 * 1024 * 1024, // 24 MB
         Capacity = 1024 * 1024 * 1024 // 1 GB
     };
 
@@ -305,11 +305,19 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             return false;
         }
 
-        m_blockSize = size;
-
         // Update block size on both media
-        m_contentMedia?.SetBlockSize(size);
-        m_initiatorMedia?.SetBlockSize(size);
+        if (!(m_contentMedia?.SetBlockSize(size) ?? true))
+        {
+            SetError(m_contentMedia.LastError);
+            return false;
+        }
+        if (!(m_initiatorMedia?.SetBlockSize(size) ?? true))
+        {
+            SetError(m_initiatorMedia.LastError);
+            return false;
+        }
+
+        m_blockSize = size;
 
         m_logger.LogTrace("{Prefix}: Block size set to {Size}", LogPrefix, size);
         return true;

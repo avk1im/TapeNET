@@ -40,6 +40,8 @@ public class LogLevelConverter : IValueConverter
                 return "Warning";
             if (message.Contains("iii") || message.Contains(">>>") || message.Contains("vvv"))
                 return "Info";
+            if (message.Contains("vvv") || message.Contains(">>>") || message.Contains("vvv"))
+                return "Completed";
         }
         return "Normal";
     }

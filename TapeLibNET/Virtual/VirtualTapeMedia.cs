@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Windows.Win32.Foundation;
@@ -6,25 +5,119 @@ using Windows.Win32.Foundation;
 namespace TapeLibNET.Virtual;
 
 /// <summary>
-/// Represents a tape mark (filemark, setmark, or end-of-data).
+/// Represents a tape mark type.
 /// </summary>
 public enum TapeMarkType : byte
 {
     None = 0,
     Filemark = 1,
     Setmark = 2,
-    EndOfData = 3
+    EndOfData = 3  // Used as return value only, never stored in virtual blocks
 }
 
+// Semantics:
+//  "logical block" -- a data block vsible to the caller. "Block" names mean logical block
+//  "virtual block" -- our internal implementation, never exposed to caller.
+//                     Always called out in names "VirtualBlock"
+
 /// <summary>
-/// A block on virtual tape - either data or a tapemark.
+/// A virtual block on virtual tape - represents either a contiguous range of logical data blocks or a tapemark.
+/// For data: spans multiple logical blocks of the same BlockSize.
+/// For marks: occupies exactly one logical block position.
 /// </summary>
-internal readonly record struct VirtualTapeBlock(
-    bool IsMark,
-    TapeMarkType MarkType,
-    int DataLength,      // 0 for marks, actual length for data (always equals BlockSize for data)
-    long StreamOffset    // Position in stream where this block's data starts (for data blocks)
-);
+internal readonly record struct VirtualTapeBlock
+{
+    /// <summary>True if this is a tape mark, false if data.</summary>
+    public bool IsMark { get; init; }
+
+    /// <summary>Type of mark (only valid if IsMark is true).</summary>
+    public TapeMarkType MarkType { get; init; }
+
+    /// <summary>Logical block size used when writing (0 for marks).</summary>
+    public uint BlockSize { get; init; }
+
+    /// <summary>Starting logical block number.</summary>
+    public long BeginAtBlock { get; init; }
+
+    /// <summary>Total bytes of data (0 for marks).</summary>
+    public long DataLength { get; init; }
+
+    /// <summary>Position in backing stream where data starts (-1 for marks).</summary>
+    public long StreamOffset { get; init; }
+
+    /// <summary>Number of logical blocks in this virtual block (0 for marks, 1+ for data).</summary>
+    public int BlockCount => IsMark ? 0 : (int)(DataLength / BlockSize);
+
+    /// <summary>Logical block number just after this virtual block (BeginAtBlock + BlockCount, or +1 for marks).</summary>
+    public long EndBlock => BeginAtBlock + (IsMark ? 1 : BlockCount);
+
+    /// <summary>Creates a data virtual block.</summary>
+    public static VirtualTapeBlock CreateData(long beginAtBlock, uint blockSize, long dataLength, long streamOffset) =>
+        new()
+        {
+            IsMark = false,
+            MarkType = TapeMarkType.None,
+            BlockSize = blockSize,
+            BeginAtBlock = beginAtBlock,
+            DataLength = dataLength,
+            StreamOffset = streamOffset
+        };
+
+    /// <summary>Creates a mark virtual block (occupies 1 logical block position).</summary>
+    public static VirtualTapeBlock CreateMark(long atBlock, TapeMarkType markType) =>
+        new()
+        {
+            IsMark = true,
+            MarkType = markType,
+            BlockSize = 0,
+            BeginAtBlock = atBlock,
+            DataLength = 0,
+            StreamOffset = -1
+        };
+
+    /// <summary>
+    /// Returns a new virtual block truncated at the given logical block position.
+    /// The truncated block spans from BeginAtBlock to (but not including) truncateAtBlock.
+    /// </summary>
+    public VirtualTapeBlock TruncateAt(long truncateAtBlock)
+    {
+        if (IsMark)
+            return this; // Marks cannot be truncated
+
+        long newBlockCount = truncateAtBlock - BeginAtBlock;
+        if (newBlockCount <= 0)
+            return this with { DataLength = 0 };
+
+        return this with { DataLength = newBlockCount * BlockSize };
+    }
+
+    /// <summary>
+    /// Returns a new virtual block expanded by the given number of bytes.
+    /// </summary>
+    public VirtualTapeBlock ExpandBy(long additionalBytes)
+    {
+        if (IsMark)
+            return this;
+        return this with { DataLength = DataLength + additionalBytes };
+    }
+
+    /// <summary>
+    /// Checks if this virtual block contains the given logical block position.
+    /// </summary>
+    public bool ContainsBlock(long logicalBlock) =>
+        logicalBlock >= BeginAtBlock && logicalBlock < EndBlock;
+
+    /// <summary>
+    /// Gets the stream offset for reading a specific logical block within this data block.
+    /// Returns -1 if this is a mark or block is not contained.
+    /// </summary>
+    public long GetStreamOffsetForBlock(long logicalBlock)
+    {
+        if (IsMark || !ContainsBlock(logicalBlock))
+            return -1;
+        return StreamOffset + (logicalBlock - BeginAtBlock) * BlockSize;
+    }
+}
 
 /// <summary>
 /// Simulates tape media backed by a Stream.
@@ -37,8 +130,9 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
     private readonly Stream m_stream;
     private readonly bool m_ownsStream;
-    private readonly List<VirtualTapeBlock> m_blockIndex = [];
-    private int m_currentBlock = 0;
+    private readonly List<VirtualTapeBlock> m_virtualBlocks = [];
+    private long m_currentBlock = 0;              // Current logical block position
+    private int m_currentVirtualBlockIndex = 0;   // Index into m_virtualBlocks
     private uint m_blockSize;
     private readonly uint m_minBlockSize;
     private readonly uint m_maxBlockSize;
@@ -99,8 +193,19 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
     public uint MaxBlockSize => m_maxBlockSize;
     public long Capacity => m_capacity;
     public long Remaining => Math.Max(0, m_capacity - m_bytesWritten);
-    public int CurrentBlock => m_currentBlock;
-    public bool IsAtEnd => m_currentBlock >= m_blockIndex.Count;
+    public long CurrentBlock => m_currentBlock;
+    public bool IsAtEnd => m_currentVirtualBlockIndex >= m_virtualBlocks.Count;
+    public bool IsAtBeginning => m_currentBlock == 0;
+
+    /// <summary>
+    /// If true, writing can only resume from BOT, EOD, or immediately after a tape mark.
+    /// </summary>
+    public bool ResumeWriteFromMarkOnly { get; set; } = false;
+
+    /// <summary>Total logical block count across all virtual blocks.</summary>
+    public long TotalBlockCount => m_virtualBlocks.Count > 0
+        ? m_virtualBlocks[^1].EndBlock
+        : 0;
 
     #endregion
 
@@ -109,7 +214,6 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
     /// <summary>
     /// Sets the block size for subsequent read/write operations.
     /// </summary>
-    /// <returns>True if successful, false if size is out of valid range.</returns>
     public bool SetBlockSize(uint size)
     {
         if (size < m_minBlockSize || size > m_maxBlockSize)
@@ -158,38 +262,59 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
         if (count == 0)
             return 0;
 
+        // Check ResumeWriteFromMarkOnly constraint
+        if (ResumeWriteFromMarkOnly && !CanResumeWrite())
+        {
+            SetError(WIN32_ERROR.ERROR_WRITE_FAULT, "Write must resume from BOT, EOD, or tape mark");
+            return 0;
+        }
+
         // Check capacity
         if (Remaining < count)
         {
             SetError(WIN32_ERROR.ERROR_END_OF_MEDIA);
             // Still try to write what we can (in complete blocks)
-            int availableBlocks = (int)(Remaining / m_blockSize);
-            count = availableBlocks * (int)m_blockSize;
+            long availableBlocks = Remaining / m_blockSize;
+            count = (int)(availableBlocks * m_blockSize);
             if (count == 0)
                 return 0;
         }
 
-        // Truncate any blocks after current position (overwrite mode)
+        // Truncate any data after current position (overwrite mode)
         TruncateFromCurrentPosition();
 
         int totalWritten = 0;
+        long streamOffset = m_stream.Position;
 
         try
         {
-            while (count >= m_blockSize)
+            m_stream.Write(buffer, offset, count);
+            totalWritten = count;
+            m_bytesWritten += count;
+
+            int blocksWritten = count / (int)m_blockSize;
+
+            // Optimization: expand last virtual block if it's data with same BlockSize and contiguous
+            if (m_virtualBlocks.Count > 0)
             {
-                long streamOffset = m_stream.Position;
-
-                m_stream.Write(buffer, offset, (int)m_blockSize);
-
-                m_blockIndex.Add(new VirtualTapeBlock(false, TapeMarkType.None, (int)m_blockSize, streamOffset));
-                m_currentBlock++;
-                m_bytesWritten += m_blockSize;
-
-                offset += (int)m_blockSize;
-                count -= (int)m_blockSize;
-                totalWritten += (int)m_blockSize;
+                var lastVB = m_virtualBlocks[^1];
+                if (!lastVB.IsMark &&
+                    lastVB.BlockSize == m_blockSize &&
+                    lastVB.EndBlock == m_currentBlock)
+                {
+                    // Expand the last virtual block instead of adding a new one
+                    m_virtualBlocks[^1] = lastVB.ExpandBy(count);
+                    m_currentBlock += blocksWritten;
+                    // m_currentVirtualBlockIndex stays pointing past the last block
+                    return totalWritten;
+                }
             }
+
+            // Add new virtual block
+            var newVB = VirtualTapeBlock.CreateData(m_currentBlock, m_blockSize, count, streamOffset);
+            m_virtualBlocks.Add(newVB);
+            m_currentVirtualBlockIndex = m_virtualBlocks.Count; // Point past end
+            m_currentBlock += blocksWritten;
         }
         catch (Exception ex)
         {
@@ -207,11 +332,47 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
     {
         ResetError();
 
+        // Check ResumeWriteFromMarkOnly constraint
+        if (ResumeWriteFromMarkOnly && !CanResumeWrite())
+        {
+            SetError(WIN32_ERROR.ERROR_WRITE_FAULT, "Write must resume from BOT, EOD, or tape mark");
+            return false;
+        }
+
         TruncateFromCurrentPosition();
-        m_blockIndex.Add(new VirtualTapeBlock(true, markType, 0, -1));
+
+        var mark = VirtualTapeBlock.CreateMark(m_currentBlock, markType);
+        m_virtualBlocks.Add(mark);
+        m_currentVirtualBlockIndex = m_virtualBlocks.Count; // Point past end
         m_currentBlock++;
 
         return true;
+    }
+
+    /// <summary>
+    /// Checks if writing can resume at current position (BOT, EOD, or just after a mark).
+    /// </summary>
+    private bool CanResumeWrite()
+    {
+        // BOT is always valid
+        if (m_currentBlock == 0)
+            return true;
+
+        // EOD is always valid
+        if (m_currentVirtualBlockIndex >= m_virtualBlocks.Count)
+            return true;
+
+        // Check if current position is just after a mark
+        // Find the virtual block that ends at or contains current position
+        int vbIndex = FindVirtualBlockIndexBefore(m_currentBlock);
+        if (vbIndex >= 0)
+        {
+            var vb = m_virtualBlocks[vbIndex];
+            if (vb.IsMark && vb.EndBlock == m_currentBlock)
+                return true;
+        }
+
+        return false;
     }
 
     #endregion
@@ -220,7 +381,7 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
     /// <summary>
     /// Reads data blocks from tape. Count must be a multiple of BlockSize.
-    /// If a tapemark is encountered, any partial block is discarded.
+    /// If a tapemark is encountered, reading stops and returns data read so far.
     /// </summary>
     /// <returns>Number of bytes read (always multiple of BlockSize, or 0 on tapemark/EOD).</returns>
     public int ReadBlocks(byte[] buffer, int offset, int count, out TapeMarkType markEncountered)
@@ -251,8 +412,11 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
         if (count == 0)
             return 0;
 
+        // Sync virtual block index with current logical block
+        SyncVirtualBlockIndex();
+
         // Check if at end of data
-        if (m_currentBlock >= m_blockIndex.Count)
+        if (m_currentVirtualBlockIndex >= m_virtualBlocks.Count)
         {
             markEncountered = TapeMarkType.EndOfData;
             SetError(WIN32_ERROR.ERROR_NO_DATA_DETECTED);
@@ -263,54 +427,59 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
         try
         {
-            while (count >= m_blockSize && m_currentBlock < m_blockIndex.Count)
+            while (count >= m_blockSize && m_currentVirtualBlockIndex < m_virtualBlocks.Count)
             {
-                var block = m_blockIndex[m_currentBlock];
+                var vb = m_virtualBlocks[m_currentVirtualBlockIndex];
 
                 // Check for tapemark
-                if (block.IsMark)
+                if (vb.IsMark)
                 {
-                    markEncountered = block.MarkType;
-                    m_currentBlock++; // Move past the mark
+                    markEncountered = vb.MarkType;
+                    m_currentVirtualBlockIndex++;
+                    m_currentBlock = vb.EndBlock;
 
-                    // Set appropriate error code
-                    SetError(block.MarkType switch
+                    SetError(vb.MarkType switch
                     {
                         TapeMarkType.Filemark => WIN32_ERROR.ERROR_FILEMARK_DETECTED,
                         TapeMarkType.Setmark => WIN32_ERROR.ERROR_SETMARK_DETECTED,
-                        TapeMarkType.EndOfData => WIN32_ERROR.ERROR_NO_DATA_DETECTED,
                         _ => WIN32_ERROR.NO_ERROR
                     });
 
-                    // Return what we've read so far (tapemark ends this read)
                     return totalRead;
                 }
 
-                // Seek to block position in stream
-                m_stream.Position = block.StreamOffset;
-
-                // Read the block
-                int bytesToRead = Math.Min(block.DataLength, (int)m_blockSize);
-                int bytesRead = m_stream.Read(buffer, offset, bytesToRead);
-
-                if (bytesRead < bytesToRead)
+                // Read logical blocks from this virtual data block
+                while (count >= m_blockSize && vb.ContainsBlock(m_currentBlock))
                 {
-                    // Unexpected end of stream - data corruption
-                    SetError(WIN32_ERROR.ERROR_READ_FAULT);
-                    LogErrorAsDebug("Unexpected end of stream");
-                    return totalRead;
+                    long streamPos = vb.GetStreamOffsetForBlock(m_currentBlock);
+                    m_stream.Position = streamPos;
+
+                    // Read at current block size, handle size mismatch
+                    int bytesToRead = (int)Math.Min(vb.BlockSize, m_blockSize);
+                    int bytesRead = m_stream.Read(buffer, offset, bytesToRead);
+
+                    if (bytesRead < bytesToRead)
+                    {
+                        SetError(WIN32_ERROR.ERROR_READ_FAULT);
+                        LogErrorAsDebug("Unexpected end of stream");
+                        return totalRead;
+                    }
+
+                    // Pad with zeros if read block was smaller than current block size
+                    if (bytesRead < m_blockSize)
+                    {
+                        Array.Clear(buffer, offset + bytesRead, (int)m_blockSize - bytesRead);
+                    }
+
+                    m_currentBlock++;
+                    offset += (int)m_blockSize;
+                    count -= (int)m_blockSize;
+                    totalRead += (int)m_blockSize;
                 }
 
-                // Pad with zeros if block was written with smaller size
-                if (bytesRead < m_blockSize)
-                {
-                    Array.Clear(buffer, offset + bytesRead, (int)m_blockSize - bytesRead);
-                }
-
-                m_currentBlock++;
-                offset += (int)m_blockSize;
-                count -= (int)m_blockSize;
-                totalRead += (int)m_blockSize;
+                // Move to next virtual block if we've exhausted this one
+                if (!vb.ContainsBlock(m_currentBlock))
+                    m_currentVirtualBlockIndex++;
             }
         }
         catch (Exception ex)
@@ -326,7 +495,10 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
     #region *** Positioning Operations ***
 
-    public bool SeekToBlock(int block)
+    /// <summary>
+    /// Seeks to the specified logical block position.
+    /// </summary>
+    public bool SeekToBlock(long block)
     {
         ResetError();
 
@@ -336,32 +508,42 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
             return false;
         }
 
-        if (block > m_blockIndex.Count)
+        if (block > TotalBlockCount)
         {
             SetError(WIN32_ERROR.ERROR_SECTOR_NOT_FOUND);
             return false;
         }
 
         m_currentBlock = block;
+        SyncVirtualBlockIndex();
 
-        // Position stream to the block's data offset
-        if (block < m_blockIndex.Count && !m_blockIndex[block].IsMark)
+        // Position stream if we're inside a data block
+        if (m_currentVirtualBlockIndex < m_virtualBlocks.Count)
         {
-            try
+            var vb = m_virtualBlocks[m_currentVirtualBlockIndex];
+            if (!vb.IsMark && vb.ContainsBlock(block))
             {
-                m_stream.Position = m_blockIndex[block].StreamOffset;
-            }
-            catch (Exception ex)
-            {
-                SetError(ex);
-                LogErrorAsDebug("Stream seek failed");
-                return false;
+                try
+                {
+                    m_stream.Position = vb.GetStreamOffsetForBlock(block);
+                }
+                catch (Exception ex)
+                {
+                    SetError(ex);
+                    LogErrorAsDebug("Stream seek failed");
+                    return false;
+                }
             }
         }
 
         return true;
     }
 
+    /// <summary>
+    /// Spaces over tape marks of the specified type.
+    /// Forward (count > 0): ends AFTER the last mark passed.
+    /// Backward (count < 0): ends AT (before) the last mark passed.
+    /// </summary>
     public int SpaceMarks(TapeMarkType markType, int count)
     {
         ResetError();
@@ -369,60 +551,65 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
         if (count == 0)
             return 0;
 
+        SyncVirtualBlockIndex();
+
         int direction = count > 0 ? 1 : -1;
         int remaining = Math.Abs(count);
         int moved = 0;
 
-        while (remaining > 0)
+        if (direction > 0)
         {
-            if (direction > 0)
+            // Moving forward: scan through virtual blocks, count marks, end AFTER the target mark
+            while (remaining > 0 && m_currentVirtualBlockIndex < m_virtualBlocks.Count)
             {
-                // Moving forward
-                if (m_currentBlock >= m_blockIndex.Count)
-                {
-                    SetError(WIN32_ERROR.ERROR_NO_DATA_DETECTED);
-                    break;
-                }
+                var vb = m_virtualBlocks[m_currentVirtualBlockIndex];
 
-                m_currentBlock++;
+                // Move position to end of this virtual block
+                m_currentBlock = vb.EndBlock;
+                m_currentVirtualBlockIndex++;
 
-                if (m_currentBlock <= m_blockIndex.Count)
-                {
-                    // Check the block we just passed
-                    var passedBlock = m_blockIndex[m_currentBlock - 1];
-                    if (passedBlock.IsMark && passedBlock.MarkType == markType)
-                    {
-                        remaining--;
-                        moved++;
-                    }
-                }
-            }
-            else
-            {
-                // Moving backward
-                if (m_currentBlock <= 0)
-                {
-                    SetError(WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA);
-                    break;
-                }
-
-                m_currentBlock--;
-
-                var passedBlock = m_blockIndex[m_currentBlock];
-                if (passedBlock.IsMark && passedBlock.MarkType == markType)
+                // Count if it's the mark type we're looking for
+                if (vb.IsMark && vb.MarkType == markType)
                 {
                     remaining--;
                     moved++;
                 }
             }
+
+            if (remaining > 0)
+                SetError(WIN32_ERROR.ERROR_NO_DATA_DETECTED);
+        }
+        else
+        {
+            // Moving backward: scan backwards, count marks, end AT (before) the target mark
+            while (remaining > 0 && m_currentVirtualBlockIndex > 0)
+            {
+                m_currentVirtualBlockIndex--;
+                var vb = m_virtualBlocks[m_currentVirtualBlockIndex];
+
+                // Move position to beginning of this virtual block
+                m_currentBlock = vb.BeginAtBlock;
+
+                // Count if it's the mark type we're looking for
+                if (vb.IsMark && vb.MarkType == markType)
+                {
+                    remaining--;
+                    moved++;
+                }
+            }
+
+            if (remaining > 0)
+                SetError(WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA);
         }
 
         return moved * direction;
     }
 
+    /// <summary>Rewinds to beginning of tape.</summary>
     public void Rewind()
     {
         m_currentBlock = 0;
+        m_currentVirtualBlockIndex = 0;
         ResetError();
 
         try
@@ -435,9 +622,11 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
         }
     }
 
+    /// <summary>Seeks to end of data.</summary>
     public void SeekToEnd()
     {
-        m_currentBlock = m_blockIndex.Count;
+        m_currentVirtualBlockIndex = m_virtualBlocks.Count;
+        m_currentBlock = TotalBlockCount;
         ResetError();
     }
 
@@ -450,15 +639,23 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
     /// </summary>
     public void Reset()
     {
-        m_blockIndex.Clear();
+        m_virtualBlocks.Clear();
         m_currentBlock = 0;
+        m_currentVirtualBlockIndex = 0;
         m_bytesWritten = 0;
         ResetError();
 
         try
         {
-            m_stream.SetLength(0);
             m_stream.Position = 0;
+        }
+        catch
+        {
+            // Best effort - stream may not support seeking
+        }
+        try
+        {
+            m_stream.SetLength(0);
         }
         catch
         {
@@ -501,39 +698,158 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
     #region *** Private Helpers ***
 
+    /// <summary>
+    /// Synchronizes m_currentVirtualBlockIndex with m_currentBlock.
+    /// </summary>
+    private void SyncVirtualBlockIndex()
+    {
+        m_currentVirtualBlockIndex = FindVirtualBlockIndex(m_currentBlock);
+    }
+
+    /// <summary>
+    /// Finds the virtual block index that contains the given logical block.
+    /// Returns m_virtualBlocks.Count if block is at or past end.
+    /// </summary>
+    private int FindVirtualBlockIndex(long logicalBlock)
+    {
+        if (m_virtualBlocks.Count == 0)
+            return 0;
+
+        if (logicalBlock >= TotalBlockCount)
+            return m_virtualBlocks.Count;
+
+        // Binary search for efficiency
+        int left = 0;
+        int right = m_virtualBlocks.Count - 1;
+
+        while (left <= right)
+        {
+            int mid = left + (right - left) / 2;
+            var vb = m_virtualBlocks[mid];
+
+            if (logicalBlock < vb.BeginAtBlock)
+                right = mid - 1;
+            else if (logicalBlock >= vb.EndBlock)
+                left = mid + 1;
+            else
+                return mid;
+        }
+
+        return left;
+    }
+
+    /// <summary>
+    /// Finds the virtual block index that ends at or just before the given logical block.
+    /// Returns -1 if no such block exists.
+    /// </summary>
+    private int FindVirtualBlockIndexBefore(long logicalBlock)
+    {
+        if (m_virtualBlocks.Count == 0 || logicalBlock <= 0)
+            return -1;
+
+        int idx = FindVirtualBlockIndex(logicalBlock - 1);
+        if (idx < m_virtualBlocks.Count && m_virtualBlocks[idx].EndBlock <= logicalBlock)
+            return idx;
+        if (idx > 0)
+            return idx - 1;
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Truncates all data from the current logical block position onwards.
+    /// Handles splitting a virtual block if current position is inside it.
+    /// </summary>
     private void TruncateFromCurrentPosition()
     {
-        if (m_currentBlock < m_blockIndex.Count)
+        SyncVirtualBlockIndex();
+
+        if (m_currentVirtualBlockIndex >= m_virtualBlocks.Count)
+            return; // At end, nothing to truncate
+
+        var vb = m_virtualBlocks[m_currentVirtualBlockIndex];
+
+        // Check if we're in the middle of a data virtual block (need to split)
+        if (!vb.IsMark && vb.ContainsBlock(m_currentBlock) && m_currentBlock > vb.BeginAtBlock)
         {
-            // Calculate bytes to remove
-            for (int i = m_currentBlock; i < m_blockIndex.Count; i++)
-            {
-                if (!m_blockIndex[i].IsMark)
-                    m_bytesWritten -= m_blockIndex[i].DataLength;
-            }
+            // Calculate bytes being removed from this block
+            long bytesRemoved = (vb.EndBlock - m_currentBlock) * vb.BlockSize;
+            m_bytesWritten -= bytesRemoved;
 
-            // Remove blocks from index
-            m_blockIndex.RemoveRange(m_currentBlock, m_blockIndex.Count - m_currentBlock);
+            // Truncate this virtual block
+            var truncated = vb.TruncateAt(m_currentBlock);
+            m_virtualBlocks[m_currentVirtualBlockIndex] = truncated;
 
-            // Truncate stream
-            try
-            {
-                // Find stream position for current block
-                long streamPos = 0;
-                for (int i = 0; i < m_currentBlock; i++)
-                {
-                    if (!m_blockIndex[i].IsMark)
-                        streamPos += m_blockIndex[i].DataLength;
-                }
-
-                m_stream.SetLength(streamPos);
-                m_stream.Position = streamPos;
-            }
-            catch
-            {
-                // Best effort - stream may not support truncation
-            }
+            // Remove all subsequent virtual blocks
+            RemoveVirtualBlocksFrom(m_currentVirtualBlockIndex + 1);
         }
+        else if (vb.BeginAtBlock == m_currentBlock)
+        {
+            // Current position is at the start of a virtual block - remove it and all following
+            RemoveVirtualBlocksFrom(m_currentVirtualBlockIndex);
+        }
+        // else: current position is past this virtual block - shouldn't happen if SyncVirtualBlockIndex is correct
+        else
+            LogErrorAsDebug("Unexpected: current block points past last virtual block");
+
+        // Truncate stream to match
+        TruncateStream();
+    }
+
+    /// <summary>
+    /// Removes all virtual blocks starting from the given index.
+    /// </summary>
+    private void RemoveVirtualBlocksFrom(int startIndex)
+    {
+        if (startIndex >= m_virtualBlocks.Count)
+            return;
+
+        // Subtract bytes from all removed data blocks
+        for (int i = startIndex; i < m_virtualBlocks.Count; i++)
+        {
+            if (!m_virtualBlocks[i].IsMark)
+                m_bytesWritten -= m_virtualBlocks[i].DataLength;
+        }
+
+        m_virtualBlocks.RemoveRange(startIndex, m_virtualBlocks.Count - startIndex);
+    }
+
+    /// <summary>
+    /// Truncates the backing stream to match the current virtual block state.
+    /// </summary>
+    private void TruncateStream()
+    {
+        long streamPos = CalculateStreamLength();
+        try
+        {
+            m_stream.SetLength(streamPos);
+        }
+        catch
+        {
+            // Best effort - stream may not support truncation
+        }
+        try
+        {
+            m_stream.Position = streamPos;
+        }
+        catch
+        {
+            // Best effort - stream may not support seeking
+        }
+    }
+
+    /// <summary>
+    /// Calculates total stream length based on all data virtual blocks.
+    /// </summary>
+    private long CalculateStreamLength()
+    {
+        long length = 0;
+        foreach (var vb in m_virtualBlocks)
+        {
+            if (!vb.IsMark)
+                length += vb.DataLength;
+        }
+        return length;
     }
 
     #endregion

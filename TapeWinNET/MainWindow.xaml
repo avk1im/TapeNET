@@ -302,6 +302,9 @@
                                         <DataTrigger Binding="{Binding Converter={x:Static converters:LogLevelConverter.Instance}}" Value="Info">
                                             <Setter Property="Foreground" Value="Blue" />
                                         </DataTrigger>
+                                        <DataTrigger Binding="{Binding Converter={x:Static converters:LogLevelConverter.Instance}}" Value="Completed">
+                                            <Setter Property="Foreground" Value="Green" />
+                                        </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </TextBlock.Style>
