@@ -79,7 +79,7 @@ namespace TapeLibNET
                     // translate Navigator.CurrentContentSet to the index on volume
                     int navCurr = (Navigator.CurrentContentSet >= 0) ? Navigator.CurrentContentSet :
                         TOC.SetIndexToStd(Navigator.CurrentContentSet + 2) - TOC.FirstSetOnVolume; // consider (-2)-based index
-                    Debug.Assert(navCurr > 0);
+                    Debug.Assert(navCurr >= 0);
 
                     toCurr = Math.Abs(navCurr - toBegin); // notice here toBegin == TOC.CurrentSetIndexOnVolume
                 }

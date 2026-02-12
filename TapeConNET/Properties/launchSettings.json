@@ -2,11 +2,15 @@
   "profiles": {
     "TapeConNET": {
       "commandName": "Project",
+      //"commandLineArgs": "-d content.dat init.dat -list",
+      //"commandLineArgs": "-d E:\\Temp\\content.dat E:\\Temp\\init.dat -c:crc32 -s -a:ON -block 16 -b E:\\Temp\\Source.ABC -list",
+      //"commandLineArgs": "-d E:\\Temp\\content.dat E:\\Temp\\init.dat -c:crc32 -s -a:ON -1 -block 64 -backup E:\\Temp\\Source.MED2 -list",
+      "commandLineArgs": "-d E:\\Temp\\content.dat E:\\Temp\\init.dat -c:crc32 -s -append:ON -block 4 -backup E:\\Temp\\Source.SMALL.A -list",
       //"commandLineArgs": "-d=0",
       //"commandLineArgs": "-d=0 -format",
       //"commandLineArgs": "-d=0 -format single",
-      //"commandLineArgs": "-d=0 -c:crc32 -s -append:OFF -block 64 -backup E:\\Temp\\Source.MED2 -list",
-      "commandLineArgs": "-d=0 -c:crc64 -s -append:ON -block 64 -backup E:\\Temp\\Source.LRG1 -list",
+      //"commandLineArgs": "-d=0 -c:crc32 -s -append:ON -block 64 -backup E:\\Temp\\Source.MED2 -list",
+      //"commandLineArgs": "-d=0 -c:crc64 -s -append:ON -block 64 -backup E:\\Temp\\Source.LRG1 -list",
       //"commandLineArgs": "-d=0 -c:crc32 -s -append:ON -1 -filemarks:OFF -block 16 -backup E:\\Temp\\Source.ABC -list",
       //"commandLineArgs": "-d=0 -c:crc32 -s -append:ON -block 4 -backup E:\\Temp\\Source.SMALL.A -list",
       //"commandLineArgs": "-d=0 -c:crc64 -s -inc:ON -block 64 -backup E:\\Temp\\Source.MED2 -list -inc:OFF -list",

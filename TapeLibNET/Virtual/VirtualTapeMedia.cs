@@ -16,7 +16,7 @@ public enum TapeMarkType : byte
 }
 
 // Semantics:
-//  "logical block" -- a data block vsible to the caller. "Block" names mean logical block
+//  "logical block" -- a data block visible to the caller. "Block" names mean logical block
 //  "virtual block" -- our internal implementation, never exposed to caller.
 //                     Always called out in names "VirtualBlock"
 
@@ -117,6 +117,35 @@ internal readonly record struct VirtualTapeBlock
             return -1;
         return StreamOffset + (logicalBlock - BeginAtBlock) * BlockSize;
     }
+
+    #region *** Serialization ***
+
+    /// <summary>Serializes this virtual block.</summary>
+    public void SerializeTo(TapeSerializer serializer)
+    {
+        serializer.Serialize(IsMark);
+        serializer.Serialize((byte)MarkType);
+        serializer.Serialize(BlockSize);
+        serializer.Serialize(BeginAtBlock);
+        serializer.Serialize(DataLength);
+        serializer.Serialize(StreamOffset);
+    }
+
+    /// <summary>Deserializes a virtual block.</summary>
+    public static VirtualTapeBlock DeserializeFrom(TapeDeserializer deserializer)
+    {
+        return new VirtualTapeBlock
+        {
+            IsMark = deserializer.DeserializeBoolean(),
+            MarkType = (TapeMarkType)deserializer.DeserializeBytes(1)![0],
+            BlockSize = deserializer.DeserializeUInt32(),
+            BeginAtBlock = deserializer.DeserializeInt64(),
+            DataLength = deserializer.DeserializeInt64(),
+            StreamOffset = deserializer.DeserializeInt64()
+        };
+    }
+
+    #endregion
 }
 
 /// <summary>
@@ -126,10 +155,20 @@ internal readonly record struct VirtualTapeBlock
 /// </summary>
 public class VirtualTapeMedia : ErrorManageableBase, IDisposable
 {
+    #region *** Constants ***
+
+    // Metadata signature: "VM" for Virtual Media
+    private static readonly byte[] MetadataSignature = [(byte)'V', (byte)'M'];
+    private const ushort MetadataVersion = 0x0100;
+
+    #endregion
+
     #region *** Private Fields ***
 
     private readonly Stream m_stream;
+    private readonly Stream? m_metadataStream;
     private readonly bool m_ownsStream;
+    private readonly bool m_ownsMetadataStream;
     private readonly List<VirtualTapeBlock> m_virtualBlocks = [];
     private long m_currentBlock = 0;              // Current logical block position
     private int m_currentVirtualBlockIndex = 0;   // Index into m_virtualBlocks
@@ -139,6 +178,7 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
     private readonly long m_capacity;
     private long m_bytesWritten = 0;
     private readonly string m_name;
+    private bool m_metadataDirty = false;
 
     #endregion
 
@@ -151,6 +191,8 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
         uint defaultBlockSize,
         long capacity,
         bool ownsStream = true,
+        Stream? metadataStream = null,
+        bool ownsMetadataStream = true,
         string? name = null,
         ILoggerFactory? loggerFactory = null)
         : base((loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<VirtualTapeMedia>())
@@ -162,12 +204,20 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
         ArgumentOutOfRangeException.ThrowIfGreaterThan(defaultBlockSize, maxBlockSize);
 
         m_stream = stream;
+        m_metadataStream = metadataStream;
         m_minBlockSize = minBlockSize;
         m_maxBlockSize = maxBlockSize;
         m_blockSize = defaultBlockSize;
         m_capacity = capacity;
         m_ownsStream = ownsStream;
+        m_ownsMetadataStream = ownsMetadataStream;
         m_name = name ?? "VirtualMedia";
+
+        // Try to load existing metadata
+        if (m_metadataStream != null && m_metadataStream.Length > 0)
+        {
+            LoadMetadata();
+        }
     }
 
     /// <summary>Simplified constructor with single block size.</summary>
@@ -176,9 +226,12 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
         uint blockSize,
         long capacity,
         bool ownsStream = true,
+        Stream? metadataStream = null,
+        bool ownsMetadataStream = true,
         string? name = null,
         ILoggerFactory? loggerFactory = null)
-        : this(stream, blockSize, blockSize, blockSize, capacity, ownsStream, name, loggerFactory)
+        : this(stream, blockSize, blockSize, blockSize, capacity, ownsStream,
+               metadataStream, ownsMetadataStream, name, loggerFactory)
     {
     }
 
@@ -206,6 +259,9 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
     public long TotalBlockCount => m_virtualBlocks.Count > 0
         ? m_virtualBlocks[^1].EndBlock
         : 0;
+
+    /// <summary>Whether metadata has been modified since last save.</summary>
+    public bool IsMetadataDirty => m_metadataDirty;
 
     #endregion
 
@@ -291,6 +347,7 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
             m_stream.Write(buffer, offset, count);
             totalWritten = count;
             m_bytesWritten += count;
+            m_metadataDirty = true;
 
             int blocksWritten = count / (int)m_blockSize;
 
@@ -345,6 +402,7 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
         m_virtualBlocks.Add(mark);
         m_currentVirtualBlockIndex = m_virtualBlocks.Count; // Point past end
         m_currentBlock++;
+        m_metadataDirty = true;
 
         return true;
     }
@@ -363,7 +421,6 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
             return true;
 
         // Check if current position is just after a mark
-        // Find the virtual block that ends at or contains current position
         int vbIndex = FindVirtualBlockIndexBefore(m_currentBlock);
         if (vbIndex >= 0)
         {
@@ -643,6 +700,7 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
         m_currentBlock = 0;
         m_currentVirtualBlockIndex = 0;
         m_bytesWritten = 0;
+        m_metadataDirty = true;
         ResetError();
 
         try
@@ -661,6 +719,106 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
         {
             // Best effort - stream may not support truncation
         }
+
+        // Save empty metadata
+        SaveMetadata();
+    }
+
+    #endregion
+
+    #region *** Metadata Persistence ***
+
+    /// <summary>
+    /// Saves virtual block metadata to the metadata stream using TapeSerializer.
+    /// </summary>
+    private void SaveMetadata()
+    {
+        if (m_metadataStream == null || !m_metadataStream.CanWrite)
+            return;
+
+        try
+        {
+            m_metadataStream.Position = 0;
+            var serializer = new TapeSerializer(m_metadataStream);
+
+            // Write header
+            serializer.Serialize(MetadataSignature);
+            serializer.Serialize(MetadataVersion);
+            serializer.Serialize(m_virtualBlocks.Count);
+            serializer.Serialize(m_bytesWritten);
+
+            // Write each virtual block
+            foreach (var vb in m_virtualBlocks)
+            {
+                vb.SerializeTo(serializer);
+            }
+
+            m_metadataStream.Flush();
+            m_metadataStream.SetLength(m_metadataStream.Position);
+            m_metadataDirty = false;
+
+            m_logger.LogTrace("{Prefix}: Saved metadata with {Count} virtual blocks", LogPrefix, m_virtualBlocks.Count);
+        }
+        catch (Exception ex)
+        {
+            m_logger.LogWarning(ex, "{Prefix}: Failed to save metadata", LogPrefix);
+        }
+    }
+
+    /// <summary>
+    /// Loads virtual block metadata from the metadata stream using TapeDeserializer.
+    /// </summary>
+    private void LoadMetadata()
+    {
+        if (m_metadataStream == null || !m_metadataStream.CanRead || m_metadataStream.Length == 0)
+            return;
+
+        try
+        {
+            m_metadataStream.Position = 0;
+            var deserializer = new TapeDeserializer(m_metadataStream);
+
+            // Read and validate header
+            var signature = deserializer.DeserializeBytes(MetadataSignature.Length);
+            if (signature == null || !signature.SequenceEqual(MetadataSignature))
+            {
+                m_logger.LogWarning("{Prefix}: Invalid metadata signature, starting fresh", LogPrefix);
+                return;
+            }
+
+            ushort version = deserializer.DeserializeUInt16();
+            if (version > MetadataVersion)
+            {
+                m_logger.LogWarning("{Prefix}: Metadata version {Version} is newer than supported {Supported}, starting fresh",
+                    LogPrefix, version, MetadataVersion);
+                return;
+            }
+
+            int blockCount = deserializer.DeserializeInt32();
+            long bytesWritten = deserializer.DeserializeInt64();
+
+            // Read virtual blocks
+            m_virtualBlocks.Clear();
+            for (int i = 0; i < blockCount; i++)
+            {
+                var vb = VirtualTapeBlock.DeserializeFrom(deserializer);
+                m_virtualBlocks.Add(vb);
+            }
+
+            m_bytesWritten = bytesWritten;
+            m_currentBlock = 0;
+            m_currentVirtualBlockIndex = 0;
+            m_metadataDirty = false;
+
+            m_logger.LogTrace("{Prefix}: Loaded metadata with {Count} virtual blocks, {Bytes} bytes written",
+                LogPrefix, m_virtualBlocks.Count, m_bytesWritten);
+        }
+        catch (Exception ex)
+        {
+            m_logger.LogWarning(ex, "{Prefix}: Failed to load metadata, starting fresh", LogPrefix);
+            m_virtualBlocks.Clear();
+            m_bytesWritten = 0;
+        }
     }
 
     #endregion
@@ -669,9 +827,24 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
     public void Flush()
     {
+        // Save metadata if dirty
+        if (m_metadataDirty)
+        {
+            SaveMetadata();
+        }
+
         try
         {
             m_stream.Flush();
+        }
+        catch
+        {
+            // Best effort
+        }
+
+        try
+        {
+            m_metadataStream?.Flush();
         }
         catch
         {
@@ -689,6 +862,9 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
             if (m_ownsStream)
                 m_stream.Dispose();
+
+            if (m_ownsMetadataStream)
+                m_metadataStream?.Dispose();
 
             m_disposed = true;
         }
@@ -788,12 +964,12 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
             // Current position is at the start of a virtual block - remove it and all following
             RemoveVirtualBlocksFrom(m_currentVirtualBlockIndex);
         }
-        // else: current position is past this virtual block - shouldn't happen if SyncVirtualBlockIndex is correct
         else
             LogErrorAsDebug("Unexpected: current block points past last virtual block");
 
         // Truncate stream to match
         TruncateStream();
+        m_metadataDirty = true;
     }
 
     /// <summary>

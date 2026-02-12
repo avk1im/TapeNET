@@ -78,6 +78,13 @@ public readonly record struct VirtualTapeDriveCapabilities
 /// </summary>
 public class VirtualTapeDriveBackend : TapeDriveBackend
 {
+    #region *** Constants ***
+
+    /// <summary>Metadata file extension.</summary>
+    public const string MetadataExtension = ".vrt";
+
+    #endregion
+
     #region *** Private Fields ***
 
     private readonly VirtualTapeDriveCapabilities m_capabilities;
@@ -87,7 +94,9 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
 
     // Streams (kept separately to manage lifecycle)
     private Stream? m_contentStream;
+    private Stream? m_contentMetadataStream;
     private Stream? m_initiatorStream;
+    private Stream? m_initiatorMetadataStream;
     private readonly bool m_ownsStreams;
 
     private uint m_driveNumber;
@@ -113,11 +122,15 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
         ILoggerFactory loggerFactory,
         VirtualTapeDriveCapabilities capabilities,
         Stream contentStream,
-        Stream? initiatorStream = null)
+        Stream? contentMetadataStream = null,
+        Stream? initiatorStream = null,
+        Stream? initiatorMetadataStream = null)
         : this(loggerFactory, capabilities)
     {
         m_contentStream = contentStream ?? throw new ArgumentNullException(nameof(contentStream));
+        m_contentMetadataStream = contentMetadataStream;
         m_initiatorStream = initiatorStream;
+        m_initiatorMetadataStream = initiatorMetadataStream;
         m_ownsStreams = false; // Caller manages streams
     }
 
@@ -135,7 +148,7 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
         return backend;
     }
 
-    /// <summary>Creates a file-backed virtual tape.</summary>
+    /// <summary>Creates a file-backed virtual tape with persistent metadata.</summary>
     public static VirtualTapeDriveBackend CreateFileBacked(
         ILoggerFactory loggerFactory,
         string contentFilePath,
@@ -144,15 +157,31 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
     {
         var caps = capabilities ?? VirtualTapeDriveCapabilities.WithSetmarks;
 
+        // Content streams
         var contentStream = new FileStream(contentFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        var contentMetadataPath = contentFilePath + MetadataExtension;
+        var contentMetadataStream = new FileStream(contentMetadataPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+
+        // Initiator streams (if supported and path provided)
         Stream? initiatorStream = null;
+        Stream? initiatorMetadataStream = null;
 
         if (caps.SupportsInitiatorPartition && initiatorFilePath != null)
+        {
             initiatorStream = new FileStream(initiatorFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            var initiatorMetadataPath = initiatorFilePath + MetadataExtension;
+            initiatorMetadataStream = new FileStream(initiatorMetadataPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        }
 
-        var backend = new VirtualTapeDriveBackend(loggerFactory, caps, contentStream, initiatorStream);
+        var backend = new VirtualTapeDriveBackend(loggerFactory, caps,
+            contentStream, contentMetadataStream,
+            initiatorStream, initiatorMetadataStream);
+
         return backend;
     }
+
+    /// <summary>Gets the metadata file path for a given content file path.</summary>
+    public static string GetMetadataPath(string contentFilePath) => contentFilePath + MetadataExtension;
 
     #endregion
 
@@ -210,10 +239,11 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
 
     public override bool LoadMedia()
     {
-        // Create media objects if not provided externally
+        // Create streams if not provided externally
         if (m_contentStream == null)
         {
             m_contentStream = new MemoryStream();
+            m_contentMetadataStream = new MemoryStream();
         }
 
         m_contentMedia = new VirtualTapeMedia(
@@ -222,12 +252,19 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             m_capabilities.MaxBlockSize,
             m_capabilities.DefaultBlockSize,
             m_capabilities.Capacity,
-            ownsStream: false); // We manage streams separately
+            ownsStream: false,
+            metadataStream: m_contentMetadataStream,
+            ownsMetadataStream: false,
+            name: "ContentMedia",
+            loggerFactory: LoggerFactory);
 
         if (m_capabilities.SupportsInitiatorPartition)
         {
             if (m_initiatorStream == null)
+            {
                 m_initiatorStream = new MemoryStream();
+                m_initiatorMetadataStream = new MemoryStream();
+            }
 
             m_initiatorMedia = new VirtualTapeMedia(
                 m_initiatorStream,
@@ -235,7 +272,11 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
                 m_capabilities.MaxBlockSize,
                 m_capabilities.DefaultBlockSize,
                 m_capabilities.InitiatorPartitionCapacity,
-                ownsStream: false);
+                ownsStream: false,
+                metadataStream: m_initiatorMetadataStream,
+                ownsMetadataStream: false,
+                name: "InitiatorMedia",
+                loggerFactory: LoggerFactory);
         }
 
         m_currentMedia = m_contentMedia;
@@ -272,9 +313,13 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
         if (m_ownsStreams)
         {
             m_contentStream?.Dispose();
+            m_contentMetadataStream?.Dispose();
             m_initiatorStream?.Dispose();
+            m_initiatorMetadataStream?.Dispose();
             m_contentStream = null;
+            m_contentMetadataStream = null;
             m_initiatorStream = null;
+            m_initiatorMetadataStream = null;
         }
         else
         {
@@ -282,7 +327,9 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             try
             {
                 m_contentStream?.Flush();
+                m_contentMetadataStream?.Flush();
                 m_initiatorStream?.Flush();
+                m_initiatorMetadataStream?.Flush();
             }
             catch
             {
@@ -339,15 +386,23 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
         {
             // Create/reset initiator media
             if (m_initiatorStream == null)
+            {
                 m_initiatorStream = new MemoryStream();
+                m_initiatorMetadataStream = new MemoryStream();
+            }
 
+            m_initiatorMedia?.Dispose();
             m_initiatorMedia = new VirtualTapeMedia(
                 m_initiatorStream,
                 m_capabilities.MinBlockSize,
                 m_capabilities.MaxBlockSize,
                 m_capabilities.DefaultBlockSize,
                 initiatorPartitionSize,
-                ownsStream: false);
+                ownsStream: false,
+                metadataStream: m_initiatorMetadataStream,
+                ownsMetadataStream: false,
+                name: "InitiatorMedia",
+                loggerFactory: LoggerFactory);
         }
         else
         {
@@ -358,7 +413,9 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             if (m_ownsStreams)
             {
                 m_initiatorStream?.Dispose();
+                m_initiatorMetadataStream?.Dispose();
                 m_initiatorStream = null;
+                m_initiatorMetadataStream = null;
             }
         }
 
@@ -442,7 +499,7 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             return false;
         }
 
-        if (!m_currentMedia.SeekToBlock((int)block))
+        if (!m_currentMedia.SeekToBlock(block))
         {
             SetError(m_currentMedia.LastError);
             return false;
@@ -684,7 +741,9 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             if (m_ownsStreams)
             {
                 m_contentStream?.Dispose();
+                m_contentMetadataStream?.Dispose();
                 m_initiatorStream?.Dispose();
+                m_initiatorMetadataStream?.Dispose();
             }
         }
 
