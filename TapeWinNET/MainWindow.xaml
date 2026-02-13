@@ -68,30 +68,43 @@
         <!-- Menu Bar -->
         <Menu Grid.Row="0">
             <MenuItem Header="_File">
-                <MenuItem Header="_Open Drive..." Command="{Binding OpenDriveCommand}" />
-                <Separator />
-                <MenuItem Header="_Refresh" Command="{Binding RefreshCommand}" />
-                <Separator />
-                <MenuItem Header="E_xit" Command="{Binding ExitCommand}" />
+                <MenuItem Header="Open _Drive" ItemsSource="{Binding DriveMenuItems}">
+                    <MenuItem.ItemContainerStyle>
+                        <Style TargetType="MenuItem">
+                            <Setter Property="Header" Value="{Binding Header}"/>
+                            <Setter Property="Command" Value="{Binding Command}"/>
+                            <Setter Property="CommandParameter" Value="{Binding DriveNumber}"/>
+                        </Style>
+                    </MenuItem.ItemContainerStyle>
+                </MenuItem>
+                <MenuItem Header="Open _Virtual Drive..." Command="{Binding OpenVirtualDriveCommand}"/>
+                <Separator/>
+                <MenuItem Header="E_xit" Command="{Binding ExitCommand}" InputGestureText="Alt+F4"/>
             </MenuItem>
             <MenuItem Header="_Media">
-                <MenuItem Header="_New Backup..." Command="{Binding NewBackupCommand}" />
-                <Separator />
-                <MenuItem Header="_Eject" Command="{Binding EjectCommand}" />
-                <Separator />
+                <MenuItem Header="_Eject" Command="{Binding EjectCommand}"/>
+                <Separator/>
+                <MenuItem Header="_Format..." IsEnabled="False" ToolTip="Coming soon"/>
+            </MenuItem>
+            <MenuItem Header="_Backup">
+                <MenuItem Header="_New Backup..." Command="{Binding NewBackupCommand}"/>
+                <MenuItem Header="_Restore..." IsEnabled="False" ToolTip="Coming soon"/>
+                <Separator Visibility="{Binding IsBackupInProgress, Converter={StaticResource BoolToVis}}"/>
                 <MenuItem Header="_Abort Backup" Command="{Binding AbortBackupCommand}"
-                          Visibility="{Binding IsBackupInProgress, Converter={StaticResource BoolToVis}}" />
+                          Visibility="{Binding IsBackupInProgress, Converter={StaticResource BoolToVis}}"/>
             </MenuItem>
             <MenuItem Header="_View">
+                <MenuItem Header="_Refresh" Command="{Binding RefreshCommand}" InputGestureText="F5"/>
+                <Separator/>
                 <MenuItem Header="Show _Full Pathname" 
                           IsCheckable="True" 
-                          IsChecked="{Binding ShowFullPathname}" />
+                          IsChecked="{Binding ShowFullPathname}"/>
                 <MenuItem Header="Show _Incremental Sets" 
                           IsCheckable="True" 
-                          IsChecked="{Binding ShowIncrementalSets}" />
+                          IsChecked="{Binding ShowIncrementalSets}"/>
             </MenuItem>
             <MenuItem Header="_Help">
-                <MenuItem Header="_About" Command="{Binding AboutCommand}" />
+                <MenuItem Header="_About" Command="{Binding AboutCommand}"/>
             </MenuItem>
         </Menu>
         

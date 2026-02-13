@@ -233,7 +233,7 @@ namespace TapeLibNET
                 var fileName = bc.fileList[bc.fileIndex]; // use an additional variable since we might modify file name
                 bc.filesProcessed++; // filesProcessed is the global multi-volume index (1-based); fileIndex is the local index (0-based)
 
-                FileInfo fileInfo = new(fileName);
+                FileInfo fileInfo = new (fileName);
                 TapeFileDescriptor fileDescr = new (fileInfo); // the constructor will check if the file exists
 
                 try
@@ -284,7 +284,8 @@ namespace TapeLibNET
                     m_logger.LogWarning("{Method}: File #{Number} >{File}< backup failed. Exception: {Ex}",
                         nameof(BackupFilesToCurrentSet), bc.filesProcessed, fileName, ex);
 
-                    if (LastError == (uint)WIN32_ERROR.ERROR_END_OF_MEDIA || ex is IOException ioex && ioex.HResult == (int)WIN32_ERROR.ERROR_END_OF_MEDIA)
+                    if (LastError == (uint)WIN32_ERROR.ERROR_END_OF_MEDIA || ex is IOException ioex && ioex.HResult == (int)WIN32_ERROR.ERROR_END_OF_MEDIA
+                        || LastError == (uint)WIN32_ERROR.ERROR_NO_DATA_DETECTED || ex is IOException ioex1 && ioex1.HResult == (int)WIN32_ERROR.ERROR_NO_DATA_DETECTED)
                     {
                         // Set up continuation on the next volume for multi-volume backup
                         m_logger.LogTrace("Setting up multi-volume backup from file #{Number} >{File}<", bc.filesProcessed, bc.fileList[bc.fileIndex]);

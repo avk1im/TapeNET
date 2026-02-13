@@ -79,7 +79,8 @@ namespace TapeLibNET
             }
         }
 
-        public readonly bool SameFileName(TapeFileDescriptor other) => FullName.Equals(other.FullName, StringComparison.OrdinalIgnoreCase);
+        public readonly bool SameFileName(string fileName) => FullName.Equals(fileName, StringComparison.OrdinalIgnoreCase);
+        public readonly bool SameFileName(TapeFileDescriptor other) => SameFileName(other.FullName);
 
         public readonly FileInfo CreateFileInfo() => new(FullName);
         public readonly bool ApplyToFileInfo(FileInfo fileInfo)
@@ -110,7 +111,7 @@ namespace TapeLibNET
         }
 
         // Estimate serialized size
-        public int EstimateSerializedSize()
+        public readonly int EstimateSerializedSize()
         {
             // string length (4 bytes) + UTF8 bytes
             int size = sizeof(int) + Encoding.UTF8.GetByteCount(FullName);
@@ -136,7 +137,7 @@ namespace TapeLibNET
         { }
 
         public bool SameFileName(TapeFileInfo other) => FileDescr.SameFileName(other.FileDescr);
-        public bool SameFileName(FileInfo fileInfo) => FileDescr.FullName.Equals(fileInfo.FullName, StringComparison.OrdinalIgnoreCase);
+        public bool SameFileName(FileInfo fileInfo) => FileDescr.SameFileName(fileInfo.FullName);
 
         public bool IsValid => UID != 0 && !string.IsNullOrEmpty(FileDescr.FullName);
 

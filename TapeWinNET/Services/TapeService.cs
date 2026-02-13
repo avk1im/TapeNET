@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging.Abstractions; // for NullLoggerFactory
 #endif
 
 using TapeLibNET;
+using TapeLibNET.Virtual;
 
 namespace TapeWinNET.Services;
 
@@ -551,6 +552,59 @@ public class TapeService : IDisposable
                     Status("Backup failed");
                     logCallback($"!!! Backup failed: {ex.Message}");
                     throw;
+                }
+            }
+        });
+    }
+
+    public Task<bool> OpenVirtualDriveAsync(
+        VirtualTapeDriveCapabilities capabilities,
+        string contentPath,
+        string? initiatorPath)
+    {
+        return Task.Run(() =>
+        {
+            lock (_lock)
+            {
+                try
+                {
+                    Log($">>> Opening virtual drive...");
+                    Log($" ii Content file: >{contentPath}<");
+                    if (initiatorPath != null)
+                        Log($" ii Initiator file: >{initiatorPath}<");
+                    Status("Opening virtual drive...");
+
+                    // Dispose existing drive if any
+                    _tapeAgent?.Dispose();
+                    _tapeAgent = null;
+                    _toc = null;
+                    _tapeDrive?.Dispose();
+
+                    var backend = VirtualTapeDriveBackend.CreateFileBacked(
+                        _loggerFactory,
+                        contentPath,
+                        initiatorPath,
+                        capabilities);
+
+                    _tapeDrive = new TapeDrive(_loggerFactory, backend);
+
+                    if (!_tapeDrive.ReopenDrive(0))
+                    {
+                        LastError = _tapeDrive.LastErrorMessage;
+                        Log($"!!! Couldn't open virtual drive. Error: {LastError}");
+                        return false;
+                    }
+
+                    DriveNumber = 0;
+                    Log("vvv Virtual drive opened successfully");
+                    Status("Virtual drive opened");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    LastError = ex.Message;
+                    Log($"!!! Exception opening virtual drive: {ex.Message}");
+                    return false;
                 }
             }
         });

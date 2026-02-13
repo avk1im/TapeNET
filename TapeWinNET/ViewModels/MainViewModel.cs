@@ -5,8 +5,11 @@ using System.Windows.Input;
 using Windows.Win32.System.SystemServices; // for Helpers
 
 using TapeLibNET;
+using TapeLibNET.Virtual;
+
 using TapeWinNET.Models;
 using TapeWinNET.Services;
+
 
 namespace TapeWinNET.ViewModels;
 
@@ -22,6 +25,11 @@ public enum ContentPaneType
     /// <summary>Backup set selected: properties + files table</summary>
     BackupSetInfo
 }
+
+/// <summary>
+/// Represents a menu item for opening a specific tape drive.
+/// </summary>
+public record DriveMenuItem(string Header, int DriveNumber, ICommand Command);
 
 public class MainViewModel : ViewModelBase
 {
@@ -54,6 +62,7 @@ public class MainViewModel : ViewModelBase
 
         // Initialize commands
         OpenDriveCommand = new AsyncRelayCommand(OpenDriveAsync, _ => !IsBusy);
+        OpenVirtualDriveCommand = new RelayCommand(ShowOpenVirtualDriveWindow, _ => !IsBusy);
         RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         EjectCommand = new AsyncRelayCommand(EjectAsync, () => !IsBusy && _tapeService.IsMediaLoaded);
         NewBackupCommand = new RelayCommand(ShowNewBackupWindow, _ => !IsBusy && _tapeService.IsMediaLoaded);
@@ -61,6 +70,25 @@ public class MainViewModel : ViewModelBase
         NavigateToBackupSetCommand = new RelayCommand(NavigateToSelectedBackupSet, _ => SelectedBackupSet != null);
         ExitCommand = new RelayCommand(Exit);
         AboutCommand = new RelayCommand(ShowAbout);
+
+        // Initialize drive menu items
+        InitializeDriveMenu();
+    }
+
+    /// <summary>
+    /// Initializes the drive menu items for drives 0-9.
+    /// TODO: Later can be enhanced to detect installed drives.
+    /// </summary>
+    private void InitializeDriveMenu()
+    {
+        for (int i = 0; i <= 9; i++)
+        {
+            DriveMenuItems.Add(new DriveMenuItem(
+                Header: $"Drive _{i}",  // Underscore creates keyboard accelerator
+                DriveNumber: i,
+                Command: OpenDriveCommand
+            ));
+        }
     }
 
     #region Properties
@@ -204,6 +232,9 @@ public class MainViewModel : ViewModelBase
     /// <summary>Whether the backup sets table is visible (Media selected)</summary>
     public bool IsBackupSetTableVisible => ContentType == ContentPaneType.MediaInfo;
 
+    /// <summary>Menu items for the Open Drive submenu.</summary>
+    public ObservableCollection<DriveMenuItem> DriveMenuItems { get; } = [];
+
     public ObservableCollection<TapeTreeItemViewModel> TreeItems { get; } = [];
     public ObservableCollection<PropertyItem> PropertyList { get; } = [];
     public ObservableCollection<FileListItem> FileList { get; } = [];
@@ -215,6 +246,7 @@ public class MainViewModel : ViewModelBase
     #region Commands
 
     public ICommand OpenDriveCommand { get; }
+    public ICommand OpenVirtualDriveCommand { get; }
     public ICommand RefreshCommand { get; }
     public ICommand EjectCommand { get; }
     public ICommand NewBackupCommand { get; }
@@ -1020,6 +1052,84 @@ public class MainViewModel : ViewModelBase
         {
             StatusMessage = status;
         });
+    }
+
+    #endregion
+
+    #region Private Methods - Virtual Drive Operations
+
+    private void ShowOpenVirtualDriveWindow(object? parameter)
+    {
+        var viewModel = new OpenVirtualDriveViewModel(
+            async (capabilities, contentPath, initiatorPath) =>
+            {
+                // Close dialog
+                Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
+                
+                // Open virtual drive
+                await OpenVirtualDriveAsync(capabilities, contentPath, initiatorPath);
+            },
+            () =>
+            {
+                Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
+            });
+
+        var window = new OpenVirtualDriveWindow(viewModel)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        window.ShowDialog();
+    }
+
+    private async Task OpenVirtualDriveAsync(
+        VirtualTapeDriveCapabilities capabilities, 
+        string contentPath, 
+        string? initiatorPath)
+    {
+        IsBusy = true;
+        BusyMessage = "Opening virtual drive...";
+
+        try
+        {
+            var success = await _tapeService.OpenVirtualDriveAsync(capabilities, contentPath, initiatorPath);
+            if (!success)
+            {
+                MessageBox.Show($"Failed to open virtual drive.\n\n{_tapeService.LastError}",
+                    "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                UpdateTreeForDriveOnly(0);
+                return;
+            }
+
+            BusyMessage = "Loading virtual media...";
+            success = await _tapeService.LoadMediaAsync();
+            if (!success)
+            {
+                MessageBox.Show($"Failed to load virtual media.\n\n{_tapeService.LastError}",
+                    "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+                UpdateTreeForDriveOnly(0);
+                return;
+            }
+
+            BusyMessage = "Reading TOC...";
+            success = await _tapeService.RestoreTOCAsync();
+            if (!success)
+            {
+                MessageBox.Show($"Failed to read virtual TOC.\n\n{_tapeService.LastError}",
+                    "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+                UpdateTreeForDriveOnly(0);
+                return;
+            }
+
+            UpdateTreeFromTOC(0);
+            
+            // Select the most recent backup set
+            SelectMostRecentSet();
+        }
+        finally
+        {
+            IsBusy = false;
+            BusyMessage = string.Empty;
+        }
     }
 
     #endregion
