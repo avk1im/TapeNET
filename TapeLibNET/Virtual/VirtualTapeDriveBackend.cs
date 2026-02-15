@@ -148,12 +148,23 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
         return backend;
     }
 
-    /// <summary>Creates a file-backed virtual tape with persistent metadata.</summary>
+    /// <summary>
+    /// Creates a file-backed virtual tape with persistent metadata.
+    /// </summary>
+    /// <param name="loggerFactory">Logger factory for logging.</param>
+    /// <param name="contentFilePath">Path to the content data file.</param>
+    /// <param name="initiatorFilePath">Optional path to the initiator partition file.</param>
+    /// <param name="capabilities">Drive capabilities (defaults to WithSetmarks).</param>
+    /// <param name="requireExistingState">
+    /// If true, LoadMedia() will fail if valid saved state doesn't exist in metadata files.
+    /// If false (default), LoadMedia() will create new media if state loading fails.
+    /// </param>
     public static VirtualTapeDriveBackend CreateFileBacked(
         ILoggerFactory loggerFactory,
         string contentFilePath,
         string? initiatorFilePath = null,
-        VirtualTapeDriveCapabilities? capabilities = null)
+        VirtualTapeDriveCapabilities? capabilities = null,
+        bool requireExistingState = false)
     {
         var caps = capabilities ?? VirtualTapeDriveCapabilities.WithSetmarks;
 
@@ -173,9 +184,13 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             initiatorMetadataStream = new FileStream(initiatorMetadataPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         }
 
+        // Create backend - LoadMedia will try to load existing state
         var backend = new VirtualTapeDriveBackend(loggerFactory, caps,
             contentStream, contentMetadataStream,
-            initiatorStream, initiatorMetadataStream);
+            initiatorStream, initiatorMetadataStream)
+        {
+            RequireExistingState = requireExistingState
+        };
 
         return backend;
     }
@@ -191,6 +206,12 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
     public override bool HasMedia => m_hasMedia && m_currentMedia != null;
     public override string DeviceName => $"VIRTUAL{m_driveNumber}";
     public override uint DriveNumber => m_driveNumber;
+
+    /// <summary>
+    /// If true, LoadMedia() requires valid saved state in metadata stream(s) and fails if loading fails.
+    /// If false (default), LoadMedia() creates new media with default parameters when state loading fails.
+    /// </summary>
+    public bool RequireExistingState { get; set; } = false;
 
     #endregion
 
@@ -246,17 +267,42 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             m_contentMetadataStream = new MemoryStream();
         }
 
-        m_contentMedia = new VirtualTapeMedia(
+        // Try to load existing state first
+        m_contentMedia = VirtualTapeMedia.TryCreateFromState(
             m_contentStream,
-            m_capabilities.MinBlockSize,
-            m_capabilities.MaxBlockSize,
-            m_capabilities.DefaultBlockSize,
-            m_capabilities.Capacity,
             ownsStream: false,
-            metadataStream: m_contentMetadataStream,
+            m_contentMetadataStream,
             ownsMetadataStream: false,
-            name: "ContentMedia",
-            loggerFactory: LoggerFactory);
+            LoggerFactory);
+
+        if (m_contentMedia == null)
+        {
+            if (RequireExistingState)
+            {
+                SetError(WIN32_ERROR.ERROR_FILE_NOT_FOUND, "Content media: no valid saved state found");
+                m_logger.LogWarning("{Prefix}: LoadMedia failed - RequireExistingState is true but no valid state found for content media", LogPrefix);
+                return false;
+            }
+
+            // Create new media with default parameters
+            m_contentMedia = new VirtualTapeMedia(
+                m_contentStream,
+                m_capabilities.MinBlockSize,
+                m_capabilities.MaxBlockSize,
+                m_capabilities.DefaultBlockSize,
+                m_capabilities.Capacity,
+                ownsStream: false,
+                metadataStream: m_contentMetadataStream,
+                ownsMetadataStream: false,
+                name: "ContentMedia",
+                loggerFactory: LoggerFactory);
+
+            m_logger.LogTrace("{Prefix}: Created new content media (no existing state)", LogPrefix);
+        }
+        else
+        {
+            m_logger.LogTrace("{Prefix}: Loaded content media from existing state", LogPrefix);
+        }
 
         if (m_capabilities.SupportsInitiatorPartition)
         {
@@ -266,25 +312,53 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
                 m_initiatorMetadataStream = new MemoryStream();
             }
 
-            m_initiatorMedia = new VirtualTapeMedia(
+            // Try to load existing state first
+            m_initiatorMedia = VirtualTapeMedia.TryCreateFromState(
                 m_initiatorStream,
-                m_capabilities.MinBlockSize,
-                m_capabilities.MaxBlockSize,
-                m_capabilities.DefaultBlockSize,
-                m_capabilities.InitiatorPartitionCapacity,
                 ownsStream: false,
-                metadataStream: m_initiatorMetadataStream,
+                m_initiatorMetadataStream,
                 ownsMetadataStream: false,
-                name: "InitiatorMedia",
-                loggerFactory: LoggerFactory);
+                LoggerFactory);
+
+            if (m_initiatorMedia == null)
+            {
+                if (RequireExistingState)
+                {
+                    // Clean up content media since we're failing
+                    m_contentMedia?.Dispose();
+                    m_contentMedia = null;
+
+                    SetError(WIN32_ERROR.ERROR_FILE_NOT_FOUND, "Initiator media: no valid saved state found");
+                    m_logger.LogWarning("{Prefix}: LoadMedia failed - RequireExistingState is true but no valid state found for initiator media", LogPrefix);
+                    return false;
+                }
+
+                // Create new media with default parameters
+                m_initiatorMedia = new VirtualTapeMedia(
+                    m_initiatorStream,
+                    m_capabilities.MinBlockSize,
+                    m_capabilities.MaxBlockSize,
+                    m_capabilities.DefaultBlockSize,
+                    m_capabilities.InitiatorPartitionCapacity,
+                    ownsStream: false,
+                    metadataStream: m_initiatorMetadataStream,
+                    ownsMetadataStream: false,
+                    name: "InitiatorMedia",
+                    loggerFactory: LoggerFactory);
+
+                m_logger.LogTrace("{Prefix}: Created new initiator media (no existing state)", LogPrefix);
+            }
+            else
+            {
+                m_logger.LogTrace("{Prefix}: Loaded initiator media from existing state", LogPrefix);
+            }
         }
 
         m_currentMedia = m_contentMedia;
         m_currentPartition = MediaPartition.Content;
         m_hasMedia = true;
-        m_blockSize = m_capabilities.DefaultBlockSize;
+        m_blockSize = m_contentMedia.BlockSize; // Use loaded block size, not capabilities default
 
-        // Position to beginning
         m_contentMedia.Rewind();
         m_initiatorMedia?.Rewind();
 

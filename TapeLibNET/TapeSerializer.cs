@@ -84,6 +84,7 @@ namespace TapeLibNET
         }
 
         public void Serialize(ITapeSerializable serializable) => serializable.SerializeTo(this);
+
         public void Serialize<TList, TValue>(TList list)
             where TList : IEnumerable<TValue>
             where TValue : ITapeSerializable
@@ -211,6 +212,7 @@ namespace TapeLibNET
 
         public TClass? Deserialize<TClass>() where TClass : class, ITapeSerializable
             => TClass.ConstructFrom(this) as TClass;
+
         public TList Deserialize<TList, TValue>()
             where TList : List<TValue>, new()
             where TValue : ITapeSerializable

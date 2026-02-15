@@ -25,7 +25,7 @@ public enum TapeMarkType : byte
 /// For data: spans multiple logical blocks of the same BlockSize.
 /// For marks: occupies exactly one logical block position.
 /// </summary>
-internal readonly record struct VirtualTapeBlock
+internal readonly record struct VirtualTapeBlock : ITapeSerializable
 {
     /// <summary>True if this is a tape mark, false if data.</summary>
     public bool IsMark { get; init; }
@@ -118,7 +118,7 @@ internal readonly record struct VirtualTapeBlock
         return StreamOffset + (logicalBlock - BeginAtBlock) * BlockSize;
     }
 
-    #region *** Serialization ***
+    #region *** ITapeSerializable ***
 
     /// <summary>Serializes this virtual block.</summary>
     public void SerializeTo(TapeSerializer serializer)
@@ -132,7 +132,7 @@ internal readonly record struct VirtualTapeBlock
     }
 
     /// <summary>Deserializes a virtual block.</summary>
-    public static VirtualTapeBlock DeserializeFrom(TapeDeserializer deserializer)
+    public static ITapeSerializable? ConstructFrom(TapeDeserializer deserializer)
     {
         return new VirtualTapeBlock
         {
@@ -157,9 +157,7 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
 {
     #region *** Constants ***
 
-    // Metadata signature: "VM" for Virtual Media
-    private static readonly byte[] MetadataSignature = [(byte)'V', (byte)'M'];
-    private const ushort MetadataVersion = 0x0100;
+    private const ushort StateVersion = 0x0100;
 
     #endregion
 
@@ -175,15 +173,20 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
     private uint m_blockSize;
     private readonly uint m_minBlockSize;
     private readonly uint m_maxBlockSize;
+    private readonly uint m_defaultBlockSize;
     private readonly long m_capacity;
     private long m_bytesWritten = 0;
     private readonly string m_name;
-    private bool m_metadataDirty = false;
+    private bool m_stateDirty = false;
 
     #endregion
 
-    #region *** Constructor ***
+    #region *** Constructors ***
 
+    /// <summary>
+    /// Creates a new virtual tape media with specified parameters.
+    /// Does NOT auto-load from metadataStream - use the deserializing constructor for existing tapes.
+    /// </summary>
     public VirtualTapeMedia(
         Stream stream,
         uint minBlockSize,
@@ -202,25 +205,25 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
         ArgumentOutOfRangeException.ThrowIfLessThan(maxBlockSize, minBlockSize);
         ArgumentOutOfRangeException.ThrowIfLessThan(defaultBlockSize, minBlockSize);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(defaultBlockSize, maxBlockSize);
+        if (metadataStream == stream)
+            throw new ArgumentException("May not use main stream as metadata stream", nameof(metadataStream));
 
         m_stream = stream;
         m_metadataStream = metadataStream;
         m_minBlockSize = minBlockSize;
         m_maxBlockSize = maxBlockSize;
-        m_blockSize = defaultBlockSize;
+        m_blockSize = m_defaultBlockSize = defaultBlockSize;
         m_capacity = capacity;
         m_ownsStream = ownsStream;
         m_ownsMetadataStream = ownsMetadataStream;
         m_name = name ?? "VirtualMedia";
 
-        // Try to load existing metadata
-        if (m_metadataStream != null && m_metadataStream.Length > 0)
-        {
-            LoadMetadata();
-        }
+        // Fresh tape - no auto-loading from metadata
     }
 
-    /// <summary>Simplified constructor with single block size.</summary>
+    /// <summary>
+    /// Simplified constructor with single block size for new tapes.
+    /// </summary>
     public VirtualTapeMedia(
         Stream stream,
         uint blockSize,
@@ -235,13 +238,105 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
     {
     }
 
+    /// <summary>
+    /// Deserializing constructor - loads existing tape from saved state in metadataStream.
+    /// Use this when opening an existing virtual tape file.
+    /// </summary>
+    /// <exception cref="FormatException">Thrown if metadata is invalid or corrupt.</exception>
+    public VirtualTapeMedia(
+        Stream stream,
+        bool ownsStream,
+        Stream metadataStream,
+        bool ownsMetadataStream = true,
+        ILoggerFactory? loggerFactory = null)
+        : base((loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<VirtualTapeMedia>())
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        ArgumentNullException.ThrowIfNull(metadataStream);
+        if (metadataStream == stream)
+            throw new ArgumentException("May not use main stream as metadata stream", nameof(metadataStream));
+        if (metadataStream.Length == 0)
+            throw new ArgumentException("Metadata stream is empty - cannot load state", nameof(metadataStream));
+
+        m_stream = stream;
+        m_metadataStream = metadataStream;
+        m_ownsStream = ownsStream;
+        m_ownsMetadataStream = ownsMetadataStream;
+
+        // Load full state from metadata
+        metadataStream.Position = 0;
+        var deserializer = new TapeDeserializer(metadataStream);
+
+        // Read and validate header
+        if (!deserializer.ValidateSignature(out ushort version) || version > StateVersion)
+            throw new FormatException($"Invalid state signature or unsupported version {version} (max: {StateVersion})");
+
+        // Load configuration
+        m_minBlockSize = deserializer.DeserializeUInt32();
+        m_maxBlockSize = deserializer.DeserializeUInt32();
+        m_defaultBlockSize = deserializer.DeserializeUInt32();
+        m_capacity = deserializer.DeserializeInt64();
+        m_name = deserializer.DeserializeString();
+
+        // Validate deserialized values
+        if (m_minBlockSize == 0)
+            throw new FormatException("Invalid minBlockSize (0) in saved state");
+        if (m_maxBlockSize < m_minBlockSize)
+            throw new FormatException($"Invalid block size range in saved state: max {m_maxBlockSize} < min {m_minBlockSize}");
+        if (m_defaultBlockSize < m_minBlockSize || m_defaultBlockSize > m_maxBlockSize)
+            throw new FormatException($"Invalid defaultBlockSize {m_defaultBlockSize} not in range [{m_minBlockSize}..{m_maxBlockSize}]");
+
+        m_blockSize = m_defaultBlockSize;
+
+        // Load data state
+        m_bytesWritten = deserializer.DeserializeInt64();
+        var virtualBlocks = deserializer.Deserialize<List<VirtualTapeBlock>, VirtualTapeBlock>();
+        if (virtualBlocks != null)
+            m_virtualBlocks.AddRange(virtualBlocks);
+
+        m_currentBlock = 0;
+        m_currentVirtualBlockIndex = 0;
+        m_stateDirty = false;
+
+        m_logger.LogTrace("{Prefix}: Loaded state with {Count} virtual blocks, {Bytes} bytes written",
+            LogPrefix, m_virtualBlocks.Count, m_bytesWritten);
+    }
+
+    /// <summary>
+    /// Tries to create a VirtualTapeMedia from existing saved state, or returns null if not possible.
+    /// Use this for safe loading when you don't know if the metadata file exists or is valid.
+    /// </summary>
+    public static VirtualTapeMedia? TryCreateFromState(
+        Stream stream,
+        bool ownsStream,
+        Stream? metadataStream,
+        bool ownsMetadataStream = true,
+        ILoggerFactory? loggerFactory = null)
+    {
+        if (metadataStream == null || metadataStream.Length == 0)
+            return null;
+
+        try
+        {
+            return new VirtualTapeMedia(stream, ownsStream, metadataStream, ownsMetadataStream, loggerFactory);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     #endregion
 
     #region *** Properties ***
 
     protected override string LogPrefix => m_name;
 
-    public uint BlockSize => m_blockSize;
+    public uint BlockSize
+    {
+        get => m_blockSize;
+        set => SetBlockSize(value);
+    }
     public uint MinBlockSize => m_minBlockSize;
     public uint MaxBlockSize => m_maxBlockSize;
     public long Capacity => m_capacity;
@@ -260,8 +355,8 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
         ? m_virtualBlocks[^1].EndBlock
         : 0;
 
-    /// <summary>Whether metadata has been modified since last save.</summary>
-    public bool IsMetadataDirty => m_metadataDirty;
+    /// <summary>Whether state has been modified since last save.</summary>
+    public bool IsStateDirty => m_stateDirty;
 
     #endregion
 
@@ -278,7 +373,7 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
             return false;
         }
 
-        m_blockSize = size;
+        m_blockSize = size > 0 ? size : m_defaultBlockSize;
         ResetError();
         return true;
     }
@@ -347,7 +442,7 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
             m_stream.Write(buffer, offset, count);
             totalWritten = count;
             m_bytesWritten += count;
-            m_metadataDirty = true;
+            m_stateDirty = true;
 
             int blocksWritten = count / (int)m_blockSize;
 
@@ -402,7 +497,7 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
         m_virtualBlocks.Add(mark);
         m_currentVirtualBlockIndex = m_virtualBlocks.Count; // Point past end
         m_currentBlock++;
-        m_metadataDirty = true;
+        m_stateDirty = true;
 
         return true;
     }
@@ -692,16 +787,24 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
     #region *** Reset / Format ***
 
     /// <summary>
-    /// Resets the media to empty state (like formatting).
+    /// Resets internal state (virtual blocks, position, bytes written).
     /// </summary>
-    public void Reset()
+    private void ResetState()
     {
         m_virtualBlocks.Clear();
         m_currentBlock = 0;
         m_currentVirtualBlockIndex = 0;
         m_bytesWritten = 0;
-        m_metadataDirty = true;
+        m_stateDirty = true;
+    }
+
+    /// <summary>
+    /// Resets the media to empty state (like formatting).
+    /// </summary>
+    public void Reset()
+    {
         ResetError();
+        ResetState();
 
         try
         {
@@ -720,104 +823,54 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
             // Best effort - stream may not support truncation
         }
 
-        // Save empty metadata
-        SaveMetadata();
+        // Save empty state
+        SaveState();
     }
 
     #endregion
 
-    #region *** Metadata Persistence ***
+    #region *** State Persistence ***
 
     /// <summary>
-    /// Saves virtual block metadata to the metadata stream using TapeSerializer.
+    /// Saves the complete state (configuration + data) to the metadata stream.
+    /// Includes: block size parameters, capacity, name, bytes written, and all virtual blocks.
     /// </summary>
-    private void SaveMetadata()
+    public bool SaveState()
     {
         if (m_metadataStream == null || !m_metadataStream.CanWrite)
-            return;
+            return false;
 
         try
         {
             m_metadataStream.Position = 0;
             var serializer = new TapeSerializer(m_metadataStream);
 
-            // Write header
-            serializer.Serialize(MetadataSignature);
-            serializer.Serialize(MetadataVersion);
-            serializer.Serialize(m_virtualBlocks.Count);
-            serializer.Serialize(m_bytesWritten);
+            // Signature and version
+            serializer.SerializeSignature(StateVersion);
 
-            // Write each virtual block
-            foreach (var vb in m_virtualBlocks)
-            {
-                vb.SerializeTo(serializer);
-            }
+            // Configuration
+            serializer.Serialize(m_minBlockSize);
+            serializer.Serialize(m_maxBlockSize);
+            serializer.Serialize(m_defaultBlockSize);
+            serializer.Serialize(m_capacity);
+            serializer.Serialize(m_name);
+
+            // Data state
+            serializer.Serialize(m_bytesWritten);
+            serializer.Serialize<List<VirtualTapeBlock>, VirtualTapeBlock>(m_virtualBlocks);
 
             m_metadataStream.Flush();
             m_metadataStream.SetLength(m_metadataStream.Position);
-            m_metadataDirty = false;
+            m_stateDirty = false;
 
-            m_logger.LogTrace("{Prefix}: Saved metadata with {Count} virtual blocks", LogPrefix, m_virtualBlocks.Count);
-        }
-        catch (Exception ex)
-        {
-            m_logger.LogWarning(ex, "{Prefix}: Failed to save metadata", LogPrefix);
-        }
-    }
-
-    /// <summary>
-    /// Loads virtual block metadata from the metadata stream using TapeDeserializer.
-    /// </summary>
-    private void LoadMetadata()
-    {
-        if (m_metadataStream == null || !m_metadataStream.CanRead || m_metadataStream.Length == 0)
-            return;
-
-        try
-        {
-            m_metadataStream.Position = 0;
-            var deserializer = new TapeDeserializer(m_metadataStream);
-
-            // Read and validate header
-            var signature = deserializer.DeserializeBytes(MetadataSignature.Length);
-            if (signature == null || !signature.SequenceEqual(MetadataSignature))
-            {
-                m_logger.LogWarning("{Prefix}: Invalid metadata signature, starting fresh", LogPrefix);
-                return;
-            }
-
-            ushort version = deserializer.DeserializeUInt16();
-            if (version > MetadataVersion)
-            {
-                m_logger.LogWarning("{Prefix}: Metadata version {Version} is newer than supported {Supported}, starting fresh",
-                    LogPrefix, version, MetadataVersion);
-                return;
-            }
-
-            int blockCount = deserializer.DeserializeInt32();
-            long bytesWritten = deserializer.DeserializeInt64();
-
-            // Read virtual blocks
-            m_virtualBlocks.Clear();
-            for (int i = 0; i < blockCount; i++)
-            {
-                var vb = VirtualTapeBlock.DeserializeFrom(deserializer);
-                m_virtualBlocks.Add(vb);
-            }
-
-            m_bytesWritten = bytesWritten;
-            m_currentBlock = 0;
-            m_currentVirtualBlockIndex = 0;
-            m_metadataDirty = false;
-
-            m_logger.LogTrace("{Prefix}: Loaded metadata with {Count} virtual blocks, {Bytes} bytes written",
+            m_logger.LogTrace("{Prefix}: Saved state with {Count} virtual blocks, {Bytes} bytes written",
                 LogPrefix, m_virtualBlocks.Count, m_bytesWritten);
+            return true;
         }
         catch (Exception ex)
         {
-            m_logger.LogWarning(ex, "{Prefix}: Failed to load metadata, starting fresh", LogPrefix);
-            m_virtualBlocks.Clear();
-            m_bytesWritten = 0;
+            m_logger.LogWarning(ex, "{Prefix}: Failed to save state", LogPrefix);
+            return false;
         }
     }
 
@@ -827,10 +880,10 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
     public void Flush()
     {
-        // Save metadata if dirty
-        if (m_metadataDirty)
+        // Save state if dirty
+        if (m_stateDirty)
         {
-            SaveMetadata();
+            SaveState();
         }
 
         try
@@ -969,7 +1022,7 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
         // Truncate stream to match
         TruncateStream();
-        m_metadataDirty = true;
+        m_stateDirty = true;
     }
 
     /// <summary>
