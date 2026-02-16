@@ -296,6 +296,8 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         if (!IsMediaLoaded)
             return false;
 
+        ResetError();
+
         SetOptimalMediaParams();
 
         if (WentOK)

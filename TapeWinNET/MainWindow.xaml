@@ -11,7 +11,7 @@
         WindowStartupLocation="CenterScreen">
     
     <Window.Resources>
-        <converters:BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <converters:BooleanToVisibilityCollapsedConverter x:Key="BoolToVis" />
 
         <!-- TreeView item style -->
         <Style x:Key="TreeViewItemStyle" TargetType="TreeViewItem">
@@ -67,7 +67,7 @@
         
         <!-- Menu Bar -->
         <Menu Grid.Row="0">
-            <MenuItem Header="_File">
+            <MenuItem x:Name="FileMenu" Header="_File">
                 <MenuItem Header="Open _Drive" ItemsSource="{Binding DriveMenuItems}">
                     <MenuItem.ItemContainerStyle>
                         <Style TargetType="MenuItem">

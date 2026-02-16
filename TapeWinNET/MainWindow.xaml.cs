@@ -27,13 +27,15 @@ namespace TapeWinNET
         {
             InitializeComponent();
             
-            // Set window icon to tape drive icon
+            // Set window icon to tape drive icon -- now done via App.OnWindowLoaded
+            /*
             var icon = TapeIcons.GetTapeDriveIcon(large: true);
             if (icon != null)
             {
                 icon.Freeze();
                 Icon = icon;
             }
+            */
             
             _viewModel = new MainViewModel();
             DataContext = _viewModel;
@@ -62,7 +64,15 @@ namespace TapeWinNET
 
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            await _viewModel.InitializeAsync(App.StartupDriveNumber);
+            // On startup, open the File menu to show drive selection options
+            // Use Dispatcher to ensure the window is fully rendered first
+            await Dispatcher.BeginInvoke(() =>
+            {
+                FileMenu.IsSubmenuOpen = true;
+            }, System.Windows.Threading.DispatcherPriority.Input);
+
+            // Uncomment to enforce auto-openning of drive 0 on startup:
+            //  await _viewModel.InitializeAsync(App.StartupDriveNumber);
         }
 
         private void MainWindow_Closing(object? sender, CancelEventArgs e)

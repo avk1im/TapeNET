@@ -14,7 +14,7 @@
         ShowInTaskbar="False">
 
     <Window.Resources>
-        <converters:BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <converters:BooleanToVisibilityCollapsedConverter x:Key="BoolToVis" />
     </Window.Resources>
 
     <Window.InputBindings>

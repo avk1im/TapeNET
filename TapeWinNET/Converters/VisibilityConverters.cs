@@ -5,7 +5,7 @@ using System.Windows.Media;
 
 namespace TapeWinNET.Converters;
 
-public class BooleanToVisibilityConverter : IValueConverter
+public class BooleanToVisibilityCollapsedConverter : IValueConverter
 {
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
     {
@@ -26,6 +26,54 @@ public class BooleanToVisibilityConverter : IValueConverter
     }
 }
 
+public class BoolToVisibilityHiddenConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        if (value is bool boolValue)
+        {
+            return boolValue ? Visibility.Visible : Visibility.Hidden;
+        }
+        return Visibility.Hidden;
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        if (value is Visibility visibility)
+        {
+            return visibility == Visibility.Visible;
+        }
+        return false;
+    }
+}
+
+/// <summary>
+/// Converts bool to Gray/LightGray brush for enabled/disabled text styling.
+/// </summary>
+public class BoolToGrayBrushConverter : IValueConverter
+{
+    private static readonly Brush EnabledBrush;
+    private static readonly Brush DisabledBrush;
+
+    static BoolToGrayBrushConverter()
+    {
+        EnabledBrush = new SolidColorBrush(Colors.Gray);
+        EnabledBrush.Freeze();
+        DisabledBrush = new SolidColorBrush(Colors.LightGray);
+        DisabledBrush.Freeze();
+    }
+
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        return value is bool boolValue && boolValue ? EnabledBrush : DisabledBrush;
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        throw new NotImplementedException();
+    }
+}
+
 public class LogLevelConverter : IValueConverter
 {
     public static LogLevelConverter Instance { get; } = new();
@@ -38,9 +86,9 @@ public class LogLevelConverter : IValueConverter
                 return "Error";
             if (message.Contains("!?") || message.Contains("??"))
                 return "Warning";
-            if (message.Contains("iii") || message.Contains(">>>") || message.Contains("vvv"))
+            if (message.Contains("iii") || message.Contains(">>>"))
                 return "Info";
-            if (message.Contains("vvv") || message.Contains(">>>") || message.Contains("vvv"))
+            if (message.Contains("vvv"))
                 return "Completed";
         }
         return "Normal";
@@ -64,6 +112,7 @@ public class LogLevelToBrushConverter : IValueConverter
     private static readonly Brush ErrorBrush;
     private static readonly Brush WarningBrush;
     private static readonly Brush InfoBrush;
+    private static readonly Brush CompletedBrush;
     private static readonly Brush NormalBrush;
 
     static LogLevelToBrushConverter()
@@ -78,6 +127,9 @@ public class LogLevelToBrushConverter : IValueConverter
         InfoBrush = new SolidColorBrush(Colors.Blue);
         InfoBrush.Freeze();
 
+        CompletedBrush = new SolidColorBrush(Colors.DarkGreen);
+        InfoBrush.Freeze();
+
         NormalBrush = new SolidColorBrush(Colors.Black);
         NormalBrush.Freeze();
     }
@@ -90,7 +142,9 @@ public class LogLevelToBrushConverter : IValueConverter
                 return ErrorBrush;
             if (message.Contains("!?") || message.Contains("??"))
                 return WarningBrush;
-            if (message.Contains("iii") || message.Contains(">>>") || message.Contains("vvv"))
+            if (message.Contains("vvv"))
+                return CompletedBrush;
+            if (message.Contains("iii") || message.Contains(">>>"))
                 return InfoBrush;
         }
         return NormalBrush;

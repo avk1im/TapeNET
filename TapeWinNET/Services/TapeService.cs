@@ -1,4 +1,5 @@
-using System.IO; // <-- Add this at the top with other using directives
+using System.IO;
+
 using Windows.Win32.System.SystemServices; // for Helpers
 
 using Microsoft.Extensions.Logging;
@@ -15,7 +16,7 @@ namespace TapeWinNET.Services;
 /// Service that wraps TapeLibNET operations with async support for UI threading.
 /// Since TapeLibNET is single-threaded, all operations are executed on a dedicated worker thread.
 /// </summary>
-public class TapeService : IDisposable
+public partial class TapeService : IDisposable
 {
     private readonly ILoggerFactory _loggerFactory;
     private TapeDrive? _tapeDrive;
@@ -268,6 +269,7 @@ public class TapeService : IDisposable
     /// Executes a backup operation with the specified parameters.
     /// </summary>
     /// <param name="fileList">List of files to backup.</param>
+    /// <param name="listContainsPatterns">List of files may contain patterns and directories.</param>
     /// <param name="description">Description for the new backup set.</param>
     /// <param name="includeSubdirectories">Whether to include subdirectories.</param>
     /// <param name="incremental">Whether this is an incremental backup.</param>
@@ -275,6 +277,7 @@ public class TapeService : IDisposable
     /// <param name="hashAlgorithm">Hash algorithm to use.</param>
     /// <param name="appendMode">True to append after existing set, false to overwrite all.</param>
     /// <param name="appendAfterSetIndex">Set index to append after (-1 for overwrite all, or specific set index).</param>
+    /// <param name="useFilemarks">Whether to use filemarks between files (blob mode if false).</param>
     /// <param name="progressCallback">Callback for progress updates (filesProcessed, totalFiles, bytesProcessed).</param>
     /// <param name="logCallback">Callback for log messages.</param>
     /// <param name="fileErrorCallback">Callback when a file error occurs. Returns FileFailedAction.</param>
@@ -284,6 +287,7 @@ public class TapeService : IDisposable
     /// <param name="setAgentCallback">Callback to provide the backup agent reference for abort support.</param>
     public Task ExecuteBackupAsync(
         List<string> fileList,
+        bool listContainsPatterns,
         string description,
         bool includeSubdirectories,
         bool incremental,
@@ -291,6 +295,7 @@ public class TapeService : IDisposable
         TapeHashAlgorithm hashAlgorithm,
         bool appendMode,
         int appendAfterSetIndex,
+        bool useFilemarks,
         Action<int, int, long> progressCallback,
         Action<string> logCallback,
         Func<string, string, FileFailedAction> fileErrorCallback,
@@ -379,21 +384,24 @@ public class TapeService : IDisposable
                     toc.CurrentSetTOC.Description = description;
                     toc.CurrentSetTOC.HashAlgorithm = hashAlgorithm;
                     toc.CurrentSetTOC.BlockSize = blockSize;
-                    toc.CurrentSetTOC.FmksMode = false; // Default to blob mode for better performance
+                    toc.CurrentSetTOC.FmksMode = useFilemarks;
 
-                    logCallback($"iii Backup set: {description}");
+                    logCallback($"iii Backup set: >{description}<");
                     logCallback($" ii Block size: {Helpers.BytesToString(blockSize)}");
                     logCallback($" ii Hash algorithm: {hashAlgorithm}");
-                    logCallback($" ii Incremental: {(incremental ? "Yes" : "No")}")
-;
-                    logCallback($" ii Files to backup: {fileList.Count:N0}");
+                    logCallback($" ii Incremental: {(incremental ? "Yes" : "No")}");
+                    if (listContainsPatterns)
+                        logCallback($" ii Patterns / directories to backup: {fileList.Count:N0}");
+                    else
+                        logCallback($" ii Files to backup: {fileList.Count:N0}");
 
                     // Create progress handler
                     var progressHandler = new GuiBackupProgressHandler(
                         logCallback,
                         progressCallback,
                         currentFileCallback,
-                        fileErrorCallback);
+                        fileErrorCallback,
+                        abortCheckCallback);
 
                     // Execute backup loop (handles multi-volume)
                     do
@@ -402,7 +410,9 @@ public class TapeService : IDisposable
 
                         bool result = agent.CanResumeToNextVolume
                             ? agent.ResumeBackupToNextVolume()
-                            : agent.BackupFileListToCurrentSet(newSet, fileList, ignoreFailures: true, progressHandler);
+                            : listContainsPatterns ?
+                                agent.BackupFilesToCurrentSet(newSet, fileList, includeSubdirectories, ignoreFailures: true, progressHandler)
+                                : agent.BackupFileListToCurrentSet(newSet, fileList, ignoreFailures: true, progressHandler);
 
                         bool noFilesBackedUp = toc.CurrentSetTOC.Count == 0;
 
@@ -690,6 +700,7 @@ public class TapeService : IDisposable
         private readonly Action<int, int, long> _progressCallback;
         private readonly Action<string> _currentFileCallback;
         private readonly Func<string, string, FileFailedAction> _fileErrorCallback;
+        private readonly Func<bool> _abortCheckCallback;
         private bool _skipAllErrors;
 
         public int FilesProcessed { get; private set; }
@@ -702,12 +713,23 @@ public class TapeService : IDisposable
             Action<string> logCallback,
             Action<int, int, long> progressCallback,
             Action<string> currentFileCallback,
-            Func<string, string, FileFailedAction> fileErrorCallback)
+            Func<string, string, FileFailedAction> fileErrorCallback,
+            Func<bool> abortCheckCallback)
         {
             _logCallback = logCallback;
             _progressCallback = progressCallback;
             _currentFileCallback = currentFileCallback;
             _fileErrorCallback = fileErrorCallback;
+            _abortCheckCallback = abortCheckCallback;
+        }
+
+        private void ThrowIfAbortRequested()
+        {
+            if (_abortCheckCallback())
+            {
+                _logCallback("!!! Backup aborted by user");
+                throw new TapeAbortRequestedException("User requested abort");
+            }
         }
 
         public void BatchStartStatistics(int set, int filesFound)
@@ -735,12 +757,16 @@ public class TapeService : IDisposable
 
         public bool PreProcessFile(ref TapeFileDescriptor fileDescr)
         {
+            ThrowIfAbortRequested();
+
             _currentFileCallback(fileDescr.FullName);
             return true;
         }
 
         public bool PostProcessFile(ref TapeFileDescriptor fileDescr)
         {
+            ThrowIfAbortRequested();
+
             FilesSucceeded++;
             FilesProcessed++;
             BytesProcessed += fileDescr.Length;
@@ -753,6 +779,8 @@ public class TapeService : IDisposable
 
         public FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex)
         {
+            ThrowIfAbortRequested();
+
             FilesFailed++;
 
             _logCallback($"!!! Failed: {fileDescr.FullName}");
@@ -785,6 +813,8 @@ public class TapeService : IDisposable
 
         public void OnFileSkipped(TapeFileDescriptor fileDescr)
         {
+            ThrowIfAbortRequested();
+
             _logCallback($" -- Skipped: {Path.GetFileName(fileDescr.FullName)}");
         }
     }

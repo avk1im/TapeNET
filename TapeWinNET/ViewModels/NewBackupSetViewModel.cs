@@ -22,6 +22,7 @@ public class NewBackupSetViewModel : ViewModelBase
     private string _description = string.Empty;
     private bool _includeSubdirectories = true;
     private bool _incrementalBackup;
+    private bool _useFilemarks = false; // Default to false
     private bool _previewFilesBeforeBackup;
     private int _selectedBlockSizeIndex = 4; // Default 16KB
     private int _selectedHashIndex = 1; // Default CRC32
@@ -97,6 +98,12 @@ public class NewBackupSetViewModel : ViewModelBase
     {
         get => _incrementalBackup;
         set => SetProperty(ref _incrementalBackup, value);
+    }
+
+    public bool UseFilemarks
+    {
+        get => _useFilemarks;
+        set => SetProperty(ref _useFilemarks, value);
     }
 
     public bool PreviewFilesBeforeBackup

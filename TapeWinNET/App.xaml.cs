@@ -10,7 +10,15 @@ namespace TapeWinNET;
 /// </summary>
 public partial class App : Application
 {
+    /// <summary>
+    /// Drive number to open on startup (can be set via command line).
+    /// </summary>
     public static int StartupDriveNumber { get; private set; } = 0;
+
+    /// <summary>
+    /// Cached application icon for all windows.
+    /// </summary>
+    public static ImageSource? ApplicationIcon { get; private set; }
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -35,6 +43,23 @@ public partial class App : Application
                     StartupDriveNumber = driveNum;
                 }
             }
+        }
+        
+        // Create and cache the application icon
+        ApplicationIcon = TapeIcons.GetTapeDriveIcon(large: true);
+        ApplicationIcon?.Freeze();
+
+        // Set default icon for all windows via EventManager
+        EventManager.RegisterClassHandler(
+            typeof(Window),
+            FrameworkElement.LoadedEvent,
+            new RoutedEventHandler(OnWindowLoaded));
+    }
+    private static void OnWindowLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is Window window && window.Icon == null && ApplicationIcon != null)
+        {
+            window.Icon = ApplicationIcon;
         }
     }
 }

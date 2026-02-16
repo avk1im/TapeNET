@@ -1,9 +1,19 @@
 ﻿<Application x:Class="TapeWinNET.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:TapeWinNET"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
         <ResourceDictionary>
+            <!-- Default style for all Windows - sets application icon -->
+            <!-- Note: Icon is also set programmatically in App.xaml.cs via TapeIcons.GetTapeDriveIcon() -->
+            <!-- Uncomment below to use an .ico file from Resources folder: -->
+            <!--
+            <Style TargetType="Window">
+                <Setter Property="Icon" Value="/Resources/tape_drive.ico"/>
+            </Style>
+            -->
+
             <!-- Common styles -->
             <Style x:Key="TreeViewItemStyle" TargetType="TreeViewItem">
                 <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />

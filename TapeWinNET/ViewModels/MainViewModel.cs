@@ -419,7 +419,10 @@ public class MainViewModel : ViewModelBase
         var viewModel = new NewBackupSetViewModel(
             _tapeService,
             OnStartBackup,
-            () => { /* Cancel - window closes itself */ });
+            () =>
+            {
+                Application.Current.Windows.OfType<NewBackupSetWindow>().FirstOrDefault()?.Close();
+            });
 
         var window = new NewBackupSetWindow(viewModel)
         {
@@ -443,7 +446,7 @@ public class MainViewModel : ViewModelBase
         {
             // Start backup directly
             newBackupWindow?.Close();
-            _ = ExecuteBackupAsync(backupViewModel, backupViewModel.GetPatterns());
+            _ = ExecuteBackupAsync(backupViewModel, backupViewModel.GetPatterns(), listContainsPatterns: true);
         }
     }
 
@@ -467,7 +470,7 @@ public class MainViewModel : ViewModelBase
                 // Close both windows and start backup with selected files
                 Application.Current.Windows.OfType<BackupPreviewWindow>().FirstOrDefault()?.Close();
                 parentWindow?.Close();
-                _ = ExecuteBackupAsync(backupViewModel, selectedFiles);
+                _ = ExecuteBackupAsync(backupViewModel, selectedFiles, listContainsPatterns: false);
             },
             () =>
             {
@@ -544,7 +547,8 @@ public class MainViewModel : ViewModelBase
         return fileList;
     }
 
-    private async Task ExecuteBackupAsync(NewBackupSetViewModel backupViewModel, List<string> fileList)
+    private async Task ExecuteBackupAsync(NewBackupSetViewModel backupViewModel,
+        List<string> fileList, bool listContainsPatterns)
     {
         if (fileList.Count == 0)
         {
@@ -565,6 +569,7 @@ public class MainViewModel : ViewModelBase
             {
                 await _tapeService.ExecuteBackupAsync(
                     fileList,
+                    listContainsPatterns,
                     backupViewModel.Description,
                     backupViewModel.IncludeSubdirectories,
                     backupViewModel.IncrementalBackup,
@@ -572,6 +577,7 @@ public class MainViewModel : ViewModelBase
                     backupViewModel.SelectedHashAlgorithm,
                     backupViewModel.AppendToSet,
                     backupViewModel.SelectedAppendOption?.SetIndex ?? -1,
+                    backupViewModel.UseFilemarks,
                     // Progress update callback
                     (processed, total, bytes) =>
                     {

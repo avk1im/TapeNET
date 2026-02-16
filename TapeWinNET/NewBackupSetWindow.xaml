@@ -14,7 +14,7 @@
         ShowInTaskbar="False">
 
     <Window.Resources>
-        <converters:BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <converters:BooleanToVisibilityCollapsedConverter x:Key="BoolToVis" />
         
         <!-- Warning panel styles -->
         <Style x:Key="WarningPanelStyle" TargetType="Border">
@@ -176,6 +176,9 @@
                                   Margin="0,0,0,4"/>
                         <CheckBox Content="Incremental backup" 
                                   IsChecked="{Binding IncrementalBackup}"
+                                  Margin="0,0,0,4"/>
+                        <CheckBox Content="Use filemarks (advanced)" 
+                                  IsChecked="{Binding UseFilemarks}"
                                   Margin="0,0,0,4"/>
                         <CheckBox Content="Preview files before backup" 
                                   IsChecked="{Binding PreviewFilesBeforeBackup}"
