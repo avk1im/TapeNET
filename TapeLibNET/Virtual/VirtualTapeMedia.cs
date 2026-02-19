@@ -222,23 +222,6 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
     }
 
     /// <summary>
-    /// Simplified constructor with single block size for new tapes.
-    /// </summary>
-    public VirtualTapeMedia(
-        Stream stream,
-        uint blockSize,
-        long capacity,
-        bool ownsStream = true,
-        Stream? metadataStream = null,
-        bool ownsMetadataStream = true,
-        string? name = null,
-        ILoggerFactory? loggerFactory = null)
-        : this(stream, blockSize, blockSize, blockSize, capacity, ownsStream,
-               metadataStream, ownsMetadataStream, name, loggerFactory)
-    {
-    }
-
-    /// <summary>
     /// Deserializing constructor - loads existing tape from saved state in metadataStream.
     /// Use this when opening an existing virtual tape file.
     /// </summary>
@@ -375,6 +358,7 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
         m_blockSize = size > 0 ? size : m_defaultBlockSize;
         ResetError();
+        m_stateDirty = true;
         return true;
     }
 
@@ -880,8 +864,8 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
     public void Flush()
     {
-        // Save state if dirty
-        if (m_stateDirty)
+        // Save state if dirty or no information yet in metadata stream (new media)
+        if (m_stateDirty || (m_metadataStream != null && m_metadataStream.Length == 0))
         {
             SaveState();
         }
@@ -1041,6 +1025,7 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
         }
 
         m_virtualBlocks.RemoveRange(startIndex, m_virtualBlocks.Count - startIndex);
+        m_stateDirty = true;
     }
 
     /// <summary>

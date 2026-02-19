@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Windows.Win32.Foundation;
 
@@ -82,6 +83,7 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
 
     /// <summary>Metadata file extension.</summary>
     public const string MetadataExtension = ".vrt";
+    public const string InitiatorSuffix = "_init";
 
     #endregion
 
@@ -122,6 +124,7 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
         ILoggerFactory loggerFactory,
         VirtualTapeDriveCapabilities capabilities,
         Stream contentStream,
+        bool ownsStreams = false,
         Stream? contentMetadataStream = null,
         Stream? initiatorStream = null,
         Stream? initiatorMetadataStream = null)
@@ -131,7 +134,7 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
         m_contentMetadataStream = contentMetadataStream;
         m_initiatorStream = initiatorStream;
         m_initiatorMetadataStream = initiatorMetadataStream;
-        m_ownsStreams = false; // Caller manages streams
+        m_ownsStreams = ownsStreams; // Either the caller of the backend manages streams -- the media never does!
     }
 
     #endregion
@@ -185,8 +188,10 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
         }
 
         // Create backend - LoadMedia will try to load existing state
+        //  Must let the backend own the stream(s) as we don't manage their lifecycle here
+        //  Notice: the backend owns the streams, the media never does!
         var backend = new VirtualTapeDriveBackend(loggerFactory, caps,
-            contentStream, contentMetadataStream,
+            contentStream, ownsStreams: true, contentMetadataStream,
             initiatorStream, initiatorMetadataStream)
         {
             RequireExistingState = requireExistingState
@@ -243,6 +248,10 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
 
     public override void Close()
     {
+        if (HasMedia)
+            UnloadMedia();
+        Debug.Assert(!HasMedia);
+
         m_isOpen = false;
         m_logger.LogTrace("{Prefix}: Closed virtual drive", LogPrefix);
     }
@@ -260,6 +269,24 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
 
     public override bool LoadMedia()
     {
+        // Flush and cleanup existing media if any -- but NOT the streams!
+        //  Notice: backend always owns the streams
+        if (m_contentMedia != null)
+        {
+            m_contentMedia.Flush();
+            m_contentMedia.Dispose();
+            m_contentMedia = null;
+        }
+
+        if (m_initiatorMedia != null)
+        {
+            m_initiatorMedia.Flush();
+            m_initiatorMedia.Dispose();
+            m_initiatorMedia = null;
+        }
+
+        m_hasMedia = false;
+
         // Create streams if not provided externally
         if (m_contentStream == null)
         {
@@ -567,6 +594,8 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
 
     public override bool SetPosition(long block)
     {
+        ResetError();
+
         if (m_currentMedia == null)
         {
             SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
@@ -579,32 +608,35 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             return false;
         }
 
-        ResetError();
         return true;
     }
 
     public override bool SetPositionToPartition(MediaPartition partition, long block)
     {
-        if (partition == MediaPartition.Initiator)
+        if (partition != MediaPartition.Current)
         {
-            if (m_initiatorMedia == null)
+            if (partition == MediaPartition.Initiator)
             {
-                SetError(WIN32_ERROR.ERROR_INVALID_PARAMETER);
-                return false;
+                if (m_initiatorMedia == null)
+                {
+                    SetError(WIN32_ERROR.ERROR_INVALID_PARAMETER);
+                    return false;
+                }
+                m_currentMedia = m_initiatorMedia;
             }
-            m_currentMedia = m_initiatorMedia;
-        }
-        else
-        {
-            if (m_contentMedia == null)
+            else
             {
-                SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
-                return false;
+                if (m_contentMedia == null)
+                {
+                    SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
+                    return false;
+                }
+                m_currentMedia = m_contentMedia;
             }
-            m_currentMedia = m_contentMedia;
+
+            m_currentPartition = partition;
         }
 
-        m_currentPartition = partition;
         return SetPosition(block);
     }
 
@@ -620,6 +652,8 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
 
     public override bool Rewind()
     {
+        ResetError();
+
         if (m_currentMedia == null)
         {
             SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
@@ -627,22 +661,24 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
         }
 
         m_currentMedia.Rewind();
-        ResetError();
-        return true;
+        return m_currentMedia.WentOK;
     }
 
     public override bool SeekToEnd(MediaPartition partition)
     {
+        ResetError();
+
         if (!SetPositionToPartition(partition, 0))
             return false;
 
         m_currentMedia!.SeekToEnd();
-        ResetError();
-        return true;
+        return m_currentMedia!.WentOK;
     }
 
     public override bool SpaceFilemarks(int count)
     {
+        ResetError();
+
         if (m_currentMedia == null)
         {
             SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
@@ -663,12 +699,13 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             return false;
         }
 
-        ResetError();
-        return true;
+        return m_currentMedia.WentOK;
     }
 
     public override bool SpaceSetmarks(int count)
     {
+        ResetError();
+
         if (!m_capabilities.SupportsSetmarks)
         {
             SetError(WIN32_ERROR.ERROR_NOT_SUPPORTED);
@@ -701,7 +738,6 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             return false;
         }
 
-        ResetError();
         return true;
     }
 
@@ -723,6 +759,8 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
 
     public override bool WriteFilemarks(uint count)
     {
+        ResetError();
+
         if (m_currentMedia == null)
         {
             SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
@@ -738,13 +776,14 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             }
         }
 
-        ResetError();
         return true;
     }
 
     public override bool WriteSetmarks(uint count)
     {
-        if (!m_capabilities.SupportsSetmarks)
+        ResetError();
+
+       if (!m_capabilities.SupportsSetmarks)
         {
             SetError(WIN32_ERROR.ERROR_NOT_SUPPORTED);
             return false;
@@ -765,7 +804,6 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             }
         }
 
-        ResetError();
         return true;
     }
 

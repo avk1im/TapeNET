@@ -865,9 +865,22 @@ void HandleFormat(List<string> values)
         return;
     }
     else
-        Console.WriteLine($"vvv Media formatted ok with TOC in {((drive.PartitionCount > 1)? "partition" : "set")}");
+        Console.WriteLine($"vvv Media formatted ok with TOC in {(drive.HasInitiatorPartition ? "partition" : "set")}");
 
-    legacyTOC = null; // no TOC after formatting
+    // Create & write an empty TOC
+    Console.WriteLine("\n>>> Creating initial TOC...");
+    
+    using var agent = new TapeFileAgent(drive, new TapeTOC(setDescription ?? $"Media created on {DateTime.Now}"));
+    if (agent.BackupTOC())
+    {
+        legacyTOC = agent.TOC;
+        Console.WriteLine("vvv Initial TOC created and saved ok");
+    }
+    else
+    {
+        legacyTOC = null;
+        OnNonFatalError("!!! Couldn't save initial TOC. Error: " + agent.LastErrorMessage);
+    }
 
     Console.WriteLine("\n>>> Loading media...");
 
@@ -914,7 +927,7 @@ void HandleDescription(List<string> values)
     if (values.Count == 0)
     {
         setDescription = null;
-        Console.WriteLine("vvv Backup set description set to standard");
+        Console.WriteLine("vvv Description set to standard");
         return;
     }
 
@@ -924,7 +937,7 @@ void HandleDescription(List<string> values)
         sb.Append(' ').Append(values[i]);
     setDescription = sb.ToString();
     
-    Console.WriteLine($"vvv Backup set description set to >{setDescription}<");
+    Console.WriteLine($"vvv Description set to >{setDescription}<");
 }
 
 void HandleFilemarks(List<string> values)
@@ -1173,7 +1186,7 @@ void HandleBackup(List<string> values)
         }
 
         if (string.IsNullOrEmpty(toc.Description))
-            toc.Description = $"Media created {DateTime.Now}";
+            toc.Description = setDescription ?? $"Media created {DateTime.Now}";
 
         Console.WriteLine("iii Media information:");
         WriteMediaInformation(toc);

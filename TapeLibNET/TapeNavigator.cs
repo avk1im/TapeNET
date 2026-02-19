@@ -585,9 +585,16 @@ namespace TapeLibNET
 
             // The TOC is in the last set of the only partion [content][SM][toc1][FM][toc1][FM] -> next move to before the last setmark (indicating end of content)
             if (WentOK)
-                MoveToNextContentSetmark(-1); // this will bring us to right before the setmark
+                MoveToNextContentSetmark(-1); // this will bring us to right before the last setmark
+
             if (WentOK)
                 MoveToNextContentSetmark(1); // Finally go 1 setmark forward to after the setmark -- the beginning of TOC data == of the to-be-written content data
+            else
+            {
+                // no setmarks found -> assume no content yet on media, just rewind to the begin of media
+                ResetError();
+                Drive.Rewind();
+            }
         }
 
         public override bool MoveToEndOfContent()

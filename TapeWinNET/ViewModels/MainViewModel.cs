@@ -294,6 +294,41 @@ public class MainViewModel : ViewModelBase
 
     #region Private Methods - Drive/Media Operations
 
+    private async Task<bool> LoadMediaInternalAsync(int driveNumber)
+    {
+        bool isBusy = IsBusy;
+        string busyMessage = BusyMessage;
+
+        try
+        {
+            IsBusy = true;
+            BusyMessage = "Loading media...";
+            var success = await _tapeService.LoadMediaAsync();
+            if (!success)
+            {
+                MessageBox.Show($"Failed to load media.\n\n{_tapeService.LastError}",
+                    "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+
+            BusyMessage = "Reading TOC...";
+            success = await _tapeService.RestoreTOCAsync();
+            if (!success)
+            {
+                MessageBox.Show($"Failed to read TOC.\n\n{_tapeService.LastError}",
+                    "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+        }
+        finally
+        {
+            IsBusy = isBusy;
+            BusyMessage = busyMessage;
+        }
+
+        return true;
+    }
+
     private async Task OpenDriveAsync(object? parameter)
     {
         int driveNumber = parameter as int? ?? 0;
@@ -312,28 +347,14 @@ public class MainViewModel : ViewModelBase
                 return;
             }
 
-            BusyMessage = "Loading media...";
-            success = await _tapeService.LoadMediaAsync();
+            success = await LoadMediaInternalAsync(driveNumber);
             if (!success)
             {
-                MessageBox.Show($"Failed to load media.\n\n{_tapeService.LastError}",
-                    "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
-                UpdateTreeForDriveOnly(driveNumber);
-                return;
-            }
-
-            BusyMessage = "Reading TOC...";
-            success = await _tapeService.RestoreTOCAsync();
-            if (!success)
-            {
-                MessageBox.Show($"Failed to read TOC.\n\n{_tapeService.LastError}",
-                    "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
                 UpdateTreeForDriveOnly(driveNumber);
                 return;
             }
 
             UpdateTreeFromTOC(driveNumber);
-            
             // Select the most recent backup set
             SelectMostRecentSet();
         }
@@ -356,24 +377,19 @@ public class MainViewModel : ViewModelBase
         {
             var driveNumber = _tapeService.DriveNumber;
 
-            var success = await _tapeService.LoadMediaAsync();
-            if (!success)
+            if (_tapeService.TOC == null)
             {
-                MessageBox.Show($"Failed to load media.\n\n{_tapeService.LastError}",
-                    "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
+                var success = await LoadMediaInternalAsync(driveNumber);
 
-            BusyMessage = "Reading TOC...";
-            success = await _tapeService.RestoreTOCAsync();
-            if (!success)
-            {
-                MessageBox.Show($"Failed to read TOC.\n\n{_tapeService.LastError}",
-                    "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
+                if (!success)
+                {
+                    UpdateTreeForDriveOnly(driveNumber);
+                    return;
+                }
             }
 
             UpdateTreeFromTOC(driveNumber);
+            // Select the most recent backup set
             SelectMostRecentSet();
         }
         finally
@@ -1066,19 +1082,28 @@ public class MainViewModel : ViewModelBase
 
     private void ShowOpenVirtualDriveWindow(object? parameter)
     {
+        ShowOpenVirtualDriveWindowInternal(prePopulatedPath: null, preSelectCreateNew: null);
+    }
+
+    private void ShowOpenVirtualDriveWindowInternal(
+        string? prePopulatedPath,
+        bool? preSelectCreateNew)
+    {
         var viewModel = new OpenVirtualDriveViewModel(
-            async (capabilities, contentPath, initiatorPath) =>
+            async (request) =>
             {
-                // Close dialog
+                // Close dialog first
                 Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
-                
-                // Open virtual drive
-                await OpenVirtualDriveAsync(capabilities, contentPath, initiatorPath);
+
+                // Open virtual drive with mode-specific handling
+                await OpenVirtualDriveAsync(request);
             },
             () =>
             {
                 Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
-            });
+            },
+            prePopulatedContentPath: prePopulatedPath,
+            preSelectCreateNew: preSelectCreateNew);
 
         var window = new OpenVirtualDriveWindow(viewModel)
         {
@@ -1087,22 +1112,50 @@ public class MainViewModel : ViewModelBase
         window.ShowDialog();
     }
 
-    private async Task OpenVirtualDriveAsync(
-        VirtualTapeDriveCapabilities capabilities, 
-        string contentPath, 
-        string? initiatorPath)
+    private async Task OpenVirtualDriveAsync(VirtualDriveOpenRequest request)
     {
         IsBusy = true;
-        BusyMessage = "Opening virtual drive...";
+        BusyMessage = request.IsCreateNew ? "Creating virtual drive..." : "Opening virtual drive...";
 
         try
         {
-            var success = await _tapeService.OpenVirtualDriveAsync(capabilities, contentPath, initiatorPath);
+            // Pass requireExisting based on user's mode selection
+            var success = await _tapeService.OpenVirtualDriveAsync(
+                request.Capabilities,
+                request.ContentPath,
+                request.InitiatorPath,
+                requireExisting: !request.IsCreateNew);
+
             if (!success)
             {
-                MessageBox.Show($"Failed to open virtual drive.\n\n{_tapeService.LastError}",
-                    "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                UpdateTreeForDriveOnly(0);
+                IsBusy = false;
+                BusyMessage = string.Empty;
+
+                if (!request.IsCreateNew)
+                {
+                    // "Open existing" failed - show error and re-open dialog
+                    MessageBox.Show(
+                        $"Failed to open existing virtual media.\n\n{_tapeService.LastError}\n\n" +
+                        "Please check the file path or select 'Create new virtual media'.",
+                        "Open Failed",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+
+                    // Re-show dialog with pre-populated path, suggesting "Create new"
+                    ShowOpenVirtualDriveWindowInternal(
+                        prePopulatedPath: request.ContentPath,
+                        preSelectCreateNew: null); // Let user decide
+                }
+                else
+                {
+                    // "Create new" failed - just show error
+                    MessageBox.Show(
+                        $"Failed to create virtual drive.\n\n{_tapeService.LastError}",
+                        "Error",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                    UpdateTreeForDriveOnly(0);
+                }
                 return;
             }
 
@@ -1110,26 +1163,55 @@ public class MainViewModel : ViewModelBase
             success = await _tapeService.LoadMediaAsync();
             if (!success)
             {
-                MessageBox.Show($"Failed to load virtual media.\n\n{_tapeService.LastError}",
-                    "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+                IsBusy = false;
+                BusyMessage = string.Empty;
+
+                MessageBox.Show(
+                    $"Failed to load virtual media.\n\n{_tapeService.LastError}",
+                    "Warning",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
                 UpdateTreeForDriveOnly(0);
                 return;
+            }
+
+            // For "Create new", create and save the initial TOC
+            if (request.IsCreateNew)
+            {
+                BusyMessage = "Creating initial TOC...";
+                success = await _tapeService.CreateInitialTOCAsync(request.MediaName);
+                if (!success)
+                {
+                    // Warning only - drive is still usable
+                    LogMessages.Add($"[{DateTime.Now:HH:mm:ss}] !!! Warning: Could not create initial TOC");
+                }
             }
 
             BusyMessage = "Reading TOC...";
             success = await _tapeService.RestoreTOCAsync();
             if (!success)
             {
-                MessageBox.Show($"Failed to read virtual TOC.\n\n{_tapeService.LastError}",
-                    "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+                // For new media, TOC read failure is expected if initial TOC creation failed
+                if (!request.IsCreateNew)
+                {
+                    MessageBox.Show(
+                        $"Failed to read virtual TOC.\n\n{_tapeService.LastError}",
+                        "Warning",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                }
                 UpdateTreeForDriveOnly(0);
                 return;
             }
 
             UpdateTreeFromTOC(0);
-            
+
             // Select the most recent backup set
             SelectMostRecentSet();
+
+            // Log success with mode info
+            var modeText = request.IsCreateNew ? "Created new" : "Opened existing";
+            LogMessages.Add($"[{DateTime.Now:HH:mm:ss}] iii {modeText} virtual media: {request.ContentPath}");
         }
         finally
         {
@@ -1140,3 +1222,4 @@ public class MainViewModel : ViewModelBase
 
     #endregion
 }
+

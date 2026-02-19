@@ -223,6 +223,56 @@ public partial class TapeService : IDisposable
         });
     }
 
+    /// <summary>
+    /// Creates and saves an initial empty TOC for newly created/formatted media.
+    /// Should be called after LoadMediaAsync() for new virtual media.
+    /// </summary>
+    /// <param name="mediaName">Description for the new media. If null, a default name is generated.</param>
+    /// <returns>True if the initial TOC was created and saved successfully.</returns>
+    public Task<bool> CreateInitialTOCAsync(string? mediaName = null)
+    {
+        return Task.Run(() =>
+        {
+            lock (_lock)
+            {
+                if (_tapeDrive == null || !_tapeDrive.IsMediaLoaded)
+                {
+                    LastError = "Media not loaded";
+                    return false;
+                }
+
+                try
+                {
+                    Log(">>> Creating initial TOC...");
+                    Status("Creating initial TOC...");
+
+                    var description = mediaName ?? $"Media created {DateTime.Now:yyyy-MM-dd HH:mm}";
+
+                    _tapeAgent?.Dispose();
+                    _tapeAgent = new TapeFileAgent(_tapeDrive, new TapeTOC(description));
+
+                    if (!_tapeAgent.BackupTOC())
+                    {
+                        LastError = _tapeAgent.LastErrorMessage;
+                        Log($"!!! Couldn't save initial TOC. Error: {LastError}");
+                        return false;
+                    }
+
+                    _toc = _tapeAgent.TOC;
+                    Log($"vvv Initial TOC created: {description}");
+                    Status("Initial TOC created");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    LastError = ex.Message;
+                    Log($"!!! Exception creating initial TOC: {ex.Message}");
+                    return false;
+                }
+            }
+        });
+    }
+
     public Task<bool> EjectMediaAsync()
     {
         return Task.Run(() =>
@@ -570,7 +620,8 @@ public partial class TapeService : IDisposable
     public Task<bool> OpenVirtualDriveAsync(
         VirtualTapeDriveCapabilities capabilities,
         string contentPath,
-        string? initiatorPath)
+        string? initiatorPath,
+        bool requireExisting = false)
     {
         return Task.Run(() =>
         {
@@ -584,29 +635,31 @@ public partial class TapeService : IDisposable
                         Log($" ii Initiator file: >{initiatorPath}<");
                     Status("Opening virtual drive...");
 
-                    // Dispose existing drive if any
-                    _tapeAgent?.Dispose();
-                    _tapeAgent = null;
-                    _toc = null;
-                    _tapeDrive?.Dispose();
-
                     var backend = VirtualTapeDriveBackend.CreateFileBacked(
                         _loggerFactory,
                         contentPath,
                         initiatorPath,
-                        capabilities);
+                        capabilities,
+                        requireExistingState: requireExisting);
+
+                    // If we got here, the backend has been created ->
+                    //  Dispose existing drive if any
+                    _tapeAgent?.Dispose();
+                    _tapeAgent = null;
+                    _toc = null;
+                    _tapeDrive?.Dispose();
 
                     _tapeDrive = new TapeDrive(_loggerFactory, backend);
 
                     if (!_tapeDrive.ReopenDrive(0))
                     {
                         LastError = _tapeDrive.LastErrorMessage;
-                        Log($"!!! Couldn't open virtual drive. Error: {LastError}");
+                        Log($"!!! Failed to open virtual drive: {LastError}");
                         return false;
                     }
 
                     DriveNumber = 0;
-                    Log("vvv Virtual drive opened successfully");
+                    Log($"vvv Virtual drive opened on file >{contentPath}<");
                     Status("Virtual drive opened");
                     return true;
                 }

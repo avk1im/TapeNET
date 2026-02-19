@@ -81,6 +81,17 @@ public enum VirtualDriveProbeStatus
 }
 
 /// <summary>
+/// Request data for opening/creating a virtual drive.
+/// </summary>
+public record VirtualDriveOpenRequest(
+    VirtualTapeDriveCapabilities Capabilities,
+    string ContentPath,
+    string? InitiatorPath,
+    bool IsCreateNew,
+    string? MediaName
+);
+
+/// <summary>
 /// ViewModel for the Open Virtual Drive dialog.
 /// Supports both opening existing virtual media and creating new virtual media.
 /// </summary>
@@ -96,15 +107,36 @@ public class OpenVirtualDriveViewModel : ViewModelBase
         => contentFilePath + VirtualTapeDriveBackend.MetadataExtension;
 
     /// <summary>
+    /// Checks the specified content file path and removes the initiator suffix if present, returning the modified path.
+    /// Example: "mymedia_init.vt" → "mymedia.vt"
+    /// </summary>
+    public static string CheckContentFilePath(string contentFilePath)
+    {
+        // Remove initiator suffix if present
+        var nameWithoutExt = Path.GetFileNameWithoutExtension(contentFilePath);
+        if (nameWithoutExt.EndsWith(VirtualTapeDriveBackend.InitiatorSuffix))
+        {
+            var baseName = nameWithoutExt[..^VirtualTapeDriveBackend.InitiatorSuffix.Length];
+            var dir = Path.GetDirectoryName(contentFilePath) ?? string.Empty;
+            var ext = Path.GetExtension(contentFilePath);
+            return Path.Combine(dir, $"{baseName}{ext}");
+        }
+        return contentFilePath;
+    }
+
+    /// <summary>
     /// Builds the initiator partition file path from content file path.
     /// Example: "mymedia.vt" → "mymedia_init.vt"
     /// </summary>
     public static string BuildInitiatorFilePath(string contentFilePath)
     {
-        var dir = Path.GetDirectoryName(contentFilePath) ?? string.Empty;
         var nameWithoutExt = Path.GetFileNameWithoutExtension(contentFilePath);
+        // Check if the file name already ends with the initiator suffix to avoid double-appending it
+        if (nameWithoutExt.EndsWith(VirtualTapeDriveBackend.InitiatorSuffix))
+            return contentFilePath; // Already has the suffix, return as is
+        var dir = Path.GetDirectoryName(contentFilePath) ?? string.Empty;
         var ext = Path.GetExtension(contentFilePath);
-        return Path.Combine(dir, $"{nameWithoutExt}_init{ext}");
+        return Path.Combine(dir, $"{nameWithoutExt}{VirtualTapeDriveBackend.InitiatorSuffix}{ext}");
     }
 
     /// <summary>
@@ -131,7 +163,7 @@ public class OpenVirtualDriveViewModel : ViewModelBase
 
     #endregion
 
-    private readonly Action<VirtualTapeDriveCapabilities, string, string?> _onOpen;
+    private readonly Action<VirtualDriveOpenRequest> _onOpen;
     private readonly Action _onCancel;
 
     // Mode selection
@@ -170,11 +202,27 @@ public class OpenVirtualDriveViewModel : ViewModelBase
     private Task? _probeTask;
 
     public OpenVirtualDriveViewModel(
-        Action<VirtualTapeDriveCapabilities, string, string?> onOpen,
-        Action onCancel)
+        Action<VirtualDriveOpenRequest> onOpen,
+        Action onCancel,
+        string? prePopulatedContentPath = null,
+        bool? preSelectCreateNew = null)
     {
         _onOpen = onOpen;
         _onCancel = onCancel;
+
+        // Pre-populate if provided (for retry scenarios)
+        if (!string.IsNullOrWhiteSpace(prePopulatedContentPath))
+        {
+            _contentFilePath = CheckContentFilePath(prePopulatedContentPath);
+            // Trigger probe after setting path
+            _ = TriggerProbeAsync();
+        }
+
+        // Pre-select mode if specified
+        if (preSelectCreateNew.HasValue)
+        {
+            _isOpenExistingMode = !preSelectCreateNew.Value;
+        }
 
         BrowseContentFileCommand = new RelayCommand(BrowseContentFile);
         ApplyPresetCommand = new RelayCommand(ApplyPreset);
@@ -214,7 +262,7 @@ public class OpenVirtualDriveViewModel : ViewModelBase
         get => _contentFilePath;
         set
         {
-            if (SetProperty(ref _contentFilePath, value))
+            if (SetProperty(ref _contentFilePath, CheckContentFilePath(value)))
             {
                 OnPropertyChanged(nameof(CanExecute));
                 OnPropertyChanged(nameof(ShowOverwriteWarning));
@@ -571,7 +619,15 @@ public class OpenVirtualDriveViewModel : ViewModelBase
             ? BuildInitiatorFilePath(ContentFilePath)
             : null;
 
-        _onOpen(capabilities, ContentFilePath, initiatorPath);
+        var request = new VirtualDriveOpenRequest(
+            Capabilities: capabilities,
+            ContentPath: ContentFilePath,
+            InitiatorPath: initiatorPath,
+            IsCreateNew: IsCreateNewMode,
+            MediaName: IsCreateNewMode ? MediaName : null
+        );
+
+        _onOpen(request);
     }
 
     #endregion

@@ -502,6 +502,10 @@ namespace TapeLibNET
             m_setTOCs = [];
             m_nextUID = 1UL; // 0UL is an invalid or "not set" value for UID
         }
+        public TapeTOC(string description) : this()
+        {
+            Description = description;
+        }
         public TapeTOC(TapeTOC toc) : this()
         {
             CopyFrom(toc);
@@ -762,8 +766,7 @@ namespace TapeLibNET
                 return null;
 
             var setTOCs = deserializer.Deserialize<List<TapeSetTOC>, TapeSetTOC>();
-            if (setTOCs.Count == 0)
-                return null;
+
             return new TapeTOC(nextUID, setTOCs)
             {
                 Description = deserializer.DeserializeString(),
