@@ -34,6 +34,9 @@ public class NewBackupSetViewModel : ViewModelBase
     private long _totalSize;
     private DateTime? _lastScanTime;
     private bool _autoScan = true;
+    // for auto-adding to pattern input:
+    private BackupSourceEntry? _selectedSourceEntry;
+    private string? _prevAutoAdded;
 
     public NewBackupSetViewModel(TapeService tapeService, Action<NewBackupSetViewModel> onStartBackup, Action onCancel)
     {
@@ -171,6 +174,22 @@ public class NewBackupSetViewModel : ViewModelBase
             if (SetProperty(ref _patternInput, value))
             {
                 CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Currently selected source entry in the ListView.
+    /// When set, auto-populates the PatternInput field.
+    /// </summary>
+    public BackupSourceEntry? SelectedSourceEntry
+    {
+        get => _selectedSourceEntry;
+        set
+        {
+            if (SetProperty(ref _selectedSourceEntry, value) && value != null)
+            {
+                AutoAddPatternFromSelection(value);
             }
         }
     }
@@ -560,7 +579,46 @@ public class NewBackupSetViewModel : ViewModelBase
     /// </summary>
     public List<string> GetPatterns()
     {
-        return SourceEntries.Select(e => e.Pattern).ToList();
+        return [.. SourceEntries.Select(e => e.Pattern)];
+    }
+
+    /// <summary>
+    /// Auto-populates the PatternInput field based on the selected source entry.
+    /// Implements smart replacement: if the user hasn't modified the previous auto-added content,
+    /// it gets replaced; otherwise, new content is appended.
+    /// </summary>
+    private void AutoAddPatternFromSelection(BackupSourceEntry entry)
+    {
+        // Build the pattern to add
+        string patternToAdd = entry.Pattern;
+
+        // If it's a folder (ends with \), append *.*
+        if (entry.SourceType == BackupSourceType.SingleFolder ||
+            patternToAdd.EndsWith('\\') || patternToAdd.EndsWith('/'))
+        {
+            patternToAdd = patternToAdd.TrimEnd('\\', '/') + "\\*.*";
+        }
+
+        // Determine how to add it to PatternInput
+        if (string.IsNullOrEmpty(PatternInput))
+        {
+            // Empty input - just set the pattern
+            PatternInput = patternToAdd;
+        }
+        else if (_prevAutoAdded != null && PatternInput.EndsWith(_prevAutoAdded))
+        {
+            // PatternInput ends with previous auto-added content (user didn't modify it)
+            // Replace the previous auto-added content with the new pattern
+            PatternInput = PatternInput[..^_prevAutoAdded.Length] + patternToAdd;
+        }
+        else
+        {
+            // User modified the content or no previous auto-add - append with separator
+            PatternInput = PatternInput.TrimEnd().TrimEnd(';') + "; " + patternToAdd;
+        }
+
+        // Remember what we auto-added for next time
+        _prevAutoAdded = patternToAdd;
     }
 
     #endregion

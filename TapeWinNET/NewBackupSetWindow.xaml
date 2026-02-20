@@ -73,21 +73,27 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <!-- Add Buttons Row -->
-                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-                        <Button Content="Add Files..." Command="{Binding AddFilesCommand}" 
-                                Width="80" Margin="0,0,4,0" ToolTip="Add files (keyboard: +)"/>
-                        <Button Content="Add Folder..." Command="{Binding AddFolderCommand}" 
-                                Width="90" Margin="0,0,4,0" ToolTip="Add folder (keyboard: Ctrl++)"/>
-                    </StackPanel>
-
-                    <!-- Pattern Input Row -->
-                    <Grid Grid.Row="1" Margin="0,0,0,8">
+                    <!-- Add Buttons and Pattern Input Row -->
+                    <Grid Grid.Row="0" Margin="0,0,0,4">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBox Grid.Column="0" 
+                        
+                        <Button Grid.Column="0" Content="Add Files..." 
+                                Command="{Binding AddFilesCommand}" 
+                                Width="80" Margin="0,0,4,0" 
+                                ToolTip="Add files (keyboard: +)"/>
+                        <Button Grid.Column="1" Content="Add Folder..." 
+                                Command="{Binding AddFolderCommand}" 
+                                Width="90" Margin="0,0,8,0" 
+                                ToolTip="Add folder (keyboard: Ctrl++)"/>
+                        <TextBlock Grid.Column="2" Text="Add Patterns:" 
+                                   VerticalAlignment="Center" Margin="8,0,4,0"/>
+                        <TextBox Grid.Column="3" 
                                  Text="{Binding PatternInput, UpdateSourceTrigger=PropertyChanged}"
                                  VerticalContentAlignment="Center"
                                  Margin="0,0,4,0">
@@ -95,19 +101,22 @@
                                 <KeyBinding Key="Return" Command="{Binding AddPatternsCommand}"/>
                             </TextBox.InputBindings>
                         </TextBox>
-                        <Button Grid.Column="1" Content="+" Command="{Binding AddPatternsCommand}" 
-                                Width="28" ToolTip="Add patterns"/>
+                        <Button Grid.Column="4" Content="+" 
+                                Command="{Binding AddPatternsCommand}" 
+                                Width="28" ToolTip="Add patterns (Enter)"/>
                     </Grid>
 
-                    <!-- Help text -->
+                    <!-- Help text - right aligned under pattern input -->
                     <TextBlock Grid.Row="1" 
-                               Text="Separate by ;. May use * and ?. Example: C:\Docs\*.doc?; D:\Projects\MyApp\"
-                               FontSize="8" Foreground="Gray" 
-                               VerticalAlignment="Bottom" Margin="0,0,36,12"/>
+                               Text="Separate patterns with ;  Use * and ?  Example: C:\Docs\*.doc?; D:\Projects\MyApp\"
+                               FontSize="10" Foreground="DarkGray" 
+                               HorizontalAlignment="Right"
+                               Margin="0,0,0,8"/>
 
                     <!-- Files List -->
                     <ListView Grid.Row="2" 
                               ItemsSource="{Binding SourceEntries}"
+                              SelectedItem="{Binding SelectedSourceEntry}"
                               VirtualizingPanel.IsVirtualizing="True"
                               VirtualizingPanel.VirtualizationMode="Recycling"
                               SelectionMode="Extended">
@@ -134,7 +143,7 @@
                                         </DataTemplate>
                                     </GridViewColumn.CellTemplate>
                                 </GridViewColumn>
-                                <GridViewColumn Header="Pattern" Width="280" 
+                                <GridViewColumn Header="Path / Pattern" Width="280" 
                                                 DisplayMemberBinding="{Binding Pattern}"/>
                                 <GridViewColumn Header="Files" Width="80" 
                                                 DisplayMemberBinding="{Binding FileCountDisplay}"/>
