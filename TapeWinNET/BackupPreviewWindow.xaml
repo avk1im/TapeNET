@@ -19,14 +19,13 @@
 
     <Window.InputBindings>
         <KeyBinding Key="Delete" Command="{Binding RemoveSelectedCommand}"/>
-        <KeyBinding Key="Escape" Command="{Binding CancelCommand}"/>
+        <KeyBinding Key="Escape" Command="{Binding BackCommand}"/>
     </Window.InputBindings>
 
     <Grid Margin="8">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
@@ -82,20 +81,20 @@
             </ListView.ContextMenu>
         </ListView>
 
-        <!-- Summary -->
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,8,0,0">
-            <TextBlock Text="{Binding SelectedFileCountDisplay}" Margin="0,0,16,0"/>
-            <Button Content="Remove Selected" Command="{Binding RemoveSelectedCommand}" Width="110"/>
-        </StackPanel>
-
         <!-- Bottom Button Bar -->
-        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
-            <Button Content="? Back" Command="{Binding BackCommand}" 
-                    Width="80" Margin="0,0,8,0"/>
-            <Button Content="Cancel" Command="{Binding CancelCommand}" 
-                    Width="80" Margin="0,0,8,0" IsCancel="True"/>
-            <Button Content="Start Backup" Command="{Binding StartBackupCommand}" 
-                    Width="100" IsDefault="True"/>
-        </StackPanel>
+        <Grid Grid.Row="2" Margin="0,12,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                <TextBlock Text="{Binding SelectedFileCountDisplay}" 
+                           VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <Button Content="Remove Selected" Command="{Binding RemoveSelectedCommand}" 
+                        Width="110"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="← Back" Command="{Binding BackCommand}" 
+                        Width="80" Margin="0,0,8,0" IsCancel="True"/>
+                <Button Content="Start Backup" Command="{Binding StartBackupCommand}" 
+                        Width="100" IsDefault="True"/>
+            </StackPanel>
+        </Grid>
     </Grid>
 </Window>

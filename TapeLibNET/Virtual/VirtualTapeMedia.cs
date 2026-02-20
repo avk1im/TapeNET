@@ -315,6 +315,7 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
     protected override string LogPrefix => m_name;
 
+    public string Name => m_name;
     public uint BlockSize
     {
         get => m_blockSize;

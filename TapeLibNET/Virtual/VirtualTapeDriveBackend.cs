@@ -209,7 +209,24 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
 
     public override bool IsOpen => m_isOpen;
     public override bool HasMedia => m_hasMedia && m_currentMedia != null;
-    public override string DeviceName => $"VIRTUAL{m_driveNumber}";
+    public override string DeviceName
+    {
+        get
+        {
+            string name = $"VTAPE{m_driveNumber}";
+
+            if (!string.IsNullOrEmpty(m_contentMedia?.Name))
+            {
+                name += $" [{m_contentMedia.Name}";
+
+                if (!string.IsNullOrEmpty(m_initiatorMedia?.Name))
+                    name += $" | {m_initiatorMedia.Name}]";
+                else
+                    name += ']';
+            }
+            return name;
+        }
+    }
     public override uint DriveNumber => m_driveNumber;
 
     /// <summary>
@@ -267,6 +284,14 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
 
     #region *** Media Operations ***
 
+    private static string NameFromStream(Stream stream)
+    {
+        // If file, retuirn the file name without path
+        if (stream is FileStream fs)
+            return Path.GetFileName(fs.Name);
+        return stream.ToString() ?? string.Empty;
+    }
+
     public override bool LoadMedia()
     {
         // Flush and cleanup existing media if any -- but NOT the streams!
@@ -321,7 +346,7 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
                 ownsStream: false,
                 metadataStream: m_contentMetadataStream,
                 ownsMetadataStream: false,
-                name: "ContentMedia",
+                name: NameFromStream(m_contentStream),
                 loggerFactory: LoggerFactory);
 
             m_logger.LogTrace("{Prefix}: Created new content media (no existing state)", LogPrefix);
@@ -370,7 +395,7 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
                     ownsStream: false,
                     metadataStream: m_initiatorMetadataStream,
                     ownsMetadataStream: false,
-                    name: "InitiatorMedia",
+                    name: NameFromStream(m_initiatorStream),
                     loggerFactory: LoggerFactory);
 
                 m_logger.LogTrace("{Prefix}: Created new initiator media (no existing state)", LogPrefix);
@@ -502,7 +527,7 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
                 ownsStream: false,
                 metadataStream: m_initiatorMetadataStream,
                 ownsMetadataStream: false,
-                name: "InitiatorMedia",
+                name: m_initiatorStream.ToString(),
                 loggerFactory: LoggerFactory);
         }
         else

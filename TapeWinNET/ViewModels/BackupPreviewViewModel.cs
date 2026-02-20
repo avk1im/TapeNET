@@ -95,18 +95,18 @@ public class BackupPreviewViewModel : ViewModelBase
 {
     private readonly Action<List<string>> _onStartBackup;
     private readonly Action _onBack;
-    private readonly Action _onCancel;
+    //private readonly Action _onCancel;
     private bool _selectAll = true;
 
     public BackupPreviewViewModel(
         List<string> fileList,
         Action<List<string>> onStartBackup,
-        Action onBack,
-        Action onCancel)
+        Action onBack
+        /*, Action onCancel*/)
     {
         _onStartBackup = onStartBackup;
         _onBack = onBack;
-        _onCancel = onCancel;
+        //_onCancel = onCancel;
 
         // Populate file list
         foreach (var file in fileList)
@@ -123,7 +123,7 @@ public class BackupPreviewViewModel : ViewModelBase
         SelectAllCommand = new RelayCommand(ToggleSelectAll);
         StartBackupCommand = new RelayCommand(_ => StartBackup(), param => SelectedFileCount > 0);
         BackCommand = new RelayCommand(_ => _onBack());
-        CancelCommand = new RelayCommand(_ => _onCancel());
+        //CancelCommand = new RelayCommand(_ => _onCancel());
     }
 
     #region Properties
@@ -164,7 +164,7 @@ public class BackupPreviewViewModel : ViewModelBase
     public ICommand SelectAllCommand { get; }
     public ICommand StartBackupCommand { get; }
     public ICommand BackCommand { get; }
-    public ICommand CancelCommand { get; }
+    //public ICommand CancelCommand { get; }
 
     #endregion
 

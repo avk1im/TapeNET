@@ -19,8 +19,8 @@ namespace TapeWinNET.Services;
 public partial class TapeService : IDisposable
 {
     private readonly ILoggerFactory _loggerFactory;
-    private TapeDrive? _tapeDrive;
-    private TapeFileAgent? _tapeAgent;
+    private TapeDrive? _drive;
+    private TapeFileAgent? _agent;
     private TapeTOC? _toc;
     private readonly object _lock = new();
     private bool _disposed;
@@ -49,29 +49,36 @@ public partial class TapeService : IDisposable
 
     #region Properties
 
-    public bool IsDriveOpen => _tapeDrive?.IsDriveOpen ?? false;
-    public bool IsMediaLoaded => _tapeDrive?.IsMediaLoaded ?? false;
+    public bool IsDriveOpen => _drive?.IsDriveOpen ?? false;
+    public bool IsMediaLoaded => _drive?.IsMediaLoaded ?? false;
     public int DriveNumber { get; private set; }
-    public string DeviceName => _tapeDrive?.DriveDeviceName ?? "Unknown";
+    public string DeviceName => _drive?.DriveDeviceName ?? "Unknown";
     public string? LastError { get; private set; }
     public TapeTOC? TOC => _toc;
-    
+
+    /// <summary>
+    /// Returns the current tape agent if an operation is in progress, null otherwise.
+    /// Use to check/set IsAbortRequested during backup or restore operations.
+    /// </summary>
+    public TapeFileAgent? Agent => _agent;
+    public bool IsAbortRequested => _agent?.IsAbortRequested ?? false;
+
     // Drive information properties
-    public bool SupportsInitiatorPartition => _tapeDrive?.SupportsInitiatorPartition ?? false;
-    public bool SupportsSetmarks => _tapeDrive?.SupportsSetmarks ?? false;
-    public bool SupportsSeqFilemarks => _tapeDrive?.SupportsSeqFilemarks ?? false;
-    public uint MinimumBlockSize => _tapeDrive?.MinimumBlockSize ?? 0;
-    public uint DefaultBlockSize => _tapeDrive?.DefaultBlockSize ?? 0;
-    public uint MaximumBlockSize => _tapeDrive?.MaximumBlockSize ?? 0;
-    public uint PartitionCount => _tapeDrive?.PartitionCount ?? 0;
-    public bool HasInitiatorPartition => _tapeDrive?.HasInitiatorPartition ?? false;
-    public long Capacity => _tapeDrive?.Capacity ?? 0;
+    public bool SupportsInitiatorPartition => _drive?.SupportsInitiatorPartition ?? false;
+    public bool SupportsSetmarks => _drive?.SupportsSetmarks ?? false;
+    public bool SupportsSeqFilemarks => _drive?.SupportsSeqFilemarks ?? false;
+    public uint MinimumBlockSize => _drive?.MinimumBlockSize ?? 0;
+    public uint DefaultBlockSize => _drive?.DefaultBlockSize ?? 0;
+    public uint MaximumBlockSize => _drive?.MaximumBlockSize ?? 0;
+    public uint PartitionCount => _drive?.PartitionCount ?? 0;
+    public bool HasInitiatorPartition => _drive?.HasInitiatorPartition ?? false;
+    public long Capacity => _drive?.Capacity ?? 0;
     
     public long GetRemainingCapacity()
     {
         lock (_lock)
         {
-            return _tapeDrive?.GetRemainingCapacity() ?? 0;
+            return _drive?.GetRemainingCapacity() ?? 0;
         }
     }
 
@@ -91,23 +98,23 @@ public partial class TapeService : IDisposable
                     Status($"Opening drive {driveNumber}...");
 
                     // Dispose existing drive if any
-                    _tapeAgent?.Dispose();
-                    _tapeAgent = null;
+                    _agent?.Dispose();
+                    _agent = null;
                     _toc = null;
-                    _tapeDrive?.Dispose();
+                    _drive?.Dispose();
 
-                    _tapeDrive = TapeDrive.CreateWin32(_loggerFactory);
+                    _drive = TapeDrive.CreateWin32(_loggerFactory);
                     
-                    if (!_tapeDrive.ReopenDrive((uint)driveNumber))
+                    if (!_drive.ReopenDrive((uint)driveNumber))
                     {
-                        LastError = _tapeDrive.LastErrorMessage;
+                        LastError = _drive.LastErrorMessage;
                         Log($"!!! Couldn't open drive. Error: {LastError}");
                         return false;
                     }
 
                     DriveNumber = driveNumber;
                     Log($"vvv Drive {driveNumber} opened successfully");
-                    Log($" ii Device name: {_tapeDrive.DriveDeviceName}");
+                    Log($" ii Device name: {_drive.DriveDeviceName}");
                     Status($"Drive {driveNumber} opened");
                     return true;
                 }
@@ -127,7 +134,7 @@ public partial class TapeService : IDisposable
         {
             lock (_lock)
             {
-                if (_tapeDrive == null)
+                if (_drive == null)
                 {
                     LastError = "Drive not open";
                     return false;
@@ -138,20 +145,20 @@ public partial class TapeService : IDisposable
                     Log(">>> Loading media...");
                     Status("Loading media...");
 
-                    if (!_tapeDrive.ReloadMedia())
+                    if (!_drive.ReloadMedia())
                     {
-                        LastError = _tapeDrive.LastErrorMessage;
+                        LastError = _drive.LastErrorMessage;
                         Log($"!!! Couldn't load media. Error: {LastError}");
                         return false;
                     }
 
                     // if multiple partitions, move to content partition to load correct media params
-                    if (_tapeDrive.HasInitiatorPartition)
+                    if (_drive.HasInitiatorPartition)
                     {
                         Log(">>> Moving to content partition...");
-                        if (!_tapeDrive.MoveToPartition(MediaPartition.Content))
+                        if (!_drive.MoveToPartition(MediaPartition.Content))
                         {
-                            LastError = _tapeDrive.LastErrorMessage;
+                            LastError = _drive.LastErrorMessage;
                             Log($"!!! Couldn't move to content partition. Error: {LastError}");
                             return false;
                         }
@@ -178,7 +185,7 @@ public partial class TapeService : IDisposable
         {
             lock (_lock)
             {
-                if (_tapeDrive == null || !_tapeDrive.IsMediaLoaded)
+                if (_drive == null || !_drive.IsMediaLoaded)
                 {
                     LastError = "Media not loaded";
                     return false;
@@ -187,9 +194,9 @@ public partial class TapeService : IDisposable
                 try
                 {
                     Log(">>> Preparing media...");
-                    if (!_tapeDrive.PrepareMedia())
+                    if (!_drive.PrepareMedia())
                     {
-                        LastError = _tapeDrive.LastErrorMessage;
+                        LastError = _drive.LastErrorMessage;
                         Log($"!!! Couldn't prepare media. Error: {LastError}");
                         return false;
                     }
@@ -197,17 +204,17 @@ public partial class TapeService : IDisposable
                     Log(">>> Restoring TOC...");
                     Status("Reading TOC...");
 
-                    _tapeAgent?.Dispose();
-                    _tapeAgent = new TapeFileAgent(_tapeDrive, null);
+                    _agent?.Dispose();
+                    _agent = new TapeFileAgent(_drive, null);
 
-                    if (!_tapeAgent.RestoreTOC())
+                    if (!_agent.RestoreTOC())
                     {
-                        LastError = _tapeAgent.LastErrorMessage;
+                        LastError = _agent.LastErrorMessage;
                         Log($"!!! Couldn't restore TOC. Error: {LastError}");
                         return false;
                     }
 
-                    _toc = _tapeAgent.TOC;
+                    _toc = _agent.TOC;
                     Log($"vvv TOC restored with {_toc.Count} backup set(s)");
                     LogTOCInfo();
                     Status($"TOC loaded: {_toc.Count} backup set(s)");
@@ -218,6 +225,11 @@ public partial class TapeService : IDisposable
                     LastError = ex.Message;
                     Log($"!!! Exception restoring TOC: {ex.Message}");
                     return false;
+                }
+                finally
+                {
+                    _agent?.Dispose();
+                    _agent = null;
                 }
             }
         });
@@ -235,7 +247,7 @@ public partial class TapeService : IDisposable
         {
             lock (_lock)
             {
-                if (_tapeDrive == null || !_tapeDrive.IsMediaLoaded)
+                if (_drive == null || !_drive.IsMediaLoaded)
                 {
                     LastError = "Media not loaded";
                     return false;
@@ -248,17 +260,17 @@ public partial class TapeService : IDisposable
 
                     var description = mediaName ?? $"Media created {DateTime.Now:yyyy-MM-dd HH:mm}";
 
-                    _tapeAgent?.Dispose();
-                    _tapeAgent = new TapeFileAgent(_tapeDrive, new TapeTOC(description));
+                    _agent?.Dispose();
+                    _agent = new TapeFileAgent(_drive, new TapeTOC(description));
 
-                    if (!_tapeAgent.BackupTOC())
+                    if (!_agent.BackupTOC())
                     {
-                        LastError = _tapeAgent.LastErrorMessage;
+                        LastError = _agent.LastErrorMessage;
                         Log($"!!! Couldn't save initial TOC. Error: {LastError}");
                         return false;
                     }
 
-                    _toc = _tapeAgent.TOC;
+                    _toc = _agent.TOC;
                     Log($"vvv Initial TOC created: {description}");
                     Status("Initial TOC created");
                     return true;
@@ -268,6 +280,11 @@ public partial class TapeService : IDisposable
                     LastError = ex.Message;
                     Log($"!!! Exception creating initial TOC: {ex.Message}");
                     return false;
+                }
+                finally
+                {
+                    _agent?.Dispose();
+                    _agent = null;
                 }
             }
         });
@@ -279,7 +296,7 @@ public partial class TapeService : IDisposable
         {
             lock (_lock)
             {
-                if (_tapeDrive == null)
+                if (_drive == null)
                 {
                     LastError = "Drive not open";
                     return false;
@@ -290,13 +307,13 @@ public partial class TapeService : IDisposable
                     Log(">>> Ejecting media...");
                     Status("Ejecting media...");
 
-                    _tapeAgent?.Dispose();
-                    _tapeAgent = null;
+                    _agent?.Dispose();
+                    _agent = null;
                     _toc = null;
 
-                    if (!_tapeDrive.UnloadMedia())
+                    if (!_drive.UnloadMedia())
                     {
-                        LastError = _tapeDrive.LastErrorMessage;
+                        LastError = _drive.LastErrorMessage;
                         Log($"!!! Couldn't eject media. Error: {LastError}");
                         return false;
                     }
@@ -315,307 +332,7 @@ public partial class TapeService : IDisposable
         });
     }
 
-    /// <summary>
-    /// Executes a backup operation with the specified parameters.
-    /// </summary>
-    /// <param name="fileList">List of files to backup.</param>
-    /// <param name="listContainsPatterns">List of files may contain patterns and directories.</param>
-    /// <param name="description">Description for the new backup set.</param>
-    /// <param name="includeSubdirectories">Whether to include subdirectories.</param>
-    /// <param name="incremental">Whether this is an incremental backup.</param>
-    /// <param name="blockSize">Block size in bytes.</param>
-    /// <param name="hashAlgorithm">Hash algorithm to use.</param>
-    /// <param name="appendMode">True to append after existing set, false to overwrite all.</param>
-    /// <param name="appendAfterSetIndex">Set index to append after (-1 for overwrite all, or specific set index).</param>
-    /// <param name="useFilemarks">Whether to use filemarks between files (blob mode if false).</param>
-    /// <param name="progressCallback">Callback for progress updates (filesProcessed, totalFiles, bytesProcessed).</param>
-    /// <param name="logCallback">Callback for log messages.</param>
-    /// <param name="fileErrorCallback">Callback when a file error occurs. Returns FileFailedAction.</param>
-    /// <param name="volumeChangeCallback">Callback when volume change is needed. Returns true to continue, false to abort.</param>
-    /// <param name="currentFileCallback">Callback to report current file being processed.</param>
-    /// <param name="abortCheckCallback">Callback to check if abort was requested.</param>
-    /// <param name="setAgentCallback">Callback to provide the backup agent reference for abort support.</param>
-    public Task ExecuteBackupAsync(
-        List<string> fileList,
-        bool listContainsPatterns,
-        string description,
-        bool includeSubdirectories,
-        bool incremental,
-        uint blockSize,
-        TapeHashAlgorithm hashAlgorithm,
-        bool appendMode,
-        int appendAfterSetIndex,
-        bool useFilemarks,
-        Action<int, int, long> progressCallback,
-        Action<string> logCallback,
-        Func<string, string, FileFailedAction> fileErrorCallback,
-        Func<int, int, int, int, long, bool> volumeChangeCallback,
-        Action<string> currentFileCallback,
-        Func<bool> abortCheckCallback,
-        Action<TapeFileBackupAgent> setAgentCallback)
-    {
-        return Task.Run(() =>
-        {
-            lock (_lock)
-            {
-                if (_tapeDrive == null || !_tapeDrive.IsMediaLoaded)
-                {
-                    LastError = "Media not loaded";
-                    throw new InvalidOperationException("Media not loaded");
-                }
-
-                if (fileList.Count == 0)
-                {
-                    logCallback("iii No files to backup");
-                    return;
-                }
-
-                try
-                {
-                    logCallback(">>> Preparing media for backup...");
-                    Status("Preparing backup...");
-
-                    if (!_tapeDrive.PrepareMedia())
-                    {
-                        LastError = _tapeDrive.LastErrorMessage;
-                        throw new InvalidOperationException($"Couldn't prepare media: {LastError}");
-                    }
-
-                    // Determine if we need to append or overwrite
-                    bool append = appendMode && _toc != null && _toc.Count > 0;
-
-                    // Create backup agent with existing TOC if appending
-                    using var agent = new TapeFileBackupAgent(_tapeDrive, append ? _toc : null);
-                    var toc = agent.TOC;
-
-                    // Provide agent reference for abort support
-                    setAgentCallback(agent);
-
-                    // Handle append after specific set
-                    if (append && appendAfterSetIndex > 0 && appendAfterSetIndex < toc.Count)
-                    {
-                        logCallback($"iii Appending after backup set #{appendAfterSetIndex}");
-                        toc.CurrentSetIndex = appendAfterSetIndex + 1;
-                        toc.EmptyCurrentSet();
-                    }
-                    else if (!append)
-                    {
-                        logCallback("iii Creating new backup, replacing all existing content");
-                        toc.RemoveAllSets();
-                    }
-
-                    // Set up media description if empty
-                    if (string.IsNullOrEmpty(toc.Description))
-                    {
-                        toc.Description = $"Media created {DateTime.Now}";
-                    }
-
-                    // Determine if we need a new set
-                    bool newSet;
-                    if (append)
-                    {
-                        if (toc.CurrentSetTOC.Count > 0)
-                        {
-                            toc.AddNewSetTOC(0, incremental);
-                            newSet = true;
-                        }
-                        else
-                        {
-                            toc.MarkCurrentSetIncremental(incremental);
-                            newSet = false;
-                        }
-                    }
-                    else
-                    {
-                        newSet = true;
-                    }
-
-                    // Configure the new backup set
-                    toc.CurrentSetTOC.Description = description;
-                    toc.CurrentSetTOC.HashAlgorithm = hashAlgorithm;
-                    toc.CurrentSetTOC.BlockSize = blockSize;
-                    toc.CurrentSetTOC.FmksMode = useFilemarks;
-
-                    logCallback($"iii Backup set: >{description}<");
-                    logCallback($" ii Block size: {Helpers.BytesToString(blockSize)}");
-                    logCallback($" ii Hash algorithm: {hashAlgorithm}");
-                    logCallback($" ii Incremental: {(incremental ? "Yes" : "No")}");
-                    if (listContainsPatterns)
-                        logCallback($" ii Patterns / directories to backup: {fileList.Count:N0}");
-                    else
-                        logCallback($" ii Files to backup: {fileList.Count:N0}");
-
-                    // Create progress handler
-                    var progressHandler = new GuiBackupProgressHandler(
-                        logCallback,
-                        progressCallback,
-                        currentFileCallback,
-                        fileErrorCallback,
-                        abortCheckCallback);
-
-                    // Execute backup loop (handles multi-volume)
-                    do
-                    {
-                        Status($"Backing up files...");
-
-                        bool result = agent.CanResumeToNextVolume
-                            ? agent.ResumeBackupToNextVolume()
-                            : listContainsPatterns ?
-                                agent.BackupFilesToCurrentSet(newSet, fileList, includeSubdirectories, ignoreFailures: true, progressHandler)
-                                : agent.BackupFileListToCurrentSet(newSet, fileList, ignoreFailures: true, progressHandler);
-
-                        bool noFilesBackedUp = toc.CurrentSetTOC.Count == 0;
-
-                        if (result)
-                        {
-                            // Handle append after set - remove sets after current
-                            if (appendAfterSetIndex > 0 && appendAfterSetIndex < toc.Count)
-                            {
-                                toc.RemoveSetsAfterCurrent();
-                            }
-
-                            if (noFilesBackedUp)
-                            {
-                                logCallback("iii No files were backed up");
-                                toc.RemoveLastEmptySet();
-                                _toc = toc;
-                                return;
-                            }
-                        }
-                        else // Backup had issues
-                        {
-                            // Check for multi-volume continuation
-                            if (agent.CanResumeToNextVolume)
-                            {
-                                logCallback($"iii Volume #{toc.Volume} is full - backup can continue to next volume");
-
-                                if (appendAfterSetIndex > 0)
-                                {
-                                    toc.RemoveSetsAfterCurrent();
-                                }
-
-                                if (noFilesBackedUp)
-                                {
-                                    toc.RemoveLastEmptySet();
-                                }
-                            }
-                            else
-                            {
-                                if (noFilesBackedUp)
-                                {
-                                    toc.RemoveLastEmptySet();
-                                    logCallback("!!! No files backed up");
-
-                                    if (!agent.Navigator.TOCInvalidated)
-                                    {
-                                        _toc = toc;
-                                        return;
-                                    }
-                                }
-                                else
-                                {
-                                    logCallback($"!!! Some files failed to back up");
-                                }
-                            }
-                        }
-
-                        // Backup TOC
-                        Status("Saving TOC...");
-                        logCallback(">>> Backing up TOC...");
-
-                        if (!agent.BackupTOC())
-                        {
-                            logCallback($"!!! Couldn't backup TOC. Error: {agent.LastErrorMessage}");
-                            logCallback(">>> Attempting to enforce TOC backup...");
-
-                            if (!agent.BackupTOC(enforce: true))
-                            {
-                                throw new InvalidOperationException($"Couldn't enforce TOC backup: {agent.LastErrorMessage}");
-                            }
-
-                            logCallback("vvv Enforced TOC backup succeeded");
-                        }
-                        else
-                        {
-                            logCallback("vvv TOC backed up successfully");
-                        }
-
-                        _toc = toc; // Update service TOC reference
-
-                        logCallback($"vvv Backed up {progressHandler.FilesSucceeded:N0} file(s), {Helpers.BytesToString(agent.BytesBackedup)}");
-                        logCallback($" ii Remaining media capacity: {Helpers.BytesToStringLong(_tapeDrive.GetRemainingCapacity())}");
-
-                        // Check if we need to continue with multi-volume
-                        if (!agent.CanResumeToNextVolume)
-                        {
-                            break; // Done
-                        }
-
-                        // Ask user to change media
-                        int filesRemaining = fileList.Count - progressHandler.FilesProcessed;
-                        bool continueBackup = volumeChangeCallback(
-                            toc.Volume,
-                            toc.Volume + 1,
-                            progressHandler.FilesProcessed,
-                            fileList.Count,
-                            agent.BytesBackedup);
-
-                        if (!continueBackup)
-                        {
-                            logCallback("iii User cancelled multi-volume continuation");
-                            break;
-                        }
-
-                        // Eject and reload media
-                        logCallback(">>> Unloading media...");
-                        Status("Ejecting media...");
-
-                        if (!_tapeDrive.UnloadMedia())
-                        {
-                            throw new InvalidOperationException($"Couldn't unload media: {_tapeDrive.LastErrorMessage}");
-                        }
-
-                        logCallback($">>> Please insert media for Volume #{toc.Volume + 1}");
-                        Status($"Waiting for Volume #{toc.Volume + 1}...");
-
-                        // Wait a moment for media swap
-                        Thread.Sleep(1000);
-
-                        logCallback(">>> Loading media...");
-                        Status("Loading media...");
-
-                        if (!_tapeDrive.ReloadMedia())
-                        {
-                            throw new InvalidOperationException($"Couldn't reload media: {_tapeDrive.LastErrorMessage}");
-                        }
-
-                        if (!_tapeDrive.PrepareMedia())
-                        {
-                            throw new InvalidOperationException($"Couldn't prepare media: {_tapeDrive.LastErrorMessage}");
-                        }
-
-                        logCallback("vvv Media loaded, continuing backup...");
-
-                    } while (true);
-
-                    Status("Backup complete");
-                    logCallback("vvv Backup completed successfully");
-                }
-                catch (TapeAbortRequestedException)
-                {
-                    Status("Backup aborted");
-                    throw; // Re-throw to be handled by caller
-                }
-                catch (Exception ex)
-                {
-                    LastError = ex.Message;
-                    Status("Backup failed");
-                    logCallback($"!!! Backup failed: {ex.Message}");
-                    throw;
-                }
-            }
-        });
-    }
+    // ExecuteBackupAsync is in TapeService.Backup.cs
 
     public Task<bool> OpenVirtualDriveAsync(
         VirtualTapeDriveCapabilities capabilities,
@@ -644,16 +361,16 @@ public partial class TapeService : IDisposable
 
                     // If we got here, the backend has been created ->
                     //  Dispose existing drive if any
-                    _tapeAgent?.Dispose();
-                    _tapeAgent = null;
+                    _agent?.Dispose();
+                    _agent = null;
                     _toc = null;
-                    _tapeDrive?.Dispose();
+                    _drive?.Dispose();
 
-                    _tapeDrive = new TapeDrive(_loggerFactory, backend);
+                    _drive = new TapeDrive(_loggerFactory, backend);
 
-                    if (!_tapeDrive.ReopenDrive(0))
+                    if (!_drive.ReopenDrive(0))
                     {
-                        LastError = _tapeDrive.LastErrorMessage;
+                        LastError = _drive.LastErrorMessage;
                         Log($"!!! Failed to open virtual drive: {LastError}");
                         return false;
                     }
@@ -679,8 +396,8 @@ public partial class TapeService : IDisposable
             return;
 
         _disposed = true;
-        _tapeAgent?.Dispose();
-        _tapeDrive?.Dispose();
+        _agent?.Dispose();
+        _drive?.Dispose();
         _loggerFactory.Dispose();
     }
 
@@ -700,12 +417,12 @@ public partial class TapeService : IDisposable
 
     private void LogMediaInfo()
     {
-        if (_tapeDrive == null)
+        if (_drive == null)
             return;
 
-        Log($" ii Partition count: {_tapeDrive.PartitionCount}");
-        Log($" ii Capacity: {Helpers.BytesToStringLong(_tapeDrive.Capacity)}");
-        Log($" ii Remaining: {Helpers.BytesToStringLong(_tapeDrive.GetRemainingCapacity())}");
+        Log($" ii Partition count: {_drive.PartitionCount}");
+        Log($" ii Capacity: {Helpers.BytesToStringLong(_drive.Capacity)}");
+        Log($" ii Remaining: {Helpers.BytesToStringLong(_drive.GetRemainingCapacity())}");
     }
 
     private void LogTOCInfo()
@@ -741,136 +458,5 @@ public partial class TapeService : IDisposable
 
     #endregion
 
-    #region Helper Classes
-
-    /// <summary>
-    /// Progress handler for GUI backup operations.
-    /// Implements ITapeFileNotifiable to bridge between TapeFileBackupAgent and the UI.
-    /// </summary>
-    private class GuiBackupProgressHandler : ITapeFileNotifiable
-    {
-        private readonly Action<string> _logCallback;
-        private readonly Action<int, int, long> _progressCallback;
-        private readonly Action<string> _currentFileCallback;
-        private readonly Func<string, string, FileFailedAction> _fileErrorCallback;
-        private readonly Func<bool> _abortCheckCallback;
-        private bool _skipAllErrors;
-
-        public int FilesProcessed { get; private set; }
-        public int FilesTotal { get; private set; }
-        public int FilesFailed { get; private set; }
-        public int FilesSucceeded { get; private set; }
-        public long BytesProcessed { get; private set; }
-
-        public GuiBackupProgressHandler(
-            Action<string> logCallback,
-            Action<int, int, long> progressCallback,
-            Action<string> currentFileCallback,
-            Func<string, string, FileFailedAction> fileErrorCallback,
-            Func<bool> abortCheckCallback)
-        {
-            _logCallback = logCallback;
-            _progressCallback = progressCallback;
-            _currentFileCallback = currentFileCallback;
-            _fileErrorCallback = fileErrorCallback;
-            _abortCheckCallback = abortCheckCallback;
-        }
-
-        private void ThrowIfAbortRequested()
-        {
-            if (_abortCheckCallback())
-            {
-                _logCallback("!!! Backup aborted by user");
-                throw new TapeAbortRequestedException("User requested abort");
-            }
-        }
-
-        public void BatchStartStatistics(int set, int filesFound)
-        {
-            FilesTotal = filesFound;
-            FilesProcessed = 0;
-            FilesFailed = 0;
-            FilesSucceeded = 0;
-            BytesProcessed = 0;
-            _skipAllErrors = false;
-
-            _logCallback($"iii Starting backup of {filesFound:N0} files to set #{set}...");
-            _progressCallback(0, filesFound, 0);
-        }
-
-        public void BatchEndStatistics(int set, int filesProcessed, int filesFailed, long bytesProcessed)
-        {
-            FilesProcessed = filesProcessed;
-            FilesFailed = filesFailed;
-            BytesProcessed = bytesProcessed;
-
-            _logCallback($"iii Backup batch complete: {filesProcessed - filesFailed:N0} succeeded, {filesFailed:N0} failed");
-            _progressCallback(filesProcessed, FilesTotal, bytesProcessed);
-        }
-
-        public bool PreProcessFile(ref TapeFileDescriptor fileDescr)
-        {
-            ThrowIfAbortRequested();
-
-            _currentFileCallback(fileDescr.FullName);
-            return true;
-        }
-
-        public bool PostProcessFile(ref TapeFileDescriptor fileDescr)
-        {
-            ThrowIfAbortRequested();
-
-            FilesSucceeded++;
-            FilesProcessed++;
-            BytesProcessed += fileDescr.Length;
-
-            _logCallback($"vvv {Path.GetFileName(fileDescr.FullName)} ({Helpers.BytesToString(fileDescr.Length)})");
-            _progressCallback(FilesProcessed, FilesTotal, BytesProcessed);
-
-            return true;
-        }
-
-        public FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex)
-        {
-            ThrowIfAbortRequested();
-
-            FilesFailed++;
-
-            _logCallback($"!!! Failed: {fileDescr.FullName}");
-            _logCallback($"    Error: {ex.Message}");
-
-            _progressCallback(FilesProcessed, FilesTotal, BytesProcessed);
-
-            // If user chose to skip all errors previously, don't show dialog
-            if (_skipAllErrors)
-            {
-                return FileFailedAction.Skip;
-            }
-
-            // Show error dialog via callback
-            var result = _fileErrorCallback(fileDescr.FullName, ex.Message);
-
-            // Check if this was a "skip all" action (handled by dialog's ApplyToAll checkbox)
-            // The dialog sets ApplyToAll and returns Skip, which we detect here
-            // For simplicity, we track skip-all state here based on repeated Skip results
-            // A more sophisticated approach would pass the ApplyToAll flag through the callback
-
-            if (result == FileFailedAction.Abort)
-            {
-                _logCallback("!!! Backup aborted by user");
-                throw new TapeAbortRequestedException("User requested abort");
-            }
-
-            return result;
-        }
-
-        public void OnFileSkipped(TapeFileDescriptor fileDescr)
-        {
-            ThrowIfAbortRequested();
-
-            _logCallback($" -- Skipped: {Path.GetFileName(fileDescr.FullName)}");
-        }
-    }
-
-    #endregion
+    // GuiBackupProgressHandler helper class is in TapeService.Backup.cs
 }
