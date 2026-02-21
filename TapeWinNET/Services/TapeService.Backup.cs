@@ -331,7 +331,6 @@ public partial class TapeService
         private readonly Action<int, int, long> _progressCallback;
         private readonly Action<string> _currentFileCallback;
         private readonly Func<string, string, FileFailedAction> _fileErrorCallback;
-        private bool _skipAllErrors;
 
         public int FilesProcessed { get; private set; }
         public int FilesTotal { get; private set; }
@@ -369,7 +368,6 @@ public partial class TapeService
             FilesFailed = 0;
             FilesSucceeded = 0;
             BytesProcessed = 0;
-            _skipAllErrors = false;
 
             _logCallback($"iii Starting backup of {filesFound:N0} files to set #{set}...");
             _progressCallback(0, filesFound, 0);
@@ -418,19 +416,8 @@ public partial class TapeService
 
             _progressCallback(FilesProcessed, FilesTotal, BytesProcessed);
 
-            // If user chose to skip all errors previously, don't show dialog
-            if (_skipAllErrors)
-            {
-                return FileFailedAction.Skip;
-            }
-
-            // Show error dialog via callback
+            // Show error dialog via callback - the callback handles sticky choices (e.g. Skip All)
             var result = _fileErrorCallback(fileDescr.FullName, ex.Message);
-
-            // Check if this was a "skip all" action (handled by dialog's ApplyToAll checkbox)
-            // The dialog sets ApplyToAll and returns Skip, which we detect here
-            // For simplicity, we track skip-all state here based on repeated Skip results
-            // A more sophisticated approach would pass the ApplyToAll flag through the callback
 
             if (result == FileFailedAction.Abort)
             {

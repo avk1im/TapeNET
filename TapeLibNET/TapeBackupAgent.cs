@@ -43,61 +43,59 @@ namespace TapeLibNET
         }
         private TapeWriteStream? OpenWriteContentStream(long length)
         {
-            return Manager.ProduceWriteContentStream(length, BytesBackedupInCurrentSet);
+            var stream = Manager.ProduceWriteContentStream(length, BytesBackedupInCurrentSet);
+            if (stream == null)
+                SyncErrorFrom(Manager);
+            return stream;
         }
 
-
-        public bool BackupFile(FileInfo fileInfo)
+        // throws if any failure -- for the caller to catch
+        private void BackupFile(FileInfo fileInfo)
         {
             m_logger.LogTrace("Backing up file >{File}< in {Method}", fileInfo.FullName, nameof(BackupFile));
 
-            try
+            using var wstream = OpenWriteContentStream(fileInfo.Length) ??
+                throw new IOException($"Failed to open content write stream for >{fileInfo.FullName}<", (int)LastError);
+            TapeFileInfo tfi = new(TOC.GenerateUID(), Drive.BlockCounter, fileInfo);
+            var hasher = CreateHasher(TOC.CurrentSetTOC.HashAlgorithm);
+
+            TapeSerializer ts = new(wstream);
+            tfi.SerializeHeaderTo(ts);
+            // needn't include header serialization in CRC hashing, since it's validated via DeserializeAndCheckHeaderFrom()
+
+#if DEBUG
+            // Simulate failures for testing error handling
+            // Set SimulateFailures to true to enable, and FailEveryNthFile to control frequency
+            if (SimulateFailures && ++SimulatedFailureCounter % FailEveryNthFile == 0)
             {
-                using var wstream = OpenWriteContentStream(fileInfo.Length);
-                if (wstream == null)
-                {
-                    m_logger.LogWarning("Failed to open content write stream in {Method}", nameof(BackupFile));
-                    return false;
-                }
-
-                TapeFileInfo tfi = new(TOC.GenerateUID(), Drive.BlockCounter, fileInfo);
-                var hasher = CreateHasher(TOC.CurrentSetTOC.HashAlgorithm);
-
-                TapeSerializer ts = new(wstream);
-                tfi.SerializeHeaderTo(ts);
-                    // needn't include header serialization in CRC hashing, since it's validated via DeserializeAndCheckHeaderFrom()
-
-                if (hasher == null)
-                {
-                    using var srcFileStream = fileInfo.OpenRead();
-                    srcFileStream.CopyTo(wstream);
-                }
-                else
-                {
-                    // Note we apply hasher to the file stream since we need to keep tape stream around
-                    var srcFileStream = fileInfo.OpenRead();
-                    using var hashingStream = new HashingStream(srcFileStream, hasher, disposeInnerToo: true);
-                    hashingStream.CopyTo(wstream);
-                }
-
-                // now the hasher has the hash ready
-                if (hasher != null)
-                    tfi.Hash = hasher.GetCurrentHash();
-
-                // only if all went well, add the TOC entry
-                TOC.CurrentSetTOC.Append(tfi);
-                BytesBackedup += wstream.Length;
+                m_logger.LogWarning("SIMULATED failure for file #{Counter} >{File}<", 
+                    SimulatedFailureCounter, fileInfo.FullName);
+                throw new IOException($"Simulated backup failure for testing (file #{SimulatedFailureCounter})");
             }
-            catch (Exception ex)
+#endif
+
+            if (hasher == null)
             {
-                m_logger.LogWarning("Exception {Exception} in {Method}", ex, nameof(BackupFile));
-                return false;
+                using var srcFileStream = fileInfo.OpenRead();
+                srcFileStream.CopyTo(wstream);
+            }
+            else
+            {
+                // Note we apply hasher to the file stream since we need to keep tape stream around
+                var srcFileStream = fileInfo.OpenRead();
+                using var hashingStream = new HashingStream(srcFileStream, hasher, ownInner: true);
+                hashingStream.CopyTo(wstream);
             }
 
-            // success
+            // now the hasher has the hash ready
+            if (hasher != null)
+                tfi.Hash = hasher.GetCurrentHash();
+
+            // only if all went well, add the TOC entry
+            TOC.CurrentSetTOC.Append(tfi);
+            BytesBackedup += wstream.Length;
+
             m_logger.LogTrace("File >{File}< backed up ok", fileInfo.FullName);
-
-            return true;
         } // BackupFile()
 
 
@@ -269,8 +267,7 @@ namespace TapeLibNET
                         continue; // not a failure, yet post-processing not called
                     }
 
-                    if (!BackupFile(fileInfo))
-                        throw new IOException($"File #{bc.filesProcessed} backup failed. Error: 0x{LastError:X8} >{LastErrorMessage}<", (int)LastError);
+                    BackupFile(fileInfo);
 
                     // success
                     NotifyPostProcessFile(bc.fileNotify, ref fileDescr);
@@ -292,13 +289,15 @@ namespace TapeLibNET
                         bc.bytesProcessed += BytesBackedupInCurrentSet; // update statistics
                         BytesBackedupMarker = BytesBackedup;
 
-                        // do not count the failed file in multi-volumen context -- as it will be re-tried on next volume
+                        // Do not count the failed file in multi-volumen context -- as it will be re-tried on next volume
                         bc.filesProcessed--;
-                        MultiVolumeContext = bc;
-
-                        // however for the current batch statistics do count and report the file as failed
+                        // However, for the current batch statistics do count and report the file as failed
                         bc.filesProcessed++;
                         bc.filesFailed++;
+
+                        // Make sure to set MultiVolumeContext before calling NotifyFileFailed()
+                        //  so that CanResumeToNextVolume indicates true already
+                        MultiVolumeContext = bc;
 
                         if (NotifyFileFailed(bc.fileNotify, fileDescr, ex) == FileFailedAction.Abort)
                             break;

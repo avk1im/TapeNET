@@ -63,6 +63,26 @@ namespace TapeLibNET
         // checked periodically if the entire operation should be aborted
         public bool IsAbortRequested { get; set; }
 
+#if DEBUG
+        /// <summary>
+        /// When true, simulates file operation failures for testing error handling.
+        /// Can be used by backup, restore, and other derived agent classes.
+        /// </summary>
+        public static bool SimulateFailures { get; set; } = false;
+
+        /// <summary>
+        /// Controls the frequency of simulated failures (every Nth file fails).
+        /// Default is 2, meaning every 2nd file fails when SimulateFailures is true.
+        /// </summary>
+        public static int FailEveryNthFile { get; set; } = 2;
+
+        /// <summary>
+        /// Counter for simulated failures. Incremented for each file processed.
+        /// Instance-level so each agent tracks its own count.
+        /// </summary>
+        protected int SimulatedFailureCounter { get; set; } = 0;
+#endif
+
 
         protected int CurrentSetAsNavigatorContentSet // used by both backup and restore agents
         {
@@ -197,7 +217,7 @@ namespace TapeLibNET
                 else
                 {
                     // serialize the TOC with hashing; careful not to dispose wstream!
-                    using var hashingStream = new HashingStream(wstream, hasher, disposeInnerToo: false);
+                    using var hashingStream = new HashingStream(wstream, hasher, ownInner: false);
                     var serializer = new TapeSerializer(hashingStream);
                     serializer.Serialize(TOC);
                     serializer.Serialize(hasher.GetCurrentHash()); // notice the hash bytes themselves aren't added to the hash!
@@ -307,7 +327,7 @@ namespace TapeLibNET
                 }
                 else
                 {
-                    using var hashingStream = new HashingStream(rstream, hasher, disposeInnerToo: false);
+                    using var hashingStream = new HashingStream(rstream, hasher, ownInner: false);
                     var deserializer = new TapeDeserializer(hashingStream);
                     var toc = deserializer.Deserialize<TapeTOC>();
                     if (toc != null)

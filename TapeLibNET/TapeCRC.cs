@@ -8,7 +8,7 @@ using System.IO.Hashing;
 namespace TapeLibNET
 {
 
-    public abstract class FilterStream(Stream inner, bool disposeInnerToo = false) : Stream
+    public abstract class FilterStream(Stream inner, bool ownInner = false) : Stream
     {
         protected abstract void OnRead(byte[] buffer, int offset, int count);
         protected abstract void OnWrite(byte[] buffer, int offset, int count);
@@ -16,7 +16,7 @@ namespace TapeLibNET
         protected override void Dispose(bool disposing)
         {
             if (disposing)
-                if (disposeInnerToo)
+                if (ownInner)
                     inner.Dispose();
             base.Dispose(disposing);
         }
@@ -52,7 +52,7 @@ namespace TapeLibNET
     } // class FliterStream
 
     public class HashingStream(Stream inner, NonCryptographicHashAlgorithm hasher,
-        bool disposeInnerToo = false) : FilterStream(inner, disposeInnerToo)
+        bool ownInner = false) : FilterStream(inner, ownInner)
     {
 
         // { begin abstract method implementations

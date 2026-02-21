@@ -4,12 +4,12 @@ using TapeLibNET;
 namespace TapeWinNET;
 
 /// <summary>
-/// Dialog for handling file backup errors with Skip/Retry/Abort options.
+/// Dialog for handling file backup errors with Skip/Retry/Skip All/Abort options.
 /// </summary>
 public partial class FileErrorDialog : Window
 {
     public FileFailedAction Result { get; private set; } = FileFailedAction.Skip;
-    public bool ApplyToAll => ApplyToAllCheckBox.IsChecked == true;
+    public bool SkipAllErrors { get; private set; }
 
     public FileErrorDialog(string filePath, string errorMessage)
     {
@@ -42,7 +42,7 @@ public partial class FileErrorDialog : Window
     private void SkipAllButton_Click(object sender, RoutedEventArgs e)
     {
         Result = FileFailedAction.Skip;
-        ApplyToAllCheckBox.IsChecked = true;
+        SkipAllErrors = true;
         DialogResult = true;
     }
 

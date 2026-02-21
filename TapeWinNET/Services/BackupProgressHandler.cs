@@ -12,7 +12,6 @@ public class BackupProgressHandler : ITapeFileNotifiable
     private readonly Action<string> _logMessage;
     private readonly Action<int, int, long> _updateProgress;
     private readonly Func<string, string, FileFailedAction> _showFileError;
-    private bool _skipAllErrors;
 
     public int FilesProcessed { get; private set; }
     public int FilesTotal { get; private set; }
@@ -43,7 +42,6 @@ public class BackupProgressHandler : ITapeFileNotifiable
         FilesFailed = 0;
         FilesSucceeded = 0;
         BytesProcessed = 0;
-        _skipAllErrors = false;
 
         _logMessage($"iii Starting backup of {filesFound:N0} files to set #{set}...");
         _updateProgress(0, filesFound, 0);
@@ -87,32 +85,8 @@ public class BackupProgressHandler : ITapeFileNotifiable
 
         _updateProgress(FilesProcessed, FilesTotal, BytesProcessed);
 
-        // If user chose to skip all errors, don't show dialog
-        if (_skipAllErrors)
-            return FileFailedAction.Skip;
-
-        // Show error dialog on UI thread
-        FileFailedAction result = FileFailedAction.Skip;
-        bool applyToAll = false;
-
-        Application.Current.Dispatcher.Invoke(() =>
-        {
-            var dialog = new FileErrorDialog(fileDescr.FullName, ex.Message)
-            {
-                Owner = Application.Current.MainWindow
-            };
-
-            if (dialog.ShowDialog() == true)
-            {
-                result = dialog.Result;
-                applyToAll = dialog.ApplyToAll;
-            }
-        });
-
-        if (applyToAll && result == FileFailedAction.Skip)
-        {
-            _skipAllErrors = true;
-        }
+        // Show error dialog via callback - the callback handles sticky choices (e.g. Skip All)
+        var result = _showFileError(fileDescr.FullName, ex.Message);
 
         if (result == FileFailedAction.Abort)
         {

@@ -590,7 +590,7 @@ namespace TapeLibNET
             {
                 var dstFileStream = fileInfo.Create(); // fileInfo.Open(FileMode.OpenOrCreate, FileAccess.Write);
                 // Notice we can attach hasher to either rstream or dstFileStream -- we go for dstFileStream since it may get disposed
-                using var hashingStream = new HashingStream(dstFileStream, hasher, disposeInnerToo: true); // will dispose dstFileStream
+                using var hashingStream = new HashingStream(dstFileStream, hasher, ownInner: true); // will dispose dstFileStream
                 rstream.CopyTo(hashingStream);
             }
 
@@ -617,7 +617,7 @@ namespace TapeLibNET
             {
                 var dstFileStream = Stream.Null;
                 // Notice we can attach hasher to either rstream or dstFileStream -- we go for dstFileStream since it may get disposed
-                using var hashingStream = new HashingStream(dstFileStream, hasher, disposeInnerToo: true); // will dispose dstFileStream
+                using var hashingStream = new HashingStream(dstFileStream, hasher, ownInner: true); // will dispose dstFileStream
                 rstream.CopyTo(hashingStream);
             }
 
@@ -640,7 +640,7 @@ namespace TapeLibNET
             {
                 using var dstFileStream = fileInfo.OpenRead();
                 // Since we're checking the tape stream (rstream), we should attach the hasher to it
-                using var hashingStream = new HashingStream(rstream, hasher, disposeInnerToo: false); // do NOT dispose rstream!
+                using var hashingStream = new HashingStream(rstream, hasher, ownInner: false); // do NOT dispose rstream!
                 if (!dstFileStream.CompareTo(hashingStream))
                     return false;
             }

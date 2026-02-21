@@ -63,7 +63,7 @@
   </ItemGroup>
 
   <!-- New version with Inputs and Outputs -->
-  <Target Name="ConvertDocxToPdf" Inputs="@(None->'%(FullPath)')" Outputs="$(MSBuildProjectDirectory)\tapecon.pdf" AfterTargets="Build">
+  <Target Name="ConvertDocxToPdf" Inputs="$(MSBuildProjectDirectory)\tapecon.docx" Outputs="$(MSBuildProjectDirectory)\tapecon.pdf" AfterTargets="Build">
     <PropertyGroup>
       <PowerShellPath>$(SystemRoot)\System32\WindowsPowerShell\v1.0\powershell.exe</PowerShellPath>
       <DocxFile>$(MSBuildProjectDirectory)\tapecon.docx</DocxFile>
@@ -74,8 +74,8 @@
     <Exec Command="&quot;$(PowerShellPath)&quot; -ExecutionPolicy Bypass -File &quot;$(ScriptFile)&quot; &quot;$(DocxFile)&quot;" />
   </Target>
 
-  <Target Name="CopyPdfToOutput" Inputs="$(PdfFile)" Outputs="$(OutputPath)tapecon.pdf" AfterTargets="ConvertDocxToPdf">
-    <Copy SourceFiles="$(PdfFile)" DestinationFolder="$(OutputPath)" />
+  <Target Name="CopyPdfToOutput" Inputs="$(MSBuildProjectDirectory)\tapecon.pdf" Outputs="$(OutputPath)tapecon.pdf" AfterTargets="ConvertDocxToPdf">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\tapecon.pdf" DestinationFolder="$(OutputPath)" />
   </Target>
 
   <!-- Version with manual comparisons commented out -->

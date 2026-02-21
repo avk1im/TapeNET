@@ -211,6 +211,14 @@ public partial class MainViewModel
         BackupProgressText = "Starting...";
         CurrentBackupFile = string.Empty;
 
+        // Sticky state for "Skip All Errors" button in the error dialog
+        bool skipAllErrors = false;
+        int errorCount = 0;
+
+#if DEBUG
+        TapeFileAgent.SimulateFailures = true;
+#endif
+
         try
         {
             await Task.Run(async () =>
@@ -248,6 +256,11 @@ public partial class MainViewModel
                     // File error callback - returns FileFailedAction
                     (filePath, error) =>
                     {
+                        errorCount++;
+
+                        if (skipAllErrors)
+                            return FileFailedAction.Skip;
+
                         FileFailedAction result = FileFailedAction.Skip;
                         Application.Current.Dispatcher.Invoke(() =>
                         {
@@ -258,6 +271,8 @@ public partial class MainViewModel
                             if (dialog.ShowDialog() == true)
                             {
                                 result = dialog.Result;
+                                if (dialog.SkipAllErrors)
+                                    skipAllErrors = true;
                             }
                         });
                         return result;
@@ -293,8 +308,16 @@ public partial class MainViewModel
             // Refresh tree after successful backup
             await RefreshAsync();
 
-            MessageBox.Show("Backup completed successfully!", "Backup Complete",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+            if (errorCount > 0)
+            {
+                MessageBox.Show("Backup completed with some errors. See log for details.", "Backup Complete",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            else
+            {
+                MessageBox.Show("Backup completed successfully!", "Backup Complete",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+            }
         }
         catch (TapeAbortRequestedException)
         {
