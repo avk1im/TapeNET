@@ -3,24 +3,24 @@ using System.Windows;
 namespace TapeWinNET;
 
 /// <summary>
-/// Dialog for prompting user to change media during multi-volume backup.
+/// Dialog for prompting user during multi-volume backup.
+/// Reusable for both "volume full" confirmation and "insert new media" prompts.
 /// </summary>
 public partial class MediaChangeDialog : Window
 {
     public bool ContinueBackup { get; private set; }
 
-    public MediaChangeDialog(int currentVolume, int nextVolume, int filesBackedUp, int totalFiles, long bytesBackedUp)
+    public MediaChangeDialog(string title, string status, string instructions, 
+        string continueButtonText, bool showWarning = false)
     {
         InitializeComponent();
 
-        StatusTextBlock.Text = $"Volume #{currentVolume} is full.\n" +
-                               $"Backed up: {filesBackedUp:N0} of {totalFiles:N0} files (~{Windows.Win32.System.SystemServices.Helpers.BytesToString(bytesBackedUp)})";
-
-        InstructionsTextBlock.Text = $"1. Remove the current media (Volume #{currentVolume})\n" +
-                                     $"2. Insert a formatted media for Volume #{nextVolume}\n" +
-                                     $"3. Click \"Continue\" when ready";
-
-        ContinueButton.Content = $"Continue with Volume #{nextVolume}";
+        Title = title;
+        TitleTextBlock.Text = title;
+        StatusTextBlock.Text = status;
+        InstructionsTextBlock.Text = instructions;
+        ContinueButton.Content = continueButtonText;
+        WarningBorder.Visibility = showWarning ? Visibility.Visible : Visibility.Collapsed;
 
         // Set window icon
         var icon = TapeIcons.GetTapeMediaIcon(large: true);

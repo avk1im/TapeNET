@@ -20,10 +20,6 @@ public readonly record struct VirtualTapeDriveCapabilities
     public bool SupportsInitiatorPartition { get; init; }
     public bool SupportsCompression { get; init; }
 
-    // Capacity
-    public long Capacity { get; init; }
-    public long InitiatorPartitionCapacity { get; init; }
-
     /// <summary>Simulates a basic tape drive (like QIC).</summary>
     public static VirtualTapeDriveCapabilities Basic => new()
     {
@@ -34,29 +30,24 @@ public readonly record struct VirtualTapeDriveCapabilities
         SupportsSeqFilemarks = false,
         SupportsInitiatorPartition = false,
         SupportsCompression = false,
-        Capacity = 100 * 1024 * 1024 // 100 MB
     };
 
     /// <summary>Simulates a drive with setmarks (like AIT or DAT).</summary>
     public static VirtualTapeDriveCapabilities WithSetmarks => Basic with
     {
         SupportsSetmarks = true,
-        Capacity = 500 * 1024 * 1024 // 500 MB
     };
 
     /// <summary>Simulates a drive with sequential filemarks (like SDLT).</summary>
     public static VirtualTapeDriveCapabilities WithSeqFilemarks => Basic with
     {
         SupportsSeqFilemarks = true,
-        Capacity = 500 * 1024 * 1024
     };
 
     /// <summary>Simulates a drive with initiator partition (like AIT).</summary>
     public static VirtualTapeDriveCapabilities WithPartitions => WithSetmarks with
     {
         SupportsInitiatorPartition = true,
-        InitiatorPartitionCapacity = 24 * 1024 * 1024, // 24 MB
-        Capacity = 1024 * 1024 * 1024 // 1 GB
     };
 
     /// <summary>Simulates a full-featured drive.</summary>
@@ -69,8 +60,6 @@ public readonly record struct VirtualTapeDriveCapabilities
         SupportsSeqFilemarks = true,
         SupportsInitiatorPartition = true,
         SupportsCompression = true,
-        Capacity = 1024L * 1024 * 1024, // 1 GB
-        InitiatorPartitionCapacity = 32 * 1024 * 1024 // 32 MB
     };
 }
 
@@ -107,34 +96,43 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
     private uint m_blockSize;
     private MediaPartition m_currentPartition = MediaPartition.Content;
 
+    // Media capacities (separate from drive capabilities - these are media attributes)
+    private long m_contentCapacity;
+    private long m_initiatorPartitionCapacity;
+
     #endregion
 
     #region *** Constructors ***
 
-    public VirtualTapeDriveBackend(ILoggerFactory loggerFactory, VirtualTapeDriveCapabilities capabilities)
+    public VirtualTapeDriveBackend(ILoggerFactory loggerFactory, VirtualTapeDriveCapabilities capabilities,
+        long contentCapacity, long initiatorPartitionCapacity = 0)
         : base(loggerFactory)
     {
         m_capabilities = capabilities;
         m_blockSize = capabilities.DefaultBlockSize;
         m_ownsStreams = true;
+        m_contentCapacity = contentCapacity;
+        m_initiatorPartitionCapacity = initiatorPartitionCapacity;
     }
 
     /// <summary>Creates backend with external streams (caller manages stream lifecycle).</summary>
     public VirtualTapeDriveBackend(
         ILoggerFactory loggerFactory,
         VirtualTapeDriveCapabilities capabilities,
+        long contentCapacity,
         Stream contentStream,
         bool ownsStreams = false,
         Stream? contentMetadataStream = null,
         Stream? initiatorStream = null,
-        Stream? initiatorMetadataStream = null)
-        : this(loggerFactory, capabilities)
+        Stream? initiatorMetadataStream = null,
+        long initiatorPartitionCapacity = 0)
+        : this(loggerFactory, capabilities, contentCapacity, initiatorPartitionCapacity)
     {
         m_contentStream = contentStream ?? throw new ArgumentNullException(nameof(contentStream));
         m_contentMetadataStream = contentMetadataStream;
         m_initiatorStream = initiatorStream;
         m_initiatorMetadataStream = initiatorMetadataStream;
-        m_ownsStreams = ownsStreams; // Either the caller of the backend manages streams -- the media never does!
+        m_ownsStreams = ownsStreams;
     }
 
     #endregion
@@ -144,10 +142,31 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
     /// <summary>Creates a memory-backed virtual tape for testing.</summary>
     public static VirtualTapeDriveBackend CreateMemoryBacked(
         ILoggerFactory loggerFactory,
-        VirtualTapeDriveCapabilities? capabilities = null)
+        VirtualTapeDriveCapabilities? capabilities = null,
+        long contentCapacity = 500 * 1024 * 1024,
+        long initiatorPartitionCapacity = 24 * 1024 * 1024)
     {
         var caps = capabilities ?? VirtualTapeDriveCapabilities.WithSetmarks;
-        var backend = new VirtualTapeDriveBackend(loggerFactory, caps);
+
+        // Explicitly create memory streams - no silent fallback in LoadMedia()
+        var contentStream = new MemoryStream();
+        var contentMetadataStream = new MemoryStream();
+
+        Stream? initiatorStream = null;
+        Stream? initiatorMetadataStream = null;
+
+        if (caps.SupportsInitiatorPartition)
+        {
+            initiatorStream = new MemoryStream();
+            initiatorMetadataStream = new MemoryStream();
+        }
+
+        var backend = new VirtualTapeDriveBackend(loggerFactory, caps,
+            contentCapacity,
+            contentStream, ownsStreams: true, contentMetadataStream,
+            initiatorStream, initiatorMetadataStream,
+            initiatorPartitionCapacity);
+
         return backend;
     }
 
@@ -156,19 +175,28 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
     /// </summary>
     /// <param name="loggerFactory">Logger factory for logging.</param>
     /// <param name="contentFilePath">Path to the content data file.</param>
+    /// <param name="contentCapacity">Capacity of the content partition in bytes.</param>
     /// <param name="initiatorFilePath">Optional path to the initiator partition file.</param>
     /// <param name="capabilities">Drive capabilities (defaults to WithSetmarks).</param>
-    /// <param name="requireExistingState">
-    /// If true, LoadMedia() will fail if valid saved state doesn't exist in metadata files.
-    /// If false (default), LoadMedia() will create new media if state loading fails.
+    /// <param name="mediaMode">
+    /// Controls how LoadMedia() handles existing vs new media state.
+    /// Open = require existing; Create = always create new; CreateNew = create only if no existing;
+    /// OpenOrCreate = load existing or create new (default).
     /// </param>
+    /// <param name="initiatorPartitionCapacity">Capacity of the initiator partition in bytes.</param>
     public static VirtualTapeDriveBackend CreateFileBacked(
         ILoggerFactory loggerFactory,
         string contentFilePath,
+        long contentCapacity,
         string? initiatorFilePath = null,
         VirtualTapeDriveCapabilities? capabilities = null,
-        bool requireExistingState = false)
+        FileMode mediaMode = FileMode.OpenOrCreate,
+        long initiatorPartitionCapacity = 0)
     {
+        if (mediaMode is not (FileMode.Open or FileMode.Create or FileMode.CreateNew or FileMode.OpenOrCreate))
+            throw new ArgumentOutOfRangeException(nameof(mediaMode),
+                $"Unsupported FileMode: {mediaMode}. Use Open, Create, CreateNew, or OpenOrCreate.");
+
         var caps = capabilities ?? VirtualTapeDriveCapabilities.WithSetmarks;
 
         // Content streams
@@ -191,10 +219,12 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
         //  Must let the backend own the stream(s) as we don't manage their lifecycle here
         //  Notice: the backend owns the streams, the media never does!
         var backend = new VirtualTapeDriveBackend(loggerFactory, caps,
+            contentCapacity,
             contentStream, ownsStreams: true, contentMetadataStream,
-            initiatorStream, initiatorMetadataStream)
+            initiatorStream, initiatorMetadataStream,
+            initiatorPartitionCapacity)
         {
-            RequireExistingState = requireExistingState
+            MediaMode = mediaMode
         };
 
         return backend;
@@ -230,10 +260,16 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
     public override uint DriveNumber => m_driveNumber;
 
     /// <summary>
-    /// If true, LoadMedia() requires valid saved state in metadata stream(s) and fails if loading fails.
-    /// If false (default), LoadMedia() creates new media with default parameters when state loading fails.
+    /// Controls how LoadMedia() handles existing vs new media state:
+    /// <list type="bullet">
+    ///   <item><see cref="FileMode.Open"/> — Require existing state; fail if not found.</item>
+    ///   <item><see cref="FileMode.Create"/> — Always create new media; truncate any existing state.</item>
+    ///   <item><see cref="FileMode.CreateNew"/> — Create new media; fail if valid state already exists.</item>
+    ///   <item><see cref="FileMode.OpenOrCreate"/> — Load existing state if available; otherwise create new.</item>
+    /// </list>
+    /// Default is <see cref="FileMode.OpenOrCreate"/>.
     /// </summary>
-    public bool RequireExistingState { get; set; } = false;
+    public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
 
     #endregion
 
@@ -312,110 +348,175 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
 
         m_hasMedia = false;
 
-        // Create streams if not provided externally
+        // Content streams must have been provided at construction time (via CreateFileBacked or CreateMemoryBacked)
         if (m_contentStream == null)
         {
-            m_contentStream = new MemoryStream();
-            m_contentMetadataStream = new MemoryStream();
+            SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE, "No content stream - media was ejected or never provided");
+            m_logger.LogWarning("{Prefix}: LoadMedia failed - no content stream available", LogPrefix);
+            return false;
         }
 
-        // Try to load existing state first
-        m_contentMedia = VirtualTapeMedia.TryCreateFromState(
-            m_contentStream,
-            ownsStream: false,
-            m_contentMetadataStream,
-            ownsMetadataStream: false,
-            LoggerFactory);
+        bool tryLoadExisting = MediaMode is FileMode.Open or FileMode.OpenOrCreate;
+        bool allowCreateNew = MediaMode is FileMode.Create or FileMode.CreateNew or FileMode.OpenOrCreate;
 
-        if (m_contentMedia == null)
+        // --- Content media ---
+
+        if (tryLoadExisting)
         {
-            if (RequireExistingState)
+            m_contentMedia = VirtualTapeMedia.TryCreateFromState(
+                m_contentStream,
+                ownsStream: false,
+                m_contentMetadataStream,
+                ownsMetadataStream: false,
+                LoggerFactory);
+        }
+
+        if (m_contentMedia != null)
+        {
+            // Existing state loaded successfully
+            if (MediaMode == FileMode.CreateNew)
             {
-                SetError(WIN32_ERROR.ERROR_FILE_NOT_FOUND, "Content media: no valid saved state found");
-                m_logger.LogWarning("{Prefix}: LoadMedia failed - RequireExistingState is true but no valid state found for content media", LogPrefix);
+                // CreateNew: fail if existing state was found
+                m_contentMedia.Dispose();
+                m_contentMedia = null;
+                SetError(WIN32_ERROR.ERROR_FILE_EXISTS, "Content media: valid state already exists (CreateNew mode)");
+                m_logger.LogWarning("{Prefix}: LoadMedia failed - CreateNew mode but valid state already exists for content media", LogPrefix);
                 return false;
             }
 
-            // Create new media with default parameters
+            m_logger.LogTrace("{Prefix}: Loaded content media from existing state", LogPrefix);
+        }
+        else
+        {
+            // No existing state (or didn't try)
+            if (!allowCreateNew)
+            {
+                // Open: fail if no existing state found
+                SetError(WIN32_ERROR.ERROR_FILE_NOT_FOUND, "Content media: no valid saved state found");
+                m_logger.LogWarning("{Prefix}: LoadMedia failed - Open mode but no valid state found for content media", LogPrefix);
+                return false;
+            }
+
+            // Create new media - truncate streams to discard stale data
+            TruncateStream(m_contentStream);
+            TruncateStream(m_contentMetadataStream);
+
             m_contentMedia = new VirtualTapeMedia(
                 m_contentStream,
                 m_capabilities.MinBlockSize,
                 m_capabilities.MaxBlockSize,
                 m_capabilities.DefaultBlockSize,
-                m_capabilities.Capacity,
+                m_contentCapacity,
                 ownsStream: false,
                 metadataStream: m_contentMetadataStream,
                 ownsMetadataStream: false,
                 name: NameFromStream(m_contentStream),
                 loggerFactory: LoggerFactory);
 
-            m_logger.LogTrace("{Prefix}: Created new content media (no existing state)", LogPrefix);
-        }
-        else
-        {
-            m_logger.LogTrace("{Prefix}: Loaded content media from existing state", LogPrefix);
+            m_logger.LogTrace("{Prefix}: Created new content media (mode: {Mode})", LogPrefix, MediaMode);
         }
 
-        if (m_capabilities.SupportsInitiatorPartition)
+        // --- Initiator media ---
+        // Note: SupportsInitiatorPartition means the drive CAN have an initiator partition,
+        // not that it MUST. If no initiator streams were provided, we simply don't create
+        // initiator media (HasInitiatorPartition will be false).
+
+        if (m_capabilities.SupportsInitiatorPartition && m_initiatorStream != null)
         {
-            if (m_initiatorStream == null)
+            if (tryLoadExisting)
             {
-                m_initiatorStream = new MemoryStream();
-                m_initiatorMetadataStream = new MemoryStream();
+                m_initiatorMedia = VirtualTapeMedia.TryCreateFromState(
+                    m_initiatorStream,
+                    ownsStream: false,
+                    m_initiatorMetadataStream,
+                    ownsMetadataStream: false,
+                    LoggerFactory);
             }
 
-            // Try to load existing state first
-            m_initiatorMedia = VirtualTapeMedia.TryCreateFromState(
-                m_initiatorStream,
-                ownsStream: false,
-                m_initiatorMetadataStream,
-                ownsMetadataStream: false,
-                LoggerFactory);
-
-            if (m_initiatorMedia == null)
+            if (m_initiatorMedia != null)
             {
-                if (RequireExistingState)
+                if (MediaMode == FileMode.CreateNew)
                 {
-                    // Clean up content media since we're failing
+                    m_initiatorMedia.Dispose();
+                    m_initiatorMedia = null;
                     m_contentMedia?.Dispose();
                     m_contentMedia = null;
-
-                    SetError(WIN32_ERROR.ERROR_FILE_NOT_FOUND, "Initiator media: no valid saved state found");
-                    m_logger.LogWarning("{Prefix}: LoadMedia failed - RequireExistingState is true but no valid state found for initiator media", LogPrefix);
+                    SetError(WIN32_ERROR.ERROR_FILE_EXISTS, "Initiator media: valid state already exists (CreateNew mode)");
+                    m_logger.LogWarning("{Prefix}: LoadMedia failed - CreateNew mode but valid state already exists for initiator media", LogPrefix);
                     return false;
                 }
 
-                // Create new media with default parameters
+                m_logger.LogTrace("{Prefix}: Loaded initiator media from existing state", LogPrefix);
+            }
+            else
+            {
+                if (!allowCreateNew)
+                {
+                    m_contentMedia?.Dispose();
+                    m_contentMedia = null;
+                    SetError(WIN32_ERROR.ERROR_FILE_NOT_FOUND, "Initiator media: no valid saved state found");
+                    m_logger.LogWarning("{Prefix}: LoadMedia failed - Open mode but no valid state found for initiator media", LogPrefix);
+                    return false;
+                }
+
+                TruncateStream(m_initiatorStream);
+                TruncateStream(m_initiatorMetadataStream);
+
                 m_initiatorMedia = new VirtualTapeMedia(
                     m_initiatorStream,
                     m_capabilities.MinBlockSize,
                     m_capabilities.MaxBlockSize,
                     m_capabilities.DefaultBlockSize,
-                    m_capabilities.InitiatorPartitionCapacity,
+                    m_initiatorPartitionCapacity,
                     ownsStream: false,
                     metadataStream: m_initiatorMetadataStream,
                     ownsMetadataStream: false,
                     name: NameFromStream(m_initiatorStream),
                     loggerFactory: LoggerFactory);
 
-                m_logger.LogTrace("{Prefix}: Created new initiator media (no existing state)", LogPrefix);
-            }
-            else
-            {
-                m_logger.LogTrace("{Prefix}: Loaded initiator media from existing state", LogPrefix);
+                m_logger.LogTrace("{Prefix}: Created new initiator media (mode: {Mode})", LogPrefix, MediaMode);
             }
         }
 
         m_currentMedia = m_contentMedia;
         m_currentPartition = MediaPartition.Content;
         m_hasMedia = true;
-        m_blockSize = m_contentMedia.BlockSize; // Use loaded block size, not capabilities default
+        m_blockSize = m_contentMedia.BlockSize;
 
         m_contentMedia.Rewind();
         m_initiatorMedia?.Rewind();
 
+        // Reset to OpenOrCreate after use - subsequent LoadMedia calls (e.g. after eject/reinsert) 
+        // should try existing state first
+        MediaMode = FileMode.OpenOrCreate;
+
         m_logger.LogTrace("{Prefix}: Media loaded", LogPrefix);
         return true;
+    }
+
+    /// <summary>
+    /// Truncates a stream to zero length (best effort).
+    /// Used when creating new media to discard any stale data from previous state.
+    /// </summary>
+    private static void TruncateStream(Stream? stream)
+    {
+        if (stream == null) return;
+        try
+        {
+            stream.SetLength(0);
+        }
+        catch
+        {
+            // Best effort - stream may not support truncation
+        }
+        try
+        {
+            stream.Position = 0;
+        }
+        catch
+        {
+            // Best effort - stream may not support truncation
+        }
     }
 
     public override bool UnloadMedia()
@@ -510,11 +611,13 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
         // Handle initiator partition
         if (initiatorPartitionSize > 0 && m_capabilities.SupportsInitiatorPartition)
         {
-            // Create/reset initiator media
+            // Initiator streams must have been provided at construction time
             if (m_initiatorStream == null)
             {
-                m_initiatorStream = new MemoryStream();
-                m_initiatorMetadataStream = new MemoryStream();
+                SetError(WIN32_ERROR.ERROR_INVALID_PARAMETER,
+                    "Cannot create initiator partition: no initiator streams were provided at drive creation");
+                m_logger.LogWarning("{Prefix}: FormatMedia failed - no initiator streams available for partition creation", LogPrefix);
+                return false;
             }
 
             m_initiatorMedia?.Dispose();
@@ -527,7 +630,7 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
                 ownsStream: false,
                 metadataStream: m_initiatorMetadataStream,
                 ownsMetadataStream: false,
-                name: m_initiatorStream.ToString(),
+                name: NameFromStream(m_initiatorStream),
                 loggerFactory: LoggerFactory);
         }
         else
@@ -854,7 +957,7 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
     public override void FillMediaParameters(out MediaParameters parameters)
     {
         parameters = new MediaParameters(
-            m_capabilities.Capacity,
+            m_contentCapacity,
             Remaining,
             m_blockSize,
             HasInitiatorPartition,

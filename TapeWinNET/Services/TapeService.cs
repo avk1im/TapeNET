@@ -337,8 +337,10 @@ public partial class TapeService : IDisposable
     public Task<bool> OpenVirtualDriveAsync(
         VirtualTapeDriveCapabilities capabilities,
         string contentPath,
+        long contentCapacity,
         string? initiatorPath,
-        bool requireExisting = false)
+        FileMode mediaMode = FileMode.OpenOrCreate,
+        long initiatorPartitionCapacity = 0)
     {
         return Task.Run(() =>
         {
@@ -350,14 +352,17 @@ public partial class TapeService : IDisposable
                     Log($" ii Content file: >{contentPath}<");
                     if (initiatorPath != null)
                         Log($" ii Initiator file: >{initiatorPath}<");
+                    Log($" ii Media mode: {mediaMode}");
                     Status("Opening virtual drive...");
 
                     var backend = VirtualTapeDriveBackend.CreateFileBacked(
                         _loggerFactory,
                         contentPath,
+                        contentCapacity,
                         initiatorPath,
                         capabilities,
-                        requireExistingState: requireExisting);
+                        mediaMode,
+                        initiatorPartitionCapacity);
 
                     // If we got here, the backend has been created ->
                     //  Dispose existing drive if any

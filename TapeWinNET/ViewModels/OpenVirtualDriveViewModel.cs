@@ -54,17 +54,21 @@ public record CapacityUnit(string Name, long Multiplier)
 /// <summary>
 /// Represents a preset configuration.
 /// </summary>
-public record PresetOption(string Name, VirtualTapeDriveCapabilities Capabilities)
+public record PresetOption(
+    string Name, 
+    VirtualTapeDriveCapabilities Capabilities,
+    long ContentCapacity,
+    long InitiatorPartitionCapacity = 0)
 {
     public override string ToString() => Name;
 
     public static PresetOption[] All { get; } =
     [
-        new("Basic", VirtualTapeDriveCapabilities.Basic),
-        new("With Setmarks", VirtualTapeDriveCapabilities.WithSetmarks),
-        new("With Seq. Filemarks", VirtualTapeDriveCapabilities.WithSeqFilemarks),
-        new("With Partitions", VirtualTapeDriveCapabilities.WithPartitions),
-        new("Full Featured", VirtualTapeDriveCapabilities.FullFeatured),
+        new("Basic", VirtualTapeDriveCapabilities.Basic, 100 * 1024 * 1024),
+        new("With Setmarks", VirtualTapeDriveCapabilities.WithSetmarks, 500 * 1024 * 1024),
+        new("With Seq. Filemarks", VirtualTapeDriveCapabilities.WithSeqFilemarks, 500 * 1024 * 1024),
+        new("With Partitions", VirtualTapeDriveCapabilities.WithPartitions, 1024L * 1024 * 1024, 24 * 1024 * 1024),
+        new("Full Featured", VirtualTapeDriveCapabilities.FullFeatured, 1024L * 1024 * 1024, 32 * 1024 * 1024),
     ];
 }
 
@@ -86,9 +90,11 @@ public enum VirtualDriveProbeStatus
 public record VirtualDriveOpenRequest(
     VirtualTapeDriveCapabilities Capabilities,
     string ContentPath,
+    long ContentCapacity,
     string? InitiatorPath,
     bool IsCreateNew,
-    string? MediaName
+    string? MediaName,
+    long InitiatorPartitionCapacity = 0
 );
 
 /// <summary>
@@ -571,8 +577,8 @@ public class OpenVirtualDriveViewModel : ViewModelBase
         EnableInitiatorPartition = caps.SupportsInitiatorPartition;
 
         // Convert capacity to appropriate unit
-        SetCapacityFromBytes(caps.Capacity, v => ContentCapacityValue = v, u => ContentCapacityUnit = u);
-        SetCapacityFromBytes(caps.InitiatorPartitionCapacity, v => InitiatorCapacityValue = v, u => InitiatorCapacityUnit = u);
+        SetCapacityFromBytes(SelectedPreset.ContentCapacity, v => ContentCapacityValue = v, u => ContentCapacityUnit = u);
+        SetCapacityFromBytes(SelectedPreset.InitiatorPartitionCapacity, v => InitiatorCapacityValue = v, u => InitiatorCapacityUnit = u);
     }
 
     private static void SetCapacityFromBytes(long bytes, Action<string> setValue, Action<CapacityUnit> setUnit)
@@ -610,8 +616,6 @@ public class OpenVirtualDriveViewModel : ViewModelBase
             SupportsSeqFilemarks = SupportsSeqFilemarks,
             SupportsInitiatorPartition = EnableInitiatorPartition,
             SupportsCompression = SupportsCompression,
-            Capacity = ContentCapacityBytes,
-            InitiatorPartitionCapacity = EnableInitiatorPartition ? InitiatorCapacityBytes : 0
         };
 
         // Use computed initiator path from naming convention
@@ -622,9 +626,11 @@ public class OpenVirtualDriveViewModel : ViewModelBase
         var request = new VirtualDriveOpenRequest(
             Capabilities: capabilities,
             ContentPath: ContentFilePath,
+            ContentCapacity: ContentCapacityBytes,
             InitiatorPath: initiatorPath,
             IsCreateNew: IsCreateNewMode,
-            MediaName: IsCreateNewMode ? MediaName : null
+            MediaName: IsCreateNewMode ? MediaName : null,
+            InitiatorPartitionCapacity: EnableInitiatorPartition ? InitiatorCapacityBytes : 0
         );
 
         _onOpen(request);

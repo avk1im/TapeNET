@@ -57,11 +57,9 @@
         <StackPanel Grid.Row="0" Margin="0,0,0,16" Orientation="Horizontal">
             <RadioButton Content="Open existing virtual media" 
                          IsChecked="{Binding IsOpenExistingMode}"
-                         Margin="0,0,24,0"
-                         GroupName="Mode"/>
+                         Margin="0,0,24,0"/>
             <RadioButton Content="Create new virtual media" 
-                         IsChecked="{Binding IsCreateNewMode}"
-                         GroupName="Mode" HorizontalAlignment="Right"/>
+                         IsChecked="{Binding IsCreateNewMode}"/>
         </StackPanel>
 
         <!-- File Paths - Fixed height to prevent layout shift -->

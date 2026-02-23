@@ -469,6 +469,13 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
     {
         ResetError();
 
+        // Check capacity - marks should not be written when media is full
+        if (Remaining <= 0)
+        {
+            SetError(WIN32_ERROR.ERROR_END_OF_MEDIA);
+            return false;
+        }
+
         // Check ResumeWriteFromMarkOnly constraint
         if (ResumeWriteFromMarkOnly && !CanResumeWrite())
         {

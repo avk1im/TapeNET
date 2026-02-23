@@ -802,8 +802,11 @@ void HandleVirtualDrive(List<string> values)
         var backend = VirtualTapeDriveBackend.CreateFileBacked(
             factory,
             contentFilePath,
+            contentCapacity: capabilities.SupportsInitiatorPartition ? 1024L * 1024 * 1024 : 500 * 1024 * 1024,
             initiatorFilePath,
-            capabilities);
+            capabilities,
+            mediaMode: FileMode.OpenOrCreate,
+            initiatorPartitionCapacity: capabilities.SupportsInitiatorPartition ? 24 * 1024 * 1024 : 0);
 
         tapeDrive = new TapeDrive(factory, backend);
 

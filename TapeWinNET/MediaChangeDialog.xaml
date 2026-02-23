@@ -17,37 +17,37 @@
 
         <!-- Icon and Title -->
         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
-            <TextBlock Text="??" FontSize="24" Margin="0,0,12,0" VerticalAlignment="Center"/>
-            <TextBlock Text="Media Change Required" FontSize="16" FontWeight="Bold" VerticalAlignment="Center"/>
+            <TextBlock Text="⚠" FontSize="24" Margin="0,0,12,0" VerticalAlignment="Center"/>
+            <TextBlock x:Name="TitleTextBlock" FontSize="16" FontWeight="Bold" VerticalAlignment="Center"/>
         </StackPanel>
 
-        <!-- Instructions -->
+        <!-- Status and Instructions -->
         <StackPanel Grid.Row="1">
             <TextBlock x:Name="StatusTextBlock" 
                        TextWrapping="Wrap" 
                        FontWeight="SemiBold"
                        Margin="0,0,0,16"/>
 
-            <TextBlock Text="To continue:" FontWeight="SemiBold" Margin="0,0,0,8"/>
-            <TextBlock x:Name="InstructionsTextBlock" TextWrapping="Wrap" Margin="16,0,0,0"/>
+            <TextBlock x:Name="InstructionsTextBlock" TextWrapping="Wrap" Margin="0,0,0,0"/>
         </StackPanel>
 
         <!-- Warning -->
-        <Border Grid.Row="2" 
+        <Border x:Name="WarningBorder"
+                Grid.Row="2" 
                 Background="#FFFFCCCC" 
                 BorderBrush="#FFCC0000" 
                 BorderThickness="1"
                 CornerRadius="4"
                 Padding="8"
                 Margin="0,12,0,0">
-            <TextBlock Text="?? WARNING: All existing data on the new media will be permanently erased!"
+            <TextBlock Text="⚠ WARNING: All existing data on the new media will be permanently erased!"
                        TextWrapping="Wrap"/>
         </Border>
 
         <!-- Buttons -->
         <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
-            <Button x:Name="ContinueButton" Width="160" Margin="0,0,8,0" Click="ContinueButton_Click"/>
-            <Button Content="Abort Backup" Width="100" Click="AbortButton_Click" IsCancel="True"/>
+            <Button x:Name="ContinueButton" Width="180" Margin="0,0,8,0" Click="ContinueButton_Click"/>
+            <Button Content="End Backup" Width="100" Margin="24,0,0,0" Click="AbortButton_Click" IsCancel="True"/>
         </StackPanel>
     </Grid>
 </Window>

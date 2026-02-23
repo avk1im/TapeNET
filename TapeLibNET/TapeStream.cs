@@ -416,7 +416,7 @@ namespace TapeLibNET
                     int written = WriteDirect(buffer, offset, count);
                     if (WentBad)
                     {
-                        m_logger.LogDebug("WriteDirect error 0x{Error:X8} in {Method}", LastError, nameof(Write));
+                        m_logger.LogDebug("Tape stream WriteDirect error 0x{Error:X8} in {Method}", LastError, nameof(Write));
                         throw new IOException($"WriteDirect error in {nameof(Write)}", (int)LastError);
                     }
 
@@ -435,7 +435,7 @@ namespace TapeLibNET
                     m_accLength += buffered;
 
                     if (WentBad)
-                        throw new IOException($" in {nameof(Write)}", (int)LastError);
+                        throw new IOException($"Buffer handling error in {nameof(Write)}", (int)LastError);
                 }
             }
         }
@@ -462,8 +462,8 @@ namespace TapeLibNET
 
             if (WentBad)
             {
-                m_logger.LogError("Flush error 0x{Error:X8} in {Method}", LastError, nameof(Flush));
-                throw new IOException($"Flush error in {nameof(Flush)}", (int)LastError);
+                m_logger.LogError("Tape stream flush error 0x{Error:X8} in {Method}", LastError, nameof(Flush));
+                throw new IOException($"Tape stream flush error in {nameof(Flush)}", (int)LastError);
             }
 
             // Notice: Here in Flush() we do not update Writte, as it counts only bytes that have been ingested by Write()

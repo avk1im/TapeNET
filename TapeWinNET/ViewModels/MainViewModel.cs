@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Input;
 
@@ -819,12 +820,14 @@ public partial class MainViewModel : ViewModelBase
 
         try
         {
-            // Pass requireExisting based on user's mode selection
+            // Pass FileMode based on user's mode selection
             var success = await _tapeService.OpenVirtualDriveAsync(
                 request.Capabilities,
                 request.ContentPath,
+                request.ContentCapacity,
                 request.InitiatorPath,
-                requireExisting: !request.IsCreateNew);
+                mediaMode: request.IsCreateNew ? FileMode.Create : FileMode.Open,
+                request.InitiatorPartitionCapacity);
 
             if (!success)
             {

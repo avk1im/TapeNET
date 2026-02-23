@@ -25,6 +25,7 @@ public partial class TapeService
     /// <summary>
     /// Probes a virtual drive to determine if valid existing media exists.
     /// This is a stateless operation - opens the drive, reads info, then closes everything.
+    /// Uses FileMode.Open to require existing state.
     /// </summary>
     /// <param name="contentPath">Path to the content partition file.</param>
     /// <param name="initiatorPath">Optional path to the initiator partition file.</param>
@@ -53,7 +54,6 @@ public partial class TapeService
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // Create backend with requireExistingState = true
                 // Use null logger factory to avoid polluting logs during probe
                 var loggerFactory = NullLoggerFactory.Instance;
                 
@@ -68,9 +68,10 @@ public partial class TapeService
                     backend = VirtualTapeDriveBackend.CreateFileBacked(
                         loggerFactory,
                         contentPath,
+                        contentCapacity: 0, // irrelevant for Open mode - capacity is read from existing state
                         initiatorPath,
                         caps,
-                        requireExistingState: true);
+                        mediaMode: FileMode.Open); // fails if cannot open existing metadata
                 }
                 catch (Exception ex)
                 {
@@ -92,7 +93,7 @@ public partial class TapeService
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // Load media
+                // Load media (will fail if no valid state - that's what we want for probe)
                 if (!drive.ReloadMedia())
                 {
                     return new VirtualDriveProbeResult(
@@ -127,7 +128,6 @@ public partial class TapeService
                     SupportsSetmarks = drive.SupportsSetmarks,
                     SupportsSeqFilemarks = drive.SupportsSeqFilemarks,
                     SupportsInitiatorPartition = drive.SupportsInitiatorPartition,
-                    Capacity = drive.Capacity
                 };
 
                 return new VirtualDriveProbeResult(

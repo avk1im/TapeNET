@@ -216,7 +216,7 @@ public partial class MainViewModel
         int errorCount = 0;
 
 #if DEBUG
-        TapeFileAgent.SimulateFailures = true;
+        //TapeFileAgent.SimulateFailures = true;
 #endif
 
         try
@@ -277,13 +277,19 @@ public partial class MainViewModel
                         });
                         return result;
                     },
-                    // Volume change callback - returns true to continue, false to abort
+                    // Volume full callback - ask user if they want to continue on next volume
                     (currentVolume, nextVolume, filesBackedUp, totalFiles, bytesBackedUp) =>
                     {
                         bool continueBackup = false;
                         Application.Current.Dispatcher.Invoke(() =>
                         {
-                            var dialog = new MediaChangeDialog(currentVolume, nextVolume, filesBackedUp, totalFiles, bytesBackedUp)
+                            var dialog = new MediaChangeDialog(
+                                "Volume Full",
+                                $"Volume #{currentVolume} is full.\n" +
+                                $"Backed up {filesBackedUp:N0} of {totalFiles:N0} files " +
+                                $"({Helpers.BytesToString(bytesBackedUp)}) so far.",
+                                $"Click Continue to eject this volume and continue the backup on a new media volume.",
+                                "Continue to Next Volume")
                             {
                                 Owner = Application.Current.MainWindow
                             };
@@ -293,6 +299,29 @@ public partial class MainViewModel
                             }
                         });
                         return continueBackup;
+                    },
+                    // Insert media callback - prompt user to insert new media after ejection
+                    (nextVolume) =>
+                    {
+                        bool mediaReady = false;
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            var dialog = new MediaChangeDialog(
+                                "Insert New Media",
+                                $"The current volume has been ejected.",
+                                $"Please insert a formatted media for Volume #{nextVolume}.\n\n" +
+                                $"Click Continue when the new media is in the drive.",
+                                "Continue Backup",
+                                showWarning: true)
+                            {
+                                Owner = Application.Current.MainWindow
+                            };
+                            if (dialog.ShowDialog() == true)
+                            {
+                                mediaReady = dialog.ContinueBackup;
+                            }
+                        });
+                        return mediaReady;
                     },
                     // Current file callback
                     filePath =>

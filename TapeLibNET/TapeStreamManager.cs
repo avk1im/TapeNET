@@ -562,8 +562,15 @@ namespace TapeLibNET
             Debug.Assert(State == TapeState.WritingContent);
 
             if (WentOK)
+            {
                 if (length >= 0 && !CheckContentCapacity(length, writtenSoFar))
-                    LastErrorWin32 = WIN32_ERROR.ERROR_END_OF_MEDIA;
+                {
+                    SetError(WIN32_ERROR.ERROR_END_OF_MEDIA);
+                    return null;
+                }
+            }
+            else
+                return null;
 
             if (!BeginWriteFile())
                 return null;

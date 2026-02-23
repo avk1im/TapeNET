@@ -1,5 +1,6 @@
 using System.IO;
 
+using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices; // for Helpers
 
 using TapeLibNET;
@@ -27,11 +28,12 @@ public partial class TapeService
     /// <param name="progressCallback">Callback for progress updates (filesProcessed, totalFiles, bytesProcessed).</param>
     /// <param name="logCallback">Callback for log messages.</param>
     /// <param name="fileErrorCallback">Callback when a file error occurs. Returns FileFailedAction.</param>
-    /// <param name="volumeChangeCallback">Callback when volume change is needed. Returns true to continue, false to abort.</param>
+    /// <param name="volumeFullCallback">Callback when current volume is full. Returns true to continue on next volume, false to end backup.</param>
+    /// <param name="insertMediaCallback">Callback after media ejection, prompting user to insert new media. Returns true when ready, false to end backup.</param>
     /// <param name="currentFileCallback">Callback to report current file being processed.</param>
     /// <remarks>
-    /// To abort a backup in progress, set BackupAgent.IsAbortRequested = true.
-    /// The backup agent is available via the BackupAgent property during execution.
+    /// To abort a backup in progress, set Agent.IsAbortRequested = true.
+    /// The backup agent is available via the Agent property during execution.
     /// </remarks>
     public Task ExecuteBackupAsync(
         List<string> fileList,
@@ -47,7 +49,8 @@ public partial class TapeService
         Action<int, int, long> progressCallback,
         Action<string> logCallback,
         Func<string, string, FileFailedAction> fileErrorCallback,
-        Func<int, int, int, int, long, bool> volumeChangeCallback,
+        Func<int, int, int, int, long, bool> volumeFullCallback,
+        Func<int, bool> insertMediaCallback,
         Action<string> currentFileCallback)
     {
         return Task.Run(() =>
@@ -246,42 +249,45 @@ public partial class TapeService
                             break; // Done
                         }
 
-                        // Ask user to change media
-                        int filesRemaining = fileList.Count - progressHandler.FilesProcessed;
-                        bool continueBackup = volumeChangeCallback(
+                        // Step 1: Ask user if they want to continue on a new volume
+                        bool continueBackup = volumeFullCallback(
                             toc.Volume,
                             toc.Volume + 1,
                             progressHandler.FilesProcessed,
-                            fileList.Count,
+                            progressHandler.FilesTotal,
                             agent.BytesBackedup);
 
                         if (!continueBackup)
                         {
-                            logCallback("iii User cancelled multi-volume continuation");
+                            logCallback("iii User chose to end multi-volume backup");
                             break;
                         }
 
-                        // Eject and reload media
-                        logCallback(">>> Unloading media...");
+                        // Step 2: Eject current media
+                        logCallback(">>> Ejecting media...");
                         Status("Ejecting media...");
 
                         if (!_drive.UnloadMedia())
                         {
-                            throw new InvalidOperationException($"Couldn't unload media: {_drive.LastErrorMessage}");
+                            throw new InvalidOperationException($"Couldn't eject media: {_drive.LastErrorMessage}");
                         }
 
-                        logCallback($">>> Please insert media for Volume #{toc.Volume + 1}");
-                        Status($"Waiting for Volume #{toc.Volume + 1}...");
+                        logCallback($"vvv Volume #{toc.Volume} ejected");
 
-                        // Wait a moment for media swap
-                        Thread.Sleep(1000);
+                        // Step 3: Ask user to insert new media
+                        if (!insertMediaCallback(toc.Volume + 1))
+                        {
+                            logCallback("iii User cancelled media insertion");
+                            break;
+                        }
 
+                        // Step 4: Load and prepare the new media
                         logCallback(">>> Loading media...");
                         Status("Loading media...");
 
                         if (!_drive.ReloadMedia())
                         {
-                            throw new InvalidOperationException($"Couldn't reload media: {_drive.LastErrorMessage}");
+                            throw new InvalidOperationException($"Couldn't load media: {_drive.LastErrorMessage}");
                         }
 
                         if (!_drive.PrepareMedia())
@@ -415,6 +421,15 @@ public partial class TapeService
             _logCallback($"    Error: {ex.Message}");
 
             _progressCallback(FilesProcessed, FilesTotal, BytesProcessed);
+
+            // Don't show file error dialog for end-of-media errors —
+            // the multi-volume logic in BackupFilesToCurrentSet handles these
+            if (ex is IOException ioEx &&
+                (ioEx.HResult == (int)WIN32_ERROR.ERROR_END_OF_MEDIA ||
+                 ioEx.HResult == (int)WIN32_ERROR.ERROR_NO_DATA_DETECTED))
+            {
+                return FileFailedAction.Skip;
+            }
 
             // Show error dialog via callback - the callback handles sticky choices (e.g. Skip All)
             var result = _fileErrorCallback(fileDescr.FullName, ex.Message);
