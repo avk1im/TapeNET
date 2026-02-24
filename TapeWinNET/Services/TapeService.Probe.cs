@@ -13,8 +13,8 @@ namespace TapeWinNET.Services;
 /// </summary>
 public record VirtualDriveProbeResult(
     bool Success,
+    VirtualMediaDescriptor? Media,
     string? MediaName,
-    long? Capacity,
     int? BackupSetCount,
     VirtualTapeDriveCapabilities? DetectedCapabilities,
     string? ErrorMessage
@@ -69,8 +69,8 @@ public partial class TapeService
                         loggerFactory,
                         contentPath,
                         contentCapacity: 0, // irrelevant for Open mode - capacity is read from existing state
-                        initiatorPath,
-                        caps,
+                        initiatorFilePath: initiatorPath,
+                        capabilities: caps,
                         mediaMode: FileMode.Open); // fails if cannot open existing metadata
                 }
                 catch (Exception ex)
@@ -130,10 +130,19 @@ public partial class TapeService
                     SupportsInitiatorPartition = drive.SupportsInitiatorPartition,
                 };
 
+                // Read initiator partition capacity if present
+                long initiatorCapacity = 0;
+                if (drive.HasInitiatorPartition && initiatorPath != null)
+                {
+                    drive.MoveToPartition(MediaPartition.Initiator);
+                    initiatorCapacity = drive.Capacity;
+                    drive.MoveToPartition(MediaPartition.Content);
+                }
+
                 return new VirtualDriveProbeResult(
                     Success: true,
+                    Media: new VirtualMediaDescriptor(contentPath, drive.Capacity, initiatorPath, initiatorCapacity),
                     MediaName: toc.Description,
-                    Capacity: drive.Capacity,
                     BackupSetCount: toc.Count,
                     DetectedCapabilities: detectedCaps,
                     ErrorMessage: null);

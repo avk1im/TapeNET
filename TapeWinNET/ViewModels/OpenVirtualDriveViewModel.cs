@@ -89,12 +89,9 @@ public enum VirtualDriveProbeStatus
 /// </summary>
 public record VirtualDriveOpenRequest(
     VirtualTapeDriveCapabilities Capabilities,
-    string ContentPath,
-    long ContentCapacity,
-    string? InitiatorPath,
+    VirtualMediaDescriptor Media,
     bool IsCreateNew,
-    string? MediaName,
-    long InitiatorPartitionCapacity = 0
+    string? MediaName
 );
 
 /// <summary>
@@ -167,10 +164,37 @@ public class OpenVirtualDriveViewModel : ViewModelBase
         return File.Exists(initiatorPath) && File.Exists(initiatorMetadataPath);
     }
 
+    /// <summary>
+    /// Decorates a file path with a volume suffix.
+    /// Strips any existing volume suffix before applying the new one.
+    /// Example: "myvtape.vt" + volume 2 → "myvtape_vol02.vt"
+    /// Example: "myvtape_vol01.vt" + volume 2 → "myvtape_vol02.vt"
+    /// </summary>
+    public static string BuildVolumeFilePath(string path, int volume)
+    {
+        var dir = Path.GetDirectoryName(path) ?? string.Empty;
+        var ext = Path.GetExtension(path);
+        var name = Path.GetFileNameWithoutExtension(path);
+
+        // Strip existing volume suffix (e.g. "_vol01", "_vol12")
+        var volSuffix = VirtualTapeDriveBackend.VolumeSuffix;
+        int volIdx = name.LastIndexOf(volSuffix, StringComparison.OrdinalIgnoreCase);
+        if (volIdx >= 0)
+        {
+            // Verify that everything after the suffix is digits
+            var afterSuffix = name[(volIdx + volSuffix.Length)..];
+            if (afterSuffix.Length > 0 && afterSuffix.All(char.IsDigit))
+                name = name[..volIdx];
+        }
+
+        return Path.Combine(dir, $"{name}{volSuffix}{volume:D2}{ext}");
+    }
+
     #endregion
 
     private readonly Action<VirtualDriveOpenRequest> _onOpen;
     private readonly Action _onCancel;
+    private readonly bool _newMediaOnly;
 
     // Mode selection
     private bool _isOpenExistingMode = true;
@@ -210,22 +234,55 @@ public class OpenVirtualDriveViewModel : ViewModelBase
     public OpenVirtualDriveViewModel(
         Action<VirtualDriveOpenRequest> onOpen,
         Action onCancel,
-        string? prePopulatedContentPath = null,
-        bool? preSelectCreateNew = null)
+        VirtualMediaDescriptor? prePopulate = null,
+        bool? preSelectCreateNew = null,
+        bool newMediaOnly = false,
+        VirtualTapeDriveCapabilities? currentCapabilities = null)
     {
         _onOpen = onOpen;
         _onCancel = onCancel;
+        _newMediaOnly = newMediaOnly;
 
-        // Pre-populate if provided (for retry scenarios)
-        if (!string.IsNullOrWhiteSpace(prePopulatedContentPath))
+        // In newMediaOnly mode, force "Create new" and pre-populate from current drive
+        if (newMediaOnly)
         {
-            _contentFilePath = CheckContentFilePath(prePopulatedContentPath);
-            // Trigger probe after setting path
-            _ = TriggerProbeAsync();
+            _isOpenExistingMode = false;
+
+            if (currentCapabilities.HasValue)
+            {
+                var caps = currentCapabilities.Value;
+                _minBlockSize = BlockSizeOption.FromBytes(caps.MinBlockSize);
+                _defaultBlockSize = BlockSizeOption.FromBytes(caps.DefaultBlockSize);
+                _maxBlockSize = BlockSizeOption.FromBytes(caps.MaxBlockSize);
+                _supportsSetmarks = caps.SupportsSetmarks;
+                _supportsSeqFilemarks = caps.SupportsSeqFilemarks;
+                _supportsCompression = caps.SupportsCompression;
+                _enableInitiatorPartition = caps.SupportsInitiatorPartition;
+            }
         }
 
-        // Pre-select mode if specified
-        if (preSelectCreateNew.HasValue)
+        // Pre-populate from previous media descriptor if provided
+        if (prePopulate != null)
+        {
+            if (!string.IsNullOrWhiteSpace(prePopulate.ContentPath))
+            {
+                _contentFilePath = CheckContentFilePath(prePopulate.ContentPath);
+                // Trigger probe after setting path
+                _ = TriggerProbeAsync();
+            }
+
+            if (prePopulate.ContentCapacity > 0)
+                SetCapacityFromBytes(prePopulate.ContentCapacity, v => _contentCapacityValue = v, u => _contentCapacityUnit = u);
+
+            if (prePopulate.InitiatorPath != null)
+                _enableInitiatorPartition = true;
+
+            if (prePopulate.InitiatorPartitionCapacity > 0)
+                SetCapacityFromBytes(prePopulate.InitiatorPartitionCapacity, v => _initiatorCapacityValue = v, u => _initiatorCapacityUnit = u);
+        }
+
+        // Pre-select mode if specified (ignored in newMediaOnly mode)
+        if (!newMediaOnly && preSelectCreateNew.HasValue)
         {
             _isOpenExistingMode = !preSelectCreateNew.Value;
         }
@@ -238,6 +295,21 @@ public class OpenVirtualDriveViewModel : ViewModelBase
 
     #region Mode Selection
 
+    /// <summary>Dialog title — changes based on newMediaOnly mode.</summary>
+    public string DialogTitle => _newMediaOnly ? "Create New Volume Media" : "Open Virtual Drive";
+
+    /// <summary>Whether the "Open existing" radio button is enabled.</summary>
+    public bool IsOpenExistingEnabled => !_newMediaOnly;
+
+    /// <summary>Whether the block size controls are enabled (disabled in newMediaOnly and in Open existing mode — block sizes are drive-level).</summary>
+    public bool IsBlockSizesEnabled => !_newMediaOnly && IsCreateNewMode;
+
+    /// <summary>Whether the preset controls are enabled (disabled in newMediaOnly and in Open existing mode).</summary>
+    public bool IsPresetsEnabled => !_newMediaOnly && IsCreateNewMode;
+
+    /// <summary>Whether the features controls are enabled (disabled in newMediaOnly and in Open existing mode).</summary>
+    public bool IsFeaturesEnabled => !_newMediaOnly && IsCreateNewMode;
+
     public bool IsOpenExistingMode
     {
         get => _isOpenExistingMode;
@@ -246,6 +318,9 @@ public class OpenVirtualDriveViewModel : ViewModelBase
             if (SetProperty(ref _isOpenExistingMode, value))
             {
                 OnPropertyChanged(nameof(IsCreateNewMode));
+                OnPropertyChanged(nameof(IsPresetsEnabled));
+                OnPropertyChanged(nameof(IsFeaturesEnabled));
+                OnPropertyChanged(nameof(IsBlockSizesEnabled));
                 OnPropertyChanged(nameof(ActionButtonText));
                 OnPropertyChanged(nameof(ShowOverwriteWarning));
                 CommandManager.InvalidateRequerySuggested();
@@ -625,13 +700,13 @@ public class OpenVirtualDriveViewModel : ViewModelBase
 
         var request = new VirtualDriveOpenRequest(
             Capabilities: capabilities,
-            ContentPath: ContentFilePath,
-            ContentCapacity: ContentCapacityBytes,
-            InitiatorPath: initiatorPath,
+            Media: new VirtualMediaDescriptor(
+                ContentFilePath,
+                ContentCapacityBytes,
+                initiatorPath,
+                EnableInitiatorPartition ? InitiatorCapacityBytes : 0),
             IsCreateNew: IsCreateNewMode,
-            MediaName: IsCreateNewMode ? MediaName : null,
-            InitiatorPartitionCapacity: EnableInitiatorPartition ? InitiatorCapacityBytes : 0
-        );
+            MediaName: IsCreateNewMode ? MediaName : null);
 
         _onOpen(request);
     }
@@ -700,7 +775,7 @@ public class OpenVirtualDriveViewModel : ViewModelBase
             _lastProbeResult = null;
 
             // Auto-select "Create new" mode if no existing media
-            if (IsOpenExistingMode)
+            if (!_newMediaOnly && IsOpenExistingMode)
                 IsCreateNewMode = true;
 
             // Check if initiator files would exist (for UI hint)
@@ -747,17 +822,37 @@ public class OpenVirtualDriveViewModel : ViewModelBase
                     {
                         ProbeStatus = VirtualDriveProbeStatus.ExistingFound;
                         // Auto-select "Open existing" mode if existing media found
-                        IsOpenExistingMode = true;
+                        if (!_newMediaOnly)
+                            IsOpenExistingMode = true;
 
-                        // Update initiator partition checkbox based on probe result
-                        if (result.DetectedCapabilities?.SupportsInitiatorPartition == true)
-                            EnableInitiatorPartition = true;
+                        // Pre-populate all fields from probe result
+                        if (result.Media != null)
+                        {
+                            SetCapacityFromBytes(result.Media.ContentCapacity, v => ContentCapacityValue = v, u => ContentCapacityUnit = u);
+                            EnableInitiatorPartition = result.Media.InitiatorPath != null;
+                            if (result.Media.InitiatorPartitionCapacity > 0)
+                                SetCapacityFromBytes(result.Media.InitiatorPartitionCapacity, v => InitiatorCapacityValue = v, u => InitiatorCapacityUnit = u);
+                        }
+
+                        if (!string.IsNullOrEmpty(result.MediaName))
+                            MediaName = result.MediaName;
+
+                        if (result.DetectedCapabilities.HasValue)
+                        {
+                            var caps = result.DetectedCapabilities.Value;
+                            MinBlockSize = BlockSizeOption.FromBytes(caps.MinBlockSize);
+                            DefaultBlockSize = BlockSizeOption.FromBytes(caps.DefaultBlockSize);
+                            MaxBlockSize = BlockSizeOption.FromBytes(caps.MaxBlockSize);
+                            SupportsSetmarks = caps.SupportsSetmarks;
+                            SupportsSeqFilemarks = caps.SupportsSeqFilemarks;
+                            SupportsCompression = caps.SupportsCompression;
+                        }
                     }
                     else
                     {
                         ProbeStatus = VirtualDriveProbeStatus.NewMedia;
                         // Auto-select "Create new" mode if no valid media
-                        if (IsOpenExistingMode)
+                        if (!_newMediaOnly && IsOpenExistingMode)
                             IsCreateNewMode = true;
                     }
 

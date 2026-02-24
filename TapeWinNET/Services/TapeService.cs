@@ -13,6 +13,17 @@ using TapeLibNET.Virtual;
 namespace TapeWinNET.Services;
 
 /// <summary>
+/// Information to create or open a file-based new virtual media
+/// </summary>
+public record VirtualMediaDescriptor(
+    string ContentPath,
+    long ContentCapacity,
+    string? InitiatorPath,
+    long InitiatorPartitionCapacity
+);
+
+
+/// <summary>
 /// Service that wraps TapeLibNET operations with async support for UI threading.
 /// Since TapeLibNET is single-threaded, all operations are executed on a dedicated worker thread.
 /// </summary>
@@ -22,11 +33,14 @@ public partial class TapeService : IDisposable
     private TapeDrive? _drive;
     private TapeFileAgent? _agent;
     private TapeTOC? _toc;
+    private VirtualMediaDescriptor? _vmdLast = null;
+        // for convenience feature: to preset values for next virtual media
     private readonly object _lock = new();
     private bool _disposed;
 
     public event EventHandler<string>? LogMessageReceived;
     public event EventHandler<string>? StatusChanged;
+
 
     public TapeService()
     {
@@ -81,6 +95,12 @@ public partial class TapeService : IDisposable
             return _drive?.GetRemainingCapacity() ?? 0;
         }
     }
+
+    /// <summary>
+    /// Whether the current drive is a virtual tape drive.
+    /// </summary>
+    public bool IsVirtualDrive => _drive?.Backend is VirtualTapeDriveBackend;
+    public VirtualMediaDescriptor? LastVMD => _vmdLast;
 
     #endregion
 
@@ -334,13 +354,48 @@ public partial class TapeService : IDisposable
 
     // ExecuteBackupAsync is in TapeService.Backup.cs
 
+    /// <summary>
+    /// Inserts new virtual media into the virtual drive by replacing the backing file streams.
+    /// Does NOT acquire _lock — designed to be called from within insertMediaCallback
+    /// where the worker thread already holds the lock and is blocked on Dispatcher.Invoke.
+    /// </summary>
+    public bool InsertVirtualMedia(
+        VirtualMediaDescriptor vmd,
+        FileMode mediaMode = FileMode.Create)
+    {
+        if (_drive?.Backend is not VirtualTapeDriveBackend vb)
+        {
+            LastError = "Not a virtual drive";
+            return false;
+        }
+
+        try
+        {
+            Log($">>> Inserting virtual media...");
+            Log($" ii Content file: >{vmd.ContentPath}<");
+            if (vmd.InitiatorPath != null)
+                Log($" ii Initiator file: >{vmd.InitiatorPath}<");
+            Log($" ii Media mode: {mediaMode}");
+
+            vb.InsertMedia(vmd.ContentPath, vmd.ContentCapacity, vmd.InitiatorPath, vmd.InitiatorPartitionCapacity, mediaMode);
+
+            _vmdLast = vmd;
+
+            Log("vvv Virtual media inserted");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            LastError = ex.Message;
+            Log($"!!! Exception inserting virtual media: {ex.Message}");
+            return false;
+        }
+    }
+
     public Task<bool> OpenVirtualDriveAsync(
         VirtualTapeDriveCapabilities capabilities,
-        string contentPath,
-        long contentCapacity,
-        string? initiatorPath,
-        FileMode mediaMode = FileMode.OpenOrCreate,
-        long initiatorPartitionCapacity = 0)
+        VirtualMediaDescriptor vmd,
+        FileMode mediaMode = FileMode.OpenOrCreate)
     {
         return Task.Run(() =>
         {
@@ -349,20 +404,20 @@ public partial class TapeService : IDisposable
                 try
                 {
                     Log($">>> Opening virtual drive...");
-                    Log($" ii Content file: >{contentPath}<");
-                    if (initiatorPath != null)
-                        Log($" ii Initiator file: >{initiatorPath}<");
+                    Log($" ii Content file: >{vmd.ContentPath}<");
+                    if (vmd.InitiatorPath != null)
+                        Log($" ii Initiator file: >{vmd.InitiatorPath}<");
                     Log($" ii Media mode: {mediaMode}");
                     Status("Opening virtual drive...");
 
                     var backend = VirtualTapeDriveBackend.CreateFileBacked(
                         _loggerFactory,
-                        contentPath,
-                        contentCapacity,
-                        initiatorPath,
+                        vmd.ContentPath,
+                        vmd.ContentCapacity,
+                        vmd.InitiatorPath,
+                        vmd.InitiatorPartitionCapacity,
                         capabilities,
-                        mediaMode,
-                        initiatorPartitionCapacity);
+                        mediaMode);
 
                     // If we got here, the backend has been created ->
                     //  Dispose existing drive if any
@@ -380,8 +435,10 @@ public partial class TapeService : IDisposable
                         return false;
                     }
 
+                    _vmdLast = vmd;
+
                     DriveNumber = 0;
-                    Log($"vvv Virtual drive opened on file >{contentPath}<");
+                    Log($"vvv Virtual drive opened on file >{vmd.ContentPath}<");
                     Status("Virtual drive opened");
                     return true;
                 }

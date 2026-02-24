@@ -52,6 +52,9 @@ public class TapeDrive : ErrorManageableBase, IDisposable
 
     protected override string LogPrefix => $"Drive #{DriveNumber}";
 
+    /// <summary>The underlying backend implementation (Win32 or Virtual).</summary>
+    public TapeDriveBackend Backend => m_backend;
+
     public uint DriveNumber => m_backend.DriveNumber;
     public string DriveDeviceName => m_backend.DeviceName;
 

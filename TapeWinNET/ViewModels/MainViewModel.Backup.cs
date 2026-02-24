@@ -4,6 +4,8 @@ using System.Windows.Input;
 using Windows.Win32.System.SystemServices; // for Helpers
 
 using TapeLibNET;
+using TapeLibNET.Virtual;
+using TapeWinNET.Services;
 
 namespace TapeWinNET.ViewModels;
 
@@ -306,19 +308,76 @@ public partial class MainViewModel
                         bool mediaReady = false;
                         Application.Current.Dispatcher.Invoke(() =>
                         {
-                            var dialog = new MediaChangeDialog(
-                                "Insert New Media",
-                                $"The current volume has been ejected.",
-                                $"Please insert a formatted media for Volume #{nextVolume}.\n\n" +
-                                $"Click Continue when the new media is in the drive.",
-                                "Continue Backup",
-                                showWarning: true)
+                            if (_tapeService.IsVirtualDrive)
                             {
-                                Owner = Application.Current.MainWindow
-                            };
-                            if (dialog.ShowDialog() == true)
+                                // Virtual drive: show OpenVirtualDriveWindow in newMediaOnly mode
+                                // to let user configure the new volume's file and capacity
+                                var currentCaps = new VirtualTapeDriveCapabilities
+                                {
+                                    MinBlockSize = _tapeService.MinimumBlockSize,
+                                    MaxBlockSize = _tapeService.MaximumBlockSize,
+                                    DefaultBlockSize = _tapeService.DefaultBlockSize,
+                                    SupportsSetmarks = _tapeService.SupportsSetmarks,
+                                    SupportsSeqFilemarks = _tapeService.SupportsSeqFilemarks,
+                                    SupportsInitiatorPartition = _tapeService.SupportsInitiatorPartition,
+                                    SupportsCompression = false,
+                                };
+
+                                // Pre-populate with previous media's values, volume-decorated path
+                                var lastVmd = _tapeService.LastVMD;
+                                VirtualMediaDescriptor? prePopulate = null;
+                                if (lastVmd != null)
+                                {
+                                    prePopulate = lastVmd with
+                                    {
+                                        ContentPath = OpenVirtualDriveViewModel.BuildVolumeFilePath(
+                                            lastVmd.ContentPath, nextVolume)
+                                    };
+                                }
+
+                                var vm = new OpenVirtualDriveViewModel(
+                                    request =>
+                                    {
+                                        // Close dialog
+                                        Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
+
+                                        // Insert the new virtual media (no lock — worker is blocked here)
+                                        mediaReady = _tapeService.InsertVirtualMedia(
+                                            request.Media,
+                                            System.IO.FileMode.Create);
+                                    },
+                                    () =>
+                                    {
+                                        Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
+                                        mediaReady = false;
+                                    },
+                                    prePopulate: prePopulate,
+                                    newMediaOnly: true,
+                                    currentCapabilities: currentCaps);
+
+                                var window = new OpenVirtualDriveWindow(vm)
+                                {
+                                    Owner = Application.Current.MainWindow
+                                };
+                                window.ShowDialog();
+                            }
+                            else
                             {
-                                mediaReady = dialog.ContinueBackup;
+                                // Physical drive: show simple media change dialog
+                                var dialog = new MediaChangeDialog(
+                                    "Insert New Media",
+                                    $"The current volume has been ejected.",
+                                    $"Please insert a formatted media for Volume #{nextVolume}.\n\n" +
+                                    $"Click Continue when the new media is in the drive.",
+                                    "Continue Backup",
+                                    showWarning: true)
+                                {
+                                    Owner = Application.Current.MainWindow
+                                };
+                                if (dialog.ShowDialog() == true)
+                                {
+                                    mediaReady = dialog.ContinueBackup;
+                                }
                             }
                         });
                         return mediaReady;

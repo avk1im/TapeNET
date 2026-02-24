@@ -73,6 +73,7 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
     /// <summary>Metadata file extension.</summary>
     public const string MetadataExtension = ".vrt";
     public const string InitiatorSuffix = "_init";
+    public const string VolumeSuffix = "_vol";
 
     #endregion
 
@@ -96,23 +97,25 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
     private uint m_blockSize;
     private MediaPartition m_currentPartition = MediaPartition.Content;
 
-    // Media capacities (separate from drive capabilities - these are media attributes)
-    private long m_contentCapacity;
-    private long m_initiatorPartitionCapacity;
+    // Media capacities to apply to newly created media
+    //  (separate from drive capabilities - these are media attributes)
+    private long m_contentCapacityForNew;
+    private long m_initiatorCapacityForNew;
 
     #endregion
 
     #region *** Constructors ***
 
-    public VirtualTapeDriveBackend(ILoggerFactory loggerFactory, VirtualTapeDriveCapabilities capabilities,
+    /// <summary>Creates backend without streams - these will need to be provided in public constructors</summary>
+    private VirtualTapeDriveBackend(ILoggerFactory loggerFactory, VirtualTapeDriveCapabilities capabilities,
         long contentCapacity, long initiatorPartitionCapacity = 0)
         : base(loggerFactory)
     {
         m_capabilities = capabilities;
         m_blockSize = capabilities.DefaultBlockSize;
         m_ownsStreams = true;
-        m_contentCapacity = contentCapacity;
-        m_initiatorPartitionCapacity = initiatorPartitionCapacity;
+        m_contentCapacityForNew = contentCapacity;
+        m_initiatorCapacityForNew = initiatorPartitionCapacity;
     }
 
     /// <summary>Creates backend with external streams (caller manages stream lifecycle).</summary>
@@ -177,21 +180,21 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
     /// <param name="contentFilePath">Path to the content data file.</param>
     /// <param name="contentCapacity">Capacity of the content partition in bytes.</param>
     /// <param name="initiatorFilePath">Optional path to the initiator partition file.</param>
+    /// <param name="initiatorCapacity">Capacity of the initiator partition in bytes.</param>
     /// <param name="capabilities">Drive capabilities (defaults to WithSetmarks).</param>
     /// <param name="mediaMode">
     /// Controls how LoadMedia() handles existing vs new media state.
     /// Open = require existing; Create = always create new; CreateNew = create only if no existing;
     /// OpenOrCreate = load existing or create new (default).
     /// </param>
-    /// <param name="initiatorPartitionCapacity">Capacity of the initiator partition in bytes.</param>
     public static VirtualTapeDriveBackend CreateFileBacked(
         ILoggerFactory loggerFactory,
         string contentFilePath,
         long contentCapacity,
         string? initiatorFilePath = null,
+        long initiatorCapacity = 0,
         VirtualTapeDriveCapabilities? capabilities = null,
-        FileMode mediaMode = FileMode.OpenOrCreate,
-        long initiatorPartitionCapacity = 0)
+        FileMode mediaMode = FileMode.OpenOrCreate)
     {
         if (mediaMode is not (FileMode.Open or FileMode.Create or FileMode.CreateNew or FileMode.OpenOrCreate))
             throw new ArgumentOutOfRangeException(nameof(mediaMode),
@@ -199,10 +202,13 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
 
         var caps = capabilities ?? VirtualTapeDriveCapabilities.WithSetmarks;
 
+        // For FileMode.Open, require existing files; otherwise create if needed
+        var fileStreamMode = mediaMode == FileMode.Open ? FileMode.Open : FileMode.OpenOrCreate;
+
         // Content streams
-        var contentStream = new FileStream(contentFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        var contentStream = new FileStream(contentFilePath, fileStreamMode, FileAccess.ReadWrite, FileShare.None);
         var contentMetadataPath = contentFilePath + MetadataExtension;
-        var contentMetadataStream = new FileStream(contentMetadataPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        var contentMetadataStream = new FileStream(contentMetadataPath, fileStreamMode, FileAccess.ReadWrite, FileShare.None);
 
         // Initiator streams (if supported and path provided)
         Stream? initiatorStream = null;
@@ -210,9 +216,9 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
 
         if (caps.SupportsInitiatorPartition && initiatorFilePath != null)
         {
-            initiatorStream = new FileStream(initiatorFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            initiatorStream = new FileStream(initiatorFilePath, fileStreamMode, FileAccess.ReadWrite, FileShare.None);
             var initiatorMetadataPath = initiatorFilePath + MetadataExtension;
-            initiatorMetadataStream = new FileStream(initiatorMetadataPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            initiatorMetadataStream = new FileStream(initiatorMetadataPath, fileStreamMode, FileAccess.ReadWrite, FileShare.None);
         }
 
         // Create backend - LoadMedia will try to load existing state
@@ -222,7 +228,7 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             contentCapacity,
             contentStream, ownsStreams: true, contentMetadataStream,
             initiatorStream, initiatorMetadataStream,
-            initiatorPartitionCapacity)
+            initiatorCapacity)
         {
             MediaMode = mediaMode
         };
@@ -406,7 +412,7 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
                 m_capabilities.MinBlockSize,
                 m_capabilities.MaxBlockSize,
                 m_capabilities.DefaultBlockSize,
-                m_contentCapacity,
+                m_contentCapacityForNew,
                 ownsStream: false,
                 metadataStream: m_contentMetadataStream,
                 ownsMetadataStream: false,
@@ -467,7 +473,7 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
                     m_capabilities.MinBlockSize,
                     m_capabilities.MaxBlockSize,
                     m_capabilities.DefaultBlockSize,
-                    m_initiatorPartitionCapacity,
+                    m_initiatorCapacityForNew,
                     ownsStream: false,
                     metadataStream: m_initiatorMetadataStream,
                     ownsMetadataStream: false,
@@ -569,6 +575,49 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
 
         m_logger.LogTrace("{Prefix}: Media unloaded", LogPrefix);
         return true;
+    }
+
+    /// <summary>
+    /// Inserts new virtual media into the drive by replacing the backing file streams.
+    /// Analogous to physically inserting a new tape cartridge into a drive.
+    /// Call <see cref="LoadMedia"/> afterwards to load the media content.
+    /// </summary>
+    /// <param name="contentFilePath">Path to the new content data file.</param>
+    /// <param name="contentCapacity">Capacity of the new content partition in bytes.</param>
+    /// <param name="initiatorFilePath">Optional path to the new initiator partition file.</param>
+    /// <param name="initiatorPartitionCapacity">Capacity of the new initiator partition in bytes.</param>
+    /// <param name="mediaMode">Controls how LoadMedia() handles the new media state.</param>
+    public void InsertMedia(
+        string contentFilePath,
+        long contentCapacity,
+        string? initiatorFilePath = null,
+        long initiatorPartitionCapacity = 0,
+        FileMode mediaMode = FileMode.Create)
+    {
+        // Eject any currently loaded media first (flushes media + disposes streams)
+        if (m_hasMedia || m_contentStream != null)
+            UnloadMedia();
+
+        // Open new file streams
+        var fileStreamMode = mediaMode == FileMode.Open ? FileMode.Open : FileMode.OpenOrCreate;
+
+        m_contentStream = new FileStream(contentFilePath, fileStreamMode, FileAccess.ReadWrite, FileShare.None);
+        var contentMetadataPath = contentFilePath + MetadataExtension;
+        m_contentMetadataStream = new FileStream(contentMetadataPath, fileStreamMode, FileAccess.ReadWrite, FileShare.None);
+
+        if (m_capabilities.SupportsInitiatorPartition && initiatorFilePath != null)
+        {
+            m_initiatorStream = new FileStream(initiatorFilePath, fileStreamMode, FileAccess.ReadWrite, FileShare.None);
+            var initiatorMetadataPath = initiatorFilePath + MetadataExtension;
+            m_initiatorMetadataStream = new FileStream(initiatorMetadataPath, fileStreamMode, FileAccess.ReadWrite, FileShare.None);
+        }
+
+        // Update capacity for new media creation
+        m_contentCapacityForNew = contentCapacity;
+        m_initiatorCapacityForNew = initiatorPartitionCapacity;
+        MediaMode = mediaMode;
+
+        m_logger.LogTrace("{Prefix}: Virtual media inserted from >{File}<", LogPrefix, contentFilePath);
     }
 
     public override bool SetBlockSize(uint size)
@@ -957,7 +1006,7 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
     public override void FillMediaParameters(out MediaParameters parameters)
     {
         parameters = new MediaParameters(
-            m_contentCapacity,
+            Capacity,
             Remaining,
             m_blockSize,
             HasInitiatorPartition,

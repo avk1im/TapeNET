@@ -8,7 +8,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="Open Virtual Drive"
+        Title="{Binding DialogTitle}"
         Width="540"
         SizeToContent="Height"
         MaxHeight="850"
@@ -57,6 +57,7 @@
         <StackPanel Grid.Row="0" Margin="0,0,0,16" Orientation="Horizontal">
             <RadioButton Content="Open existing virtual media" 
                          IsChecked="{Binding IsOpenExistingMode}"
+                         IsEnabled="{Binding IsOpenExistingEnabled}"
                          Margin="0,0,24,0"/>
             <RadioButton Content="Create new virtual media" 
                          IsChecked="{Binding IsCreateNewMode}"/>
@@ -161,7 +162,7 @@
 
         <!-- Preset Configuration -->
         <GroupBox Grid.Row="2" Header="Preset Configuration" Margin="0,0,0,12"
-                  IsEnabled="{Binding IsCreateNewMode}">
+                  IsEnabled="{Binding IsPresetsEnabled}">
             <Grid Margin="8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -273,7 +274,7 @@
 
         <!-- Features -->
         <GroupBox Grid.Row="5" Header="Features" Margin="0,0,0,12"
-                  IsEnabled="{Binding IsCreateNewMode}">
+                  IsEnabled="{Binding IsFeaturesEnabled}">
             <WrapPanel Margin="8" Orientation="Horizontal">
                 <CheckBox Content="Supports Setmarks" 
                           IsChecked="{Binding SupportsSetmarks}"
@@ -288,7 +289,7 @@
 
         <!-- Block Sizes -->
         <GroupBox Grid.Row="6" Header="Block Sizes" Margin="0,0,0,12"
-                  IsEnabled="{Binding IsCreateNewMode}">
+                  IsEnabled="{Binding IsBlockSizesEnabled}">
             <Grid Margin="8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>

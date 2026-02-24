@@ -790,6 +790,10 @@ public partial class MainViewModel : ViewModelBase
         string? prePopulatedPath,
         bool? preSelectCreateNew)
     {
+        var prePopulate = !string.IsNullOrWhiteSpace(prePopulatedPath)
+            ? new VirtualMediaDescriptor(prePopulatedPath, 0, null, 0)
+            : null;
+
         var viewModel = new OpenVirtualDriveViewModel(
             async (request) =>
             {
@@ -803,7 +807,7 @@ public partial class MainViewModel : ViewModelBase
             {
                 Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
             },
-            prePopulatedContentPath: prePopulatedPath,
+            prePopulate: prePopulate,
             preSelectCreateNew: preSelectCreateNew);
 
         var window = new OpenVirtualDriveWindow(viewModel)
@@ -823,11 +827,8 @@ public partial class MainViewModel : ViewModelBase
             // Pass FileMode based on user's mode selection
             var success = await _tapeService.OpenVirtualDriveAsync(
                 request.Capabilities,
-                request.ContentPath,
-                request.ContentCapacity,
-                request.InitiatorPath,
-                mediaMode: request.IsCreateNew ? FileMode.Create : FileMode.Open,
-                request.InitiatorPartitionCapacity);
+                request.Media,
+                mediaMode: request.IsCreateNew ? FileMode.Create : FileMode.Open);
 
             if (!success)
             {
@@ -846,7 +847,7 @@ public partial class MainViewModel : ViewModelBase
 
                     // Re-show dialog with pre-populated path, suggesting "Create new"
                     ShowOpenVirtualDriveWindowInternal(
-                        prePopulatedPath: request.ContentPath,
+                        prePopulatedPath: request.Media.ContentPath,
                         preSelectCreateNew: null); // Let user decide
                 }
                 else
@@ -914,7 +915,7 @@ public partial class MainViewModel : ViewModelBase
 
             // Log success with mode info
             var modeText = request.IsCreateNew ? "Created new" : "Opened existing";
-            LogMessages.Add($"[{DateTime.Now:HH:mm:ss}] iii {modeText} virtual media: {request.ContentPath}");
+            LogMessages.Add($"[{DateTime.Now:HH:mm:ss}] iii {modeText} virtual media: {request.Media.ContentPath}");
         }
         finally
         {

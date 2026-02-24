@@ -135,7 +135,7 @@
             <Grid Grid.Column="2" Margin="4">
                 <Grid.RowDefinitions>
                     <!-- Properties subpane (always visible) -->
-                    <RowDefinition Height="Auto" MinHeight="100" MaxHeight="250" />
+                    <RowDefinition Height="Auto" MinHeight="100" MaxHeight="300" />
                     <!-- Vertical Splitter (visible when table is shown) -->
                     <RowDefinition Height="Auto" />
                     <!-- Table subpane (visible for Media and BackupSet) -->

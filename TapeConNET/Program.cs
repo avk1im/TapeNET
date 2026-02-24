@@ -803,10 +803,10 @@ void HandleVirtualDrive(List<string> values)
             factory,
             contentFilePath,
             contentCapacity: capabilities.SupportsInitiatorPartition ? 1024L * 1024 * 1024 : 500 * 1024 * 1024,
-            initiatorFilePath,
-            capabilities,
-            mediaMode: FileMode.OpenOrCreate,
-            initiatorPartitionCapacity: capabilities.SupportsInitiatorPartition ? 24 * 1024 * 1024 : 0);
+            initiatorFilePath: initiatorFilePath,
+            initiatorCapacity: capabilities.SupportsInitiatorPartition ? 24 * 1024 * 1024 : 0,
+            capabilities: capabilities,
+            mediaMode: FileMode.OpenOrCreate);
 
         tapeDrive = new TapeDrive(factory, backend);
 

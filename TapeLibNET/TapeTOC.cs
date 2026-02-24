@@ -633,7 +633,8 @@ namespace TapeLibNET
         public int LastSetOnVolume => InternalToSetIndex(LastSetInternalOnVolume);
         public bool IsCurrentSetOnVolume => CurrentSetTOC.Volume == Volume;
         public bool IsCurrentSetLast => CurrentSetIndex == MaxSetIndex;
-        public bool IsCurrentSetContOnNextVolume => ContinuedOnNextVolume && IsCurrentSetLast;
+        public bool IsCurrentSetContOnNextVolume => IsCurrentSetLast ? ContinuedOnNextVolume :
+            this[CurrentSetIndex + 1].ContinuedFromPrevVolume;
         public bool IsCurrentSetContFromPrevVolume => CurrentSetTOC.ContinuedFromPrevVolume;
         public bool IsCurrentSetContFromPrevVolumeInc => LastNonIncSetInternal < FirstSetInternalOnVolume;
 
