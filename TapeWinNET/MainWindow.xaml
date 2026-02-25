@@ -4,14 +4,17 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
-        xmlns:converters="clr-namespace:TapeWinNET.Converters" d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
+        xmlns:converters="clr-namespace:TapeWinNET.Converters"
+        d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
         mc:Ignorable="d"
         Title="{Binding WindowTitle}" 
         Height="700" Width="1100"
         WindowStartupLocation="CenterScreen">
     
     <Window.Resources>
-        <converters:BooleanToVisibilityCollapsedConverter x:Key="BoolToVis" />
+        <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVis" />
+        <converters:BoolToOpacityConverter x:Key="BoolToOpacityIcon" DimmedOpacity="0.4"/>
+        <converters:BoolToOpacityConverter x:Key="BoolToOpacityText" DimmedOpacity="0.6"/>
 
         <!-- TreeView item style -->
         <Style x:Key="TreeViewItemStyle" TargetType="TreeViewItem">
@@ -24,10 +27,12 @@
                                   DataType="{x:Type vm:TapeTreeItemViewModel}"
                                   ItemsSource="{Binding Children}">
             <StackPanel Orientation="Horizontal" Margin="2">
-                <!-- Icon bound to the Icon property -->
+                <!-- Icon bound to the Icon property, dimmed for off-volume sets -->
                 <Image Width="16" Height="16" Margin="0,0,4,0"
-                       Source="{Binding Icon}" />
-                <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center">
+                       Source="{Binding Icon}"
+                       Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityIcon}}" />
+                <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center"
+                           Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
                             <Style.Triggers>
@@ -135,7 +140,7 @@
             <Grid Grid.Column="2" Margin="4">
                 <Grid.RowDefinitions>
                     <!-- Properties subpane (always visible) -->
-                    <RowDefinition Height="Auto" MinHeight="100" MaxHeight="300" />
+                    <RowDefinition Height="150" MinHeight="100" MaxHeight="300" />
                     <!-- Vertical Splitter (visible when table is shown) -->
                     <RowDefinition Height="Auto" />
                     <!-- Table subpane (visible for Media and BackupSet) -->
@@ -213,28 +218,71 @@
                             </ListView.InputBindings>
                             <ListView.View>
                                 <GridView>
-                                    <!-- Icon column for backup sets -->
+                                    <!-- Icon column for backup sets, dimmed for off-volume sets -->
                                     <GridViewColumn Width="32">
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
-                                                <Image Width="16" Height="16" Source="{Binding Icon}" />
+                                                <Image Width="16" Height="16" Source="{Binding Icon}"
+                                                       Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityIcon}}" />
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>
                                     </GridViewColumn>
-                                    <GridViewColumn Header="Set #" Width="60"
-                                                    DisplayMemberBinding="{Binding IndexDisplay}" />
-                                    <GridViewColumn Header="Description" Width="180"
-                                                    DisplayMemberBinding="{Binding Description}" />
-                                    <GridViewColumn Header="Files" Width="60"
-                                                    DisplayMemberBinding="{Binding FileCountFormatted}" />
-                                    <GridViewColumn Header="Created" Width="130"
-                                                    DisplayMemberBinding="{Binding CreatedOnFormatted}" />
-                                    <GridViewColumn Header="Inc?" Width="45"
-                                                    DisplayMemberBinding="{Binding IncrementalDisplay}" />
-                                    <GridViewColumn Header="Block" Width="60"
-                                                    DisplayMemberBinding="{Binding BlockSize}" />
-                                    <GridViewColumn Header="Hash" Width="70"
-                                                    DisplayMemberBinding="{Binding HashAlgorithm}" />
+                                    <GridViewColumn Header="Set #" Width="60">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding IndexDisplay}"
+                                                           Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Description" Width="180">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Description}"
+                                                           Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Files" Width="60">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding FileCountFormatted}"
+                                                           Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Created" Width="130">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding CreatedOnFormatted}"
+                                                           Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Inc?" Width="45">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding IncrementalDisplay}"
+                                                           Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Block" Width="60">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding BlockSize}"
+                                                           Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Hash" Width="70">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding HashAlgorithm}"
+                                                           Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
                                 </GridView>
                             </ListView.View>
                         </ListView>

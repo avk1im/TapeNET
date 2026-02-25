@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Windows.Media.Imaging;
+
 using TapeLibNET;
 
 namespace TapeWinNET.ViewModels;
@@ -24,6 +25,7 @@ public class TapeTreeItemViewModel : ViewModelBase
     private bool _isSelected;
     private TreeItemType _itemType;
     private object? _tag;
+    private bool _isOnCurrentVolume = true;
 
     static TapeTreeItemViewModel()
     {
@@ -96,6 +98,16 @@ public class TapeTreeItemViewModel : ViewModelBase
     };
 
     /// <summary>
+    /// Whether this backup set resides on the currently loaded volume.
+    /// Used to dim icons of sets from previous volumes.
+    /// </summary>
+    public bool IsOnCurrentVolume
+    {
+        get => _isOnCurrentVolume;
+        set => SetProperty(ref _isOnCurrentVolume, value);
+    }
+
+    /// <summary>
     /// Additional data associated with this item (e.g., set index for BackupSet items)
     /// </summary>
     public object? Tag
@@ -138,7 +150,7 @@ public class TapeTreeItemViewModel : ViewModelBase
         return item;
     }
 
-    public static TapeTreeItemViewModel CreateBackupSetItem(TapeSetTOC setTOC, int setIndex, int totalSets, TapeTreeItemViewModel parent)
+    public static TapeTreeItemViewModel CreateBackupSetItem(TapeSetTOC setTOC, int setIndex, int totalSets, TapeTreeItemViewModel parent, bool isOnCurrentVolume)
     {
         var altIndex = -(totalSets - setIndex);
         var description = string.IsNullOrEmpty(setTOC.Description) 
@@ -150,7 +162,8 @@ public class TapeTreeItemViewModel : ViewModelBase
             DisplayName = $"Set #{setIndex} | {altIndex}: {description}",
             ItemType = TreeItemType.BackupSet,
             Tag = setIndex,
-            Parent = parent
+            Parent = parent,
+            IsOnCurrentVolume = isOnCurrentVolume
         };
         return item;
     }

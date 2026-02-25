@@ -5,7 +5,7 @@ using System.Windows.Media;
 
 namespace TapeWinNET.Converters;
 
-public class BooleanToVisibilityCollapsedConverter : IValueConverter
+public class BoolToVisibilityCollapsedConverter : IValueConverter
 {
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
     {
@@ -66,6 +66,30 @@ public class BoolToGrayBrushConverter : IValueConverter
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
     {
         return value is bool boolValue && boolValue ? EnabledBrush : DisabledBrush;
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        throw new NotImplementedException();
+    }
+}
+
+/// <summary>
+/// Converts a bool to an opacity value.
+/// true = 1.0 (fully visible), false = DimmedOpacity (default 0.4).
+/// Configure via the DimmedOpacity property on the resource declaration:
+///   &lt;converters:BoolToOpacityConverter x:Key="..." DimmedOpacity="0.38"/&gt;
+/// </summary>
+public class BoolToOpacityConverter : IValueConverter
+{
+    /// <summary>
+    /// Opacity applied when the bound value is false. Default is 0.4.
+    /// </summary>
+    public double DimmedOpacity { get; set; } = 0.4;
+
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        return value is bool b && b ? 1.0 : DimmedOpacity;
     }
 
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)

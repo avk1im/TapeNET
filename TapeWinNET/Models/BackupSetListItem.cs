@@ -1,13 +1,14 @@
 using System.Windows.Media.Imaging;
+using Windows.Win32.System.SystemServices; // for Helpers
+
 using TapeLibNET;
-using Windows.Win32.System.SystemServices;
 
 namespace TapeWinNET.Models;
 
 /// <summary>
 /// Represents a backup set item for display in the backup sets ListView.
 /// </summary>
-public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex)
+public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bool isOnCurrentVolume)
 {
     private static BitmapSource? _backupSetIcon;
     private static bool _iconLoaded;
@@ -43,6 +44,12 @@ public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex)
     /// Gets the icon for backup set items.
     /// </summary>
     public BitmapSource? Icon => _backupSetIcon;
+
+    /// <summary>
+    /// Whether this backup set resides on the currently loaded volume.
+    /// Used to dim icons of sets from previous volumes.
+    /// </summary>
+    public bool IsOnCurrentVolume => isOnCurrentVolume;
 
     /// <summary>
     /// Standard set index (1-based, from oldest to newest)

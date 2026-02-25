@@ -479,10 +479,12 @@ public partial class MainViewModel : ViewModelBase
 
         // Add backup sets (from latest to oldest for consistency with alt index display)
         int totalSets = toc.Count;
+        int currentVolume = toc.Volume;
         for (int i = totalSets; i >= 1; i--)
         {
             var setTOC = toc[i];
-            var setItem = TapeTreeItemViewModel.CreateBackupSetItem(setTOC, i, totalSets, tapeItem);
+            var setItem = TapeTreeItemViewModel.CreateBackupSetItem(setTOC, i, totalSets, tapeItem,
+                setTOC.Volume == currentVolume);
             tapeItem.Children.Add(setItem);
         }
 
@@ -603,7 +605,7 @@ public partial class MainViewModel : ViewModelBase
         // Populate backup sets table
         TableHeader = $"Backup Sets ({toc.Count})";
         int totalSets = toc.Count;
-        for (int i = 1; i <= totalSets; i++)
+        for (int i = 1; i <= totalSets; i++)    
         {
             var setTOC = toc[i];
             BackupSetList.Add(new BackupSetListItem(setTOC, i, toc.SetIndexToAlt(i)));
@@ -612,12 +614,13 @@ public partial class MainViewModel : ViewModelBase
 
         // Populate backup sets table in the alternative order: from latest (0) down to oldest (toc.MinSetIndex)
         TableHeader = $"Backup Sets ({toc.Count})";
+        int currentVolume = toc.Volume;
         for (int alt = 0; alt >= toc.MinSetIndex; alt--)
         {
             int setIndex = toc.SetIndexToAlt(alt); // this also converts from alt to regular index
             var setTOC = toc[setIndex];
             // Not used currently, but could be for an alternative view
-            BackupSetList.Add(new BackupSetListItem(setTOC, setIndex, alt));
+            BackupSetList.Add(new BackupSetListItem(setTOC, setIndex, alt, setTOC.Volume == currentVolume));
         }
 
         StatusMessage = $"Media: {toc.Description ?? "Volume #" + toc.Volume} - {toc.Count} backup set(s)";

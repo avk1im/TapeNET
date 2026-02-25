@@ -18,7 +18,7 @@
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis"/>
-        <converters:BooleanToVisibilityCollapsedConverter x:Key="BoolToVisConverter"/>
+        <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVisConverter"/>
 
         <!-- Style for status indicator -->
         <Style x:Key="StatusTextStyle" TargetType="TextBlock">
