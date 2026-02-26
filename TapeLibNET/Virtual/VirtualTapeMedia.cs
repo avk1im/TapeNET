@@ -153,7 +153,7 @@ internal readonly record struct VirtualTapeBlock : ITapeSerializable
 /// Handles block-based I/O and tapemark tracking.
 /// Enforces real tape behavior: block-aligned reads/writes, tapemark handling.
 /// </summary>
-public class VirtualTapeMedia : ErrorManageableBase, IDisposable
+public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 {
     #region *** Constants ***
 
@@ -658,8 +658,10 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
             return false;
         }
 
+        long fromBlock = m_currentBlock;
         m_currentBlock = block;
         SyncVirtualBlockIndex();
+        AccumulateOdometer(fromBlock, block);
 
         // Position stream if we're inside a data block
         if (m_currentVirtualBlockIndex < m_virtualBlocks.Count)
@@ -695,6 +697,7 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
         if (count == 0)
             return 0;
 
+        long fromBlock = m_currentBlock;
         SyncVirtualBlockIndex();
 
         int direction = count > 0 ? 1 : -1;
@@ -746,14 +749,17 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
                 SetError(WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA);
         }
 
+        AccumulateOdometer(fromBlock, m_currentBlock);
         return moved * direction;
     }
 
     /// <summary>Rewinds to beginning of tape.</summary>
     public void Rewind()
     {
+        long fromBlock = m_currentBlock;
         m_currentBlock = 0;
         m_currentVirtualBlockIndex = 0;
+        AccumulateOdometer(fromBlock, 0);
         ResetError();
 
         try
@@ -769,8 +775,10 @@ public class VirtualTapeMedia : ErrorManageableBase, IDisposable
     /// <summary>Seeks to end of data.</summary>
     public void SeekToEnd()
     {
+        long fromBlock = m_currentBlock;
         m_currentVirtualBlockIndex = m_virtualBlocks.Count;
         m_currentBlock = TotalBlockCount;
+        AccumulateOdometer(fromBlock, m_currentBlock);
         ResetError();
     }
 

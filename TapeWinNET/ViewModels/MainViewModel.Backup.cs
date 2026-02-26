@@ -352,8 +352,9 @@ public partial class MainViewModel
                                         mediaReady = false;
                                     },
                                     prePopulate: prePopulate,
-                                    newMediaOnly: true,
-                                    currentCapabilities: currentCaps);
+                                    mediaMode: System.IO.FileMode.Create,
+                                    currentCapabilities: currentCaps,
+                                    currentIoSpeed: _selectedIoSpeed);
 
                                 var window = new OpenVirtualDriveWindow(vm)
                                 {

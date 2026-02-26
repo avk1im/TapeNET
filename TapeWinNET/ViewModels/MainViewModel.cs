@@ -60,6 +60,7 @@ public partial class MainViewModel : ViewModelBase
         // Initialize commands
         OpenDriveCommand = new AsyncRelayCommand(OpenDriveAsync, _ => !IsBusy);
         OpenVirtualDriveCommand = new RelayCommand(ShowOpenVirtualDriveWindow, _ => !IsBusy);
+        SetIoSpeedCommand = new RelayCommand(SetIoSpeed, _ => IsIoSpeedEnabled);
         RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         EjectCommand = new AsyncRelayCommand(EjectAsync, () => !IsBusy && _tapeService.IsMediaLoaded);
         NavigateToBackupSetCommand = new RelayCommand(NavigateToSelectedBackupSet, _ => SelectedBackupSet != null);
@@ -68,6 +69,9 @@ public partial class MainViewModel : ViewModelBase
 
         // Initialize backup commands (from MainViewModel.Backup.cs)
         InitializeBackupCommands();
+
+        // Initialize restore commands (from MainViewModel.Restore.cs)
+        InitializeRestoreCommands();
 
         // Initialize drive menu items
         InitializeDriveMenu();
@@ -129,6 +133,7 @@ public partial class MainViewModel : ViewModelBase
             if (SetProperty(ref _isBusy, value))
             {
                 OnPropertyChanged(nameof(IsGeneralBusy));
+                OnPropertyChanged(nameof(IsIoSpeedEnabled));
                 CommandManager.InvalidateRequerySuggested();
             }
         }
@@ -142,17 +147,24 @@ public partial class MainViewModel : ViewModelBase
             if (SetProperty(ref _isBackupInProgress, value))
             {
                 OnPropertyChanged(nameof(IsGeneralBusy));
+                OnPropertyChanged(nameof(IsOperationInProgress));
                 CommandManager.InvalidateRequerySuggested();
             }
         }
     }
 
     /// <summary>
-    /// True when busy with non-backup operations (shows full-window overlay).
+    /// True when busy with non-backup/restore operations (shows full-window overlay).
     /// </summary>
-    public bool IsGeneralBusy => IsBusy && !IsBackupInProgress;
+    public bool IsGeneralBusy => IsBusy && !IsBackupInProgress && !IsRestoreInProgress;
+
+    /// <summary>
+    /// True when any tape operation (backup or restore/validate/verify) is in progress.
+    /// </summary>
+    public bool IsOperationInProgress => IsBackupInProgress || IsRestoreInProgress;
 
     // BackupProgressPercent, BackupProgressText, CurrentBackupFile properties are in MainViewModel.Backup.cs
+    // RestoreProgressPercent, RestoreProgressText, CurrentRestoreFile, IsRestoreInProgress properties are in MainViewModel.Restore.cs
 
     public bool ShowFullPathname
     {
@@ -217,6 +229,30 @@ public partial class MainViewModel : ViewModelBase
     /// <summary>Menu items for the Open Drive submenu.</summary>
     public ObservableCollection<DriveMenuItem> DriveMenuItems { get; } = [];
 
+    /// <summary>Available IO speed options for the virtual drive.</summary>
+    public IoSpeedOption[] IoSpeedOptions { get; } = IoSpeedOption.All;
+
+    /// <summary>Whether IO speed simulation controls should be visible (virtual drive is open).</summary>
+    public bool IsIoSpeedVisible => _tapeService.IsVirtualDrive;
+
+    /// <summary>Whether IO speed simulation controls should be enabled (not busy).</summary>
+    public bool IsIoSpeedEnabled => _tapeService.IsVirtualDrive && !IsBusy;
+
+    private IoSpeedOption _selectedIoSpeed = IoSpeedOption.Unlimited;
+
+    /// <summary>Currently selected IO speed simulation rate.</summary>
+    public IoSpeedOption SelectedIoSpeed
+    {
+        get => _selectedIoSpeed;
+        set
+        {
+            if (SetProperty(ref _selectedIoSpeed, value) && value != null)
+            {
+                _tapeService.SetVirtualIoRate(value.BytesPerSecond, value.LocateBytesPerSecond, value.SearchBytesPerSecond, value.SeekOverheadMs);
+            }
+        }
+    }
+
     public ObservableCollection<TapeTreeItemViewModel> TreeItems { get; } = [];
     public ObservableCollection<PropertyItem> PropertyList { get; } = [];
     public ObservableCollection<FileListItem> FileList { get; } = [];
@@ -229,9 +265,11 @@ public partial class MainViewModel : ViewModelBase
 
     public ICommand OpenDriveCommand { get; }
     public ICommand OpenVirtualDriveCommand { get; }
+    public ICommand SetIoSpeedCommand { get; }
     public ICommand RefreshCommand { get; }
     public ICommand EjectCommand { get; }
     // NewBackupCommand and AbortBackupCommand are in MainViewModel.Backup.cs
+    // RestoreCommand, ValidateCommand, VerifyCommand, AbortRestoreCommand are in MainViewModel.Restore.cs
     public ICommand NavigateToBackupSetCommand { get; }
     public ICommand ExitCommand { get; }
     public ICommand AboutCommand { get; }
@@ -332,12 +370,14 @@ public partial class MainViewModel : ViewModelBase
             if (!success)
             {
                 UpdateTreeForDriveOnly(driveNumber);
+                NotifyIoSpeedChanged();
                 return;
             }
 
             UpdateTreeFromTOC(driveNumber);
             // Select the most recent backup set
             SelectMostRecentSet();
+            NotifyIoSpeedChanged();
         }
         finally
         {
@@ -413,12 +453,18 @@ public partial class MainViewModel : ViewModelBase
 
     #region Private Methods - Menu Commands
 
+    private void SetIoSpeed(object? parameter)
+    {
+        if (parameter is IoSpeedOption option)
+            SelectedIoSpeed = option;
+    }
+
     private void Exit(object? parameter)
     {
-        if (IsBackupInProgress)
+        if (IsOperationInProgress)
         {
             var result = MessageBox.Show(
-                "A backup is in progress. Are you sure you want to exit?\n\nThe backup will be aborted.",
+                "An operation is in progress. Are you sure you want to exit?\n\nThe operation will be aborted.",
                 "Exit",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning);
@@ -758,6 +804,19 @@ public partial class MainViewModel : ViewModelBase
 
     #region Private Methods - Event Handlers
 
+    /// <summary>
+    /// Syncs the IO speed UI state with the current drive.
+    /// Call after opening/closing a drive to update visibility and selection.
+    /// </summary>
+    private void NotifyIoSpeedChanged()
+    {
+        // Sync selection from the backend's current rate
+        _selectedIoSpeed = IoSpeedOption.FromBytesPerSecond(_tapeService.VirtualIoRateBytesPerSecond);
+        OnPropertyChanged(nameof(SelectedIoSpeed));
+        OnPropertyChanged(nameof(IsIoSpeedVisible));
+        OnPropertyChanged(nameof(IsIoSpeedEnabled));
+    }
+
     private void OnLogMessageReceived(object? sender, string message)
     {
         Application.Current.Dispatcher.Invoke(() =>
@@ -811,7 +870,7 @@ public partial class MainViewModel : ViewModelBase
                 Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
             },
             prePopulate: prePopulate,
-            preSelectCreateNew: preSelectCreateNew);
+            preferCreateNew: preSelectCreateNew);
 
         var window = new OpenVirtualDriveWindow(viewModel)
         {
@@ -882,6 +941,15 @@ public partial class MainViewModel : ViewModelBase
                 return;
             }
 
+            // Apply IO speed selected in the dialog (if any) - before any TOC operations
+            //  so that the TOC operations already reflect the selected speed
+            if (request.IoSpeed != null)
+            {
+                SelectedIoSpeed = request.IoSpeed;
+            }
+            // Sync IO speed UI state for the newly opened virtual drive
+            NotifyIoSpeedChanged();
+            
             // For "Create new", create and save the initial TOC
             if (request.IsCreateNew)
             {

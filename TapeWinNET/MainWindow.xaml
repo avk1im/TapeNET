@@ -84,6 +84,28 @@
                 </MenuItem>
                 <MenuItem Header="Open _Virtual Drive..." Command="{Binding OpenVirtualDriveCommand}"/>
                 <Separator/>
+                <MenuItem Header="Virtual _IO Speed" 
+                          ItemsSource="{Binding IoSpeedOptions}"
+                          Visibility="{Binding IsIoSpeedVisible, Converter={StaticResource BoolToVis}}"
+                          IsEnabled="{Binding IsIoSpeedEnabled}">
+                    <MenuItem.ItemContainerStyle>
+                        <Style TargetType="MenuItem">
+                            <Setter Property="Header" Value="{Binding Display}"/>
+                            <Setter Property="IsCheckable" Value="True"/>
+                            <Setter Property="IsChecked">
+                                <Setter.Value>
+                                    <MultiBinding Converter="{x:Static converters:EqualityConverter.Instance}" Mode="OneWay">
+                                        <Binding/>
+                                        <Binding Path="DataContext.SelectedIoSpeed" RelativeSource="{RelativeSource AncestorType=Window}"/>
+                                    </MultiBinding>
+                                </Setter.Value>
+                            </Setter>
+                            <Setter Property="Command" Value="{Binding DataContext.SetIoSpeedCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                            <Setter Property="CommandParameter" Value="{Binding}"/>
+                        </Style>
+                    </MenuItem.ItemContainerStyle>
+                </MenuItem>
+                <Separator Visibility="{Binding IsIoSpeedVisible, Converter={StaticResource BoolToVis}}"/>
                 <MenuItem Header="E_xit" Command="{Binding ExitCommand}" InputGestureText="Alt+F4"/>
             </MenuItem>
             <MenuItem Header="_Media">
@@ -93,10 +115,15 @@
             </MenuItem>
             <MenuItem Header="_Backup">
                 <MenuItem Header="_New Backup..." Command="{Binding NewBackupCommand}"/>
-                <MenuItem Header="_Restore..." IsEnabled="False" ToolTip="Coming soon"/>
-                <Separator Visibility="{Binding IsBackupInProgress, Converter={StaticResource BoolToVis}}"/>
-                <MenuItem Header="_Abort Backup" Command="{Binding AbortBackupCommand}"
+                <Separator/>
+                <MenuItem Header="_Restore..." Command="{Binding RestoreCommand}"/>
+                <MenuItem Header="Va_lidate..." Command="{Binding ValidateCommand}"/>
+                <MenuItem Header="Veri_fy..." Command="{Binding VerifyCommand}"/>
+                <Separator Visibility="{Binding IsOperationInProgress, Converter={StaticResource BoolToVis}}"/>
+                <MenuItem Header="Abort _Backup" Command="{Binding AbortBackupCommand}"
                           Visibility="{Binding IsBackupInProgress, Converter={StaticResource BoolToVis}}"/>
+                <MenuItem Header="Abort _Operation" Command="{Binding AbortRestoreCommand}"
+                          Visibility="{Binding IsRestoreInProgress, Converter={StaticResource BoolToVis}}"/>
             </MenuItem>
             <MenuItem Header="_View">
                 <MenuItem Header="_Refresh" Command="{Binding RefreshCommand}" InputGestureText="F5"/>
@@ -305,16 +332,16 @@
                                        FontWeight="SemiBold"
                                        HorizontalAlignment="Center"
                                        Margin="0,0,0,12"/>
-                            
+
                             <ProgressBar Value="{Binding BackupProgressPercent}" 
                                          Maximum="100"
                                          Height="24" 
                                          Margin="0,0,0,8"/>
-                            
+
                             <TextBlock Text="{Binding BackupProgressText}"
                                        HorizontalAlignment="Center"
                                        Margin="0,0,0,4"/>
-                            
+
                             <TextBlock Text="{Binding CurrentBackupFile}"
                                        HorizontalAlignment="Center"
                                        Foreground="Gray"
@@ -322,9 +349,51 @@
                                        TextTrimming="CharacterEllipsis"
                                        MaxWidth="300"
                                        Margin="0,0,0,16"/>
-                            
+
                             <Button Content="Abort Backup" 
                                     Command="{Binding AbortBackupCommand}"
+                                    HorizontalAlignment="Center"
+                                    Width="100"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <!-- Restore/Validate/Verify Progress Overlay (covers only tree + content, not log pane) -->
+                <Grid Grid.RowSpan="3" 
+                      Background="#80000000"
+                      Visibility="{Binding IsRestoreInProgress, Converter={StaticResource BoolToVis}}">
+                    <Border Background="White" 
+                            CornerRadius="8"
+                            Padding="24"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            MinWidth="350">
+                        <StackPanel>
+                            <TextBlock Text="{Binding BusyMessage}" 
+                                       FontSize="14"
+                                       FontWeight="SemiBold"
+                                       HorizontalAlignment="Center"
+                                       Margin="0,0,0,12"/>
+
+                            <ProgressBar Value="{Binding RestoreProgressPercent}" 
+                                         Maximum="100"
+                                         Height="24" 
+                                         Margin="0,0,0,8"/>
+
+                            <TextBlock Text="{Binding RestoreProgressText}"
+                                       HorizontalAlignment="Center"
+                                       Margin="0,0,0,4"/>
+
+                            <TextBlock Text="{Binding CurrentRestoreFile}"
+                                       HorizontalAlignment="Center"
+                                       Foreground="Gray"
+                                       FontSize="11"
+                                       TextTrimming="CharacterEllipsis"
+                                       MaxWidth="300"
+                                       Margin="0,0,0,16"/>
+
+                            <Button Content="Abort" 
+                                    Command="{Binding AbortRestoreCommand}"
                                     HorizontalAlignment="Center"
                                     Width="100"/>
                         </StackPanel>
@@ -381,6 +450,15 @@
                 <TextBlock Text="{Binding StatusMessage}" />
             </StatusBarItem>
             <Separator />
+            <StatusBarItem Visibility="{Binding IsIoSpeedVisible, Converter={StaticResource BoolToVis}}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Virtual IO:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <ComboBox ItemsSource="{Binding IoSpeedOptions}"
+                              SelectedItem="{Binding SelectedIoSpeed}"
+                              IsEnabled="{Binding IsIoSpeedEnabled}"
+                              Width="180" FontSize="11"/>
+                </StackPanel>
+            </StatusBarItem>
             <StatusBarItem HorizontalAlignment="Right">
                 <ProgressBar Width="150" Height="16" 
                              IsIndeterminate="{Binding IsBusy}"

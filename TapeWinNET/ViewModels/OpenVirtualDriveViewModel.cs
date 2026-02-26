@@ -73,6 +73,42 @@ public record PresetOption(
 }
 
 /// <summary>
+/// Represents a simulated IO speed option for the virtual tape drive.
+/// BytesPerSecond of 0 means unlimited (no throttling).
+/// Each tier carries three rates plus mechanical overhead:
+///   - BytesPerSecond: streaming read/write speed
+///   - LocateBytesPerSecond: blind seek speed (rewind, seek to block/EOD) — tape at full mechanical speed
+///   - SearchBytesPerSecond: mark scanning speed (space filemarks/setmarks) — tape reading at high speed
+///   - SeekOverheadMs: fixed per-operation overhead (acceleration + deceleration + settle/servo lock)
+/// </summary>
+public record IoSpeedOption(long BytesPerSecond, long LocateBytesPerSecond, long SearchBytesPerSecond, int SeekOverheadMs, string Display)
+{
+    public override string ToString() => Display;
+
+    private const long MB = 1024 * 1024;
+    private const long GB = 1024 * 1024 * 1024;
+    private const int FuFa1 = 2; // fudge factor to provide more realistic speeds for testing
+    private const int FuFa2 = 3; // fudge factor to provide more realistic speeds for testing
+
+    public static IoSpeedOption[] All { get; } =
+    [
+        new(  6 * MB / FuFa1,    1500 * MB / FuFa2,   36 * MB / FuFa2,  400 * FuFa2, "6 MB/s (AIT-1, DAT-160)"),
+        new( 12 * MB / FuFa1,       3 * GB / FuFa2,   72 * MB / FuFa2,  350 * FuFa2, "12 MB/s (AIT-3Ex, DLT-V4)"),
+        new( 24 * MB / FuFa1,       5 * GB / FuFa2,  144 * MB / FuFa2,  300 * FuFa2, "24 MB/s (AIT-4/5)"),
+        new( 60 * MB / FuFa1,       8 * GB / FuFa2,  300 * MB / FuFa2,  250 * FuFa2, "60 MB/s (LTO-3/4)"),
+        new(160 * MB / FuFa1,      18 * GB / FuFa2,  640 * MB / FuFa2,  200 * FuFa2, "160 MB/s (LTO-5/6)"),
+        new(400 * MB / FuFa1,      80 * GB / FuFa2, 1200 * MB / FuFa2,  150 * FuFa2, "400 MB/s (LTO-8/9)"),
+        new(  0,            0,        0,           0, "Unlimited"),
+    ];
+
+    /// <summary>Returns the Unlimited option (default).</summary>
+    public static IoSpeedOption Unlimited => All[^1];
+
+    public static IoSpeedOption FromBytesPerSecond(long bytesPerSecond) =>
+        All.FirstOrDefault(o => o.BytesPerSecond == bytesPerSecond) ?? Unlimited;
+}
+
+/// <summary>
 /// Status of the virtual media probe operation.
 /// </summary>
 public enum VirtualDriveProbeStatus
@@ -91,7 +127,8 @@ public record VirtualDriveOpenRequest(
     VirtualTapeDriveCapabilities Capabilities,
     VirtualMediaDescriptor Media,
     bool IsCreateNew,
-    string? MediaName
+    string? MediaName,
+    IoSpeedOption? IoSpeed = null
 );
 
 /// <summary>
@@ -195,6 +232,7 @@ public class OpenVirtualDriveViewModel : ViewModelBase
     private readonly Action<VirtualDriveOpenRequest> _onOpen;
     private readonly Action _onCancel;
     private readonly bool _newMediaOnly;
+    private readonly bool _existingMediaOnly;
 
     // Mode selection
     private bool _isOpenExistingMode = true;
@@ -217,7 +255,10 @@ public class OpenVirtualDriveViewModel : ViewModelBase
     // Features
     private bool _supportsSetmarks = true;
     private bool _supportsSeqFilemarks;
-    private bool _supportsCompression;
+
+    // IO Speed
+    private IoSpeedOption _selectedIoSpeed = IoSpeedOption.Unlimited;
+    private readonly bool _isIoSpeedLocked;
 
     // Preset
     private PresetOption _selectedPreset = PresetOption.All[1]; // WithSetmarks
@@ -235,18 +276,20 @@ public class OpenVirtualDriveViewModel : ViewModelBase
         Action<VirtualDriveOpenRequest> onOpen,
         Action onCancel,
         VirtualMediaDescriptor? prePopulate = null,
-        bool? preSelectCreateNew = null,
-        bool newMediaOnly = false,
-        VirtualTapeDriveCapabilities? currentCapabilities = null)
+        bool? preferCreateNew = null,
+        FileMode mediaMode = FileMode.OpenOrCreate,
+        VirtualTapeDriveCapabilities? currentCapabilities = null,
+        IoSpeedOption? currentIoSpeed = null)
     {
         _onOpen = onOpen;
         _onCancel = onCancel;
-        _newMediaOnly = newMediaOnly;
+        _newMediaOnly = mediaMode == FileMode.Create;
+        _existingMediaOnly = mediaMode == FileMode.Open;
 
-        // In newMediaOnly mode, force "Create new" and pre-populate from current drive
-        if (newMediaOnly)
+        // In newMediaOnly / existingMediaOnly mode, force the mode and pre-populate from current drive
+        if (_newMediaOnly || _existingMediaOnly)
         {
-            _isOpenExistingMode = false;
+            _isOpenExistingMode = _existingMediaOnly;
 
             if (currentCapabilities.HasValue)
             {
@@ -256,8 +299,14 @@ public class OpenVirtualDriveViewModel : ViewModelBase
                 _maxBlockSize = BlockSizeOption.FromBytes(caps.MaxBlockSize);
                 _supportsSetmarks = caps.SupportsSetmarks;
                 _supportsSeqFilemarks = caps.SupportsSeqFilemarks;
-                _supportsCompression = caps.SupportsCompression;
                 _enableInitiatorPartition = caps.SupportsInitiatorPartition;
+            }
+
+            // Lock IO speed to the drive's current setting
+            if (currentIoSpeed != null)
+            {
+                _selectedIoSpeed = currentIoSpeed;
+                _isIoSpeedLocked = true;
             }
         }
 
@@ -281,10 +330,10 @@ public class OpenVirtualDriveViewModel : ViewModelBase
                 SetCapacityFromBytes(prePopulate.InitiatorPartitionCapacity, v => _initiatorCapacityValue = v, u => _initiatorCapacityUnit = u);
         }
 
-        // Pre-select mode if specified (ignored in newMediaOnly mode)
-        if (!newMediaOnly && preSelectCreateNew.HasValue)
+        // Pre-select mode if specified (ignored in newMediaOnly / existingMediaOnly modes)
+        if (!_newMediaOnly && !_existingMediaOnly && preferCreateNew.HasValue)
         {
-            _isOpenExistingMode = !preSelectCreateNew.Value;
+            _isOpenExistingMode = !preferCreateNew.Value;
         }
 
         BrowseContentFileCommand = new RelayCommand(BrowseContentFile);
@@ -295,20 +344,21 @@ public class OpenVirtualDriveViewModel : ViewModelBase
 
     #region Mode Selection
 
-    /// <summary>Dialog title — changes based on newMediaOnly mode.</summary>
-    public string DialogTitle => _newMediaOnly ? "Create New Volume Media" : "Open Virtual Drive";
+    /// <summary>Dialog title — changes based on media mode.</summary>
+    public string DialogTitle => _newMediaOnly ? "Create New Media Volume" 
+        : _existingMediaOnly ? "Load Another Media Volume" : "Open Virtual Drive";
 
-    /// <summary>Whether the "Open existing" radio button is enabled.</summary>
-    public bool IsOpenExistingEnabled => !_newMediaOnly;
+    /// <summary>Whether the mode radio buttons are enabled (disabled in both restricted modes).</summary>
+    public bool IsOpenExistingEnabled => !_newMediaOnly && !_existingMediaOnly;
 
-    /// <summary>Whether the block size controls are enabled (disabled in newMediaOnly and in Open existing mode — block sizes are drive-level).</summary>
-    public bool IsBlockSizesEnabled => !_newMediaOnly && IsCreateNewMode;
+    /// <summary>Whether the block size controls are enabled (disabled in restricted modes and in Open existing mode — block sizes are drive-level).</summary>
+    public bool IsBlockSizesEnabled => !_newMediaOnly && !_existingMediaOnly && IsCreateNewMode;
 
-    /// <summary>Whether the preset controls are enabled (disabled in newMediaOnly and in Open existing mode).</summary>
-    public bool IsPresetsEnabled => !_newMediaOnly && IsCreateNewMode;
+    /// <summary>Whether the preset controls are enabled (disabled in restricted modes and in Open existing mode).</summary>
+    public bool IsPresetsEnabled => !_newMediaOnly && !_existingMediaOnly && IsCreateNewMode;
 
-    /// <summary>Whether the features controls are enabled (disabled in newMediaOnly and in Open existing mode).</summary>
-    public bool IsFeaturesEnabled => !_newMediaOnly && IsCreateNewMode;
+    /// <summary>Whether the features controls are enabled (disabled in restricted modes and in Open existing mode).</summary>
+    public bool IsFeaturesEnabled => !_newMediaOnly && !_existingMediaOnly && IsCreateNewMode;
 
     public bool IsOpenExistingMode
     {
@@ -527,11 +577,25 @@ public class OpenVirtualDriveViewModel : ViewModelBase
         set => SetProperty(ref _supportsSeqFilemarks, value);
     }
 
-    public bool SupportsCompression
+    #endregion
+
+    #region IO Speed
+
+    /// <summary>Available IO speed simulation options.</summary>
+    public IoSpeedOption[] IoSpeedOptions { get; } = IoSpeedOption.All;
+
+    /// <summary>
+    /// Selected IO speed for the new drive. In newMediaOnly mode this is
+    /// locked to the drive's current value and the combo is disabled.
+    /// </summary>
+    public IoSpeedOption SelectedIoSpeed
     {
-        get => _supportsCompression;
-        set => SetProperty(ref _supportsCompression, value);
+        get => _selectedIoSpeed;
+        set => SetProperty(ref _selectedIoSpeed, value);
     }
+
+    /// <summary>Whether the IO speed combo is enabled (disabled in newMediaOnly mode).</summary>
+    public bool IsIoSpeedEnabled => !_isIoSpeedLocked;
 
     #endregion
 
@@ -648,7 +712,6 @@ public class OpenVirtualDriveViewModel : ViewModelBase
 
         SupportsSetmarks = caps.SupportsSetmarks;
         SupportsSeqFilemarks = caps.SupportsSeqFilemarks;
-        SupportsCompression = caps.SupportsCompression;
         EnableInitiatorPartition = caps.SupportsInitiatorPartition;
 
         // Convert capacity to appropriate unit
@@ -690,7 +753,7 @@ public class OpenVirtualDriveViewModel : ViewModelBase
             SupportsSetmarks = SupportsSetmarks,
             SupportsSeqFilemarks = SupportsSeqFilemarks,
             SupportsInitiatorPartition = EnableInitiatorPartition,
-            SupportsCompression = SupportsCompression,
+            SupportsCompression = false,
         };
 
         // Use computed initiator path from naming convention
@@ -706,7 +769,8 @@ public class OpenVirtualDriveViewModel : ViewModelBase
                 initiatorPath,
                 EnableInitiatorPartition ? InitiatorCapacityBytes : 0),
             IsCreateNew: IsCreateNewMode,
-            MediaName: IsCreateNewMode ? MediaName : null);
+            MediaName: IsCreateNewMode ? MediaName : null,
+            IoSpeed: _isIoSpeedLocked ? null : SelectedIoSpeed);
 
         _onOpen(request);
     }
@@ -775,7 +839,7 @@ public class OpenVirtualDriveViewModel : ViewModelBase
             _lastProbeResult = null;
 
             // Auto-select "Create new" mode if no existing media
-            if (!_newMediaOnly && IsOpenExistingMode)
+            if (!_newMediaOnly && !_existingMediaOnly && IsOpenExistingMode)
                 IsCreateNewMode = true;
 
             // Check if initiator files would exist (for UI hint)
@@ -822,7 +886,7 @@ public class OpenVirtualDriveViewModel : ViewModelBase
                     {
                         ProbeStatus = VirtualDriveProbeStatus.ExistingFound;
                         // Auto-select "Open existing" mode if existing media found
-                        if (!_newMediaOnly)
+                        if (!_newMediaOnly && !_existingMediaOnly)
                             IsOpenExistingMode = true;
 
                         // Pre-populate all fields from probe result
@@ -845,14 +909,13 @@ public class OpenVirtualDriveViewModel : ViewModelBase
                             MaxBlockSize = BlockSizeOption.FromBytes(caps.MaxBlockSize);
                             SupportsSetmarks = caps.SupportsSetmarks;
                             SupportsSeqFilemarks = caps.SupportsSeqFilemarks;
-                            SupportsCompression = caps.SupportsCompression;
                         }
                     }
                     else
                     {
                         ProbeStatus = VirtualDriveProbeStatus.NewMedia;
                         // Auto-select "Create new" mode if no valid media
-                        if (!_newMediaOnly && IsOpenExistingMode)
+                        if (!_newMediaOnly && !_existingMediaOnly && IsOpenExistingMode)
                             IsCreateNewMode = true;
                     }
 

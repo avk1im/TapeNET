@@ -102,6 +102,12 @@ public partial class TapeService : IDisposable
     public bool IsVirtualDrive => _drive?.Backend is VirtualTapeDriveBackend;
     public VirtualMediaDescriptor? LastVMD => _vmdLast;
 
+    /// <summary>
+    /// Gets the current IO speed simulation rate for the virtual drive, or 0 if not virtual.
+    /// </summary>
+    public long VirtualIoRateBytesPerSecond =>
+        _drive?.Backend is VirtualTapeDriveBackend vb ? vb.IoRateBytesPerSecond : 0;
+
     #endregion
 
     #region Public Methods
@@ -450,6 +456,43 @@ public partial class TapeService : IDisposable
                 }
             }
         });
+    }
+
+    /// <summary>
+    /// Sets the simulated IO, locate, and search speeds for the virtual tape drive.
+    /// Thread-safe: acquires the lock to prevent modification during a running operation.
+    /// </summary>
+    /// <param name="bytesPerSecond">Streaming IO rate in bytes/second, or 0 for unlimited.</param>
+    /// <param name="locateBytesPerSecond">Blind-seek (locate) rate in bytes/second, or 0 for unlimited.</param>
+    /// <param name="searchBytesPerSecond">Mark-scanning (search) rate in bytes/second, or 0 for unlimited.</param>
+    /// <param name="seekOverheadMs">Seek overhead time in milliseconds, added to locate/search operations.</param>
+    /// <returns>True if the rates were set, false if not a virtual drive.</returns>
+    public bool SetVirtualIoRate(long bytesPerSecond, long locateBytesPerSecond = 0, long searchBytesPerSecond = 0, int seekOverheadMs = 0)
+    {
+        lock (_lock)
+        {
+            if (_drive?.Backend is not VirtualTapeDriveBackend vb)
+                return false;
+
+            vb.IoRateBytesPerSecond = bytesPerSecond;
+            vb.LocateRateBytesPerSecond = locateBytesPerSecond;
+            vb.SearchRateBytesPerSecond = searchBytesPerSecond;
+            vb.SeekOverheadMs = seekOverheadMs;
+
+            if (bytesPerSecond == 0)
+            {
+                Log($"iii IO speed simulation: unlimited");
+            }
+            else
+            {
+                Log($"iii IO speed simulation: {Helpers.BytesToString(bytesPerSecond)}/s" +
+                    $", locate: {Helpers.BytesToString(locateBytesPerSecond)}/s" +
+                    $", search: {Helpers.BytesToString(searchBytesPerSecond)}/s" +
+                    $", seek overhead: {seekOverheadMs} ms");
+            }
+
+            return true;
+        }
     }
 
     public void Dispose()

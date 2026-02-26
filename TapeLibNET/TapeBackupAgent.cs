@@ -74,18 +74,22 @@ namespace TapeLibNET
             }
 #endif
 
-            if (hasher == null)
+            // Double-buffer file data to overlap file reads with tape writes
+            using (var buffered = new BufferedTapeWriteStream(wstream, Drive.BlockSize))
             {
-                using var srcFileStream = fileInfo.OpenRead();
-                srcFileStream.CopyTo(wstream);
-            }
-            else
-            {
-                // Note we apply hasher to the file stream since we need to keep tape stream around
-                var srcFileStream = fileInfo.OpenRead();
-                using var hashingStream = new HashingStream(srcFileStream, hasher, ownInner: true);
-                hashingStream.CopyTo(wstream);
-            }
+                if (hasher == null)
+                {
+                    using var srcFileStream = fileInfo.OpenRead();
+                    srcFileStream.CopyTo(buffered);
+                }
+                else
+                {
+                    // Note we apply hasher to the file stream since we need to keep tape stream around
+                    var srcFileStream = fileInfo.OpenRead();
+                    using var hashingStream = new HashingStream(srcFileStream, hasher, ownInner: true);
+                    hashingStream.CopyTo(buffered);
+                }
+            } // buffered flushed here, before wstream.Length is read below
 
             // now the hasher has the hash ready
             if (hasher != null)

@@ -272,20 +272,35 @@
             </Grid>
         </GroupBox>
 
-        <!-- Features -->
-        <GroupBox Grid.Row="5" Header="Features" Margin="0,0,0,12"
-                  IsEnabled="{Binding IsFeaturesEnabled}">
-            <WrapPanel Margin="8" Orientation="Horizontal">
-                <CheckBox Content="Supports Setmarks" 
-                          IsChecked="{Binding SupportsSetmarks}"
-                          Margin="0,0,24,4"/>
-                <CheckBox Content="Supports Seq. Filemarks" 
-                          IsChecked="{Binding SupportsSeqFilemarks}"
-                          Margin="0,0,24,4"/>
-                <CheckBox Content="Supports Compression" 
-                          IsChecked="{Binding SupportsCompression}"/>
-            </WrapPanel>
-        </GroupBox>
+        <!-- Features + IO Speed -->
+        <Grid Grid.Row="5" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Features (left) -->
+            <GroupBox Grid.Column="0" Header="Features" Margin="0,0,12,0"
+                      IsEnabled="{Binding IsFeaturesEnabled}">
+                <WrapPanel Margin="8" Orientation="Horizontal">
+                    <CheckBox Content="Supports Setmarks" 
+                              IsChecked="{Binding SupportsSetmarks}"
+                              Margin="0,0,24,4"/>
+                    <CheckBox Content="Supports Seq. Filemarks" 
+                              IsChecked="{Binding SupportsSeqFilemarks}"
+                              Margin="0,0,0,4"/>
+                </WrapPanel>
+            </GroupBox>
+
+            <!-- IO Speed (right) -->
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Text="IO Speed:" Margin="0,0,0,4"/>
+                <ComboBox ItemsSource="{Binding IoSpeedOptions}"
+                          SelectedItem="{Binding SelectedIoSpeed}"
+                          IsEnabled="{Binding IsIoSpeedEnabled}"
+                          Width="180"/>
+            </StackPanel>
+        </Grid>
 
         <!-- Block Sizes -->
         <GroupBox Grid.Row="6" Header="Block Sizes" Margin="0,0,0,12"

@@ -66,7 +66,7 @@ public readonly record struct VirtualTapeDriveCapabilities
 /// <summary>
 /// Virtual tape drive backend for emulating physical hardware.
 /// </summary>
-public class VirtualTapeDriveBackend : TapeDriveBackend
+public partial class VirtualTapeDriveBackend : TapeDriveBackend
 {
     #region *** Constants ***
 
@@ -489,6 +489,10 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
         m_hasMedia = true;
         m_blockSize = m_contentMedia.BlockSize;
 
+        // Sync odometer state from throttle settings
+        SyncOdometerEnabled(m_contentMedia);
+        SyncOdometerEnabled(m_initiatorMedia);
+
         m_contentMedia.Rewind();
         m_initiatorMedia?.Rewind();
 
@@ -735,6 +739,9 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             eof = true;
         }
 
+        // Simulate IO speed
+        ThrottleIo(bytesRead);
+
         return bytesRead;
     }
 
@@ -762,6 +769,9 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
         else
             ResetError();
 
+        // Simulate IO speed
+        ThrottleIo(bytesWritten);
+
         return bytesWritten;
     }
 
@@ -779,12 +789,14 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             return false;
         }
 
+        m_currentMedia.ResetOdometer();
         if (!m_currentMedia.SeekToBlock(block))
         {
             SetError(m_currentMedia.LastError);
             return false;
         }
 
+        ThrottleMovementFromOdometer(m_locateRateBytesPerSecond);
         return true;
     }
 
@@ -837,7 +849,9 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             return false;
         }
 
+        m_currentMedia.ResetOdometer();
         m_currentMedia.Rewind();
+        ThrottleMovementFromOdometer(m_locateRateBytesPerSecond);
         return m_currentMedia.WentOK;
     }
 
@@ -848,7 +862,9 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
         if (!SetPositionToPartition(partition, 0))
             return false;
 
+        m_currentMedia!.ResetOdometer();
         m_currentMedia!.SeekToEnd();
+        ThrottleMovementFromOdometer(m_locateRateBytesPerSecond);
         return m_currentMedia!.WentOK;
     }
 
@@ -862,7 +878,9 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             return false;
         }
 
+        m_currentMedia.ResetOdometer();
         int moved = m_currentMedia.SpaceMarks(TapeMarkType.Filemark, count);
+        ThrottleMovementFromOdometer(m_searchRateBytesPerSecond);
 
         if (!m_currentMedia.WentOK)
         {
@@ -901,7 +919,9 @@ public class VirtualTapeDriveBackend : TapeDriveBackend
             return true;
         }
 
+        m_currentMedia.ResetOdometer();
         int moved = m_currentMedia.SpaceMarks(TapeMarkType.Setmark, count);
+        ThrottleMovementFromOdometer(m_searchRateBytesPerSecond);
 
         if (!m_currentMedia.WentOK)
         {
