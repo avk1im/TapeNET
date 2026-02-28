@@ -4,6 +4,7 @@ using System.Windows.Input;
 using Microsoft.Win32;
 
 using TapeLibNET.Virtual;
+using TapeWinNET.Converters;
 using TapeWinNET.Services;
 
 namespace TapeWinNET.ViewModels;
@@ -372,7 +373,8 @@ public class OpenVirtualDriveViewModel : ViewModelBase
                 OnPropertyChanged(nameof(IsFeaturesEnabled));
                 OnPropertyChanged(nameof(IsBlockSizesEnabled));
                 OnPropertyChanged(nameof(ActionButtonText));
-                OnPropertyChanged(nameof(ShowOverwriteWarning));
+                OnPropertyChanged(nameof(WarningLevel));
+                OnPropertyChanged(nameof(WarningMessage));
                 CommandManager.InvalidateRequerySuggested();
             }
         }
@@ -396,7 +398,8 @@ public class OpenVirtualDriveViewModel : ViewModelBase
             if (SetProperty(ref _contentFilePath, CheckContentFilePath(value)))
             {
                 OnPropertyChanged(nameof(CanExecute));
-                OnPropertyChanged(nameof(ShowOverwriteWarning));
+                OnPropertyChanged(nameof(WarningLevel));
+                OnPropertyChanged(nameof(WarningMessage));
                 OnPropertyChanged(nameof(InitiatorFilePathDisplay));
                 // Trigger probe when path changes (with debouncing via Delay in XAML binding)
                 _ = TriggerProbeAsync();
@@ -675,10 +678,15 @@ public class OpenVirtualDriveViewModel : ViewModelBase
 
     public string ActionButtonText => IsOpenExistingMode ? "Open" : "Create";
 
-    public bool ShowOverwriteWarning =>
+    public WarningLevel WarningLevel =>
         IsCreateNewMode &&
         !string.IsNullOrWhiteSpace(ContentFilePath) &&
-        (File.Exists(ContentFilePath) || File.Exists(BuildContentMetadataFilePath(ContentFilePath)));
+        (File.Exists(ContentFilePath) || File.Exists(BuildContentMetadataFilePath(ContentFilePath)))
+            ? WarningLevel.Warning : WarningLevel.None;
+
+    public string WarningMessage => WarningLevel != WarningLevel.None
+        ? "Existing files will be overwritten."
+        : string.Empty;
 
     public bool CanExecute =>
         !string.IsNullOrWhiteSpace(ContentFilePath) &&

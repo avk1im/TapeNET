@@ -4,6 +4,7 @@ using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices; // for Helpers
 
 using TapeLibNET;
+using TapeWinNET.Converters;
 
 namespace TapeWinNET.Services;
 
@@ -54,7 +55,7 @@ public partial class TapeService
         bool recurseSubdirectories,
         TapeHowToHandleExisting handleExisting,
         Action<int, int, long> progressCallback,
-        Action<string> logCallback,
+        Action<LogEntry> logCallback,
         Func<string, string, FileFailedAction> fileErrorCallback,
         Func<int, bool> volumeChangeCallback,
         Func<int, bool> insertMediaCallback,
@@ -64,6 +65,16 @@ public partial class TapeService
         {
             lock (_lock)
             {
+                // Local log helpers for concise structured logging
+#pragma warning disable CS8321 // some log helpers not used (yet), but might be later
+                void logOk(string msg)         => logCallback(new LogEntry(WarningLevel.Completed, msg, false, DateTime.Now));
+                void logOkSub(string msg)      => logCallback(new LogEntry(WarningLevel.Completed, msg, true, DateTime.Now));
+                void logInfo(string msg)       => logCallback(new LogEntry(WarningLevel.Info, msg, false, DateTime.Now));
+                void logInfoSub(string msg)    => logCallback(new LogEntry(WarningLevel.Info, msg, true, DateTime.Now));
+                void logFail(string msg)       => logCallback(new LogEntry(WarningLevel.Failed, msg, false, DateTime.Now));
+                void logErr(string msg)        => logCallback(new LogEntry(WarningLevel.Error, msg, false, DateTime.Now));
+#pragma warning restore CS8321
+
                 if (_drive == null || !_drive.IsMediaLoaded)
                 {
                     LastError = "Media not loaded";
@@ -80,7 +91,7 @@ public partial class TapeService
 
                 try
                 {
-                    logCallback($">>> {modeName} files...");
+                    logInfo($"{modeName} files...");
                     Status($"Preparing {modeName.ToLowerInvariant()}...");
 
                     if (!_drive.PrepareMedia())
@@ -105,14 +116,14 @@ public partial class TapeService
                     // Restore TOC if not already loaded
                     if (_toc == null)
                     {
-                        logCallback(">>> Restoring TOC from tape...");
+                        logInfo("Restoring TOC from tape...");
                         Status("Reading TOC...");
                         if (!agent.RestoreTOC())
                         {
                             throw new InvalidOperationException($"Couldn't restore TOC: {agent.LastErrorMessage}");
                         }
                         _toc = toc;
-                        logCallback($"vvv TOC restored with {toc.Count} backup set(s)");
+                        logOk($"TOC restored with {toc.Count} backup set(s)");
                     }
 
                     // Log info about the sets being processed
@@ -121,18 +132,18 @@ public partial class TapeService
                         toc.CurrentSetIndex = setIndex;
                         var setTOC = toc.CurrentSetTOC;
 
-                        logCallback($"iii {modeName} backup set #{setIndex}: {setTOC.Description}");
-                        logCallback($" ii Files in set: {setTOC.Count:N0}");
-                        logCallback($" ii Block size: {Helpers.BytesToString(setTOC.BlockSize)}");
-                        logCallback($" ii Hash algorithm: {setTOC.HashAlgorithm}");
-                        logCallback($" ii Incremental: {(setTOC.Incremental ? "Yes" : "No")}");
+                        logInfo($"{modeName} backup set #{setIndex}: {setTOC.Description}");
+                        logInfoSub($"Files in set: {setTOC.Count:N0}");
+                        logInfoSub($"Block size: {Helpers.BytesToString(setTOC.BlockSize)}");
+                        logInfoSub($"Hash algorithm: {setTOC.HashAlgorithm}");
+                        logInfoSub($"Incremental: {(setTOC.Incremental ? "Yes" : "No")}");
                         if (incremental && setTOC.Incremental)
-                            logCallback($" ii {modeName} incremental backup set including earlier dependent sets");
+                            logInfoSub($"{modeName} incremental backup set including earlier dependent sets");
                     }
                     if (mode == RestoreMode.Restore && !string.IsNullOrEmpty(targetDirectory))
-                        logCallback($" ii Target directory: {targetDirectory}");
+                        logInfoSub($"Target directory: {targetDirectory}");
                     if (filePatterns != null && filePatterns.Count > 0)
-                        logCallback($" ii File patterns: {string.Join(", ", filePatterns)}");
+                        logInfoSub($"File patterns: {string.Join(", ", filePatterns)}");
 
                     // Create progress handler
                     var progressHandler = new GuiRestoreProgressHandler(
@@ -154,17 +165,17 @@ public partial class TapeService
                     while (!result && agent.CanResumeFromAnotherVolume)
                     {
                         int volumeNeeded = agent.VolumeToResumeFrom;
-                        logCallback($"iii {modeName} requires Volume #{volumeNeeded} to continue");
+                        logInfo($"{modeName} requires Volume #{volumeNeeded} to continue");
 
                         // Step 1: Ask user if they want to continue
                         if (!volumeChangeCallback(volumeNeeded))
                         {
-                            logCallback($"iii User chose to end multi-volume {modeName.ToLowerInvariant()}");
+                            logInfo($"User chose to end multi-volume {modeName.ToLowerInvariant()}");
                             break;
                         }
 
                         // Step 2: Eject current media
-                        logCallback(">>> Ejecting media...");
+                        logInfo("Ejecting media...");
                         Status("Ejecting media...");
 
                         if (!_drive.UnloadMedia())
@@ -172,17 +183,17 @@ public partial class TapeService
                             throw new InvalidOperationException($"Couldn't eject media: {_drive.LastErrorMessage}");
                         }
 
-                        logCallback($"vvv Volume #{toc.Volume} ejected");
+                        logOk($"Volume #{toc.Volume} ejected");
 
                         // Step 3: Ask user to insert the required volume
                         if (!insertMediaCallback(volumeNeeded))
                         {
-                            logCallback("iii User cancelled media insertion");
+                            logInfo("User cancelled media insertion");
                             break;
                         }
 
                         // Step 4: Load and prepare the new media
-                        logCallback(">>> Loading media...");
+                        logInfo("Loading media...");
                         Status("Loading media...");
 
                         if (!_drive.ReloadMedia())
@@ -195,7 +206,7 @@ public partial class TapeService
                             throw new InvalidOperationException($"Couldn't prepare media: {_drive.LastErrorMessage}");
                         }
 
-                        logCallback($"vvv Media loaded, continuing {modeName.ToLowerInvariant()}...");
+                        logOk($"Media loaded, continuing {modeName.ToLowerInvariant()}...");
                         Status($"{modeName} files...");
 
                         // Step 5: Resume restore on the new volume
@@ -205,12 +216,12 @@ public partial class TapeService
                     // Log final results
                     if (!result && !agent.CanResumeFromAnotherVolume && progressHandler.FilesFailed > 0)
                     {
-                        logCallback($"!!! {modeName}: {progressHandler.FilesFailed:N0} file(s) of {progressHandler.FilesProcessed:N0} failed");
+                        logFail($"{modeName}: {progressHandler.FilesFailed:N0} file(s) of {progressHandler.FilesProcessed:N0} failed");
                     }
 
-                    logCallback($"vvv {modeName}: {progressHandler.FilesSucceeded:N0} file(s), {Helpers.BytesToString(agent.BytesRestored)}");
+                    logOk($"{modeName}: {progressHandler.FilesSucceeded:N0} file(s), {Helpers.BytesToString(agent.BytesRestored)}");
                     Status($"{modeName} complete");
-                    logCallback($"vvv {modeName} completed successfully");
+                    logOk($"{modeName} completed successfully");
                 }
                 catch (TapeAbortRequestedException)
                 {
@@ -221,7 +232,7 @@ public partial class TapeService
                 {
                     LastError = ex.Message;
                     Status($"{modeName} failed");
-                    logCallback($"!!! {modeName} failed: {ex.Message}");
+                    logErr($"{modeName} failed: {ex.Message}");
                     throw;
                 }
                 finally
@@ -241,7 +252,7 @@ public partial class TapeService
     /// </summary>
     private class GuiRestoreProgressHandler(
         TapeFileAgent agent,
-        Action<string> logCallback,
+        Action<LogEntry> logCallback,
         Action<int, int, long> progressCallback,
         Action<string> currentFileCallback,
         Func<string, string, FileFailedAction> fileErrorCallback,
@@ -253,11 +264,14 @@ public partial class TapeService
         public int FilesSucceeded { get; private set; }
         public long BytesProcessed { get; private set; }
 
+        private void Log(WarningLevel level, string msg, bool sub = false)
+            => logCallback(new LogEntry(level, msg, sub, DateTime.Now));
+
         private void ThrowIfAbortRequested()
         {
             if (agent.IsAbortRequested)
             {
-                logCallback($"!!! {modeName} aborted by user");
+                Log(WarningLevel.Error, $"{modeName} aborted by user");
                 throw new TapeAbortRequestedException("User requested abort");
             }
         }
@@ -270,7 +284,7 @@ public partial class TapeService
             FilesSucceeded = 0;
             BytesProcessed = 0;
 
-            logCallback($"iii Starting {modeName.ToLowerInvariant()} of {filesFound:N0} files from set #{set}...");
+            Log(WarningLevel.Info, $"Starting {modeName.ToLowerInvariant()} of {filesFound:N0} files from set #{set}...");
             progressCallback(0, FilesTotal, 0);
         }
 
@@ -280,14 +294,13 @@ public partial class TapeService
             FilesFailed = filesFailed;
             BytesProcessed = bytesProcessed;
 
-            logCallback($"iii {modeName} batch complete: {filesProcessed - filesFailed:N0} succeeded, {filesFailed:N0} failed");
+            Log(WarningLevel.Info, $"{modeName} batch complete: {filesProcessed - filesFailed:N0} succeeded, {filesFailed:N0} failed");
             progressCallback(filesProcessed, FilesTotal, bytesProcessed);
         }
 
         public bool PreProcessFile(ref TapeFileDescriptor fileDescr)
         {
             ThrowIfAbortRequested();
-
             currentFileCallback(fileDescr.FullName);
             return true;
         }
@@ -300,7 +313,7 @@ public partial class TapeService
             FilesProcessed++;
             BytesProcessed += fileDescr.Length;
 
-            logCallback($"vvv {Path.GetFileName(fileDescr.FullName)} ({Helpers.BytesToString(fileDescr.Length)})");
+            Log(WarningLevel.Completed, $"{Path.GetFileName(fileDescr.FullName)} ({Helpers.BytesToString(fileDescr.Length)})");
             progressCallback(FilesProcessed, FilesTotal, BytesProcessed);
 
             return true;
@@ -312,8 +325,8 @@ public partial class TapeService
 
             FilesFailed++;
 
-            logCallback($"!!! Failed: {fileDescr.FullName}");
-            logCallback($"    Error: {ex.Message}");
+            Log(WarningLevel.Failed, $"Failed: {fileDescr.FullName}");
+            Log(WarningLevel.Failed, $"Error: {ex.Message}", sub: true);
 
             progressCallback(FilesProcessed, FilesTotal, BytesProcessed);
 
@@ -330,7 +343,7 @@ public partial class TapeService
 
             if (result == FileFailedAction.Abort)
             {
-                logCallback($"!!! {modeName} aborted by user");
+                Log(WarningLevel.Error, $"{modeName} aborted by user");
                 throw new TapeAbortRequestedException("User requested abort");
             }
 
@@ -341,7 +354,7 @@ public partial class TapeService
         {
             ThrowIfAbortRequested();
 
-            logCallback($" -- Skipped: {Path.GetFileName(fileDescr.FullName)}");
+            Log(WarningLevel.None, $"Skipped: {Path.GetFileName(fileDescr.FullName)}", sub: true);
         }
     }
 

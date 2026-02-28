@@ -1,0 +1,200 @@
+<Window x:Class="TapeWinNET.RestoreWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
+        xmlns:converters="clr-namespace:TapeWinNET.Converters"
+        d:DataContext="{d:DesignInstance Type=vm:RestoreViewModel}"
+        mc:Ignorable="d"
+        Title="{Binding DialogTitle}"
+        Width="580"
+        SizeToContent="Height"
+        MaxHeight="600"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False">
+
+    <Window.Resources>
+        <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVis"/>
+    </Window.Resources>
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Operation Selection (no GroupBox, just radio buttons) -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
+            <RadioButton Content="Restore"
+                         IsChecked="{Binding IsRestoreMode}"
+                         Margin="0,0,20,0"/>
+            <RadioButton Content="Validate"
+                         IsChecked="{Binding IsValidateMode}"
+                         Margin="24,0,20,0"/>
+            <RadioButton Content="Verify"
+                         IsChecked="{Binding IsVerifyMode}"
+                         Margin="24,0,20,0"/>
+        </StackPanel>
+
+        <!-- Backup Sets -->
+        <GroupBox Grid.Row="1" Header="Backup Sets to process (uncheck to exclude)" Margin="0,0,0,12">
+            <Grid Margin="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" MaxHeight="160"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Sets Table -->
+                <ListView Grid.Row="0"
+                          ItemsSource="{Binding BackupSets}"
+                          VirtualizingPanel.IsVirtualizing="True"
+                          VirtualizingPanel.VirtualizationMode="Recycling">
+                    <ListView.View>
+                        <GridView>
+                            <!-- Checkbox column -->
+                            <GridViewColumn Width="28">
+                                <GridViewColumn.HeaderTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding DataContext.AreAllChecked,
+                                                              RelativeSource={RelativeSource AncestorType=Window}}"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  ToolTip="Select / deselect all"/>
+                                    </DataTemplate>
+                                </GridViewColumn.HeaderTemplate>
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding IsCheckedForRestore, Mode=TwoWay}"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <!-- Icon column -->
+                            <GridViewColumn Width="28">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Image Width="16" Height="16" Source="{Binding Icon}"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Set #" Width="55"
+                                            DisplayMemberBinding="{Binding IndexDisplay}"/>
+                            <GridViewColumn Header="Description" Width="170"
+                                            DisplayMemberBinding="{Binding Description}"/>
+                            <GridViewColumn Header="Files" Width="55"
+                                            DisplayMemberBinding="{Binding FileCountFormatted}"/>
+                            <GridViewColumn Header="Inc?" Width="40"
+                                            DisplayMemberBinding="{Binding IncrementalDisplay}"/>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+
+                <!-- File Patterns -->
+                <Grid Grid.Row="1" Margin="0,8,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="File Patterns (optional):"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBox Grid.Column="1"
+                             Text="{Binding FilePatterns, UpdateSourceTrigger=PropertyChanged}"
+                             VerticalContentAlignment="Center"/>
+                </Grid>
+
+                <!-- Help text -->
+                <TextBlock Grid.Row="2"
+                           Text="Separate patterns with ;  Use * and ?  Example: C:\Docs\*.doc?; D:\Projects\MyApp\"
+                           FontSize="10" Foreground="DarkGray"
+                           HorizontalAlignment="Right"
+                           Margin="0,2,0,0"/>
+            </Grid>
+        </GroupBox>
+
+        <!-- Restore To -->
+        <GroupBox Grid.Row="2" Header="Restore to" Margin="0,0,0,12"
+                  IsEnabled="{Binding IsRestoreToEnabled}">
+            <StackPanel Margin="8">
+                <RadioButton Content="Original location"
+                             IsChecked="{Binding RestoreToOriginal}"
+                             Margin="0,0,0,6"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <RadioButton Grid.Column="0" Content="Target directory:"
+                                 IsChecked="{Binding RestoreToTargetDir}"
+                                 VerticalAlignment="Center"
+                                 Margin="0,0,8,0"/>
+                    <TextBox Grid.Column="1"
+                             Text="{Binding TargetDirectory, UpdateSourceTrigger=PropertyChanged}"
+                             VerticalContentAlignment="Center"
+                             IsEnabled="{Binding IsTargetDirectoryInputEnabled}"
+                             Margin="0,0,8,0"/>
+                    <Button Grid.Column="2"
+                            Content="Browse..."
+                            Command="{Binding BrowseTargetCommand}"
+                            IsEnabled="{Binding IsTargetDirectoryInputEnabled}"
+                            Padding="12,4"/>
+                </Grid>
+            </StackPanel>
+        </GroupBox>
+
+        <!-- Options -->
+        <GroupBox Grid.Row="3" Header="Options" Margin="0,0,0,12">
+            <StackPanel Margin="8">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="140"/>
+                    </Grid.ColumnDefinitions>
+                    <CheckBox Grid.Column="0"
+                              Content="Include incremental chain"
+                              IsChecked="{Binding Incremental}"
+                              VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="1" Text="Handle existing:"
+                               VerticalAlignment="Center" Margin="12,0,8,0"
+                               IsEnabled="{Binding IsHandleExistingEnabled}"/>
+                    <ComboBox Grid.Column="2"
+                              ItemsSource="{Binding HandleExistingOptions}"
+                              SelectedItem="{Binding SelectedHandleExisting}"
+                              IsEnabled="{Binding IsHandleExistingEnabled}"/>
+                </Grid>
+
+                <!-- Handle-existing warning -->
+                <Border Style="{StaticResource WarningPanelStyle}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
+                                   FontSize="13" Margin="0,0,6,0"/>
+                        <TextBlock Text="{Binding WarningMessage}"
+                                   VerticalAlignment="Center" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </GroupBox>
+
+        <!-- Buttons -->
+        <StackPanel Grid.Row="4"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,4,0,0">
+            <Button Content="Cancel"
+                    Command="{Binding CancelCommand}"
+                    IsCancel="True"
+                    Width="80"
+                    Margin="0,0,8,0"/>
+            <Button Content="{Binding ActionButtonText}"
+                    Command="{Binding StartCommand}"
+                    IsDefault="True"
+                    Width="100"/>
+        </StackPanel>
+    </Grid>
+</Window>

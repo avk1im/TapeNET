@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions; // for NullLoggerFactory
 
 using TapeLibNET;
 using TapeLibNET.Virtual;
+using TapeWinNET.Converters;
 
 namespace TapeWinNET.Services;
 
@@ -38,7 +39,7 @@ public partial class TapeService : IDisposable
     private readonly object _lock = new();
     private bool _disposed;
 
-    public event EventHandler<string>? LogMessageReceived;
+    public event EventHandler<LogEntry>? LogMessageReceived;
     public event EventHandler<string>? StatusChanged;
 
 
@@ -120,7 +121,7 @@ public partial class TapeService : IDisposable
             {
                 try
                 {
-                    Log($">>> Opening drive {driveNumber}...");
+                    LogInfo($"Opening drive {driveNumber}...");
                     Status($"Opening drive {driveNumber}...");
 
                     // Dispose existing drive if any
@@ -130,24 +131,24 @@ public partial class TapeService : IDisposable
                     _drive?.Dispose();
 
                     _drive = TapeDrive.CreateWin32(_loggerFactory);
-                    
+
                     if (!_drive.ReopenDrive((uint)driveNumber))
                     {
                         LastError = _drive.LastErrorMessage;
-                        Log($"!!! Couldn't open drive. Error: {LastError}");
+                        LogErr($"Couldn't open drive. Error: {LastError}");
                         return false;
                     }
 
                     DriveNumber = driveNumber;
-                    Log($"vvv Drive {driveNumber} opened successfully");
-                    Log($" ii Device name: {_drive.DriveDeviceName}");
+                    LogOk($"Drive {driveNumber} opened successfully");
+                    LogInfoSub($"Device name: {_drive.DriveDeviceName}");
                     Status($"Drive {driveNumber} opened");
                     return true;
                 }
                 catch (Exception ex)
                 {
                     LastError = ex.Message;
-                    Log($"!!! Exception opening drive: {ex.Message}");
+                    LogErr($"Exception opening drive: {ex.Message}");
                     return false;
                 }
             }
@@ -168,29 +169,29 @@ public partial class TapeService : IDisposable
 
                 try
                 {
-                    Log(">>> Loading media...");
+                    LogInfo("Loading media...");
                     Status("Loading media...");
 
                     if (!_drive.ReloadMedia())
                     {
                         LastError = _drive.LastErrorMessage;
-                        Log($"!!! Couldn't load media. Error: {LastError}");
+                        LogErr($"Couldn't load media. Error: {LastError}");
                         return false;
                     }
 
                     // if multiple partitions, move to content partition to load correct media params
                     if (_drive.HasInitiatorPartition)
                     {
-                        Log(">>> Moving to content partition...");
+                        LogInfo("Moving to content partition...");
                         if (!_drive.MoveToPartition(MediaPartition.Content))
                         {
                             LastError = _drive.LastErrorMessage;
-                            Log($"!!! Couldn't move to content partition. Error: {LastError}");
+                            LogErr($"Couldn't move to content partition. Error: {LastError}");
                             return false;
                         }
                     }
 
-                    Log("vvv Media loaded successfully");
+                    LogOk("Media loaded successfully");
                     LogMediaInfo();
                     Status("Media loaded");
                     return true;
@@ -198,7 +199,7 @@ public partial class TapeService : IDisposable
                 catch (Exception ex)
                 {
                     LastError = ex.Message;
-                    Log($"!!! Exception loading media: {ex.Message}");
+                    LogErr($"Exception loading media: {ex.Message}");
                     return false;
                 }
             }
@@ -219,15 +220,15 @@ public partial class TapeService : IDisposable
 
                 try
                 {
-                    Log(">>> Preparing media...");
+                    LogInfo("Preparing media...");
                     if (!_drive.PrepareMedia())
                     {
                         LastError = _drive.LastErrorMessage;
-                        Log($"!!! Couldn't prepare media. Error: {LastError}");
+                        LogErr($"Couldn't prepare media. Error: {LastError}");
                         return false;
                     }
 
-                    Log(">>> Restoring TOC...");
+                    LogInfo("Restoring TOC...");
                     Status("Reading TOC...");
 
                     _agent?.Dispose();
@@ -236,12 +237,12 @@ public partial class TapeService : IDisposable
                     if (!_agent.RestoreTOC())
                     {
                         LastError = _agent.LastErrorMessage;
-                        Log($"!!! Couldn't restore TOC. Error: {LastError}");
+                        LogErr($"Couldn't restore TOC. Error: {LastError}");
                         return false;
                     }
 
                     _toc = _agent.TOC;
-                    Log($"vvv TOC restored with {_toc.Count} backup set(s)");
+                    LogOk($"TOC restored with {_toc.Count} backup set(s)");
                     LogTOCInfo();
                     Status($"TOC loaded: {_toc.Count} backup set(s)");
                     return true;
@@ -249,7 +250,7 @@ public partial class TapeService : IDisposable
                 catch (Exception ex)
                 {
                     LastError = ex.Message;
-                    Log($"!!! Exception restoring TOC: {ex.Message}");
+                    LogErr($"Exception restoring TOC: {ex.Message}");
                     return false;
                 }
                 finally
@@ -281,7 +282,7 @@ public partial class TapeService : IDisposable
 
                 try
                 {
-                    Log(">>> Creating initial TOC...");
+                    LogInfo("Creating initial TOC...");
                     Status("Creating initial TOC...");
 
                     var description = mediaName ?? $"Media created {DateTime.Now:yyyy-MM-dd HH:mm}";
@@ -292,19 +293,19 @@ public partial class TapeService : IDisposable
                     if (!_agent.BackupTOC())
                     {
                         LastError = _agent.LastErrorMessage;
-                        Log($"!!! Couldn't save initial TOC. Error: {LastError}");
+                        LogErr($"Couldn't save initial TOC. Error: {LastError}");
                         return false;
                     }
 
                     _toc = _agent.TOC;
-                    Log($"vvv Initial TOC created: {description}");
+                    LogOk($"Initial TOC created: {description}");
                     Status("Initial TOC created");
                     return true;
                 }
                 catch (Exception ex)
                 {
                     LastError = ex.Message;
-                    Log($"!!! Exception creating initial TOC: {ex.Message}");
+                    LogErr($"Exception creating initial TOC: {ex.Message}");
                     return false;
                 }
                 finally
@@ -330,7 +331,7 @@ public partial class TapeService : IDisposable
 
                 try
                 {
-                    Log(">>> Ejecting media...");
+                    LogInfo("Ejecting media...");
                     Status("Ejecting media...");
 
                     _agent?.Dispose();
@@ -340,18 +341,18 @@ public partial class TapeService : IDisposable
                     if (!_drive.UnloadMedia())
                     {
                         LastError = _drive.LastErrorMessage;
-                        Log($"!!! Couldn't eject media. Error: {LastError}");
+                        LogErr($"Couldn't eject media. Error: {LastError}");
                         return false;
                     }
 
-                    Log("vvv Media ejected");
+                    LogOk("Media ejected");
                     Status("Media ejected");
                     return true;
                 }
                 catch (Exception ex)
                 {
                     LastError = ex.Message;
-                    Log($"!!! Exception ejecting media: {ex.Message}");
+                    LogErr($"Exception ejecting media: {ex.Message}");
                     return false;
                 }
             }
@@ -377,23 +378,23 @@ public partial class TapeService : IDisposable
 
         try
         {
-            Log($">>> Inserting virtual media...");
-            Log($" ii Content file: >{vmd.ContentPath}<");
+            LogInfo($"Inserting virtual media...");
+            LogInfoSub($"Content file: >{vmd.ContentPath}<");
             if (vmd.InitiatorPath != null)
-                Log($" ii Initiator file: >{vmd.InitiatorPath}<");
-            Log($" ii Media mode: {mediaMode}");
+                LogInfoSub($"Initiator file: >{vmd.InitiatorPath}<");
+            LogInfoSub($"Media mode: {mediaMode}");
 
             vb.InsertMedia(vmd.ContentPath, vmd.ContentCapacity, vmd.InitiatorPath, vmd.InitiatorPartitionCapacity, mediaMode);
 
             _vmdLast = vmd;
 
-            Log("vvv Virtual media inserted");
+            LogOk("Virtual media inserted");
             return true;
         }
         catch (Exception ex)
         {
             LastError = ex.Message;
-            Log($"!!! Exception inserting virtual media: {ex.Message}");
+            LogErr($"Exception inserting virtual media: {ex.Message}");
             return false;
         }
     }
@@ -409,11 +410,11 @@ public partial class TapeService : IDisposable
             {
                 try
                 {
-                    Log($">>> Opening virtual drive...");
-                    Log($" ii Content file: >{vmd.ContentPath}<");
+                    LogInfo($"Opening virtual drive...");
+                    LogInfoSub($"Content file: >{vmd.ContentPath}<");
                     if (vmd.InitiatorPath != null)
-                        Log($" ii Initiator file: >{vmd.InitiatorPath}<");
-                    Log($" ii Media mode: {mediaMode}");
+                        LogInfoSub($"Initiator file: >{vmd.InitiatorPath}<");
+                    LogInfoSub($"Media mode: {mediaMode}");
                     Status("Opening virtual drive...");
 
                     var backend = VirtualTapeDriveBackend.CreateFileBacked(
@@ -437,21 +438,21 @@ public partial class TapeService : IDisposable
                     if (!_drive.ReopenDrive(0))
                     {
                         LastError = _drive.LastErrorMessage;
-                        Log($"!!! Failed to open virtual drive: {LastError}");
+                        LogErr($"Failed to open virtual drive: {LastError}");
                         return false;
                     }
 
                     _vmdLast = vmd;
 
                     DriveNumber = 0;
-                    Log($"vvv Virtual drive opened on file >{vmd.ContentPath}<");
+                    LogOk($"Virtual drive opened on file >{vmd.ContentPath}<");
                     Status("Virtual drive opened");
                     return true;
                 }
                 catch (Exception ex)
                 {
                     LastError = ex.Message;
-                    Log($"!!! Exception opening virtual drive: {ex.Message}");
+                    LogErr($"Exception opening virtual drive: {ex.Message}");
                     return false;
                 }
             }
@@ -481,11 +482,11 @@ public partial class TapeService : IDisposable
 
             if (bytesPerSecond == 0)
             {
-                Log($"iii IO speed simulation: unlimited");
+                LogInfo($"IO speed simulation: unlimited");
             }
             else
             {
-                Log($"iii IO speed simulation: {Helpers.BytesToString(bytesPerSecond)}/s" +
+                LogInfo($"IO speed simulation: {Helpers.BytesToString(bytesPerSecond)}/s" +
                     $", locate: {Helpers.BytesToString(locateBytesPerSecond)}/s" +
                     $", search: {Helpers.BytesToString(searchBytesPerSecond)}/s" +
                     $", seek overhead: {seekOverheadMs} ms");
@@ -508,12 +509,22 @@ public partial class TapeService : IDisposable
 
     #endregion
 
-    #region Private Methods
+    #region Private Methods — Logging
 
-    private void Log(string message)
-    {
-        LogMessageReceived?.Invoke(this, message);
-    }
+    private void Emit(WarningLevel level, string message, bool sub = false)
+        => LogMessageReceived?.Invoke(this, new LogEntry(level, message, sub, DateTime.Now));
+
+    private void Log(string msg)          => Emit(WarningLevel.None, msg);
+    private void LogOk(string msg)        => Emit(WarningLevel.Completed, msg);
+    private void LogOkSub(string msg)     => Emit(WarningLevel.Completed, msg, sub: true);
+    private void LogInfo(string msg)      => Emit(WarningLevel.Info, msg);
+    private void LogInfoSub(string msg)   => Emit(WarningLevel.Info, msg, sub: true);
+    private void LogWarn(string msg)      => Emit(WarningLevel.Warning, msg);
+    private void LogWarnSub(string msg)   => Emit(WarningLevel.Warning, msg, sub: true);
+    private void LogFail(string msg)      => Emit(WarningLevel.Failed, msg);
+    private void LogFailSub(string msg)   => Emit(WarningLevel.Failed, msg, sub: true);
+    private void LogErr(string msg)       => Emit(WarningLevel.Error, msg);
+    private void LogErrSub(string msg)    => Emit(WarningLevel.Error, msg, sub: true);
 
     private void Status(string status)
     {
@@ -525,9 +536,9 @@ public partial class TapeService : IDisposable
         if (_drive == null)
             return;
 
-        Log($" ii Partition count: {_drive.PartitionCount}");
-        Log($" ii Capacity: {Helpers.BytesToStringLong(_drive.Capacity)}");
-        Log($" ii Remaining: {Helpers.BytesToStringLong(_drive.GetRemainingCapacity())}");
+        LogInfoSub($"Partition count: {_drive.PartitionCount}");
+        LogInfoSub($"Capacity: {Helpers.BytesToStringLong(_drive.Capacity)}");
+        LogInfoSub($"Remaining: {Helpers.BytesToStringLong(_drive.GetRemainingCapacity())}");
     }
 
     private void LogTOCInfo()
@@ -535,28 +546,17 @@ public partial class TapeService : IDisposable
         if (_toc == null)
             return;
 
-        Log($" ii Media name: {_toc.Description}");
-        Log($" ii Created: {_toc.CreationTime}");
-        Log($" ii Last saved: {_toc.LastSaveTime}");
-        Log($" ii Volume: #{_toc.Volume}");
-
-        /*
-        // List sets in regular order: from oldest (1) to latest (_toc.MaxSetIndex)
-        for (int i = 1; i <= _toc.MaxSetIndex; i++)
-        {
-            var setTOC = _toc[i];
-            var altIndex = _toc.SetIndexToAlt(i);
-            Log($" ii Set #{i} | {altIndex}: {setTOC.Description} - {setTOC.Count} files" +
-                (setTOC.Incremental ? " [Incremental]" : ""));
-        }
-        */
+        LogInfoSub($"Media name: {_toc.Description}");
+        LogInfoSub($"Created: {_toc.CreationTime}");
+        LogInfoSub($"Last saved: {_toc.LastSaveTime}");
+        LogInfoSub($"Volume: #{_toc.Volume}");
 
         // List sets in alternative order: from latest (0) down to oldest (_toc.MinSetIndex)
         for (int alt = 0; alt >= _toc.MinSetIndex; alt--)
         {
-            int setIndex = _toc.SetIndexToAlt(alt); // this also converst from alt to regular index
+            int setIndex = _toc.SetIndexToAlt(alt); // this also converts from alt to regular index
             var setTOC = _toc[setIndex];
-            Log($" ii Set {setIndex} | {alt}: {setTOC.Description} - {setTOC.Count} files" +
+            LogInfoSub($"Set {setIndex} | {alt}: {setTOC.Description} - {setTOC.Count} files" +
                 (setTOC.Incremental ? " [Incremental]" : ""));
         }
     }

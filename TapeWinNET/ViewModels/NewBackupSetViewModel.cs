@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Input;
 using Microsoft.Win32;
 using TapeLibNET;
+using TapeWinNET.Converters;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
 using Windows.Win32.System.SystemServices;
@@ -267,7 +268,7 @@ public class NewBackupSetViewModel : ViewModelBase
         get
         {
             if (OverwriteMedia)
-                return "?? WARNING: This will ERASE ALL DATA on the media!";
+                return "WARNING: This will ERASE ALL DATA on the media!";
 
             if (SelectedAppendOption != null && !SelectedAppendOption.IsOverwrite)
             {
@@ -276,7 +277,7 @@ public class NewBackupSetViewModel : ViewModelBase
                 {
                     int setsToRemove = toc.Count - SelectedAppendOption.SetIndex;
                     if (setsToRemove > 0)
-                        return $"?? {setsToRemove} backup set(s) after this one will be overwritten.";
+                        return $"{setsToRemove} backup set(s) after this one will be overwritten.";
                 }
             }
 
@@ -285,23 +286,23 @@ public class NewBackupSetViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Warning level for styling: "Danger", "Warning", or "Info".
+    /// Warning level for styling.
     /// </summary>
-    public string WarningLevel
+    public WarningLevel WarningLevel
     {
         get
         {
             if (OverwriteMedia)
-                return "Danger";
+                return WarningLevel.Error;
 
             if (SelectedAppendOption != null && !SelectedAppendOption.IsOverwrite)
             {
                 var toc = _tapeService.TOC;
                 if (toc != null && SelectedAppendOption.SetIndex < toc.Count)
-                    return "Warning";
+                    return WarningLevel.Warning;
             }
 
-            return "Info";
+            return WarningLevel.Info;
         }
     }
 

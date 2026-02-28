@@ -15,30 +15,6 @@
 
     <Window.Resources>
         <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVis" />
-        
-        <!-- Warning panel styles -->
-        <Style x:Key="WarningPanelStyle" TargetType="Border">
-            <Setter Property="Padding" Value="8"/>
-            <Setter Property="Margin" Value="0,8,0,0"/>
-            <Setter Property="CornerRadius" Value="4"/>
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding WarningLevel}" Value="Danger">
-                    <Setter Property="Background" Value="#FFFFCCCC"/>
-                    <Setter Property="BorderBrush" Value="#FFCC0000"/>
-                    <Setter Property="BorderThickness" Value="1"/>
-                </DataTrigger>
-                <DataTrigger Binding="{Binding WarningLevel}" Value="Warning">
-                    <Setter Property="Background" Value="#FFFFF0CC"/>
-                    <Setter Property="BorderBrush" Value="#FFCC9900"/>
-                    <Setter Property="BorderThickness" Value="1"/>
-                </DataTrigger>
-                <DataTrigger Binding="{Binding WarningLevel}" Value="Info">
-                    <Setter Property="Background" Value="#FFCCFFCC"/>
-                    <Setter Property="BorderBrush" Value="#FF00CC00"/>
-                    <Setter Property="BorderThickness" Value="1"/>
-                </DataTrigger>
-            </Style.Triggers>
-        </Style>
     </Window.Resources>
 
     <Window.InputBindings>
@@ -234,7 +210,12 @@
 
                         <!-- Warning Panel -->
                         <Border Style="{StaticResource WarningPanelStyle}">
-                            <TextBlock Text="{Binding WarningMessage}" TextWrapping="Wrap"/>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
+                                           FontSize="13" Margin="0,0,6,0"/>
+                                <TextBlock Text="{Binding WarningMessage}" TextWrapping="Wrap"
+                                           VerticalAlignment="Center"/>
+                            </StackPanel>
                         </Border>
                     </StackPanel>
                 </GroupBox>

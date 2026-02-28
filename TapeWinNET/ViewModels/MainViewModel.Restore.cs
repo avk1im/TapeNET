@@ -5,6 +5,8 @@ using Windows.Win32.System.SystemServices; // for Helpers
 
 using TapeLibNET;
 using TapeLibNET.Virtual;
+using TapeWinNET.Converters;
+using TapeWinNET.Models;
 using TapeWinNET.Services;
 
 namespace TapeWinNET.ViewModels;
@@ -152,34 +154,59 @@ public partial class MainViewModel
         if (toc == null)
             return;
 
-        // For Restore mode, prompt for target directory
-        string? targetDirectory = null;
-        if (mode == RestoreMode.Restore)
+        // Gather the BackupSetListItem objects for the selected indexes
+        var preSelectedSets = setIndexes
+            .Select(idx => BackupSetList.FirstOrDefault(b => b.SetIndex == idx))
+            .Where(b => b != null)
+            .Cast<BackupSetListItem>()
+            .ToList();
+
+        // If selection came from tree view (not from checkboxes), find or create the item
+        if (preSelectedSets.Count == 0 && setIndexes.Count > 0)
         {
-            var dialog = new Microsoft.Win32.OpenFolderDialog
+            foreach (var idx in setIndexes)
             {
-                Title = "Select Target Directory for Restore"
-            };
-
-            if (dialog.ShowDialog() != true)
-                return;
-
-            targetDirectory = dialog.FolderName;
+                var setTOC = toc[idx];
+                var altIdx = toc.SetIndexToAlt(idx);
+                preSelectedSets.Add(new BackupSetListItem(setTOC, idx, altIdx, setTOC.Volume == toc.Volume));
+            }
         }
 
-        // Determine if any of the selected sets is incremental
-        bool incremental = setIndexes.Any(idx =>
-        {
-            toc.CurrentSetIndex = idx;
-            return toc.CurrentSetTOC.Incremental;
-        });
+        if (preSelectedSets.Count == 0)
+            return;
 
-        _ = ExecuteRestoreAsync(mode, setIndexes, incremental, targetDirectory);
+        var viewModel = new RestoreViewModel(
+            mode,
+            preSelectedSets,
+            request =>
+            {
+                // Close the dialog
+                Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
+
+                // Execute the operation with the gathered settings
+                _ = ExecuteRestoreAsync(request);
+            },
+            () =>
+            {
+                Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
+            });
+
+        var window = new RestoreWindow(viewModel)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        window.ShowDialog();
     }
 
-    private async Task ExecuteRestoreAsync(
-        RestoreMode mode, List<int> setIndexes, bool incremental, string? targetDirectory)
+    private async Task ExecuteRestoreAsync(RestoreRequest request)
     {
+        var mode = request.Mode;
+        var setIndexes = request.SetIndexes;
+        var incremental = request.Incremental;
+        var targetDirectory = request.TargetDirectory;
+        var handleExisting = request.HandleExisting;
+        var filePatterns = request.FilePatterns;
+
         string modeName = mode switch
         {
             RestoreMode.Restore => "Restore",
@@ -207,10 +234,10 @@ public partial class MainViewModel
                     mode,
                     setIndexes,
                     incremental,
-                    filePatterns: null, // no file filtering in simplified UI
+                    filePatterns,
                     targetDirectory,
                     recurseSubdirectories: true,
-                    TapeHowToHandleExisting.KeepBoth,
+                    handleExisting,
                     // Progress update callback
                     (processed, total, bytes) =>
                     {
@@ -221,11 +248,11 @@ public partial class MainViewModel
                         });
                     },
                     // Log message callback
-                    message =>
+                    entry =>
                     {
                         Application.Current.Dispatcher.Invoke(() =>
                         {
-                            LogMessages.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
+                            LogMessages.Add(entry);
                             while (LogMessages.Count > 1000)
                                 LogMessages.RemoveAt(0);
                         });
@@ -379,13 +406,13 @@ public partial class MainViewModel
         }
         catch (TapeAbortRequestedException)
         {
-            LogMessages.Add($"[{DateTime.Now:HH:mm:ss}] !!! {modeName} aborted by user");
+            LogErr($"{modeName} aborted by user");
             MessageBox.Show($"{modeName} was aborted.", $"{modeName} Aborted",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         catch (Exception ex)
         {
-            LogMessages.Add($"[{DateTime.Now:HH:mm:ss}] !!! {modeName} failed: {ex.Message}");
+            LogErr($"{modeName} failed: {ex.Message}");
             MessageBox.Show($"{modeName} failed.\n\n{ex.Message}", $"{modeName} Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }

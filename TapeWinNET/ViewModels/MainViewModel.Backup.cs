@@ -3,6 +3,8 @@ using System.Windows.Input;
 
 using Windows.Win32.System.SystemServices; // for Helpers
 
+using TapeWinNET.Converters;
+
 using TapeLibNET;
 using TapeLibNET.Virtual;
 using TapeWinNET.Services;
@@ -246,11 +248,11 @@ public partial class MainViewModel
                         });
                     },
                     // Log message callback
-                    message =>
+                    entry =>
                     {
                         Application.Current.Dispatcher.Invoke(() =>
                         {
-                            LogMessages.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
+                            LogMessages.Add(entry);
                             while (LogMessages.Count > 1000)
                                 LogMessages.RemoveAt(0);
                         });
@@ -410,13 +412,13 @@ public partial class MainViewModel
         }
         catch (TapeAbortRequestedException)
         {
-            LogMessages.Add($"[{DateTime.Now:HH:mm:ss}] !!! Backup aborted by user");
+            LogErr("Backup aborted by user");
             MessageBox.Show("Backup was aborted.", "Backup Aborted",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         catch (Exception ex)
         {
-            LogMessages.Add($"[{DateTime.Now:HH:mm:ss}] !!! Backup failed: {ex.Message}");
+            LogErr($"Backup failed: {ex.Message}");
             MessageBox.Show($"Backup failed.\n\n{ex.Message}", "Backup Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }

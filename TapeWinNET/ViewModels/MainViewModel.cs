@@ -7,6 +7,7 @@ using Windows.Win32.System.SystemServices; // for Helpers
 
 using TapeLibNET;
 using TapeLibNET.Virtual;
+using TapeWinNET.Converters;
 
 using TapeWinNET.Models;
 using TapeWinNET.Services;
@@ -257,7 +258,7 @@ public partial class MainViewModel : ViewModelBase
     public ObservableCollection<PropertyItem> PropertyList { get; } = [];
     public ObservableCollection<FileListItem> FileList { get; } = [];
     public ObservableCollection<BackupSetListItem> BackupSetList { get; } = [];
-    public ObservableCollection<string> LogMessages { get; } = [];
+    public ObservableCollection<LogEntry> LogMessages { get; } = [];
 
     #endregion
 
@@ -647,17 +648,6 @@ public partial class MainViewModel : ViewModelBase
         PropertyList.Add(new PropertyItem("Continued on Next Volume", 
             toc.ContinuedOnNextVolume ? "Yes" : "No"));
 
-        /*
-        // Populate backup sets table
-        TableHeader = $"Backup Sets ({toc.Count})";
-        int totalSets = toc.Count;
-        for (int i = 1; i <= totalSets; i++)    
-        {
-            var setTOC = toc[i];
-            BackupSetList.Add(new BackupSetListItem(setTOC, i, toc.SetIndexToAlt(i)));
-        }
-        */
-
         // Populate backup sets table in the alternative order: from latest (0) down to oldest (toc.MinSetIndex)
         TableHeader = $"Backup Sets ({toc.Count})";
         int currentVolume = toc.Volume;
@@ -745,7 +735,7 @@ public partial class MainViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            LogMessages.Add($"!!! Error loading backup set info: {ex.Message}");
+            LogErr($"Error loading backup set info: {ex.Message}");
             StatusMessage = "Error loading backup set information";
         }
     }
@@ -802,6 +792,25 @@ public partial class MainViewModel : ViewModelBase
 
     #endregion
 
+    #region Private Methods — Logging
+
+    private void AddLog(LogEntry entry)
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            LogMessages.Add(entry);
+            while (LogMessages.Count > 1000)
+                LogMessages.RemoveAt(0);
+        });
+    }
+
+    private void LogInfo(string msg)    => AddLog(new LogEntry(WarningLevel.Info, msg, false, DateTime.Now));
+    private void LogOk(string msg)      => AddLog(new LogEntry(WarningLevel.Completed, msg, false, DateTime.Now));
+    private void LogWarn(string msg)    => AddLog(new LogEntry(WarningLevel.Warning, msg, false, DateTime.Now));
+    private void LogErr(string msg)     => AddLog(new LogEntry(WarningLevel.Error, msg, false, DateTime.Now));
+
+    #endregion
+
     #region Private Methods - Event Handlers
 
     /// <summary>
@@ -817,12 +826,12 @@ public partial class MainViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsIoSpeedEnabled));
     }
 
-    private void OnLogMessageReceived(object? sender, string message)
+    private void OnLogMessageReceived(object? sender, LogEntry entry)
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
-            LogMessages.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
-            
+            LogMessages.Add(entry);
+
             // Keep log size manageable
             while (LogMessages.Count > 1000)
             {
@@ -958,7 +967,7 @@ public partial class MainViewModel : ViewModelBase
                 if (!success)
                 {
                     // Warning only - drive is still usable
-                    LogMessages.Add($"[{DateTime.Now:HH:mm:ss}] !!! Warning: Could not create initial TOC");
+                    LogWarn("Could not create initial TOC");
                 }
             }
 
@@ -986,7 +995,7 @@ public partial class MainViewModel : ViewModelBase
 
             // Log success with mode info
             var modeText = request.IsCreateNew ? "Created new" : "Opened existing";
-            LogMessages.Add($"[{DateTime.Now:HH:mm:ss}] iii {modeText} virtual media: {request.Media.ContentPath}");
+            LogInfo($"{modeText} virtual media: {request.Media.ContentPath}");
         }
         finally
         {

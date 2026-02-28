@@ -435,25 +435,51 @@
                      FontSize="11"
                      Style="{StaticResource VirtualizedListBoxStyle}">
                 <ListBox.ItemTemplate>
-                    <DataTemplate>
-                        <!-- TextBlock Text="{Binding}" 
-                                   Foreground="{Binding Converter={x:Static converters:LogLevelToBrushConverter.Instance}}" /-->
-                        <TextBlock Text="{Binding}">
+                    <DataTemplate DataType="{x:Type converters:LogEntry}">
+                        <TextBlock Text="{Binding DisplayText}">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Converter={x:Static converters:LogLevelConverter.Instance}}" Value="Error">
-                                            <Setter Property="Foreground" Value="Red" />
+                                        <!-- Sub-bullets: indent, keep default color -->
+                                        <DataTrigger Binding="{Binding IsSub}" Value="True">
+                                            <Setter Property="Margin" Value="16,0,0,0"/>
                                         </DataTrigger>
-                                        <DataTrigger Binding="{Binding Converter={x:Static converters:LogLevelConverter.Instance}}" Value="Warning">
-                                            <Setter Property="Foreground" Value="Orange" />
-                                        </DataTrigger>
-                                        <DataTrigger Binding="{Binding Converter={x:Static converters:LogLevelConverter.Instance}}" Value="Info">
-                                            <Setter Property="Foreground" Value="Blue" />
-                                        </DataTrigger>
-                                        <DataTrigger Binding="{Binding Converter={x:Static converters:LogLevelConverter.Instance}}" Value="Completed">
-                                            <Setter Property="Foreground" Value="Green" />
-                                        </DataTrigger>
+                                        <!-- Level-based coloring (only for non-sub entries) -->
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding Level}" Value="{x:Static converters:WarningLevel.Error}"/>
+                                                <Condition Binding="{Binding IsSub}" Value="False"/>
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="Foreground" Value="{StaticResource WarningFg.Error}" />
+                                        </MultiDataTrigger>
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding Level}" Value="{x:Static converters:WarningLevel.Failed}"/>
+                                                <Condition Binding="{Binding IsSub}" Value="False"/>
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="Foreground" Value="{StaticResource WarningFg.Failed}" />
+                                        </MultiDataTrigger>
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding Level}" Value="{x:Static converters:WarningLevel.Warning}"/>
+                                                <Condition Binding="{Binding IsSub}" Value="False"/>
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="Foreground" Value="{StaticResource WarningFg.Warning}" />
+                                        </MultiDataTrigger>
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding Level}" Value="{x:Static converters:WarningLevel.Info}"/>
+                                                <Condition Binding="{Binding IsSub}" Value="False"/>
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="Foreground" Value="{StaticResource WarningFg.Info}" />
+                                        </MultiDataTrigger>
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding Level}" Value="{x:Static converters:WarningLevel.Completed}"/>
+                                                <Condition Binding="{Binding IsSub}" Value="False"/>
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="Foreground" Value="{StaticResource WarningFg.Completed}" />
+                                        </MultiDataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </TextBlock.Style>
