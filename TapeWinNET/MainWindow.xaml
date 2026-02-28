@@ -115,13 +115,15 @@
             </MenuItem>
             <MenuItem Header="_Backup">
                 <MenuItem Header="_New Backup..." Command="{Binding NewBackupCommand}"/>
-                <Separator/>
+                <Separator Visibility="{Binding IsBackupInProgress, Converter={StaticResource BoolToVis}}"/>
+                <MenuItem Header="Abort _Backup" Command="{Binding AbortBackupCommand}"
+                          Visibility="{Binding IsBackupInProgress, Converter={StaticResource BoolToVis}}"/>
+            </MenuItem>
+            <MenuItem Header="_Restore">
                 <MenuItem Header="_Restore..." Command="{Binding RestoreCommand}"/>
                 <MenuItem Header="Va_lidate..." Command="{Binding ValidateCommand}"/>
                 <MenuItem Header="Veri_fy..." Command="{Binding VerifyCommand}"/>
-                <Separator Visibility="{Binding IsOperationInProgress, Converter={StaticResource BoolToVis}}"/>
-                <MenuItem Header="Abort _Backup" Command="{Binding AbortBackupCommand}"
-                          Visibility="{Binding IsBackupInProgress, Converter={StaticResource BoolToVis}}"/>
+                <Separator Visibility="{Binding IsRestoreInProgress, Converter={StaticResource BoolToVis}}"/>
                 <MenuItem Header="Abort _Operation" Command="{Binding AbortRestoreCommand}"
                           Visibility="{Binding IsRestoreInProgress, Converter={StaticResource BoolToVis}}"/>
             </MenuItem>
@@ -245,6 +247,23 @@
                             </ListView.InputBindings>
                             <ListView.View>
                                 <GridView>
+                                    <!-- Checkbox column for multi-set restore selection -->
+                                    <GridViewColumn Width="28">
+                                        <GridViewColumn.HeaderTemplate>
+                                            <DataTemplate>
+                                                <CheckBox IsChecked="{Binding DataContext.AreAllBackupSetsChecked,
+                                                                      RelativeSource={RelativeSource AncestorType=Window}}"
+                                                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                          ToolTip="Select / deselect all"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.HeaderTemplate>
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox IsChecked="{Binding IsCheckedForRestore, Mode=TwoWay}"
+                                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
                                     <!-- Icon column for backup sets, dimmed for off-volume sets -->
                                     <GridViewColumn Width="32">
                                         <GridViewColumn.CellTemplate>

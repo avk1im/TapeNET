@@ -29,8 +29,8 @@ public partial class TapeService
     /// Executes a restore, validate, or verify operation with the specified parameters.
     /// </summary>
     /// <param name="mode">The restore flavor to execute.</param>
-    /// <param name="setIndex">Backup set index to restore from (1-based).</param>
-    /// <param name="incremental">Whether to traverse the incremental chain.</param>
+    /// <param name="setIndexes">Backup set indexes to restore from (1-based). Multiple sets are combined into a single pass.</param>
+    /// <param name="incremental">Whether to traverse the incremental chain for each set.</param>
     /// <param name="filePatterns">Optional file filter patterns (null = all files).</param>
     /// <param name="targetDirectory">Target directory for Restore mode (ignored for Validate/Verify).</param>
     /// <param name="recurseSubdirectories">Whether to recreate subdirectory structure (Restore only).</param>
@@ -47,7 +47,7 @@ public partial class TapeService
     /// </remarks>
     public Task ExecuteRestoreAsync(
         RestoreMode mode,
-        int setIndex,
+        List<int> setIndexes,
         bool incremental,
         List<string>? filePatterns,
         string? targetDirectory,
@@ -115,17 +115,20 @@ public partial class TapeService
                         logCallback($"vvv TOC restored with {toc.Count} backup set(s)");
                     }
 
-                    // Set the current backup set
-                    toc.CurrentSetIndex = setIndex;
-                    var setTOC = toc.CurrentSetTOC;
+                    // Log info about the sets being processed
+                    foreach (var setIndex in setIndexes)
+                    {
+                        toc.CurrentSetIndex = setIndex;
+                        var setTOC = toc.CurrentSetTOC;
 
-                    logCallback($"iii {modeName} backup set #{setIndex}: {setTOC.Description}");
-                    logCallback($" ii Files in set: {setTOC.Count:N0}");
-                    logCallback($" ii Block size: {Helpers.BytesToString(setTOC.BlockSize)}");
-                    logCallback($" ii Hash algorithm: {setTOC.HashAlgorithm}");
-                    logCallback($" ii Incremental: {(setTOC.Incremental ? "Yes" : "No")}");
-                    if (incremental && setTOC.Incremental)
-                        logCallback($" ii {modeName} incremental backup set including earlier dependent sets");
+                        logCallback($"iii {modeName} backup set #{setIndex}: {setTOC.Description}");
+                        logCallback($" ii Files in set: {setTOC.Count:N0}");
+                        logCallback($" ii Block size: {Helpers.BytesToString(setTOC.BlockSize)}");
+                        logCallback($" ii Hash algorithm: {setTOC.HashAlgorithm}");
+                        logCallback($" ii Incremental: {(setTOC.Incremental ? "Yes" : "No")}");
+                        if (incremental && setTOC.Incremental)
+                            logCallback($" ii {modeName} incremental backup set including earlier dependent sets");
+                    }
                     if (mode == RestoreMode.Restore && !string.IsNullOrEmpty(targetDirectory))
                         logCallback($" ii Target directory: {targetDirectory}");
                     if (filePatterns != null && filePatterns.Count > 0)
@@ -143,13 +146,9 @@ public partial class TapeService
                     // Execute the restore operation
                     Status($"{modeName} files...");
 
-                    bool result = incremental
-                        ? (filePatterns != null && filePatterns.Count > 0)
-                            ? agent.RestoreFilesFromCurrentSetInc(filePatterns, ignoreFailures: true, progressHandler)
-                            : agent.RestoreAllFilesFromCurrentSetInc(ignoreFailures: true, progressHandler)
-                        : (filePatterns != null && filePatterns.Count > 0)
-                            ? agent.RestoreFilesFromCurrentSet(filePatterns, ignoreFailures: true, progressHandler)
-                            : agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, progressHandler);
+                    bool result = agent.RestoreFilesFromSets(
+                        setIndexes, incremental, filePatterns,
+                        ignoreFailures: true, progressHandler);
 
                     // Handle multi-volume continuation
                     while (!result && agent.CanResumeFromAnotherVolume)

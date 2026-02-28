@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Windows.Media.Imaging;
 using Windows.Win32.System.SystemServices; // for Helpers
 
@@ -8,7 +9,7 @@ namespace TapeWinNET.Models;
 /// <summary>
 /// Represents a backup set item for display in the backup sets ListView.
 /// </summary>
-public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bool isOnCurrentVolume)
+public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bool isOnCurrentVolume) : INotifyPropertyChanged
 {
     private static BitmapSource? _backupSetIcon;
     private static bool _iconLoaded;
@@ -87,4 +88,23 @@ public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bo
     public int Volume => _setTOC.Volume;
 
     public TapeSetTOC SetTOC => _setTOC;
+
+    /// <summary>
+    /// Whether this backup set is checked for restore/validate/verify operations.
+    /// </summary>
+    private bool _isCheckedForRestore;
+    public bool IsCheckedForRestore
+    {
+        get => _isCheckedForRestore;
+        set
+        {
+            if (_isCheckedForRestore != value)
+            {
+                _isCheckedForRestore = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsCheckedForRestore)));
+            }
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 }

@@ -896,6 +896,102 @@ namespace TapeLibNET
             }
         }
 
+        /// <summary>
+        /// Combines two arrays of tape file selections returned by SelectFiles()
+        /// </summary>
+        /// <param name="selA">This selection was peformed for the set index idxB.</param>
+        /// <param name="idxA">The set index for which selA was selected</param>
+        /// <param name="selB">This selection was performed for the set index idxB</param>
+        /// <param name="idxB">The set index for which selB was selected</param>
+        /// <returns>An array containing the combined tape file selections from both input arrays.</returns>
+        /// <remarks>selA and selB are not modeified</remarks>
+        // Notice selection arrays run the index from newer down to older -- the revers of TOC indexation
+        // idxA:                                       v
+        // selA:             oldest -> [set2] [set1] [set0] <- latest
+        // selB:      oldest -> [set2] [set1] [set0] <- latest
+        // idxB:                                ^
+        public List<TapeFileInfo>?[] CombineSelectedFiles(List<TapeFileInfo>?[] selA, int idxA,
+            List<TapeFileInfo>?[] selB, int idxB)
+        {
+            // ensure the indexes are of the same indexation system
+            int intA = SetIndexToInternal(idxA);
+            int intB = SetIndexToInternal(idxB);
+
+            // pick as A the selection that starts with the newer set
+            if (intA < intB)
+            {
+                (intB, intA) = (intA, intB);
+                //(idxB, idxA) = (idxA, idxB); // not needed since we don't use idxA and idxB anymore
+                (selB, selA) = (selA, selB);
+            }
+            Debug.Assert(intA >= intB); // now selA is the selection starting with the earlier set
+            
+            int bBegin = intA - intB; // the begin index of selB in selA's indexation
+            int bEnd = bBegin + selB.Length - 1; // the end index of selB in selA's indexation
+            int abEnd = int.Max(selA.Length - 1, bEnd); // the end index of the combined selection in selA's indexation
+
+            var selAandB = new List<TapeFileInfo>?[abEnd + 1];
+
+            // First, copy the sets from A's overhang over B (if any) since they are not affected by the combination
+            //  selAandB follows selA's indexation
+            //  i is in selA's (and selAandB's) indexation, and i - bBegin is in selB's indexation
+            for (int i = 0; i < int.Min(selA.Length, bBegin); i++)
+                selAandB[i] = selA[i];
+
+            // Next, feel the gap between the end of selA and the begin of selB (if any) with []
+            for (int i = selA.Length; i < bBegin; i++)
+                selAandB[i] = []; // empty selection since selA doesn't cover this part, and selB starts later
+
+            // Next, combine the overlapping part of A and B (if any)
+            if (bBegin < selA.Length) // if there is an overlapping part between selA and selB
+            {
+                //  i is in selA's (and selAandB's) indexation, and i - bBegin is in selB's indexation
+                for (int i = bBegin; i <= int.Min(bEnd, selA.Length - 1); i++)
+                {
+                    if (selA[i] == null || selB[i - bBegin] == null)
+                    {
+                        // if either selection is "all files", then the combined selection is also "all files"
+                        selAandB[i] = null;
+                    }
+                    else
+                    {
+                        Debug.Assert(selA[i] != null && selB[i - bBegin] != null);
+                        // combine the two selections by taking the union of the two lists of files
+                        //  Notice: the compiler cannot null-check indexed array elements, hence '!'
+                        var combined = new List<TapeFileInfo>(selA[i]!);
+                        var combinedNames = new HashSet<string>(selA[i]!.Select(t => t.FileDescr.FullName), StringComparer.OrdinalIgnoreCase);
+                        foreach (var tfi in selB[i - bBegin]!)
+                        {
+                            if (combinedNames.Add(tfi.FileDescr.FullName))
+                                combined.Add(tfi);
+                        }
+                        selAandB[i] = combined;
+                    }
+                }
+
+                // Finally, determine if A or B has an overhang over the other in the older direction
+                //  and copy it since there's no combination
+                if (bEnd >= selA.Length) // B has an overhang over A in the older direction
+                {
+                    for (int i = selA.Length; i <= bEnd; i++)
+                        selAandB[i] = selB[i - bBegin]; // copy from B
+                }
+                else // A has an overhang over B in the older direction (or both end)
+                {
+                    for (int i = bEnd + 1; i <= selA.Length - 1; i++)
+                        selAandB[i] = selA[i]; // copy from A
+                }
+            }
+            else // if there is no overlap between selA and selB...
+            {
+                // ...then just copy from B
+                for (int i = bBegin; i <= bEnd; i++)
+                    selAandB[i] = selB[i - bBegin];
+            }
+
+            return selAandB;
+        }
+
         // Compute total file size on tape -- considering block sizes per set
         // onVolumeOnly : if true, only compute for sets on the current volume; otherwise, compute for all sets
         public long ComputeTotalFileSizeOnTape(uint defaultBlockSize = 0, bool onVolumeOnly = true)

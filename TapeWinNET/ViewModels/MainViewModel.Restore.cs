@@ -88,28 +88,53 @@ public partial class MainViewModel
 
     /// <summary>
     /// Whether restore/validate/verify commands should be enabled.
-    /// Requires: not busy, media loaded, TOC available, and a backup set selected.
+    /// Requires: not busy, media loaded, TOC available, and at least one backup set selected.
     /// </summary>
     private bool CanStartRestore =>
-        !IsBusy && _tapeService.IsMediaLoaded && _tapeService.TOC != null && SelectedSetIndex.HasValue;
+        !IsBusy && _tapeService.IsMediaLoaded && _tapeService.TOC != null && SelectedSetIndexes.Count > 0;
 
     /// <summary>
-    /// Gets the currently selected backup set index from either the tree view or the backup set list view.
-    /// Returns null if no backup set is selected.
+    /// Gets or sets whether all backup sets are checked for restore.
+    /// Setter checks or unchecks every item in BackupSetList.
     /// </summary>
-    private int? SelectedSetIndex
+    public bool AreAllBackupSetsChecked
+    {
+        get => BackupSetList.Count > 0 && BackupSetList.All(b => b.IsCheckedForRestore);
+        set
+        {
+            foreach (var item in BackupSetList)
+                item.IsCheckedForRestore = value;
+            OnPropertyChanged(nameof(AreAllBackupSetsChecked));
+            CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
+    /// <summary>
+    /// Gets the set indexes selected for restore: checked sets in the backup set list,
+    /// or the single set selected in the tree view.
+    /// </summary>
+    private List<int> SelectedSetIndexes
     {
         get
         {
-            // First try: backup set selected in tree view
-            if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet)
-                return _selectedTreeItem.SetIndex;
+            // First try: checked backup sets in the list view (multi-select via checkboxes)
+            var checkedSets = BackupSetList
+                .Where(b => b.IsCheckedForRestore)
+                .Select(b => b.SetIndex)
+                .ToList();
 
-            // Second try: backup set selected in the backup set list view
+            if (checkedSets.Count > 0)
+                return checkedSets;
+
+            // Second try: backup set selected in tree view
+            if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet && _selectedTreeItem.SetIndex.HasValue)
+                return [_selectedTreeItem.SetIndex.Value];
+
+            // Third try: backup set selected (clicked) in the backup set list view
             if (SelectedBackupSet != null)
-                return SelectedBackupSet.SetIndex;
+                return [SelectedBackupSet.SetIndex];
 
-            return null;
+            return [];
         }
     }
 
@@ -119,8 +144,8 @@ public partial class MainViewModel
 
     private void StartRestoreForSelectedSet(RestoreMode mode)
     {
-        int? setIndex = SelectedSetIndex;
-        if (!setIndex.HasValue)
+        var setIndexes = SelectedSetIndexes;
+        if (setIndexes.Count == 0)
             return;
 
         var toc = _tapeService.TOC;
@@ -142,15 +167,18 @@ public partial class MainViewModel
             targetDirectory = dialog.FolderName;
         }
 
-        // Determine if the set is incremental and should traverse the chain
-        toc.CurrentSetIndex = setIndex.Value;
-        bool incremental = toc.CurrentSetTOC.Incremental;
+        // Determine if any of the selected sets is incremental
+        bool incremental = setIndexes.Any(idx =>
+        {
+            toc.CurrentSetIndex = idx;
+            return toc.CurrentSetTOC.Incremental;
+        });
 
-        _ = ExecuteRestoreAsync(mode, setIndex.Value, incremental, targetDirectory);
+        _ = ExecuteRestoreAsync(mode, setIndexes, incremental, targetDirectory);
     }
 
     private async Task ExecuteRestoreAsync(
-        RestoreMode mode, int setIndex, bool incremental, string? targetDirectory)
+        RestoreMode mode, List<int> setIndexes, bool incremental, string? targetDirectory)
     {
         string modeName = mode switch
         {
@@ -177,7 +205,7 @@ public partial class MainViewModel
             {
                 await _tapeService.ExecuteRestoreAsync(
                     mode,
-                    setIndex,
+                    setIndexes,
                     incremental,
                     filePatterns: null, // no file filtering in simplified UI
                     targetDirectory,
