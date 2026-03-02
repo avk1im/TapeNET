@@ -24,4 +24,7 @@ public partial class BackupPreviewWindow : Window
             Icon = icon;
         }
     }
+
+    private void ItemCheckBox_Changed(object sender, RoutedEventArgs e)
+        => ViewModel.OnItemCheckChanged();
 }

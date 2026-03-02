@@ -8,9 +8,9 @@
         d:DataContext="{d:DesignInstance Type=vm:RestoreViewModel}"
         mc:Ignorable="d"
         Title="{Binding DialogTitle}"
-        Width="580"
+        Width="660"
         SizeToContent="Height"
-        MaxHeight="600"
+        MaxHeight="720"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
         ShowInTaskbar="False">
@@ -42,19 +42,22 @@
         </StackPanel>
 
         <!-- Backup Sets -->
-        <GroupBox Grid.Row="1" Header="Backup Sets to process (uncheck to exclude)" Margin="0,0,0,12">
+        <GroupBox Grid.Row="1" Header="{Binding ItemsGroupHeader}" Margin="0,0,0,12">
             <Grid Margin="8">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" MaxHeight="160"/>
+                    <RowDefinition Height="Auto" MaxHeight="280"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <!-- Sets Table -->
+                <!-- Sets Table (set mode) -->
                 <ListView Grid.Row="0"
                           ItemsSource="{Binding BackupSets}"
+                          CheckBox.Checked="ItemCheckBox_Changed"
+                          CheckBox.Unchecked="ItemCheckBox_Changed"
                           VirtualizingPanel.IsVirtualizing="True"
-                          VirtualizingPanel.VirtualizationMode="Recycling">
+                          VirtualizingPanel.VirtualizationMode="Recycling"
+                          Visibility="{Binding IsSetsListVisible, Converter={StaticResource BoolToVis}}">
                     <ListView.View>
                         <GridView>
                             <!-- Checkbox column -->
@@ -94,8 +97,48 @@
                     </ListView.View>
                 </ListView>
 
-                <!-- File Patterns -->
-                <Grid Grid.Row="1" Margin="0,8,0,0">
+                <!-- Files Table (file mode) -->
+                <ListView Grid.Row="0"
+                          ItemsSource="{Binding Files}"
+                          CheckBox.Checked="ItemCheckBox_Changed"
+                          CheckBox.Unchecked="ItemCheckBox_Changed"
+                          VirtualizingPanel.IsVirtualizing="True"
+                          VirtualizingPanel.VirtualizationMode="Recycling"
+                          Visibility="{Binding IsFilesListVisible, Converter={StaticResource BoolToVis}}">
+                    <ListView.View>
+                        <GridView>
+                            <!-- Checkbox column -->
+                            <GridViewColumn Width="28">
+                                <GridViewColumn.HeaderTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding DataContext.AreAllChecked,
+                                                              RelativeSource={RelativeSource AncestorType=Window}}"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  ToolTip="Select / deselect all files"/>
+                                    </DataTemplate>
+                                </GridViewColumn.HeaderTemplate>
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding IsCheckedForRestore, Mode=TwoWay}"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Name" Width="180"
+                                            DisplayMemberBinding="{Binding FileName}"/>
+                            <GridViewColumn Header="Size" Width="75"
+                                            DisplayMemberBinding="{Binding SizeFormatted}"/>
+                            <GridViewColumn Header="Modified" Width="120"
+                                            DisplayMemberBinding="{Binding LastModified}"/>
+                            <GridViewColumn Header="Path" Width="200"
+                                            DisplayMemberBinding="{Binding FullPath}"/>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+
+                <!-- File Patterns (set mode only) -->
+                <Grid Grid.Row="1" Margin="0,8,0,0"
+                      Visibility="{Binding ShowFilePatterns, Converter={StaticResource BoolToVis}}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
@@ -107,12 +150,13 @@
                              VerticalContentAlignment="Center"/>
                 </Grid>
 
-                <!-- Help text -->
+                <!-- Help text (set mode only) -->
                 <TextBlock Grid.Row="2"
                            Text="Separate patterns with ;  Use * and ?  Example: C:\Docs\*.doc?; D:\Projects\MyApp\"
                            FontSize="10" Foreground="DarkGray"
                            HorizontalAlignment="Right"
-                           Margin="0,2,0,0"/>
+                           Margin="0,2,0,0"
+                           Visibility="{Binding ShowFilePatterns, Converter={StaticResource BoolToVis}}"/>
             </Grid>
         </GroupBox>
 

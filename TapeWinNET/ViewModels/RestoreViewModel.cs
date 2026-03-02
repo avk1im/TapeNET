@@ -37,6 +37,7 @@ public record HandleExistingOption(TapeHowToHandleExisting Value, string Display
 /// <summary>
 /// ViewModel for the RestoreWindow dialog.
 /// Gathers settings for a restore/validate/verify operation.
+/// Supports two modes: set-based (backup sets) and file-based (individual files from one set).
 /// </summary>
 public class RestoreViewModel : ViewModelBase
 {
@@ -50,6 +51,13 @@ public class RestoreViewModel : ViewModelBase
     private string _targetDirectory = string.Empty;
     private HandleExistingOption _selectedHandleExisting = HandleExistingOption.All[0]; // Keep Both
 
+    /// <summary>Whether this dialog operates on individual files rather than backup sets.</summary>
+    public bool IsFileMode { get; }
+
+    /// <summary>Set index for file mode (the single set the files come from).</summary>
+    private readonly int _fileSetIndex;
+
+    /// <summary>Constructor for set-based restore.</summary>
     public RestoreViewModel(
         RestoreMode mode,
         List<BackupSetListItem> preSelectedSets,
@@ -59,12 +67,12 @@ public class RestoreViewModel : ViewModelBase
         _onStart = onStart;
         _onCancel = onCancel;
         _mode = mode;
+        IsFileMode = false;
 
         // Clone the pre-selected sets into our local collection (all pre-checked)
         foreach (var item in preSelectedSets)
         {
             BackupSets.Add(item);
-            // Ensure all pre-selected sets are checked
             item.IsCheckedForRestore = true;
         }
 
@@ -76,10 +84,53 @@ public class RestoreViewModel : ViewModelBase
         CancelCommand = new RelayCommand(_ => _onCancel());
     }
 
+    /// <summary>Constructor for file-based restore.</summary>
+    public RestoreViewModel(
+        RestoreMode mode,
+        List<FileListItem> preSelectedFiles,
+        int setIndex,
+        bool isIncremental,
+        Action<RestoreRequest> onStart,
+        Action onCancel)
+    {
+        _onStart = onStart;
+        _onCancel = onCancel;
+        _mode = mode;
+        IsFileMode = true;
+        _fileSetIndex = setIndex;
+
+        Files = preSelectedFiles;
+        foreach (var item in preSelectedFiles)
+            item.IsCheckedForRestore = true;
+
+        _incremental = isIncremental;
+
+        BrowseTargetCommand = new RelayCommand(BrowseTarget);
+        StartCommand = new RelayCommand(ExecuteStart, _ => CanStart);
+        CancelCommand = new RelayCommand(_ => _onCancel());
+    }
+
     #region Properties
 
-    /// <summary>The backup sets available for this operation.</summary>
+    /// <summary>The backup sets available for this operation (set mode).</summary>
     public ObservableCollection<BackupSetListItem> BackupSets { get; } = [];
+
+    /// <summary>The files available for this operation (file mode). Uses List for efficient population.</summary>
+    public List<FileListItem> Files { get; } = [];
+
+    /// <summary>Whether the sets list is visible (set mode).</summary>
+    public bool IsSetsListVisible => !IsFileMode;
+
+    /// <summary>Whether the files list is visible (file mode).</summary>
+    public bool IsFilesListVisible => IsFileMode;
+
+    /// <summary>Header text for the items GroupBox.</summary>
+    public string ItemsGroupHeader => IsFileMode
+        ? "Files to process (uncheck to exclude)"
+        : "Backup Sets to process (uncheck to exclude)";
+
+    /// <summary>Whether the file patterns input row is visible.</summary>
+    public bool ShowFilePatterns => !IsFileMode;
 
     /// <summary>Available handle-existing options for the combo box.</summary>
     public HandleExistingOption[] HandleExistingOptions { get; } = HandleExistingOption.All;
@@ -90,7 +141,7 @@ public class RestoreViewModel : ViewModelBase
         RestoreMode.Validate => "Validate",
         RestoreMode.Verify => "Verify",
         _ => "Restore"
-    };
+    } + (IsFileMode ? " Files" : " Backup Sets");
 
     public string ActionButtonText => _mode switch
     {
@@ -219,23 +270,43 @@ public class RestoreViewModel : ViewModelBase
     };
 
     /// <summary>
-    /// Whether all backup sets are checked.
-    /// Setter checks or unchecks every item.
+    /// Whether all items are checked.
+    /// Setter checks or unchecks every item in the appropriate list.
     /// </summary>
     public bool AreAllChecked
     {
-        get => BackupSets.Count > 0 && BackupSets.All(b => b.IsCheckedForRestore);
+        get => IsFileMode
+            ? Files.Count > 0 && Files.All(f => f.IsCheckedForRestore)
+            : BackupSets.Count > 0 && BackupSets.All(b => b.IsCheckedForRestore);
         set
         {
-            foreach (var item in BackupSets)
-                item.IsCheckedForRestore = value;
+            if (IsFileMode)
+            {
+                foreach (var item in Files)
+                    item.IsCheckedForRestore = value;
+            }
+            else
+            {
+                foreach (var item in BackupSets)
+                    item.IsCheckedForRestore = value;
+            }
             OnPropertyChanged(nameof(AreAllChecked));
             OnPropertyChanged(nameof(CanStart));
             CommandManager.InvalidateRequerySuggested();
         }
     }
 
-    public bool CanStart => BackupSets.Any(b => b.IsCheckedForRestore);
+    public bool CanStart => IsFileMode
+        ? Files.Any(f => f.IsCheckedForRestore)
+        : BackupSets.Any(b => b.IsCheckedForRestore);
+
+    /// <summary>Called from code-behind when a row checkbox is toggled.</summary>
+    public void OnItemCheckChanged()
+    {
+        OnPropertyChanged(nameof(AreAllChecked));
+        OnPropertyChanged(nameof(CanStart));
+        CommandManager.InvalidateRequerySuggested();
+    }
 
     #endregion
 
@@ -265,21 +336,33 @@ public class RestoreViewModel : ViewModelBase
 
     private void ExecuteStart(object? _)
     {
-        var checkedIndexes = BackupSets
-            .Where(b => b.IsCheckedForRestore)
-            .Select(b => b.SetIndex)
-            .ToList();
-
-        // Parse file patterns: split by ';', trim, remove empty
+        List<int> checkedIndexes;
         List<string>? filePatterns = null;
-        if (!string.IsNullOrWhiteSpace(_filePatterns))
+
+        if (IsFileMode)
         {
-            filePatterns = _filePatterns
-                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToList();
+            checkedIndexes = [_fileSetIndex];
+            filePatterns = [.. Files
+                .Where(f => f.IsCheckedForRestore)
+                .Select(f => f.FullPath)];
 
             if (filePatterns.Count == 0)
-                filePatterns = null;
+                return;
+        }
+        else
+        {
+            checkedIndexes = [.. BackupSets
+                .Where(b => b.IsCheckedForRestore)
+                .Select(b => b.SetIndex)];
+
+            // Parse file patterns: split by ';', trim, remove empty
+            if (!string.IsNullOrWhiteSpace(_filePatterns))
+            {
+                filePatterns = [.. _filePatterns.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+
+                if (filePatterns.Count == 0)
+                    filePatterns = null;
+            }
         }
 
         // Target directory is only used in Restore mode when "Target directory" radio is selected

@@ -41,6 +41,8 @@
                   ItemsSource="{Binding Files}"
                   VirtualizingPanel.IsVirtualizing="True"
                   VirtualizingPanel.VirtualizationMode="Recycling"
+                  CheckBox.Checked="ItemCheckBox_Changed"
+                  CheckBox.Unchecked="ItemCheckBox_Changed"
                   SelectionMode="Extended">
             <ListView.View>
                 <GridView>

@@ -77,15 +77,23 @@ public partial class MainViewModel
     private void InitializeRestoreCommands()
     {
         RestoreCommand = new RelayCommand(
-            _ => StartRestoreForSelectedSet(RestoreMode.Restore),
+            _ => StartRestore(RestoreMode.Restore),
             _ => CanStartRestore);
         ValidateCommand = new RelayCommand(
-            _ => StartRestoreForSelectedSet(RestoreMode.Validate),
+            _ => StartRestore(RestoreMode.Validate),
             _ => CanStartRestore);
         VerifyCommand = new RelayCommand(
-            _ => StartRestoreForSelectedSet(RestoreMode.Verify),
+            _ => StartRestore(RestoreMode.Verify),
             _ => CanStartRestore);
         AbortRestoreCommand = new RelayCommand(AbortRestore, _ => IsRestoreInProgress);
+    }
+
+    private void StartRestore(RestoreMode mode)
+    {
+        if (HasFilesCheckedForRestore && IsFileTableVisible)
+            StartRestoreForSelectedFiles(mode);
+        else
+            StartRestoreForSelectedSet(mode);
     }
 
     /// <summary>
@@ -93,7 +101,8 @@ public partial class MainViewModel
     /// Requires: not busy, media loaded, TOC available, and at least one backup set selected.
     /// </summary>
     private bool CanStartRestore =>
-        !IsBusy && _tapeService.IsMediaLoaded && _tapeService.TOC != null && SelectedSetIndexes.Count > 0;
+        !IsBusy && _tapeService.IsMediaLoaded && _tapeService.TOC != null
+        && (SelectedSetIndexes.Count > 0 || HasFilesCheckedForRestore);
 
     /// <summary>
     /// Gets or sets whether all backup sets are checked for restore.
@@ -109,6 +118,41 @@ public partial class MainViewModel
             OnPropertyChanged(nameof(AreAllBackupSetsChecked));
             CommandManager.InvalidateRequerySuggested();
         }
+    }
+
+    /// <summary>
+    /// Gets or sets whether all files are checked for restore.
+    /// Setter checks or unchecks every item in FileList.
+    /// </summary>
+    public bool AreAllFilesChecked
+    {
+        get => FileList.Count > 0 && FileList.All(f => f.IsCheckedForRestore);
+        set
+        {
+            foreach (var item in FileList)
+                item.IsCheckedForRestore = value;
+            OnPropertyChanged(nameof(AreAllFilesChecked));
+            CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
+    /// <summary>
+    /// Whether any files are checked for restore in the file list.
+    /// </summary>
+    private bool HasFilesCheckedForRestore => FileList.Any(f => f.IsCheckedForRestore);
+
+    /// <summary>Called from code-behind when a file row checkbox is toggled.</summary>
+    public void OnFileCheckChanged()
+    {
+        OnPropertyChanged(nameof(AreAllFilesChecked));
+        CommandManager.InvalidateRequerySuggested();
+    }
+
+    /// <summary>Called from code-behind when a backup set row checkbox is toggled.</summary>
+    public void OnBackupSetCheckChanged()
+    {
+        OnPropertyChanged(nameof(AreAllBackupSetsChecked));
+        CommandManager.InvalidateRequerySuggested();
     }
 
     /// <summary>
@@ -184,6 +228,55 @@ public partial class MainViewModel
                 Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
 
                 // Execute the operation with the gathered settings
+                _ = ExecuteRestoreAsync(request);
+            },
+            () =>
+            {
+                Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
+            });
+
+        var window = new RestoreWindow(viewModel)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        window.ShowDialog();
+    }
+
+    private void StartRestoreForSelectedFiles(RestoreMode mode)
+    {
+        var toc = _tapeService.TOC;
+        if (toc == null)
+            return;
+
+        // Determine the set index from the current tree selection
+        int setIndex;
+        if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet && _selectedTreeItem.SetIndex.HasValue)
+            setIndex = _selectedTreeItem.SetIndex.Value;
+        else
+            return;
+
+        var checkedFiles = FileList.Where(f => f.IsCheckedForRestore).ToList();
+        if (checkedFiles.Count == 0)
+            return;
+
+        toc.CurrentSetIndex = setIndex;
+        var setTOC = toc.CurrentSetTOC;
+
+        if (setTOC.Count == checkedFiles.Count)
+        {
+            // All files are checked —> shortcut to full set restore
+            StartRestoreForSelectedSet(mode);
+            return;
+        }
+
+        var viewModel = new RestoreViewModel(
+            mode,
+            checkedFiles,
+            setIndex,
+            setTOC.Incremental,
+            request =>
+            {
+                Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
                 _ = ExecuteRestoreAsync(request);
             },
             () =>

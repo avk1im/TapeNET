@@ -397,9 +397,6 @@ namespace TapeLibNET
             if (pattern.EndsWith('\\'))
                 pattern += "*.*";
 
-            // Replace directory separators with the regex equivalent
-            pattern = pattern.Replace("\\", "\\\\");
-
             // Escape special regex characters, then replace wildcard characters with their regex equivalents
             pattern = Regex.Escape(pattern).Replace(@"\*", ".*").Replace(@"\?", ".");
 
@@ -414,6 +411,9 @@ namespace TapeLibNET
             return patterns.Select(FromFilePatternToRegexPattern);
         }
 
+        internal static bool PatternsHaveWildcards(List<string> patterns) =>
+            patterns.Exists(p => p.Contains('*') || p.Contains('?') || p.EndsWith('\\'));
+
         // Returns a list of TapeFileInfo objects that match the given file patterns
         //  Null patterns means select all files
         //  Empty patterns means select no files
@@ -422,21 +422,41 @@ namespace TapeLibNET
         {
             if (filePatterns == null)
                 return null; // null means all files in set
+
+            return SelectFiles(filePatterns, PatternsHaveWildcards(filePatterns));
+        }
+        // Internal version that takes an explcit "haveWildcards" parameter to avoid redundant wildcard checks
+        internal List<TapeFileInfo>? SelectFiles(List<string>? filePatterns, bool haveWildcards)
+        {
+            if (filePatterns == null)
+                return null; // null means all files in set
             if (filePatterns.Count == 0)
                 return []; // empty list means no files
 
-            // Convert the list of patterns to a list of regular expressions
-            //  Consider that if the patern ends with '', automatically treat it as
-            //  "select all files from that directory", that is as "*.*"
-            var patterns = FromFilePatternsToRegexPatterns(filePatterns).ToList(); // use ToList() to cache the results!
-
-            // Iterate over all files in the current set and add those that match at least one of the patterns to the list
             List<TapeFileInfo> filesSelected = [];
 
-            foreach (var tfi in this)
+            if (haveWildcards)
             {
-                if (FileMatchesRegexPatterns(tfi.FileDescr.FullName, patterns))
-                    filesSelected.Add(tfi);
+                var patterns = FromFilePatternsToRegexPatterns(filePatterns).ToList();
+                foreach (var tfi in this)
+                {
+                    if (FileMatchesRegexPatterns(tfi.FileDescr.FullName, patterns))
+                        filesSelected.Add(tfi);
+                }
+            }
+            else
+            {
+                // Fast path: plain file names without wildcards, use HashSet for O(1) lookup
+                var plainSet = new HashSet<string>(filePatterns, StringComparer.OrdinalIgnoreCase);
+                foreach (var tfi in this)
+                {
+                    if (plainSet.Remove(tfi.FileDescr.FullName))
+                    {
+                        filesSelected.Add(tfi);
+                        if (plainSet.Count == 0)
+                            break;
+                    }
+                }
             }
 
             return (filesSelected.Count == Count) ? null /* null means all files in set */ : filesSelected;
@@ -450,26 +470,44 @@ namespace TapeLibNET
         {
             if (filePatterns == null)
                 return new(m_tapeFileInfos); // list all files -- don't use "null means all files" shortcut
+
+            return SelectFilesAsLinkedList(filePatterns, PatternsHaveWildcards(filePatterns));
+        }
+        // Internal version that takes an explcit "haveWildcards" parameter to avoid redundant wildcard checks
+        internal LinkedList<TapeFileInfo> SelectFilesAsLinkedList(List<string>? filePatterns, bool haveWildcartds)
+        {
+            if (filePatterns == null)
+                return new(m_tapeFileInfos); // list all files -- don't use "null means all files" shortcut
             if (filePatterns.Count == 0)
                 return []; // empty list means no files
 
-            // Convert the list of patterns to a list of regular expressions
-            //  Consider that if the patern ends with '', automatically treat it as
-            //  "select all files from that directory", that is as "*.*"
-            var patterns = FromFilePatternsToRegexPatterns(filePatterns).ToList(); // use ToList() to cache the results!
-
-            // Iterate over all files in the current set and add those that match at least one of the patterns to the list
             LinkedList<TapeFileInfo> filesSelected = [];
 
-            foreach (var tfi in this)
+            if (haveWildcartds)
             {
-                if (FileMatchesRegexPatterns(tfi.FileDescr.FullName, patterns))
-                    filesSelected.AddLast(tfi);
+                var patterns = FromFilePatternsToRegexPatterns(filePatterns).ToList();
+                foreach (var tfi in this)
+                {
+                    if (FileMatchesRegexPatterns(tfi.FileDescr.FullName, patterns))
+                        filesSelected.AddLast(tfi);
+                }
+            }
+            else
+            {
+                var plainSet = new HashSet<string>(filePatterns, StringComparer.OrdinalIgnoreCase);
+                foreach (var tfi in this)
+                {
+                    if (plainSet.Remove(tfi.FileDescr.FullName))
+                    {
+                        filesSelected.AddLast(tfi);
+                        if (plainSet.Count == 0)
+                            break;
+                    }
+                }
             }
 
             return filesSelected; // don't use "null means all files" shortcut since the list might need editing
         }
-
         // Compute the size of all files in the set on tape, consideing the block size
         public long ComputeTotalFileSizeOnTape(uint defaultBlockSize = 0)
         {
@@ -853,13 +891,16 @@ namespace TapeLibNET
         //  A null list means all files from the corresponding set
         public List<TapeFileInfo>?[] SelectFiles(bool incremental, List<string>? filePatterns = null)
         {
+            bool haveWildcards = filePatterns != null && TapeSetTOC.PatternsHaveWildcards(filePatterns);
+
             if (!incremental || !CurrentSetTOC.Incremental) // non-incremental case
             {
-                return CurrentSetTOC.ContinuedFromPrevVolume ?
-                    [ CurrentSetTOC.SelectFiles(filePatterns), m_setTOCs[m_currSetInternal - 1].SelectFiles(filePatterns) ] :
-                    [ CurrentSetTOC.SelectFiles(filePatterns) ];
+                return CurrentSetTOC.ContinuedFromPrevVolume && m_currSetInternal > 0 ?
+                    [ CurrentSetTOC.SelectFiles(filePatterns, haveWildcards),
+                        m_setTOCs[m_currSetInternal - 1].SelectFiles(filePatterns, haveWildcards) ] :
+                    [ CurrentSetTOC.SelectFiles(filePatterns, haveWildcards) ];
             }
-            else
+            else // go down the incremental chain
             {
                 int firstNonInc = LastNonIncSetInternal; // find the latest non-incremental set
 
@@ -871,7 +912,7 @@ namespace TapeLibNET
                 for (int i = m_currSetInternal; i >= firstNonInc; i--)
                 {
                     // use LinkedList since we will be removing elements from the middle
-                    var filesToCheck = m_setTOCs[i].SelectFilesAsLinkedList(filePatterns); // never returns null
+                    var filesToCheck = m_setTOCs[i].SelectFilesAsLinkedList(filePatterns, haveWildcards); // never returns null
 
                     // now remove all files that are already selected in the newer sets
                     //  iterate over filesToCheck backwards since we will be removing elements

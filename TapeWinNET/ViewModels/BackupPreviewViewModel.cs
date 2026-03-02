@@ -112,7 +112,6 @@ public class BackupPreviewViewModel : ViewModelBase
         foreach (var file in fileList)
         {
             var item = new BackupPreviewFileItem(file);
-            item.PropertyChanged += FileItem_PropertyChanged;
             Files.Add(item);
         }
 
@@ -170,19 +169,18 @@ public class BackupPreviewViewModel : ViewModelBase
 
     #region Private Methods
 
-    private void FileItem_PropertyChanged(object? sender, PropertyChangedEventArgs e)
-    {
-        if (e.PropertyName == nameof(BackupPreviewFileItem.IsSelected))
-        {
-            UpdateTotals();
-        }
-    }
+    /// <summary>Called from code-behind when a row checkbox is toggled.</summary>
+    public void OnItemCheckChanged() => UpdateTotals();
 
     private void UpdateTotals()
     {
         SelectedFileCount = Files.Count(f => f.IsSelected);
         SelectedTotalSize = Files.Where(f => f.IsSelected).Sum(f => f.Size);
 
+        // Sync the header checkbox without triggering its setter
+        _selectAll = Files.Count > 0 && SelectedFileCount == Files.Count;
+
+        OnPropertyChanged(nameof(SelectAll));
         OnPropertyChanged(nameof(TotalFileCount));
         OnPropertyChanged(nameof(TotalFileCountDisplay));
         OnPropertyChanged(nameof(SelectedFileCount));
@@ -199,7 +197,6 @@ public class BackupPreviewViewModel : ViewModelBase
         var toRemove = Files.Where(f => f.IsSelected).ToList();
         foreach (var file in toRemove)
         {
-            file.PropertyChanged -= FileItem_PropertyChanged;
             Files.Remove(file);
         }
         UpdateTotals();

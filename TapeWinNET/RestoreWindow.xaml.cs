@@ -14,4 +14,7 @@ public partial class RestoreWindow : Window
         InitializeComponent();
         DataContext = viewModel;
     }
+
+    private void ItemCheckBox_Changed(object sender, RoutedEventArgs e)
+        => (DataContext as RestoreViewModel)?.OnItemCheckChanged();
 }

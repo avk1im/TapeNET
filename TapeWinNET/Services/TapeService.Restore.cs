@@ -143,7 +143,7 @@ public partial class TapeService
                     if (mode == RestoreMode.Restore && !string.IsNullOrEmpty(targetDirectory))
                         logInfoSub($"Target directory: {targetDirectory}");
                     if (filePatterns != null && filePatterns.Count > 0)
-                        logInfoSub($"File patterns: {string.Join(", ", filePatterns)}");
+                        logInfoSub($"File patterns ({filePatterns.Count:N0}): {JoinTruncated(filePatterns, ", ", 256)}");
 
                     // Create progress handler
                     var progressHandler = new GuiRestoreProgressHandler(

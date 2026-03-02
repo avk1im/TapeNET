@@ -225,11 +225,30 @@
                         <ListView ItemsSource="{Binding FileList}"
                                   SelectedItem="{Binding SelectedFile}"
                                   GridViewColumnHeader.Click="GridViewColumnHeader_Click"
+                                  CheckBox.Checked="FileCheckBox_Changed"
+                                  CheckBox.Unchecked="FileCheckBox_Changed"
                                   VirtualizingPanel.IsVirtualizing="True"
                                   VirtualizingPanel.VirtualizationMode="Recycling"
                                   Visibility="{Binding IsFileTableVisible, Converter={StaticResource BoolToVis}}">
                             <ListView.View>
                                 <GridView>
+                                    <!-- Checkbox column for file-level restore selection -->
+                                    <GridViewColumn Width="28">
+                                        <GridViewColumn.HeaderTemplate>
+                                            <DataTemplate>
+                                                <CheckBox IsChecked="{Binding DataContext.AreAllFilesChecked,
+                                                                      RelativeSource={RelativeSource AncestorType=Window}}"
+                                                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                          ToolTip="Select / deselect all files"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.HeaderTemplate>
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox IsChecked="{Binding IsCheckedForRestore, Mode=TwoWay}"
+                                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
                                     <!-- Icon column for files -->
                                     <GridViewColumn Width="30">
                                         <GridViewColumn.CellTemplate>
@@ -256,6 +275,8 @@
                         <ListView ItemsSource="{Binding BackupSetList}"
                                   SelectedItem="{Binding SelectedBackupSet}"
                                   GridViewColumnHeader.Click="GridViewColumnHeader_Click"
+                                  CheckBox.Checked="BackupSetCheckBox_Changed"
+                                  CheckBox.Unchecked="BackupSetCheckBox_Changed"
                                   VirtualizingPanel.IsVirtualizing="True"
                                   VirtualizingPanel.VirtualizationMode="Recycling"
                                   Visibility="{Binding IsBackupSetTableVisible, Converter={StaticResource BoolToVis}}"
@@ -451,10 +472,14 @@
                      x:Name="LogListBox"
                      FontFamily="Consolas"
                      FontSize="11"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     HorizontalContentAlignment="Stretch"
                      Style="{StaticResource VirtualizedListBoxStyle}">
                 <ListBox.ItemTemplate>
                     <DataTemplate DataType="{x:Type converters:LogEntry}">
-                        <TextBlock Text="{Binding DisplayText}">
+                        <TextBlock Text="{Binding DisplayText}"
+                                   TextTrimming="CharacterEllipsis"
+                                   ToolTip="{Binding DisplayText}">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Style.Triggers>

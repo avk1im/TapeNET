@@ -715,5 +715,39 @@ public partial class TapeService : IDisposable
 
     #endregion
 
+    #region Private Helpers
+
+    /// <summary>
+    /// Joins list items with a separator, stopping early once <paramref name="maxLength"/> is reached.
+    /// Appends "… (+N more)" when truncated.
+    /// </summary>
+    private static string JoinTruncated(List<string> items, string separator, int maxLength)
+    {
+        if (items.Count == 0)
+            return string.Empty;
+
+        var sb = new System.Text.StringBuilder(Math.Min(maxLength + 64, items.Count * 20));
+        int count = 0;
+
+        foreach (var item in items)
+        {
+            if (count > 0)
+            {
+                if (sb.Length + separator.Length + item.Length > maxLength)
+                {
+                    sb.Append($"… (+{items.Count - count:N0} more)");
+                    return sb.ToString();
+                }
+                sb.Append(separator);
+            }
+            sb.Append(item);
+            count++;
+        }
+
+        return sb.ToString();
+    }
+
+    #endregion
+
     // GuiBackupProgressHandler helper class is in TapeService.Backup.cs
 }

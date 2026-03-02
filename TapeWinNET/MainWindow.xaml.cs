@@ -137,5 +137,13 @@ namespace TapeWinNET
                 _viewModel.NavigateToBackupSetCommand.Execute(null);
             }
         }
+
+        // Routed event handlers for row checkbox changes — bubble up from any CheckBox in the ListView.
+        // Zero per-item subscriptions; refreshes the header "select all" checkbox.
+        private void FileCheckBox_Changed(object sender, RoutedEventArgs e)
+            => _viewModel.OnFileCheckChanged();
+
+        private void BackupSetCheckBox_Changed(object sender, RoutedEventArgs e)
+            => _viewModel.OnBackupSetCheckChanged();
     }
 }

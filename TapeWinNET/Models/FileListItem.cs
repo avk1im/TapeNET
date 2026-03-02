@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO;
 using System.Windows.Media.Imaging;
 
@@ -8,7 +9,7 @@ using TapeLibNET;
 
 namespace TapeWinNET.Models;
 
-public class FileListItem(TapeFileInfo fileInfo, bool showFullPath)
+public class FileListItem(TapeFileInfo fileInfo, bool showFullPath) : INotifyPropertyChanged
 {
     private static BitmapSource? _fileIcon;
     private static bool _iconLoaded;
@@ -59,4 +60,20 @@ public class FileListItem(TapeFileInfo fileInfo, bool showFullPath)
     public long Block => _fileInfo.Block;
 
     public TapeFileInfo FileInfo => _fileInfo;
+
+    private bool _isCheckedForRestore;
+    public bool IsCheckedForRestore
+    {
+        get => _isCheckedForRestore;
+        set
+        {
+            if (_isCheckedForRestore != value)
+            {
+                _isCheckedForRestore = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsCheckedForRestore)));
+            }
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 }
