@@ -72,6 +72,17 @@ public partial class TapeService : IDisposable
     public TapeTOC? TOC => _toc;
 
     /// <summary>
+    /// Indicates whether the current TOC was loaded from a file rather than from tape.
+    /// When true, the media content may be accessible but the on-tape TOC is missing or corrupt.
+    /// </summary>
+    public bool IsTOCFromFile { get; private set; }
+
+    /// <summary>
+    /// Full path of the TOC file when <see cref="IsTOCFromFile"/> is true, null otherwise.
+    /// </summary>
+    public string? TOCFilePath { get; private set; }
+
+    /// <summary>
     /// Returns the current tape agent if an operation is in progress, null otherwise.
     /// Use to check/set IsAbortRequested during backup or restore operations.
     /// </summary>
@@ -242,6 +253,8 @@ public partial class TapeService : IDisposable
                     }
 
                     _toc = _agent.TOC;
+                    IsTOCFromFile = false;
+                    TOCFilePath = null;
                     LogOk($"TOC restored with {_toc.Count} backup set(s)");
                     LogTOCInfo();
                     Status($"TOC loaded: {_toc.Count} backup set(s)");
@@ -298,6 +311,8 @@ public partial class TapeService : IDisposable
                     }
 
                     _toc = _agent.TOC;
+                    IsTOCFromFile = false;
+                    TOCFilePath = null;
                     LogOk($"Initial TOC created: {description}");
                     Status("Initial TOC created");
                     return true;
@@ -337,6 +352,8 @@ public partial class TapeService : IDisposable
                     _agent?.Dispose();
                     _agent = null;
                     _toc = null;
+                    IsTOCFromFile = false;
+                    TOCFilePath = null;
 
                     if (!_drive.UnloadMedia())
                     {
@@ -354,6 +371,116 @@ public partial class TapeService : IDisposable
                     LastError = ex.Message;
                     LogErr($"Exception ejecting media: {ex.Message}");
                     return false;
+                }
+            }
+        });
+    }
+
+    /// <summary>
+    /// Imports a TOC from a file and applies it as the current TOC.
+    /// Use when the on-tape TOC is missing or corrupt and a TOC file is available.
+    /// Only requires the drive to be open (media need not be loaded).
+    /// </summary>
+    /// <param name="filePath">Full path to the .tapetoc file.</param>
+    /// <returns>True if the TOC was imported and validated successfully.</returns>
+    public Task<bool> ImportTOCFromFileAsync(string filePath)
+    {
+        return Task.Run(() =>
+        {
+            lock (_lock)
+            {
+                if (_drive == null || !_drive.IsDriveOpen)
+                {
+                    LastError = "Drive not open";
+                    return false;
+                }
+
+                try
+                {
+                    LogInfo($"Importing TOC from file: {filePath}");
+                    Status("Importing TOC from file...");
+
+                    _agent?.Dispose();
+                    _agent = new TapeFileAgent(_drive, null);
+
+                    if (!_agent.LoadTOCFromFile(filePath))
+                    {
+                        LastError = _agent.LastErrorMessage;
+                        LogErr($"Couldn't import TOC from file. Error: {LastError}");
+                        return false;
+                    }
+
+                    _toc = _agent.TOC;
+                    IsTOCFromFile = true;
+                    TOCFilePath = filePath;
+                    LogOk($"TOC imported from file with {_toc.Count} backup set(s)");
+                    LogTOCInfo();
+                    LogWarn("TOC imported from a file — on-tape TOC may be missing or corrupt");
+                    LogWarnSub("Adding New Backup Sets disabled");
+                    Status($"TOC from file: {_toc.Count} backup set(s)");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    LastError = ex.Message;
+                    LogErr($"Exception importing TOC from file: {ex.Message}");
+                    return false;
+                }
+                finally
+                {
+                    _agent?.Dispose();
+                    _agent = null;
+                }
+            }
+        });
+    }
+
+    /// <summary>
+    /// Exports the current TOC to a file. Can be used as a safety copy for any media.
+    /// </summary>
+    /// <param name="filePath">Full path to the .tapetoc file to create.</param>
+    /// <returns>True if the TOC was exported successfully.</returns>
+    public Task<bool> ExportTOCToFileAsync(string filePath)
+    {
+        return Task.Run(() =>
+        {
+            lock (_lock)
+            {
+                if (_toc == null)
+                {
+                    LastError = "No TOC loaded";
+                    return false;
+                }
+
+                try
+                {
+                    LogInfo($"Exporting TOC to file: {filePath}");
+                    Status("Exporting TOC to file...");
+
+                    _agent?.Dispose();
+                    _agent = new TapeFileAgent(_drive!, _toc);
+
+                    if (!_agent.SaveTOCToFile(filePath))
+                    {
+                        LastError = _agent.LastErrorMessage;
+                        LogErr($"Couldn't export TOC to file. Error: {LastError}");
+                        return false;
+                    }
+
+                    LogOk($"TOC exported to file: {filePath}");
+                    Status("TOC exported to file");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    LastError = ex.Message;
+                    LogErr($"Exception exporting TOC to file: {ex.Message}");
+                    return false;
+                }
+                finally
+                {
+                    _agent?.Dispose();
+                    _agent = null;
                 }
             }
         });
@@ -496,6 +623,31 @@ public partial class TapeService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Invalidates the cached TOC and disposes any active agent.
+    /// Use before re-reading the TOC to ensure fresh data from tape.
+    /// Returns false if an operation is currently in progress (lock held).
+    /// </summary>
+    public bool Reset()
+    {
+        if (!Monitor.TryEnter(_lock))
+            return false;
+
+        try
+        {
+            _agent?.Dispose();
+                _agent = null;
+                _toc = null;
+                IsTOCFromFile = false;
+                TOCFilePath = null;
+                return true;
+        }
+        finally
+        {
+            Monitor.Exit(_lock);
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -556,7 +708,7 @@ public partial class TapeService : IDisposable
         {
             int setIndex = _toc.SetIndexToAlt(alt); // this also converts from alt to regular index
             var setTOC = _toc[setIndex];
-            LogInfoSub($"Set {setIndex} | {alt}: {setTOC.Description} - {setTOC.Count} files" +
+            LogInfoSub($"Set #{setIndex} | {alt}: {setTOC.Description} - {setTOC.Count} files" +
                 (setTOC.Incremental ? " [Incremental]" : ""));
         }
     }

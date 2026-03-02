@@ -167,11 +167,11 @@ namespace TapeLibNET
             if (tfis == null) // null means restore all files
                 return RestoreFilesFromCurrentSet(ignoreFailures, fileNotify);
 
-            NotifyBatchStartStatistics(fileNotify, tfis.Count);
+            NotifyBatchStart(fileNotify, tfis.Count);
 
             if (!BeginReadContentForCurrentSet()) // start conent reading mode in tape manager so that tape positioning works correctly
             {
-                NotifyBatchEndStatistics(fileNotify, 0, tfis.Count, 0);
+                NotifyBatchEnd(fileNotify);
                 m_logger.LogWarning("Failed to begin reading content in {Method}", nameof(RestoreFilesFromCurrentSet));
                 return false;
             }
@@ -179,9 +179,6 @@ namespace TapeLibNET
 
             bool overallSuccess = true;
             FileFailedAction fileFailedAction;
-            int filesProcessed = 0;
-            int filesFailed = 0;
-            long bytesProcessed = BytesRestored;
             LastFileSkipped = false;
 
             if (Navigator.FmksMode)
@@ -196,7 +193,6 @@ namespace TapeLibNET
                     fileFailedAction = FileFailedAction.Skip; // reset to skip to avoid infinite loop
 
                     var tfi = tfis[index];
-                    filesProcessed++;
 
                     if (tfi == null || !tfi.IsValid)
                     {
@@ -204,7 +200,7 @@ namespace TapeLibNET
                         goto FAILURE;
                     }
 
-                    m_logger.LogTrace("Restoring file #{Number} >{File}< at index {Index}", filesProcessed, tfi.FileDescr.FullName, index);
+                    m_logger.LogTrace("Restoring file #{Number} >{File}< at index {Index}", _stats.FilesProcessed + 1, tfi.FileDescr.FullName, index);
 
                     int moveBy = index - lastIndex;
                     if (LastFileSkipped || moveBy != 0) // optimization: even though MoveToNextFilemark() will ignore moves by 0, it still takes time
@@ -225,7 +221,7 @@ namespace TapeLibNET
 
                     // success
                     m_logger.LogTrace("File >{File}< restored ok", tfi.FileDescr.FullName);
-                    
+
                     continue;
 
                 FAILURE:
@@ -235,8 +231,7 @@ namespace TapeLibNET
 
                         if (Navigator.MoveToNextContentFilemark(-1)) // FIXME: should we move by -2? and then by +1?
                         {
-                            // retry the same file without incrementing filesProcessed
-                            filesProcessed--; // don't doublecount
+                            StatsUndoFailure(); // don't double-count
                             goto RETRY;
                         }
                         else
@@ -247,8 +242,7 @@ namespace TapeLibNET
                     }
 
                     overallSuccess = false;
-                    filesFailed++;
-                    
+
                     if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
                         continue;
                     else
@@ -265,16 +259,14 @@ namespace TapeLibNET
                 RETRY:
                     fileFailedAction = FileFailedAction.Skip; // reset to skip to avoid infinite loop
 
-                    filesProcessed++;
-
                     if (tfi == null || !tfi.IsValid)
                     {
                         m_logger.LogWarning("Invalid file info in {Method}", nameof(RestoreFilesFromCurrentSet));
                         goto FAILURE;
                     }
 
-                    m_logger.LogTrace("Restoring file #{Number} >{File}< at block {Block}", filesProcessed, tfi.FileDescr.FullName, tfi.Block);
-                    
+                    m_logger.LogTrace("Restoring file #{Number} >{File}< at block {Block}", _stats.FilesProcessed + 1, tfi.FileDescr.FullName, tfi.Block);
+
                     // Optimization: determine if we're at the next tfi so that we can skip moving the tape
                     int index = (lastIndex >= 0)? TOC.CurrentSetTOC.IndexOf(tfi, lastIndex) : TOC.CurrentSetTOC.IndexOf(tfi);
 
@@ -296,7 +288,7 @@ namespace TapeLibNET
                         m_logger.LogWarning("Failed to restore file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
                         goto FAILURE;
                     }
- 
+
                     // success
                     lastFileFailed = false;
                     m_logger.LogTrace("File >{File}< restored ok", tfi.FileDescr.FullName);
@@ -308,13 +300,11 @@ namespace TapeLibNET
                    if (fileFailedAction == FileFailedAction.Retry && tfi != null && tfi.IsValid)
                    {
                         m_logger.LogTrace("Retrying file >{File}< as per file failed action", tfi.FileDescr.FullName);
-                        // retry the same file without incrementing filesProcessed
-                        filesProcessed--; // don't doublecount
+                        StatsUndoFailure(); // don't double-count
                         goto RETRY;
                    }
 
                     overallSuccess = false;
-                    filesFailed++;
 
                     if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
                         continue;
@@ -323,16 +313,15 @@ namespace TapeLibNET
                 }
             }
 
-            bytesProcessed = BytesRestored - bytesProcessed;
-            NotifyBatchEndStatistics(fileNotify, filesProcessed, filesFailed, bytesProcessed);
+            NotifyBatchEnd(fileNotify);
 
             return overallSuccess;
-        } // RestoreFilesFromCurrentSet(List<TapeFileInfo>)
+        }
 
         // Restore ALL files from the current set
         private bool RestoreFilesFromCurrentSet(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
-            NotifyBatchStartStatistics(fileNotify, TOC.CurrentSetTOC.Count);
+            NotifyBatchStart(fileNotify, TOC.CurrentSetTOC.Count);
 
             if (!BeginReadContentForCurrentSet())
             {
@@ -343,9 +332,6 @@ namespace TapeLibNET
 
             bool overallSuccess = true;
             FileFailedAction fileFailedAction;
-            int filesProcessed = 0;
-            int filesFailed = 0;
-            long bytesProcessed = BytesRestored;
             bool lastFileFailed = false;
             LastFileSkipped = false;
 
@@ -354,15 +340,13 @@ namespace TapeLibNET
             RETRY:
                 fileFailedAction = FileFailedAction.Skip; // reset to skip to avoid infinite loop
 
-                filesProcessed++;
-
                 if (tfi == null || !tfi.IsValid)
                 {
                     m_logger.LogWarning("Invalid file info in {Method}", nameof(RestoreFilesFromCurrentSet));
                     goto FAILURE;
                 }
 
-                m_logger.LogTrace("Restoring file #{Number} >{File}<", filesProcessed, tfi.FileDescr.FullName);
+                m_logger.LogTrace("Restoring file #{Number} >{File}<", _stats.FilesProcessed + 1, tfi.FileDescr.FullName);
 
                 // in non-Fmks mode, we might need to move tape if last file was skipped or failed
                 if (!Navigator.FmksMode && (LastFileSkipped || lastFileFailed))
@@ -395,7 +379,7 @@ namespace TapeLibNET
 
                     if (!Navigator.FmksMode || Navigator.MoveToNextContentFilemark(-1)) // FIXME: should we move by -2? and then by +1?
                     {
-                        filesProcessed--; // don't doublecount
+                        StatsUndoFailure(); // don't double-count
                         goto RETRY;
                     }
                     else
@@ -406,7 +390,6 @@ namespace TapeLibNET
                 }
 
                 overallSuccess = false;
-                filesFailed++;
 
                 if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
                     continue;
@@ -414,11 +397,10 @@ namespace TapeLibNET
                     break;
             }
 
-            bytesProcessed = BytesRestored - bytesProcessed;
-            NotifyBatchEndStatistics(fileNotify, filesProcessed, filesFailed, bytesProcessed);
+            NotifyBatchEnd(fileNotify);
 
             return overallSuccess;
-        } // RestoreFilesFromCurrentSet()
+        }
 
 
         // The context with which we can resume restore on the previous volume
@@ -432,9 +414,6 @@ namespace TapeLibNET
             internal int filesSelectedIdx = filesSelected.Length - 1; // we'll be counting down
 
             internal bool overallSuccess = true;
-            //internal int filesProcessed = 0;
-            //internal int filesFailed = 0;
-            //internal long bytesProcessed = 0L;
         }
         private TapeRestoreContext? MultiVolumeContext { get; set; } = null;
         public bool CanResumeFromAnotherVolume => MultiVolumeContext != null;
@@ -526,7 +505,7 @@ namespace TapeLibNET
                 if (!result)
                 {
                     rc.overallSuccess = false;
-                    if (!ignoreFailures)
+                    if (!ignoreFailures || IsAbortRequested)
                         break;
                 }
             }
@@ -548,6 +527,7 @@ namespace TapeLibNET
         {
             m_logger.LogTrace("Starting restoring pre-selected files from current set #{Set} down", TOC.CurrentSetIndex);
 
+            _stats.Reset();
             return RestoreFilesFromCurrentSetDownInt(filesSelected, ignoreFailures, fileNotify);
         } // RestoreFilesFromCurrentSetDown(List<string>)
 
@@ -557,6 +537,7 @@ namespace TapeLibNET
         {
             m_logger.LogTrace("Starting restoring files from current set #{Set}", TOC.CurrentSetIndex);
 
+            _stats.Reset();
             return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filePatterns), ignoreFailures, fileNotify);
         } // RestoreFilesFromCurrentSet(List<string>)
 
@@ -565,6 +546,7 @@ namespace TapeLibNET
         {
             m_logger.LogTrace("Starting incrementally restoring files from current set #{Set}", TOC.CurrentSetIndex);
 
+            _stats.Reset();
             return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, filePatterns), ignoreFailures, fileNotify);
         } // RestoreFilesFromCurrentSetInc(List<string>)
 
@@ -572,6 +554,7 @@ namespace TapeLibNET
         {
             m_logger.LogTrace("Starting restoring all files from current set #{Set}", TOC.CurrentSetIndex);
 
+            _stats.Reset();
             return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filePatterns: null), ignoreFailures, fileNotify);
         } // RestoreAllFilesFromCurrentSet()
 
@@ -580,6 +563,7 @@ namespace TapeLibNET
         {
             m_logger.LogTrace("Starting incrementally restoring all files from current set #{Set}", TOC.CurrentSetIndex);
 
+            _stats.Reset();
             return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, filePatterns: null), ignoreFailures, fileNotify);
         } // RestoreAllFilesFromCurrentSetInc()
 
@@ -603,6 +587,8 @@ namespace TapeLibNET
         {
             if (setIndexes.Count == 0)
                 return true;
+
+            _stats.Reset();
 
             // Normalize to standard indexes, deduplicate, sort from newest to oldest
             var stdIndexes = setIndexes
@@ -639,17 +625,20 @@ namespace TapeLibNET
     {
         protected override bool RestoreFileCore(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
         {
+            // Double-buffer tape reads to overlap with file writes
+            using var buffered = new BufferedTapeReadStream(rstream, Drive.BlockSize);
+
             if (hasher == null)
             {
                 using var dstFileStream = fileInfo.Create(); // fileInfo.Open(FileMode.OpenOrCreate, FileAccess.Write);
-                rstream.CopyTo(dstFileStream);
+                buffered.CopyTo(dstFileStream);
             }
             else
             {
                 var dstFileStream = fileInfo.Create(); // fileInfo.Open(FileMode.OpenOrCreate, FileAccess.Write);
                 // Notice we can attach hasher to either rstream or dstFileStream -- we go for dstFileStream since it may get disposed
                 using var hashingStream = new HashingStream(dstFileStream, hasher, ownInner: true); // will dispose dstFileStream
-                rstream.CopyTo(hashingStream);
+                buffered.CopyTo(hashingStream);
             }
 
             return base.RestoreFileCore(fileInfo, rstream, hasher);
@@ -688,17 +677,20 @@ namespace TapeLibNET
     {
         protected override bool RestoreFileCore(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
         {
+            // Double-buffer tape reads to overlap with file reads and comparison
+            using var buffered = new BufferedTapeReadStream(rstream, Drive.BlockSize);
+
             if (hasher == null)
             {
                 using var dstFileStream = fileInfo.OpenRead();
-                if (!rstream.CompareTo(dstFileStream))
+                if (!buffered.CompareTo(dstFileStream))
                     return false;
             }
             else
             {
                 using var dstFileStream = fileInfo.OpenRead();
-                // Since we're checking the tape stream (rstream), we should attach the hasher to it
-                using var hashingStream = new HashingStream(rstream, hasher, ownInner: false); // do NOT dispose rstream!
+                // Since we're checking the tape stream, attach the hasher to the buffered tape read
+                using var hashingStream = new HashingStream(buffered, hasher, ownInner: false); // do NOT dispose buffered!
                 if (!dstFileStream.CompareTo(hashingStream))
                     return false;
             }

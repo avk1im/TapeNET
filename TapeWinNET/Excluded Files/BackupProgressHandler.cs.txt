@@ -1,0 +1,93 @@
+using System.Windows;
+using TapeLibNET;
+
+namespace TapeWinNET.Services;
+
+/// <summary>
+/// Handles backup progress events and user interaction via ITapeFileNotifiable.
+/// Bridges between the TapeFileBackupAgent and the WPF UI.
+/// All statistics come from the library via <see cref="TapeFileStatistics"/>.
+/// </summary>
+/// <remarks>
+/// Creates a new BackupProgressHandler.
+/// </remarks>
+/// <param name="logMessage">Action to log a message to the UI.</param>
+/// <param name="updateProgress">Action to update progress (filesProcessed, filesTotal, bytesProcessed).</param>
+/// <param name="showFileError">Function to show file error dialog. Returns FileFailedAction.</param>
+public class BackupProgressHandler(
+    Action<string> logMessage,
+    Action<int, int, long> updateProgress,
+    Func<string, string, FileFailedAction> showFileError) : ITapeFileNotifiable
+{
+    private readonly Action<string> _logMessage = logMessage;
+    private readonly Action<int, int, long> _updateProgress = updateProgress;
+    private readonly Func<string, string, FileFailedAction> _showFileError = showFileError;
+
+    // Convenience accessors — always reflect the latest library snapshot
+    public int FilesProcessed { get; private set; }
+    public int FilesTotal { get; private set; }
+    public int FilesFailed { get; private set; }
+    public int FilesSucceeded { get; private set; }
+    public long BytesProcessed { get; private set; }
+
+    private void Sync(in TapeFileStatistics stats)
+    {
+        FilesTotal = stats.FilesTotal;
+        FilesProcessed = stats.FilesProcessed;
+        FilesSucceeded = stats.FilesSucceeded;
+        FilesFailed = stats.FilesFailed;
+        BytesProcessed = stats.BytesProcessed;
+    }
+
+    public void BatchStart(int setIndex, in TapeFileStatistics stats)
+    {
+        Sync(stats);
+        _logMessage($"iii Starting backup of {stats.FilesTotal:N0} files to set #{setIndex}...");
+        _updateProgress(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
+    }
+
+    public void BatchEnd(int setIndex, in TapeFileStatistics stats)
+    {
+        Sync(stats);
+        _logMessage($"iii Backup batch complete: {stats.FilesSucceeded:N0} succeeded, {stats.FilesFailed:N0} failed");
+        _updateProgress(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
+    }
+
+    public bool PreProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
+    {
+        _logMessage($" ii Backing up: {fileDescr.FullName}");
+        return true;
+    }
+
+    public bool PostProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
+    {
+        Sync(stats);
+        _logMessage($"vvv OK: {System.IO.Path.GetFileName(fileDescr.FullName)} ({Windows.Win32.System.SystemServices.Helpers.BytesToString(fileDescr.Length)})");
+        _updateProgress(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
+        return true;
+    }
+
+    public FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex, in TapeFileStatistics stats)
+    {
+        Sync(stats);
+        _logMessage($"!!! Failed: {fileDescr.FullName}");
+        _logMessage($"    Error: {ex.Message}");
+        _updateProgress(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
+
+        // Show error dialog via callback - the callback handles sticky choices (e.g. Skip All)
+        var result = _showFileError(fileDescr.FullName, ex.Message);
+
+        if (result == FileFailedAction.Abort)
+        {
+            _logMessage("!!! Backup aborted by user");
+        }
+
+        return result;
+    }
+
+    public void OnFileSkipped(TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
+    {
+        Sync(stats);
+        _logMessage($" -- Skipped: {System.IO.Path.GetFileName(fileDescr.FullName)}");
+    }
+}

@@ -63,7 +63,10 @@ public partial class MainViewModel : ViewModelBase
         OpenVirtualDriveCommand = new RelayCommand(ShowOpenVirtualDriveWindow, _ => !IsBusy);
         SetIoSpeedCommand = new RelayCommand(SetIoSpeed, _ => IsIoSpeedEnabled);
         RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => !IsBusy && _tapeService.IsDriveOpen);
+        RereadTOCCommand = new AsyncRelayCommand(RereadTOCAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         EjectCommand = new AsyncRelayCommand(EjectAsync, () => !IsBusy && _tapeService.IsMediaLoaded);
+        ExportTOCCommand = new AsyncRelayCommand(ExportTOCAsync, () => !IsBusy && _tapeService.TOC != null);
+        ImportTOCCommand = new AsyncRelayCommand(ImportTOCAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         NavigateToBackupSetCommand = new RelayCommand(NavigateToSelectedBackupSet, _ => SelectedBackupSet != null);
         ExitCommand = new RelayCommand(Exit);
         AboutCommand = new RelayCommand(ShowAbout);
@@ -268,7 +271,10 @@ public partial class MainViewModel : ViewModelBase
     public ICommand OpenVirtualDriveCommand { get; }
     public ICommand SetIoSpeedCommand { get; }
     public ICommand RefreshCommand { get; }
+    public ICommand RereadTOCCommand { get; }
     public ICommand EjectCommand { get; }
+    public ICommand ExportTOCCommand { get; }
+    public ICommand ImportTOCCommand { get; }
     // NewBackupCommand and AbortBackupCommand are in MainViewModel.Backup.cs
     // RestoreCommand, ValidateCommand, VerifyCommand, AbortRestoreCommand are in MainViewModel.Restore.cs
     public ICommand NavigateToBackupSetCommand { get; }
@@ -335,9 +341,22 @@ public partial class MainViewModel : ViewModelBase
             success = await _tapeService.RestoreTOCAsync();
             if (!success)
             {
-                MessageBox.Show($"Failed to read TOC.\n\n{_tapeService.LastError}",
-                    "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return false;
+                var result = MessageBox.Show(
+                    $"Failed to read TOC from media.\n\n{_tapeService.LastError}\n\n" +
+                    "If you have a saved TOC file (.tapetoc), you can load it to access the media content.\n\n" +
+                    "Would you like to load a TOC from file?",
+                    "TOC Read Failed", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    success = await ImportTOCFromFileAsync();
+                    if (!success)
+                        return false;
+                }
+                else
+                {
+                    return false;
+                }
             }
         }
         finally
@@ -385,6 +404,21 @@ public partial class MainViewModel : ViewModelBase
             IsBusy = false;
             BusyMessage = string.Empty;
         }
+    }
+
+    private async Task RereadTOCAsync()
+    {
+        if (!_tapeService.IsDriveOpen)
+            return;
+
+        if (!_tapeService.Reset())
+        {
+            MessageBox.Show("Cannot reload while an operation is in progress.",
+                "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        await RefreshAsync();
     }
 
     private async Task RefreshAsync()
@@ -446,6 +480,120 @@ public partial class MainViewModel : ViewModelBase
             IsBusy = false;
             BusyMessage = string.Empty;
         }
+    }
+
+    private async Task ExportTOCAsync()
+    {
+        var toc = _tapeService.TOC;
+        if (toc == null)
+            return;
+
+        var suggestedName = BuildTOCFileName(toc);
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = "Export TOC to File",
+            Filter = $"Tape TOC files (*{TapeFileAgent.TOCFileExtension})|*{TapeFileAgent.TOCFileExtension}|All files (*.*)|*.*",
+            FileName = suggestedName,
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            OverwritePrompt = true,
+        };
+
+        if (dialog.ShowDialog() != true)
+            return;
+
+        IsBusy = true;
+        BusyMessage = "Exporting TOC...";
+
+        try
+        {
+            var success = await _tapeService.ExportTOCToFileAsync(dialog.FileName);
+            if (success)
+            {
+                MessageBox.Show($"TOC exported successfully to:\n{dialog.FileName}",
+                    "Export TOC", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            else
+            {
+                MessageBox.Show($"Failed to export TOC.\n\n{_tapeService.LastError}",
+                    "Export TOC", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+        finally
+        {
+            IsBusy = false;
+            BusyMessage = string.Empty;
+        }
+    }
+
+    private async Task ImportTOCAsync()
+    {
+        if (_tapeService.TOC != null)
+        {
+            var result = MessageBox.Show(
+                "This media already has a valid TOC loaded.\n\n" +
+                "Are you sure you want to replace it with a TOC from file?",
+                "Import TOC", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+
+            if (result != MessageBoxResult.Yes)
+                return;
+        }
+
+        if (await ImportTOCFromFileAsync())
+        {
+            UpdateTreeFromTOC(_tapeService.DriveNumber);
+            SelectMostRecentSet();
+        }
+    }
+
+    /// <summary>
+    /// Shows an OpenFileDialog for .tapetoc files and loads the selected TOC.
+    /// Shared by the Import TOC menu command and the TOC-load-failure recovery path.
+    /// </summary>
+    private async Task<bool> ImportTOCFromFileAsync()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Import TOC from File",
+            Filter = $"Tape TOC files (*{TapeFileAgent.TOCFileExtension})|*{TapeFileAgent.TOCFileExtension}|All files (*.*)|*.*",
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+        };
+
+        if (dialog.ShowDialog() != true)
+            return false;
+
+        IsBusy = true;
+        BusyMessage = "Importing TOC from file...";
+
+        try
+        {
+            var success = await _tapeService.ImportTOCFromFileAsync(dialog.FileName);
+            if (!success)
+            {
+                MessageBox.Show($"Failed to import TOC from file.\n\n{_tapeService.LastError}",
+                    "Import TOC", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            return success;
+        }
+        finally
+        {
+            IsBusy = false;
+            BusyMessage = string.Empty;
+        }
+    }
+
+    private static string BuildTOCFileName(TapeTOC toc)
+    {
+        var invalidChars = System.IO.Path.GetInvalidFileNameChars();
+        var sanitized = new string(
+            (toc.Description ?? "tape").Select(c => invalidChars.Contains(c) ? '_' : c).ToArray()).Trim();
+
+        if (string.IsNullOrWhiteSpace(sanitized))
+            sanitized = "tape";
+
+        if (sanitized.Length > 60)
+            sanitized = sanitized[..60];
+
+        return $"{sanitized}_vol{toc.Volume}{TapeFileAgent.TOCFileExtension}";
     }
 
     #endregion
@@ -521,7 +669,10 @@ public partial class MainViewModel : ViewModelBase
         TreeItems.Add(driveItem);
 
         // Create tape/volume node
-        var tapeItem = TapeTreeItemViewModel.CreateTapeItem(toc, driveItem);
+        var tocFileName = _tapeService.IsTOCFromFile
+            ? System.IO.Path.GetFileName(_tapeService.TOCFilePath ?? "file")
+            : null;
+        var tapeItem = TapeTreeItemViewModel.CreateTapeItem(toc, driveItem, tocFileName);
         driveItem.Children.Add(tapeItem);
 
         // Add backup sets (from latest to oldest for consistency with alt index display)
@@ -536,7 +687,9 @@ public partial class MainViewModel : ViewModelBase
         }
 
         WindowTitle = $"TapeWin - {toc.Description ?? $"Volume #{toc.Volume}"}";
-        StatusMessage = $"Loaded {totalSets} backup set(s)";
+        StatusMessage = _tapeService.IsTOCFromFile
+            ? $"\u26a0 TOC: {System.IO.Path.GetFileName(_tapeService.TOCFilePath)} | Loaded {totalSets} backup set(s)"
+            : $"Loaded {totalSets} backup set(s)";
     }
 
     private void SelectMostRecentSet()
@@ -643,7 +796,10 @@ public partial class MainViewModel : ViewModelBase
         PropertyList.Add(new PropertyItem("Used", Helpers.BytesToStringLong(used)));
         PropertyList.Add(new PropertyItem("Remaining", Helpers.BytesToStringLong(remaining)));
         PropertyList.Add(new PropertyItem("TOC Placement", 
-            _tapeService.HasInitiatorPartition ? "Partition" : "Set"));
+            _tapeService.IsTOCFromFile
+                ? $"File: {_tapeService.TOCFilePath}"
+                : _tapeService.HasInitiatorPartition ? "Partition" : "Set",
+            isHighlighted: _tapeService.IsTOCFromFile));
         PropertyList.Add(new PropertyItem("Volume", $"#{toc.Volume}"));
         PropertyList.Add(new PropertyItem("Continued on Next Volume", 
             toc.ContinuedOnNextVolume ? "Yes" : "No"));
@@ -659,7 +815,10 @@ public partial class MainViewModel : ViewModelBase
             BackupSetList.Add(new BackupSetListItem(setTOC, setIndex, alt, setTOC.Volume == currentVolume));
         }
 
-        StatusMessage = $"Media: {toc.Description ?? "Volume #" + toc.Volume} - {toc.Count} backup set(s)";
+        var mediaName = toc.Description ?? "Volume #" + toc.Volume;
+        StatusMessage = _tapeService.IsTOCFromFile
+            ? $"\u26a0 TOC: {System.IO.Path.GetFileName(_tapeService.TOCFilePath)} | Media: {mediaName} - {toc.Count} backup set(s)"
+            : $"Media: {mediaName} - {toc.Count} backup set(s)";
     }
 
     private void LoadBackupSetInfo(int setIndex)
@@ -975,14 +1134,26 @@ public partial class MainViewModel : ViewModelBase
             success = await _tapeService.RestoreTOCAsync();
             if (!success)
             {
-                // For new media, TOC read failure is expected if initial TOC creation failed
                 if (!request.IsCreateNew)
                 {
-                    MessageBox.Show(
-                        $"Failed to read virtual TOC.\n\n{_tapeService.LastError}",
-                        "Warning",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Warning);
+                    // Offer file-based TOC load for existing virtual media
+                    var result = MessageBox.Show(
+                        $"Failed to read TOC from virtual media.\n\n{_tapeService.LastError}\n\n" +
+                        "If you have a saved TOC file (.tapetoc), you can load it to access the media content.\n\n" +
+                        "Would you like to load a TOC from file?",
+                        "TOC Read Failed", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+
+                    if (result == MessageBoxResult.Yes)
+                    {
+                        success = await ImportTOCFromFileAsync();
+                        if (success)
+                        {
+                            UpdateTreeFromTOC(0);
+                            SelectMostRecentSet();
+                            NotifyIoSpeedChanged();
+                            return;
+                        }
+                    }
                 }
                 UpdateTreeForDriveOnly(0);
                 return;

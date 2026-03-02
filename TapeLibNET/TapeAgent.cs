@@ -25,23 +25,49 @@ namespace TapeLibNET
 
     public enum FileFailedAction { Skip, Retry, Abort }
 
+    /// <summary>
+    /// Cumulative file-operation statistics maintained by the tape agent.
+    /// A snapshot is passed to every <see cref="ITapeFileNotifiable"/> callback so
+    /// the caller never needs to track its own counters.
+    /// <para>Invariant: <c>FilesProcessed == FilesSucceeded + FilesFailed + FilesSkipped</c></para>
+    /// </summary>
+    public struct TapeFileStatistics
+    {
+        /// <summary>Total files expected for the entire operation (across all batches/volumes).</summary>
+        public int FilesTotal;
+        /// <summary>Files finished (succeeded + failed + skipped). Retried files are counted once.</summary>
+        public int FilesProcessed;
+        /// <summary>Files completed without error.</summary>
+        public int FilesSucceeded;
+        /// <summary>Files that hit an error and were not retried.</summary>
+        public int FilesFailed;
+        /// <summary>Files skipped (by pre-processor, incremental, or user choice).</summary>
+        public int FilesSkipped;
+        /// <summary>Total logical bytes of succeeded files.</summary>
+        public long BytesProcessed;
+
+        /// <summary>Reset all counters to zero.</summary>
+        public void Reset() => this = default;
+    }
+
     public interface ITapeFileNotifiable
     {
-        public void BatchStartStatistics(int set, int filesFound);
-        public void BatchEndStatistics(int set, int filesProcessed, int filesFailed, long bytesProcessed);
+        void BatchStart(int setIndex, in TapeFileStatistics stats);
+        void BatchEnd(int setIndex, in TapeFileStatistics stats);
 
-        // The following methos may throw TapeOperationAbortException to abort the entire operation (not just the file)
+        // The following methods may throw TapeAbortRequestedException to abort the entire operation (not just the file)
 
-        // called for a chance to modify the fileDescr before restoring the file. If returns false, skip the file
-        public bool PreProcessFile(ref TapeFileDescriptor fileDescr);
-        
-        // called for a chance to modify the fileDescr after restoring the file. If returns false, skip applying fileDescr
-        public bool PostProcessFile(ref TapeFileDescriptor fileDescr);
-        
-        // called when an error occurs during file restore
-        //  returns how the caller wishes to proceed: skip file, retry the same file, abort entire operation
-        public FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex);
-        public void OnFileSkipped(TapeFileDescriptor fileDescr);
+        /// <summary>Called before processing a file. Return false to skip the file.</summary>
+        bool PreProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats);
+
+        /// <summary>Called after successfully processing a file. Return false to skip applying file attributes.</summary>
+        bool PostProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats);
+
+        /// <summary>Called when a file error occurs. Returns how to proceed.</summary>
+        FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex, in TapeFileStatistics stats);
+
+        /// <summary>Called when a file is skipped.</summary>
+        void OnFileSkipped(TapeFileDescriptor fileDescr, in TapeFileStatistics stats);
     }
 
 
@@ -59,6 +85,15 @@ namespace TapeLibNET
 
         public long BytesBackedup { get; protected set; } = 0L;
         public long BytesRestored { get; protected set; } = 0L;
+
+        /// <summary>
+        /// Cumulative file-operation statistics. Updated by the Notify* methods;
+        /// a snapshot is passed to every <see cref="ITapeFileNotifiable"/> callback.
+        /// </summary>
+        protected TapeFileStatistics _stats;
+
+        /// <summary>Read-only reference to the current statistics.</summary>
+        public ref readonly TapeFileStatistics Statistics => ref _stats;
 
         // checked periodically if the entire operation should be aborted
         public bool IsAbortRequested { get; set; }
@@ -204,7 +239,8 @@ namespace TapeLibNET
                 if (wstream == null)
                     return false;
 
-                ThrowIfAbortRequested($"after openning TOC in {nameof(BackupTOCCore)}");
+                // NOTE: no ThrowIfAbortRequested here — TOC writing is a critical
+                // data-integrity operation and must never be aborted.
 
                 var hasher = CreateHasher(c_hashForTOC);
 
@@ -420,38 +456,151 @@ namespace TapeLibNET
 
         #endregion // *** TOC Restore ***
 
+        #region *** TOC File I/O ***
+
+        /// <summary>
+        /// File extension for emergency TOC files.
+        /// </summary>
+        public const string TOCFileExtension = ".tapetoc";
+
+        /// <summary>
+        /// Saves the current TOC to a file using the same serialization format and CRC
+        /// as the on-tape copy. The file is self-validating via the appended hash.
+        /// </summary>
+        /// <param name="filePath">Full path to the file to create/overwrite.</param>
+        /// <returns>True if the TOC was saved successfully.</returns>
+        public bool SaveTOCToFile(string filePath)
+        {
+            try
+            {
+                m_logger.LogTrace("Saving TOC to file: {Path}", filePath);
+
+                using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None);
+                var hasher = CreateHasher(c_hashForTOC);
+
+                if (hasher == null)
+                {
+                    var serializer = new TapeSerializer(fs);
+                    serializer.Serialize(TOC);
+                }
+                else
+                {
+                    using var hashingStream = new HashingStream(fs, hasher, ownInner: false);
+                    var serializer = new TapeSerializer(hashingStream);
+                    serializer.Serialize(TOC);
+                    serializer.Serialize(hasher.GetCurrentHash());
+                }
+
+                m_logger.LogTrace("TOC saved to file successfully");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                m_logger.LogWarning("Exception {Exception} saving TOC to file {Path}", ex, filePath);
+                SetError(ex, $"Failed to save TOC to file: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Loads a TOC from a file previously saved by <see cref="SaveTOCToFile"/>.
+        /// The file format and CRC validation are identical to the on-tape format.
+        /// On success, the loaded TOC replaces the current <see cref="TOC"/> content.
+        /// </summary>
+        /// <param name="filePath">Full path to the TOC file to load.</param>
+        /// <returns>True if the TOC was loaded and validated successfully.</returns>
+        public bool LoadTOCFromFile(string filePath)
+        {
+            try
+            {
+                m_logger.LogTrace("Loading TOC from file: {Path}", filePath);
+
+                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                var hasher = CreateHasher(c_hashForTOC);
+
+                if (hasher == null)
+                {
+                    var deserializer = new TapeDeserializer(fs);
+                    var toc = deserializer.Deserialize<TapeTOC>();
+                    if (toc == null)
+                    {
+                        m_logger.LogWarning("Failed to deserialize TOC from file {Path}", filePath);
+                        SetError(WIN32_ERROR.ERROR_INVALID_DATA, "Failed to deserialize TOC from file");
+                        return false;
+                    }
+                    TOC.CopyFrom(toc);
+                }
+                else
+                {
+                    using var hashingStream = new HashingStream(fs, hasher, ownInner: false);
+                    var deserializer = new TapeDeserializer(hashingStream);
+                    var toc = deserializer.Deserialize<TapeTOC>();
+                    if (toc == null)
+                    {
+                        m_logger.LogWarning("Failed to deserialize TOC from file {Path}", filePath);
+                        SetError(WIN32_ERROR.ERROR_INVALID_DATA, "Failed to deserialize TOC from file");
+                        return false;
+                    }
+
+                    byte[] hashBytesCheck1 = hasher.GetCurrentHash();
+                    byte[]? hashBytesCheck2 = deserializer.DeserializeBytes(hasher.HashLengthInBytes);
+                    if (!(hashBytesCheck2?.SequenceEqual(hashBytesCheck1) ?? false))
+                    {
+                        m_logger.LogWarning("CRC check failed for TOC file {Path}", filePath);
+                        SetError(WIN32_ERROR.ERROR_CRC, $"CRC check failed for TOC file. Hasher: {c_hashForTOC}");
+                        return false;
+                    }
+
+                    TOC.CopyFrom(toc);
+                }
+
+                m_logger.LogTrace("TOC loaded from file successfully: {Sets} set(s)", TOC.Count);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                m_logger.LogWarning("Exception {Exception} loading TOC from file {Path}", ex, filePath);
+                SetError(ex, $"Failed to load TOC from file: {ex.Message}");
+                return false;
+            }
+        }
+
+        #endregion // *** TOC File I/O ***
+
         #region *** Notification wrappers ***
 
         // Safe calls to ITapeFileNotifiable
         //  All exceptions are caught and logged as warnings -- except for TapeAbortRequestedException, which is rethrown
+        //  The _stats struct is updated BEFORE the callback is invoked, so the callback always sees current totals.
 
-        protected void NotifyBatchStartStatistics(ITapeFileNotifiable? fileNotify, int filesFound)
+        protected void NotifyBatchStart(ITapeFileNotifiable? fileNotify, int filesFound)
         {
+            _stats.FilesTotal += filesFound;
             if (fileNotify != null)
             {
                 try
                 {
-                    fileNotify.BatchStartStatistics(TOC.CurrentSetIndex, filesFound);
+                    fileNotify.BatchStart(TOC.CurrentSetIndex, in _stats);
                 }
                 catch (Exception ex2)
                 {
                     // in statistics notification, we don't rethrow TapeAbortRequestedException
-                    m_logger.LogWarning("Exception {Exception} while notifying batch start statistics", ex2);
+                    m_logger.LogWarning("Exception {Exception} while notifying batch start", ex2);
                 }
             }
         }
-        protected void NotifyBatchEndStatistics(ITapeFileNotifiable? fileNotify, int filesProcessed, int filesFailed, long bytesProcessed)
+        protected void NotifyBatchEnd(ITapeFileNotifiable? fileNotify)
         {
             if (fileNotify != null)
             {
                 try
                 {
-                    fileNotify.BatchEndStatistics(TOC.CurrentSetIndex, filesProcessed, filesFailed, bytesProcessed);
+                    fileNotify.BatchEnd(TOC.CurrentSetIndex, in _stats);
                 }
                 catch (Exception ex2)
                 {
                     // in statistics notification, we don't rethrow TapeAbortRequestedException
-                    m_logger.LogWarning("Exception {Exception} while notifying batch end statistics", ex2);
+                    m_logger.LogWarning("Exception {Exception} while notifying batch end", ex2);
                 }
             }
         }
@@ -462,7 +611,7 @@ namespace TapeLibNET
             {
                 try
                 {
-                    return fileNotify.PreProcessFile(ref fileDescr);
+                    return fileNotify.PreProcessFile(ref fileDescr, in _stats);
                 }
                 catch (TapeAbortRequestedException ex1)
                 {
@@ -478,15 +627,19 @@ namespace TapeLibNET
         }
         protected bool NotifyPostProcessFile(ITapeFileNotifiable? fileNotify, ref TapeFileDescriptor fileDescr)
         {
+            _stats.FilesProcessed++;
+            _stats.FilesSucceeded++;
+            _stats.BytesProcessed += fileDescr.Length;
+
             if (fileNotify != null)
             {
                 try
                 {
-                    return fileNotify.PostProcessFile(ref fileDescr);
+                    return fileNotify.PostProcessFile(ref fileDescr, in _stats);
                 }
                 catch (TapeAbortRequestedException ex1)
                 {
-                    m_logger.LogInformation("Abort requested while notifying pre-process file: {Exception}", ex1);
+                    m_logger.LogInformation("Abort requested while notifying post-process file: {Exception}", ex1);
                     throw; // rethrow to abort the entire operation
                 }
                 catch (Exception ex2)
@@ -497,23 +650,27 @@ namespace TapeLibNET
             return true;
         }
 
-        // Returns true to signal abort of entire operation
-        //  Since we may call this method outside of try block, do not rethrow TapeAbortRequestedException here --
-        //  return the action request instead
+        // Returns the desired action. Does NOT rethrow TapeAbortRequestedException —
+        //  returns FileFailedAction.Abort instead, so the caller can handle it.
+        //  Sets IsAbortRequested when the result is Abort, so outer loops and the
+        //  service layer can detect the abort without relying solely on the return value.
         protected FileFailedAction NotifyFileFailed(ITapeFileNotifiable? fileNotify, TapeFileDescriptor fileDescr, Exception ex)
         {
+            _stats.FilesProcessed++;
+            _stats.FilesFailed++;
+
             FileFailedAction result = FileFailedAction.Skip;
 
             if (fileNotify != null)
             {
                 try
                 {
-                    result = fileNotify.OnFileFailed(fileDescr, ex);
+                    result = fileNotify.OnFileFailed(fileDescr, ex, in _stats);
                 }
                 catch (TapeAbortRequestedException ex1)
                 {
-                    m_logger.LogInformation("Abort requested while notifying pre-process file: {Exception}", ex1);
-                    return FileFailedAction.Abort; // signal to abort the entire operation
+                    m_logger.LogInformation("Abort requested while notifying file failure: {Exception}", ex1);
+                    result = FileFailedAction.Abort;
                 }
                 catch (Exception ex2)
                 {
@@ -522,19 +679,25 @@ namespace TapeLibNET
                 }
             }
 
+            if (result == FileFailedAction.Abort)
+                IsAbortRequested = true;
+
             return result;
         }
         protected void NotifyFileSkipped(ITapeFileNotifiable? fileNotify, TapeFileDescriptor fileDescr)
         {
+            _stats.FilesProcessed++;
+            _stats.FilesSkipped++;
+
             if (fileNotify != null)
             {
                 try
                 {
-                    fileNotify.OnFileSkipped(fileDescr);
+                    fileNotify.OnFileSkipped(fileDescr, in _stats);
                 }
                 catch (TapeAbortRequestedException ex1)
                 {
-                    m_logger.LogInformation("Abort requested while notifying pre-process file: {Exception}", ex1);
+                    m_logger.LogInformation("Abort requested while notifying file skipped: {Exception}", ex1);
                     throw; // rethrow to abort the entire operation
                 }
                 catch (Exception ex2)
@@ -542,6 +705,16 @@ namespace TapeLibNET
                     m_logger.LogWarning("Exception {Exception} while notifying file skipped", ex2);
                 }
             }
+        }
+
+        /// <summary>
+        /// Undoes the last failure recorded by <see cref="NotifyFileFailed"/>.
+        /// Call when a file will be retried (user chose Retry, or end-of-media → next volume).
+        /// </summary>
+        protected void StatsUndoFailure()
+        {
+            _stats.FilesProcessed--;
+            _stats.FilesFailed--;
         }
 
         #endregion // *** Notification wrappers ***

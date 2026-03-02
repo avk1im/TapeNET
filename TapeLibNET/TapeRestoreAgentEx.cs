@@ -101,6 +101,17 @@ namespace TapeLibNET
     } // class TapeFileNotifiableCollection
     */
 
+    /// <summary>
+    /// Extends <see cref="TapeFileRestoreAgent"/> to handle:
+    ///  - target directory,
+    ///  - recursion into subdirectories, and
+    ///  - existing files.
+    /// </summary>
+    /// <param name="drive"></param>
+    /// <param name="targetDir"></param>
+    /// <param name="recurseSubdirs"></param>
+    /// <param name="handleExisting"></param>
+    /// <param name="legacyTOC"></param>
     public class TapeFileRestoreAgentEx(TapeDrive drive,
         string? targetDir, bool recurseSubdirs, TapeHowToHandleExisting handleExisting,
         TapeTOC? legacyTOC = null) : TapeFileRestoreAgent(drive, legacyTOC)

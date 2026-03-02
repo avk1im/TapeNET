@@ -218,6 +218,12 @@ public partial class VirtualTapeDriveBackend
     /// Reads the odometer from the current media, applies fixed seek overhead,
     /// throttles at the given rate, and resets the odometer.
     /// Convenience method for use in backend positioning operations.
+    /// <para>
+    /// Pauses the IO stopwatch during movement sleeps to prevent seek time
+    /// from being counted as "free" IO elapsed time. Without this, the hundreds
+    /// of milliseconds spent in seek sleeps would create IO credit that absorbs
+    /// future IO debt, effectively disabling the IO throttle.
+    /// </para>
     /// </summary>
     private void ThrottleMovementFromOdometer(long rateBytesPerSecond)
     {
@@ -225,17 +231,27 @@ public partial class VirtualTapeDriveBackend
             return;
 
         long distance = m_currentMedia.OdometerBytes;
+        if (distance <= 0)
+            return;
+
+        // Pause IO stopwatch so that movement sleep time does not
+        // accumulate as "free" elapsed IO time (Stop/Start preserves accumulated value)
+        bool ioWasRunning = m_ioStopwatch.IsRunning;
+        if (ioWasRunning)
+            m_ioStopwatch.Stop();
 
         // Apply fixed mechanical overhead (accel + decel + settle)
-        if (distance > 0 && m_seekOverheadMs > 0)
+        if (m_seekOverheadMs > 0)
             Thread.Sleep(m_seekOverheadMs);
 
         // Apply distance-based transport time
-        if (distance > 0 && rateBytesPerSecond > 0)
-        {
+        if (rateBytesPerSecond > 0)
             ThrottleMovement(distance, rateBytesPerSecond);
-            m_currentMedia.ResetOdometer();
-        }
+
+        m_currentMedia.ResetOdometer();
+
+        if (ioWasRunning)
+            m_ioStopwatch.Start();
     }
 
     /// <summary>

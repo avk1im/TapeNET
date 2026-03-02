@@ -167,15 +167,11 @@ namespace TapeLibNET
         private struct TapeBackupContext(List<string> fileList, bool ignoreFailures, ITapeFileNotifiable? fileNotify)
         {
             internal readonly List<string> fileList = fileList;
-            //internal readonly bool recurseSubdirs = recurseSubdirs; // don't need this since we have complete file list
             internal readonly bool ignoreFailures = ignoreFailures;
             internal readonly ITapeFileNotifiable? fileNotify = fileNotify;
 
             internal int fileIndex = 0;
             internal bool overallSuccess = true;
-            internal int filesProcessed = 0;
-            internal int filesFailed = 0;
-            internal long bytesProcessed = 0L;
         }
         private TapeBackupContext? MultiVolumeContext { get; set; } = null;
         public bool CanResumeToNextVolume => MultiVolumeContext != null;
@@ -221,7 +217,7 @@ namespace TapeLibNET
 
             if (!BeginWriteContentForCurrentSet(newSet)) // start conent writing mode in tape manager so that tape positioning works correctly
             {
-                NotifyBatchEndStatistics(bc.fileNotify, 0, bc.fileList.Count, 0);
+                NotifyBatchEnd(bc.fileNotify);
                 m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSet));
                 return false;
             }
@@ -233,7 +229,6 @@ namespace TapeLibNET
             for (; bc.fileIndex < bc.fileList.Count; bc.fileIndex++) // use for int instead if foreach to know the index for multi-volume backup
             {
                 var fileName = bc.fileList[bc.fileIndex]; // use an additional variable since we might modify file name
-                bc.filesProcessed++; // filesProcessed is the global multi-volume index (1-based); fileIndex is the local index (0-based)
 
                 FileInfo fileInfo = new (fileName);
                 TapeFileDescriptor fileDescr = new (fileInfo); // the constructor will check if the file exists
@@ -248,7 +243,7 @@ namespace TapeLibNET
                         if (!NotifyPreProcessFile(bc.fileNotify, ref fileDescr))
                         {
                             NotifyFileSkipped(bc.fileNotify, fileDescr);
-                            m_logger.LogTrace("File #{Number} >{File}< skipped per pre-processor request", bc.filesProcessed, fileName);
+                            m_logger.LogTrace("File #{Number} >{File}< skipped per pre-processor request", _stats.FilesProcessed, fileName);
                             continue; // not a failure, yet post-processing not called
                         }
                         // the pre-processor may have modified the file name => re-create fileInfo
@@ -257,17 +252,17 @@ namespace TapeLibNET
                     }
 
                     if (!fileInfo.Exists)
-                        throw new FileNotFoundException($"File #{bc.filesProcessed} not found", fileName);
+                        throw new FileNotFoundException($"File not found", fileName);
 
                     fileDescr.FillFrom(fileInfo); // fill in the rest of the file descriptor from the file info, now that we know it exists
 
                     m_logger.LogTrace("Backing up file #{Number} >{File}< of length {Length}",
-                        bc.filesProcessed, fileName, Helpers.BytesToString(fileInfo.Length));
+                        _stats.FilesProcessed + 1, fileName, Helpers.BytesToString(fileInfo.Length));
 
                     if (TOC.CurrentSetTOC.Incremental && TOC.IsFileUptodateInc(fileInfo))
                     {
                         NotifyFileSkipped(bc.fileNotify, fileDescr);
-                        m_logger.LogTrace("File #{Number} >{File}< found up-to-date in an incremental set -> skipping", bc.filesProcessed, fileName);
+                        m_logger.LogTrace("File #{Number} >{File}< found up-to-date in an incremental set -> skipping", _stats.FilesProcessed, fileName);
                         continue; // not a failure, yet post-processing not called
                     }
 
@@ -276,37 +271,33 @@ namespace TapeLibNET
                     // success
                     NotifyPostProcessFile(bc.fileNotify, ref fileDescr);
 
-                    m_logger.LogTrace("File #{Number} >{File}< backed up ok", bc.filesProcessed, fileName);
+                    m_logger.LogTrace("File #{Number} >{File}< backed up ok", _stats.FilesProcessed, fileName);
                 }
                 catch (Exception ex)
                 {
                     SetError(ex);
 
                     m_logger.LogWarning("{Method}: File #{Number} >{File}< backup failed. Exception: {Ex}",
-                        nameof(BackupFilesToCurrentSet), bc.filesProcessed, fileName, ex);
+                        nameof(BackupFilesToCurrentSet), _stats.FilesProcessed + 1, fileName, ex);
 
                     if (LastError == (uint)WIN32_ERROR.ERROR_END_OF_MEDIA || ex is IOException ioex && ioex.HResult == (int)WIN32_ERROR.ERROR_END_OF_MEDIA
                         || LastError == (uint)WIN32_ERROR.ERROR_NO_DATA_DETECTED || ex is IOException ioex1 && ioex1.HResult == (int)WIN32_ERROR.ERROR_NO_DATA_DETECTED)
                     {
                         // Set up continuation on the next volume for multi-volume backup
-                        m_logger.LogTrace("Setting up multi-volume backup from file #{Number} >{File}<", bc.filesProcessed, bc.fileList[bc.fileIndex]);
-                        bc.bytesProcessed += BytesBackedupInCurrentSet; // update statistics
+                        m_logger.LogTrace("Setting up multi-volume backup from file #{Number} >{File}<", _stats.FilesProcessed + 1, bc.fileList[bc.fileIndex]);
                         BytesBackedupMarker = BytesBackedup;
-
-                        // Do not count the failed file in multi-volumen context -- as it will be re-tried on next volume
-                        bc.filesProcessed--;
-                        // However, for the current batch statistics do count and report the file as failed
-                        bc.filesProcessed++;
-                        bc.filesFailed++;
 
                         // Make sure to set MultiVolumeContext before calling NotifyFileFailed()
                         //  so that CanResumeToNextVolume indicates true already
                         MultiVolumeContext = bc;
 
+                        // Report the file as failed (stats updated by NotifyFileFailed),
+                        //  then undo the failure since the file will be re-tried on next volume
                         if (NotifyFileFailed(bc.fileNotify, fileDescr, ex) == FileFailedAction.Abort)
                             break;
-                        // it makes no sense to retry the file if the media is at the end
-                        NotifyBatchEndStatistics(bc.fileNotify, bc.filesProcessed, bc.filesFailed, bc.bytesProcessed);
+                        StatsUndoFailure(); // the file will be re-tried on next volume
+
+                        NotifyBatchEnd(bc.fileNotify);
 
                         TOC.ContinuedOnNextVolume = true;
                         Debug.Assert(CanResumeToNextVolume); // we're ready to continue with multi-volume backup
@@ -314,7 +305,6 @@ namespace TapeLibNET
                     }
 
                     bc.overallSuccess = false;
-                    bc.filesFailed++;
 
                     var retryAction = NotifyFileFailed(bc.fileNotify, fileDescr, ex);
                     if (retryAction == FileFailedAction.Abort)
@@ -322,7 +312,7 @@ namespace TapeLibNET
                     else if (retryAction == FileFailedAction.Retry)
                     {
                         bc.fileIndex--; // decrement to retry same file
-                        bc.filesProcessed--; // don't double-count
+                        StatsUndoFailure(); // don't double-count
                         continue;
                     }
                     // else Skip - continue to next file
@@ -333,14 +323,13 @@ namespace TapeLibNET
 
             } // foreach fileName
 
-            bc.bytesProcessed += BytesBackedupInCurrentSet; // update statistics
             BytesBackedupMarker = BytesBackedup;
-            NotifyBatchEndStatistics(bc.fileNotify, bc.filesProcessed, bc.filesFailed, bc.bytesProcessed);
+            NotifyBatchEnd(bc.fileNotify);
 
             MultiVolumeContext = null; // clear multi-volume context -- if we got here we're done with [multi-volume] backup
 
             return bc.overallSuccess;
-        } // BackupFilesToCurrentSet()
+        }
 
         public bool BackupFilesToCurrentSet(bool newSet, List<string> fileAndDirectoryPatterns, bool recurseSubdirs, bool ignoreFailures = true,
             ITapeFileNotifiable? fileNotify = null)
@@ -359,7 +348,8 @@ namespace TapeLibNET
                 return true; // no files found to back up -> treat as success
             }
 
-            NotifyBatchStartStatistics(fileNotify, fileList.Count);
+            _stats.Reset();
+            NotifyBatchStart(fileNotify, fileList.Count);
 
             m_logger.LogTrace("Starting backing up {Count} files to current set #{Set}", fileList.Count, TOC.CurrentSetIndex);
             if (TOC.CurrentSetTOC.Incremental)

@@ -32,6 +32,9 @@ public partial class TapeService
     /// <param name="volumeFullCallback">Callback when current volume is full. Returns true to continue on next volume, false to end backup.</param>
     /// <param name="insertMediaCallback">Callback after media ejection, prompting user to insert new media. Returns true when ready, false to end backup.</param>
     /// <param name="currentFileCallback">Callback to report current file being processed.</param>
+    /// <param name="emergencyTocSaveCallback">Callback when all attempts to save TOC to tape fail.
+    /// Receives a suggested file path for emergency TOC export; returns the chosen path, or null to skip.
+    /// If null, no emergency export is attempted.</param>
     /// <remarks>
     /// To abort a backup in progress, set Agent.IsAbortRequested = true.
     /// The backup agent is available via the Agent property during execution.
@@ -52,7 +55,8 @@ public partial class TapeService
         Func<string, string, FileFailedAction> fileErrorCallback,
         Func<int, int, int, int, long, bool> volumeFullCallback,
         Func<int, bool> insertMediaCallback,
-        Action<string> currentFileCallback)
+        Action<string> currentFileCallback,
+        Func<string, string?>? emergencyTocSaveCallback = null)
     {
         return Task.Run(() =>
         {
@@ -165,6 +169,7 @@ public partial class TapeService
                         fileErrorCallback);
 
                     // Execute backup loop (handles multi-volume)
+                    bool wasAborted = false;
                     do
                     {
                         Status($"Backing up files...");
@@ -174,6 +179,10 @@ public partial class TapeService
                             : listContainsPatterns ?
                                 agent.BackupFilesToCurrentSet(newSet, fileList, includeSubdirectories, ignoreFailures: true, progressHandler)
                                 : agent.BackupFileListToCurrentSet(newSet, fileList, ignoreFailures: true, progressHandler);
+
+                        // The agent catches TapeAbortRequestedException internally and returns false,
+                        // so we detect abort via the flag rather than catching the exception.
+                        wasAborted = agent.IsAbortRequested;
 
                         bool noFilesBackedUp = toc.CurrentSetTOC.Count == 0;
 
@@ -193,10 +202,15 @@ public partial class TapeService
                                 return;
                             }
                         }
-                        else // Backup had issues
+                        else // Backup had issues (including abort)
                         {
+                            if (wasAborted)
+                            {
+                                if (noFilesBackedUp)
+                                    toc.RemoveLastEmptySet();
+                            }
                             // Check for multi-volume continuation
-                            if (agent.CanResumeToNextVolume)
+                            else if (agent.CanResumeToNextVolume)
                             {
                                 logInfo($"Volume #{toc.Volume} is full - backup can continue to next volume");
 
@@ -231,8 +245,16 @@ public partial class TapeService
                         }
 
                         // Backup TOC
-                        Status("Saving TOC...");
-                        logInfo("Backing up TOC...");
+                        if (!wasAborted)
+                        {
+                            Status("Saving TOC...");
+                            logInfo("Backing up TOC...");
+                        }
+                        else
+                        {
+                            Status("Aborting — saving TOC...");
+                            logInfo("Abort requested — saving TOC to preserve media integrity...");
+                        }
 
                         if (!agent.BackupTOC())
                         {
@@ -241,10 +263,58 @@ public partial class TapeService
 
                             if (!agent.BackupTOC(enforce: true))
                             {
-                                throw new InvalidOperationException($"Couldn't enforce TOC backup: {agent.LastErrorMessage}");
-                            }
+                                logErr("Couldn't enforce TOC backup");
 
-                            logOk("Enforced TOC backup succeeded");
+                                if (emergencyTocSaveCallback != null)
+                                {
+                                    logInfo("Attempting to export TOC to file as emergency recovery...");
+                                    Status("Emergency TOC export...");
+
+                                    bool emergencySaved = false;
+                                    string suggestedPath = BuildEmergencyTocExportPath(toc);
+                                    // give the user two attempts to save the TOC to a file; break if user cancels
+                                    for (int attempt = 1; attempt <= 2 && !emergencySaved; attempt++)
+                                    {
+                                        string? chosenPath = emergencyTocSaveCallback(suggestedPath);
+
+                                        if (string.IsNullOrEmpty(chosenPath))
+                                        {
+                                            logErr("User declined emergency TOC export");
+                                            break;
+                                        }
+
+                                        if (agent.SaveTOCToFile(chosenPath))
+                                        {
+                                            logOk($"Emergency TOC exported to: {chosenPath}");
+                                            logInfoSub("This file can be used to recover access to the media content");
+                                            IsTOCFromFile = true;
+                                            TOCFilePath = chosenPath;
+                                            emergencySaved = true;
+                                        }
+                                        else
+                                        {
+                                            logErr($"Failed to export emergency TOC to file: {agent.LastErrorMessage}");
+                                            if (attempt < 2)
+                                                logInfoSub("You can try a different location...");
+                                        }
+                                    }
+
+                                    if (!emergencySaved)
+                                    {
+                                        throw new InvalidOperationException(
+                                            "TOC backup failed — media TOC is lost. " +
+                                            "The backed-up files are on the media but cannot be accessed without a TOC.");
+                                    }
+                                }
+                                else
+                                {
+                                    throw new InvalidOperationException($"Couldn't enforce TOC backup: {agent.LastErrorMessage}");
+                                }
+                            }
+                            else
+                            {
+                                logOk("Enforced TOC backup succeeded");
+                            }
                         }
                         else
                         {
@@ -253,14 +323,21 @@ public partial class TapeService
 
                         _toc = toc; // Update service TOC reference
 
-                        logOk($"Backed up {progressHandler.FilesSucceeded:N0} file(s), {Helpers.BytesToString(agent.BytesBackedup)}");
+                        // Log results for this volume
+                        logOk($"Backed up {progressHandler.FilesSucceeded:N0} file(s) of {progressHandler.FilesProcessed:N0}, {Helpers.BytesToString(agent.BytesBackedup)}");
+                        if (!result && progressHandler.FilesFailed > 0)
+                        {
+                            logFail($"{progressHandler.FilesFailed:N0} file(s) of {progressHandler.FilesProcessed:N0} failed to back up");
+                        }
                         logOkSub($"Remaining media capacity: {Helpers.BytesToStringLong(_drive.GetRemainingCapacity())}");
+
+                        // If backup was aborted, TOC has been saved — break out
+                        if (wasAborted)
+                            break;
 
                         // Check if we need to continue with multi-volume
                         if (!agent.CanResumeToNextVolume)
-                        {
                             break; // Done
-                        }
 
                         // Step 1: Ask user if they want to continue on a new volume
                         bool continueBackup = volumeFullCallback(
@@ -312,6 +389,13 @@ public partial class TapeService
 
                     } while (true);
 
+                    if (wasAborted)
+                    {
+                        logOk("TOC saved after abort");
+                        Status("Backup aborted");
+                        throw new TapeAbortRequestedException("User requested abort");
+                    }
+
                     Status("Backup complete");
                     logOk("Backup completed successfully");
                 }
@@ -337,105 +421,119 @@ public partial class TapeService
         });
     }
 
+    private static string BuildEmergencyTocExportPath(TapeTOC toc)
+    {
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var sanitized = new string(
+            (toc.Description ?? "tape").Select(c => invalidChars.Contains(c) ? '_' : c).ToArray()).Trim();
+
+        if (string.IsNullOrWhiteSpace(sanitized))
+            sanitized = "tape";
+
+        // Limit length to avoid path issues
+        if (sanitized.Length > 60)
+            sanitized = sanitized[..60];
+
+        var fileName = $"{sanitized}_vol{toc.Volume}_{DateTime.Now:yyyyMMdd_HHmmss}{TapeFileAgent.TOCFileExtension}";
+        var directory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        return Path.Combine(directory, fileName);
+    }
+
     #region Helper Classes
 
     /// <summary>
     /// Progress handler for GUI backup operations.
     /// Implements ITapeFileNotifiable to bridge between TapeFileBackupAgent and the UI.
+    /// All statistics come from the library via <see cref="TapeFileStatistics"/>.
     /// </summary>
-    private class GuiBackupProgressHandler : ITapeFileNotifiable
+    private class GuiBackupProgressHandler(
+        TapeFileAgent agent,
+        Action<LogEntry> logCallback,
+        Action<int, int, long> progressCallback,
+        Action<string> currentFileCallback,
+        Func<string, string, FileFailedAction> fileErrorCallback) : ITapeFileNotifiable
     {
-        private readonly TapeFileAgent _agent;
-        private readonly Action<LogEntry> _logCallback;
-        private readonly Action<int, int, long> _progressCallback;
-        private readonly Action<string> _currentFileCallback;
-        private readonly Func<string, string, FileFailedAction> _fileErrorCallback;
+        private readonly TapeFileAgent _agent = agent;
+        private readonly Action<LogEntry> _logCallback = logCallback;
+        private readonly Action<int, int, long> _progressCallback = progressCallback;
+        private readonly Action<string> _currentFileCallback = currentFileCallback;
+        private readonly Func<string, string, FileFailedAction> _fileErrorCallback = fileErrorCallback;
 
+        // Convenience accessors — always reflect the latest library snapshot
         public int FilesProcessed { get; private set; }
         public int FilesTotal { get; private set; }
         public int FilesFailed { get; private set; }
         public int FilesSucceeded { get; private set; }
         public long BytesProcessed { get; private set; }
 
-        public GuiBackupProgressHandler(
-            TapeFileAgent agent,
-            Action<LogEntry> logCallback,
-            Action<int, int, long> progressCallback,
-            Action<string> currentFileCallback,
-            Func<string, string, FileFailedAction> fileErrorCallback)
-        {
-            _agent = agent;
-            _logCallback = logCallback;
-            _progressCallback = progressCallback;
-            _currentFileCallback = currentFileCallback;
-            _fileErrorCallback = fileErrorCallback;
-        }
+        private bool _abortLogged;
 
         private void Log(WarningLevel level, string msg, bool sub = false)
             => _logCallback(new LogEntry(level, msg, sub, DateTime.Now));
+
+        private void Sync(in TapeFileStatistics stats)
+        {
+            FilesTotal = stats.FilesTotal;
+            FilesProcessed = stats.FilesProcessed;
+            FilesSucceeded = stats.FilesSucceeded;
+            FilesFailed = stats.FilesFailed;
+            BytesProcessed = stats.BytesProcessed;
+        }
 
         private void ThrowIfAbortRequested()
         {
             if (_agent.IsAbortRequested)
             {
-                Log(WarningLevel.Error, "Backup aborted by user");
+                if (!_abortLogged)
+                {
+                    _abortLogged = true;
+                    Log(WarningLevel.Warning, "Backup abort requested");
+                }
                 throw new TapeAbortRequestedException("User requested abort");
             }
         }
 
-        public void BatchStartStatistics(int set, int filesFound)
+        public void BatchStart(int setIndex, in TapeFileStatistics stats)
         {
-            FilesTotal = filesFound;
-            FilesProcessed = 0;
-            FilesFailed = 0;
-            FilesSucceeded = 0;
-            BytesProcessed = 0;
-
-            Log(WarningLevel.Info, $"Starting backup of {filesFound:N0} files to set #{set}...");
-            _progressCallback(0, filesFound, 0);
+            Sync(stats);
+            Log(WarningLevel.Info, $"Starting backup of {stats.FilesTotal:N0} files to set #{setIndex}...");
+            _progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
         }
 
-        public void BatchEndStatistics(int set, int filesProcessed, int filesFailed, long bytesProcessed)
+        public void BatchEnd(int setIndex, in TapeFileStatistics stats)
         {
-            FilesProcessed = filesProcessed;
-            FilesFailed = filesFailed;
-            BytesProcessed = bytesProcessed;
-
-            Log(WarningLevel.Info, $"Backup batch complete: {filesProcessed - filesFailed:N0} succeeded, {filesFailed:N0} failed");
-            _progressCallback(filesProcessed, FilesTotal, bytesProcessed);
+            Sync(stats);
+            Log(WarningLevel.Info, $"Backup batch complete: {stats.FilesSucceeded:N0} succeeded, {stats.FilesFailed:N0} failed");
+            _progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
         }
 
-        public bool PreProcessFile(ref TapeFileDescriptor fileDescr)
+        public bool PreProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
         {
             ThrowIfAbortRequested();
             _currentFileCallback(fileDescr.FullName);
             return true;
         }
 
-        public bool PostProcessFile(ref TapeFileDescriptor fileDescr)
+        public bool PostProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
         {
             ThrowIfAbortRequested();
-
-            FilesSucceeded++;
-            FilesProcessed++;
-            BytesProcessed += fileDescr.Length;
+            Sync(stats);
 
             Log(WarningLevel.Completed, $"{Path.GetFileName(fileDescr.FullName)} ({Helpers.BytesToString(fileDescr.Length)})");
-            _progressCallback(FilesProcessed, FilesTotal, BytesProcessed);
+            _progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
 
             return true;
         }
 
-        public FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex)
+        public FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex, in TapeFileStatistics stats)
         {
             ThrowIfAbortRequested();
-
-            FilesFailed++;
+            Sync(stats);
 
             Log(WarningLevel.Failed, $"Failed: {fileDescr.FullName}");
             Log(WarningLevel.Failed, $"Error: {ex.Message}", sub: true);
 
-            _progressCallback(FilesProcessed, FilesTotal, BytesProcessed);
+            _progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
 
             // Don't show file error dialog for end-of-media errors —
             // the multi-volume logic in BackupFilesToCurrentSet handles these
@@ -451,16 +549,21 @@ public partial class TapeService
 
             if (result == FileFailedAction.Abort)
             {
-                Log(WarningLevel.Error, "Backup aborted by user");
+                if (!_abortLogged)
+                {
+                    _abortLogged = true;
+                    Log(WarningLevel.Warning, "Backup abort requested");
+                }
                 throw new TapeAbortRequestedException("User requested abort");
             }
 
             return result;
         }
 
-        public void OnFileSkipped(TapeFileDescriptor fileDescr)
+        public void OnFileSkipped(TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
         {
             ThrowIfAbortRequested();
+            Sync(stats);
 
             Log(WarningLevel.None, $"Skipped: {Path.GetFileName(fileDescr.FullName)}", sub: true);
         }

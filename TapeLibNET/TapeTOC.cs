@@ -230,7 +230,7 @@ namespace TapeLibNET
             ContinuedFromPrevVolume = setTOC.ContinuedFromPrevVolume;
         }
         public string Description { get; set; } = string.Empty;
-        public DateTime CreationTime { get; init; } = DateTime.Now;
+        public DateTime CreationTime { get; internal set; } = DateTime.Now;
         public bool FmksMode { get; set; } = false;
         public uint BlockSize { get; set; } = 0;
         public DateTime LastSaveTime { get; internal set; } = DateTime.Now;
@@ -313,7 +313,7 @@ namespace TapeLibNET
             m_tapeFileInfos.Clear();
             m_tapeFileInfos.AddRange(toc.m_tapeFileInfos);
             Description = toc.Description;
-            // CreationTime = toc.CreationTime; // CreationTime is init only
+            CreationTime = toc.CreationTime;
             FmksMode = toc.FmksMode;
             BlockSize = toc.BlockSize;
             LastSaveTime = toc.LastSaveTime;
@@ -513,7 +513,7 @@ namespace TapeLibNET
 
         internal TypeUID GenerateUID() => m_nextUID++;
         public string Description { get; set; } = string.Empty;
-        public DateTime CreationTime { get; init; } = DateTime.Now;
+        public DateTime CreationTime { get; internal set; } = DateTime.Now;
         public DateTime LastSaveTime { get; internal set; } = DateTime.Now;
 
         public int Volume { get; internal set; } = 1; // volume indexing starts from 1
@@ -696,7 +696,7 @@ namespace TapeLibNET
 
             m_nextUID = toc.m_nextUID;
             Description = toc.Description;
-            // CreationTime = toc.CreationTime; // CreationTime is init only
+            CreationTime = toc.CreationTime;
             LastSaveTime = toc.LastSaveTime;
             Volume = toc.Volume;
             ContinuedOnNextVolume = toc.ContinuedOnNextVolume;

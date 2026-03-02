@@ -4,6 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
+        xmlns:models="clr-namespace:TapeWinNET.Models"
         xmlns:converters="clr-namespace:TapeWinNET.Converters"
         d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
         mc:Ignorable="d"
@@ -41,6 +42,9 @@
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding ItemType}" Value="Tape">
                                     <Setter Property="FontWeight" Value="SemiBold" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsTOCFromFile}" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource WarningFg.Failed}" />
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
@@ -109,6 +113,11 @@
                 <MenuItem Header="E_xit" Command="{Binding ExitCommand}" InputGestureText="Alt+F4"/>
             </MenuItem>
             <MenuItem Header="_Media">
+                <MenuItem Header="_Reread TOC" Command="{Binding RereadTOCCommand}"/>
+                <Separator/>
+                <MenuItem Header="E_xport TOC to File..." Command="{Binding ExportTOCCommand}"/>
+                <MenuItem Header="_Import TOC from File..." Command="{Binding ImportTOCCommand}"/>
+                <Separator/>
                 <MenuItem Header="_Eject" Command="{Binding EjectCommand}"/>
                 <Separator/>
                 <MenuItem Header="_Format..." IsEnabled="False" ToolTip="Coming soon"/>
@@ -181,6 +190,15 @@
                     <ListView ItemsSource="{Binding PropertyList}"
                               VirtualizingPanel.IsVirtualizing="True"
                               VirtualizingPanel.VirtualizationMode="Recycling">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsHighlighted}" Value="True">
+                                        <Setter Property="Foreground" Value="{StaticResource WarningFg.Failed}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ListView.ItemContainerStyle>
                         <ListView.View>
                             <GridView>
                                 <GridViewColumn Header="Property" Width="180"

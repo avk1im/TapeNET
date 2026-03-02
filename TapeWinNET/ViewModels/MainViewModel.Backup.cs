@@ -57,7 +57,7 @@ public partial class MainViewModel
     /// </summary>
     private void InitializeBackupCommands()
     {
-        NewBackupCommand = new RelayCommand(ShowNewBackupWindow, _ => !IsBusy && _tapeService.IsMediaLoaded);
+        NewBackupCommand = new RelayCommand(ShowNewBackupWindow, _ => !IsBusy && _tapeService.IsMediaLoaded && !_tapeService.IsTOCFromFile);
         AbortBackupCommand = new RelayCommand(AbortBackup, _ => IsBackupInProgress);
     }
 
@@ -392,6 +392,25 @@ public partial class MainViewModel
                         {
                             CurrentBackupFile = System.IO.Path.GetFileName(filePath);
                         });
+                    },
+                    // Emergency TOC export callback — when all tape TOC writes fail
+                    suggestedPath =>
+                    {
+                        string? chosenPath = null;
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            var dialog = new Microsoft.Win32.SaveFileDialog
+                            {
+                                Title = "Emergency TOC Export",
+                                Filter = $"Tape TOC files (*{TapeFileAgent.TOCFileExtension})|*{TapeFileAgent.TOCFileExtension}|All files (*.*)|*.*",
+                                FileName = System.IO.Path.GetFileName(suggestedPath),
+                                InitialDirectory = System.IO.Path.GetDirectoryName(suggestedPath) ?? "",
+                                OverwritePrompt = true,
+                            };
+                            if (dialog.ShowDialog() == true)
+                                chosenPath = dialog.FileName;
+                        });
+                        return chosenPath;
                     }
                 );
             });

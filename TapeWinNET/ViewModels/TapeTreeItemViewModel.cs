@@ -26,6 +26,7 @@ public class TapeTreeItemViewModel : ViewModelBase
     private TreeItemType _itemType;
     private object? _tag;
     private bool _isOnCurrentVolume = true;
+    private bool _isTOCFromFile;
 
     static TapeTreeItemViewModel()
     {
@@ -108,6 +109,16 @@ public class TapeTreeItemViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// When true on a Tape item, indicates the TOC was loaded from a file.
+    /// Drives warning display: red text, warning prefix in display name.
+    /// </summary>
+    public bool IsTOCFromFile
+    {
+        get => _isTOCFromFile;
+        set => SetProperty(ref _isTOCFromFile, value);
+    }
+
+    /// <summary>
     /// Additional data associated with this item (e.g., set index for BackupSet items)
     /// </summary>
     public object? Tag
@@ -135,17 +146,24 @@ public class TapeTreeItemViewModel : ViewModelBase
         };
     }
 
-    public static TapeTreeItemViewModel CreateTapeItem(TapeTOC toc, TapeTreeItemViewModel parent)
+    public static TapeTreeItemViewModel CreateTapeItem(TapeTOC toc, TapeTreeItemViewModel parent,
+        string? tocFileName = null)
     {
+        bool fromFile = tocFileName != null;
+        string baseName = string.IsNullOrEmpty(toc.Description)
+            ? $"Volume #{toc.Volume}"
+            : $"Volume #{toc.Volume}: {toc.Description}";
+
         var item = new TapeTreeItemViewModel
         {
-            DisplayName = string.IsNullOrEmpty(toc.Description) 
-                ? $"Volume #{toc.Volume}" 
-                : $"Volume #{toc.Volume}: {toc.Description}",
+            DisplayName = fromFile
+                ? $"{baseName}  ⚠ TOC: {tocFileName}"
+                : baseName,
             ItemType = TreeItemType.Tape,
             Tag = toc.Volume,
             Parent = parent,
-            IsExpanded = true
+            IsExpanded = true,
+            IsTOCFromFile = fromFile
         };
         return item;
     }

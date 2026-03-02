@@ -1715,15 +1715,28 @@ delegate void FlagHandler(List<string> values);
 abstract class OnFileEventProcessor(TapeTOC toc, bool quiteMode, string processingName = "Processing") : ITapeFileNotifiable
 {
     public int SetIndex { get; set; } = 0; // set index for the current backup set
-    public int SucceededCount { get; private set; } = 0; // accumulated by PostProcessFile()
-    public int ProcessedCount { get; private set; } = 0; // reported by BatchEndStatistics()
-    public int FailedCount { get; private set; } = 0; // reported by BatchEndStatistics()
-    public int CompletedCount => ProcessedCount - FailedCount;
-    public int SkippedCount => CompletedCount - SucceededCount;
-    public long BytesProcessed { get; private set; } = 0; // reported by BatchEndStatistics()
+
+    // Statistics — always reflect the latest snapshot from TapeFileStatistics
+    public int ProcessedCount { get; private set; } = 0;
+    public int SucceededCount { get; private set; } = 0;
+    public int FailedCount { get; private set; } = 0;
+    public int SkippedCount { get; private set; } = 0;
+    public long BytesProcessed { get; private set; } = 0;
+    public int FilesTotal { get; private set; } = 0;
     public double ElapsedSeconds => stopwatch.ElapsedSeconds;
 
     protected Windows.Win32.System.SystemServices.Stopwatch stopwatch = new();
+
+    /// <summary>Capture latest stats snapshot from library.</summary>
+    private void Sync(in TapeFileStatistics stats)
+    {
+        FilesTotal = stats.FilesTotal;
+        ProcessedCount = stats.FilesProcessed;
+        SucceededCount = stats.FilesSucceeded;
+        FailedCount = stats.FilesFailed;
+        SkippedCount = stats.FilesSkipped;
+        BytesProcessed = stats.BytesProcessed;
+    }
 
     protected string FormatSetIndex(int setIndex)
     {
@@ -1731,20 +1744,19 @@ abstract class OnFileEventProcessor(TapeTOC toc, bool quiteMode, string processi
         return $"{setIndex} | {toc.SetIndexToAlt(setIndex)}";
     }
 
-    public virtual void BatchStartStatistics(int set, int filesFound)
+    public virtual void BatchStart(int setIndex, in TapeFileStatistics stats)
     {
-        Console.WriteLine($"iii {filesFound} files found to process for/from backup set #{FormatSetIndex(set)}");
-        
-        SetIndex = set;
+        Sync(stats);
+        Console.WriteLine($"iii {stats.FilesTotal} files found to process for/from backup set #{FormatSetIndex(setIndex)}");
+
+        SetIndex = setIndex;
         stopwatch.Restart();
     }
-    public void BatchEndStatistics(int set, int filesProcessed, int filesFailed, long bytesProcessed)
+    public void BatchEnd(int setIndex, in TapeFileStatistics stats)
     {
         stopwatch.Stop();
-        ProcessedCount = filesProcessed;
-        FailedCount = filesFailed;
-        BytesProcessed = bytesProcessed;
-        SetIndex = set;
+        Sync(stats);
+        SetIndex = setIndex;
 
         WriteStatistics();
     }
@@ -1754,7 +1766,6 @@ abstract class OnFileEventProcessor(TapeTOC toc, bool quiteMode, string processi
         if (ProcessedCount != 0)
         {
             Console.WriteLine($"iii Of {ProcessedCount} file(s) processed for/from backup set #{SetIndex}:");
-            Console.WriteLine($" ii Completed:\t{CompletedCount} ~ {100.0 * CompletedCount / ProcessedCount:F2}%");
             Console.WriteLine($" ii Succeeded:\t{SucceededCount} ~ {100.0 * SucceededCount / ProcessedCount:F2}%");
             Console.WriteLine($" ii Skipped:\t{SkippedCount} ~ {100.0 * SkippedCount / ProcessedCount:F2}%");
             Console.WriteLine($" ii Failed:\t{FailedCount} ~ {100.0 * FailedCount / ProcessedCount:F2}%");
@@ -1803,42 +1814,42 @@ abstract class OnFileEventProcessor(TapeTOC toc, bool quiteMode, string processi
         }
     }
 
-    public virtual bool PreProcessFile(ref TapeFileDescriptor fileDescr)
+    public virtual bool PreProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
     {
         Console.Write($" ii {processingName} >{fileDescr.FullName}< : {Helpers.BytesToString(fileDescr.Length)} ");
         return true;
-        
+
     }
 
     // called for a chance to modify the fileDescr after restoring the file. If returns false, skip applying fileDescr
-    public virtual bool PostProcessFile(ref TapeFileDescriptor fileDescr)
+    public virtual bool PostProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
     {
         // write just the file name
         Console.WriteLine($"OK >{Path.GetFileName(fileDescr.FullName)}<");
-        SucceededCount++;
+        Sync(stats);
         return true;
     }
 
     // called when a file error occurs during restoring the file
-    public virtual FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex)
+    public virtual FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex, in TapeFileStatistics stats)
     {
         Console.WriteLine($"!!! Failed {processingName} file >{Path.GetFileName(fileDescr.FullName)}<. Exception: {ex}");
-        // FailedCount++; // <-- needn't do it here since failed count is reported by BatchEndStatistics()
+        Sync(stats);
 
         return MessageGetFileAction("??? Retry the file?");
     }
-    public virtual void OnFileSkipped(TapeFileDescriptor fileDescr)
+    public virtual void OnFileSkipped(TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
     {
         // write just the file name
         Console.WriteLine($"Skipped >{Path.GetFileName(fileDescr.FullName)}<");
-        // SkippedCount++;
+        Sync(stats);
     }
 
 } // class OnFileEventProcessor
 
 class OnFileBackupProcessor(TapeTOC toc, bool quiteMode) : OnFileEventProcessor(toc, quiteMode, "Backing up")
 {
-    public override bool PreProcessFile(ref TapeFileDescriptor fileDescr)
+    public override bool PreProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
     {
         FileInfo fileInfo = new(fileDescr.FullName);
         if (!fileInfo.Exists) // just for illustration -- the agent will check if file exists anyways
@@ -1847,9 +1858,9 @@ class OnFileBackupProcessor(TapeTOC toc, bool quiteMode) : OnFileEventProcessor(
             return false;
         }
 
-        return base.PreProcessFile(ref fileDescr); // call the base class method
+        return base.PreProcessFile(ref fileDescr, in stats); // call the base class method
     }
-} // class OnFileBackupProcessor
+}
 
 class OnFileRestoreProcessor(TapeTOC toc, bool quiteMode) : OnFileEventProcessor(toc, quiteMode, "Restoring")
 {
