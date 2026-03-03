@@ -115,9 +115,16 @@ namespace TapeLibNET
             return pattern.TrimEnd().EndsWith('\\') || Directory.Exists(pattern);
         }
 
-        public List<string> BuildFileNameList(List<string> fileAndDirectoryPatterns, bool recursive)
+        public static List<string> BuildFileNameList(List<string> fileAndDirectoryPatterns, bool recursive)
         {
             List<string> fileNames = [];
+            HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+
+            void AddFile(string path)
+            {
+                if (seen.Add(path))
+                    fileNames.Add(path);
+            }
 
             foreach (var pattern in fileAndDirectoryPatterns)
             {
@@ -135,8 +142,8 @@ namespace TapeLibNET
                         if (!string.IsNullOrEmpty(directoryPath))
                         {
                             var searchOption = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-                            var filesInDirectory = Directory.EnumerateFiles(directoryPath, fileNameWithWildcards, searchOption);
-                            fileNames.AddRange(filesInDirectory);
+                            foreach (var file in Directory.EnumerateFiles(directoryPath, fileNameWithWildcards, searchOption))
+                                AddFile(file);
                         }
                         // else non-existing directory -> ignore
                     }
@@ -145,18 +152,19 @@ namespace TapeLibNET
                         // If it's a directory, add files (recursively if requested)
                         var directoryPath = Path.GetFullPath(pattern);
                         var searchOption = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-                        var filesInDirectory = Directory.EnumerateFiles(directoryPath, "*", searchOption);
-                        fileNames.AddRange(filesInDirectory);
+                        foreach (var file in Directory.EnumerateFiles(directoryPath, "*", searchOption))
+                            AddFile(file);
                     }
                     else
                     {
                         // Otherwise, assume it's a file name
-                        fileNames.Add(Path.GetFullPath(pattern));
+                        AddFile(Path.GetFullPath(pattern));
                     }
                 }
-                catch (Exception ex)
+                catch
                 {
-                    m_logger.LogWarning("Exception {Exception} while building file name list for >{Pattern}<", ex, pattern);
+                    // cannot log since it's a static method -> simply ignore and continue with other patterns
+                    //m_logger.LogWarning("Exception {Exception} while building file name list for >{Pattern}<", ex, pattern);
                 }
             } // foreach pattern
 

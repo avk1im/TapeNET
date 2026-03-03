@@ -17,6 +17,7 @@ public record RestoreRequest(
     bool Incremental,
     List<string>? FilePatterns,
     string? TargetDirectory,
+    bool RecurseSubdirectories,
     TapeHowToHandleExisting HandleExisting);
 
 /// <summary>
@@ -48,6 +49,7 @@ public class RestoreViewModel : ViewModelBase
     private bool _incremental;
     private string _filePatterns = string.Empty;
     private bool _restoreToOriginal = true;
+    private bool _recurseSubdirectories;
     private string _targetDirectory = string.Empty;
     private HandleExistingOption _selectedHandleExisting = HandleExistingOption.All[0]; // Keep Both
 
@@ -68,6 +70,7 @@ public class RestoreViewModel : ViewModelBase
         _onCancel = onCancel;
         _mode = mode;
         IsFileMode = false;
+        _recurseSubdirectories = true; // in set mode, pre-assume user wants to include subdirs
 
         // Clone the pre-selected sets into our local collection (all pre-checked)
         foreach (var item in preSelectedSets)
@@ -98,6 +101,7 @@ public class RestoreViewModel : ViewModelBase
         _mode = mode;
         IsFileMode = true;
         _fileSetIndex = setIndex;
+        _recurseSubdirectories = false; // in file mode, pre-assume user only wants the specific files, not subdirs
 
         Files = preSelectedFiles;
         foreach (var item in preSelectedFiles)
@@ -214,6 +218,7 @@ public class RestoreViewModel : ViewModelBase
             {
                 OnPropertyChanged(nameof(RestoreToTargetDir));
                 OnPropertyChanged(nameof(IsTargetDirectoryInputEnabled));
+                OnPropertyChanged(nameof(IsRecurseSubdirsEnabled));
             }
         }
     }
@@ -249,6 +254,16 @@ public class RestoreViewModel : ViewModelBase
 
     /// <summary>Whether the target directory text box and Browse button are enabled.</summary>
     public bool IsTargetDirectoryInputEnabled => _mode == RestoreMode.Restore && !_restoreToOriginal;
+
+    /// <summary>Whether to recreate subdirectory structure under the target directory.</summary>
+    public bool RecurseSubdirectories
+    {
+        get => _recurseSubdirectories;
+        set => SetProperty(ref _recurseSubdirectories, value);
+    }
+
+    /// <summary>Whether the "Restore with subdirectories" checkbox is enabled.</summary>
+    public bool IsRecurseSubdirsEnabled => _mode == RestoreMode.Restore && !_restoreToOriginal;
 
     /// <summary>Whether the handle-existing combo is enabled (Restore mode only).</summary>
     public bool IsHandleExistingEnabled => _mode == RestoreMode.Restore;
@@ -375,6 +390,7 @@ public class RestoreViewModel : ViewModelBase
             Incremental: _incremental,
             FilePatterns: filePatterns,
             TargetDirectory: targetDir,
+            RecurseSubdirectories: targetDir != null && _recurseSubdirectories,
             HandleExisting: _selectedHandleExisting.Value);
 
         _onStart(request);

@@ -105,7 +105,7 @@ public partial class MainViewModel
     {
         // Build complete file list for preview
         var patterns = backupViewModel.GetPatterns();
-        var fileList = BuildFileListFromPatterns(patterns, backupViewModel.IncludeSubdirectories);
+        var fileList = TapeFileBackupAgent.BuildFileNameList(patterns, backupViewModel.IncludeSubdirectories);
 
         if (fileList.Count == 0)
         {
@@ -144,6 +144,8 @@ public partial class MainViewModel
         previewWindow.ShowDialog();
     }
 
+    /*
+    // Not necessary - same functionality as TapeFileBackupAgent.BuildFileNameList
     private static List<string> BuildFileListFromPatterns(List<string> patterns, bool includeSubdirectories)
     {
         var fileList = new List<string>();
@@ -198,6 +200,7 @@ public partial class MainViewModel
 
         return fileList;
     }
+    */
 
     private async Task ExecuteBackupAsync(NewBackupSetViewModel backupViewModel,
         List<string> fileList, bool listContainsPatterns)

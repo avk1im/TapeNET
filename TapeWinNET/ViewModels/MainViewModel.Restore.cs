@@ -8,6 +8,7 @@ using TapeLibNET.Virtual;
 using TapeWinNET.Converters;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
+using TapeWinNET.Utils;
 
 namespace TapeWinNET.ViewModels;
 
@@ -90,10 +91,50 @@ public partial class MainViewModel
 
     private void StartRestore(RestoreMode mode)
     {
+        StartRestore(mode, targetDirectory: null);
+    }
+
+    private void StartRestore(RestoreMode mode, string? targetDirectory)
+    {
         if (HasFilesCheckedForRestore && IsFileTableVisible)
-            StartRestoreForSelectedFiles(mode);
+            StartRestoreForSelectedFiles(mode, targetDirectory);
         else
-            StartRestoreForSelectedSet(mode);
+            StartRestoreForSelectedSet(mode, targetDirectory);
+    }
+
+    /// <summary>
+    /// Initiates a drag-to-Explorer operation. Called from code-behind
+    /// when the user drags from a TreeView or ListView control.
+    /// Creates a marker file, performs DoDragDrop, detects the target Explorer folder,
+    /// and opens RestoreWindow with the target directory pre-filled.
+    /// </summary>
+    public void StartDragRestoreToExplorer(DependencyObject dragSource)
+    {
+        if (!CanStartRestore) return;
+
+        var markerPath = ExplorerDropHelper.CreateMarkerFile();
+        try
+        {
+            var data = new DataObject(DataFormats.FileDrop, new[] { markerPath });
+            var result = DragDrop.DoDragDrop(dragSource, data, DragDropEffects.Copy);
+
+            string? targetFolder = null;
+            if (result != DragDropEffects.None)
+                targetFolder = ExplorerDropHelper.GetExplorerFolderAtCursor();
+
+            ExplorerDropHelper.CleanupMarker(markerPath, targetFolder);
+
+            if (targetFolder != null)
+            {
+                // Bring our window back to the foreground — Explorer still has focus after the drop
+                Application.Current.MainWindow?.Activate();
+                StartRestore(RestoreMode.Restore, targetFolder);
+            }
+        }
+        catch
+        {
+            ExplorerDropHelper.CleanupMarker(markerPath, null);
+        }
     }
 
     /// <summary>
@@ -137,9 +178,11 @@ public partial class MainViewModel
     }
 
     /// <summary>
-    /// Whether any files are checked for restore in the file list.
+    /// Whether any files are selected for restore — either explicitly checkmarked
+    /// or selected (clicked) in the file ListView.
     /// </summary>
-    private bool HasFilesCheckedForRestore => FileList.Any(f => f.IsCheckedForRestore);
+    private bool HasFilesCheckedForRestore =>
+        FileList.Any(f => f.IsCheckedForRestore) || SelectedFile != null;
 
     /// <summary>Called from code-behind when a file row checkbox is toggled.</summary>
     public void OnFileCheckChanged()
@@ -188,7 +231,7 @@ public partial class MainViewModel
 
     #region Private Methods - Restore Operations
 
-    private void StartRestoreForSelectedSet(RestoreMode mode)
+    private void StartRestoreForSelectedSet(RestoreMode mode, string? targetDirectory = null)
     {
         var setIndexes = SelectedSetIndexes;
         if (setIndexes.Count == 0)
@@ -235,6 +278,13 @@ public partial class MainViewModel
                 Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
             });
 
+        // Pre-fill target directory (e.g. from drag-to-Explorer)
+        if (targetDirectory != null)
+        {
+            viewModel.RestoreToTargetDir = true;
+            viewModel.TargetDirectory = targetDirectory;
+        }
+
         var window = new RestoreWindow(viewModel)
         {
             Owner = Application.Current.MainWindow
@@ -242,7 +292,7 @@ public partial class MainViewModel
         window.ShowDialog();
     }
 
-    private void StartRestoreForSelectedFiles(RestoreMode mode)
+    private void StartRestoreForSelectedFiles(RestoreMode mode, string? targetDirectory = null)
     {
         var toc = _tapeService.TOC;
         if (toc == null)
@@ -256,6 +306,11 @@ public partial class MainViewModel
             return;
 
         var checkedFiles = FileList.Where(f => f.IsCheckedForRestore).ToList();
+
+        // Fall back to the ListView-selected file if none are explicitly checkmarked
+        if (checkedFiles.Count == 0 && SelectedFile != null)
+            checkedFiles = [SelectedFile];
+
         if (checkedFiles.Count == 0)
             return;
 
@@ -265,7 +320,7 @@ public partial class MainViewModel
         if (setTOC.Count == checkedFiles.Count)
         {
             // All files are checked —> shortcut to full set restore
-            StartRestoreForSelectedSet(mode);
+            StartRestoreForSelectedSet(mode, targetDirectory);
             return;
         }
 
@@ -284,6 +339,13 @@ public partial class MainViewModel
                 Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
             });
 
+        // Pre-fill target directory (e.g. from drag-to-Explorer)
+        if (targetDirectory != null)
+        {
+            viewModel.RestoreToTargetDir = true;
+            viewModel.TargetDirectory = targetDirectory;
+        }
+
         var window = new RestoreWindow(viewModel)
         {
             Owner = Application.Current.MainWindow
@@ -297,6 +359,7 @@ public partial class MainViewModel
         var setIndexes = request.SetIndexes;
         var incremental = request.Incremental;
         var targetDirectory = request.TargetDirectory;
+        var recurseSubdirectories = request.RecurseSubdirectories;
         var handleExisting = request.HandleExisting;
         var filePatterns = request.FilePatterns;
 
@@ -329,7 +392,7 @@ public partial class MainViewModel
                     incremental,
                     filePatterns,
                     targetDirectory,
-                    recurseSubdirectories: true,
+                    recurseSubdirectories: recurseSubdirectories,
                     handleExisting,
                     // Progress update callback
                     (processed, total, bytes) =>

@@ -143,7 +143,7 @@
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="File Patterns (optional):"
+                    <TextBlock Grid.Column="0" Text="File patterns (optional):"
                                VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <TextBox Grid.Column="1"
                              Text="{Binding FilePatterns, UpdateSourceTrigger=PropertyChanged}"
@@ -188,6 +188,10 @@
                             IsEnabled="{Binding IsTargetDirectoryInputEnabled}"
                             Padding="12,4"/>
                 </Grid>
+                <CheckBox Content="Restore with subdirectories"
+                          IsChecked="{Binding RecurseSubdirectories}"
+                          IsEnabled="{Binding IsRecurseSubdirsEnabled}"
+                          Margin="20,6,0,0"/>
             </StackPanel>
         </GroupBox>
 

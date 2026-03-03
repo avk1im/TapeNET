@@ -1,14 +1,10 @@
 ﻿using System.ComponentModel;
-using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
-using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
 using TapeWinNET.ViewModels;
 using TapeWinNET.Models;
 
@@ -22,6 +18,10 @@ namespace TapeWinNET
         private readonly MainViewModel _viewModel;
         private GridViewColumnHeader? _lastHeaderClicked;
         private ListSortDirection _lastDirection = ListSortDirection.Ascending;
+
+        // Drag-to-Explorer gesture tracking
+        private Point _dragStartPoint;
+        private bool _dragStartValid;
 
         public MainWindow()
         {
@@ -145,5 +145,47 @@ namespace TapeWinNET
 
         private void BackupSetCheckBox_Changed(object sender, RoutedEventArgs e)
             => _viewModel.OnBackupSetCheckChanged();
+
+
+        #region Drag-to-Explorer
+
+        private void DragSource_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            // Don't initiate drag from checkboxes or column headers
+            _dragStartValid = !IsFromCheckBoxOrHeader(e.OriginalSource as DependencyObject);
+            if (_dragStartValid)
+                _dragStartPoint = e.GetPosition(null);
+        }
+
+        private void DragSource_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_dragStartValid || e.LeftButton != MouseButtonState.Pressed)
+                return;
+
+            var pos = e.GetPosition(null);
+            if (Math.Abs(pos.X - _dragStartPoint.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(pos.Y - _dragStartPoint.Y) < SystemParameters.MinimumVerticalDragDistance)
+                return;
+
+            _dragStartValid = false; // prevent re-entry while DoDragDrop blocks
+            _viewModel.StartDragRestoreToExplorer((DependencyObject)sender);
+        }
+
+        /// <summary>
+        /// Walks the visual tree to check if the click originated from a CheckBox or column header.
+        /// These should handle their own click behavior, not start a drag.
+        /// </summary>
+        private static bool IsFromCheckBoxOrHeader(DependencyObject? source)
+        {
+            while (source != null)
+            {
+                if (source is CheckBox or GridViewColumnHeader)
+                    return true;
+                source = VisualTreeHelper.GetParent(source);
+            }
+            return false;
+        }
+
+        #endregion
     }
 }

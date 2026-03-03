@@ -3,6 +3,8 @@ SetupDiLoadClassIcon
 
 SHGetStockIconInfo
 
+GetCursorPos
+GetWindowRect
 
 WIN32_ERROR
 //NO_ERROR

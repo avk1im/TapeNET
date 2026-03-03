@@ -8,7 +8,7 @@
         d:DataContext="{d:DesignInstance Type=vm:NewBackupSetViewModel}"
         mc:Ignorable="d"
         Title="New Backup Set"
-        Height="700" Width="1100"
+        Height="620" Width="900"
         MinHeight="400" MinWidth="600"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False">
@@ -89,22 +89,26 @@
                                HorizontalAlignment="Right"
                                Margin="0,0,0,8"/>
 
-                    <!-- Files List -->
-                    <ListView Grid.Row="2" 
-                              ItemsSource="{Binding SourceEntries}"
+                    <!-- Files List with drop hint overlay -->
+                    <Grid Grid.Row="2">
+                        <ListView ItemsSource="{Binding SourceEntries}"
                               SelectedItem="{Binding SelectedSourceEntry}"
                               VirtualizingPanel.IsVirtualizing="True"
                               VirtualizingPanel.VirtualizationMode="Recycling"
-                              SelectionMode="Extended">
+                              SelectionMode="Extended"
+                              AllowDrop="True"
+                              DragOver="SourceList_DragOver"
+                              Drop="SourceList_Drop"
+                              CheckBox.Checked="ItemCheckBox_Changed"
+                              CheckBox.Unchecked="ItemCheckBox_Changed">
                         <ListView.View>
                             <GridView>
                                 <!-- Checkbox column -->
                                 <GridViewColumn Width="30">
                                     <GridViewColumn.Header>
-                                        <CheckBox IsChecked="{Binding DataContext.SelectAll, RelativeSource={RelativeSource AncestorType=ListView}}"
-                                                  Command="{Binding DataContext.SelectAllCommand, RelativeSource={RelativeSource AncestorType=ListView}}"
-                                                  ToolTip="Select/Deselect All"/>
-                                    </GridViewColumn.Header>
+                                            <CheckBox IsChecked="{Binding DataContext.SelectAll, RelativeSource={RelativeSource AncestorType=ListView}}"
+                                                      ToolTip="Select/Deselect All"/>
+                                        </GridViewColumn.Header>
                                     <GridViewColumn.CellTemplate>
                                         <DataTemplate>
                                             <CheckBox IsChecked="{Binding IsSelected}"/>
@@ -131,6 +135,13 @@
                             </ContextMenu>
                         </ListView.ContextMenu>
                     </ListView>
+                        <!-- Drop hint overlay -->
+                        <TextBlock Text="Drop Files and Folders here"
+                                   FontSize="16" Foreground="LightGray"
+                                   HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                   Margin="0,0,16,8"
+                                   IsHitTestVisible="False"/>
+                    </Grid>
                 </Grid>
             </GroupBox>
 

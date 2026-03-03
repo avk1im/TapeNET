@@ -164,7 +164,9 @@
                 <TreeView ItemsSource="{Binding TreeItems}"
                           ItemTemplate="{StaticResource TreeItemTemplate}"
                           ItemContainerStyle="{StaticResource TreeViewItemStyle}"
-                          SelectedItemChanged="TreeView_SelectedItemChanged">
+                          SelectedItemChanged="TreeView_SelectedItemChanged"
+                          PreviewMouseLeftButtonDown="DragSource_PreviewMouseLeftButtonDown"
+                          MouseMove="DragSource_MouseMove">
                 </TreeView>
             </GroupBox>
             
@@ -227,6 +229,8 @@
                                   GridViewColumnHeader.Click="GridViewColumnHeader_Click"
                                   CheckBox.Checked="FileCheckBox_Changed"
                                   CheckBox.Unchecked="FileCheckBox_Changed"
+                                  PreviewMouseLeftButtonDown="DragSource_PreviewMouseLeftButtonDown"
+                                  MouseMove="DragSource_MouseMove"
                                   VirtualizingPanel.IsVirtualizing="True"
                                   VirtualizingPanel.VirtualizationMode="Recycling"
                                   Visibility="{Binding IsFileTableVisible, Converter={StaticResource BoolToVis}}">
@@ -277,6 +281,8 @@
                                   GridViewColumnHeader.Click="GridViewColumnHeader_Click"
                                   CheckBox.Checked="BackupSetCheckBox_Changed"
                                   CheckBox.Unchecked="BackupSetCheckBox_Changed"
+                                  PreviewMouseLeftButtonDown="DragSource_PreviewMouseLeftButtonDown"
+                                  MouseMove="DragSource_MouseMove"
                                   VirtualizingPanel.IsVirtualizing="True"
                                   VirtualizingPanel.VirtualizationMode="Recycling"
                                   Visibility="{Binding IsBackupSetTableVisible, Converter={StaticResource BoolToVis}}"

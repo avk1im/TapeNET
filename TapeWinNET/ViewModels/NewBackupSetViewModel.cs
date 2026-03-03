@@ -35,6 +35,7 @@ public class NewBackupSetViewModel : ViewModelBase
     private long _totalSize;
     private DateTime? _lastScanTime;
     private bool _autoScan = true;
+    private bool _selectAll = true;
     // for auto-adding to pattern input:
     private BackupSourceEntry? _selectedSourceEntry;
     private string? _prevAutoAdded;
@@ -50,7 +51,7 @@ public class NewBackupSetViewModel : ViewModelBase
         AddFolderCommand = new RelayCommand(AddFolder, () => !IsScanning);
         AddPatternsCommand = new RelayCommand(AddPatterns, () => !IsScanning && !string.IsNullOrWhiteSpace(PatternInput));
         RemoveSelectedCommand = new RelayCommand(RemoveSelected, () => !IsScanning && HasSelectedEntries);
-        SelectAllCommand = new RelayCommand(SelectAll);
+        SelectAllCommand = new RelayCommand(ToggleSelectAll);
         ScanNowCommand = new AsyncRelayCommand(ScanNowAsync, () => !IsScanning && SourceEntries.Count > 0);
         StartBackupCommand = new RelayCommand(StartBackup, param => CanStartBackup());
         CancelCommand = new RelayCommand(_ => _onCancel());
@@ -411,6 +412,25 @@ public class NewBackupSetViewModel : ViewModelBase
         PatternInput = string.Empty;
     }
 
+    /// <summary>
+    /// Adds files and folders from an array of paths (e.g. from drag-and-drop).
+    /// Folders get a trailing backslash, duplicates are skipped.
+    /// </summary>
+    public void AddPaths(string[] paths)
+    {
+        foreach (var path in paths)
+        {
+            var normalized = Directory.Exists(path)
+                ? path.TrimEnd('\\') + "\\"
+                : path;
+
+            if (!SourceEntries.Any(e => e.Pattern.Equals(normalized, StringComparison.OrdinalIgnoreCase)))
+            {
+                SourceEntries.Add(BackupSourceEntry.Create(normalized));
+            }
+        }
+    }
+
     private void RemoveSelected()
     {
         var toRemove = SourceEntries.Where(e => e.IsSelected).ToList();
@@ -423,15 +443,38 @@ public class NewBackupSetViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanRemoveSelected));
     }
 
-    private void SelectAll()
+    /// <summary>
+    /// Whether all source entries are selected.
+    /// Setter checks or unchecks every item.
+    /// </summary>
+    public bool SelectAll
     {
-        bool anyUnselected = SourceEntries.Any(e => !e.IsSelected);
-        foreach (var entry in SourceEntries)
+        get => _selectAll;
+        set
         {
-            entry.IsSelected = anyUnselected;
+            if (SetProperty(ref _selectAll, value))
+            {
+                foreach (var entry in SourceEntries)
+                    entry.IsSelected = value;
+                OnPropertyChanged(nameof(HasSelectedEntries));
+                OnPropertyChanged(nameof(CanRemoveSelected));
+            }
         }
+    }
+
+    /// <summary>Called from code-behind when a row checkbox is toggled.</summary>
+    public void OnItemCheckChanged()
+    {
+        _selectAll = SourceEntries.Count > 0 && SourceEntries.All(e => e.IsSelected);
+        OnPropertyChanged(nameof(SelectAll));
         OnPropertyChanged(nameof(HasSelectedEntries));
         OnPropertyChanged(nameof(CanRemoveSelected));
+        CommandManager.InvalidateRequerySuggested();
+    }
+
+    private void ToggleSelectAll()
+    {
+        SelectAll = !SelectAll;
     }
 
     private async Task ScanNowAsync()

@@ -133,8 +133,7 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 - **C# 12 / .NET 8** features: primary constructors, collection expressions (`[]`), file-scoped namespaces, records, `required` members where appropriate.
 - **No comments** unless matching existing style or explaining complex logic.
 - **Existing libraries only** — no new packages without necessity.
-- **`.editorconfig`** at solution root: `dotnet_diagnostic.CS8321.severity = suggestion` (unused local functions downgraded to suggestion).
-- **Naming**: PascalCase for public members, `_camelCase` for private fields, `camelCase` for local functions/variables.
+- **Naming**: PascalCase for public members, `_camelCase` for private fields (`m_mfcStyle` in TapeLibNET for historical reasons), `camelCase` for local functions/variables.
 - **`Helpers.BytesToString` / `Helpers.BytesToStringLong`** from `Windows.Win32.System.SystemServices` for human-readable byte sizes.
 - **Set indexes**: Dual display format `#{standard} | {alt}` where standard counts from oldest (1-based) and alt counts from newest (0, -1, -2...).
 
@@ -151,7 +150,6 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 
 ## What's Next (Planned)
 
-- File statistics hardening
 - Media format dialog
 - UI: context menus, drag-and-drop for file lists
 - Additional UI polish and workflow refinements
