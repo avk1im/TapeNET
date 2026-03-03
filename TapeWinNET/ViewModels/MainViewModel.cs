@@ -259,7 +259,14 @@ public partial class MainViewModel : ViewModelBase
 
     public ObservableCollection<TapeTreeItemViewModel> TreeItems { get; } = [];
     public ObservableCollection<PropertyItem> PropertyList { get; } = [];
-    public ObservableCollection<FileListItem> FileList { get; } = [];
+
+    private List<FileListItem> _fileList = [];
+    public List<FileListItem> FileList
+    {
+        get => _fileList;
+        private set => SetProperty(ref _fileList, value);
+    }
+
     public ObservableCollection<BackupSetListItem> BackupSetList { get; } = [];
     public ObservableCollection<LogEntry> LogMessages { get; } = [];
 
@@ -722,7 +729,7 @@ public partial class MainViewModel : ViewModelBase
     private void LoadDriveInfo()
     {
         PropertyList.Clear();
-        FileList.Clear();
+        FileList = [];
         BackupSetList.Clear();
         ContentType = ContentPaneType.DriveInfo;
         PropertiesHeader = "Drive Properties";
@@ -766,7 +773,7 @@ public partial class MainViewModel : ViewModelBase
     private void LoadMediaInfo()
     {
         PropertyList.Clear();
-        FileList.Clear();
+        FileList = [];
         BackupSetList.Clear();
         ContentType = ContentPaneType.MediaInfo;
         PropertiesHeader = "Media Properties";
@@ -828,7 +835,7 @@ public partial class MainViewModel : ViewModelBase
             return;
 
         PropertyList.Clear();
-        FileList.Clear();
+        FileList = [];
         BackupSetList.Clear();
         ContentType = ContentPaneType.BackupSetInfo;
 
@@ -884,11 +891,12 @@ public partial class MainViewModel : ViewModelBase
                 TableHeader = $"Files ({setTOC.Count})";
             }
 
+            var newFileList = new List<FileListItem>();
             foreach (var fileInfo in files)
             {
-                var item = new FileListItem(fileInfo, ShowFullPathname);
-                FileList.Add(item);
+                newFileList.Add(new FileListItem(fileInfo, ShowFullPathname));
             }
+            FileList = newFileList;
 
             StatusMessage = $"Set #{setIndex} | #{altIndex}: {FileList.Count} file(s)";
         }

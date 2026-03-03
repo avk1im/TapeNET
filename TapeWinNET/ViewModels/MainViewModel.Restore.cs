@@ -317,12 +317,16 @@ public partial class MainViewModel
         toc.CurrentSetIndex = setIndex;
         var setTOC = toc.CurrentSetTOC;
 
+        /*
+        // Optional behavior: if all files in the set are checked, go to set restore dialog
+        //  Might not be what the user expects when they explicitly checked every file
         if (setTOC.Count == checkedFiles.Count)
         {
             // All files are checked —> shortcut to full set restore
             StartRestoreForSelectedSet(mode, targetDirectory);
             return;
         }
+        */
 
         var viewModel = new RestoreViewModel(
             mode,
