@@ -138,7 +138,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="150" />
+            <RowDefinition x:Name="LogPaneRow" Height="150" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         
@@ -233,7 +233,7 @@
         <!-- Main Content Area -->
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="280" MinWidth="150" />
+                <ColumnDefinition x:Name="TreePaneColumn" Width="280" MinWidth="150" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" MinWidth="300" />
             </Grid.ColumnDefinitions>
@@ -260,7 +260,7 @@
             <Grid Grid.Column="2" Margin="4">
                 <Grid.RowDefinitions>
                     <!-- Properties subpane (always visible) -->
-                    <RowDefinition Height="150" MinHeight="100" MaxHeight="300" />
+                    <RowDefinition x:Name="PropertiesPaneRow" Height="150" MinHeight="100" MaxHeight="300" />
                     <!-- Vertical Splitter (visible when table is shown) -->
                     <RowDefinition Height="Auto" />
                     <!-- Table subpane (visible for Media and BackupSet) -->

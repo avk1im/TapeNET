@@ -5,6 +5,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using TapeWinNET.Utils;
 using TapeWinNET.ViewModels;
 using TapeWinNET.Models;
 
@@ -26,19 +27,11 @@ namespace TapeWinNET
         public MainWindow()
         {
             InitializeComponent();
-            
-            // Set window icon to tape drive icon -- now done via App.OnWindowLoaded
-            /*
-            var icon = TapeIcons.GetTapeDriveIcon(large: true);
-            if (icon != null)
-            {
-                icon.Freeze();
-                Icon = icon;
-            }
-            */
-            
+
             _viewModel = new MainViewModel();
             DataContext = _viewModel;
+
+            ApplySettings(_viewModel.Settings);
 
             // Subscribe to collection changes to auto-scroll log
             _viewModel.LogMessages.CollectionChanged += (s, e) =>
@@ -64,19 +57,33 @@ namespace TapeWinNET
 
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            // On startup, open the File menu to show drive selection options
-            // Use Dispatcher to ensure the window is fully rendered first
+            // If the last session used a physical drive, ask before reopening
+            var lastDrive = _viewModel.StartupPhysicalDriveNumber;
+            if (lastDrive.HasValue)
+            {
+                var result = MessageBox.Show(
+                    $"Reopen tape drive {lastDrive.Value} from the previous session?",
+                    "Reopen Drive",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    await _viewModel.InitializeAsync(lastDrive.Value);
+                    return;
+                }
+            }
+
+            // Otherwise, open the File menu to show drive selection options
             await Dispatcher.BeginInvoke(() =>
             {
                 FileMenu.IsSubmenuOpen = true;
             }, System.Windows.Threading.DispatcherPriority.Input);
-
-            // Uncomment to enforce auto-openning of drive 0 on startup:
-            //  await _viewModel.InitializeAsync(App.StartupDriveNumber);
         }
 
         private void MainWindow_Closing(object? sender, CancelEventArgs e)
         {
+            SaveSettings();
             _viewModel.Cleanup();
         }
 
@@ -196,6 +203,93 @@ namespace TapeWinNET
             return (source as ListViewItem)?.DataContext as T;
         }
 
+
+        #region Window State Persistence
+
+        private void ApplySettings(AppSettings settings)
+        {
+            // Restore window size
+            if (settings.WindowWidth.HasValue && settings.WindowHeight.HasValue)
+            {
+                Width = settings.WindowWidth.Value;
+                Height = settings.WindowHeight.Value;
+            }
+
+            // Restore window position (with screen-bounds validation)
+            if (settings.WindowLeft.HasValue && settings.WindowTop.HasValue)
+            {
+                var left = settings.WindowLeft.Value;
+                var top = settings.WindowTop.Value;
+
+                // Ensure at least 100px of the window is visible on some screen
+                const double minVisible = 100;
+                var screenLeft = SystemParameters.VirtualScreenLeft;
+                var screenTop = SystemParameters.VirtualScreenTop;
+                var screenRight = screenLeft + SystemParameters.VirtualScreenWidth;
+                var screenBottom = screenTop + SystemParameters.VirtualScreenHeight;
+
+                if (left + minVisible > screenLeft && left < screenRight - minVisible &&
+                    top + minVisible > screenTop && top < screenBottom - minVisible)
+                {
+                    WindowStartupLocation = WindowStartupLocation.Manual;
+                    Left = left;
+                    Top = top;
+                }
+            }
+
+            // Restore maximized state (after position, so normal bounds are set first)
+            if (settings.IsMaximized)
+                WindowState = WindowState.Maximized;
+
+            // Restore splitter positions
+            if (settings.TreePaneWidth.HasValue && settings.TreePaneWidth.Value >= TreePaneColumn.MinWidth)
+                TreePaneColumn.Width = new GridLength(settings.TreePaneWidth.Value);
+
+            if (settings.LogPaneHeight.HasValue && settings.LogPaneHeight.Value >= 50)
+                LogPaneRow.Height = new GridLength(settings.LogPaneHeight.Value);
+
+            if (settings.PropertiesPaneHeight.HasValue)
+            {
+                var h = settings.PropertiesPaneHeight.Value;
+                h = Math.Clamp(h, PropertiesPaneRow.MinHeight, PropertiesPaneRow.MaxHeight);
+                PropertiesPaneRow.Height = new GridLength(h);
+            }
+        }
+
+        private void SaveSettings()
+        {
+            var settings = _viewModel.Settings;
+
+            // Save window position/size (use RestoreBounds when maximized to remember normal size)
+            if (WindowState == WindowState.Maximized)
+            {
+                settings.IsMaximized = true;
+                settings.WindowLeft = RestoreBounds.Left;
+                settings.WindowTop = RestoreBounds.Top;
+                settings.WindowWidth = RestoreBounds.Width;
+                settings.WindowHeight = RestoreBounds.Height;
+            }
+            else
+            {
+                settings.IsMaximized = false;
+                settings.WindowLeft = Left;
+                settings.WindowTop = Top;
+                settings.WindowWidth = Width;
+                settings.WindowHeight = Height;
+            }
+
+            // Save splitter positions
+            settings.TreePaneWidth = TreePaneColumn.ActualWidth;
+            settings.LogPaneHeight = LogPaneRow.ActualHeight;
+            settings.PropertiesPaneHeight = PropertiesPaneRow.ActualHeight;
+
+            // Let the ViewModel save its own state (last drive info)
+            _viewModel.SaveSettings();
+
+            settings.SaveToFile();
+        }
+
+        #endregion
 
         #region Drag-to-Explorer
 

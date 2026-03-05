@@ -1,10 +1,11 @@
 using System.IO;
+using System.Text.Json;
 
 namespace TapeWinNET.Utils;
 
 /// <summary>
 /// Manages a most-recently-used (MRU) list of file paths with persistence
-/// to a simple text file in the app's local data folder.
+/// to a JSON file in the app's local data folder.
 /// Thread-safe for concurrent reads and writes.
 /// </summary>
 public class MruFileList
@@ -15,9 +16,9 @@ public class MruFileList
     private readonly List<string> _items = [];
 
     /// <summary>
-    /// Creates an MRU list backed by a text file in <c>%LocalAppData%\TapeWinNET\</c>.
+    /// Creates an MRU list backed by a JSON file in <c>%LocalAppData%\TapeWinNET\</c>.
     /// </summary>
-    /// <param name="fileName">Name of the persistence file (e.g., "VirtualDriveMru.txt").</param>
+    /// <param name="fileName">Name of the persistence file (e.g., "VirtualDriveMru.json").</param>
     /// <param name="maxCount">Maximum number of entries to keep.</param>
     public MruFileList(string fileName, int maxCount = 4)
     {
@@ -128,11 +129,15 @@ public class MruFileList
                 if (!File.Exists(_filePath))
                     return;
 
-                foreach (var line in File.ReadAllLines(_filePath))
+                var json = File.ReadAllText(_filePath);
+                var list = JsonSerializer.Deserialize<List<string>>(json);
+                if (list != null)
                 {
-                    var trimmed = line.Trim();
-                    if (!string.IsNullOrEmpty(trimmed) && _items.Count < _maxCount)
-                        _items.Add(trimmed);
+                    foreach (var item in list)
+                    {
+                        if (!string.IsNullOrWhiteSpace(item) && _items.Count < _maxCount)
+                            _items.Add(item);
+                    }
                 }
             }
             catch
@@ -148,7 +153,8 @@ public class MruFileList
         {
             try
             {
-                File.WriteAllLines(_filePath, _items);
+                var json = JsonSerializer.Serialize(_items, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(_filePath, json);
             }
             catch
             {

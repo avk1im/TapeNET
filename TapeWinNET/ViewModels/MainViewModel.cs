@@ -39,7 +39,8 @@ public partial class MainViewModel : ViewModelBase
     private const int MruMaxCount = 4;
 
     private readonly TapeService _tapeService;
-    private readonly MruFileList _virtualDriveMru = new("VirtualDriveMru.txt", MruMaxCount);
+    private readonly MruFileList _virtualDriveMru = new("VirtualDriveMru.json", MruMaxCount);
+    private readonly AppSettings _settings = AppSettings.LoadFromFile();
     private string _windowTitle = "TapeWin - Tape Backup Manager";
     private string _statusMessage = "Ready";
     private string _busyMessage = string.Empty;
@@ -364,6 +365,37 @@ public partial class MainViewModel : ViewModelBase
     public void Cleanup()
     {
         _tapeService.Dispose();
+    }
+
+    /// <summary>The loaded settings instance — View layer reads this to restore window layout.</summary>
+    public AppSettings Settings => _settings;
+
+    /// <summary>
+    /// If the last session used a physical drive, this holds the drive number.
+    /// The View layer should prompt the user before reopening.
+    /// Null if last session was virtual or no previous session.
+    /// </summary>
+    public int? StartupPhysicalDriveNumber =>
+        _settings.LastDriveNumber.HasValue && !_settings.LastDriveWasVirtual
+            ? _settings.LastDriveNumber
+            : null;
+
+    /// <summary>
+    /// Saves the current application state (last drive info).
+    /// Call before passing to the View layer's <see cref="AppSettings"/> save.
+    /// </summary>
+    public void SaveSettings()
+    {
+        if (_tapeService.IsDriveOpen)
+        {
+            _settings.LastDriveNumber = _tapeService.DriveNumber;
+            _settings.LastDriveWasVirtual = _tapeService.IsVirtualDrive;
+        }
+        else
+        {
+            _settings.LastDriveNumber = null;
+            _settings.LastDriveWasVirtual = false;
+        }
     }
 
     #endregion
