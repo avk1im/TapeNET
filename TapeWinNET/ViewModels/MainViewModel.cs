@@ -11,6 +11,7 @@ using TapeWinNET.Converters;
 
 using TapeWinNET.Models;
 using TapeWinNET.Services;
+using TapeWinNET.Utils;
 
 
 namespace TapeWinNET.ViewModels;
@@ -35,7 +36,10 @@ public record DriveMenuItem(string Header, int DriveNumber, ICommand Command);
 
 public partial class MainViewModel : ViewModelBase
 {
+    private const int MruMaxCount = 4;
+
     private readonly TapeService _tapeService;
+    private readonly MruFileList _virtualDriveMru = new("VirtualDriveMru.txt", MruMaxCount);
     private string _windowTitle = "TapeWin - Tape Backup Manager";
     private string _statusMessage = "Ready";
     private string _busyMessage = string.Empty;
@@ -60,7 +64,9 @@ public partial class MainViewModel : ViewModelBase
 
         // Initialize commands
         OpenDriveCommand = new AsyncRelayCommand(OpenDriveAsync, _ => !IsBusy);
+        OpenDriveByNameCommand = new AsyncRelayCommand(OpenDriveByNameAsync, () => !IsBusy);
         OpenVirtualDriveCommand = new RelayCommand(ShowOpenVirtualDriveWindow, _ => !IsBusy);
+        OpenRecentVirtualDriveCommand = new AsyncRelayCommand(OpenRecentVirtualDriveAsync, _ => !IsBusy);
         SetIoSpeedCommand = new RelayCommand(SetIoSpeed, _ => IsIoSpeedEnabled);
         RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         RereadTOCCommand = new AsyncRelayCommand(RereadTOCAsync, () => !IsBusy && _tapeService.IsDriveOpen);
@@ -82,22 +88,45 @@ public partial class MainViewModel : ViewModelBase
 
         // Initialize drive menu items
         InitializeDriveMenu();
+
+        // Initialize MRU virtual drive menu items
+        RefreshRecentVirtualDriveMenu();
     }
 
-    /// <summary>
-    /// Initializes the drive menu items for drives 0-9.
-    /// TODO: Later can be enhanced to detect installed drives.
-    /// </summary>
     private void InitializeDriveMenu()
     {
-        for (int i = 0; i <= 9; i++)
+        // Drive 0 is always available as the most common default
+        DriveMenuItems.Add(new DriveMenuItem(
+            Header: "Drive _0",
+            DriveNumber: 0,
+            Command: OpenDriveCommand));
+
+        // "Specify..." lets the user enter a device name directly
+        DriveMenuItems.Add(new DriveMenuItem(
+            Header: "_Specify...",
+            DriveNumber: -1,
+            Command: OpenDriveByNameCommand));
+
+        // Probe drives 1-9 in the background and insert any found ones before "Specify..."
+        Task.Run(() =>
         {
-            DriveMenuItems.Add(new DriveMenuItem(
-                Header: $"Drive _{i}",  // Underscore creates keyboard accelerator
-                DriveNumber: i,
-                Command: OpenDriveCommand
-            ));
-        }
+            for (int i = 1; i <= 9; i++)
+            {
+                if (TapeDrive.ProbeWin32((uint)i))
+                {
+                    int driveNum = i;
+                    Application.Current.Dispatcher.Invoke(() =>
+                    {
+                        // Insert before the last item ("Specify...")
+                        int insertIndex = DriveMenuItems.Count - 1;
+                        DriveMenuItems.Insert(insertIndex, new DriveMenuItem(
+                            Header: $"Drive _{driveNum}",
+                            DriveNumber: driveNum,
+                            Command: OpenDriveCommand));
+                    });
+                }
+            }
+        });
     }
 
     #region Properties
@@ -273,12 +302,20 @@ public partial class MainViewModel : ViewModelBase
     public ObservableCollection<BackupSetListItem> BackupSetList { get; } = [];
     public ObservableCollection<LogEntry> LogMessages { get; } = [];
 
+    /// <summary>Menu items for the Recent Virtual Drives submenu.</summary>
+    public ObservableCollection<DriveMenuItem> RecentVirtualDriveMenuItems { get; } = [];
+
+    /// <summary>Whether the Recent Virtual Drives submenu should be visible.</summary>
+    public bool HasRecentVirtualDrives => RecentVirtualDriveMenuItems.Count > 0;
+
     #endregion
 
     #region Commands
 
     public ICommand OpenDriveCommand { get; }
+    public ICommand OpenDriveByNameCommand { get; }
     public ICommand OpenVirtualDriveCommand { get; }
+    public ICommand OpenRecentVirtualDriveCommand { get; }
     public ICommand SetIoSpeedCommand { get; }
     public ICommand RefreshCommand { get; }
     public ICommand RereadTOCCommand { get; }
@@ -416,6 +453,39 @@ public partial class MainViewModel : ViewModelBase
         {
             IsBusy = false;
             BusyMessage = string.Empty;
+        }
+    }
+
+    private async Task OpenDriveByNameAsync()
+    {
+        var dialog = new RenameDialog(
+            "Open Drive",
+            "Enter the tape device name:",
+            @"\\.\TAPE0")
+        {
+            Owner = Application.Current.MainWindow
+        };
+
+        if (dialog.ShowDialog() != true)
+            return;
+
+        var name = dialog.NewName;
+
+        // Try to extract drive number from device name like \\.\TAPE0
+        if (name.StartsWith(@"\\.\TAPE", StringComparison.OrdinalIgnoreCase) &&
+            int.TryParse(name[@"\\.\TAPE".Length..], out int driveNum))
+        {
+            await OpenDriveAsync(driveNum);
+        }
+        else if (int.TryParse(name, out driveNum))
+        {
+            await OpenDriveAsync(driveNum);
+        }
+        else
+        {
+            MessageBox.Show(
+                $"Invalid device name: {name}\n\nExpected format: \\\\.\\TAPE0",
+                "Open Drive", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -1334,12 +1404,68 @@ public partial class MainViewModel : ViewModelBase
             // Log success with mode info
             var modeText = request.IsCreateNew ? "Created new" : "Opened existing";
             LogInfo($"{modeText} virtual media: {request.Media.ContentPath}");
+
+            AddToVirtualDriveMru(request.Media.ContentPath);
         }
         finally
         {
             IsBusy = false;
             BusyMessage = string.Empty;
         }
+    }
+
+    private void AddToVirtualDriveMru(string contentPath)
+    {
+        _virtualDriveMru.Add(contentPath);
+        RefreshRecentVirtualDriveMenu();
+    }
+
+    private void RefreshRecentVirtualDriveMenu()
+    {
+        RecentVirtualDriveMenuItems.Clear();
+
+        int index = 1;
+        foreach (var path in _virtualDriveMru.Items)
+        {
+            var display = MruFileList.AbbreviatePath(path);
+            RecentVirtualDriveMenuItems.Add(new DriveMenuItem(
+                Header: $"_{index} {display}",
+                DriveNumber: index,
+                Command: OpenRecentVirtualDriveCommand));
+            index++;
+        }
+
+        OnPropertyChanged(nameof(HasRecentVirtualDrives));
+    }
+
+    private async Task OpenRecentVirtualDriveAsync(object? parameter)
+    {
+        int mruIndex = (parameter as int? ?? 1) - 1;
+        var items = _virtualDriveMru.Items;
+
+        if (mruIndex < 0 || mruIndex >= items.Count)
+            return;
+
+        var contentPath = items[mruIndex];
+
+        if (!File.Exists(contentPath))
+        {
+            var result = MessageBox.Show(
+                $"The file no longer exists:\n\n{contentPath}\n\nRemove from recent list?",
+                "File Not Found", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+
+            if (result == MessageBoxResult.Yes)
+            {
+                _virtualDriveMru.Remove(contentPath);
+                RefreshRecentVirtualDriveMenu();
+            }
+            return;
+        }
+
+        // Open the virtual drive dialog pre-populated with this path
+        ShowOpenVirtualDriveWindowInternal(
+            prePopulatedPath: contentPath,
+            preSelectCreateNew: false);
     }
 
     #endregion
@@ -1491,6 +1617,8 @@ public partial class MainViewModel : ViewModelBase
 
             UpdateTreeFromTOC(_tapeService.DriveNumber);
             SelectMostRecentSet();
+
+            AddToVirtualDriveMru(newVmd.ContentPath);
 
             MessageBox.Show("Virtual media formatted successfully!", "Format Complete",
                 MessageBoxButton.OK, MessageBoxImage.Information);

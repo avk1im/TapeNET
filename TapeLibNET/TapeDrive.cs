@@ -49,9 +49,23 @@ public class TapeDrive : ErrorManageableBase, IDisposable
     public static TapeDrive CreateWin32(ILoggerFactory? loggerFactory = null)
     {
         loggerFactory ??= NullLoggerFactory.Instance;
-        return new TapeDrive(loggerFactory, new TapeDriveWin32Backend(loggerFactory));
+        return new TapeDrive(new TapeDriveWin32Backend(loggerFactory));
     }
 
+    /// <summary>Probe if a tape drive with specified number is present.</summary>
+    public static bool ProbeWin32(uint driveNumber = 0)
+    {
+        var loggerFactory = NullLoggerFactory.Instance;
+        try
+        {
+            using var drive = new TapeDrive(new TapeDriveWin32Backend(loggerFactory));
+            return drive.ProbeDrive(driveNumber);
+        }
+        catch
+        {
+            return false;
+        }
+    }
     #endregion
 
     #region *** Properties ***
@@ -269,6 +283,25 @@ public class TapeDrive : ErrorManageableBase, IDisposable
 
         m_logger.LogTrace("{Prefix}: Drive reopened", LogPrefix);
         return IsDriveOpen;
+    }
+
+    internal bool ProbeDrive(uint driveNumber = 0)
+    {
+        if (IsDriveOpen) // do not probe with an already open drive not to spoil its state!
+            return false;
+
+        m_logger.LogTrace("Probing drive #{Number}", driveNumber);
+
+        if (!m_backend.Open(driveNumber))
+        {
+            m_logger.LogTrace("Failed probing drive #{Number}", driveNumber);
+            return false;
+        }
+
+        m_backend.Close();
+
+        m_logger.LogTrace("Suceeded probing drive #{Number}", driveNumber);
+        return true;
     }
 
     public void CloseDrive()

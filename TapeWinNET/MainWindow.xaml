@@ -34,6 +34,16 @@
                 </MenuItem.ItemContainerStyle>
             </MenuItem>
             <MenuItem Header="Open _Virtual Drive..." Command="{Binding OpenVirtualDriveCommand}"/>
+            <MenuItem Header="Recent Virtual Drives" ItemsSource="{Binding RecentVirtualDriveMenuItems}"
+                      Visibility="{Binding HasRecentVirtualDrives, Converter={StaticResource BoolToVis}}">
+                <MenuItem.ItemContainerStyle>
+                    <Style TargetType="MenuItem">
+                        <Setter Property="Header" Value="{Binding Header}"/>
+                        <Setter Property="Command" Value="{Binding Command}"/>
+                        <Setter Property="CommandParameter" Value="{Binding DriveNumber}"/>
+                    </Style>
+                </MenuItem.ItemContainerStyle>
+            </MenuItem>
         </ContextMenu>
 
         <!-- Context menu: Media (Tape) node -->
@@ -145,6 +155,16 @@
                     </MenuItem.ItemContainerStyle>
                 </MenuItem>
                 <MenuItem Header="Open _Virtual Drive..." Command="{Binding OpenVirtualDriveCommand}"/>
+                <MenuItem Header="Recent Virtual Drives" ItemsSource="{Binding RecentVirtualDriveMenuItems}"
+                          Visibility="{Binding HasRecentVirtualDrives, Converter={StaticResource BoolToVis}}">
+                    <MenuItem.ItemContainerStyle>
+                        <Style TargetType="MenuItem">
+                            <Setter Property="Header" Value="{Binding Header}"/>
+                            <Setter Property="Command" Value="{Binding Command}"/>
+                            <Setter Property="CommandParameter" Value="{Binding DriveNumber}"/>
+                        </Style>
+                    </MenuItem.ItemContainerStyle>
+                </MenuItem>
                 <Separator/>
                 <MenuItem Header="Virtual _IO Speed" 
                           ItemsSource="{Binding IoSpeedOptions}"

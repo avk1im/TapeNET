@@ -150,5 +150,7 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 
 ## What's Next (Planned)
 
-- Media capacity reporting
-- Additional UI polish and workflow refinements
+- `TapeWinNET`: Additional UI polish and workflow refinements
+- `TapeLibNET`: Polishing, validation, & hardening of the core functionality
+- `TapeLibNET`: Proper commenting of the code, esp. public API and complex logic areas
+- `TapeConNET`: Service updates to keep in sync with library changes
