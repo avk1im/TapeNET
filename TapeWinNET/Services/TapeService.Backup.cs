@@ -100,24 +100,40 @@ public partial class TapeService
                     // Determine if we need to append or overwrite
                     bool append = appendMode && _toc != null;
 
+                    // --- TOC preparation ---
+                    // Three modes:
+                    //  1. Append after specific set: backup copy of TOC for rollback, empty the
+                    //     target set slot, reuse it (newSet=false). Sets after it are removed on success.
+                    //  2. Straight append: add a new set after existing ones (newSet=true),
+                    //     or reuse the last set if it's empty (newSet=false).
+                    //  3. Overwrite: remove all existing sets, write from scratch (newSet=true).
+
                     // Create backup agent with existing TOC if appending, store in _tapeAgent field
                     _agent?.Dispose();
-                    _agent = new TapeFileBackupAgent(_drive, append ? _toc : null);
+                    _agent = new TapeFileBackupAgent(_drive, _toc);
                     var agent = (TapeFileBackupAgent)_agent;
                     var toc = agent.TOC;
+                    TapeTOC? backupTOC = null;
+                    bool appendAfterSetUsed = false;
+                    appendAfterSetIndex = toc.SetIndexToStd(appendAfterSetIndex); // ensure std form
 
-                    // Handle append after specific set
-                    if (append && appendAfterSetIndex > 0 && appendAfterSetIndex < toc.Count)
+                    // Mode 1: Append after specific set — save TOC copy for rollback
+                    if (append && appendAfterSetIndex > toc.FirstSetOnVolume && appendAfterSetIndex < toc.LastSetOnVolume)
                     {
-                        logInfo($"Appending after backup set #{appendAfterSetIndex}");
+                        logInfo($"Appending after backup set #{appendAfterSetIndex} | {toc.SetIndexToAlt(appendAfterSetIndex)}");
+                        backupTOC = new TapeTOC(toc);
+                        appendAfterSetUsed = true;
                         toc.CurrentSetIndex = appendAfterSetIndex + 1;
-                        toc.EmptyCurrentSet();
+                        toc.EmptyCurrentSet(); // clear the target slot; will trigger newSet=false below
                     }
+                    // Mode 3: Overwrite — save TOC copy for rollback
                     else if (!append)
                     {
                         logInfo("Creating new backup, replacing all existing content");
+                        backupTOC = new TapeTOC(toc);
                         toc.RemoveAllSets();
                     }
+                    // else: Mode 2 — straight append (no TOC modification needed here)
 
                     // Set up media description if empty
                     if (string.IsNullOrEmpty(toc.Description))
@@ -125,24 +141,24 @@ public partial class TapeService
                         toc.Description = $"Media created {DateTime.Now}";
                     }
 
-                    // Determine if we need a new set
+                    // Determine if a new set was added or an existing empty slot is reused
                     bool newSet;
                     if (append)
                     {
                         if (toc.CurrentSetTOC.Count > 0)
                         {
-                            toc.AddNewSetTOC(0, incremental);
+                            toc.AddNewSetTOC(0, incremental); // straight append: add new set
                             newSet = true;
                         }
                         else
                         {
-                            toc.MarkCurrentSetIncremental(incremental);
+                            toc.MarkCurrentSetIncremental(incremental); // reuse emptied slot (mode 1)
                             newSet = false;
                         }
                     }
                     else
                     {
-                        newSet = true;
+                        newSet = true; // overwrite: entire TOC created anew
                     }
 
                     // Configure the new backup set
@@ -168,7 +184,11 @@ public partial class TapeService
                         currentFileCallback,
                         fileErrorCallback);
 
-                    // Execute backup loop (handles multi-volume)
+                    // --- Backup loop (handles multi-volume) ---
+                    // After each iteration:
+                    //  result=true  → all files processed successfully
+                    //  result=false → abort, volume full (CanResumeToNextVolume), or hard failure
+                    // In all cases, the TOC must be cleaned up and saved to tape.
                     bool wasAborted = false;
                     do
                     {
@@ -186,35 +206,50 @@ public partial class TapeService
 
                         bool noFilesBackedUp = toc.CurrentSetTOC.Count == 0;
 
+                        // --- TOC cleanup based on result ---
+
                         if (result)
                         {
-                            // Handle append after set - remove sets after current
-                            if (appendAfterSetIndex > 0 && appendAfterSetIndex < toc.Count)
+                            // Success: trim sets after current if we replaced a middle set (mode 1)
+                            if (appendAfterSetUsed)
                             {
                                 toc.RemoveSetsAfterCurrent();
                             }
 
+                            // Success but no files (e.g. incremental with no changes, no matching files):
+                            // undo TOC modifications and return without saving TOC to tape
                             if (noFilesBackedUp)
                             {
                                 logInfo("No files were backed up");
-                                toc.RemoveLastEmptySet();
+                                if (backupTOC != null)
+                                    toc.CopyFrom(backupTOC); // restore original TOC
+                                else
+                                    toc.RemoveLastEmptySet();
                                 _toc = toc;
                                 return;
                             }
                         }
-                        else // Backup had issues (including abort)
+                        else // Backup had issues
                         {
                             if (wasAborted)
                             {
+                                // Abort: undo TOC modifications if no files were written;
+                                // TOC will still be saved to tape below to preserve media integrity
                                 if (noFilesBackedUp)
-                                    toc.RemoveLastEmptySet();
+                                {
+                                    if (backupTOC != null)
+                                        toc.CopyFrom(backupTOC);
+                                    else
+                                        toc.RemoveLastEmptySet();
+                                }
                             }
-                            // Check for multi-volume continuation
                             else if (agent.CanResumeToNextVolume)
                             {
+                                // Volume full: trim trailing sets (mode 1), remove empty set if no files;
+                                // TOC will be saved, then user is prompted to insert next volume
                                 logInfo($"Volume #{toc.Volume} is full - backup can continue to next volume");
 
-                                if (appendAfterSetIndex > 0)
+                                if (appendAfterSetUsed)
                                 {
                                     toc.RemoveSetsAfterCurrent();
                                 }
@@ -226,16 +261,28 @@ public partial class TapeService
                             }
                             else
                             {
+                                // Hard failure (no multi-volume resume possible)
                                 if (noFilesBackedUp)
                                 {
-                                    toc.RemoveLastEmptySet();
-                                    logErr("No files backed up");
+                                    // No files written: restore original TOC or remove empty set
+                                    if (backupTOC != null)
+                                    {
+                                        toc.CopyFrom(backupTOC);
+                                        logErr("No files backed up");
+                                    }
+                                    else
+                                    {
+                                        toc.RemoveLastEmptySet();
+                                        logErr("No files backed up");
+                                    }
 
+                                    // If TOC on tape is still valid, skip re-saving it
                                     if (!agent.Navigator.TOCInvalidated)
                                     {
                                         _toc = toc;
                                         return;
                                     }
+                                    // else: TOC on tape is stale → must save below
                                 }
                                 else
                                 {
@@ -244,7 +291,13 @@ public partial class TapeService
                             }
                         }
 
-                        // Backup TOC
+                        // --- Save TOC to tape ---
+                        // If we wrote content and are not continuing to another volume,
+                        // clear any stale multi-volume continuation flag from a previous session
+                        // (e.g. user backed up onto a middle volume of an old multi-volume chain)
+                        if (!noFilesBackedUp && !agent.CanResumeToNextVolume)
+                            toc.ContinuedOnNextVolume = false;
+
                         if (!wasAborted)
                         {
                             Status("Saving TOC...");

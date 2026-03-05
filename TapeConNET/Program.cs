@@ -1241,8 +1241,11 @@ void HandleBackup(List<string> values)
 
                 if (noFilesBackedup)
                 {
-                    Console.WriteLine("iii No files backed up"); // might be ok -- e.g. if incremental backup or no matching files found
-                    toc.RemoveLastEmptySet();
+                    Console.WriteLine("iii No files backed up");
+                    if (backupTOC != null)
+                        toc.CopyFrom(backupTOC); // restore original TOC
+                    else
+                        toc.RemoveLastEmptySet();
                     stopwatch.Stop();
                     legacyTOC = toc; // save the TOC for the next operation
                     break; // needn't carry on to back up the TOC
@@ -1265,10 +1268,10 @@ void HandleBackup(List<string> values)
                 {
                     if (noFilesBackedup)
                     {
-                        if (appendAfterSet.HasValue && backupTOC != null) // if we removed sets, try to restore them
+                        if (backupTOC != null) // restore original TOC (appendAfterSet or overwrite rollback)
                         {
-                            toc.CopyFrom(backupTOC); // restore the TOC from the backup copy
-                            Console.WriteLine("!!! No files backed up -> no sets removed");
+                            toc.CopyFrom(backupTOC);
+                            Console.WriteLine("!!! No files backed up -> TOC restored");
                         }
                         else
                         {
@@ -1290,6 +1293,11 @@ void HandleBackup(List<string> values)
                     }
                 }
             }
+
+            // If we wrote content and are not continuing to another volume,
+            // clear any stale multi-volume continuation flag from a previous session
+            if (!noFilesBackedup && !agent.CanResumeToNextVolume)
+                toc.ContinuedOnNextVolume = false;
 
             if (!noFilesBackedup)
                 Console.Write($">>> Backing up TOC with {toc.CurrentSetTOC.Count} new file entr(y|ies)...");

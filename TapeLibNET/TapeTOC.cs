@@ -555,7 +555,7 @@ namespace TapeLibNET
         public DateTime LastSaveTime { get; internal set; } = DateTime.Now;
 
         public int Volume { get; internal set; } = 1; // volume indexing starts from 1
-        public bool ContinuedOnNextVolume { get; internal set; } = false;
+        public bool ContinuedOnNextVolume { get; set; } = false;
 
         public int Count => m_setTOCs.Count;
         public TapeSetTOC CurrentSetTOC
@@ -717,6 +717,7 @@ namespace TapeLibNET
                 {
                     HashAlgorithm = setTOC.HashAlgorithm,
                     Description = setTOC.Description,
+                    BlockSize = setTOC.BlockSize,
                     ContinuedFromPrevVolume = contFromPrevVolume && (m_setTOCs.Count > 0), // the very first set may not be continued
                 }
             );

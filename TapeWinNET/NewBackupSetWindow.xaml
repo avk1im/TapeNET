@@ -221,12 +221,13 @@
 
                         <!-- Warning Panel -->
                         <Border Style="{StaticResource WarningPanelStyle}">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
-                                           FontSize="13" Margin="0,0,6,0"/>
-                                <TextBlock Text="{Binding WarningMessage}" TextWrapping="Wrap"
-                                           VerticalAlignment="Center"/>
-                            </StackPanel>
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Left"
+                                           Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
+                                           FontSize="13" Margin="0,0,6,0"
+                                           VerticalAlignment="Top"/>
+                                <TextBlock Text="{Binding WarningMessage}" TextWrapping="Wrap"/>
+                            </DockPanel>
                         </Border>
                     </StackPanel>
                 </GroupBox>

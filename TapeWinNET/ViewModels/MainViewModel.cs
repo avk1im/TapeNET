@@ -947,7 +947,7 @@ public partial class MainViewModel : ViewModelBase
         }
 
         // Populate media properties
-        PropertyList.Add(new PropertyItem("Name", toc.Description ?? "(unnamed)"));
+        PropertyList.Add(new PropertyItem("Description", toc.Description ?? "(unnamed)"));
         PropertyList.Add(new PropertyItem("Created On", toc.CreationTime.ToString("G")));
         PropertyList.Add(new PropertyItem("Last Saved", toc.LastSaveTime.ToString("G")));
         PropertyList.Add(new PropertyItem("Backup Sets", toc.Count.ToString()));
@@ -1008,7 +1008,7 @@ public partial class MainViewModel : ViewModelBase
             PropertiesHeader = $"Backup Set #{setIndex} | {altIndex} Properties";
 
             // Populate backup set properties
-            PropertyList.Add(new PropertyItem("Name", setTOC.Description ?? "(unnamed)"));
+            PropertyList.Add(new PropertyItem("Description", setTOC.Description ?? "(unnamed)"));
             PropertyList.Add(new PropertyItem("Set Index", $"#{setIndex} | {altIndex}"));
             PropertyList.Add(new PropertyItem("Files", setTOC.Count.ToString("N0")));
             PropertyList.Add(new PropertyItem("Total File Size on Tape",

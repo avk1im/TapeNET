@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Dynamic;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
@@ -268,21 +269,31 @@ public class NewBackupSetViewModel : ViewModelBase
     {
         get
         {
-            if (OverwriteMedia)
-                return "WARNING: This will ERASE ALL DATA on the media!";
+            string message = string.Empty;
+            var toc = _tapeService.TOC;
 
-            if (SelectedAppendOption != null && !SelectedAppendOption.IsOverwrite)
+            if (OverwriteMedia)
+                message = "WARNING: This will ERASE ALL DATA on the media!";
+            else if (SelectedAppendOption != null && !SelectedAppendOption.IsOverwrite)
             {
-                var toc = _tapeService.TOC;
                 if (toc != null && SelectedAppendOption.SetIndex < toc.Count)
                 {
                     int setsToRemove = toc.Count - SelectedAppendOption.SetIndex;
                     if (setsToRemove > 0)
-                        return $"{setsToRemove} backup set(s) after this one will be overwritten.";
+                        message = $"{setsToRemove} backup set(s) after this one will be overwritten.";
                 }
             }
+            else
+                message = "New backup set will be appended after the selected set.";
 
-            return "New backup set will be appended after the selected set.";
+            if (toc?.ContinuedOnNextVolume ?? false)
+            {
+                if (message != string.Empty)
+                    message += "\r\n";
+                message += "Note: Writing to this media will invalidate a multi-volume backup";
+            }
+
+            return message;
         }
     }
 
@@ -296,12 +307,16 @@ public class NewBackupSetViewModel : ViewModelBase
             if (OverwriteMedia)
                 return WarningLevel.Error;
 
+            var toc = _tapeService.TOC;
+
             if (SelectedAppendOption != null && !SelectedAppendOption.IsOverwrite)
             {
-                var toc = _tapeService.TOC;
                 if (toc != null && SelectedAppendOption.SetIndex < toc.Count)
                     return WarningLevel.Warning;
             }
+
+            if (toc?.ContinuedOnNextVolume ?? false)
+                return WarningLevel.Warning;
 
             return WarningLevel.Info;
         }
@@ -604,9 +619,9 @@ public class NewBackupSetViewModel : ViewModelBase
         }
 
         // Add options from latest to oldest (0, -1, -2, ...)
-        for (int alt = 0; alt >= toc.MinSetIndex; alt--)
+        for (int setIndex = toc.LastSetOnVolume; setIndex >= toc.FirstSetOnVolume; setIndex--)
         {
-            int setIndex = toc.SetIndexToAlt(alt);
+            int alt = toc.SetIndexToAlt(setIndex);
             var setTOC = toc[setIndex];
             AppendOptions.Add(new AppendAfterOption(setTOC, setIndex, alt));
         }

@@ -229,7 +229,7 @@ namespace TapeWinNET
         {
             while (source != null)
             {
-                if (source is CheckBox or GridViewColumnHeader)
+                if (source is CheckBox or GridViewColumnHeader or ScrollBar)
                     return true;
                 source = VisualTreeHelper.GetParent(source);
             }
