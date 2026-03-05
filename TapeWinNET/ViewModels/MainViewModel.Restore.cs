@@ -113,6 +113,9 @@ public partial class MainViewModel
         if (!CanStartRestore) return;
 
         var markerPath = ExplorerDropHelper.CreateMarkerFile();
+        if (markerPath == null)
+            return;
+
         try
         {
             var data = new DataObject(DataFormats.FileDrop, new[] { markerPath });
@@ -131,7 +134,8 @@ public partial class MainViewModel
                 StartRestore(RestoreMode.Restore, targetFolder);
             }
         }
-        catch
+        catch { }
+        finally
         {
             ExplorerDropHelper.CleanupMarker(markerPath, null);
         }

@@ -68,8 +68,8 @@ public record PresetOption(
         new("Basic", VirtualTapeDriveCapabilities.Basic, 100 * 1024 * 1024),
         new("With Setmarks", VirtualTapeDriveCapabilities.WithSetmarks, 500 * 1024 * 1024),
         new("With Seq. Filemarks", VirtualTapeDriveCapabilities.WithSeqFilemarks, 500 * 1024 * 1024),
-        new("With Partitions", VirtualTapeDriveCapabilities.WithPartitions, 1024L * 1024 * 1024, 24 * 1024 * 1024),
-        new("Full Featured", VirtualTapeDriveCapabilities.FullFeatured, 1024L * 1024 * 1024, 32 * 1024 * 1024),
+        new("With Partitions", VirtualTapeDriveCapabilities.WithPartitions, 1024L * 1024 * 1024, 16 * 1024 * 1024),
+        new("Full Featured", VirtualTapeDriveCapabilities.FullFeatured, 1024L * 1024 * 1024, 16 * 1024 * 1024),
     ];
 }
 

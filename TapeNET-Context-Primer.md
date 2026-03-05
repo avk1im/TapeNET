@@ -150,6 +150,5 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 
 ## What's Next (Planned)
 
-- Media format dialog
-- UI: context menus, drag-and-drop for file lists
+- Media capacity reporting
 - Additional UI polish and workflow refinements

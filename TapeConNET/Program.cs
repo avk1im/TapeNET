@@ -535,8 +535,8 @@ void WriteDriveInformation()
         Console.WriteLine($" ii Partition count: {drive.PartitionCount}");
         if (drive.PartitionCount > 1)
             Console.WriteLine($" ii Current partition: {drive.GetCurrentPartition()}");
-        Console.WriteLine($" ii Capacity: {Helpers.BytesToStringLong(drive.Capacity)}");
-        Console.WriteLine($" ii Remaining (est.): {Helpers.BytesToStringLong(drive.GetRemainingCapacity())}");
+        Console.WriteLine($" ii Capacity: {Helpers.BytesToStringLong(drive.ContentCapacity)}");
+        Console.WriteLine($" ii Remaining (est.): {Helpers.BytesToStringLong(drive.GetContentRemainingCapacity())}");
     }
     else
     {
@@ -552,14 +552,14 @@ void WriteMediaInformation(TapeTOC toc)
     Console.WriteLine($" ii Created on: {toc.CreationTime}");
     Console.WriteLine($" ii Last saved: {toc.LastSaveTime}");
     Console.WriteLine($" ii Backup sets: {toc.Count}");
-    Console.WriteLine($" ii Capacity: {Helpers.BytesToStringLong(drive.Capacity)}");
+    Console.WriteLine($" ii Capacity: {Helpers.BytesToStringLong(drive.ContentCapacity)}");
     var used = toc.ComputeTotalFileSizeOnTape(drive.DefaultBlockSize);
     if (!drive.HasInitiatorPartition)
         used += TapeNavigator.TOCCapacity; // if TOC is in set, it consumes content space
-    var remaining = drive.Capacity - used; //drive.GetRemainingCapacity();
+    var remaining = drive.ContentCapacity - used; //drive.GetContentRemainingCapacity();
     Console.WriteLine($" ii Used: {Helpers.BytesToStringLong(used)}");
     Console.WriteLine($" ii Remaining: {Helpers.BytesToStringLong(remaining)}");
-    Console.WriteLine($" ii Remaining (est.): {Helpers.BytesToStringLong(drive.GetRemainingCapacity())}");
+    Console.WriteLine($" ii Remaining (est.): {Helpers.BytesToStringLong(drive.GetContentRemainingCapacity())}");
     Console.WriteLine($" ii TOC placement: {((drive.HasInitiatorPartition) ? "partition" : "set")}");
     Console.WriteLine($" ii Volume #{toc.Volume}");
     Console.WriteLine($" ii Continued on next volume? {(toc.ContinuedOnNextVolume ? "Yes" : "No")}");
@@ -762,9 +762,6 @@ void HandleDrive(List<string> values)
     }
 
     Console.WriteLine("vvv Media loaded ok");
-
-    if (tapeDrive.HasInitiatorPartition)
-        tapeDrive.MoveToPartition(MediaPartition.Content); // to get correct Capacity information
 
     filemarksMode = false; // fill the default filemarks mode
     blockSizeKB = tapeDrive.BlockSize / 1024U; // fill the drive's default block size
@@ -1320,7 +1317,7 @@ void HandleBackup(List<string> values)
 
             Console.WriteLine($"vvv Backed up {proc.ProcessedCount} file(s) incl. TOC ~ {Helpers.BytesToString(agent.BytesBackedup)} in " + stopwatch.ElapsedTimeSpan +
                 $" --> throughput {Helpers.BytesToString((long)(agent.BytesBackedup / stopwatch.ElapsedSeconds))}/s");
-            Console.WriteLine($"iii Remaining media capacity: {Helpers.BytesToStringLong(drive.GetRemainingCapacity())}");
+            Console.WriteLine($"iii Remaining media capacity: {Helpers.BytesToStringLong(drive.GetContentRemainingCapacity())}");
 
             // Check if we can proceed with the next volume
             if (!agent.CanResumeToNextVolume)
@@ -1565,9 +1562,6 @@ void HandleList(List<string> values)
         if (legacyTOC == null && !RestoreTOC(agent))
             return;
         tocSize = agent.BytesRestored - tocSize;
-
-        if (drive.HasInitiatorPartition)
-            drive.MoveToPartition(MediaPartition.Content); // to get correct Capacity information
 
         Console.WriteLine("iii Media information:");
         WriteMediaInformation(toc);

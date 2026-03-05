@@ -31,13 +31,20 @@ public static class ExplorerDropHelper
     /// Explorer requires actual file paths on disk to accept the drop.
     /// </summary>
     /// <returns>Full path to the marker file in the temp directory.</returns>
-    public static string CreateMarkerFile()
+    public static string? CreateMarkerFile()
     {
-        var name = $"{MarkerPrefix}{Guid.NewGuid():N}.tmp";
-        var path = Path.Combine(Path.GetTempPath(), name);
-        File.WriteAllBytes(path, []);
-        File.SetAttributes(path, FileAttributes.Hidden | FileAttributes.Temporary);
-        return path;
+        try
+        {
+            var name = $"{MarkerPrefix}{Guid.NewGuid():N}.tmp";
+            var path = Path.Combine(Path.GetTempPath(), name);
+            File.WriteAllBytes(path, []);
+            File.SetAttributes(path, FileAttributes.Hidden | FileAttributes.Temporary);
+            return path;
+        }
+        catch
+        {
+            return null; // failed to create marker file
+        }
     }
 
     /// <summary>
@@ -117,8 +124,11 @@ public static class ExplorerDropHelper
     /// </summary>
     /// <param name="markerPath">Path returned by <see cref="CreateMarkerFile"/>.</param>
     /// <param name="targetFolder">Path returned by <see cref="GetExplorerFolderAtCursor"/>, or null.</param>
-    public static void CleanupMarker(string markerPath, string? targetFolder)
+    public static void CleanupMarker(string? markerPath, string? targetFolder)
     {
+        if (markerPath == null)
+            return;
+
         TryDelete(markerPath);
 
         if (targetFolder != null)

@@ -11,16 +11,74 @@
         Title="{Binding WindowTitle}" 
         Height="700" Width="1100"
         WindowStartupLocation="CenterScreen">
-    
+
+    <Window.InputBindings>
+        <KeyBinding Key="F2" Command="{Binding RenameSelectedCommand}"/>
+    </Window.InputBindings>
+
     <Window.Resources>
         <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVis" />
         <converters:BoolToOpacityConverter x:Key="BoolToOpacityIcon" DimmedOpacity="0.4"/>
         <converters:BoolToOpacityConverter x:Key="BoolToOpacityText" DimmedOpacity="0.6"/>
 
+        <!-- Context menu: Drive node (DataContext is TapeTreeItemViewModel, so bind to window) -->
+        <ContextMenu x:Key="DriveContextMenu" x:Shared="False"
+                     DataContext="{Binding PlacementTarget.Tag, RelativeSource={RelativeSource Self}}">
+            <MenuItem Header="Open _Drive" ItemsSource="{Binding DriveMenuItems}">
+                <MenuItem.ItemContainerStyle>
+                    <Style TargetType="MenuItem">
+                        <Setter Property="Header" Value="{Binding Header}"/>
+                        <Setter Property="Command" Value="{Binding Command}"/>
+                        <Setter Property="CommandParameter" Value="{Binding DriveNumber}"/>
+                    </Style>
+                </MenuItem.ItemContainerStyle>
+            </MenuItem>
+            <MenuItem Header="Open _Virtual Drive..." Command="{Binding OpenVirtualDriveCommand}"/>
+        </ContextMenu>
+
+        <!-- Context menu: Media (Tape) node -->
+        <ContextMenu x:Key="MediaContextMenu" x:Shared="False"
+                     DataContext="{Binding PlacementTarget.Tag, RelativeSource={RelativeSource Self}}">
+            <MenuItem Header="_New Backup..." Command="{Binding NewBackupCommand}"/>
+            <Separator/>
+            <MenuItem Header="Re_name..." Command="{Binding RenameSelectedCommand}"/>
+            <MenuItem Header="_Reread TOC" Command="{Binding RereadTOCCommand}"/>
+            <Separator/>
+            <MenuItem Header="E_xport TOC to File..." Command="{Binding ExportTOCCommand}"/>
+            <MenuItem Header="_Import TOC from File..." Command="{Binding ImportTOCCommand}"/>
+            <Separator/>
+            <MenuItem Header="_Eject" Command="{Binding EjectCommand}"/>
+            <Separator/>
+            <MenuItem Header="_Format..." Command="{Binding FormatMediaCommand}"/>
+        </ContextMenu>
+
+        <!-- Context menu: Backup set / Restore actions (shared by TreeView and ListViews) -->
+        <ContextMenu x:Key="RestoreContextMenu" x:Shared="False"
+                     DataContext="{Binding PlacementTarget.Tag, RelativeSource={RelativeSource Self}}">
+            <MenuItem Header="_Restore..." Command="{Binding RestoreCommand}"/>
+            <MenuItem Header="Va_lidate..." Command="{Binding ValidateCommand}"/>
+            <MenuItem Header="Veri_fy..." Command="{Binding VerifyCommand}"/>
+            <Separator/>
+            <MenuItem Header="Re_name..." Command="{Binding RenameSelectedCommand}"/>
+        </ContextMenu>
+
         <!-- TreeView item style -->
         <Style x:Key="TreeViewItemStyle" TargetType="TreeViewItem">
             <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
             <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+            <!-- Pass window DataContext to context menus via Tag (context menus are outside the visual tree) -->
+            <Setter Property="Tag" Value="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding ItemType}" Value="Drive">
+                    <Setter Property="ContextMenu" Value="{StaticResource DriveContextMenu}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ItemType}" Value="Tape">
+                    <Setter Property="ContextMenu" Value="{StaticResource MediaContextMenu}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ItemType}" Value="BackupSet">
+                    <Setter Property="ContextMenu" Value="{StaticResource RestoreContextMenu}"/>
+                </DataTrigger>
+            </Style.Triggers>
         </Style>
 
         <!-- TreeView item template with icons -->
@@ -113,6 +171,7 @@
                 <MenuItem Header="E_xit" Command="{Binding ExitCommand}" InputGestureText="Alt+F4"/>
             </MenuItem>
             <MenuItem Header="_Media">
+                <MenuItem Header="Re_name..." Command="{Binding RenameMediaCommand}"/>
                 <MenuItem Header="_Reread TOC" Command="{Binding RereadTOCCommand}"/>
                 <Separator/>
                 <MenuItem Header="E_xport TOC to File..." Command="{Binding ExportTOCCommand}"/>
@@ -120,7 +179,7 @@
                 <Separator/>
                 <MenuItem Header="_Eject" Command="{Binding EjectCommand}"/>
                 <Separator/>
-                <MenuItem Header="_Format..." IsEnabled="False" ToolTip="Coming soon"/>
+                <MenuItem Header="_Format..." Command="{Binding FormatMediaCommand}"/>
             </MenuItem>
             <MenuItem Header="_Backup">
                 <MenuItem Header="_New Backup..." Command="{Binding NewBackupCommand}"/>
@@ -165,6 +224,7 @@
                           ItemTemplate="{StaticResource TreeItemTemplate}"
                           ItemContainerStyle="{StaticResource TreeViewItemStyle}"
                           SelectedItemChanged="TreeView_SelectedItemChanged"
+                          PreviewMouseRightButtonDown="TreeView_PreviewMouseRightButtonDown"
                           PreviewMouseLeftButtonDown="DragSource_PreviewMouseLeftButtonDown"
                           MouseMove="DragSource_MouseMove">
                 </TreeView>
@@ -192,6 +252,11 @@
                     <ListView ItemsSource="{Binding PropertyList}"
                               VirtualizingPanel.IsVirtualizing="True"
                               VirtualizingPanel.VirtualizationMode="Recycling">
+                        <ListView.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Re_name..." Command="{Binding RenameSelectedCommand}"/>
+                            </ContextMenu>
+                        </ListView.ContextMenu>
                         <ListView.ItemContainerStyle>
                             <Style TargetType="ListViewItem">
                                 <Style.Triggers>
@@ -230,7 +295,9 @@
                                   CheckBox.Checked="FileCheckBox_Changed"
                                   CheckBox.Unchecked="FileCheckBox_Changed"
                                   PreviewMouseLeftButtonDown="DragSource_PreviewMouseLeftButtonDown"
+                                  PreviewMouseLeftButtonUp="FileList_PreviewMouseLeftButtonUp"
                                   MouseMove="DragSource_MouseMove"
+                                  Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}"
                                   VirtualizingPanel.IsVirtualizing="True"
                                   VirtualizingPanel.VirtualizationMode="Recycling"
                                   Visibility="{Binding IsFileTableVisible, Converter={StaticResource BoolToVis}}">
@@ -273,8 +340,11 @@
                                                     DisplayMemberBinding="{Binding FullPath}" />
                                 </GridView>
                             </ListView.View>
+                            <ListView.ContextMenu>
+                                <StaticResource ResourceKey="RestoreContextMenu"/>
+                            </ListView.ContextMenu>
                         </ListView>
-                        
+
                         <!-- Backup Sets Table (visible when Media is selected) -->
                         <ListView ItemsSource="{Binding BackupSetList}"
                                   SelectedItem="{Binding SelectedBackupSet}"
@@ -282,7 +352,9 @@
                                   CheckBox.Checked="BackupSetCheckBox_Changed"
                                   CheckBox.Unchecked="BackupSetCheckBox_Changed"
                                   PreviewMouseLeftButtonDown="DragSource_PreviewMouseLeftButtonDown"
+                                  PreviewMouseLeftButtonUp="BackupSetList_PreviewMouseLeftButtonUp"
                                   MouseMove="DragSource_MouseMove"
+                                  Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}"
                                   VirtualizingPanel.IsVirtualizing="True"
                                   VirtualizingPanel.VirtualizationMode="Recycling"
                                   Visibility="{Binding IsBackupSetTableVisible, Converter={StaticResource BoolToVis}}"
@@ -376,10 +448,13 @@
                                     </GridViewColumn>
                                 </GridView>
                             </ListView.View>
+                            <ListView.ContextMenu>
+                                <StaticResource ResourceKey="RestoreContextMenu"/>
+                            </ListView.ContextMenu>
                         </ListView>
                     </Grid>
                 </GroupBox>
-                
+
                 <!-- Backup Progress Overlay (covers only tree + content, not log pane) -->
                 <Grid Grid.RowSpan="3" 
                       Background="#80000000"

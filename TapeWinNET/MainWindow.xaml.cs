@@ -88,6 +88,20 @@ namespace TapeWinNET
             }
         }
 
+        /// <summary>
+        /// Selects the TreeViewItem under the cursor on right-click so that
+        /// the context menu commands apply to the clicked item, not the previous selection.
+        /// </summary>
+        private void TreeView_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            var source = e.OriginalSource as DependencyObject;
+            while (source != null && source is not TreeViewItem)
+                source = VisualTreeHelper.GetParent(source);
+
+            if (source is TreeViewItem item)
+                item.IsSelected = true;
+        }
+
         private void GridViewColumnHeader_Click(object sender, RoutedEventArgs e)
         {
             if (e.OriginalSource is GridViewColumnHeader headerClicked)
@@ -145,6 +159,42 @@ namespace TapeWinNET
 
         private void BackupSetCheckBox_Changed(object sender, RoutedEventArgs e)
             => _viewModel.OnBackupSetCheckChanged();
+
+        /// <summary>
+        /// Toggles the checkbox when clicking anywhere on a file row (not just the checkbox itself).
+        /// </summary>
+        private void FileList_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (IsFromCheckBoxOrHeader(e.OriginalSource as DependencyObject))
+                return;
+
+            if (FindListViewItemAndDataContext<FileListItem>(e.OriginalSource as DependencyObject) is { } file)
+                file.IsCheckedForRestore = !file.IsCheckedForRestore;
+        }
+
+        /// <summary>
+        /// Toggles the checkbox when clicking anywhere on a backup set row (not just the checkbox itself).
+        /// </summary>
+        private void BackupSetList_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (IsFromCheckBoxOrHeader(e.OriginalSource as DependencyObject))
+                return;
+
+            if (FindListViewItemAndDataContext<BackupSetListItem>(e.OriginalSource as DependencyObject) is { } set)
+                set.IsCheckedForRestore = !set.IsCheckedForRestore;
+        }
+
+        /// <summary>
+        /// Walks the visual tree up from the click target to find the ListViewItem,
+        /// then returns its DataContext as T if it matches.
+        /// </summary>
+        private static T? FindListViewItemAndDataContext<T>(DependencyObject? source) where T : class
+        {
+            while (source != null && source is not ListViewItem)
+                source = VisualTreeHelper.GetParent(source);
+
+            return (source as ListViewItem)?.DataContext as T;
+        }
 
 
         #region Drag-to-Explorer

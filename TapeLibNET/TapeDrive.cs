@@ -17,6 +17,12 @@ public class TapeDrive : ErrorManageableBase, IDisposable
     private DriveCapabilities? m_driveParams = null;
     private MediaParameters? m_mediaParams = null;
 
+    // Content partition capacity cache — avoids needing to be on the Content partition
+    // to query its capacity. Updated whenever RefreshMediaParams() is called while on Content.
+    private long m_cachedContentCapacity = -1;
+    private long m_cachedContentRemaining = -1;
+    private bool m_onContentPartition; // tracked via MoveToPartition / EnsureOnContentPartition
+
     #endregion
 
     #region *** Private Constants ***
@@ -74,6 +80,12 @@ public class TapeDrive : ErrorManageableBase, IDisposable
     internal long BlockCounter => GetCurrentBlock();
     public long Capacity => m_mediaParams?.Capacity ?? 0L;
 
+    /// <summary>
+    /// Capacity of the Content partition, cached from the last time media params were
+    /// refreshed while on Content. Falls back to <see cref="Capacity"/> if not yet cached.
+    /// </summary>
+    public long ContentCapacity => m_cachedContentCapacity >= 0 ? m_cachedContentCapacity : Capacity;
+
     public long GetRemainingCapacity()
     {
         if (!RefreshMediaParams())
@@ -81,6 +93,22 @@ public class TapeDrive : ErrorManageableBase, IDisposable
 
         Debug.Assert(m_mediaParams != null);
         return m_mediaParams.Value.Remaining;
+    }
+
+    /// <summary>
+    /// Remaining capacity of the Content partition, cached from the last time media params
+    /// were refreshed while on Content. If currently on Content, refreshes first.
+    /// </summary>
+    public long GetContentRemainingCapacity()
+    {
+        if (m_onContentPartition)
+        {
+            // On content — refresh to get the latest value and cache it
+            return GetRemainingCapacity();
+        }
+
+        // On another partition — return the cached content remaining
+        return m_cachedContentRemaining >= 0 ? m_cachedContentRemaining : 0;
     }
 
     public long ByteCounter { get; internal set; } = 0L;
@@ -250,6 +278,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         m_backend.Close();
         m_driveParams = null;
         m_mediaParams = null;
+        InvalidateContentCache();
 
         m_logger.LogTrace("{Prefix}: Closed", LogPrefix);
     }
@@ -272,7 +301,10 @@ public class TapeDrive : ErrorManageableBase, IDisposable
             return false;
         }
 
+        // RefreshMediaParams first: EnsureOnContentPartition needs HasInitiatorPartition
+        // from m_mediaParams. No wrong caching here — m_onContentPartition is false.
         RefreshMediaParams();
+        EnsureOnContentPartition();
         m_logger.LogTrace("{Prefix}: Media loaded", LogPrefix);
         return IsMediaLoaded;
     }
@@ -290,6 +322,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         }
 
         m_mediaParams = null;
+        InvalidateContentCache();
         m_logger.LogTrace("{Prefix}: Media unloaded", LogPrefix);
         return true;
     }
@@ -328,8 +361,12 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         // Reload after format
         if (WentOK)
             m_backend.LoadMedia();
+        // RefreshMediaParams first: EnsureOnContentPartition needs HasInitiatorPartition
+        // from m_mediaParams. No wrong caching here — m_onContentPartition is false.
         if (WentOK)
             RefreshMediaParams();
+        if (WentOK)
+            EnsureOnContentPartition();
         if (WentOK)
             PrepareMedia();
 
@@ -387,6 +424,10 @@ public class TapeDrive : ErrorManageableBase, IDisposable
             LogErrorAsDebug("Failed to move to partition");
             return false;
         }
+
+        // Track which partition we're on for content capacity caching
+        if (partition != MediaPartition.Current)
+            m_onContentPartition = (partition == MediaPartition.Content);
 
         // parameters may differ for another partition, e.g. Capacity -> refresh them
         RefreshMediaParams();
@@ -612,9 +653,58 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         SyncErrorFrom(m_backend);
 
         if (WentOK)
+        {
             m_mediaParams = mediaParams;
 
+            if (m_onContentPartition)
+                CacheContentMediaParams(mediaParams);
+        }
+
         return WentOK;
+    }
+
+    private void CacheContentMediaParams(in MediaParameters mediaParams)
+    {
+        m_cachedContentCapacity = mediaParams.Capacity;
+        m_cachedContentRemaining = mediaParams.Remaining;
+    }
+
+    private void InvalidateContentCache()
+    {
+        m_cachedContentCapacity = -1;
+        m_cachedContentRemaining = -1;
+        m_onContentPartition = false;
+    }
+
+    /// <summary>
+    /// Ensures the drive is on the Content partition and the capacity cache is populated.
+    /// For multi-partition media, checks actual position first to avoid an unnecessary move.
+    /// </summary>
+    private void EnsureOnContentPartition()
+    {
+        if (HasInitiatorPartition)
+        {
+            if (!m_onContentPartition)
+            {
+                // Check actual position — after media load we're likely already on Content
+                if (GetCurrentPartition() == MediaPartition.Content)
+                {
+                    m_onContentPartition = true;
+                    RefreshMediaParams(); // re-read to populate the cache
+                }
+                else
+                {
+                    MoveToPartition(MediaPartition.Content); // move + refresh + cache
+                }
+            }
+        }
+        else
+        {
+            // Single-partition media is always Content — populate cache from current params
+            m_onContentPartition = true;
+            if (m_cachedContentCapacity < 0 && m_mediaParams != null)
+                CacheContentMediaParams(m_mediaParams.Value);
+        }
     }
 
     private void SetOptimalDriveParams()

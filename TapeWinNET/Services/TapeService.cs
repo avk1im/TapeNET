@@ -98,13 +98,13 @@ public partial class TapeService : IDisposable
     public uint MaximumBlockSize => _drive?.MaximumBlockSize ?? 0;
     public uint PartitionCount => _drive?.PartitionCount ?? 0;
     public bool HasInitiatorPartition => _drive?.HasInitiatorPartition ?? false;
-    public long Capacity => _drive?.Capacity ?? 0;
-    
+    public long Capacity => _drive?.ContentCapacity ?? 0;
+
     public long GetRemainingCapacity()
     {
         lock (_lock)
         {
-            return _drive?.GetRemainingCapacity() ?? 0;
+            return _drive?.GetContentRemainingCapacity() ?? 0;
         }
     }
 
@@ -188,18 +188,6 @@ public partial class TapeService : IDisposable
                         LastError = _drive.LastErrorMessage;
                         LogErr($"Couldn't load media. Error: {LastError}");
                         return false;
-                    }
-
-                    // if multiple partitions, move to content partition to load correct media params
-                    if (_drive.HasInitiatorPartition)
-                    {
-                        LogInfo("Moving to content partition...");
-                        if (!_drive.MoveToPartition(MediaPartition.Content))
-                        {
-                            LastError = _drive.LastErrorMessage;
-                            LogErr($"Couldn't move to content partition. Error: {LastError}");
-                            return false;
-                        }
                     }
 
                     LogOk("Media loaded successfully");
@@ -321,6 +309,90 @@ public partial class TapeService : IDisposable
                 {
                     LastError = ex.Message;
                     LogErr($"Exception creating initial TOC: {ex.Message}");
+                    return false;
+                }
+                finally
+                {
+                    _agent?.Dispose();
+                    _agent = null;
+                }
+            }
+        });
+    }
+
+    /// <summary>
+    /// Formats the media, creating partitions as specified, and writes an initial empty TOC.
+    /// Reloads media after format to refresh parameters.
+    /// </summary>
+    /// <param name="initiatorPartitionSize">
+    /// Size of the initiator partition for TOC placement.
+    /// Use <see cref="TapeNavigator.TOCCapacity"/> to create an initiator partition,
+    /// or -1 for single-partition (TOC in set) mode.
+    /// </param>
+    /// <param name="mediaName">Description for the new media. If null, a default name is generated.</param>
+    public Task<bool> FormatMediaAsync(long initiatorPartitionSize, string? mediaName)
+    {
+        return Task.Run(() =>
+        {
+            lock (_lock)
+            {
+                if (_drive == null || !_drive.IsMediaLoaded)
+                {
+                    LastError = "Media not loaded";
+                    return false;
+                }
+
+                try
+                {
+                    _agent?.Dispose();
+                    _agent = null;
+                    _toc = null;
+                    IsTOCFromFile = false;
+                    TOCFilePath = null;
+
+                    LogInfo("Formatting media...");
+                    Status("Formatting media...");
+
+                    if (!_drive.FormatMedia(initiatorPartitionSize))
+                    {
+                        LastError = _drive.LastErrorMessage;
+                        LogErr($"Couldn't format media. Error: {LastError}");
+                        return false;
+                    }
+
+                    var tocPlacement = _drive.HasInitiatorPartition ? "partition" : "set";
+                    LogOk($"Media formatted with TOC in {tocPlacement}");
+
+                    LogInfo("Creating initial TOC...");
+                    Status("Creating initial TOC...");
+
+                    var description = mediaName ?? $"Media created {DateTime.Now:yyyy-MM-dd HH:mm}";
+                    _agent = new TapeFileAgent(_drive, new TapeTOC(description));
+
+                    if (!_agent.BackupTOC())
+                    {
+                        LastError = _agent.LastErrorMessage;
+                        LogErr($"Couldn't save initial TOC. Error: {LastError}");
+                        return false;
+                    }
+
+                    _toc = _agent.TOC;
+
+                    if (!_drive.ReloadMedia())
+                    {
+                        LastError = _drive.LastErrorMessage;
+                        LogWarn($"Couldn't reload media after format. Error: {LastError}");
+                    }
+
+                    LogOk($"Media formatted: {description}");
+                    LogMediaInfo();
+                    Status("Media formatted");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    LastError = ex.Message;
+                    LogErr($"Exception formatting media: {ex.Message}");
                     return false;
                 }
                 finally
@@ -475,6 +547,99 @@ public partial class TapeService : IDisposable
                 {
                     LastError = ex.Message;
                     LogErr($"Exception exporting TOC to file: {ex.Message}");
+                    return false;
+                }
+                finally
+                {
+                    _agent?.Dispose();
+                    _agent = null;
+                }
+            }
+        });
+    }
+
+    /// <summary>
+    /// Renames the media by updating the TOC description and writing it back to tape.
+    /// </summary>
+    public async Task<bool> RenameMediaAsync(string newName)
+    {
+        if (_toc == null || _drive == null)
+        {
+            LastError = "No media loaded";
+            return false;
+        }
+
+        return await Task.Run(() =>
+        {
+            lock (_lock)
+            {
+                try
+                {
+                    LogInfo($"Renaming media to: {newName}");
+                    _toc.Description = newName;
+
+                    _agent = new TapeFileAgent(_drive, _toc);
+                    if (!_agent.BackupTOC())
+                    {
+                        LastError = "Failed to write TOC to media";
+                        LogErr(LastError);
+                        return false;
+                    }
+
+                    LogOk($"Media renamed to: {newName}");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    LastError = ex.Message;
+                    LogErr($"Exception renaming media: {ex.Message}");
+                    return false;
+                }
+                finally
+                {
+                    _agent?.Dispose();
+                    _agent = null;
+                }
+            }
+        });
+    }
+
+    /// <summary>
+    /// Renames a backup set by updating the set TOC description and writing the TOC back to tape.
+    /// </summary>
+    public async Task<bool> RenameBackupSetAsync(int setIndex, string newName)
+    {
+        if (_toc == null || _drive == null)
+        {
+            LastError = "No media loaded";
+            return false;
+        }
+
+        return await Task.Run(() =>
+        {
+            lock (_lock)
+            {
+                try
+                {
+                    var setTOC = _toc[setIndex];
+                    LogInfo($"Renaming backup set #{setIndex} to: {newName}");
+                    setTOC.Description = newName;
+
+                    _agent = new TapeFileAgent(_drive, _toc);
+                    if (!_agent.BackupTOC())
+                    {
+                        LastError = "Failed to write TOC to media";
+                        LogErr(LastError);
+                        return false;
+                    }
+
+                    LogOk($"Backup set #{setIndex} renamed to: {newName}");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    LastError = ex.Message;
+                    LogErr($"Exception renaming backup set: {ex.Message}");
                     return false;
                 }
                 finally
@@ -689,8 +854,8 @@ public partial class TapeService : IDisposable
             return;
 
         LogInfoSub($"Partition count: {_drive.PartitionCount}");
-        LogInfoSub($"Capacity: {Helpers.BytesToStringLong(_drive.Capacity)}");
-        LogInfoSub($"Remaining: {Helpers.BytesToStringLong(_drive.GetRemainingCapacity())}");
+        LogInfoSub($"Capacity: {Helpers.BytesToStringLong(_drive.ContentCapacity)}");
+        LogInfoSub($"Remaining: {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
     }
 
     private void LogTOCInfo()

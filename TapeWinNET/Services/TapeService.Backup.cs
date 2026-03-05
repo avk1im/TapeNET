@@ -98,7 +98,7 @@ public partial class TapeService
                     }
 
                     // Determine if we need to append or overwrite
-                    bool append = appendMode && _toc != null && _toc.Count > 0;
+                    bool append = appendMode && _toc != null;
 
                     // Create backup agent with existing TOC if appending, store in _tapeAgent field
                     _agent?.Dispose();
@@ -329,7 +329,7 @@ public partial class TapeService
                         {
                             logFail($"{progressHandler.FilesFailed:N0} file(s) of {progressHandler.FilesProcessed:N0} failed to back up");
                         }
-                        logOkSub($"Remaining media capacity: {Helpers.BytesToStringLong(_drive.GetRemainingCapacity())}");
+                        logOkSub($"Remaining media capacity: {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
 
                         // If backup was aborted, TOC has been saved — break out
                         if (wasAborted)
@@ -413,7 +413,6 @@ public partial class TapeService
                 }
                 finally
                 {
-                    // Clean up the backup agent
                     _agent?.Dispose();
                     _agent = null;
                 }

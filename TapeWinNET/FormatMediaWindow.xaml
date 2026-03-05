@@ -1,0 +1,64 @@
+<Window x:Class="TapeWinNET.FormatMediaWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
+        xmlns:converters="clr-namespace:TapeWinNET.Converters"
+        d:DataContext="{d:DesignInstance Type=vm:FormatMediaViewModel}"
+        mc:Ignorable="d"
+        Title="Format Media"
+        Height="300" Width="450"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+
+    <Window.InputBindings>
+        <KeyBinding Key="Escape" Command="{Binding CancelCommand}"/>
+    </Window.InputBindings>
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Media Name -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,16">
+            <TextBlock Text="Media Description:" Margin="0,0,0,4"/>
+            <TextBox Text="{Binding MediaName, UpdateSourceTrigger=PropertyChanged}"/>
+        </StackPanel>
+
+        <!-- Initiator Partition Option -->
+        <StackPanel Grid.Row="1" Margin="0,0,0,8">
+            <CheckBox Content="Create initiator partition for TOC"
+                      IsChecked="{Binding CreateInitiatorPartition}"
+                      IsEnabled="{Binding SupportsInitiatorPartition}"
+                      Margin="0,0,0,4"/>
+            <TextBlock Text="{Binding InitiatorPartitionHint}"
+                       FontSize="10" Foreground="DarkGray"
+                       TextWrapping="Wrap"
+                       Margin="20,0,0,0"/>
+        </StackPanel>
+
+        <!-- Warning Panel -->
+        <Border Grid.Row="2" Style="{StaticResource WarningPanelStyle}" VerticalAlignment="Bottom">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
+                           FontSize="13" Margin="0,0,6,0"/>
+                <TextBlock Text="{Binding WarningMessage}" TextWrapping="Wrap"
+                           VerticalAlignment="Center"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Buttons -->
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Cancel" Command="{Binding CancelCommand}"
+                    Width="80" Margin="0,0,8,0" IsCancel="True"/>
+            <Button Content="Format" Command="{Binding FormatCommand}"
+                    Width="80"/>
+        </StackPanel>
+    </Grid>
+</Window>

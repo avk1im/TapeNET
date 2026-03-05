@@ -33,7 +33,7 @@ namespace TapeLibNET
 
             Navigator.TargetContentSet = newSet ? ((TOC.CurrentSetIndexOnVolume > 0) ? -1 : 0) : CurrentSetAsNavigatorContentSet;
 
-            var remainingCapacity = Drive.Capacity - TOC.ComputeTotalFileSizeOnTape();
+            var remainingCapacity = Drive.ContentCapacity - TOC.ComputeTotalFileSizeOnTape();
             if (!Drive.HasInitiatorPartition)
                 remainingCapacity -= TapeNavigator.TOCCapacity; // if TOC is in a content set, reserve space for it
 

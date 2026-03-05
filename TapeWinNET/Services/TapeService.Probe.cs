@@ -136,12 +136,11 @@ public partial class TapeService
                 {
                     drive.MoveToPartition(MediaPartition.Initiator);
                     initiatorCapacity = drive.Capacity;
-                    drive.MoveToPartition(MediaPartition.Content);
                 }
 
                 return new VirtualDriveProbeResult(
                     Success: true,
-                    Media: new VirtualMediaDescriptor(contentPath, drive.Capacity, initiatorPath, initiatorCapacity),
+                    Media: new VirtualMediaDescriptor(contentPath, drive.ContentCapacity, initiatorPath, initiatorCapacity),
                     MediaName: toc.Description,
                     BackupSetCount: toc.Count,
                     DetectedCapabilities: detectedCaps,

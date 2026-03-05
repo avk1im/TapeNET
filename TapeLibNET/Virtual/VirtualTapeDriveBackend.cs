@@ -147,7 +147,7 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
         ILoggerFactory loggerFactory,
         VirtualTapeDriveCapabilities? capabilities = null,
         long contentCapacity = 500 * 1024 * 1024,
-        long initiatorPartitionCapacity = 24 * 1024 * 1024)
+        long initiatorPartitionCapacity = 16 * 1024 * 1024)
     {
         var caps = capabilities ?? VirtualTapeDriveCapabilities.WithSetmarks;
 

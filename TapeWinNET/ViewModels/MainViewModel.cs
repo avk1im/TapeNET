@@ -65,9 +65,12 @@ public partial class MainViewModel : ViewModelBase
         RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         RereadTOCCommand = new AsyncRelayCommand(RereadTOCAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         EjectCommand = new AsyncRelayCommand(EjectAsync, () => !IsBusy && _tapeService.IsMediaLoaded);
+        FormatMediaCommand = new RelayCommand(ShowFormatMediaWindow, _ => !IsBusy && _tapeService.IsMediaLoaded);
         ExportTOCCommand = new AsyncRelayCommand(ExportTOCAsync, () => !IsBusy && _tapeService.TOC != null);
         ImportTOCCommand = new AsyncRelayCommand(ImportTOCAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         NavigateToBackupSetCommand = new RelayCommand(NavigateToSelectedBackupSet, _ => SelectedBackupSet != null);
+        RenameSelectedCommand = new AsyncRelayCommand(RenameSelectedAsync, () => CanRenameSelected);
+        RenameMediaCommand = new AsyncRelayCommand(RenameMediaAsync, () => CanRenameMedia);
         ExitCommand = new RelayCommand(Exit);
         AboutCommand = new RelayCommand(ShowAbout);
 
@@ -280,11 +283,14 @@ public partial class MainViewModel : ViewModelBase
     public ICommand RefreshCommand { get; }
     public ICommand RereadTOCCommand { get; }
     public ICommand EjectCommand { get; }
+    public ICommand FormatMediaCommand { get; }
     public ICommand ExportTOCCommand { get; }
     public ICommand ImportTOCCommand { get; }
     // NewBackupCommand and AbortBackupCommand are in MainViewModel.Backup.cs
     // RestoreCommand, ValidateCommand, VerifyCommand, AbortRestoreCommand are in MainViewModel.Restore.cs
     public ICommand NavigateToBackupSetCommand { get; }
+    public ICommand RenameSelectedCommand { get; }
+    public ICommand RenameMediaCommand { get; }
     public ICommand ExitCommand { get; }
     public ICommand AboutCommand { get; }
 
@@ -723,6 +729,159 @@ public partial class MainViewModel : ViewModelBase
             // Only drive node available
             TreeItems[0].IsSelected = true;
             OnTreeItemSelected(TreeItems[0]);
+        }
+    }
+
+    /// <summary>Whether the rename command should be enabled.</summary>
+    private bool CanRenameSelected =>
+        !IsBusy && _tapeService.TOC != null &&
+        (_selectedTreeItem?.ItemType is TreeItemType.Tape or TreeItemType.BackupSet);
+
+    /// <summary>Whether the rename media command should be enabled.</summary>
+    private bool CanRenameMedia =>
+        !IsBusy && _tapeService.TOC != null;
+
+    /// <summary>Dispatches to <see cref="RenameMediaAsync"/> or <see cref="RenameBackupSetAsync"/>
+    /// based on the currently selected tree item.</summary>
+    private async Task RenameSelectedAsync()
+    {
+        if (_selectedTreeItem?.ItemType == TreeItemType.Tape)
+            await RenameMediaAsync();
+        else if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet && _selectedTreeItem.SetIndex.HasValue)
+            await RenameBackupSetAsync(_selectedTreeItem.SetIndex.Value);
+    }
+
+    /// <summary>
+    /// Shows a rename dialog for the current media and writes the updated TOC back to tape.
+    /// </summary>
+    private async Task RenameMediaAsync()
+    {
+        var toc = _tapeService.TOC;
+        if (toc == null)
+            return;
+
+        var dialog = new RenameDialog(
+            "Rename Media",
+            "Enter a new description for the media:",
+            toc.Description ?? string.Empty)
+        {
+            Owner = Application.Current.MainWindow
+        };
+
+        if (dialog.ShowDialog() != true || dialog.NewName == toc.Description)
+            return;
+
+        IsBusy = true;
+        BusyMessage = "Renaming media...";
+        try
+        {
+            if (await _tapeService.RenameMediaAsync(dialog.NewName))
+            {
+                // Iterate thru TreeItems to find the tape node and update its display name
+                foreach (var driveNode in TreeItems)
+                {
+                    foreach (var tapeNode in driveNode.Children)
+                    {
+                        if (tapeNode.ItemType == TreeItemType.Tape)
+                        {
+                            tapeNode.DisplayName = dialog.NewName;
+                            break;
+                        }
+                    }
+                }
+                WindowTitle = $"TapeWin - {dialog.NewName}";
+                if (_selectedTreeItem?.ItemType == TreeItemType.Tape)
+                    LoadMediaInfo(); // refresh properties pane if media node is selected
+            }
+            else
+            {
+                MessageBox.Show($"Failed to rename media.\n\n{_tapeService.LastError}",
+                    "Rename Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+        finally
+        {
+            IsBusy = false;
+            BusyMessage = string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Shows a rename dialog for the specified backup set and writes the updated TOC back to tape.
+    /// </summary>
+    private async Task RenameBackupSetAsync(int setIndex)
+    {
+        var toc = _tapeService.TOC;
+        if (toc == null)
+            return;
+
+        var setTOC = toc[setIndex];
+
+        var dialog = new RenameDialog(
+            "Rename Backup Set",
+            $"Enter a new description for backup set #{setIndex} | {toc.SetIndexToAlt(setIndex)}:",
+            setTOC.Description ?? string.Empty)
+        {
+            Owner = Application.Current.MainWindow
+        };
+
+        if (dialog.ShowDialog() != true || setTOC.Description == dialog.NewName)
+            return;
+
+        IsBusy = true;
+        BusyMessage = "Renaming backup set...";
+        try
+        {
+            if (await _tapeService.RenameBackupSetAsync(setIndex, dialog.NewName))
+            {
+                // Update tree node if it is currently selected: "Set #N | -M: description"
+                if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet &&
+                    _selectedTreeItem.SetIndex == setIndex)
+                {
+                    var colonIdx = _selectedTreeItem.DisplayName.IndexOf(':');
+                    _selectedTreeItem.DisplayName = colonIdx >= 0
+                        ? $"{_selectedTreeItem.DisplayName[..colonIdx]}: {dialog.NewName}"
+                        : dialog.NewName;
+                    LoadBackupSetInfo(setIndex); // refreh properties pane
+                }
+                else
+                {
+                    // Iterate thru all tree nodes to find and rename the node for this backup set
+                    foreach (var driveNode in TreeItems)
+                    {
+                        foreach (var tapeNode in driveNode.Children)
+                        {
+                            if (tapeNode.ItemType == TreeItemType.Tape)
+                            {
+                                foreach (var setNode in tapeNode.Children)
+                                {
+                                    if (setNode.ItemType == TreeItemType.BackupSet &&
+                                        setNode.SetIndex == setIndex)
+                                    {
+                                        var colonIdx = setNode.DisplayName.IndexOf(':');
+                                        setNode.DisplayName = colonIdx >= 0
+                                            ? $"{setNode.DisplayName[..colonIdx]}: {dialog.NewName}"
+                                            : dialog.NewName;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (_selectedTreeItem?.ItemType == TreeItemType.Tape)
+                        LoadMediaInfo(); // refresh backup set table pane if media node is selected
+                }
+            }
+            else
+            {
+                MessageBox.Show($"Failed to rename backup set.\n\n{_tapeService.LastError}",
+                    "Rename Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+        finally
+        {
+            IsBusy = false;
+            BusyMessage = string.Empty;
         }
     }
 
@@ -1175,6 +1334,172 @@ public partial class MainViewModel : ViewModelBase
             // Log success with mode info
             var modeText = request.IsCreateNew ? "Created new" : "Opened existing";
             LogInfo($"{modeText} virtual media: {request.Media.ContentPath}");
+        }
+        finally
+        {
+            IsBusy = false;
+            BusyMessage = string.Empty;
+        }
+    }
+
+    #endregion
+
+    #region Private Methods - Format Operations
+
+    private void ShowFormatMediaWindow(object? parameter)
+    {
+        var viewModel = new FormatMediaViewModel(
+            _tapeService,
+            OnStartFormat,
+            () => Application.Current.Windows.OfType<FormatMediaWindow>().FirstOrDefault()?.Close());
+
+        var window = new FormatMediaWindow(viewModel)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        window.ShowDialog();
+    }
+
+    private async void OnStartFormat(FormatMediaViewModel formatViewModel)
+    {
+        Application.Current.Windows.OfType<FormatMediaWindow>().FirstOrDefault()?.Close();
+
+        var result = MessageBox.Show(
+            "Are you sure you want to format the media?\n\nAll data will be permanently erased. This cannot be undone.",
+            "Confirm Format",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+
+        if (result != MessageBoxResult.Yes)
+            return;
+
+        if (_tapeService.IsVirtualDrive)
+            await FormatVirtualDriveAsync(formatViewModel);
+        else
+            await ExecuteFormatAsync(formatViewModel);
+    }
+
+    private async Task ExecuteFormatAsync(FormatMediaViewModel formatViewModel)
+    {
+        IsBusy = true;
+        BusyMessage = "Formatting media...";
+
+        try
+        {
+            long initiatorPartitionSize = formatViewModel.CreateInitiatorPartition
+                ? TapeNavigator.TOCCapacity : -1;
+
+            var success = await _tapeService.FormatMediaAsync(initiatorPartitionSize, formatViewModel.MediaName);
+
+            if (!success)
+            {
+                MessageBox.Show($"Failed to format media.\n\n{_tapeService.LastError}",
+                    "Format Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            UpdateTreeFromTOC(_tapeService.DriveNumber);
+            SelectMostRecentSet();
+
+            MessageBox.Show("Media formatted successfully!", "Format Complete",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            LogErr($"Format failed: {ex.Message}");
+            MessageBox.Show($"Format failed.\n\n{ex.Message}", "Format Error",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            IsBusy = false;
+            BusyMessage = string.Empty;
+        }
+    }
+
+    private async Task FormatVirtualDriveAsync(FormatMediaViewModel formatViewModel)
+    {
+        var currentCaps = new VirtualTapeDriveCapabilities
+        {
+            MinBlockSize = _tapeService.MinimumBlockSize,
+            MaxBlockSize = _tapeService.MaximumBlockSize,
+            DefaultBlockSize = _tapeService.DefaultBlockSize,
+            SupportsSetmarks = _tapeService.SupportsSetmarks,
+            SupportsSeqFilemarks = _tapeService.SupportsSeqFilemarks,
+            SupportsInitiatorPartition = _tapeService.SupportsInitiatorPartition,
+            SupportsCompression = false,
+        };
+
+        var lastVmd = _tapeService.LastVMD;
+        VirtualMediaDescriptor? newVmd = null;
+
+        var vm = new OpenVirtualDriveViewModel(
+            request =>
+            {
+                Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
+                newVmd = request.Media;
+            },
+            () =>
+            {
+                Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
+            },
+            prePopulate: lastVmd,
+            mediaMode: FileMode.Create,
+            currentCapabilities: currentCaps,
+            currentIoSpeed: _selectedIoSpeed);
+
+        var window = new OpenVirtualDriveWindow(vm)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        window.ShowDialog();
+
+        if (newVmd == null)
+            return;
+
+        IsBusy = true;
+        BusyMessage = "Creating virtual media...";
+
+        try
+        {
+            if (!_tapeService.InsertVirtualMedia(newVmd, FileMode.Create))
+            {
+                MessageBox.Show($"Failed to create virtual media files.\n\n{_tapeService.LastError}",
+                    "Format Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            BusyMessage = "Loading media...";
+            if (!await _tapeService.LoadMediaAsync())
+            {
+                MessageBox.Show($"Failed to load virtual media.\n\n{_tapeService.LastError}",
+                    "Format Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            BusyMessage = "Formatting media...";
+            long initiatorPartitionSize = formatViewModel.CreateInitiatorPartition
+                ? TapeNavigator.TOCCapacity : -1;
+
+            if (!await _tapeService.FormatMediaAsync(initiatorPartitionSize, formatViewModel.MediaName))
+            {
+                MessageBox.Show($"Failed to format media.\n\n{_tapeService.LastError}",
+                    "Format Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            UpdateTreeFromTOC(_tapeService.DriveNumber);
+            SelectMostRecentSet();
+
+            MessageBox.Show("Virtual media formatted successfully!", "Format Complete",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            LogErr($"Format failed: {ex.Message}");
+            MessageBox.Show($"Format failed.\n\n{ex.Message}", "Format Error",
+                MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
