@@ -1,0 +1,86 @@
+<UserControl x:Class="TapeWinNET.Controls.FileFilterPane"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:converters="clr-namespace:TapeWinNET.Converters"
+             mc:Ignorable="d"
+             x:Name="Root"
+             d:DesignHeight="60" d:DesignWidth="600">
+
+    <UserControl.Resources>
+        <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVis" />
+    </UserControl.Resources>
+
+    <StackPanel Margin="4,4,4,0">
+        <!-- Filter bar row -->
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <Button Grid.Column="0" Content="Filter" 
+                    Command="{Binding ApplyFilterCommand, ElementName=Root}"
+                    Width="50" Margin="0,0,4,0"
+                    IsEnabled="{Binding HasFilterText, ElementName=Root}"
+                    ToolTip="Apply wildcard filter"/>
+
+            <TextBox Grid.Column="1" 
+                     Text="{Binding FilterText, ElementName=Root, UpdateSourceTrigger=PropertyChanged}"
+                     VerticalContentAlignment="Center"
+                     Margin="0,0,4,0">
+                <TextBox.InputBindings>
+                    <KeyBinding Key="Return" 
+                                Command="{Binding ApplyFilterCommand, ElementName=Root}"/>
+                    <KeyBinding Key="Escape" 
+                                Command="{Binding RemoveFilterCommand, ElementName=Root}"/>
+                </TextBox.InputBindings>
+            </TextBox>
+
+            <!-- Filter status text -->
+            <TextBlock Grid.Column="2" VerticalAlignment="Center" Margin="4,0,8,0">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Text">
+                            <Setter.Value>
+                                <MultiBinding StringFormat="{}{0:N0} of {1:N0} file(s)">
+                                    <Binding Path="FilteredCount" ElementName="Root"/>
+                                    <Binding Path="TotalCount" ElementName="Root"/>
+                                </MultiBinding>
+                            </Setter.Value>
+                        </Setter>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsFilterActive, ElementName=Root}" Value="False">
+                                <Setter Property="Text">
+                                    <Setter.Value>
+                                        <Binding Path="TotalCount" ElementName="Root" StringFormat="{}{0:N0} file(s)"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
+            <Button Grid.Column="3" Content="Advanced" 
+                    Width="65" Margin="0,0,4,0"
+                    IsEnabled="False"
+                    ToolTip="Advanced filtering (coming soon)"/>
+
+            <Button Grid.Column="4" Content="✕ Remove filter" 
+                    Command="{Binding RemoveFilterCommand, ElementName=Root}"
+                    Width="95"
+                    IsEnabled="{Binding IsFilterActive, ElementName=Root}"
+                    ToolTip="Clear the current filter"/>
+        </Grid>
+
+        <!-- Help text -->
+        <TextBlock Text="Separate patterns with ;   Use * and ?   Example: *.doc?; C:\Projects\MyApp\"
+                   FontSize="10" Foreground="DarkGray"
+                   Margin="54,2,0,0"/>
+    </StackPanel>
+</UserControl>

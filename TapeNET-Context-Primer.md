@@ -154,3 +154,12 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 - `TapeLibNET`: Polishing, validation, & hardening of the core functionality
 - `TapeLibNET`: Proper commenting of the code, esp. public API and complex logic areas
 - `TapeConNET`: Service updates to keep in sync with library changes
+
+- `TapeWinNET`: UI enhancement features
+1. Log export / clear — The log pane caps at 1000 entries but there's no way to save or clear it. A "Save Log..." and "Clear Log" in the context menu or View menu would be useful for troubleshooting long operations.
+2. File filter/search in the backup set table — When browsing a set with thousands of files, a quick filter text box above the file ListView (filter-as-you-type by filename pattern) would be very handy. Low-cost given fileList is already a List<FileListItem> that gets swapped wholesale.
+3. [DONE] Window state persistence — Remember window size, position, splitter proportions, and the last-opened drive number between sessions. Could live alongside the MRU file in %LocalAppData%\TapeWinNET\. JSON serializer based implementation.
+4. Operation-complete notification — A FlashWindowEx or system notification when a long backup/restore finishes while the window is in the background. Tape operations can run for hours; easy to miss completion.
+5. Delete most-recent backup set — Removing the newest set from the TOC (the library likely supports this via TapeTOC manipulation + TOC rewrite). Useful when the last backup was accidental or corrupt.
+6. Capacity usage bar — A small visual bar in the Media properties or status bar showing used/remaining as a colored segment bar, broken down by set. Quick situational awareness without reading numbers.
+

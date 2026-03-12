@@ -33,6 +33,9 @@ namespace TapeWinNET
 
             ApplySettings(_viewModel.Settings);
 
+            // Wire filter pane callback to the ViewModel
+            FileFilterPaneControl.FilterRequested = _viewModel.OnFileFilterApplied;
+
             // Subscribe to collection changes to auto-scroll log
             _viewModel.LogMessages.CollectionChanged += (s, e) =>
             {
@@ -91,6 +94,7 @@ namespace TapeWinNET
         {
             if (e.NewValue is TapeTreeItemViewModel item)
             {
+                FileFilterPaneControl.Reset();
                 _viewModel.OnTreeItemSelected(item);
             }
         }

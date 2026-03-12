@@ -55,6 +55,12 @@ public partial class MainViewModel : ViewModelBase
     private TapeTreeItemViewModel? _selectedTreeItem;
     private ContentPaneType _contentType = ContentPaneType.DriveInfo;
 
+    // File filter fields
+    private List<FileListItem>? _unfilteredFileList;
+    private bool _isFileFilterActive;
+    private int _fileFilteredCount;
+    private int _fileTotalCount;
+
     // Backup fields are in MainViewModel.Backup.cs
 
     public MainViewModel()
@@ -308,6 +314,82 @@ public partial class MainViewModel : ViewModelBase
 
     /// <summary>Whether the Recent Virtual Drives submenu should be visible.</summary>
     public bool HasRecentVirtualDrives => RecentVirtualDriveMenuItems.Count > 0;
+
+    #endregion
+
+    #region File Filter Properties
+
+    /// <summary>Whether a file filter is currently applied.</summary>
+    public bool IsFileFilterActive
+    {
+        get => _isFileFilterActive;
+        set => SetProperty(ref _isFileFilterActive, value);
+    }
+
+    /// <summary>Number of files currently displayed (after filtering).</summary>
+    public int FileFilteredCount
+    {
+        get => _fileFilteredCount;
+        set => SetProperty(ref _fileFilteredCount, value);
+    }
+
+    /// <summary>Total number of files before filtering.</summary>
+    public int FileTotalCount
+    {
+        get => _fileTotalCount;
+        set => SetProperty(ref _fileTotalCount, value);
+    }
+
+    /// <summary>
+    /// Called by the View when the FileFilterPane requests a filter operation.
+    /// </summary>
+    /// <param name="patterns">Parsed wildcard patterns, or null to clear the filter.</param>
+    /// <param name="restoreAction">Opaque delegate that restores the filter pane's UI state
+    /// and re-applies the filter. Stored on the tree item so the filter survives navigation.
+    /// Null when the filter is being removed.</param>
+    public async Task OnFileFilterApplied(List<string>? patterns, Func<Task>? restoreAction)
+    {
+        if (patterns == null || patterns.Count == 0)
+        {
+            // Remove filter — restore original list
+            if (_unfilteredFileList != null)
+            {
+                FileList = _unfilteredFileList;
+                _unfilteredFileList = null;
+            }
+            IsFileFilterActive = false;
+            FileFilteredCount = FileList.Count;
+            FileTotalCount = FileList.Count;
+
+            // Clear saved state so navigating away and back won't re-apply
+            if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet)
+                _selectedTreeItem.SavedFilterState = null;
+            return;
+        }
+
+        // Cache the original list if not already cached
+        _unfilteredFileList ??= FileList;
+
+        var source = _unfilteredFileList;
+        var filtered = await Utils.FileFilter.FilterAsync(
+            source, patterns, item => item.FullPath);
+
+        FileList = filtered;
+        IsFileFilterActive = true;
+        FileFilteredCount = filtered.Count;
+        FileTotalCount = source.Count;
+
+        // Save the restore delegate so the filter survives navigation
+        if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet)
+            _selectedTreeItem.SavedFilterState = restoreAction;
+    }
+
+    /// <summary>Resets the ViewModel-side filter state (used when loading new content).</summary>
+    private void ClearFileFilter()
+    {
+        _unfilteredFileList = null;
+        IsFileFilterActive = false;
+    }
 
     #endregion
 
@@ -1098,6 +1180,7 @@ public partial class MainViewModel : ViewModelBase
         PropertyList.Clear();
         FileList = [];
         BackupSetList.Clear();
+        ClearFileFilter();
         ContentType = ContentPaneType.BackupSetInfo;
 
         try
@@ -1158,8 +1241,14 @@ public partial class MainViewModel : ViewModelBase
                 newFileList.Add(new FileListItem(fileInfo, ShowFullPathname));
             }
             FileList = newFileList;
+            FileTotalCount = newFileList.Count;
+            FileFilteredCount = newFileList.Count;
 
             StatusMessage = $"Set #{setIndex} | #{altIndex}: {FileList.Count} file(s)";
+
+            // Restore saved filter if the user previously filtered this backup set
+            if (_selectedTreeItem?.SavedFilterState is { } restoreAction)
+                _ = restoreAction();
         }
         catch (Exception ex)
         {

@@ -379,17 +379,17 @@ namespace TapeLibNET
             return indexes;
         }
 
-        private static bool FileMatchesRegexPattern(string fullFileName, string pattern)
+        public static bool FileMatchesRegexPattern(string fullFileName, string pattern)
         {
             return Regex.IsMatch(fullFileName, pattern, RegexOptions.IgnoreCase);
         }
 
-        private static bool FileMatchesRegexPatterns(string fullFileName, IEnumerable<string> patterns)
+        public static bool FileMatchesRegexPatterns(string fullFileName, IEnumerable<string> patterns)
         {
             return patterns.Any(pattern => FileMatchesRegexPattern(fullFileName, pattern));
         }
 
-        private static string FromFilePatternToRegexPattern(string pattern)
+        public static string FromFilePatternToRegexPattern(string pattern)
         {
             // Convert the pattern to a regular expression
             //  Consider that if the pattern ends with \, automatically treat it as
@@ -405,13 +405,13 @@ namespace TapeLibNET
             return pattern;
         }
 
-        private static IEnumerable<string> FromFilePatternsToRegexPatterns(List<string> patterns)
+        public static IEnumerable<string> FromFilePatternsToRegexPatterns(List<string> patterns)
         {
             // Convert the list of patterns to a list of regular expressions
             return patterns.Select(FromFilePatternToRegexPattern);
         }
 
-        internal static bool PatternsHaveWildcards(List<string> patterns) =>
+        public static bool PatternsHaveWildcards(List<string> patterns) =>
             patterns.Exists(p => p.Contains('*') || p.Contains('?') || p.EndsWith('\\'));
 
         // Returns a list of TapeFileInfo objects that match the given file patterns

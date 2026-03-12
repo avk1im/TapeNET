@@ -6,6 +6,7 @@
         xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
         xmlns:models="clr-namespace:TapeWinNET.Models"
         xmlns:converters="clr-namespace:TapeWinNET.Converters"
+        xmlns:controls="clr-namespace:TapeWinNET.Controls"
         d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
         mc:Ignorable="d"
         Title="{Binding WindowTitle}" 
@@ -308,62 +309,83 @@
                 <GroupBox Grid.Row="2" Header="{Binding TableHeader}"
                           Visibility="{Binding IsTableVisible, Converter={StaticResource BoolToVis}}">
                     <Grid>
-                        <!-- Files Table (visible when BackupSet is selected) -->
-                        <ListView ItemsSource="{Binding FileList}"
-                                  SelectedItem="{Binding SelectedFile}"
-                                  GridViewColumnHeader.Click="GridViewColumnHeader_Click"
-                                  CheckBox.Checked="FileCheckBox_Changed"
-                                  CheckBox.Unchecked="FileCheckBox_Changed"
-                                  PreviewMouseLeftButtonDown="DragSource_PreviewMouseLeftButtonDown"
-                                  PreviewMouseLeftButtonUp="FileList_PreviewMouseLeftButtonUp"
-                                  MouseMove="DragSource_MouseMove"
-                                  Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}"
-                                  VirtualizingPanel.IsVirtualizing="True"
-                                  VirtualizingPanel.VirtualizationMode="Recycling"
-                                  Visibility="{Binding IsFileTableVisible, Converter={StaticResource BoolToVis}}">
-                            <ListView.View>
-                                <GridView>
-                                    <!-- Checkbox column for file-level restore selection -->
-                                    <GridViewColumn Width="28">
-                                        <GridViewColumn.HeaderTemplate>
-                                            <DataTemplate>
-                                                <CheckBox IsChecked="{Binding DataContext.AreAllFilesChecked,
-                                                                      RelativeSource={RelativeSource AncestorType=Window}}"
-                                                          HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                          ToolTip="Select / deselect all files"/>
-                                            </DataTemplate>
-                                        </GridViewColumn.HeaderTemplate>
-                                        <GridViewColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <CheckBox IsChecked="{Binding IsCheckedForRestore, Mode=TwoWay}"
-                                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                            </DataTemplate>
-                                        </GridViewColumn.CellTemplate>
-                                    </GridViewColumn>
-                                    <!-- Icon column for files -->
-                                    <GridViewColumn Width="30">
-                                        <GridViewColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <Image Width="16" Height="16" Source="{Binding Icon}" />
-                                            </DataTemplate>
-                                        </GridViewColumn.CellTemplate>
-                                    </GridViewColumn>
-                                    <GridViewColumn Header="Name" Width="200"
-                                                    DisplayMemberBinding="{Binding FileName}" />
-                                    <GridViewColumn Header="Size" Width="80"
-                                                    DisplayMemberBinding="{Binding SizeFormatted}" />
-                                    <GridViewColumn Header="Modified" Width="130"
-                                                    DisplayMemberBinding="{Binding LastModified}" />
-                                    <GridViewColumn Header="Block" Width="70"
-                                                    DisplayMemberBinding="{Binding Block}" />
-                                    <GridViewColumn Header="Path" Width="250"
-                                                    DisplayMemberBinding="{Binding FullPath}" />
-                                </GridView>
-                            </ListView.View>
-                            <ListView.ContextMenu>
-                                <StaticResource ResourceKey="RestoreContextMenu"/>
-                            </ListView.ContextMenu>
-                        </ListView>
+                        <!-- Files Table + Filter Pane (visible when BackupSet is selected) -->
+                        <Grid Visibility="{Binding IsFileTableVisible, Converter={StaticResource BoolToVis}}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition x:Name="FileFilterPaneRow" Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <ListView Grid.Row="0"
+                                      ItemsSource="{Binding FileList}"
+                                      SelectedItem="{Binding SelectedFile}"
+                                      GridViewColumnHeader.Click="GridViewColumnHeader_Click"
+                                      CheckBox.Checked="FileCheckBox_Changed"
+                                      CheckBox.Unchecked="FileCheckBox_Changed"
+                                      PreviewMouseLeftButtonDown="DragSource_PreviewMouseLeftButtonDown"
+                                      PreviewMouseLeftButtonUp="FileList_PreviewMouseLeftButtonUp"
+                                      MouseMove="DragSource_MouseMove"
+                                      Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}"
+                                      VirtualizingPanel.IsVirtualizing="True"
+                                      VirtualizingPanel.VirtualizationMode="Recycling">
+                                <ListView.View>
+                                    <GridView>
+                                        <!-- Checkbox column for file-level restore selection -->
+                                        <GridViewColumn Width="28">
+                                            <GridViewColumn.HeaderTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox IsChecked="{Binding DataContext.AreAllFilesChecked,
+                                                                          RelativeSource={RelativeSource AncestorType=Window}}"
+                                                              HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                              ToolTip="Select / deselect all files"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.HeaderTemplate>
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox IsChecked="{Binding IsCheckedForRestore, Mode=TwoWay}"
+                                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+                                        <!-- Icon column for files -->
+                                        <GridViewColumn Width="30">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <Image Width="16" Height="16" Source="{Binding Icon}" />
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+                                        <GridViewColumn Header="Name" Width="200"
+                                                        DisplayMemberBinding="{Binding FileName}" />
+                                        <GridViewColumn Header="Size" Width="80"
+                                                        DisplayMemberBinding="{Binding SizeFormatted}" />
+                                        <GridViewColumn Header="Modified" Width="130"
+                                                        DisplayMemberBinding="{Binding LastModified}" />
+                                        <GridViewColumn Header="Block" Width="70"
+                                                        DisplayMemberBinding="{Binding Block}" />
+                                        <GridViewColumn Header="Path" Width="250"
+                                                        DisplayMemberBinding="{Binding FullPath}" />
+                                    </GridView>
+                                </ListView.View>
+                                <ListView.ContextMenu>
+                                    <StaticResource ResourceKey="RestoreContextMenu"/>
+                                </ListView.ContextMenu>
+                            </ListView>
+
+                            <!-- Splitter between file list and filter pane -->
+                            <GridSplitter Grid.Row="1" Height="4"
+                                          HorizontalAlignment="Stretch"
+                                          VerticalAlignment="Center"
+                                          Background="LightGray"/>
+
+                            <!-- File Filter Pane -->
+                            <controls:FileFilterPane Grid.Row="2"
+                                                     x:Name="FileFilterPaneControl"
+                                                     TotalCount="{Binding FileTotalCount}"
+                                                     FilteredCount="{Binding FileFilteredCount}"
+                                                     IsFilterActive="{Binding IsFileFilterActive}"/>
+                        </Grid>
 
                         <!-- Backup Sets Table (visible when Media is selected) -->
                         <ListView ItemsSource="{Binding BackupSetList}"

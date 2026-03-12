@@ -135,6 +135,13 @@ public class TapeTreeItemViewModel : ViewModelBase
     public int? SetIndex => ItemType == TreeItemType.BackupSet ? Tag as int? : null;
     public int? VolumeNumber => ItemType == TreeItemType.Tape ? Tag as int? : null;
 
+    /// <summary>
+    /// Opaque restore delegate created by <see cref="Controls.FileFilterPane"/>.
+    /// When invoked, it restores the filter pane's UI state and re-applies the filter.
+    /// Stored per backup-set tree node so the filter survives navigation.
+    /// </summary>
+    public Func<Task>? SavedFilterState { get; set; }
+
     public static TapeTreeItemViewModel CreateDriveItem(int driveNumber, string deviceName)
     {
         return new TapeTreeItemViewModel
