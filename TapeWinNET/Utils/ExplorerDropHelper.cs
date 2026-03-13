@@ -24,7 +24,7 @@ namespace TapeWinNET.Utils;
 /// </summary>
 public static class ExplorerDropHelper
 {
-    private const string MarkerPrefix = ".tapenet_drop_";
+    private const string MarkerPrefix = "~drop_";
 
     /// <summary>
     /// Creates a temporary 0-byte hidden marker file for use with <see cref="DataFormats.FileDrop"/>.
@@ -35,7 +35,11 @@ public static class ExplorerDropHelper
     {
         try
         {
-            var name = $"{MarkerPrefix}{Guid.NewGuid():N}.tmp";
+            var assembly = System.Reflection.Assembly.GetEntryAssembly();
+            if (assembly == null)
+                return null;
+            var assemblyName = assembly.GetName().Name ?? "TapeWinNET";
+            var name = $"{MarkerPrefix}{assemblyName}{Guid.NewGuid():N}.tmp";
             var path = Path.Combine(Path.GetTempPath(), name);
             File.WriteAllBytes(path, []);
             File.SetAttributes(path, FileAttributes.Hidden | FileAttributes.Temporary);

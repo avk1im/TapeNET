@@ -344,10 +344,10 @@ public partial class MainViewModel : ViewModelBase
     /// Called by the View when the FileFilterPane requests a filter operation.
     /// </summary>
     /// <param name="patterns">Parsed wildcard patterns, or null to clear the filter.</param>
-    /// <param name="restoreAction">Opaque delegate that restores the filter pane's UI state
+    /// <param name="reapplyAction">Opaque delegate that restores the filter pane's UI state
     /// and re-applies the filter. Stored on the tree item so the filter survives navigation.
     /// Null when the filter is being removed.</param>
-    public async Task OnFileFilterApplied(List<string>? patterns, Func<Task>? restoreAction)
+    public async Task OnFileFilterApplied(List<string>? patterns, Func<Task>? reapplyAction)
     {
         if (patterns == null || patterns.Count == 0)
         {
@@ -381,7 +381,7 @@ public partial class MainViewModel : ViewModelBase
 
         // Save the restore delegate so the filter survives navigation
         if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet)
-            _selectedTreeItem.SavedFilterState = restoreAction;
+            _selectedTreeItem.SavedFilterState = reapplyAction;
     }
 
     /// <summary>Resets the ViewModel-side filter state (used when loading new content).</summary>
@@ -484,7 +484,7 @@ public partial class MainViewModel : ViewModelBase
 
     #region Private Methods - Drive/Media Operations
 
-    private async Task<bool> LoadMediaInternalAsync(int driveNumber)
+    private async Task<bool> LoadMediaInternalAsync()
     {
         bool isBusy = IsBusy;
         string busyMessage = BusyMessage;
@@ -550,7 +550,7 @@ public partial class MainViewModel : ViewModelBase
                 return;
             }
 
-            success = await LoadMediaInternalAsync(driveNumber);
+            success = await LoadMediaInternalAsync();
             if (!success)
             {
                 UpdateTreeForDriveOnly(driveNumber);
@@ -632,7 +632,7 @@ public partial class MainViewModel : ViewModelBase
 
             if (_tapeService.TOC == null)
             {
-                var success = await LoadMediaInternalAsync(driveNumber);
+                var success = await LoadMediaInternalAsync();
 
                 if (!success)
                 {

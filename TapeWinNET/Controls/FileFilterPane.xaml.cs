@@ -149,17 +149,18 @@ public partial class FileFilterPane : UserControl
             return;
 
         // Capture the filter text so the restore delegate can reconstruct this state
-        //  Notice: local function acts as a delegate
-        Task restoreAction()
+        var reapplyText = text;
+        //  Notice: local function acts as a closure delegate
+        Task reapplyAction()
         {
-            FilterText = text;
+            FilterText = reapplyText;
             return ApplyFilterAsync();
         }
 
         IsBusy = true;
         try
         {
-            await FilterRequested(patterns, restoreAction);
+            await FilterRequested(patterns, reapplyAction);
         }
         finally
         {
