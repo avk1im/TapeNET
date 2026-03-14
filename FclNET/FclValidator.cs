@@ -25,6 +25,11 @@ public static class FclValidator
     {
         switch (node)
         {
+            case FclErrorExpression error:
+                // Surface the parse error embedded in the AST.
+                diagnostics.Add(error.Diagnostic);
+                break;
+
             case FclCondition condition:
                 ValidateCondition(condition, diagnostics);
                 break;
@@ -51,7 +56,7 @@ public static class FclValidator
 
     private static void ValidateCondition(FclCondition condition, List<FclDiagnostic> diagnostics)
     {
-        var fieldCategory = GetFieldCategory(condition.Field);
+        var fieldCategory = FclFieldTranslator.GetCategory(condition.Field);
 
         // ── Operator compatibility ──────────────────────────
         ValidateOperatorForField(condition, fieldCategory, diagnostics);
@@ -67,13 +72,13 @@ public static class FclValidator
     }
 
     private static void ValidateOperatorForField(
-        FclCondition condition, FieldCategory category, List<FclDiagnostic> diagnostics)
+        FclCondition condition, FclFieldCategory category, List<FclDiagnostic> diagnostics)
     {
         var op = condition.Operator;
 
         switch (category)
         {
-            case FieldCategory.String:
+            case FclFieldCategory.String:
                 if (IsDateOperator(op))
                     diagnostics.Add(MakeDiagnostic(
                         FclDiagnosticCodes.DateOperatorOnNonDate, condition.OperatorSpan,
@@ -88,7 +93,7 @@ public static class FclValidator
                         $"Operator '{op}' is for the Attributes field; '{condition.Field}' is a string field."));
                 break;
 
-            case FieldCategory.Date:
+            case FclFieldCategory.Date:
                 if (IsStringOnlyOperator(op))
                     diagnostics.Add(MakeDiagnostic(
                         FclDiagnosticCodes.StringOperatorOnNonString, condition.OperatorSpan,
@@ -103,7 +108,7 @@ public static class FclValidator
                         $"Operator '{op}' is for the Attributes field; '{condition.Field}' is a date field."));
                 break;
 
-            case FieldCategory.Size:
+            case FclFieldCategory.Size:
                 if (IsStringOnlyOperator(op))
                     diagnostics.Add(MakeDiagnostic(
                         FclDiagnosticCodes.StringOperatorOnNonString, condition.OperatorSpan,
@@ -118,7 +123,7 @@ public static class FclValidator
                         $"Operator '{op}' is for the Attributes field; 'Size' is a numeric field."));
                 break;
 
-            case FieldCategory.Attribute:
+            case FclFieldCategory.Attribute:
                 if (!IsAttributeOperator(op) && op != FclOperator.Equals && op != FclOperator.NotEquals)
                     diagnostics.Add(MakeDiagnostic(
                         FclDiagnosticCodes.IncompatibleOperator, condition.OperatorSpan,
@@ -128,34 +133,34 @@ public static class FclValidator
     }
 
     private static void ValidateValueForField(
-        FclCondition condition, FieldCategory category, List<FclDiagnostic> diagnostics)
+        FclCondition condition, FclFieldCategory category, List<FclDiagnostic> diagnostics)
     {
         var value = condition.Value;
 
         switch (category)
         {
-            case FieldCategory.String:
+            case FclFieldCategory.String:
                 if (value is not FclStringValue)
                     diagnostics.Add(MakeDiagnostic(
                         FclDiagnosticCodes.IncompatibleValue, value.Span,
                         $"Field '{condition.Field}' requires a string value."));
                 break;
 
-            case FieldCategory.Date:
+            case FclFieldCategory.Date:
                 if (value is not (FclAbsoluteDateValue or FclRelativeDateValue))
                     diagnostics.Add(MakeDiagnostic(
                         FclDiagnosticCodes.IncompatibleValue, value.Span,
                         $"Field '{condition.Field}' requires a date value."));
                 break;
 
-            case FieldCategory.Size:
+            case FclFieldCategory.Size:
                 if (value is not FclSizeValue)
                     diagnostics.Add(MakeDiagnostic(
                         FclDiagnosticCodes.IncompatibleValue, value.Span,
                         "Field 'Size' requires a size value."));
                 break;
 
-            case FieldCategory.Attribute:
+            case FclFieldCategory.Attribute:
                 if (value is not FclAttributeValue)
                     diagnostics.Add(MakeDiagnostic(
                         FclDiagnosticCodes.IncompatibleValue, value.Span,
@@ -179,21 +184,6 @@ public static class FclValidator
     }
 
     // ── Helpers ──────────────────────────────────────────
-
-    private enum FieldCategory { String, Date, Size, Attribute }
-
-    private static FieldCategory GetFieldCategory(FclField field) => field switch
-    {
-        FclField.FullName or FclField.Name or FclField.Extension or FclField.Path
-            => FieldCategory.String,
-        FclField.Created or FclField.Modified
-            => FieldCategory.Date,
-        FclField.Size
-            => FieldCategory.Size,
-        FclField.Attributes
-            => FieldCategory.Attribute,
-        _ => FieldCategory.String
-    };
 
     private static bool IsStringOnlyOperator(FclOperator op) =>
         op is FclOperator.Contains or FclOperator.NotContains

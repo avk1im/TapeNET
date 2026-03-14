@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
-using System.Reflection.Metadata.Ecma335;
+using System.Globalization;
+using System.Text;
 
 namespace FclNET.Ast;
 
@@ -23,6 +24,18 @@ public abstract class FclExpression : FclNode
 #pragma warning disable IDE0290 // Use primary constructor -- should not apply to protected constructor!
     protected FclExpression(SourceSpan span) : base(span) { }
 #pragma warning restore IDE0290 // Use primary constructor
+
+    /// <summary>
+    /// Appends the formatted FCL representation of this expression to
+    ///  <paramref name="sb"/>, respecting the given formatting options.
+    /// </summary>
+    /// <param name="sb">Target string builder.</param>
+    /// <param name="options">Formatting options controlling layout and style.</param>
+    /// <param name="indent">Current indentation level (in spaces).</param>
+    public abstract void FormatTo(StringBuilder sb, FclFormatOptions options, int indent);
+
+    /// <summary>Returns the FCL source text using default formatting options.</summary>
+    public override string ToString() => FclFormatter.Format(this);
 }
 
 /// <summary>
@@ -34,6 +47,26 @@ public sealed class FclOrExpression(ImmutableArray<FclExpression> operands, Sour
 {
     /// <summary>The operands (at least two).</summary>
     public ImmutableArray<FclExpression> Operands { get; } = operands;
+
+    /// <inheritdoc />
+    public override void FormatTo(StringBuilder sb, FclFormatOptions options, int indent)
+    {
+        Operands[0].FormatTo(sb, options, indent);
+        for (int i = 1; i < Operands.Length; i++)
+        {
+            if (options.ConditionPerLine)
+            {
+                sb.Append('\n');
+                FclFormatter.AppendIndent(sb, indent);
+            }
+            else
+            {
+                sb.Append(' ');
+            }
+            sb.Append("or ");
+            Operands[i].FormatTo(sb, options, indent);
+        }
+    }
 }
 
 /// <summary>
@@ -45,6 +78,26 @@ public sealed class FclAndExpression(ImmutableArray<FclExpression> operands, Sou
 {
     /// <summary>The operands (at least two).</summary>
     public ImmutableArray<FclExpression> Operands { get; } = operands;
+
+    /// <inheritdoc />
+    public override void FormatTo(StringBuilder sb, FclFormatOptions options, int indent)
+    {
+        Operands[0].FormatTo(sb, options, indent);
+        for (int i = 1; i < Operands.Length; i++)
+        {
+            if (options.ConditionPerLine)
+            {
+                sb.Append('\n');
+                FclFormatter.AppendIndent(sb, indent);
+            }
+            else
+            {
+                sb.Append(' ');
+            }
+            sb.Append("and ");
+            Operands[i].FormatTo(sb, options, indent);
+        }
+    }
 }
 
 /// <summary>
@@ -56,6 +109,13 @@ public sealed class FclNotExpression(FclExpression operand, SourceSpan span)
 {
     /// <summary>The negated sub-expression.</summary>
     public FclExpression Operand { get; } = operand;
+
+    /// <inheritdoc />
+    public override void FormatTo(StringBuilder sb, FclFormatOptions options, int indent)
+    {
+        sb.Append("not ");
+        Operand.FormatTo(sb, options, indent);
+    }
 }
 
 /// <summary>
@@ -67,6 +127,62 @@ public sealed class FclGroupExpression(FclExpression inner, SourceSpan span)
 {
     /// <summary>The inner expression.</summary>
     public FclExpression Inner { get; } = inner;
+
+    /// <inheritdoc />
+    public override void FormatTo(StringBuilder sb, FclFormatOptions options, int indent)
+    {
+        if (!options.ConditionPerLine)
+        {
+            // Inline mode: (inner)
+            sb.Append('(');
+            Inner.FormatTo(sb, options, indent);
+            sb.Append(')');
+            return;
+        }
+
+        int innerIndent = indent + options.IndentSize;
+
+        if (options.BracesOnNewLine)
+        {
+            // C-style: opening paren on its own line, inner indented, closing paren aligned.
+            sb.Append('(');
+            sb.Append('\n');
+            FclFormatter.AppendIndent(sb, innerIndent);
+            Inner.FormatTo(sb, options, innerIndent);
+            sb.Append('\n');
+            FclFormatter.AppendIndent(sb, indent);
+            sb.Append(')');
+        }
+        else
+        {
+            // Inline open: first operand on same line as '(', subsequent indented.
+            sb.Append('(');
+            Inner.FormatTo(sb, options, innerIndent);
+            sb.Append(')');
+        }
+    }
+}
+
+/// <summary>
+/// Sentinel expression node representing a parse error. Carries the
+/// <see cref="FclDiagnostic"/> that describes the error so that the
+/// validator can surface it and the evaluator can safely ignore it.
+/// <para>
+/// Returned by the parser instead of <c>null</c> from expression-parsing
+///  methods, ensuring the AST is always structurally complete.
+/// </para>
+/// </summary>
+public sealed class FclErrorExpression(FclDiagnostic diagnostic)
+    : FclExpression(diagnostic.Span)
+{
+    /// <summary>The diagnostic that describes the parse error.</summary>
+    public FclDiagnostic Diagnostic { get; } = diagnostic;
+
+    /// <inheritdoc />
+    public override void FormatTo(StringBuilder sb, FclFormatOptions options, int indent)
+    {
+        sb.Append("<error>");
+    }
 }
 
 /// <summary>
@@ -94,6 +210,16 @@ public sealed class FclCondition(
 
     /// <summary>The value to compare against.</summary>
     public FclValue Value { get; } = value;
+
+    /// <inheritdoc />
+    public override void FormatTo(StringBuilder sb, FclFormatOptions options, int indent)
+    {
+        sb.Append(FclFormatter.FieldToString(Field));
+        sb.Append(' ');
+        sb.Append(FclFormatter.OperatorToString(Operator, options.PreferWordOperators));
+        sb.Append(' ');
+        Value.FormatTo(sb, options);
+    }
 }
 
 // ─────────────────────────────────────────────────────────
@@ -106,6 +232,22 @@ public abstract class FclValue : FclNode
 #pragma warning disable IDE0290 // Use primary constructor -- should not apply to protected constructor!
     protected FclValue(SourceSpan span) : base(span) { }
 #pragma warning restore IDE0290 // Use primary constructor
+
+    /// <summary>
+    /// Appends the formatted FCL representation of this value to
+    ///  <paramref name="sb"/>, respecting the given formatting options.
+    /// </summary>
+    /// <param name="sb">Target string builder.</param>
+    /// <param name="options">Formatting options (e.g. date format style).</param>
+    public abstract void FormatTo(StringBuilder sb, FclFormatOptions options);
+
+    /// <summary>Returns the FCL source text using default formatting options.</summary>
+    public override string ToString()
+    {
+        var sb = new StringBuilder();
+        FormatTo(sb, FclFormatOptions.Default);
+        return sb.ToString();
+    }
 }
 
 /// <summary>
@@ -119,6 +261,15 @@ public sealed class FclStringValue(string value, bool wasQuoted, SourceSpan span
 
     /// <summary>Whether the original source used quotes.</summary>
     public bool WasQuoted { get; } = wasQuoted;
+
+    /// <inheritdoc />
+    public override void FormatTo(StringBuilder sb, FclFormatOptions options)
+    {
+        if (WasQuoted || FclFormatter.NeedsQuoting(Value))
+            FclFormatter.AppendQuoted(sb, Value);
+        else
+            sb.Append(Value);
+    }
 }
 
 /// <summary>
@@ -135,6 +286,18 @@ public sealed class FclSizeValue(double numericValue, FclSizeUnit unit, long byt
 
     /// <summary>The resolved size in bytes.</summary>
     public long Bytes { get; } = bytes;
+
+    /// <inheritdoc />
+    public override void FormatTo(StringBuilder sb, FclFormatOptions options)
+    {
+        // Omit decimal places for whole numbers.
+        if (NumericValue == Math.Floor(NumericValue))
+            sb.Append(((long)NumericValue).ToString(CultureInfo.InvariantCulture));
+        else
+            sb.Append(NumericValue.ToString("G", CultureInfo.InvariantCulture));
+
+        sb.Append(FclFormatter.SizeUnitToString(Unit));
+    }
 }
 
 /// <summary>
@@ -148,6 +311,21 @@ public sealed class FclAbsoluteDateValue(DateTime value, bool hasTime, SourceSpa
 
     /// <summary>Whether the original literal included a time component.</summary>
     public bool HasTime { get; } = hasTime;
+
+    /// <inheritdoc />
+    public override void FormatTo(StringBuilder sb, FclFormatOptions options)
+    {
+        if (options.UseIso8601Dates)
+        {
+            sb.Append(HasTime
+                ? Value.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture)
+                : Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        }
+        else
+        {
+            sb.Append(Value.ToString(CultureInfo.CurrentCulture));
+        }
+    }
 }
 
 /// <summary>
@@ -219,6 +397,18 @@ public sealed class FclRelativeDateValue(FclDateAnchor anchor, int offset, FclDa
             _ => baseTime
         };
     }
+
+    /// <inheritdoc />
+    public override void FormatTo(StringBuilder sb, FclFormatOptions options)
+    {
+        sb.Append(FclFormatter.DateAnchorToString(Anchor));
+        if (Offset != 0)
+        {
+            sb.Append(Offset > 0 ? '+' : '-');
+            sb.Append(Math.Abs(Offset));
+            sb.Append(FclFormatter.DateUnitToString(Unit));
+        }
+    }
 }
 
 /// <summary>
@@ -240,4 +430,10 @@ public sealed class FclAttributeValue(FclAttribute attribute, SourceSpan span)
         FclAttribute.Temporary => FileAttributes.Temporary,
         _ => 0
     };
+
+    /// <inheritdoc />
+    public override void FormatTo(StringBuilder sb, FclFormatOptions options)
+    {
+        sb.Append(FclFormatter.AttributeToString(Attribute));
+    }
 }

@@ -18,6 +18,7 @@ public sealed class FclEvaluator
 {
     private readonly FclExpression _root;
     private readonly Dictionary<FclCondition, Regex> _regexCache = [];
+    private readonly Dictionary<FclCondition, Regex> _wildcardRegexCache = [];
     private readonly Dictionary<FclCondition, string[]> _wildcardPatterns = [];
     private readonly List<FclDiagnostic> _runtimeDiagnostics = [];
 
@@ -55,6 +56,9 @@ public sealed class FclEvaluator
     {
         switch (node)
         {
+            case FclErrorExpression:
+                break; // Nothing to preprocess for error nodes.
+
             case FclCondition condition:
                 if (condition.Value is FclStringValue sv)
                 {
@@ -74,10 +78,28 @@ public sealed class FclEvaluator
                     }
                     else if (condition.Operator == FclOperator.Matches)
                     {
-                        // Pre-split semicolon patterns (parser may have already expanded,
-                        //  but if a single string value contains semicolons we handle it here).
-                        _wildcardPatterns[condition] = sv.Value
+                        var patterns = sv.Value
                             .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+                        if (condition.Field is FclField.Name or FclField.Extension)
+                        {
+                            // Name/Extension never contain backslashes — use the faster
+                            //  FileSystemName.MatchesSimpleExpression for evaluation.
+                            _wildcardPatterns[condition] = patterns;
+                        }
+                        else
+                        {
+                            // FullName/Path: compile to regex for unanchored fragment matching.
+                            //  FileSystemName.MatchesSimpleExpression is unsuitable here because
+                            //  it treats '\' as a path separator and prevents '*'/'?' from
+                            //  crossing directory segments.
+                            bool isPathField = condition.Field == FclField.Path;
+                            var combined = string.Join('|',
+                                patterns.Select(p => WildcardPatternToRegex(p, isPathField)));
+                            _wildcardRegexCache[condition] = new Regex(
+                                combined,
+                                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+                        }
                     }
                 }
                 else if (condition.Value is FclRelativeDateValue rel)
@@ -123,6 +145,7 @@ public sealed class FclEvaluator
 
     private bool EvalNode(FclExpression node, IFclFileInfo file) => node switch
     {
+        FclErrorExpression => false, // Parse error — validator should have flagged this.
         FclCondition c => EvalCondition(c, file),
         FclOrExpression or => EvalOr(or, file),
         FclAndExpression and => EvalAnd(and, file),
@@ -193,6 +216,7 @@ public sealed class FclEvaluator
 
     private bool EvalWildcard(FclCondition c, string actual)
     {
+        // Name/Extension: fast path via FileSystemName (no backslashes in value)
         if (_wildcardPatterns.TryGetValue(c, out var patterns))
         {
             for (int i = 0; i < patterns.Length; i++)
@@ -203,9 +227,19 @@ public sealed class FclEvaluator
             return false;
         }
 
-        // Fallback (shouldn't happen after PreparePatterns)
+        // FullName/Path: regex-based fragment matching
+        if (_wildcardRegexCache.TryGetValue(c, out var regex))
+            return regex.IsMatch(actual);
+
+        // Fallback (shouldn't happen after Preprocess)
+        Debug.WriteLine(c, "Warning: wildcard pattern not preprocessed; compiling on-the-fly");
         var value = ((FclStringValue)c.Value).Value;
-        return FileSystemName.MatchesSimpleExpression(value, actual, ignoreCase: true);
+        bool isPathField = c.Field == FclField.Path;
+        regex = new Regex(
+            WildcardPatternToRegex(value, isPathField),
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        _wildcardRegexCache[c] = regex;
+        return regex.IsMatch(actual);
     }
 
     private bool EvalRegex(FclCondition c, string actual)
@@ -305,6 +339,41 @@ public sealed class FclEvaluator
     }
 
     // ── Utility ─────────────────────────────────────────
+
+    /// <summary>
+    /// Converts a DOS-style wildcard pattern to a regex pattern string for
+    /// <b>unanchored fragment matching</b>, following the same approach as
+    /// <c>TapeSetTOC.FromFilePatternToRegexPattern()</c>.
+    /// <list type="bullet">
+    /// <item><c>*</c> matches any sequence of characters including path separators.</item>
+    /// <item><c>?</c> matches any single character.</item>
+    /// </list>
+    /// <para>Trailing backslash handling depends on <paramref name="isPathField"/>:</para>
+    /// <list type="bullet">
+    /// <item><b>Path</b> (<c>true</c>): trailing <c>\</c> is stripped, since
+    ///   <c>Path.GetDirectoryName</c> returns without trailing separator.</item>
+    /// <item><b>FullName</b> (<c>false</c>): trailing <c>\</c> → append <c>*.*</c>
+    ///   ("any file in this directory and subdirectories").</item>
+    /// </list>
+    /// <para>The result is <b>not anchored</b> — the pattern matches as a fragment
+    ///  anywhere in the value, so e.g. <c>\doc?</c> matches
+    ///  <c>C:\docs\test.txt</c> as well as <c>C:\users\docs\test.txt</c>.</para>
+    /// </summary>
+    internal static string WildcardPatternToRegex(string pattern, bool isPathField)
+    {
+        // Trailing backslash:
+        //  Path  → strip (GetDirectoryName never returns trailing \)
+        //  FullName → means "any file here", like TapeSetTOC: append *.*
+        if (pattern.EndsWith('\\'))
+            pattern = isPathField ? pattern[..^1] : pattern + "*.*";
+
+        // Escape regex-special characters, then restore wildcards:
+        //  \* → .*   (match any characters including \)
+        //  \? → .    (match any single character)
+        return Regex.Escape(pattern)
+            .Replace(@"\*", ".*")
+            .Replace(@"\?", ".");
+    }
 
 #pragma warning disable SYSLIB1045 // Convert to 'GeneratedRegexAttribute'. No need to optimize since
                                    //  this pattern is only used as a sentinel for invalid patterns.

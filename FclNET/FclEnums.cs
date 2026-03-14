@@ -129,3 +129,40 @@ public enum FclSizeUnit
     /// <summary>Terabytes (1,099,511,627,776 bytes).</summary>
     TB
 }
+
+/// <summary>
+/// Broad type category of an <see cref="FclField"/>.
+/// Used by the parser and validator to resolve context-dependent operators
+/// and to dispatch value parsing.
+/// </summary>
+public enum FclFieldCategory
+{
+    /// <summary>String fields: FullName, Name, Extension, Path.</summary>
+    String,
+    /// <summary>Date/time fields: Created, Modified.</summary>
+    Date,
+    /// <summary>The Size field.</summary>
+    Size,
+    /// <summary>The Attributes field.</summary>
+    Attribute
+}
+
+/// <summary>
+/// Maps <see cref="FclField"/> values to their <see cref="FclFieldCategory"/>.
+/// </summary>
+public static class FclFieldTranslator
+{
+    /// <summary>Returns the broad type category for the given field.</summary>
+    public static FclFieldCategory GetCategory(FclField field) => field switch
+    {
+        FclField.FullName or FclField.Name or FclField.Extension or FclField.Path
+            => FclFieldCategory.String,
+        FclField.Created or FclField.Modified
+            => FclFieldCategory.Date,
+        FclField.Size
+            => FclFieldCategory.Size,
+        FclField.Attributes
+            => FclFieldCategory.Attribute,
+        _ => FclFieldCategory.String
+    };
+}

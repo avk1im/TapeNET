@@ -9,6 +9,10 @@
     <Version>1.0.0.$(BuildNumber)</Version>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="FclNET.Tests" />
+  </ItemGroup>
+
   <Import Project="..\Versioning.targets" />
 
   <ItemGroup>

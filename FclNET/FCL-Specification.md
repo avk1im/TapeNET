@@ -235,6 +235,80 @@ Attributes has Hidden
 not Attributes has ReadOnly
 ```
 
+### Value Chain Shortcut
+
+When multiple values share the same field and operator, consecutive values may be
+chained using `or` or `and` after the first condition. This is syntactic sugar that
+expands each chained value into a full condition repeating the original field and
+operator.
+
+The chain continues as long as the next token after `or`/`and` is a value — not a
+field name (which would start a new condition) or a logical keyword. If a chained
+value contains spaces or special characters, it must be quoted.
+
+#### String field chains
+
+```
+Extension equals doc or docx or txt
+```
+is equivalent to:
+```
+Extension equals doc or Extension equals docx or Extension equals txt
+```
+
+The same works with other string operators:
+```
+Path contains docs or documents
+Name matches "important*" or "urgent*"
+Name notContains temp and cache
+```
+
+The `and` chain creates a conjunction:
+```
+FullName contains users and documents
+```
+is equivalent to:
+```
+FullName contains users and FullName contains documents
+```
+
+#### Attribute field chains
+
+```
+Attributes has System or Hidden or Temporary
+```
+is equivalent to:
+```
+Attributes has System or Attributes has Hidden or Attributes has Temporary
+```
+
+The same works with `notHas`:
+```
+Attributes notHas Hidden or System
+```
+is equivalent to:
+```
+Attributes notHas Hidden or Attributes notHas System
+```
+
+#### Chain rules
+
+- Only one connective type (`or` or `and`) is allowed per chain — mixing `or`
+  and `and` within a single chain is not supported (use the explicit long form).
+- When a chain connective is followed by a field name, the chain ends and a new
+  condition begins. For example, `Extension equals doc or Name equals test` is
+  parsed as two separate conditions joined by `or`, not as a chain.
+- The chain binds at the condition level (inside `ParseCondition`), so it
+  effectively groups the values before the surrounding `and`/`or` precedence
+  rules apply.
+
+> **Note:** The formatter always emits the expanded (long) form. The shortcut
+> is purely a parser convenience.
+
+> **Note:** For `matches` and `regex`, both the semicolon shortcut (within a
+> single value) and the value chain shortcut (separate tokens) are available.
+> They should not be mixed in the same expression.
+
 ## Logical Connectives
 
 | Keyword | Aliases | Precedence | Description          |
@@ -290,6 +364,16 @@ Multiple patterns (semicolon shortcut):
 Name matches "*.jpg; *.png; *.gif"
 ```
 
+Multiple patterns (value chain shortcut):
+```
+Name matches "*.jpg" or "*.png" or "*.gif"
+```
+
+Multiple extensions (value chain shortcut):
+```
+Extension equals .doc or .docx or .xlsx
+```
+
 Large recent files:
 ```
 Size greaterThan 10MB and Modified after today-7d
@@ -303,6 +387,16 @@ Photos but not RAW files:
 Hidden or system files in a specific directory:
 ```
 Path contains "Windows" and (Attributes has Hidden or Attributes has System)
+```
+
+Hidden or system files (value chain shortcut):
+```
+Path contains "Windows" and (Attributes has Hidden or System)
+```
+
+Files in user or project directories:
+```
+FullName contains users and documents
 ```
 
 Complex query:
