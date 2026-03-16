@@ -33,7 +33,7 @@ Comment      ::= "//" { any character except newline }
 |-------------|------------|-------------------------------------|------------------------------------|
 | `FullName`  | String     | Full path including file name       | `TapeFileDescriptor.FullName`      |
 | `Name`      | String     | File name only (with extension)     | `Path.GetFileName(FullName)`       |
-| `Extension` | String     | File extension (e.g. `.doc`)        | `Path.GetExtension(FullName)`      |
+| `Extension` | String     | File extension **including the leading dot** (e.g. `.doc`)| `Path.GetExtension(FullName)`|
 | `Path`      | String     | Directory path only                 | `Path.GetDirectoryName(FullName)`  |
 | `Size`      | Size       | File size in bytes                  | `TapeFileDescriptor.Length`        |
 | `Created`   | DateTime   | File creation date/time             | `TapeFileDescriptor.CreationTime`  |
@@ -52,6 +52,7 @@ For use with string fields (`FullName`, `Name`, `Extension`, `Path`).
 | `contains`    |                  | Substring match (case-insensitive)             |
 | `notContains` |                  | Does not contain substring                     |
 | `matches`     |                  | DOS-style wildcard match (`*`, `?`)            |
+| `notMatches`  |                  | Negated DOS-style wildcard match               |
 | `regex`       |                  | Full .NET regular expression match             |
 
 ### Date/Time Operators
@@ -83,8 +84,8 @@ For use with the `Attributes` field.
 
 | Operator       | Aliases          | Description                                    |
 |---------------|------------------|------------------------------------------------|
-| `has`         | `contains`       | File has the specified attribute flag          |
-| `notHas`      | `notContains`    | File does not have the attribute flag          |
+| `have`        | `has`            | File has the specified attribute flag          |
+| `notHave`     | `notHas`         | File does not have the attribute flag          |
 
 ## Value Literals
 
@@ -110,9 +111,9 @@ Strings may be **unquoted** or **quoted**:
 Backslashes are **always literal** — no escape sequences. This is intentional for
 Windows path compatibility.
 
-### Semicolon Shortcut for `matches` and `regex`
+### Semicolon Shortcut for `matches`, `notMatches`, and `regex`
 
-When the operator is `matches` or `regex`, the value may contain semicolon-separated
+When the operator is `matches`, `notMatches`, or `regex`, the value may contain
 patterns. This is syntactic sugar that expands to an OR-chain:
 
 ```
@@ -125,6 +126,9 @@ Name matches "*.doc" or Name matches "*.txt" or Name matches "*.pdf"
 
 The formatter may re-collapse such OR-chains back to the semicolon shortcut when all
 branches share the same field and operator.
+
+Trailing semicolons are silently ignored: `"*.doc; *.txt;"` is treated identically
+to `"*.doc; *.txt"`.
 
 ### Size Values
 
@@ -231,8 +235,8 @@ Attribute values are predefined identifiers (case-insensitive):
 
 Example:
 ```
-Attributes has Hidden
-not Attributes has ReadOnly
+Attributes have Hidden
+not Attributes have ReadOnly
 ```
 
 ### Value Chain Shortcut
@@ -275,20 +279,20 @@ FullName contains users and FullName contains documents
 #### Attribute field chains
 
 ```
-Attributes has System or Hidden or Temporary
+Attributes have System or Hidden or Temporary
 ```
 is equivalent to:
 ```
-Attributes has System or Attributes has Hidden or Attributes has Temporary
+Attributes have System or Attributes have Hidden or Attributes have Temporary
 ```
 
-The same works with `notHas`:
+The same works with `notHave`:
 ```
-Attributes notHas Hidden or System
+Attributes notHave Hidden or System
 ```
 is equivalent to:
 ```
-Attributes notHas Hidden or Attributes notHas System
+Attributes notHave Hidden or Attributes notHave System
 ```
 
 #### Chain rules
@@ -302,10 +306,11 @@ Attributes notHas Hidden or Attributes notHas System
   effectively groups the values before the surrounding `and`/`or` precedence
   rules apply.
 
-> **Note:** The formatter always emits the expanded (long) form. The shortcut
-> is purely a parser convenience.
+> **Note:** The formatter collapses qualifying chains back to shortcut form.
+> A chain qualifies when all operands share the same field and operator and the
+> field belongs to a chainable category (string or attribute).
 
-> **Note:** For `matches` and `regex`, both the semicolon shortcut (within a
+> **Note:** For `matches`, `notMatches`, and `regex`, both the semicolon shortcut
 > single value) and the value chain shortcut (separate tokens) are available.
 > They should not be mixed in the same expression.
 
@@ -386,12 +391,12 @@ Photos but not RAW files:
 
 Hidden or system files in a specific directory:
 ```
-Path contains "Windows" and (Attributes has Hidden or Attributes has System)
+Path contains "Windows" and (Attributes have Hidden or Attributes have System)
 ```
 
 Hidden or system files (value chain shortcut):
 ```
-Path contains "Windows" and (Attributes has Hidden or System)
+Path contains "Windows" and (Attributes have Hidden or System)
 ```
 
 Files in user or project directories:
@@ -434,7 +439,7 @@ Detected after parsing by walking the AST. Each error includes the same structur
 Examples:
 - Type mismatch: `Name before "2025-01-01"` — `before` requires a date field
 - Invalid value: `Size greaterThan abc` — not a valid size literal
-- Unknown attribute: `Attributes has Encrypted` — not a recognized attribute value
+- Unknown attribute: `Attributes have Encrypted` — not a recognized attribute value
 
 ### Evaluation Errors (Runtime)
 
@@ -509,5 +514,5 @@ This is a strict subset of what FCL can express.
 ### Formatter Round-Tripping
 
 The formatter converts an AST back to an FCL string in canonical form. When an
-OR-chain consists of conditions sharing the same field and `matches`/`regex` operator,
+OR-chain consists of conditions sharing the same field and `matches`/`notMatches`/`regex` operator,
 the formatter collapses them into the semicolon shortcut.

@@ -34,13 +34,8 @@ public static class FclValidator
                 ValidateCondition(condition, diagnostics);
                 break;
 
-            case FclOrExpression or:
-                foreach (var operand in or.Operands)
-                    Visit(operand, diagnostics);
-                break;
-
-            case FclAndExpression and:
-                foreach (var operand in and.Operands)
+            case FclChainExpression chain:
+                foreach (var operand in chain.Operands)
                     Visit(operand, diagnostics);
                 break;
 
@@ -127,7 +122,7 @@ public static class FclValidator
                 if (!IsAttributeOperator(op) && op != FclOperator.Equals && op != FclOperator.NotEquals)
                     diagnostics.Add(MakeDiagnostic(
                         FclDiagnosticCodes.IncompatibleOperator, condition.OperatorSpan,
-                        $"Operator '{op}' is not valid for the Attributes field. Use 'has' or 'notHas'."));
+                        $"Operator '{op}' is not valid for the Attributes field. Use 'have' or 'notHave'."));
                 break;
         }
     }
@@ -187,7 +182,7 @@ public static class FclValidator
 
     private static bool IsStringOnlyOperator(FclOperator op) =>
         op is FclOperator.Contains or FclOperator.NotContains
-           or FclOperator.Matches or FclOperator.Regex;
+           or FclOperator.Matches or FclOperator.NotMatches or FclOperator.Regex;
 
     private static bool IsDateOperator(FclOperator op) =>
         op is FclOperator.Before or FclOperator.BeforeOrOn
@@ -198,7 +193,7 @@ public static class FclValidator
            or FclOperator.LessThan or FclOperator.LessOrEqual;
 
     private static bool IsAttributeOperator(FclOperator op) =>
-        op is FclOperator.Has or FclOperator.NotHas;
+        op is FclOperator.Have or FclOperator.NotHave;
 
     private static FclDiagnostic MakeDiagnostic(string code, SourceSpan span, string message) =>
         new(FclDiagnosticSeverity.Error, code, message, span);

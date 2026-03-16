@@ -19,8 +19,8 @@ public class FclParserTests
     [InlineData("Name notContains temp", FclField.Name, FclOperator.NotContains)]
     [InlineData("Name matches *.txt", FclField.Name, FclOperator.Matches)]
     [InlineData("Name regex \"^test\"", FclField.Name, FclOperator.Regex)]
-    [InlineData("Attributes has Hidden", FclField.Attributes, FclOperator.Has)]
-    [InlineData("Attributes notHas ReadOnly", FclField.Attributes, FclOperator.NotHas)]
+    [InlineData("Attributes has Hidden", FclField.Attributes, FclOperator.Have)]
+    [InlineData("Attributes notHas ReadOnly", FclField.Attributes, FclOperator.NotHave)]
     public void Parse_SimpleCondition(string input, FclField expectedField, FclOperator expectedOp)
     {
         var expr = FclTestHelpers.ParseOk(input);
@@ -416,7 +416,7 @@ public class FclParserTests
         {
             var cond = Assert.IsType<FclCondition>(operand);
             Assert.Equal(FclField.Attributes, cond.Field);
-            Assert.Equal(FclOperator.Has, cond.Operator);
+            Assert.Equal(FclOperator.Have, cond.Operator);
         }
         // Verify the individual attribute values.
         Assert.Equal(FclAttribute.Hidden, Assert.IsType<FclAttributeValue>(((FclCondition)or.Operands[0]).Value).Attribute);
@@ -434,7 +434,7 @@ public class FclParserTests
         {
             var cond = Assert.IsType<FclCondition>(operand);
             Assert.Equal(FclField.Attributes, cond.Field);
-            Assert.Equal(FclOperator.Has, cond.Operator);
+            Assert.Equal(FclOperator.Have, cond.Operator);
         }
     }
 
@@ -447,7 +447,7 @@ public class FclParserTests
         foreach (var operand in or.Operands)
         {
             var cond = Assert.IsType<FclCondition>(operand);
-            Assert.Equal(FclOperator.NotHas, cond.Operator);
+            Assert.Equal(FclOperator.NotHave, cond.Operator);
         }
     }
 
@@ -629,5 +629,110 @@ public class FclParserTests
         // "Name" at 0, "test" ends at 16 → span [0..16)
         Assert.Equal(0, cond.Span.Start);
         Assert.Equal(16, cond.Span.End);
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  notMatches operator
+    // ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Parse_NotMatches_ProducesCorrectOperator()
+    {
+        var expr = FclTestHelpers.ParseOk("Name notMatches \"*.txt\"");
+        var cond = Assert.IsType<FclCondition>(expr);
+        Assert.Equal(FclField.Name, cond.Field);
+        Assert.Equal(FclOperator.NotMatches, cond.Operator);
+    }
+
+    [Fact]
+    public void Parse_NotMatches_SemicolonExpansion()
+    {
+        // notMatches with semicolons should expand just like matches.
+        var expr = FclTestHelpers.ParseOk("Name notMatches \"*.txt; *.log\"");
+        var or = Assert.IsType<FclOrExpression>(expr);
+        Assert.Equal(2, or.Operands.Length);
+        foreach (var operand in or.Operands)
+        {
+            var cond = Assert.IsType<FclCondition>(operand);
+            Assert.Equal(FclOperator.NotMatches, cond.Operator);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  have / notHave canonical keywords
+    // ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Parse_HaveKeyword_ParsesAsHave()
+    {
+        var expr = FclTestHelpers.ParseOk("Attributes have Hidden");
+        var cond = Assert.IsType<FclCondition>(expr);
+        Assert.Equal(FclOperator.Have, cond.Operator);
+    }
+
+    [Fact]
+    public void Parse_NotHaveKeyword_ParsesAsNotHave()
+    {
+        var expr = FclTestHelpers.ParseOk("Attributes notHave ReadOnly");
+        var cond = Assert.IsType<FclCondition>(expr);
+        Assert.Equal(FclOperator.NotHave, cond.Operator);
+    }
+
+    [Fact]
+    public void Parse_HasAlias_StillParsesAsHave()
+    {
+        // "has" is an alias for "have" — should produce the same result.
+        var expr = FclTestHelpers.ParseOk("Attributes has Hidden");
+        var cond = Assert.IsType<FclCondition>(expr);
+        Assert.Equal(FclOperator.Have, cond.Operator);
+    }
+
+    [Fact]
+    public void Parse_NotHasAlias_StillParsesAsNotHave()
+    {
+        var expr = FclTestHelpers.ParseOk("Attributes notHas System");
+        var cond = Assert.IsType<FclCondition>(expr);
+        Assert.Equal(FclOperator.NotHave, cond.Operator);
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  contains / notContains no longer alias for Attributes
+    // ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Parse_ContainsOnAttributes_IsNotRecognized()
+    {
+        // "contains" is a string-only operator — on Attributes it should fail validation.
+        var lexer = new FclLexer("Attributes contains Hidden");
+        var tokens = lexer.Tokenize();
+        var parser = new FclParser(tokens);
+        var expr = parser.Parse();
+        Assert.NotNull(expr);
+        // Parser parses it as Contains operator; validator will flag it.
+        var cond = Assert.IsType<FclCondition>(expr);
+        Assert.Equal(FclOperator.Contains, cond.Operator);
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  Trailing semicolons
+    // ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Parse_TrailingSemicolon_StrippedGracefully()
+    {
+        // "*.doc;" should be treated as "*.doc" after stripping the trailing semicolon.
+        var expr = FclTestHelpers.ParseOk("Name matches \"*.doc;\"");
+        var cond = Assert.IsType<FclCondition>(expr);
+        var sv = Assert.IsType<FclStringValue>(cond.Value);
+        Assert.Equal("*.doc", sv.Value);
+    }
+
+    [Fact]
+    public void Parse_TrailingSemicolon_MultiplePatterns_NoExtraEmptyPattern()
+    {
+        // "*.doc;*.txt;" should produce exactly 2 patterns, not 3.
+        var expr = FclTestHelpers.ParseOk("Name matches \"*.doc; *.txt;\"");
+        var or = Assert.IsType<FclOrExpression>(expr);
+        Assert.Equal(2, or.Operands.Length);
     }
 }

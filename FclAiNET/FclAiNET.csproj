@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>fclai</AssemblyName>
+    <RootNamespace>FclAiNET</RootNamespace>
+    <Version>1.0.0.$(BuildNumber)</Version>
+  </PropertyGroup>
+
+  <Import Project="..\Versioning.targets" />
+
+  <ItemGroup>
+    <ProjectReference Include="..\FclNET\FclNET.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.4.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.4.0" />
+    <!-- Logging.Abstractions is resolved transitively via Microsoft.Extensions.AI;
+         no explicit reference needed. -->
+  </ItemGroup>
+
+</Project>

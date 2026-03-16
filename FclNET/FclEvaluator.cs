@@ -76,7 +76,7 @@ public sealed class FclEvaluator
                             _regexCache[condition] = NeverMatchRegex();
                         }
                     }
-                    else if (condition.Operator == FclOperator.Matches)
+                    else if (condition.Operator is FclOperator.Matches or FclOperator.NotMatches)
                     {
                         var patterns = sv.Value
                             .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
@@ -121,12 +121,8 @@ public sealed class FclEvaluator
                 }
                 break;
 
-            case FclOrExpression or:
-                foreach (var op in or.Operands) Preprocess(op);
-                break;
-
-            case FclAndExpression and:
-                foreach (var op in and.Operands) Preprocess(op);
+            case FclChainExpression chain:
+                foreach (var op in chain.Operands) Preprocess(op);
                 break;
 
             case FclNotExpression not:
@@ -209,6 +205,7 @@ public sealed class FclEvaluator
             FclOperator.Contains => actual.Contains(expected, StringComparison.OrdinalIgnoreCase),
             FclOperator.NotContains => !actual.Contains(expected, StringComparison.OrdinalIgnoreCase),
             FclOperator.Matches => EvalWildcard(c, actual),
+            FclOperator.NotMatches => !EvalWildcard(c, actual),
             FclOperator.Regex => EvalRegex(c, actual),
             _ => false
         };
@@ -332,8 +329,8 @@ public sealed class FclEvaluator
 
         return c.Operator switch
         {
-            FclOperator.Has => (actual & expected) == expected,
-            FclOperator.NotHas => (actual & expected) == 0,
+            FclOperator.Have => (actual & expected) == expected,
+            FclOperator.NotHave => (actual & expected) == 0,
             _ => false
         };
     }

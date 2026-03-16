@@ -120,6 +120,7 @@ public static class FclFormatter
         FclOperator.Contains    => "contains",
         FclOperator.NotContains => "notContains",
         FclOperator.Matches     => "matches",
+        FclOperator.NotMatches  => "notMatches",
         FclOperator.Regex       => "regex",
 
         // Date comparison — symbolic aliases shared with size operators
@@ -143,8 +144,8 @@ public static class FclFormatter
         FclOperator.LessOrEqual                     => "lessOrEqual",
 
         // Attribute — word form only
-        FclOperator.Has    => "has",
-        FclOperator.NotHas => "notHas",
+        FclOperator.Have    => "have",
+        FclOperator.NotHave => "notHave",
 
         _ => op.ToString()
     };

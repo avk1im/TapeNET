@@ -39,18 +39,85 @@ public abstract class FclExpression : FclNode
 }
 
 /// <summary>
-/// Logical OR: two or more sub-expressions joined by <c>or</c>.
-/// <code>expr1 or expr2 [or expr3 ...]</code>
+/// Abstract base for chain expressions (OR, AND) that share a common
+/// operand array and value-chain formatting logic.
 /// </summary>
-public sealed class FclOrExpression(ImmutableArray<FclExpression> operands, SourceSpan span)
+public abstract class FclChainExpression(ImmutableArray<FclExpression> operands, SourceSpan span)
     : FclExpression(span)
 {
     /// <summary>The operands (at least two).</summary>
     public ImmutableArray<FclExpression> Operands { get; } = operands;
 
+    /// <summary>
+    /// Determines whether all operands form a value chain: every operand is
+    /// an <see cref="FclCondition"/> sharing the same field and operator,
+    /// and the field belongs to a chainable category (String or Attribute).
+    /// </summary>
+    protected bool IsValueChain()
+    {
+        if (Operands.Length < 2 || Operands[0] is not FclCondition first)
+            return false;
+
+        var category = FclFieldTranslator.GetCategory(first.Field);
+        if (category is not (FclFieldCategory.String or FclFieldCategory.Attribute))
+            return false;
+
+        for (int i = 1; i < Operands.Length; i++)
+        {
+            if (Operands[i] is not FclCondition c
+                || c.Field != first.Field
+                || c.Operator != first.Operator)
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Formats this chain using the value chain shortcut: emits the first
+    /// condition fully (<c>Field Op Value</c>), then only the
+    /// <paramref name="connective"/> and value for each subsequent operand.
+    /// </summary>
+    protected void FormatValueChain(StringBuilder sb, FclFormatOptions options, int indent, string connective)
+    {
+        // First operand: full condition (field op value)
+        Operands[0].FormatTo(sb, options, indent);
+
+        for (int i = 1; i < Operands.Length; i++)
+        {
+            var cond = (FclCondition)Operands[i];
+            if (options.ConditionPerLine)
+            {
+                sb.Append('\n');
+                FclFormatter.AppendIndent(sb, indent);
+            }
+            else
+            {
+                sb.Append(' ');
+            }
+            sb.Append(connective);
+            sb.Append(' ');
+            cond.Value.FormatTo(sb, options);
+        }
+    }
+}
+
+/// <summary>
+/// Logical OR: two or more sub-expressions joined by <c>or</c>.
+/// <code>expr1 or expr2 [or expr3 ...]</code>
+/// </summary>
+public sealed class FclOrExpression(ImmutableArray<FclExpression> operands, SourceSpan span)
+    : FclChainExpression(operands, span)
+{
     /// <inheritdoc />
     public override void FormatTo(StringBuilder sb, FclFormatOptions options, int indent)
     {
+        // Collapse value chains: "Name equals a or Name equals b" → "Name equals a or b"
+        if (IsValueChain())
+        {
+            FormatValueChain(sb, options, indent, "or");
+            return;
+        }
+
         Operands[0].FormatTo(sb, options, indent);
         for (int i = 1; i < Operands.Length; i++)
         {
@@ -74,14 +141,18 @@ public sealed class FclOrExpression(ImmutableArray<FclExpression> operands, Sour
 /// <code>expr1 and expr2 [and expr3 ...]</code>
 /// </summary>
 public sealed class FclAndExpression(ImmutableArray<FclExpression> operands, SourceSpan span)
-    : FclExpression(span)
+    : FclChainExpression(operands, span)
 {
-    /// <summary>The operands (at least two).</summary>
-    public ImmutableArray<FclExpression> Operands { get; } = operands;
-
     /// <inheritdoc />
     public override void FormatTo(StringBuilder sb, FclFormatOptions options, int indent)
     {
+        // Collapse value chains: "Name contains a and Name contains b" → "Name contains a and b"
+        if (IsValueChain())
+        {
+            FormatValueChain(sb, options, indent, "and");
+            return;
+        }
+
         Operands[0].FormatTo(sb, options, indent);
         for (int i = 1; i < Operands.Length; i++)
         {

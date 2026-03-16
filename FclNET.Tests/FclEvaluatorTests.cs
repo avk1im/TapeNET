@@ -510,4 +510,78 @@ public class FclEvaluatorTests
         Assert.True(evaluator.Evaluate(recent));
         Assert.False(evaluator.Evaluate(old));
     }
+
+    // ─────────────────────────────────────────────────────
+    //  notMatches operator
+    // ─────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("Name notMatches \"*.txt\"", @"C:\docs\readme.txt", false)]  // matches → negated → false
+    [InlineData("Name notMatches \"*.txt\"", @"C:\docs\readme.doc", true)]   // doesn't match → negated → true
+    [InlineData("Name notMatches \"*.log\"", @"C:\docs\readme.txt", true)]
+    [InlineData("Name notMatches \"te?t.*\"", @"C:\docs\test.txt", false)]
+    public void Evaluate_NameNotMatches(string fcl, string fullName, bool expected)
+    {
+        var file = new TestFclFileInfo { FullName = fullName };
+        Assert.Equal(expected, FclTestHelpers.Evaluate(fcl, file));
+    }
+
+    [Fact]
+    public void Evaluate_FullNameNotMatches_ExcludesPattern()
+    {
+        // notMatches on FullName: exclude files in temp directories.
+        var keep = new TestFclFileInfo { FullName = @"C:\docs\readme.txt" };
+        var exclude = new TestFclFileInfo { FullName = @"C:\temp\readme.txt" };
+
+        Assert.True(FclTestHelpers.Evaluate(@"FullName notMatches ""*\temp\*""", keep));
+        Assert.False(FclTestHelpers.Evaluate(@"FullName notMatches ""*\temp\*""", exclude));
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  have / notHave canonical keywords
+    // ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Evaluate_HaveKeyword_SameAsHas()
+    {
+        var file = new TestFclFileInfo
+        {
+            FullName = @"C:\test.txt",
+            Attributes = FileAttributes.Hidden | FileAttributes.Archive
+        };
+        Assert.True(FclTestHelpers.Evaluate("Attributes have Hidden", file));
+        Assert.True(FclTestHelpers.Evaluate("Attributes have Archive", file));
+        Assert.False(FclTestHelpers.Evaluate("Attributes have System", file));
+    }
+
+    [Fact]
+    public void Evaluate_NotHaveKeyword_SameAsNotHas()
+    {
+        var file = new TestFclFileInfo
+        {
+            FullName = @"C:\test.txt",
+            Attributes = FileAttributes.Normal
+        };
+        Assert.True(FclTestHelpers.Evaluate("Attributes notHave Hidden", file));
+        Assert.True(FclTestHelpers.Evaluate("Attributes notHave System", file));
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  Trailing semicolons (robustness)
+    // ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Evaluate_TrailingSemicolon_IgnoredGracefully()
+    {
+        // A trailing semicolon should not cause a match failure.
+        var file = new TestFclFileInfo { FullName = @"C:\docs\readme.txt" };
+        Assert.True(FclTestHelpers.Evaluate("Name matches \"*.txt;\"", file));
+    }
+
+    [Fact]
+    public void Evaluate_TrailingSemicolon_MultiplePatterns()
+    {
+        var file = new TestFclFileInfo { FullName = @"C:\docs\readme.doc" };
+        Assert.True(FclTestHelpers.Evaluate("Name matches \"*.txt; *.doc;\"", file));
+    }
 }

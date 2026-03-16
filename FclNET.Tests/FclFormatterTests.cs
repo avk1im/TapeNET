@@ -25,7 +25,7 @@ public class FclFormatterTests
     [InlineData("Modified >= 2025-06-01", "Modified afterOrOn 2025-06-01")]
     [InlineData("Name contains test", "Name contains test")]
     [InlineData("Name matches *.txt", "Name matches \"*.txt\"")]
-    [InlineData("Attributes has Hidden", "Attributes has Hidden")]
+    [InlineData("Attributes has Hidden", "Attributes have Hidden")]
     public void Format_SimpleCondition_DefaultOptions(string input, string expected)
     {
         var expr = FclTestHelpers.ParseOk(input);
@@ -61,8 +61,8 @@ public class FclFormatterTests
     [InlineData("Name notContains test", "Name notContains test")]
     [InlineData("Name matches *.txt", "Name matches \"*.txt\"")]
     [InlineData("Name regex \"^test\"", "Name regex \"^test\"")]
-    [InlineData("Attributes has Hidden", "Attributes has Hidden")]
-    [InlineData("Attributes notHas Hidden", "Attributes notHas Hidden")]
+    [InlineData("Attributes has Hidden", "Attributes have Hidden")]
+    [InlineData("Attributes notHas Hidden", "Attributes notHave Hidden")]
     public void Format_WordOnlyOperators_StayAsWords(string input, string expected)
     {
         var options = new FclFormatOptions { PreferWordOperators = false };
@@ -157,11 +157,11 @@ public class FclFormatterTests
     // ─────────────────────────────────────────────────────
 
     [Theory]
-    [InlineData("Attributes has Hidden", "Attributes has Hidden")]
-    [InlineData("Attributes has ReadOnly", "Attributes has ReadOnly")]
-    [InlineData("Attributes has System", "Attributes has System")]
-    [InlineData("Attributes has Archive", "Attributes has Archive")]
-    [InlineData("Attributes has Temporary", "Attributes has Temporary")]
+    [InlineData("Attributes has Hidden", "Attributes have Hidden")]
+    [InlineData("Attributes has ReadOnly", "Attributes have ReadOnly")]
+    [InlineData("Attributes has System", "Attributes have System")]
+    [InlineData("Attributes has Archive", "Attributes have Archive")]
+    [InlineData("Attributes has Temporary", "Attributes have Temporary")]
     public void Format_AttributeValue(string input, string expected)
     {
         var expr = FclTestHelpers.ParseOk(input);
@@ -175,8 +175,9 @@ public class FclFormatterTests
     [Fact]
     public void Format_OrExpression_Inline()
     {
+        // Same field+op → collapsed value chain
         var expr = FclTestHelpers.ParseOk("Name equals a or Name equals b");
-        Assert.Equal("Name equals a or Name equals b", FclFormatter.Format(expr));
+        Assert.Equal("Name equals a or b", FclFormatter.Format(expr));
     }
 
     [Fact]
@@ -207,14 +208,15 @@ public class FclFormatterTests
     [Fact]
     public void Format_OrExpression_MultiLine()
     {
+        // Same field+op → collapsed value chain in multi-line mode
         var expr = FclTestHelpers.ParseOk("Name equals a or Name equals b or Name equals c");
         var result = FclFormatter.Format(expr, FclFormatOptions.MultiLine);
 
         var lines = result.Split('\n');
         Assert.Equal(3, lines.Length);
         Assert.Equal("Name equals a", lines[0]);
-        Assert.Equal("or Name equals b", lines[1]);
-        Assert.Equal("or Name equals c", lines[2]);
+        Assert.Equal("or b", lines[1]);
+        Assert.Equal("or c", lines[2]);
     }
 
     [Fact]
@@ -302,12 +304,12 @@ public class FclFormatterTests
     [InlineData("Created before 2025-06-15")]
     [InlineData("Created after today-7d")]
     [InlineData("Modified afterOrOn now-2h")]
-    [InlineData("Attributes has Hidden")]
-    [InlineData("Name equals a or Name equals b")]
+    [InlineData("Attributes have Hidden")]
+    [InlineData("Name equals a or Name equals b")]  // collapses to "Name equals a or b"
     [InlineData("Name equals a and Size greaterThan 1MB")]
     [InlineData("not Name equals test")]
-    [InlineData("(Name equals a or Name equals b)")]
-    [InlineData("(Name equals a or Name equals b) and Size greaterThan 1MB")]
+    [InlineData("(Name equals a or Name equals b)")]  // collapses to "(Name equals a or b)"
+    [InlineData("(Name equals a or Name equals b) and Size greaterThan 1MB")]  // inner OR collapses
     public void RoundTrip_ParseFormatParse_ProducesSameOutput(string input)
     {
         var expr1 = FclTestHelpers.ParseOk(input);
@@ -334,5 +336,109 @@ public class FclFormatterTests
     public void NeedsQuoting_ReturnsCorrectResult(string value, bool expected)
     {
         Assert.Equal(expected, FclFormatter.NeedsQuoting(value));
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  Value chain collapsing
+    // ─────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("Extension equals doc or Extension equals docx",
+                "Extension equals doc or docx")]
+    [InlineData("Name contains foo or Name contains bar or Name contains baz",
+                "Name contains foo or bar or baz")]
+    [InlineData("Attributes have Hidden or Attributes have System or Attributes have Temporary",
+                "Attributes have Hidden or System or Temporary")]
+    [InlineData("Path contains docs and Path contains archive",
+                "Path contains docs and archive")]
+    [InlineData("Name matches \"*.doc\" or Name matches \"*.docx\"",
+                "Name matches \"*.doc\" or \"*.docx\"")]
+    public void Format_ValueChain_Collapsed(string input, string expected)
+    {
+        var expr = FclTestHelpers.ParseOk(input);
+        Assert.Equal(expected, FclFormatter.Format(expr));
+    }
+
+    [Theory]
+    [InlineData("Name equals a and Size greaterThan 1MB",
+                "Name equals a and Size greaterThan 1MB")]    // different fields
+    [InlineData("Name equals a or Extension equals b",
+                "Name equals a or Extension equals b")]       // different fields
+    [InlineData("Name equals a or Name contains b",
+                "Name equals a or Name contains b")]          // different operators
+    [InlineData("Size greaterThan 10MB or Size greaterThan 20MB",
+                "Size greaterThan 10MB or Size greaterThan 20MB")]  // non-chainable category
+    public void Format_NonChain_NotCollapsed(string input, string expected)
+    {
+        var expr = FclTestHelpers.ParseOk(input);
+        Assert.Equal(expected, FclFormatter.Format(expr));
+    }
+
+    [Fact]
+    public void Format_ValueChain_MultiLine()
+    {
+        var expr = FclTestHelpers.ParseOk("Extension equals doc or Extension equals docx or Extension equals pdf");
+        var result = FclFormatter.Format(expr, FclFormatOptions.MultiLine);
+
+        var lines = result.Split('\n');
+        Assert.Equal(3, lines.Length);
+        Assert.Equal("Extension equals doc", lines[0]);
+        Assert.Equal("or docx", lines[1]);
+        Assert.Equal("or pdf", lines[2]);
+    }
+
+    [Fact]
+    public void Format_ValueChain_RoundTrip()
+    {
+        // Shortcut form → parse (expands) → format (collapses) → same
+        var input = "Extension equals doc or docx or pdf";
+        var expr1 = FclTestHelpers.ParseOk(input);
+        var fmt1 = FclFormatter.Format(expr1);
+        Assert.Equal("Extension equals doc or docx or pdf", fmt1);
+
+        var expr2 = FclTestHelpers.ParseOk(fmt1);
+        var fmt2 = FclFormatter.Format(expr2);
+        Assert.Equal(fmt1, fmt2);
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  notMatches operator formatting
+    // ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Format_NotMatches_EmitsCorrectKeyword()
+    {
+        var expr = FclTestHelpers.ParseOk("Name notMatches \"*.txt\"");
+        Assert.Equal("Name notMatches \"*.txt\"", FclFormatter.Format(expr));
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  have / notHave canonical output
+    // ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Format_HasAlias_EmitsHave()
+    {
+        // Input uses "has" alias but output should use canonical "have".
+        var expr = FclTestHelpers.ParseOk("Attributes has Hidden");
+        Assert.Equal("Attributes have Hidden", FclFormatter.Format(expr));
+    }
+
+    [Fact]
+    public void Format_NotHasAlias_EmitsNotHave()
+    {
+        var expr = FclTestHelpers.ParseOk("Attributes notHas ReadOnly");
+        Assert.Equal("Attributes notHave ReadOnly", FclFormatter.Format(expr));
+    }
+
+    [Fact]
+    public void Format_HaveKeyword_RoundTrips()
+    {
+        var expr = FclTestHelpers.ParseOk("Attributes have Hidden");
+        var formatted = FclFormatter.Format(expr);
+        Assert.Equal("Attributes have Hidden", formatted);
+
+        var expr2 = FclTestHelpers.ParseOk(formatted);
+        Assert.Equal(formatted, FclFormatter.Format(expr2));
     }
 }

@@ -260,7 +260,7 @@ public sealed class FclParser(List<FclToken> tokens)
         }
 
         // ── Semicolon expansion for matches / regex ─────
-        if (op is FclOperator.Matches or FclOperator.Regex
+        if (op is FclOperator.Matches or FclOperator.NotMatches or FclOperator.Regex
             && value is FclStringValue sv
             && sv.Value.Contains(';'))
         {
@@ -363,19 +363,16 @@ public sealed class FclParser(List<FclToken> tokens)
         { op = FclOperator.NotEquals; span = _walker.Current.Span; _walker.Advance(); return true; }
 
         if (text.Equals("contains", StringComparison.OrdinalIgnoreCase))
-        {
-            op = category == FclFieldCategory.Attribute ? FclOperator.Has : FclOperator.Contains;
-            span = _walker.Current.Span; _walker.Advance(); return true;
-        }
+        { op = FclOperator.Contains; span = _walker.Current.Span; _walker.Advance(); return true; }
 
         if (text.Equals("notContains", StringComparison.OrdinalIgnoreCase))
-        {
-            op = category == FclFieldCategory.Attribute ? FclOperator.NotHas : FclOperator.NotContains;
-            span = _walker.Current.Span; _walker.Advance(); return true;
-        }
+        { op = FclOperator.NotContains; span = _walker.Current.Span; _walker.Advance(); return true; }
 
         if (text.Equals("matches", StringComparison.OrdinalIgnoreCase))
         { op = FclOperator.Matches; span = _walker.Current.Span; _walker.Advance(); return true; }
+
+        if (text.Equals("notMatches", StringComparison.OrdinalIgnoreCase))
+        { op = FclOperator.NotMatches; span = _walker.Current.Span; _walker.Advance(); return true; }
 
         if (text.Equals("regex", StringComparison.OrdinalIgnoreCase))
         { op = FclOperator.Regex; span = _walker.Current.Span; _walker.Advance(); return true; }
@@ -404,11 +401,13 @@ public sealed class FclParser(List<FclToken> tokens)
         if (text.Equals("lessOrEqual", StringComparison.OrdinalIgnoreCase))
         { op = FclOperator.LessOrEqual; span = _walker.Current.Span; _walker.Advance(); return true; }
 
-        if (text.Equals("has", StringComparison.OrdinalIgnoreCase))
-        { op = FclOperator.Has; span = _walker.Current.Span; _walker.Advance(); return true; }
+        if (text.Equals("have", StringComparison.OrdinalIgnoreCase)
+            || text.Equals("has", StringComparison.OrdinalIgnoreCase))
+        { op = FclOperator.Have; span = _walker.Current.Span; _walker.Advance(); return true; }
 
-        if (text.Equals("notHas", StringComparison.OrdinalIgnoreCase))
-        { op = FclOperator.NotHas; span = _walker.Current.Span; _walker.Advance(); return true; }
+        if (text.Equals("notHave", StringComparison.OrdinalIgnoreCase)
+            || text.Equals("notHas", StringComparison.OrdinalIgnoreCase))
+        { op = FclOperator.NotHave; span = _walker.Current.Span; _walker.Advance(); return true; }
 
         return false;
     }
@@ -1063,8 +1062,12 @@ public sealed class FclParser(List<FclToken> tokens)
         if (parts.Length <= 1)
         {
             // No semicolons or only one pattern — no expansion needed.
+            // If a trailing semicolon was stripped (e.g. "*.doc;"), use the cleaned value.
+            var cleanedValue = parts.Length == 1 && parts[0] != sv.Value
+                ? new FclStringValue(parts[0], sv.WasQuoted, sv.Span)
+                : sv;
             var condSpan = SourceSpan.Covering(fieldSpan, sv.Span);
-            return new FclCondition(field, fieldSpan, op, opSpan, sv, condSpan);
+            return new FclCondition(field, fieldSpan, op, opSpan, cleanedValue, condSpan);
         }
 
         var operands = ImmutableArray.CreateBuilder<FclExpression>(parts.Length);

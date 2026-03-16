@@ -202,4 +202,54 @@ public class FclValidatorTests
         var diagnostics = FclValidator.Validate(expr);
         Assert.Single(diagnostics);
     }
+
+    // ─────────────────────────────────────────────────────
+    //  have / notHave canonical keywords
+    // ─────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("Attributes have Hidden")]
+    [InlineData("Attributes notHave ReadOnly")]
+    [InlineData("Attributes have System")]
+    public void Validate_HaveKeywords_NoErrors(string input)
+    {
+        var expr = FclTestHelpers.ParseOk(input);
+        var diagnostics = FclValidator.Validate(expr);
+        Assert.Empty(diagnostics);
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  notMatches operator
+    // ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Validate_NotMatchesOnStringField_NoErrors()
+    {
+        var expr = FclTestHelpers.ParseOk("Name notMatches \"*.tmp\"");
+        var diagnostics = FclValidator.Validate(expr);
+        Assert.Empty(diagnostics);
+    }
+
+    [Fact]
+    public void Validate_NotMatchesOnDateField_ReportsError()
+    {
+        var expr = FclTestHelpers.ParseOk("Created notMatches today");
+        var diagnostics = FclValidator.Validate(expr);
+        Assert.Contains(diagnostics, d => d.Code == FclDiagnosticCodes.StringOperatorOnNonString);
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  contains / notContains no longer alias for Attributes
+    // ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Validate_ContainsOnAttributes_ReportsError()
+    {
+        // "contains" is now purely a string operator, not an Attributes alias.
+        var expr = FclTestHelpers.ParseOk("Attributes contains Hidden");
+        var diagnostics = FclValidator.Validate(expr);
+        Assert.Contains(diagnostics, d =>
+            d.Code == FclDiagnosticCodes.StringOperatorOnNonString
+            || d.Code == FclDiagnosticCodes.IncompatibleOperator);
+    }
 }

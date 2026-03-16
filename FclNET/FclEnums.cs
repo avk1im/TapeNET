@@ -42,6 +42,8 @@ public enum FclOperator
     NotContains,
     /// <summary>DOS-style wildcard match (<c>*</c>, <c>?</c>).</summary>
     Matches,
+    /// <summary>Negated DOS-style wildcard match.</summary>
+    NotMatches,
     /// <summary>Full .NET regular expression match.</summary>
     Regex,
 
@@ -70,9 +72,9 @@ public enum FclOperator
     // --- Attribute operators ---
 
     /// <summary>File has the specified attribute flag.</summary>
-    Has,
+    Have,
     /// <summary>File does not have the specified attribute flag.</summary>
-    NotHas
+    NotHave
 }
 
 /// <summary>

@@ -187,6 +187,82 @@ public class FclIntegrationTests
     }
 
     // ─────────────────────────────────────────────────────
+    //  notMatches — exclusion patterns
+    // ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void NotMatches_ExcludeTemporaryFiles()
+    {
+        // The idiomatic way to exclude multiple patterns is "not Name matches ..."
+        // (semicolons expand to OR, so notMatches + semicolons would be
+        //  "notMatches A or notMatches B" — almost always true).
+        var fcl = "not Name matches \"*.tmp; *.bak; ~$*\"";
+
+        Assert.True(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\docs\report.doc")));
+        Assert.False(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\docs\report.tmp")));
+        Assert.False(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\docs\report.bak")));
+        Assert.False(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\docs\~$report.doc")));
+    }
+
+    [Fact]
+    public void NotMatches_SinglePattern_ExcludesCorrectly()
+    {
+        // Single-pattern notMatches works straightforwardly.
+        var fcl = "Name notMatches \"*.tmp\"";
+
+        Assert.True(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\docs\report.doc")));
+        Assert.False(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\docs\report.tmp")));
+    }
+
+    [Fact]
+    public void NotMatches_CombinedWithPositiveFilter()
+    {
+        // Documents that are NOT temp files.
+        var fcl = "Extension equals .doc and Name notMatches \"~$*\"";
+
+        Assert.True(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\docs\report.doc")));
+        Assert.False(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\docs\~$report.doc")));
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  have / notHave canonical keywords in integration
+    // ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void HaveKeyword_EndToEnd()
+    {
+        // Using canonical "have"/"notHave" keywords through the full pipeline.
+        var fcl = "not (Attributes have Temporary or Attributes have System)";
+
+        Assert.True(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\data\normal.txt")));
+        Assert.False(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\data\temp.tmp", attributes: FileAttributes.Temporary)));
+    }
+
+    [Fact]
+    public void HaveChain_EndToEnd()
+    {
+        // Value chain shortcut with "have".
+        var fcl = "Attributes have Hidden or System or Temporary";
+
+        Assert.True(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\test.txt", attributes: FileAttributes.Hidden)));
+        Assert.True(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\test.txt", attributes: FileAttributes.System)));
+        Assert.False(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\test.txt", attributes: FileAttributes.Archive)));
+    }
+
+    // ─────────────────────────────────────────────────────
     //  Helper
     // ─────────────────────────────────────────────────────
 
