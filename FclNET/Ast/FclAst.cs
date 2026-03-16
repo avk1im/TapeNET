@@ -114,6 +114,24 @@ public sealed class FclOrExpression(ImmutableArray<FclExpression> operands, Sour
         // Collapse value chains: "Name equals a or Name equals b" → "Name equals a or b"
         if (IsValueChain())
         {
+            // Special case: collapse matches/notMatches/regex OR-chains into the semicolon shortcut:
+            //  "Name matches "a" or Name matches "b" or Name matches "c"" → "Name matches "a; b; c""
+            if (Operands[0] is FclCondition c
+                && c.Operator is FclOperator.Matches or FclOperator.NotMatches or FclOperator.Regex)
+            {
+                sb.Append(FclFormatter.FieldToString(c.Field));
+                sb.Append(' ');
+                sb.Append(FclFormatter.OperatorToString(c.Operator, options.PreferWordOperators));
+                sb.Append(' ');
+
+                // Extract raw string values (without per-value quoting) and
+                //  join them with "; " inside a single quoted string.
+                var raw = Operands.Cast<FclCondition>()
+                    .Select(cond => ((FclStringValue)cond.Value).Value);
+                FclFormatter.AppendQuoted(sb, string.Join("; ", raw));
+                return;
+            }
+
             FormatValueChain(sb, options, indent, "or");
             return;
         }

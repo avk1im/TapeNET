@@ -272,7 +272,7 @@ public sealed class FclParser(List<FclToken> tokens)
 
         // ── Value chain shortcut ────────────────────────
         // "Extension equals doc or docx"      → expanded to individual conditions.
-        // "Attributes has Hidden or System"   → expanded to individual conditions.
+        // "Attributes have Hidden or System"   → expanded to individual conditions.
         // "FullName contains users and docs"  → expanded to individual conditions.
         if (fieldCategory is FclFieldCategory.String or FclFieldCategory.Attribute
             && IsValueChainContinuation(fieldCategory))

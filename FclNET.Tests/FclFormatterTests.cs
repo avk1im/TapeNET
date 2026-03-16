@@ -352,7 +352,7 @@ public class FclFormatterTests
     [InlineData("Path contains docs and Path contains archive",
                 "Path contains docs and archive")]
     [InlineData("Name matches \"*.doc\" or Name matches \"*.docx\"",
-                "Name matches \"*.doc\" or \"*.docx\"")]
+                "Name matches \"*.doc; *.docx\"")]
     public void Format_ValueChain_Collapsed(string input, string expected)
     {
         var expr = FclTestHelpers.ParseOk(input);
@@ -440,5 +440,112 @@ public class FclFormatterTests
 
         var expr2 = FclTestHelpers.ParseOk(formatted);
         Assert.Equal(formatted, FclFormatter.Format(expr2));
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  Semicolon collapse for matches / notMatches / regex
+    // ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Format_MatchesChain_CollapsesToSemicolon_TwoPatterns()
+    {
+        var expr = FclTestHelpers.ParseOk("Name matches \"*.doc\" or Name matches \"*.txt\"");
+        Assert.Equal("Name matches \"*.doc; *.txt\"", FclFormatter.Format(expr));
+    }
+
+    [Fact]
+    public void Format_MatchesChain_CollapsesToSemicolon_ThreePatterns()
+    {
+        var expr = FclTestHelpers.ParseOk(
+            "Name matches \"*.doc\" or Name matches \"*.txt\" or Name matches \"*.pdf\"");
+        Assert.Equal("Name matches \"*.doc; *.txt; *.pdf\"", FclFormatter.Format(expr));
+    }
+
+    [Fact]
+    public void Format_MatchesChain_CollapsesToSemicolon_FullNameField()
+    {
+        var expr = FclTestHelpers.ParseOk(
+            "FullName matches \"C:\\docs\\*\" or FullName matches \"C:\\backup\\*\"");
+        Assert.Equal("FullName matches \"C:\\docs\\*; C:\\backup\\*\"", FclFormatter.Format(expr));
+    }
+
+    [Fact]
+    public void Format_MatchesChain_CollapsesToSemicolon_UnquotedValues()
+    {
+        // Unquoted patterns — the semicolon collapse still wraps in quotes.
+        var expr = FclTestHelpers.ParseOk("Name matches *.doc or Name matches *.txt");
+        Assert.Equal("Name matches \"*.doc; *.txt\"", FclFormatter.Format(expr));
+    }
+
+    [Fact]
+    public void Format_MatchesChain_SemicolonRoundTrip()
+    {
+        // Semicolons → parse (expands to OR) → format (collapses back) → same
+        var input = "Name matches \"*.doc; *.txt; *.pdf\"";
+        var expr1 = FclTestHelpers.ParseOk(input);
+        var fmt1 = FclFormatter.Format(expr1);
+        Assert.Equal(input, fmt1);
+
+        var expr2 = FclTestHelpers.ParseOk(fmt1);
+        var fmt2 = FclFormatter.Format(expr2);
+        Assert.Equal(fmt1, fmt2);
+    }
+
+    [Fact]
+    public void Format_MatchesChain_MultiLine_StillCollapsesToSemicolon()
+    {
+        // Semicolon collapse produces a single condition, so multi-line has no effect.
+        var expr = FclTestHelpers.ParseOk("Name matches \"*.doc\" or Name matches \"*.txt\"");
+        var result = FclFormatter.Format(expr, FclFormatOptions.MultiLine);
+        Assert.Equal("Name matches \"*.doc; *.txt\"", result);
+    }
+
+    [Fact]
+    public void Format_NotMatchesChain_CollapsesToSemicolon()
+    {
+        // notMatches OR-chains also collapse to semicolons per spec.
+        var expr = FclTestHelpers.ParseOk(
+            "Name notMatches \"*.tmp\" or Name notMatches \"*.bak\"");
+        Assert.Equal("Name notMatches \"*.tmp; *.bak\"", FclFormatter.Format(expr));
+    }
+
+    [Fact]
+    public void Format_RegexChain_CollapsesToSemicolon()
+    {
+        // regex OR-chains also collapse to semicolons per spec.
+        var expr = FclTestHelpers.ParseOk(
+            "Name regex \"^test\" or Name regex \"^temp\"");
+        Assert.Equal("Name regex \"^test; ^temp\"", FclFormatter.Format(expr));
+    }
+
+    [Fact]
+    public void Format_MatchesChain_SymbolicMode_UsesSameKeyword()
+    {
+        // PreferWordOperators = false doesn't affect matches (word-only operator).
+        var options = new FclFormatOptions { PreferWordOperators = false };
+        var expr = FclTestHelpers.ParseOk("Name matches \"*.doc\" or Name matches \"*.txt\"");
+        Assert.Equal("Name matches \"*.doc; *.txt\"", FclFormatter.Format(expr, options));
+    }
+
+    [Fact]
+    public void Format_MatchesChain_MixedFields_NotCollapsed()
+    {
+        // Different fields → not a value chain, no semicolon collapse.
+        var expr = FclTestHelpers.ParseOk(
+            "Name matches \"*.doc\" or Extension matches \"*.txt\"");
+        Assert.Equal(
+            "Name matches \"*.doc\" or Extension matches \"*.txt\"",
+            FclFormatter.Format(expr));
+    }
+
+    [Fact]
+    public void Format_MatchesChain_MixedWithOtherOp_NotCollapsed()
+    {
+        // matches + contains → different operators, no collapse.
+        var expr = FclTestHelpers.ParseOk(
+            "Name matches \"*.doc\" or Name contains doc");
+        Assert.Equal(
+            "Name matches \"*.doc\" or Name contains doc",
+            FclFormatter.Format(expr));
     }
 }
