@@ -782,7 +782,8 @@ public partial class MainViewModel : ViewModelBase
     {
         var invalidChars = System.IO.Path.GetInvalidFileNameChars();
         var sanitized = new string(
-            (toc.Description ?? "tape").Select(c => invalidChars.Contains(c) ? '_' : c).ToArray()).Trim();
+            [.. (toc.Description ?? "tape").Select(c => invalidChars.Contains(c) ? '_' : c)]
+            ).Trim();
 
         if (string.IsNullOrWhiteSpace(sanitized))
             sanitized = "tape";
@@ -869,7 +870,8 @@ public partial class MainViewModel : ViewModelBase
         var tocFileName = _tapeService.IsTOCFromFile
             ? System.IO.Path.GetFileName(_tapeService.TOCFilePath ?? "file")
             : null;
-        var tapeItem = TapeTreeItemViewModel.CreateTapeItem(toc, driveItem, tocFileName);
+        var tapeItem = TapeTreeItemViewModel.CreateTapeItem(toc, driveItem, tocFileName,
+            isInMemory: _tapeService.IsInMemoryDrive);
         driveItem.Children.Add(tapeItem);
 
         // Add backup sets (from latest to oldest for consistency with alt index display)
@@ -884,9 +886,14 @@ public partial class MainViewModel : ViewModelBase
         }
 
         WindowTitle = $"TapeWin - {toc.Description ?? $"Volume #{toc.Volume}"}";
-        StatusMessage = _tapeService.IsTOCFromFile
-            ? $"\u26a0 TOC: {System.IO.Path.GetFileName(_tapeService.TOCFilePath)} | Loaded {totalSets} backup set(s)"
-            : $"Loaded {totalSets} backup set(s)";
+
+        // Status message: TOC-from-file warning takes precedence over in-memory info
+        if (_tapeService.IsTOCFromFile)
+            StatusMessage = $"\u26a0 TOC: {System.IO.Path.GetFileName(_tapeService.TOCFilePath)} | Loaded {totalSets} backup set(s)";
+        else if (_tapeService.IsInMemoryDrive)
+            StatusMessage = $"\u2139 In-memory \u2013 cannot be saved | Loaded {totalSets} backup set(s)";
+        else
+            StatusMessage = $"Loaded {totalSets} backup set(s)";
     }
 
     private void SelectMostRecentSet()
@@ -1408,7 +1415,8 @@ public partial class MainViewModel : ViewModelBase
     private async Task OpenVirtualDriveAsync(VirtualDriveOpenRequest request)
     {
         IsBusy = true;
-        BusyMessage = request.IsCreateNew ? "Creating virtual drive..." : "Opening virtual drive...";
+        BusyMessage = request.Media.InMemory ? "Creating in-memory virtual drive..."
+            : request.IsCreateNew ? "Creating virtual drive..." : "Opening virtual drive...";
 
         try
         {
@@ -1523,10 +1531,13 @@ public partial class MainViewModel : ViewModelBase
             SelectMostRecentSet();
 
             // Log success with mode info
-            var modeText = request.IsCreateNew ? "Created new" : "Opened existing";
+            var modeText = request.Media.InMemory ? "Created in-memory"
+                : request.IsCreateNew ? "Created new" : "Opened existing";
             LogInfo($"{modeText} virtual media: {request.Media.ContentPath}");
 
-            AddToVirtualDriveMru(request.Media.ContentPath);
+            // Don't add in-memory drives to MRU (they can't be reopened)
+            if (!request.Media.InMemory)
+                AddToVirtualDriveMru(request.Media.ContentPath);
         }
         finally
         {

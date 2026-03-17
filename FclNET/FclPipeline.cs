@@ -131,4 +131,80 @@ public static class FclPipeline
 
         return Select(parseResult.Expression!, files, out diagnostics);
     }
+
+    // ─────────────────────────────────────────────────────
+    //  Wildcard evaluator factory
+    // ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Creates an <see cref="FclEvaluator"/> that matches files against DOS-style
+    /// wildcard patterns (<c>*</c>, <c>?</c>) using the <c>fullname matches</c> condition.
+    /// <para>
+    /// Builds a synthetic AST node internally — no lexer/parser involved.
+    /// The evaluator pre-compiles all patterns for efficient repeated evaluation.
+    /// </para>
+    /// </summary>
+    /// <param name="patterns">
+    /// One or more DOS-style wildcard patterns (e.g. <c>*.txt</c>, <c>C:\Backup\*.*</c>).
+    /// </param>
+    /// <returns>A ready-to-use evaluator for the combined pattern.</returns>
+    public static FclEvaluator CreateWildcardEvaluator(IReadOnlyList<string> patterns)
+    {
+        var joined = string.Join("; ", patterns);
+        return CreateWildcardEvaluator(joined);
+    }
+
+    /// <summary>
+    /// Creates an <see cref="FclEvaluator"/> that matches files against a single
+    /// (potentially semicolon-separated) DOS-style wildcard pattern string using
+    /// the <c>fullname matches</c> condition.
+    /// </summary>
+    /// <param name="pattern">
+    /// A wildcard pattern string, optionally semicolon-separated
+    /// (e.g. <c>"*.txt; *.log"</c>).
+    /// </param>
+    /// <returns>A ready-to-use evaluator for the pattern.</returns>
+    public static FclEvaluator CreateWildcardEvaluator(string pattern)
+    {
+        // Build a synthetic AST: fullname matches "pattern"
+        var value = new FclStringValue(pattern, wasQuoted: true, SourceSpan.None);
+        var condition = new FclCondition(
+            FclField.FullName, SourceSpan.None,
+            FclOperator.Matches, SourceSpan.None,
+            value, SourceSpan.None);
+        return new FclEvaluator(condition);
+    }
+}
+
+// ─────────────────────────────────────────────────────
+//  Lightweight IFclFileInfo implementation
+// ─────────────────────────────────────────────────────
+
+/// <summary>
+/// Lightweight, immutable <see cref="IFclFileInfo"/> snapshot.
+/// A <see langword="readonly struct"/> to avoid heap allocation — ideal for
+/// high-throughput evaluation of file descriptors from external sources
+/// (e.g. <c>TapeFileDescriptor</c>).
+/// </summary>
+public readonly struct FclFileInfo(
+    string fullName,
+    long size,
+    DateTime creationTime,
+    DateTime lastWriteTime,
+    FileAttributes attributes) : IFclFileInfo
+{
+    /// <inheritdoc />
+    public string FullName { get; } = fullName;
+
+    /// <inheritdoc />
+    public long Size { get; } = size;
+
+    /// <inheritdoc />
+    public DateTime CreationTime { get; } = creationTime;
+
+    /// <inheritdoc />
+    public DateTime LastWriteTime { get; } = lastWriteTime;
+
+    /// <inheritdoc />
+    public FileAttributes Attributes { get; } = attributes;
 }

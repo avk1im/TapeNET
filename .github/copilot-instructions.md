@@ -2,16 +2,21 @@
 
 ## Solution Structure
 
-The **TapeNET** solution (`D:\Documents.DEV\Projects\TapeNET`) targets **.NET 8 / C# 12** and contains four projects:
+The **TapeNET** solution (`D:\Documents.DEV\Projects\TapeNET`) targets **.NET 8 / C# 12** and contains six projects:
 
 | Project | Type | Role |
 |---------|------|------|
 | `TapeLibNET` | Class library | Core tape I/O library — drives, agents, TOC, streams, serialization |
-| `FclNET`     | Class library | Implements FCL, a "File Conditions Language" to filter large lists of files |
+| `FclNET`     | Class library | FCL (File Conditions Language) — DSL for file filtering by name, path, size, date, attributes |
+| `FclAiNET`   | Class library | AI-assisted natural language → FCL translation using `Microsoft.Extensions.AI` |
 | `TapeConNET` | Console app | CLI tape backup utility (`tapecon`) — flag-based command-line interface |
 | `TapeWinNET` | WPF app | GUI tape backup manager — MVVM, tree-based navigation, log pane, dialogs for backup and restore |
+| `FclAiNET.Test` | Console app | Interactive NL → FCL REPL for testing AI translation |
 
-- The apps depend on the libraries; the libraries are independent of each other.
+**Test projects:** `FclNET.Tests` (xUnit, 390+ tests).
+
+- The apps depend on the libraries; `FclNET` has no project dependencies; `FclAiNET` depends on `FclNET`.
+- The tape projects (`TapeLibNET`, `TapeConNET`, `TapeWinNET`) are currently independent of the FCL projects.
 - Hence no need to e.g. parse the apps when working on the libraries.
 - Only if a comprehensive understanding of the whole solution is required, refer to `D:\Documents.DEV\Projects\TapeNET\TapeNET-Context-Primer.md`.
 
@@ -33,6 +38,21 @@ The **TapeNET** solution (`D:\Documents.DEV\Projects\TapeNET`) targets **.NET 8 
 ## Formatting Logic
 - Encapsulate formatting logic inside the AST expression classes rather than in a static formatter helper.
 - Factor shared behavior across AST node types into an abstract base class rather than using static helper methods with many parameters.
+
+## For FCL Library: Architecture Conventions
+
+- **Pipeline stages are independent:** Lexer, Parser, Validator, Evaluator, Formatter each operate on their own input (tokens, AST, etc.) and produce their own output. `FclPipeline` is the one-stop convenience wrapper.
+- **AST is immutable:** All nodes use primary constructors with read-only properties. All nodes carry `SourceSpan` for diagnostic positions.
+- **`IFclFileInfo` abstraction:** The evaluator operates against this interface, keeping FclNET independent of `TapeLibNET`. Consuming projects implement it for their file descriptor types.
+- **Diagnostics via `FclDiagnostic`:** Unified structure (severity, error code, message, source span) for parse, validation, and runtime errors. Never throw exceptions for user input errors.
+- **Canonical form:** The formatter always emits the word-form operators (not symbolic aliases), ISO 8601 dates, and re-collapses semicolons and value chains where applicable.
+- **Test coverage:** FclNET.Tests uses xUnit with `InternalsVisibleTo`. Test helpers (`FclTestHelpers.ParseOk`, `Evaluate`, `ValidateOk`) reduce boilerplate. New features should include parser, evaluator, formatter, and integration tests.
+
+## For AI Translation Library: Conventions
+
+- **`IFclAiInteraction` callback pattern:** Modeled after TapeLibNET's `ITapeFileNotifiable` — a minimal interface that the library calls into, letting each app decide how to present the interaction.
+- **Provider-agnostic via `IChatClient`:** All AI interaction goes through `Microsoft.Extensions.AI` abstractions. No direct OpenAI/Ollama SDK calls outside `FclAiProviderFactory`.
+- **System prompt is self-contained:** `FclAiSystemPrompt` contains a condensed FCL reference optimized for LLM consumption. When the FCL language changes, update the prompt alongside the spec.
 
 ## For WPF App: Structured logging — LogEntry + WarningLevel
 

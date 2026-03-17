@@ -112,6 +112,10 @@
                                 <DataTrigger Binding="{Binding ItemType}" Value="Tape">
                                     <Setter Property="FontWeight" Value="SemiBold" />
                                 </DataTrigger>
+                                <!-- In-memory info (blue) — listed before IsTOCFromFile so TOC warning takes precedence -->
+                                <DataTrigger Binding="{Binding IsInMemory}" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource WarningFg.Info}" />
+                                </DataTrigger>
                                 <DataTrigger Binding="{Binding IsTOCFromFile}" Value="True">
                                     <Setter Property="Foreground" Value="{StaticResource WarningFg.Failed}" />
                                 </DataTrigger>

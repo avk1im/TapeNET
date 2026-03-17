@@ -87,15 +87,45 @@ public sealed class FclEvaluator
                             //  FileSystemName.MatchesSimpleExpression for evaluation.
                             _wildcardPatterns[condition] = patterns;
                         }
+                        else if (condition.Field == FclField.FullName)
+                        {
+                            // Optimization: patterns without path separators (e.g. "*.txt",
+                            //  "*.doc?", "MyPresentation.*") clearly target only the filename
+                            //  component and can use the much faster
+                            //  FileSystemName.MatchesSimpleExpression against Path.GetFileName().
+                            //  Patterns with separators (e.g. "C:\docs\*", "\doc?") still need
+                            //  regex for unanchored fragment matching across segments.
+                            List<string>? nameTargetable = null;
+                            List<string>? pathBased = null;
+
+                            foreach (var p in patterns)
+                            {
+                                if (p.AsSpan().IndexOfAny('\\', '/') < 0)
+                                    (nameTargetable ??= []).Add(p);
+                                else
+                                    (pathBased ??= []).Add(p);
+                            }
+
+                            if (nameTargetable is not null)
+                                _wildcardPatterns[condition] = [.. nameTargetable];
+
+                            if (pathBased is not null)
+                            {
+                                var combined = string.Join('|',
+                                    pathBased.Select(p => WildcardPatternToRegex(p, isPathField: false)));
+                                _wildcardRegexCache[condition] = new Regex(
+                                    combined,
+                                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+                            }
+                        }
                         else
                         {
-                            // FullName/Path: compile to regex for unanchored fragment matching.
+                            // Path: compile to regex for unanchored fragment matching.
                             //  FileSystemName.MatchesSimpleExpression is unsuitable here because
                             //  it treats '\' as a path separator and prevents '*'/'?' from
                             //  crossing directory segments.
-                            bool isPathField = condition.Field == FclField.Path;
                             var combined = string.Join('|',
-                                patterns.Select(p => WildcardPatternToRegex(p, isPathField)));
+                                patterns.Select(p => WildcardPatternToRegex(p, isPathField: true)));
                             _wildcardRegexCache[condition] = new Regex(
                                 combined,
                                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
@@ -213,20 +243,37 @@ public sealed class FclEvaluator
 
     private bool EvalWildcard(FclCondition c, string actual)
     {
-        // Name/Extension: fast path via FileSystemName (no backslashes in value)
-        if (_wildcardPatterns.TryGetValue(c, out var patterns))
+        // Name/Extension/FullName (name-targetable): fast path via FileSystemName.
+        //  For FullName, name-targetable patterns (without path separators) are
+        //  matched against just the filename component — much faster than regex.
+        bool hasNamePatterns = _wildcardPatterns.TryGetValue(c, out var patterns);
+
+        if (hasNamePatterns)
         {
-            for (int i = 0; i < patterns.Length; i++)
+            var target = c.Field == FclField.FullName
+                ? Path.GetFileName(actual.AsSpan())
+                : actual.AsSpan();
+
+            for (int i = 0; i < patterns!.Length; i++) // since TryGetValue succeeded, patterns is non-null
             {
-                if (FileSystemName.MatchesSimpleExpression(patterns[i], actual, ignoreCase: true))
+                if (FileSystemName.MatchesSimpleExpression(patterns[i], target, ignoreCase: true))
                     return true;
             }
-            return false;
+
+            // For Name/Extension, all patterns live here — no regex fallthrough needed.
+            if (c.Field is FclField.Name or FclField.Extension)
+                return false;
         }
 
-        // FullName/Path: regex-based fragment matching
+        // FullName/Path: regex-based fragment matching (path-containing patterns).
+        //  For FullName, this is checked after the name-targetable fast path above,
+        //  so a mixed condition like "*.txt; C:\docs\*" checks both branches.
         if (_wildcardRegexCache.TryGetValue(c, out var regex))
             return regex.IsMatch(actual);
+
+        // FullName with only name-targetable patterns — no regex branch needed.
+        if (hasNamePatterns)
+            return false;
 
         // Fallback (shouldn't happen after Preprocess)
         Debug.WriteLine(c, "Warning: wildcard pattern not preprocessed; compiling on-the-fly");

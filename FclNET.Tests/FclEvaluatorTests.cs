@@ -136,6 +136,35 @@ public class FclEvaluatorTests
         Assert.Equal(expected, FclTestHelpers.Evaluate(fcl, file));
     }
 
+    [Theory]
+    // Name-targetable patterns: no path separators → fast FileSystemName path
+    [InlineData("FullName matches \"*.txt\"", @"C:\docs\test.txt", true)]
+    [InlineData("FullName matches \"*.txt\"", @"C:\docs\test.doc", false)]
+    [InlineData("FullName matches \"*.doc?\"", @"C:\docs\test.docx", true)]
+    [InlineData("FullName matches \"*.doc?\"", @"C:\docs\test.txt", false)]
+    [InlineData("FullName matches \"test.*\"", @"C:\docs\test.txt", true)]
+    [InlineData("FullName matches \"test.*\"", @"C:\docs\other.txt", false)]
+    [InlineData("FullName matches \"te?t.*\"", @"C:\docs\test.txt", true)]
+    [InlineData("FullName matches \"te?t.*\"", @"C:\docs\teeest.txt", false)]
+    // Multiple name-targetable patterns via semicolon
+    [InlineData("FullName matches \"*.txt; *.doc\"", @"C:\docs\test.txt", true)]
+    [InlineData("FullName matches \"*.txt; *.doc\"", @"C:\docs\test.doc", true)]
+    [InlineData("FullName matches \"*.txt; *.doc\"", @"C:\docs\test.xls", false)]
+    // Mixed: name-targetable + path-based patterns in one condition
+    [InlineData("FullName matches \"*.txt; C:\\other\\*\"", @"C:\docs\test.txt", true)]       // name hit
+    [InlineData("FullName matches \"*.txt; C:\\other\\*\"", @"C:\other\data.csv", true)]      // path hit
+    [InlineData("FullName matches \"*.txt; C:\\other\\*\"", @"C:\docs\test.doc", false)]      // no hit
+    // NotMatches with name-targetable patterns
+    [InlineData("FullName notMatches \"*.txt\"", @"C:\docs\test.txt", false)]
+    [InlineData("FullName notMatches \"*.txt\"", @"C:\docs\test.doc", true)]
+    [InlineData("FullName notMatches \"*.txt; *.doc\"", @"C:\docs\test.xls", true)]
+    [InlineData("FullName notMatches \"*.txt; *.doc\"", @"C:\docs\test.doc", true)]  // OR-expanded: notMatches *.txt (true) short-circuits
+    public void Evaluate_FullNameMatches_NameTargetable(string fcl, string fullName, bool expected)
+    {
+        var file = new TestFclFileInfo { FullName = fullName };
+        Assert.Equal(expected, FclTestHelpers.Evaluate(fcl, file));
+    }
+
     // ─────────────────────────────────────────────────────
     //  Size evaluation
     // ─────────────────────────────────────────────────────

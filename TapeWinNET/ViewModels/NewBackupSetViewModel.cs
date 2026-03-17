@@ -282,7 +282,14 @@ public class NewBackupSetViewModel : ViewModelBase
                     if (setsToRemove > 0)
                         message = $"{setsToRemove} backup set(s) after this one will be overwritten.";
                 }
+                else
+                {
+                    // Appending after the last set — no sets will be overwritten
+                    message = "New backup set will be appended after the last set.";
+                }
             }
+            else if (toc == null || toc.Count == 0)
+                message = "New backup set will be the first on the media.";
             else
                 message = "New backup set will be appended after the selected set.";
 

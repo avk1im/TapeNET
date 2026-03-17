@@ -237,6 +237,7 @@ public class OpenVirtualDriveViewModel : ViewModelBase
 
     // Mode selection
     private bool _isOpenExistingMode = true;
+    private bool _isInMemory;
 
     // File paths
     private string _contentFilePath = string.Empty;
@@ -250,7 +251,7 @@ public class OpenVirtualDriveViewModel : ViewModelBase
     // Capacity
     private string _contentCapacityValue = "500";
     private CapacityUnit _contentCapacityUnit = CapacityUnit.All[2]; // MB
-    private string _initiatorCapacityValue = "24";
+    private string _initiatorCapacityValue = "16";
     private CapacityUnit _initiatorCapacityUnit = CapacityUnit.All[2]; // MB
 
     // Features
@@ -287,6 +288,11 @@ public class OpenVirtualDriveViewModel : ViewModelBase
         _newMediaOnly = mediaMode == FileMode.Create;
         _existingMediaOnly = mediaMode == FileMode.Open;
 
+        // In-memory is available in the generic open dialog, or when continuing
+        //  from a previous in-memory volume (newMediaOnly mode with InMemory prePopulate)
+        _isInMemoryAvailable = !_existingMediaOnly
+            && (!_newMediaOnly || (prePopulate?.InMemory ?? false));
+
         // In newMediaOnly / existingMediaOnly mode, force the mode and pre-populate from current drive
         if (_newMediaOnly || _existingMediaOnly)
         {
@@ -314,7 +320,12 @@ public class OpenVirtualDriveViewModel : ViewModelBase
         // Pre-populate from previous media descriptor if provided
         if (prePopulate != null)
         {
-            if (!string.IsNullOrWhiteSpace(prePopulate.ContentPath))
+            // If previous media was in-memory, pre-select in-memory mode
+            if (prePopulate.InMemory)
+                _isInMemory = true;
+
+            // Set file path and trigger probe only for file-backed media
+            if (!prePopulate.InMemory && !string.IsNullOrWhiteSpace(prePopulate.ContentPath))
             {
                 _contentFilePath = CheckContentFilePath(prePopulate.ContentPath);
                 // Trigger probe after setting path
@@ -349,8 +360,40 @@ public class OpenVirtualDriveViewModel : ViewModelBase
     public string DialogTitle => _newMediaOnly ? "Create New Media Volume" 
         : _existingMediaOnly ? "Load Another Media Volume" : "Open Virtual Drive";
 
-    /// <summary>Whether the mode radio buttons are enabled (disabled in both restricted modes).</summary>
-    public bool IsOpenExistingEnabled => !_newMediaOnly && !_existingMediaOnly;
+    /// <summary>Whether the "In-memory" checkbox is available (only in generic open dialog).</summary>
+    public bool IsInMemoryAvailable => _isInMemoryAvailable;
+    private readonly bool _isInMemoryAvailable;
+
+    /// <summary>Whether in-memory mode is selected (no file backing).</summary>
+    public bool IsInMemory
+    {
+        get => _isInMemory;
+        set
+        {
+            if (SetProperty(ref _isInMemory, value))
+            {
+                if (value)
+                {
+                    // Force "Create new" mode and cancel any running probe
+                    IsCreateNewMode = true;
+                    CancelProbe();
+                    ProbeStatus = VirtualDriveProbeStatus.None;
+                }
+                OnPropertyChanged(nameof(IsOpenExistingEnabled));
+                OnPropertyChanged(nameof(IsFilePathsEnabled));
+                OnPropertyChanged(nameof(CanExecute));
+                OnPropertyChanged(nameof(WarningLevel));
+                OnPropertyChanged(nameof(WarningMessage));
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
+    /// <summary>Whether the mode radio buttons are enabled (disabled in both restricted modes and in-memory mode).</summary>
+    public bool IsOpenExistingEnabled => !_newMediaOnly && !_existingMediaOnly && !_isInMemory;
+
+    /// <summary>Whether the File Paths group is enabled (disabled in in-memory mode).</summary>
+    public bool IsFilePathsEnabled => !_isInMemory;
 
     /// <summary>Whether the block size controls are enabled (disabled in restricted modes and in Open existing mode — block sizes are drive-level).</summary>
     public bool IsBlockSizesEnabled => !_newMediaOnly && !_existingMediaOnly && IsCreateNewMode;
@@ -679,19 +722,25 @@ public class OpenVirtualDriveViewModel : ViewModelBase
     public string ActionButtonText => IsOpenExistingMode ? "Open" : "Create";
 
     public WarningLevel WarningLevel =>
-        IsCreateNewMode &&
-        !string.IsNullOrWhiteSpace(ContentFilePath) &&
-        (File.Exists(ContentFilePath) || File.Exists(BuildContentMetadataFilePath(ContentFilePath)))
-            ? WarningLevel.Warning : WarningLevel.None;
+        _isInMemory
+            ? WarningLevel.Info
+            : IsCreateNewMode &&
+              !string.IsNullOrWhiteSpace(ContentFilePath) &&
+              (File.Exists(ContentFilePath) || File.Exists(BuildContentMetadataFilePath(ContentFilePath)))
+                ? WarningLevel.Warning : WarningLevel.None;
 
-    public string WarningMessage => WarningLevel != WarningLevel.None
-        ? "Existing files will be overwritten."
-        : string.Empty;
+    public string WarningMessage => _isInMemory
+        ? "The content of in-memory virtual media cannot be saved."
+        : WarningLevel != WarningLevel.None
+            ? "Existing files will be overwritten."
+            : string.Empty;
 
     public bool CanExecute =>
-        !string.IsNullOrWhiteSpace(ContentFilePath) &&
         !IsProbing &&
-        (IsOpenExistingMode || (IsContentCapacityValid && (!EnableInitiatorPartition || IsInitiatorCapacityValid)));
+        (_isInMemory
+            ? IsContentCapacityValid && (!EnableInitiatorPartition || IsInitiatorCapacityValid)
+            : !string.IsNullOrWhiteSpace(ContentFilePath) &&
+              (IsOpenExistingMode || (IsContentCapacityValid && (!EnableInitiatorPartition || IsInitiatorCapacityValid))));
 
     #endregion
 
@@ -765,17 +814,19 @@ public class OpenVirtualDriveViewModel : ViewModelBase
         };
 
         // Use computed initiator path from naming convention
+        //  For in-memory: use a placeholder path to signal initiator partition presence
         string? initiatorPath = EnableInitiatorPartition
-            ? BuildInitiatorFilePath(ContentFilePath)
+            ? (_isInMemory ? "(in-memory)" : BuildInitiatorFilePath(ContentFilePath))
             : null;
 
         var request = new VirtualDriveOpenRequest(
             Capabilities: capabilities,
             Media: new VirtualMediaDescriptor(
-                ContentFilePath,
+                _isInMemory ? "(in-memory)" : ContentFilePath,
                 ContentCapacityBytes,
                 initiatorPath,
-                EnableInitiatorPartition ? InitiatorCapacityBytes : 0),
+                EnableInitiatorPartition ? InitiatorCapacityBytes : 0,
+                InMemory: _isInMemory),
             IsCreateNew: IsCreateNewMode,
             MediaName: IsCreateNewMode ? MediaName : null,
             IoSpeed: _isIoSpeedLocked ? null : SelectedIoSpeed);

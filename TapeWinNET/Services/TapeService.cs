@@ -14,13 +14,14 @@ using TapeWinNET.Converters;
 namespace TapeWinNET.Services;
 
 /// <summary>
-/// Information to create or open a file-based new virtual media
+/// Information to create or open a virtual media (file-backed or in-memory).
 /// </summary>
 public record VirtualMediaDescriptor(
     string ContentPath,
     long ContentCapacity,
     string? InitiatorPath,
-    long InitiatorPartitionCapacity
+    long InitiatorPartitionCapacity,
+    bool InMemory = false
 );
 
 
@@ -112,6 +113,12 @@ public partial class TapeService : IDisposable
     /// Whether the current drive is a virtual tape drive.
     /// </summary>
     public bool IsVirtualDrive => _drive?.Backend is VirtualTapeDriveBackend;
+
+    /// <summary>
+    /// Whether the current virtual drive is backed by memory streams (not files).
+    /// </summary>
+    public bool IsInMemoryDrive => _vmdLast?.InMemory ?? false;
+
     public VirtualMediaDescriptor? LastVMD => _vmdLast;
 
     /// <summary>
@@ -696,6 +703,10 @@ public partial class TapeService : IDisposable
         VirtualMediaDescriptor vmd,
         FileMode mediaMode = FileMode.OpenOrCreate)
     {
+        // Dispatch to in-memory or file-backed creation
+        if (vmd.InMemory)
+            return OpenVirtualDriveInMemoryAsync(capabilities, vmd);
+
         return Task.Run(() =>
         {
             lock (_lock)
@@ -745,6 +756,64 @@ public partial class TapeService : IDisposable
                 {
                     LastError = ex.Message;
                     LogErr($"Exception opening virtual drive: {ex.Message}");
+                    return false;
+                }
+            }
+        });
+    }
+
+    /// <summary>
+    /// Creates a memory-backed virtual tape drive.
+    /// All data is held in memory and lost when the drive is closed.
+    /// </summary>
+    private Task<bool> OpenVirtualDriveInMemoryAsync(
+        VirtualTapeDriveCapabilities capabilities,
+        VirtualMediaDescriptor vmd)
+    {
+        return Task.Run(() =>
+        {
+            lock (_lock)
+            {
+                try
+                {
+                    LogInfo("Opening in-memory virtual drive...");
+                    LogInfoSub($"Content capacity: {Helpers.BytesToStringLong(vmd.ContentCapacity)}");
+                    if (vmd.InitiatorPath != null)
+                        LogInfoSub($"Initiator capacity: {Helpers.BytesToStringLong(vmd.InitiatorPartitionCapacity)}");
+                    Status("Opening in-memory virtual drive...");
+
+                    var backend = VirtualTapeDriveBackend.CreateMemoryBacked(
+                        _loggerFactory,
+                        capabilities,
+                        vmd.ContentCapacity,
+                        vmd.InitiatorPartitionCapacity);
+
+                    // Dispose existing drive if any
+                    _agent?.Dispose();
+                    _agent = null;
+                    _toc = null;
+                    _drive?.Dispose();
+
+                    _drive = new TapeDrive(_loggerFactory, backend);
+
+                    if (!_drive.ReopenDrive(0))
+                    {
+                        LastError = _drive.LastErrorMessage;
+                        LogErr($"Failed to open in-memory virtual drive: {LastError}");
+                        return false;
+                    }
+
+                    _vmdLast = vmd;
+
+                    DriveNumber = 0;
+                    LogOk("In-memory virtual drive opened");
+                    Status("In-memory virtual drive opened");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    LastError = ex.Message;
+                    LogErr($"Exception opening in-memory virtual drive: {ex.Message}");
                     return false;
                 }
             }

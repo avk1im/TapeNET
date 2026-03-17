@@ -422,41 +422,27 @@ namespace TapeLibNET
         {
             if (filePatterns == null)
                 return null; // null means all files in set
-
-            return SelectFiles(filePatterns, PatternsHaveWildcards(filePatterns));
-        }
-        // Internal version that takes an explcit "haveWildcards" parameter to avoid redundant wildcard checks
-        internal List<TapeFileInfo>? SelectFiles(List<string>? filePatterns, bool haveWildcards)
-        {
-            if (filePatterns == null)
-                return null; // null means all files in set
             if (filePatterns.Count == 0)
                 return []; // empty list means no files
 
-            List<TapeFileInfo> filesSelected = [];
+            return SelectFiles(new WildcardFileFilter(filePatterns));
+        }
 
-            if (haveWildcards)
+        /// <summary>
+        /// Returns a list of <see cref="TapeFileInfo"/> objects that pass the given filter.
+        /// A <c>null</c> filter means select all files.
+        /// Returns <c>null</c> when all files in the set match ("null means all" convention).
+        /// </summary>
+        public List<TapeFileInfo>? SelectFiles(ITapeFileFilter? filter)
+        {
+            if (filter == null)
+                return null; // null means all files in set
+
+            List<TapeFileInfo> filesSelected = [];
+            foreach (var tfi in this)
             {
-                var patterns = FromFilePatternsToRegexPatterns(filePatterns).ToList();
-                foreach (var tfi in this)
-                {
-                    if (FileMatchesRegexPatterns(tfi.FileDescr.FullName, patterns))
-                        filesSelected.Add(tfi);
-                }
-            }
-            else
-            {
-                // Fast path: plain file names without wildcards, use HashSet for O(1) lookup
-                var plainSet = new HashSet<string>(filePatterns, StringComparer.OrdinalIgnoreCase);
-                foreach (var tfi in this)
-                {
-                    if (plainSet.Remove(tfi.FileDescr.FullName))
-                    {
-                        filesSelected.Add(tfi);
-                        if (plainSet.Count == 0)
-                            break;
-                    }
-                }
+                if (filter.Matches(tfi.FileDescr))
+                    filesSelected.Add(tfi);
             }
 
             return (filesSelected.Count == Count) ? null /* null means all files in set */ : filesSelected;
@@ -470,40 +456,27 @@ namespace TapeLibNET
         {
             if (filePatterns == null)
                 return new(m_tapeFileInfos); // list all files -- don't use "null means all files" shortcut
-
-            return SelectFilesAsLinkedList(filePatterns, PatternsHaveWildcards(filePatterns));
-        }
-        // Internal version that takes an explcit "haveWildcards" parameter to avoid redundant wildcard checks
-        internal LinkedList<TapeFileInfo> SelectFilesAsLinkedList(List<string>? filePatterns, bool haveWildcartds)
-        {
-            if (filePatterns == null)
-                return new(m_tapeFileInfos); // list all files -- don't use "null means all files" shortcut
             if (filePatterns.Count == 0)
                 return []; // empty list means no files
 
-            LinkedList<TapeFileInfo> filesSelected = [];
+            return SelectFilesAsLinkedList(new WildcardFileFilter(filePatterns));
+        }
 
-            if (haveWildcartds)
+        /// <summary>
+        /// Returns a linked list of <see cref="TapeFileInfo"/> objects that pass the given filter.
+        /// A <c>null</c> filter means select all files.
+        /// Doesn't return "null means all files" shortcut since the list might need editing.
+        /// </summary>
+        internal LinkedList<TapeFileInfo> SelectFilesAsLinkedList(ITapeFileFilter? filter)
+        {
+            if (filter == null)
+                return new(m_tapeFileInfos); // list all files -- don't use "null means all files" shortcut
+
+            LinkedList<TapeFileInfo> filesSelected = [];
+            foreach (var tfi in this)
             {
-                var patterns = FromFilePatternsToRegexPatterns(filePatterns).ToList();
-                foreach (var tfi in this)
-                {
-                    if (FileMatchesRegexPatterns(tfi.FileDescr.FullName, patterns))
-                        filesSelected.AddLast(tfi);
-                }
-            }
-            else
-            {
-                var plainSet = new HashSet<string>(filePatterns, StringComparer.OrdinalIgnoreCase);
-                foreach (var tfi in this)
-                {
-                    if (plainSet.Remove(tfi.FileDescr.FullName))
-                    {
-                        filesSelected.AddLast(tfi);
-                        if (plainSet.Count == 0)
-                            break;
-                    }
-                }
+                if (filter.Matches(tfi.FileDescr))
+                    filesSelected.AddLast(tfi);
             }
 
             return filesSelected; // don't use "null means all files" shortcut since the list might need editing
@@ -888,18 +861,32 @@ namespace TapeLibNET
 
         // Considering incremental sets, select files from the current and previous set(s) that match the given patterns
         //  null patterns means consider all files
-        //  Reurn an array of lists of files from the latest set, 2nd latest, 3rd latest, etc.
+        //  Return an array of lists of files from the latest set, 2nd latest, 3rd latest, etc.
         //  A null list means all files from the corresponding set
         public List<TapeFileInfo>?[] SelectFiles(bool incremental, List<string>? filePatterns = null)
         {
-            bool haveWildcards = filePatterns != null && TapeSetTOC.PatternsHaveWildcards(filePatterns);
+            if (filePatterns == null)
+                return SelectFiles(incremental, (ITapeFileFilter?)null);
+            if (filePatterns.Count == 0)
+                return [[]]; // empty patterns means no files
 
+            return SelectFiles(incremental, new WildcardFileFilter(filePatterns));
+        }
+
+        /// <summary>
+        /// Considering incremental sets, select files from the current and previous set(s)
+        /// that pass the given filter. A <c>null</c> filter means consider all files.
+        /// Returns an array of lists from newest to oldest set in the incremental chain.
+        /// A <c>null</c> list entry means all files from the corresponding set.
+        /// </summary>
+        public List<TapeFileInfo>?[] SelectFiles(bool incremental, ITapeFileFilter? filter)
+        {
             if (!incremental || !CurrentSetTOC.Incremental) // non-incremental case
             {
                 return CurrentSetTOC.ContinuedFromPrevVolume && m_currSetInternal > 0 ?
-                    [ CurrentSetTOC.SelectFiles(filePatterns, haveWildcards),
-                        m_setTOCs[m_currSetInternal - 1].SelectFiles(filePatterns, haveWildcards) ] :
-                    [ CurrentSetTOC.SelectFiles(filePatterns, haveWildcards) ];
+                    [ CurrentSetTOC.SelectFiles(filter),
+                        m_setTOCs[m_currSetInternal - 1].SelectFiles(filter) ] :
+                    [ CurrentSetTOC.SelectFiles(filter) ];
             }
             else // go down the incremental chain
             {
@@ -913,7 +900,7 @@ namespace TapeLibNET
                 for (int i = m_currSetInternal; i >= firstNonInc; i--)
                 {
                     // use LinkedList since we will be removing elements from the middle
-                    var filesToCheck = m_setTOCs[i].SelectFilesAsLinkedList(filePatterns, haveWildcards); // never returns null
+                    var filesToCheck = m_setTOCs[i].SelectFilesAsLinkedList(filter); // never returns null
 
                     // now remove all files that are already selected in the newer sets
                     //  iterate over filesToCheck backwards since we will be removing elements

@@ -22,7 +22,8 @@
   </ItemGroup>
 	
   <ItemGroup>
-    <ProjectReference Include="..\TapeLibNET\TapeLibNET.csproj" />
+	<ProjectReference Include="..\FclNET\FclNET.csproj" />
+	<ProjectReference Include="..\TapeLibNET\TapeLibNET.csproj" />
   </ItemGroup>
 
 	<ItemGroup>

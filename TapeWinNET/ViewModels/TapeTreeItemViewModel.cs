@@ -27,6 +27,7 @@ public class TapeTreeItemViewModel : ViewModelBase
     private object? _tag;
     private bool _isOnCurrentVolume = true;
     private bool _isTOCFromFile;
+    private bool _isInMemory;
 
     static TapeTreeItemViewModel()
     {
@@ -119,6 +120,16 @@ public class TapeTreeItemViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// When true on a Tape item, indicates the media is backed by memory streams.
+    /// Drives info display: blue text, info suffix in display name.
+    /// </summary>
+    public bool IsInMemory
+    {
+        get => _isInMemory;
+        set => SetProperty(ref _isInMemory, value);
+    }
+
+    /// <summary>
     /// Additional data associated with this item (e.g., set index for BackupSet items)
     /// </summary>
     public object? Tag
@@ -154,23 +165,29 @@ public class TapeTreeItemViewModel : ViewModelBase
     }
 
     public static TapeTreeItemViewModel CreateTapeItem(TapeTOC toc, TapeTreeItemViewModel parent,
-        string? tocFileName = null)
+        string? tocFileName = null, bool isInMemory = false)
     {
         bool fromFile = tocFileName != null;
         string baseName = string.IsNullOrEmpty(toc.Description)
             ? $"Volume #{toc.Volume}"
             : $"Volume #{toc.Volume}: {toc.Description}";
 
+        // Build display name: TOC-from-file warning takes precedence over in-memory info
+        string displayName = baseName;
+        if (fromFile)
+            displayName = $"{baseName}  ⚠ TOC: {tocFileName}";
+        else if (isInMemory)
+            displayName = $"{baseName}  ℹ In-memory";
+
         var item = new TapeTreeItemViewModel
         {
-            DisplayName = fromFile
-                ? $"{baseName}  ⚠ TOC: {tocFileName}"
-                : baseName,
+            DisplayName = displayName,
             ItemType = TreeItemType.Tape,
             Tag = toc.Volume,
             Parent = parent,
             IsExpanded = true,
-            IsTOCFromFile = fromFile
+            IsTOCFromFile = fromFile,
+            IsInMemory = isInMemory
         };
         return item;
     }

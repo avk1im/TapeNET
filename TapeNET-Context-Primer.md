@@ -2,15 +2,145 @@
 
 ## Solution Structure
 
-The **TapeNET** solution (`D:\Documents.DEV\Projects\TapeNET`) targets **.NET 8 / C# 12** and contains three projects:
+The **TapeNET** solution (`D:\Documents.DEV\Projects\TapeNET`) targets **.NET 8 / C# 12** and contains six projects:
 
 | Project | Type | Role |
 |---------|------|------|
 | `TapeLibNET` | Class library | Core tape I/O library — drives, agents, TOC, streams, serialization |
-| `TapeConNET` | Console app | CLI tape utility (`tapecon`) — flag-based command-line interface |
+| `FclNET` | Class library | FCL (File Conditions Language) — DSL for file filtering by name, path, size, date, attributes |
+| `FclAiNET` | Class library | AI-assisted natural language → FCL translation using `Microsoft.Extensions.AI` |
+| `TapeConNET` | Console app | CLI tape backup utility (`tapecon`) — flag-based command-line interface |
 | `TapeWinNET` | WPF app | GUI tape backup manager — MVVM, tree-based navigation, log pane |
+| `FclAiNET.Test` | Console app | Interactive NL → FCL REPL for testing AI translation |
+
+**Test projects:** `FclNET.Tests` (xUnit, 390+ tests covering lexer, parser, validator, evaluator, formatter, pipeline).
+
+**Dependencies:** The apps depend on the libraries. `FclNET` has no dependencies on other solution projects. `FclAiNET` depends on `FclNET`. The tape projects (`TapeLibNET`, `TapeConNET`, `TapeWinNET`) are independent of the FCL projects (so far; `TapeWinNET` will integrate FclNET for advanced file filtering).
 
 Git repo: `https://github.com/avk1im/TapeNET`, branch `dev`.
+
+---
+
+## FclNET — FCL Language Library
+
+### Overview
+
+FCL (File Conditions Language) is a small domain-specific language for expressing file filtering criteria. It supports matching on file names, paths, sizes, dates, and attributes using comparison operators and logical connectives (`and`, `or`, `not`, parentheses). FCL is case-insensitive for keywords; the formatter emits a canonical form.
+
+Full language specification: `FclNET/FCL-Specification.md`.
+
+### Processing pipeline
+
+```
+Input string → FclLexer → Token stream → FclParser → AST
+                                                       ↓
+                                                  FclValidator → List<FclDiagnostic>
+                                                       ↓
+                                                  FclEvaluator → bool (per file)
+                                                       ↓
+                                                  FclFormatter → normalized FCL string
+```
+
+`FclPipeline` wraps all stages behind concise entry points: `TryParse`, `Evaluate`, `Select`.
+
+### Key types
+
+| Type | Role |
+|------|------|
+| `FclLexer` | Tokenizes input, handles comments, quoted strings, size/date literals |
+| `FclParser` | Recursive-descent parser producing an immutable AST; expands syntactic sugar (semicolon shortcuts, value chains) |
+| `FclValidator` | Semantic validation — type mismatches, invalid regex, unknown attributes |
+| `FclEvaluator` | Evaluates AST against `IFclFileInfo`; preprocesses wildcard patterns, caches regex |
+| `FclFormatter` | AST → canonical FCL string; supports inline/multi-line modes, value chain collapsing, semicolon re-collapsing |
+| `FclPipeline` | One-stop API: `TryParse`, `Evaluate`, `Select(expression, files)`, `Select(string, files)` |
+| `FclParseResult` | Record with `Expression` (AST root) and `Diagnostics`; `IsValid` convenience property |
+
+### AST hierarchy
+
+```
+FclExpression (abstract)
+  FclChainExpression (abstract) — shared operand array + value-chain logic
+    FclOrExpression             — two or more branches joined by "or"
+    FclAndExpression            — two or more branches joined by "and"
+  FclNotExpression              — negation of a sub-expression
+  FclGroupExpression            — parenthesized sub-expression
+  FclCondition                  — Field Operator Value leaf node
+  FclErrorExpression            — sentinel for parse errors
+
+FclValue (abstract)
+  FclStringValue                — string literal (quoted/unquoted)
+  FclSizeValue                  — parsed size with unit (e.g. 10MB → 10485760 bytes)
+  FclAbsoluteDateValue          — concrete date/time
+  FclRelativeDateValue          — anchor + offset, resolved at evaluation time
+  FclAttributeValue             — attribute flag identifier
+```
+
+All nodes carry a `SourceSpan` for diagnostic positions. Formatting logic is encapsulated in each node's `FormatTo` method (polymorphic, not a static helper).
+
+### IFclFileInfo interface
+
+The evaluator operates against an `IFclFileInfo` abstraction, keeping FclNET independent of `TapeLibNET`:
+
+```csharp
+public interface IFclFileInfo
+{
+    string FullName { get; }
+    long Size { get; }
+    DateTime CreationTime { get; }
+    DateTime LastWriteTime { get; }
+    FileAttributes Attributes { get; }
+}
+```
+
+### Language highlights
+
+- **Fields:** `FullName`, `Name`, `Extension`, `Path`, `Size`, `Created`, `Modified`, `Attributes`
+- **Operators:** type-specific — string (`equals`, `contains`, `matches`, `notMatches`, `regex`), date (`before`, `after`, `beforeOrOn`, `afterOrOn`), size (`greaterThan`, `lessThan`, etc.), attribute (`have`, `notHave`). Symbolic aliases (`==`, `!=`, `<`, `>`, `<=`, `>=`) accepted.
+- **Values:** unquoted/quoted strings, size literals with units (`10MB`, `1.5GB`), absolute dates (ISO 8601 or locale), relative dates (`today-7d`, `now-2h`), attribute flags (`Hidden`, `ReadOnly`, `System`, `Archive`, `Temporary`).
+- **Syntactic sugar:** Semicolon shortcuts for multi-pattern matching (`Name matches "*.doc; *.txt"`), value chains (`Extension equals doc or docx or txt`), comment lines (`//`).
+- **Diagnostics:** Unified `FclDiagnostic` structure with severity, error code, message, and source span — used for parse, validation, and runtime errors.
+
+---
+
+## FclAiNET — AI-Assisted FCL Generation
+
+### Overview
+
+FclAiNET translates natural language file filter descriptions (e.g. "large photos from last week") into validated FCL expressions using LLM chat completions. Built on `Microsoft.Extensions.AI` (`IChatClient`), it supports both local (Ollama, LM Studio) and cloud (GitHub Models, OpenAI, Azure OpenAI) providers.
+
+### Key types
+
+| Type | Role |
+|------|------|
+| `FclAiTranslator` | Core translator: NL → chat completion → FCL → `FclPipeline.TryParse` validation → canonical output |
+| `FclAiProviderFactory` | Provider discovery and creation: probes local endpoints, checks env vars, falls back to user interaction |
+| `FclAiSystemPrompt` | System prompt with condensed FCL language reference (~2 KB); two variants (direct mode / tool mode) |
+| `FclAiTools` | `AIFunction` tool definitions (`ValidateFcl`, `FormatFcl`) for LLM self-validation via function calling |
+| `IFclAiInteraction` | UI callback interface for provider status and cloud credential prompting (like `ITapeFileNotifiable`) |
+| `FclTranslationResult` | Result record: `Success`, `Fcl` (canonical), `Expression` (AST), `Explanation` (on failure), `Attempts` |
+| `FclAiProviderChoice` | Provider selection record: `Provider`, `ApiKey`, `ModelId`, `Endpoint` |
+
+### Translation modes
+
+Detected automatically on the first request:
+
+- **Tool mode** — the LLM invokes `ValidateFcl`/`FormatFcl` tools via `FunctionInvokingChatClient` to self-validate within a single chat turn.
+- **Direct mode** — fallback when tool calling is unsupported (HTTP 400) or the model emits fake tool-call JSON. The translator parses output externally and re-prompts with error context.
+
+Both modes share an outer retry loop (default 3 attempts) with error feedback for iterative correction.
+
+### Provider discovery order
+
+1. Probe Ollama at `localhost:11434` (enumerate models via `/api/tags`)
+2. Probe LM Studio at `localhost:1234` (enumerate models via `/v1/models`)
+3. Check environment variables: `GITHUB_TOKEN`, `OPENAI_API_KEY`, `AZURE_OPENAI_API_KEY`
+4. Ask user via `IFclAiInteraction.ChooseCloudProviderAsync`
+
+Local providers support model fallback: if the smoke test fails with one model, `TryNextLocalModel()` iterates through remaining models.
+
+### FclAiNET.Test — Interactive Test App
+
+A console REPL that exercises the full pipeline: provider discovery → smoke test (with model fallback) → interactive NL → FCL loop. Implements `IFclAiInteraction` as `ConsoleAiInteraction` for terminal-based provider selection and credential input.
 
 ---
 
@@ -151,6 +281,8 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 - ✅ Structured `LogEntry`-based logging with `WarningLevel` icons, colors, sub-entry indentation
 - ✅ Virtual drive support with IO speed simulation
 - ✅ New Backup Set dialog, Restore dialog, Open Virtual Drive dialog
+- ✅ FCL language: lexer, parser, validator, evaluator, formatter, pipeline API (390+ tests)
+- ✅ FCL AI translator: natural language → FCL via LLM, with tool-calling and direct modes, provider auto-discovery
 
 ## What's Next (Planned)
 
@@ -161,7 +293,7 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 
 - `TapeWinNET`: UI enhancement features
 1. Log export / clear — The log pane caps at 1000 entries but there's no way to save or clear it. A "Save Log..." and "Clear Log" in the context menu or View menu would be useful for troubleshooting long operations.
-2. File filter/search in the backup set table — When browsing a set with thousands of files, a quick filter text box above the file ListView (filter-as-you-type by filename pattern) would be very handy. Low-cost given fileList is already a List<FileListItem> that gets swapped wholesale.
+2. [WIP] File filter/search in the backup set table — When browsing a set with thousands of files, a quick filter text box above the file ListView (filter-as-you-type by filename pattern) would be very handy. Low-cost given fileList is already a List<FileListItem> that gets swapped wholesale.
 3. [DONE] Window state persistence — Remember window size, position, splitter proportions, and the last-opened drive number between sessions. Could live alongside the MRU file in %LocalAppData%\TapeWinNET\. JSON serializer based implementation.
 4. Operation-complete notification — A FlashWindowEx or system notification when a long backup/restore finishes while the window is in the background. Tape operations can run for hours; easy to miss completion.
 5. Delete most-recent backup set — Removing the newest set from the TOC (the library likely supports this via TapeTOC manipulation + TOC rewrite). Useful when the last backup was accidental or corrupt.

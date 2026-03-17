@@ -1,6 +1,27 @@
+using FclNET;
 using TapeLibNET;
 
 namespace TapeWinNET.Utils;
+
+/// <summary>
+/// <see cref="ITapeFileFilter"/> adapter that evaluates files using an
+/// <see cref="FclEvaluator"/> from FclNET. Bridges <c>TapeFileDescriptor</c>
+/// to <see cref="FclFileInfo"/> for each match test.
+/// </summary>
+public sealed class FclTapeFileFilter(FclEvaluator evaluator) : ITapeFileFilter
+{
+    /// <inheritdoc />
+    public bool Matches(in TapeFileDescriptor fileDescr)
+    {
+        var snapshot = new FclFileInfo(
+            fileDescr.FullName,
+            fileDescr.Length,
+            fileDescr.CreationTime,
+            fileDescr.LastWriteTime,
+            fileDescr.Attributes);
+        return evaluator.Evaluate(snapshot);
+    }
+}
 
 /// <summary>
 /// Utility class for filtering file lists using DOS-style wildcard patterns.
@@ -21,8 +42,9 @@ public static class FileFilter
 
     /// <summary>
     /// Filters a list of items asynchronously on a background thread using
-    /// DOS-style wildcard patterns. Returns only items whose full path matches
-    /// at least one pattern.
+    /// DOS-style wildcard patterns. Uses <see cref="FclPipeline.CreateWildcardEvaluator(string)"/>
+    /// for behavioral consistency with FclNET. Returns only items whose full path
+    /// matches at least one pattern.
     /// </summary>
     /// <typeparam name="T">Item type.</typeparam>
     /// <param name="source">The full unfiltered list.</param>
@@ -34,15 +56,18 @@ public static class FileFilter
         List<string> patterns,
         Func<T, string> pathSelector)
     {
-        // Pre-compile regex patterns on the calling thread (lightweight)
-        var regexPatterns = TapeSetTOC.FromFilePatternsToRegexPatterns(patterns).ToList();
+        // Pre-compile via FclEvaluator on the calling thread (lightweight)
+        var evaluator = FclPipeline.CreateWildcardEvaluator(patterns);
 
         return Task.Run(() =>
         {
             var result = new List<T>();
             foreach (var item in source)
             {
-                if (TapeSetTOC.FileMatchesRegexPatterns(pathSelector(item), regexPatterns))
+                // Build a minimal FclFileInfo — only FullName is needed for wildcard matching
+                var snapshot = new FclFileInfo(
+                    pathSelector(item), 0, default, default, default);
+                if (evaluator.Evaluate(snapshot))
                     result.Add(item);
             }
             return result;

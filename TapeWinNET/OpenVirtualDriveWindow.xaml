@@ -54,14 +54,21 @@
         </Grid.RowDefinitions>
 
         <!-- Mode Selection -->
-        <StackPanel Grid.Row="0" Margin="0,0,0,16" Orientation="Horizontal">
-            <RadioButton Content="Open existing virtual media" 
-                         IsChecked="{Binding IsOpenExistingMode}"
-                         IsEnabled="{Binding IsOpenExistingEnabled}"
-                         Margin="0,0,24,0"/>
-            <RadioButton Content="Create new virtual media" 
-                         IsChecked="{Binding IsCreateNewMode}"/>
-        </StackPanel>
+        <Grid Grid.Row="0" Margin="0,0,0,16">
+            <StackPanel Orientation="Horizontal">
+                <RadioButton Content="Open existing virtual media" 
+                             IsChecked="{Binding IsOpenExistingMode}"
+                             IsEnabled="{Binding IsOpenExistingEnabled}"
+                             Margin="0,0,24,0"/>
+                <RadioButton Content="Create new virtual media" 
+                             IsChecked="{Binding IsCreateNewMode}"/>
+            </StackPanel>
+            <CheckBox Content="In-memory" 
+                      IsChecked="{Binding IsInMemory}"
+                      Visibility="{Binding IsInMemoryAvailable, Converter={StaticResource BoolToVisConverter}}"
+                      HorizontalAlignment="Right"
+                      ToolTip="Create virtual media backed by memory streams instead of files"/>
+        </Grid>
 
         <!-- File Paths - Fixed height to prevent layout shift -->
         <GroupBox Grid.Row="1" Header="File Paths" Margin="0,0,0,12">
@@ -75,8 +82,10 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <TextBlock Grid.Row="0" Text="Content Partition File: *" Margin="0,0,0,4"/>
-                <Grid Grid.Row="1" Margin="0,0,0,4">
+                <TextBlock Grid.Row="0" Text="Content Partition File: *" Margin="0,0,0,4"
+                           IsEnabled="{Binding IsFilePathsEnabled}"/>
+                <Grid Grid.Row="1" Margin="0,0,0,4"
+                      IsEnabled="{Binding IsFilePathsEnabled}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
@@ -101,7 +110,8 @@
                 </Grid>
 
                 <!-- Probe Status Indicator -->
-                <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
+                <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8"
+                            IsEnabled="{Binding IsFilePathsEnabled}">
                     <TextBlock Text="{Binding ProbeStatusIcon}" 
                                FontFamily="Segoe UI Symbol"
                                Margin="0,0,4,0"
@@ -121,7 +131,8 @@
                 <!-- Initiator path label - always visible but text grayed when disabled -->
                 <TextBlock Grid.Row="4" 
                            Text="Initiator Partition File (auto-computed):" 
-                           Margin="0,0,0,4">
+                           Margin="0,0,0,4"
+                           IsEnabled="{Binding IsFilePathsEnabled}">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
                             <Setter Property="Foreground" Value="LightGray"/>
@@ -139,7 +150,8 @@
                            Margin="20,0,0,0"
                            FontStyle="Italic"
                            TextTrimming="CharacterEllipsis"
-                           ToolTip="{Binding InitiatorFilePathDisplay}">
+                           ToolTip="{Binding InitiatorFilePathDisplay}"
+                           IsEnabled="{Binding IsFilePathsEnabled}">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
                             <Setter Property="Foreground" Value="LightGray"/>
