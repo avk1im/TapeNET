@@ -618,6 +618,178 @@ public class FclParserTests
     }
 
     // ─────────────────────────────────────────────────────
+    //  Range chain shortcut — size
+    // ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Parse_SizeRangeChain_And_ExpandsToAndExpression()
+    {
+        // "Size greaterThan 100KB and lessOrEqual 1MB" → AND of two conditions.
+        var expr = FclTestHelpers.ParseOk("Size greaterThan 100KB and lessOrEqual 1MB");
+        var and = Assert.IsType<FclAndExpression>(expr);
+        Assert.Equal(2, and.Operands.Length);
+
+        var first = Assert.IsType<FclCondition>(and.Operands[0]);
+        Assert.Equal(FclField.Size, first.Field);
+        Assert.Equal(FclOperator.GreaterThan, first.Operator);
+
+        var second = Assert.IsType<FclCondition>(and.Operands[1]);
+        Assert.Equal(FclField.Size, second.Field);
+        Assert.Equal(FclOperator.LessOrEqual, second.Operator);
+    }
+
+    [Fact]
+    public void Parse_SizeRangeChain_Or_ExpandsToOrExpression()
+    {
+        // "Size lessThan 1KB or greaterThan 1GB" → OR of two conditions.
+        var expr = FclTestHelpers.ParseOk("Size lessThan 1KB or greaterThan 1GB");
+        var or = Assert.IsType<FclOrExpression>(expr);
+        Assert.Equal(2, or.Operands.Length);
+
+        var first = Assert.IsType<FclCondition>(or.Operands[0]);
+        Assert.Equal(FclOperator.LessThan, first.Operator);
+
+        var second = Assert.IsType<FclCondition>(or.Operands[1]);
+        Assert.Equal(FclOperator.GreaterThan, second.Operator);
+    }
+
+    [Fact]
+    public void Parse_SizeRangeChain_SymbolicOperators()
+    {
+        // "Size > 100KB and <= 1MB" → AND of two conditions.
+        var expr = FclTestHelpers.ParseOk("Size > 100KB and <= 1MB");
+        var and = Assert.IsType<FclAndExpression>(expr);
+        Assert.Equal(2, and.Operands.Length);
+
+        var first = Assert.IsType<FclCondition>(and.Operands[0]);
+        Assert.Equal(FclOperator.GreaterThan, first.Operator);
+
+        var second = Assert.IsType<FclCondition>(and.Operands[1]);
+        Assert.Equal(FclOperator.LessOrEqual, second.Operator);
+    }
+
+    [Fact]
+    public void Parse_SizeRangeChain_ThreeElements()
+    {
+        // Three-element range chain.
+        var expr = FclTestHelpers.ParseOk("Size greaterOrEqual 100KB and lessThan 1MB and notEquals 500KB");
+        var and = Assert.IsType<FclAndExpression>(expr);
+        Assert.Equal(3, and.Operands.Length);
+        foreach (var operand in and.Operands)
+        {
+            var cond = Assert.IsType<FclCondition>(operand);
+            Assert.Equal(FclField.Size, cond.Field);
+        }
+    }
+
+    [Fact]
+    public void Parse_SizeRangeChain_SingleCondition_NoExpansion()
+    {
+        // Only one condition — no chain.
+        var expr = FclTestHelpers.ParseOk("Size greaterThan 10MB");
+        Assert.IsType<FclCondition>(expr);
+    }
+
+    [Fact]
+    public void Parse_SizeRangeChain_StopsAtFieldCondition()
+    {
+        // "and Name" starts a new condition — chain does not absorb it.
+        // The range chain (Size > 100KB and < 1MB) becomes a nested AND
+        //  that is one operand of the outer AND with "Name equals test".
+        var expr = FclTestHelpers.ParseOk("Size greaterThan 100KB and lessThan 1MB and Name equals test");
+        var and = Assert.IsType<FclAndExpression>(expr);
+        Assert.Equal(2, and.Operands.Length);
+        // First operand is the range chain (nested AND of two Size conditions).
+        var inner = Assert.IsType<FclAndExpression>(and.Operands[0]);
+        Assert.Equal(2, inner.Operands.Length);
+        Assert.Equal(FclField.Size, Assert.IsType<FclCondition>(inner.Operands[0]).Field);
+        Assert.Equal(FclField.Size, Assert.IsType<FclCondition>(inner.Operands[1]).Field);
+        // Second operand is the separate Name condition.
+        var last = Assert.IsType<FclCondition>(and.Operands[1]);
+        Assert.Equal(FclField.Name, last.Field);
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  Range chain shortcut — date
+    // ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Parse_DateRangeChain_And_ExpandsToAndExpression()
+    {
+        // "Modified afterOrOn 2025-01-01 and before 2025-02-01" → AND of two conditions.
+        var expr = FclTestHelpers.ParseOk("Modified afterOrOn 2025-01-01 and before 2025-02-01");
+        var and = Assert.IsType<FclAndExpression>(expr);
+        Assert.Equal(2, and.Operands.Length);
+
+        var first = Assert.IsType<FclCondition>(and.Operands[0]);
+        Assert.Equal(FclField.Modified, first.Field);
+        Assert.Equal(FclOperator.AfterOrOn, first.Operator);
+
+        var second = Assert.IsType<FclCondition>(and.Operands[1]);
+        Assert.Equal(FclField.Modified, second.Field);
+        Assert.Equal(FclOperator.Before, second.Operator);
+    }
+
+    [Fact]
+    public void Parse_DateRangeChain_RelativeDates()
+    {
+        // Range chain with relative dates.
+        var expr = FclTestHelpers.ParseOk("Created after today-30d and beforeOrOn today");
+        var and = Assert.IsType<FclAndExpression>(expr);
+        Assert.Equal(2, and.Operands.Length);
+
+        var first = Assert.IsType<FclCondition>(and.Operands[0]);
+        Assert.Equal(FclOperator.After, first.Operator);
+        Assert.IsType<FclRelativeDateValue>(first.Value);
+
+        var second = Assert.IsType<FclCondition>(and.Operands[1]);
+        Assert.Equal(FclOperator.BeforeOrOn, second.Operator);
+        Assert.IsType<FclRelativeDateValue>(second.Value);
+    }
+
+    [Fact]
+    public void Parse_DateRangeChain_Or_ExpandsToOrExpression()
+    {
+        // "Modified before 2024-01-01 or afterOrOn 2025-01-01" → OR of two conditions.
+        var expr = FclTestHelpers.ParseOk("Modified before 2024-01-01 or afterOrOn 2025-01-01");
+        var or = Assert.IsType<FclOrExpression>(expr);
+        Assert.Equal(2, or.Operands.Length);
+
+        var first = Assert.IsType<FclCondition>(or.Operands[0]);
+        Assert.Equal(FclOperator.Before, first.Operator);
+
+        var second = Assert.IsType<FclCondition>(or.Operands[1]);
+        Assert.Equal(FclOperator.AfterOrOn, second.Operator);
+    }
+
+    [Fact]
+    public void Parse_DateRangeChain_SymbolicOperators()
+    {
+        // "Modified >= 2025-01-01 and < 2025-02-01" → AND of two conditions.
+        var expr = FclTestHelpers.ParseOk("Modified >= 2025-01-01 and < 2025-02-01");
+        var and = Assert.IsType<FclAndExpression>(expr);
+        Assert.Equal(2, and.Operands.Length);
+
+        var first = Assert.IsType<FclCondition>(and.Operands[0]);
+        Assert.Equal(FclOperator.AfterOrOn, first.Operator);
+
+        var second = Assert.IsType<FclCondition>(and.Operands[1]);
+        Assert.Equal(FclOperator.Before, second.Operator);
+    }
+
+    [Fact]
+    public void Parse_DateRangeChain_InLargerExpression()
+    {
+        // Range chain inside a larger expression with different fields.
+        var expr = FclTestHelpers.ParseOk("Name matches \"*.doc\" and (Modified afterOrOn 2025-01-01 and before 2025-02-01)");
+        var and = Assert.IsType<FclAndExpression>(expr);
+        Assert.Equal(2, and.Operands.Length);
+        var group = Assert.IsType<FclGroupExpression>(and.Operands[1]);
+        var inner = Assert.IsType<FclAndExpression>(group.Inner);
+        Assert.Equal(2, inner.Operands.Length);
+    }
+
+    // ─────────────────────────────────────────────────────
     //  SourceSpan coverage
     // ─────────────────────────────────────────────────────
 

@@ -263,6 +263,53 @@ public class FclIntegrationTests
     }
 
     // ─────────────────────────────────────────────────────
+    //  Range chain shortcut — end-to-end
+    // ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void SizeRangeChain_EndToEnd()
+    {
+        // "Size greaterThan 100KB and lessOrEqual 1MB"
+        var fcl = "Size greaterThan 100KB and lessOrEqual 1MB";
+
+        Assert.True(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\test.txt", size: 500 * 1024)));        // 500 KB — in range
+        Assert.True(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\test.txt", size: 1024 * 1024)));       // exactly 1 MB — upper bound
+        Assert.False(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\test.txt", size: 50)));                 // 50 B — too small
+        Assert.False(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\test.txt", size: 2 * 1024 * 1024)));   // 2 MB — too large
+    }
+
+    [Fact]
+    public void DateRangeChain_EndToEnd()
+    {
+        // "Modified afterOrOn 2025-01-01 and before 2025-02-01"
+        var fcl = "Modified afterOrOn 2025-01-01 and before 2025-02-01";
+
+        Assert.True(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\test.txt", lastWrite: new DateTime(2025, 1, 15))));  // mid-January
+        Assert.True(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\test.txt", lastWrite: new DateTime(2025, 1, 1))));   // exactly lower bound
+        Assert.False(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\test.txt", lastWrite: new DateTime(2025, 2, 1))));   // exactly upper bound (exclusive)
+        Assert.False(FclTestHelpers.Evaluate(fcl,
+            File(@"C:\test.txt", lastWrite: new DateTime(2024, 12, 31)))); // before range
+    }
+
+    [Fact]
+    public void SizeRangeChain_RoundTrip()
+    {
+        // Parse → format → re-parse → format should be stable.
+        var input = "Size greaterThan 100KB and lessOrEqual 1MB";
+        var result = FclPipeline.TryParse(input);
+        Assert.True(result.IsValid);
+        var formatted = FclFormatter.Format(result.Expression!);
+        Assert.Equal(input, formatted);
+    }
+
+    // ─────────────────────────────────────────────────────
     //  Helper
     // ─────────────────────────────────────────────────────
 

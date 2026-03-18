@@ -280,6 +280,15 @@ public sealed class FclParser(List<FclToken> tokens)
             return ExpandValueChain(condition, fieldToken.Span, op, opSpan, fieldCategory);
         }
 
+        // ── Range chain shortcut ────────────────────────
+        // "Modified afterOrOn 2025-01-01 and before 2025-02-01"  → expanded.
+        // "Size greaterThan 100KB and lessOrEqual 1MB"           → expanded.
+        if (fieldCategory is FclFieldCategory.Date or FclFieldCategory.Size
+            && IsRangeChainContinuation(fieldCategory))
+        {
+            return ExpandRangeChain(condition, field, fieldToken.Span, fieldCategory);
+        }
+
         return condition;
     }
 
@@ -1033,6 +1042,135 @@ public sealed class FclParser(List<FclToken> tokens)
 
             var condSpan = SourceSpan.Covering(fieldSpan, chainedValue.Span);
             operands.Add(new FclCondition(firstCondition.Field, fieldSpan, op, opSpan, chainedValue, condSpan));
+        }
+
+        // Single operand — no actual chain was consumed.
+        if (operands.Count == 1)
+            return firstCondition;
+
+        var span = SourceSpan.Covering(operands[0].Span, operands[^1].Span);
+        return chainIsOr
+            ? new FclOrExpression(operands.ToImmutable(), span)
+            : new FclAndExpression(operands.ToImmutable(), span);
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  Range chain expansion (Date / Size)
+    // ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Checks whether the tokens ahead form a range chain continuation:
+    /// a connective (<c>or</c>/<c>and</c>) followed by an operator valid
+    /// for the field category — not a field name or a bare value.
+    /// <para>
+    /// Examples of range chains:
+    /// <c>Modified afterOrOn 2025-01-01 and before 2025-02-01</c>,
+    /// <c>Size greaterThan 100KB and lessOrEqual 1MB</c>.
+    /// </para>
+    /// </summary>
+    private bool IsRangeChainContinuation(FclFieldCategory category)
+    {
+        if (_walker.IsAtEnd) return false;
+
+        // The current token must be a connective (or / and / || / &&).
+        if (!IsOrKeyword() && !IsAndKeyword()) return false;
+
+        // The next token must be an operator valid for this field category
+        //  (word operator or symbol operator), NOT a field name.
+        var next = _walker.Peek(1);
+        return IsOperatorToken(next, category);
+    }
+
+    /// <summary>
+    /// Determines whether a token looks like an operator for the given field
+    /// category. Used by range chain detection to distinguish
+    /// <c>and lessThan 1MB</c> (chain continues) from
+    /// <c>and Name equals test</c> (new condition).
+    /// </summary>
+    private static bool IsOperatorToken(FclToken token, FclFieldCategory category)
+    {
+        // Symbol operators are always unambiguous.
+        if (token.Kind is FclTokenKind.DoubleEquals or FclTokenKind.BangEquals
+            or FclTokenKind.LessThan or FclTokenKind.LessOrEqual
+            or FclTokenKind.GreaterThan or FclTokenKind.GreaterOrEqual)
+            return true;
+
+        if (token.Kind != FclTokenKind.Word)
+            return false;
+
+        var text = token.Text;
+
+        // Operators shared by all categories.
+        if (text.Equals("equals", StringComparison.OrdinalIgnoreCase)
+            || text.Equals("notEquals", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Date-specific operators.
+        if (category == FclFieldCategory.Date)
+        {
+            return text.Equals("before", StringComparison.OrdinalIgnoreCase)
+                || text.Equals("beforeOrOn", StringComparison.OrdinalIgnoreCase)
+                || text.Equals("after", StringComparison.OrdinalIgnoreCase)
+                || text.Equals("afterOrOn", StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Size-specific operators.
+        if (category == FclFieldCategory.Size)
+        {
+            return text.Equals("greaterThan", StringComparison.OrdinalIgnoreCase)
+                || text.Equals("greaterOrEqual", StringComparison.OrdinalIgnoreCase)
+                || text.Equals("lessThan", StringComparison.OrdinalIgnoreCase)
+                || text.Equals("lessOrEqual", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Expands a range chain shortcut into an OR/AND expression:
+    /// <c>Size greaterThan 100KB and lessOrEqual 1MB</c> →
+    /// <c>Size greaterThan 100KB and Size lessOrEqual 1MB</c>.
+    /// <para>
+    /// Unlike value chains (which share a single operator across all
+    /// chained values), range chains carry their own operator+value pair
+    /// for each continuation element. The field is inherited from the
+    /// first condition.
+    /// </para>
+    /// </summary>
+    private FclExpression ExpandRangeChain(
+        FclCondition firstCondition,
+        FclField field,
+        SourceSpan fieldSpan,
+        FclFieldCategory category)
+    {
+        var operands = ImmutableArray.CreateBuilder<FclExpression>();
+        operands.Add(firstCondition);
+
+        // Determine the chain connective from the first continuation.
+        bool chainIsOr = IsOrKeyword();
+
+        while (!_walker.IsAtEnd && IsRangeChainContinuation(category))
+        {
+            // Verify consistent connective within the chain.
+            bool currentIsOr = IsOrKeyword();
+            if (currentIsOr != chainIsOr)
+                break; // Connective changed — stop the chain.
+
+            _walker.Advance(); // consume "or" / "and" / "||" / "&&"
+
+            // Parse the chained operator.
+            if (!TryParseOperator(category, out var chainedOp, out var chainedOpSpan))
+                break;
+
+            // Parse the chained value.
+            if (_walker.IsAtEnd)
+                break;
+
+            var chainedValue = ParseValue(category);
+            if (chainedValue is null) break;
+
+            var condSpan = SourceSpan.Covering(fieldSpan, chainedValue.Span);
+            operands.Add(new FclCondition(field, fieldSpan, chainedOp, chainedOpSpan, chainedValue, condSpan));
         }
 
         // Single operand — no actual chain was consumed.

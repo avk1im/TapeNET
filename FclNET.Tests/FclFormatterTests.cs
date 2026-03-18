@@ -366,8 +366,8 @@ public class FclFormatterTests
                 "Name equals a or Extension equals b")]       // different fields
     [InlineData("Name equals a or Name contains b",
                 "Name equals a or Name contains b")]          // different operators
-    [InlineData("Size greaterThan 10MB or Size greaterThan 20MB",
-                "Size greaterThan 10MB or Size greaterThan 20MB")]  // non-chainable category
+    [InlineData("Modified after 2025-01-01 or Size greaterThan 10MB",
+                "Modified after 2025-01-01 or Size greaterThan 10MB")] // different fields
     public void Format_NonChain_NotCollapsed(string input, string expected)
     {
         var expr = FclTestHelpers.ParseOk(input);
@@ -547,5 +547,52 @@ public class FclFormatterTests
         Assert.Equal(
             "Name matches \"*.doc\" or Name contains doc",
             FclFormatter.Format(expr));
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  Range chain collapsing (Date / Size)
+    // ─────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("Size greaterThan 100KB and Size lessOrEqual 1MB",
+                "Size greaterThan 100KB and lessOrEqual 1MB")]
+    [InlineData("Size lessThan 1KB or Size greaterThan 1GB",
+                "Size lessThan 1KB or greaterThan 1GB")]
+    [InlineData("Modified afterOrOn 2025-01-01 and Modified before 2025-02-01",
+                "Modified afterOrOn 2025-01-01 and before 2025-02-01")]
+    [InlineData("Created after 2024-06-01 or Created before 2024-01-01",
+                "Created after 2024-06-01 or before 2024-01-01")]
+    [InlineData("Size greaterThan 10MB or Size greaterThan 20MB",
+                "Size greaterThan 10MB or greaterThan 20MB")]  // same-op range chain still collapses
+    public void Format_RangeChain_Collapsed(string input, string expected)
+    {
+        var expr = FclTestHelpers.ParseOk(input);
+        Assert.Equal(expected, FclFormatter.Format(expr));
+    }
+
+    [Fact]
+    public void Format_RangeChain_RoundTrip()
+    {
+        // Shortcut form → parse (expands) → format (collapses) → same
+        var input = "Size greaterThan 100KB and lessOrEqual 1MB";
+        var expr1 = FclTestHelpers.ParseOk(input);
+        var fmt1 = FclFormatter.Format(expr1);
+        Assert.Equal(input, fmt1);
+
+        var expr2 = FclTestHelpers.ParseOk(fmt1);
+        var fmt2 = FclFormatter.Format(expr2);
+        Assert.Equal(fmt1, fmt2);
+    }
+
+    [Fact]
+    public void Format_RangeChain_MultiLine()
+    {
+        var expr = FclTestHelpers.ParseOk("Size greaterThan 100KB and Size lessOrEqual 1MB");
+        var result = FclFormatter.Format(expr, FclFormatOptions.MultiLine);
+
+        var lines = result.Split('\n');
+        Assert.Equal(2, lines.Length);
+        Assert.Equal("Size greaterThan 100KB", lines[0]);
+        Assert.Equal("and lessOrEqual 1MB", lines[1]);
     }
 }

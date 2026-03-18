@@ -99,6 +99,61 @@ public abstract class FclChainExpression(ImmutableArray<FclExpression> operands,
             cond.Value.FormatTo(sb, options);
         }
     }
+
+    /// <summary>
+    /// Determines whether all operands form a range chain: every operand is
+    /// an <see cref="FclCondition"/> sharing the same field, and the field
+    /// belongs to a range-chainable category (Date or Size). Unlike value
+    /// chains, the operators may differ across operands.
+    /// </summary>
+    protected bool IsRangeChain()
+    {
+        if (Operands.Length < 2 || Operands[0] is not FclCondition first)
+            return false;
+
+        var category = FclFieldTranslator.GetCategory(first.Field);
+        if (category is not (FclFieldCategory.Date or FclFieldCategory.Size))
+            return false;
+
+        for (int i = 1; i < Operands.Length; i++)
+        {
+            if (Operands[i] is not FclCondition c
+                || c.Field != first.Field)
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Formats this chain using the range chain shortcut: emits the first
+    /// condition fully (<c>Field Op Value</c>), then only the
+    /// <paramref name="connective"/>, operator, and value for each
+    /// subsequent operand.
+    /// </summary>
+    protected void FormatRangeChain(StringBuilder sb, FclFormatOptions options, int indent, string connective)
+    {
+        // First operand: full condition (field op value)
+        Operands[0].FormatTo(sb, options, indent);
+
+        for (int i = 1; i < Operands.Length; i++)
+        {
+            var cond = (FclCondition)Operands[i];
+            if (options.ConditionPerLine)
+            {
+                sb.Append('\n');
+                FclFormatter.AppendIndent(sb, indent);
+            }
+            else
+            {
+                sb.Append(' ');
+            }
+            sb.Append(connective);
+            sb.Append(' ');
+            sb.Append(FclFormatter.OperatorToString(cond.Operator, options.PreferWordOperators));
+            sb.Append(' ');
+            cond.Value.FormatTo(sb, options);
+        }
+    }
 }
 
 /// <summary>
@@ -136,6 +191,13 @@ public sealed class FclOrExpression(ImmutableArray<FclExpression> operands, Sour
             return;
         }
 
+        // Collapse range chains: "Size > 100KB or Size > 200KB" → "Size greaterThan 100KB or greaterThan 200KB"
+        if (IsRangeChain())
+        {
+            FormatRangeChain(sb, options, indent, "or");
+            return;
+        }
+
         Operands[0].FormatTo(sb, options, indent);
         for (int i = 1; i < Operands.Length; i++)
         {
@@ -168,6 +230,13 @@ public sealed class FclAndExpression(ImmutableArray<FclExpression> operands, Sou
         if (IsValueChain())
         {
             FormatValueChain(sb, options, indent, "and");
+            return;
+        }
+
+        // Collapse range chains: "Size > 100KB and Size <= 1MB" → "Size greaterThan 100KB and lessOrEqual 1MB"
+        if (IsRangeChain())
+        {
+            FormatRangeChain(sb, options, indent, "and");
             return;
         }
 

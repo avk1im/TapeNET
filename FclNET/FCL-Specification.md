@@ -295,6 +295,43 @@ is equivalent to:
 Attributes notHave Hidden or Attributes notHave System
 ```
 
+#### Range chain shortcut (Date / Size)
+
+For date and size fields, a related shortcut allows chaining different
+operators against the same field. After the first condition, each
+continuation element carries its **own operator and value**, while the
+field is inherited from the first condition. This is especially natural
+for expressing ranges.
+
+```
+Modified afterOrOn 2025-01-01 and before 2025-02-01
+```
+is equivalent to:
+```
+Modified afterOrOn 2025-01-01 and Modified before 2025-02-01
+```
+
+```
+Size greaterThan 100KB and lessOrEqual 1MB
+```
+is equivalent to:
+```
+Size greaterThan 100KB and Size lessOrEqual 1MB
+```
+
+The same works with relative dates and with `or`:
+```
+Created after today-30d and beforeOrOn today
+Modified before 2024-01-01 or afterOrOn 2025-01-01
+Size lessThan 1KB or greaterThan 1GB
+```
+
+Symbolic operator aliases are accepted:
+```
+Size > 100KB and <= 1MB
+Modified >= 2025-01-01 and < 2025-02-01
+```
+
 #### Chain rules
 
 - Only one connective type (`or` or `and`) is allowed per chain — mixing `or`
@@ -307,8 +344,10 @@ Attributes notHave Hidden or Attributes notHave System
   rules apply.
 
 > **Note:** The formatter collapses qualifying chains back to shortcut form.
-> A chain qualifies when all operands share the same field and operator and the
-> field belongs to a chainable category (string or attribute).
+> A value chain qualifies when all operands share the same field and operator
+> and the field belongs to a chainable category (string or attribute). A range
+> chain qualifies when all operands share the same field and the field belongs
+> to a range-chainable category (date or size).
 
 > **Note:** For `matches`, `notMatches`, and `regex`, both the semicolon shortcut
 > single value) and the value chain shortcut (separate tokens) are available.
@@ -407,6 +446,16 @@ FullName contains users and documents
 Complex query:
 ```
 Name matches "*.doc; *.docx" and Modified afterOrOn 2024-01-01 and Size lessThan 50MB
+```
+
+Date range (range chain shortcut):
+```
+Modified afterOrOn 2025-01-01 and before 2025-02-01
+```
+
+Size range (range chain shortcut):
+```
+Size greaterThan 100KB and lessOrEqual 1MB
 ```
 
 ## Relationship to the Basic Filter

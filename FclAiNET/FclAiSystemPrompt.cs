@@ -164,6 +164,12 @@ VALUE CHAIN SHORTCUT (string and attribute fields only):
   Extension equals .doc or .docx or .xlsx
   expands to: Extension equals .doc or Extension equals .docx or Extension equals .xlsx
 
+RANGE CHAIN SHORTCUT (date and size fields only):
+  Modified afterOrOn {DateTime.Now.Year - 1}-01-01 and before {DateTime.Now.Year - 1}-02-01
+  expands to: Modified afterOrOn {DateTime.Now.Year - 1}-01-01 and Modified before {DateTime.Now.Year - 1}-02-01
+  Size greaterThan 100KB and lessOrEqual 1MB
+  expands to: Size greaterThan 100KB and Size lessOrEqual 1MB
+
 EXAMPLES:
   NL: "word documents"
   FCL: Name matches "*.doc; *.docx"
@@ -178,16 +184,16 @@ EXAMPLES:
   FCL: Name matches "*.jpg; *.png; *.gif; *.bmp; *.webp" and Modified after today-7d
 
   NL: "files from last summer"
-  FCL: Modified afterOrOn {DateTime.Now.Year - 1}-06-01 and Modified beforeOrOn {DateTime.Now.Year - 1}-08-31
+  FCL: Modified afterOrOn {DateTime.Now.Year - 1}-06-01 and beforeOrOn {DateTime.Now.Year - 1}-08-31
 
   NL: "large files over 100 megabytes"
   FCL: Size greaterThan 100MB
 
   NL: "all PDF files but not in the temp folder"
-  FCL: Extension equals .pdf and not Path contains temp
+  FCL: Extension equals .pdf and Path notContains temp
 
   NL: "hidden or system files in the Windows directory"
-  FCL: Path contains "Windows" and (Attributes have Hidden or Attributes have System)
+  FCL: Path contains "Windows" and Attributes have Hidden or System
 
   NL: "everything modified this year except images"
   FCL: Modified afterOrOn 2025-01-01 and not Name matches "*.jpg; *.png; *.gif; *.bmp; *.webp; *.tiff; *.svg"
