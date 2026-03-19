@@ -133,6 +133,47 @@ public static class FclPipeline
     }
 
     // ─────────────────────────────────────────────────────
+    //  DNF (Disjunctive Normal Form)
+    // ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns <c>true</c> if <paramref name="expression"/> is already in
+    /// Disjunctive Normal Form: <c>OR( AND(literal, …), … )</c> where each
+    /// literal is an <see cref="Ast.FclCondition"/> or
+    /// <c>NOT(FclCondition)</c>.
+    /// </summary>
+    public static bool IsDnf(FclExpression expression)
+        => FclDnfConverter.IsDnf(expression);
+
+    /// <summary>
+    /// Converts <paramref name="expression"/> to Disjunctive Normal Form.
+    /// Returns <c>null</c> if the conversion would produce more than
+    /// <paramref name="maxClauses"/> OR-clauses (exponential blowup guard).
+    /// </summary>
+    /// <param name="expression">A validated FCL expression.</param>
+    /// <param name="maxClauses">Maximum allowed OR-clauses (default 256).</param>
+    public static FclExpression? ToDnf(FclExpression expression, int maxClauses = 256)
+        => FclDnfConverter.ToDnf(expression, maxClauses);
+
+    /// <summary>
+    /// Converts <paramref name="expression"/> to DNF and extracts the
+    /// groups as a list-of-lists: outer = OR groups, inner = AND literals.
+    /// Returns <c>null</c> if the expression cannot be converted within
+    /// the clause limit.
+    /// </summary>
+    /// <param name="expression">A validated FCL expression.</param>
+    /// <param name="maxClauses">Maximum allowed OR-clauses (default 256).</param>
+    public static List<List<FclExpression>>? ExtractDnfGroups(
+        FclExpression expression, int maxClauses = 256)
+    {
+        var dnf = FclDnfConverter.ToDnf(expression, maxClauses);
+        if (dnf is null)
+            return null;
+
+        return FclDnfConverter.ExtractDnfGroups(dnf);
+    }
+
+    // ─────────────────────────────────────────────────────
     //  Wildcard evaluator factory
     // ─────────────────────────────────────────────────────
 
