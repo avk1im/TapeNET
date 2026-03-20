@@ -1,0 +1,181 @@
+<UserControl x:Class="TapeWinNET.Controls.FclConditionRow"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
+             xmlns:converters="clr-namespace:TapeWinNET.Converters"
+             xmlns:fcl="clr-namespace:FclNET;assembly=fcl"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:FclConditionRowVM}"
+             d:DesignHeight="30" d:DesignWidth="650">
+
+    <UserControl.Resources>
+        <converters:FclFieldDisplayNameConverter x:Key="FieldDisplayNameConverter"/>
+        <converters:FclOperatorDisplayNameConverter x:Key="OperatorDisplayNameConverter"/>
+        <converters:NotNullToBoolConverter x:Key="NotNullToBoolConverter"/>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>  <!-- NOT checkbox -->
+            <ColumnDefinition Width="110"/>   <!-- Field combo -->
+            <ColumnDefinition Width="120"/>   <!-- Operator combo -->
+            <ColumnDefinition Width="*"/>     <!-- Value input area -->
+            <ColumnDefinition Width="Auto"/>  <!-- Remove button -->
+        </Grid.ColumnDefinitions>
+
+        <!-- NOT checkbox -->
+        <CheckBox Grid.Column="0"
+                  Content="NOT"
+                  IsChecked="{Binding IsNegated}"
+                  VerticalAlignment="Center"
+                  Margin="0,0,6,0"
+                  ToolTip="Negate this condition"/>
+
+        <!-- Field combobox -->
+        <ComboBox Grid.Column="1"
+                  ItemsSource="{x:Static vm:FclConditionRowVM.AllFields}"
+                  SelectedItem="{Binding SelectedField}"
+                  VerticalAlignment="Center"
+                  Margin="0,0,4,0">
+            <ComboBox.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding Converter={StaticResource FieldDisplayNameConverter}}"/>
+                </DataTemplate>
+            </ComboBox.ItemTemplate>
+        </ComboBox>
+
+        <!-- Operator combobox -->
+        <ComboBox Grid.Column="2"
+                  ItemsSource="{Binding AvailableOperators}"
+                  SelectedItem="{Binding SelectedOperator}"
+                  VerticalAlignment="Center"
+                  Margin="0,0,4,0"
+                  IsEnabled="{Binding SelectedField, Converter={StaticResource NotNullToBoolConverter}}">
+            <ComboBox.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding Converter={StaticResource OperatorDisplayNameConverter}}"/>
+                </DataTemplate>
+            </ComboBox.ItemTemplate>
+        </ComboBox>
+
+        <!-- Value input area — switches based on ActiveCategory -->
+        <Grid Grid.Column="3" Margin="0,0,4,0">
+
+            <!-- String value input -->
+            <TextBox Text="{Binding ValueText, UpdateSourceTrigger=PropertyChanged}"
+                     VerticalContentAlignment="Center">
+                <TextBox.Style>
+                    <Style TargetType="TextBox">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ActiveCategory}" Value="{x:Static fcl:FclFieldCategory.String}">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBox.Style>
+            </TextBox>
+
+            <!-- Date value input -->
+            <StackPanel Orientation="Horizontal">
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ActiveCategory}" Value="{x:Static fcl:FclFieldCategory.Date}">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+                <DatePicker SelectedDate="{Binding DateValue}"
+                            VerticalAlignment="Center"
+                            Width="130"/>
+                <CheckBox Content="Relative"
+                          IsChecked="{Binding IsRelativeDate}"
+                          VerticalAlignment="Center"
+                          Margin="8,0,0,0"
+                          ToolTip="Store as offset from today (e.g. today-7d)"/>
+                <TextBlock Text="{Binding RelativeDateHint}"
+                           VerticalAlignment="Center"
+                           Foreground="Gray" FontStyle="Italic"
+                           Margin="6,0,0,0">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsRelativeDate}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </StackPanel>
+
+            <!-- Size value input -->
+            <StackPanel Orientation="Horizontal">
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ActiveCategory}" Value="{x:Static fcl:FclFieldCategory.Size}">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+                <TextBox Text="{Binding SizeValue, UpdateSourceTrigger=PropertyChanged}"
+                         VerticalContentAlignment="Center"
+                         Width="100"/>
+                <ComboBox ItemsSource="{x:Static vm:FclConditionRowVM.AllSizeUnits}"
+                          SelectedItem="{Binding SelectedSizeUnit}"
+                          VerticalAlignment="Center"
+                          Width="55" Margin="4,0,0,0"/>
+            </StackPanel>
+
+            <!-- Attribute value input -->
+            <ComboBox ItemsSource="{x:Static vm:FclConditionRowVM.AllAttributes}"
+                      SelectedItem="{Binding SelectedAttribute}"
+                      VerticalAlignment="Center">
+                <ComboBox.Style>
+                    <Style TargetType="ComboBox">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ActiveCategory}" Value="{x:Static fcl:FclFieldCategory.Attribute}">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ComboBox.Style>
+            </ComboBox>
+
+            <!-- Placeholder when no field is selected -->
+            <TextBlock Text="Select a field first"
+                       VerticalAlignment="Center"
+                       Foreground="LightGray" FontStyle="Italic">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedField, Converter={StaticResource NotNullToBoolConverter}}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+        </Grid>
+
+        <!-- Remove button -->
+        <Button Grid.Column="4"
+                Content="✕"
+                Command="{Binding RemoveCommand}"
+                Width="22" Height="22"
+                Padding="0"
+                VerticalAlignment="Center"
+                ToolTip="Remove this condition"/>
+    </Grid>
+</UserControl>

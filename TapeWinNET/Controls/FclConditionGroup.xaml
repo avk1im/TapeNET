@@ -1,0 +1,84 @@
+<UserControl x:Class="TapeWinNET.Controls.FclConditionGroup"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
+             xmlns:controls="clr-namespace:TapeWinNET.Controls"
+             xmlns:converters="clr-namespace:TapeWinNET.Converters"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:FclConditionGroupVM}"
+             d:DesignHeight="120" d:DesignWidth="650">
+
+    <UserControl.Resources>
+        <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVis"/>
+    </UserControl.Resources>
+
+    <StackPanel>
+        <!-- OR separator — hidden for the first group -->
+        <Grid Margin="0,6,0,6">
+            <Grid.Style>
+                <Style TargetType="Grid">
+                    <Setter Property="Visibility" Value="Visible"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsFirst}" Value="True">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Grid.Style>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <Separator Grid.Column="0" VerticalAlignment="Center"/>
+            <TextBlock Grid.Column="1" Text=" OR " Foreground="Gray"
+                       FontWeight="SemiBold" VerticalAlignment="Center"/>
+            <Separator Grid.Column="2" VerticalAlignment="Center"/>
+            <Button Grid.Column="3" Content="✕"
+                    Command="{Binding RemoveGroupCommand}"
+                    Width="20" Height="20" Padding="0"
+                    FontSize="10" Margin="6,0,0,0"
+                    ToolTip="Remove this group"/>
+        </Grid>
+
+        <!-- Condition rows -->
+        <ItemsControl ItemsSource="{Binding Conditions}">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate DataType="{x:Type vm:FclConditionRowVM}">
+                    <controls:FclConditionRow Margin="0,1,0,1"/>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <!-- + Add condition (AND) -->
+        <Button Content="+ Add condition"
+                Command="{Binding AddConditionCommand}"
+                HorizontalAlignment="Left"
+                Margin="0,4,0,0" Padding="8,2"
+                FontSize="11" Foreground="Gray"
+                ToolTip="Add an AND-connected condition to this group">
+            <Button.Template>
+                <ControlTemplate TargetType="Button">
+                    <TextBlock Text="{TemplateBinding Content}"
+                               Cursor="Hand"
+                               TextDecorations="Underline"
+                               Foreground="{TemplateBinding Foreground}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Foreground" Value="Black"/>
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </ControlTemplate>
+            </Button.Template>
+        </Button>
+    </StackPanel>
+</UserControl>
