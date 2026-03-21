@@ -226,6 +226,7 @@
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
             <!-- Show/Hide Program toggle -->
@@ -243,11 +244,16 @@
 
             <!-- Right-aligned action buttons -->
             <Button Grid.Column="3"
+                    Content="Clear Filter"
+                    Command="{Binding ClearFilterCommand}"
+                    Width="80" Margin="0,0,8,0"
+                    ToolTip="Remove the filter definition entirely"/>
+            <Button Grid.Column="4"
                     Content="Cancel"
                     Command="{Binding CancelCommand}"
                     IsCancel="True"
                     Width="80" Margin="0,0,8,0"/>
-            <Button Grid.Column="4"
+            <Button Grid.Column="5"
                     Content="Apply Filter"
                     Command="{Binding ApplyFilterCommand}"
                     IsDefault="True"

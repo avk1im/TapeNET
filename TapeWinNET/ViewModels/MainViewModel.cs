@@ -5,6 +5,8 @@ using System.Windows.Input;
 
 using Windows.Win32.System.SystemServices; // for Helpers
 
+using FclNET;
+
 using TapeLibNET;
 using TapeLibNET.Virtual;
 using TapeWinNET.Converters;
@@ -343,15 +345,15 @@ public partial class MainViewModel : ViewModelBase
     /// <summary>
     /// Called by the View when the FileFilterPane requests a filter operation.
     /// </summary>
-    /// <param name="patterns">Parsed wildcard patterns, or null to clear the filter.</param>
+    /// <param name="evaluator">Ready-to-use FCL evaluator, or null to disable the filter.</param>
     /// <param name="reapplyAction">Opaque delegate that restores the filter pane's UI state
     /// and re-applies the filter. Stored on the tree item so the filter survives navigation.
-    /// Null when the filter is being removed.</param>
-    public async Task OnFileFilterApplied(List<string>? patterns, Func<Task>? reapplyAction)
+    /// Null when the filter is being disabled.</param>
+    public async Task OnFileFilterApplied(FclEvaluator? evaluator, Func<Task>? reapplyAction)
     {
-        if (patterns == null || patterns.Count == 0)
+        if (evaluator is null)
         {
-            // Remove filter — restore original list
+            // Disable filter — restore original list
             if (_unfilteredFileList != null)
             {
                 FileList = _unfilteredFileList;
@@ -372,7 +374,7 @@ public partial class MainViewModel : ViewModelBase
 
         var source = _unfilteredFileList;
         var filtered = await Utils.FileFilter.FilterAsync(
-            source, patterns, item => item.FullPath);
+            source, evaluator, item => item.FullPath);
 
         FileList = filtered;
         IsFileFilterActive = true;

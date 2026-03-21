@@ -41,6 +41,34 @@ public static class FileFilter
     }
 
     /// <summary>
+    /// Filters a list of items asynchronously on a background thread using a
+    /// pre-built <see cref="FclEvaluator"/>. Returns only items that match.
+    /// </summary>
+    /// <typeparam name="T">Item type.</typeparam>
+    /// <param name="source">The full unfiltered list.</param>
+    /// <param name="evaluator">A ready-to-use FCL evaluator.</param>
+    /// <param name="pathSelector">Function to extract the full file path from an item.</param>
+    /// <returns>A new filtered list.</returns>
+    public static Task<List<T>> FilterAsync<T>(
+        IReadOnlyList<T> source,
+        FclEvaluator evaluator,
+        Func<T, string> pathSelector)
+    {
+        return Task.Run(() =>
+        {
+            var result = new List<T>();
+            foreach (var item in source)
+            {
+                var snapshot = new FclFileInfo(
+                    pathSelector(item), 0, default, default, default);
+                if (evaluator.Evaluate(snapshot))
+                    result.Add(item);
+            }
+            return result;
+        });
+    }
+
+    /// <summary>
     /// Filters a list of items asynchronously on a background thread using
     /// DOS-style wildcard patterns. Uses <see cref="FclPipeline.CreateWildcardEvaluator(string)"/>
     /// for behavioral consistency with FclNET. Returns only items whose full path
@@ -56,21 +84,7 @@ public static class FileFilter
         List<string> patterns,
         Func<T, string> pathSelector)
     {
-        // Pre-compile via FclEvaluator on the calling thread (lightweight)
         var evaluator = FclPipeline.CreateWildcardEvaluator(patterns);
-
-        return Task.Run(() =>
-        {
-            var result = new List<T>();
-            foreach (var item in source)
-            {
-                // Build a minimal FclFileInfo — only FullName is needed for wildcard matching
-                var snapshot = new FclFileInfo(
-                    pathSelector(item), 0, default, default, default);
-                if (evaluator.Evaluate(snapshot))
-                    result.Add(item);
-            }
-            return result;
-        });
+        return FilterAsync(source, evaluator, pathSelector);
     }
 }

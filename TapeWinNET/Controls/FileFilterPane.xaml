@@ -20,24 +20,49 @@
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <Button Grid.Column="0" Content="Filter" 
-                    Command="{Binding ApplyFilterCommand, ElementName=Root}"
-                    Width="50" Margin="0,0,4,0"
-                    IsEnabled="{Binding HasFilterText, ElementName=Root}"
-                    ToolTip="Apply wildcard filter"/>
+            <!-- Toggle Apply / Disable button -->
+            <Button Grid.Column="0"
+                    Command="{Binding ToggleFilterCommand, ElementName=Root}"
+                    Width="60" Margin="0,0,4,0">
+                <Button.Style>
+                    <Style TargetType="Button">
+                        <Setter Property="Content" Value="Apply"/>
+                        <Setter Property="ToolTip" Value="Apply filter"/>
+                        <Setter Property="IsEnabled" Value="{Binding CanApplyFilter, ElementName=Root}"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsFilterActive, ElementName=Root}" Value="True">
+                                <Setter Property="Content" Value="Disable"/>
+                                <Setter Property="ToolTip" Value="Disable the active filter (keeps definition)"/>
+                                <Setter Property="IsEnabled" Value="True"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
 
-            <TextBox Grid.Column="1" 
+            <!-- Pattern text / advanced summary -->
+            <TextBox Grid.Column="1"
                      Text="{Binding FilterText, ElementName=Root, UpdateSourceTrigger=PropertyChanged}"
+                     IsReadOnly="{Binding HasAdvancedFilter, ElementName=Root}"
                      VerticalContentAlignment="Center"
                      Margin="0,0,4,0">
+                <TextBox.Style>
+                    <Style TargetType="TextBox">
+                        <Style.Triggers>
+                            <!-- Gray italic when showing advanced summary (read-only) -->
+                            <DataTrigger Binding="{Binding HasAdvancedFilter, ElementName=Root}" Value="True">
+                                <Setter Property="FontStyle" Value="Italic"/>
+                                <Setter Property="Foreground" Value="Gray"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBox.Style>
                 <TextBox.InputBindings>
-                    <KeyBinding Key="Return" 
-                                Command="{Binding ApplyFilterCommand, ElementName=Root}"/>
-                    <KeyBinding Key="Escape" 
-                                Command="{Binding RemoveFilterCommand, ElementName=Root}"/>
+                    <KeyBinding Key="Return"
+                                Command="{Binding ToggleFilterCommand, ElementName=Root}"/>
                 </TextBox.InputBindings>
             </TextBox>
 
@@ -66,21 +91,38 @@
                 </TextBlock.Style>
             </TextBlock>
 
-            <Button Grid.Column="3" Content="Advanced" 
-                    Width="65" Margin="0,0,4,0"
-                    IsEnabled="False"
-                    ToolTip="Advanced filtering (coming soon)"/>
-
-            <Button Grid.Column="4" Content="✕ Remove filter" 
-                    Command="{Binding RemoveFilterCommand, ElementName=Root}"
-                    Width="95"
-                    IsEnabled="{Binding IsFilterActive, ElementName=Root}"
-                    ToolTip="Clear the current filter"/>
+            <!-- Advanced filter button -->
+            <Button Grid.Column="3"
+                    Command="{Binding AdvancedFilterCommand, ElementName=Root}"
+                    Padding="6,0" Margin="0,0,0,0">
+                <Button.Style>
+                    <Style TargetType="Button">
+                        <Setter Property="Content" Value="Advanced&#x2026;"/>
+                        <Setter Property="ToolTip" Value="Open the advanced filter editor"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasAdvancedFilter, ElementName=Root}" Value="True">
+                                <Setter Property="Content" Value="Advanced &#x25CF;"/>
+                                <Setter Property="ToolTip" Value="{Binding AdvancedFilterTooltip, ElementName=Root}"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
         </Grid>
 
-        <!-- Help text -->
-        <TextBlock Text="Separate patterns with ;   Use * and ?   Example: *.doc?; C:\Projects\MyApp\"
-                   FontSize="10" Foreground="DarkGray"
-                   Margin="54,2,0,0"/>
+        <!-- Help text / pattern explanation -->
+        <TextBlock FontSize="10" Foreground="DarkGray" Margin="64,2,0,0">
+            <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                    <Setter Property="Text"
+                            Value="Separate patterns with ;   Use * and ?   Example: *.doc?; C:\Projects\MyApp\"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding HasAdvancedFilter, ElementName=Root}" Value="True">
+                            <Setter Property="Text" Value="Advanced filter active &#x2014; click Advanced to edit"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
     </StackPanel>
 </UserControl>

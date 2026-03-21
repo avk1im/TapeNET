@@ -51,6 +51,7 @@ public class FclFilterWindowVM : ViewModelBase
             _ => IsProgramPaneOpen);
         ToggleProgramPaneCommand = new RelayCommand(_ => ToggleProgramPane());
         ApplyFilterCommand = new RelayCommand(_ => ExecuteApply(), _ => CanApply);
+        ClearFilterCommand = new RelayCommand(_ => _onApply(null));
         CancelCommand = new RelayCommand(_ => _onCancel());
         GenerateWithAiCommand = new RelayCommand(_ => { }, _ => false); // placeholder
     }
@@ -167,6 +168,9 @@ public class FclFilterWindowVM : ViewModelBase
 
     /// <summary>Applies the filter and closes the dialog.</summary>
     public ICommand ApplyFilterCommand { get; }
+
+    /// <summary>Clears the filter definition and closes the dialog.</summary>
+    public ICommand ClearFilterCommand { get; }
 
     /// <summary>Cancels and closes the dialog.</summary>
     public ICommand CancelCommand { get; }
