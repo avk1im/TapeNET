@@ -9,8 +9,8 @@
         d:DataContext="{d:DesignInstance Type=vm:FclFilterWindowVM}"
         mc:Ignorable="d"
         Title="Advanced Filter"
-        Height="480" Width="520"
-        MinHeight="350" MinWidth="440"
+        Height="380" Width="550"
+        MinHeight="250" MinWidth="440"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False">
 

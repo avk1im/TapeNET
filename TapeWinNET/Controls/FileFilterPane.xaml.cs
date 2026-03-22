@@ -245,7 +245,7 @@ public partial class FileFilterPane : UserControl
             _advancedConditionCount = savedConditionCount;
             _advancedGroupCount = savedGroupCount;
             HasAdvancedFilter = savedHasAdvanced;
-            FilterText = savedText;
+            FilterText = savedText ?? string.Empty;
             UpdateCanApply();
             UpdateAdvancedUI();
             return ApplyFilterAsync();

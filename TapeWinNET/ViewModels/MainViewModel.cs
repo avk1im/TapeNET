@@ -374,7 +374,7 @@ public partial class MainViewModel : ViewModelBase
 
         var source = _unfilteredFileList;
         var filtered = await Utils.FileFilter.FilterAsync(
-            source, evaluator, item => item.FullPath);
+            source, evaluator, item => item.FileInfo.FileDescr);
 
         FileList = filtered;
         IsFileFilterActive = true;

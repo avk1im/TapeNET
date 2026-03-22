@@ -52,16 +52,16 @@ public static class FileFilter
     public static Task<List<T>> FilterAsync<T>(
         IReadOnlyList<T> source,
         FclEvaluator evaluator,
-        Func<T, string> pathSelector)
+        Func<T, TapeFileDescriptor> descriptorMaker)
     {
         return Task.Run(() =>
         {
             var result = new List<T>();
+            var filter = new FclTapeFileFilter(evaluator);
             foreach (var item in source)
             {
-                var snapshot = new FclFileInfo(
-                    pathSelector(item), 0, default, default, default);
-                if (evaluator.Evaluate(snapshot))
+                var descriptor = descriptorMaker(item);
+                if (filter.Matches(descriptor))
                     result.Add(item);
             }
             return result;
@@ -85,6 +85,11 @@ public static class FileFilter
         Func<T, string> pathSelector)
     {
         var evaluator = FclPipeline.CreateWildcardEvaluator(patterns);
-        return FilterAsync(source, evaluator, pathSelector);
+        return FilterAsync(source, evaluator, item =>
+            {
+                var path = pathSelector(item);
+                return new TapeFileDescriptor(path);
+            }
+        );
     }
 }
