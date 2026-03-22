@@ -9,7 +9,7 @@
         d:DataContext="{d:DesignInstance Type=vm:FclFilterWindowVM}"
         mc:Ignorable="d"
         Title="Advanced Filter"
-        Height="380" Width="550"
+        Height="360" Width="570"
         MinHeight="250" MinWidth="440"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False">
@@ -121,7 +121,7 @@
                           Visibility="{Binding IsProgramPaneOpen, Converter={StaticResource BoolToVis}}"/>
 
             <!-- ─── Right pane: FCL Program ─── -->
-            <GroupBox Grid.Column="2" Header="FCL Program"
+            <GroupBox Grid.Column="2" Header="{Binding ProgramPaneHeader}"
                       Visibility="{Binding IsProgramPaneOpen, Converter={StaticResource BoolToVis}}">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -132,13 +132,22 @@
 
                     <!-- FCL text editor -->
                     <TextBox Grid.Row="0"
+                             x:Name="ProgramTextBox"
                              Text="{Binding FclText, UpdateSourceTrigger=PropertyChanged}"
                              AcceptsReturn="True"
                              AcceptsTab="True"
                              TextWrapping="Wrap"
                              VerticalScrollBarVisibility="Auto"
+                             IsInactiveSelectionHighlightEnabled="True"
                              FontFamily="Consolas" FontSize="12"
                              Padding="4">
+                        <TextBox.Resources>
+                            <!-- Orange highlight for diagnostic spans (visible even when TextBox is unfocused) -->
+                            <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}"
+                                             Color="#FF8C00" Opacity="0.3"/>
+                            <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}"
+                                             Color="Black"/>
+                        </TextBox.Resources>
                         <TextBox.Style>
                             <Style TargetType="TextBox">
                                 <Style.Triggers>
@@ -168,32 +177,29 @@
                     </TextBlock>
 
                     <!-- Diagnostics list -->
-                    <ListView Grid.Row="2"
-                              ItemsSource="{Binding Diagnostics}"
-                              SelectedItem="{Binding SelectedDiagnostic}"
-                              Visibility="{Binding HasErrors, Converter={StaticResource BoolToVis}}"
-                              FontFamily="Consolas" FontSize="11"
-                              BorderThickness="1" BorderBrush="LightGray">
-                        <ListView.View>
-                            <GridView>
-                                <GridViewColumn Header="Error" Width="380">
-                                    <GridViewColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <TextBlock>
-                                                <TextBlock.Text>
-                                                    <MultiBinding StringFormat="{}{0} {1}: {2}">
-                                                        <Binding Path="Severity"/>
-                                                        <Binding Path="Code"/>
-                                                        <Binding Path="Message"/>
-                                                    </MultiBinding>
-                                                </TextBlock.Text>
-                                            </TextBlock>
-                                        </DataTemplate>
-                                    </GridViewColumn.CellTemplate>
-                                </GridViewColumn>
-                            </GridView>
-                        </ListView.View>
-                    </ListView>
+                    <ListBox Grid.Row="2"
+                             ItemsSource="{Binding Diagnostics}"
+                             SelectedItem="{Binding SelectedDiagnostic}"
+                             Visibility="{Binding HasErrors, Converter={StaticResource BoolToVis}}"
+                             FontFamily="Consolas" FontSize="11"
+                             BorderThickness="1" BorderBrush="LightGray"
+                             HorizontalContentAlignment="Stretch"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}">
+                                    <TextBlock.Text>
+                                        <MultiBinding StringFormat="{}{0} {1}: {2}">
+                                            <Binding Path="Severity"/>
+                                            <Binding Path="Code"/>
+                                            <Binding Path="Message"/>
+                                        </MultiBinding>
+                                    </TextBlock.Text>
+                                </TextBlock>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
                 </Grid>
             </GroupBox>
         </Grid>
@@ -237,10 +243,14 @@
 
             <!-- AI placeholder -->
             <Button Grid.Column="1"
-                    Content="Generate with AI…"
                     Command="{Binding GenerateWithAiCommand}"
                     Padding="8,4"
-                    ToolTip="AI-assisted FCL generation (coming soon)"/>
+                    ToolTip="AI-assisted FCL generation (coming soon)">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="✦" FontSize="14" Margin="0,0,4,0"/>
+                    <TextBlock Text="Generate with AI…"/>
+                </StackPanel>
+            </Button>
 
             <!-- Right-aligned action buttons -->
             <Button Grid.Column="3"

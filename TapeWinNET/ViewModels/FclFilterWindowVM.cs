@@ -17,6 +17,7 @@ public class FclFilterWindowVM : ViewModelBase
     private readonly Action _onCancel;
 
     private string _fclText = string.Empty;
+    private string? _appliedFclText;
     private bool _isProgramPaneOpen;
     private bool _isFclTextModified;
     private FclDiagnostic? _selectedDiagnostic;
@@ -45,10 +46,12 @@ public class FclFilterWindowVM : ViewModelBase
 
         // Commands
         AddGroupCommand = new RelayCommand(_ => AddGroup());
-        ApplyVisualToTextCommand = new RelayCommand(_ => SyncVisualToText());
+        ApplyVisualToTextCommand = new RelayCommand(
+            _ => SyncVisualToText(),
+            _ => IsFclTextModified);
         ApplyTextToVisualCommand = new RelayCommand(
             _ => SyncTextToVisual(),
-            _ => IsProgramPaneOpen);
+            _ => IsFclTextModified && IsProgramPaneOpen);
         ToggleProgramPaneCommand = new RelayCommand(_ => ToggleProgramPane());
         ApplyFilterCommand = new RelayCommand(_ => ExecuteApply(), _ => CanApply);
         ClearFilterCommand = new RelayCommand(_ => _onApply(null));
@@ -95,11 +98,51 @@ public class FclFilterWindowVM : ViewModelBase
     public string ToggleProgramPaneText =>
         IsProgramPaneOpen ? "◀ Hide Program" : "Show Program ▶";
 
-    /// <summary>Whether the user has modified the FCL text since the last sync.</summary>
+    /// <summary>
+    /// Whether the user has modified the FCL text since the last sync.
+    /// When true, the program text is out of sync with the visual editor
+    /// and the "last-modified wins" rule applies on Apply.
+    /// </summary>
     public bool IsFclTextModified
     {
         get => _isFclTextModified;
-        private set => SetProperty(ref _isFclTextModified, value);
+        private set
+        {
+            if (SetProperty(ref _isFclTextModified, value))
+            {
+                OnPropertyChanged(nameof(ProgramPaneHeader));
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Header for the FCL Program GroupBox. Shows " ●" suffix when the
+    /// program text has been manually modified and is not yet synced back
+    /// to the visual editor.
+    /// </summary>
+    public string ProgramPaneHeader =>
+        IsFclTextModified ? "FCL Program ●" : "FCL Program";
+
+    /// <summary>
+    /// The FCL text that was used when the filter was applied via the
+    /// text-path ("last-modified wins"). <c>null</c> when the visual
+    /// editor was the winning source. Used by <see cref="Controls.FileFilterPane"/>
+    /// to preserve user-edited text (including comments) across dialog re-opens.
+    /// </summary>
+    public string? AppliedFclText => _appliedFclText;
+
+    /// <summary>
+    /// Restores previously saved FCL text without setting
+    /// <see cref="IsFclTextModified"/>. Called during dialog initialization
+    /// when re-opening a dialog whose last apply used user-edited text.
+    /// </summary>
+    public void RestoreSavedFclText(string text)
+    {
+        _fclText = text;
+        OnPropertyChanged(nameof(FclText));
+        // Text matches what was applied, so it's not "modified"
+        IsFclTextModified = false;
     }
 
     // ─────────────────────────────────────────────────────
@@ -289,7 +332,7 @@ public class FclFilterWindowVM : ViewModelBase
             return;
         }
 
-        var expression = result.Expression!;
+        var expression = result.Expression!; // since result.IsValid
 
         // Check if DNF-shaped or convertible
         if (FclPipeline.IsDnf(expression))
@@ -313,6 +356,9 @@ public class FclFilterWindowVM : ViewModelBase
             IsFclTextModified = false;
             IsDnfCompatible = true;
             NonDnfMessage = null;
+
+            // Preserve the user-edited text (may contain comments, formatting)
+            _appliedFclText = FclText;
         }
         else
         {
@@ -348,11 +394,17 @@ public class FclFilterWindowVM : ViewModelBase
                 return;
             }
             result = parseResult.Expression;
+
+            // Preserve the user-edited text (may contain comments, formatting)
+            _appliedFclText = FclText;
         }
         else
         {
-            // Use the visual editor
+            // Use the visual editor — no custom text to preserve
             result = BuildExpressionFromGroups();
+            _appliedFclText = null;
+                // FIXME: Consider the case that user closed the program pane
+                //  but hasn't modified the visual program - then we should keep the text!
         }
 
         _onApply(result);

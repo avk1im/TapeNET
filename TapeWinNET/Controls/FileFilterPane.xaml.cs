@@ -11,6 +11,20 @@ using TapeWinNET.ViewModels;
 namespace TapeWinNET.Controls;
 
 /// <summary>
+/// Captures the <see cref="FclFilterWindow"/> layout so it can be restored
+/// the next time the dialog opens for the same backup set (session-only,
+/// not persisted to disk). Stored alongside the advanced filter expression.
+/// </summary>
+internal record FclFilterWindowState(
+    double Width,
+    double Height,
+    double Left,
+    double Top,
+    bool IsProgramPaneOpen,
+    double ProgramColumnWidth,
+    string? SavedFclText);
+
+/// <summary>
 /// Reusable filter pane for file lists. Supports two modes:
 /// <list type="bullet">
 ///   <item><b>Pattern mode:</b> DOS-style wildcard filtering (*, ?) with
@@ -34,6 +48,9 @@ public partial class FileFilterPane : UserControl
     private FclExpression? _advancedExpression;
     private int _advancedConditionCount;
     private int _advancedGroupCount;
+
+    // Per-backup-set window layout (session-only, not persisted to disk)
+    private FclFilterWindowState? _windowState;
 
     /// <summary>
     /// Async callback invoked when the user applies or disables a filter.
@@ -237,6 +254,7 @@ public partial class FileFilterPane : UserControl
         var savedGroupCount = _advancedGroupCount;
         var savedText = FilterText;
         var savedHasAdvanced = HasAdvancedFilter;
+        var savedWindowState = _windowState;
 
         Task reapplyAction()
         {
@@ -244,6 +262,7 @@ public partial class FileFilterPane : UserControl
             _advancedExpression = savedExpression;
             _advancedConditionCount = savedConditionCount;
             _advancedGroupCount = savedGroupCount;
+            _windowState = savedWindowState;
             HasAdvancedFilter = savedHasAdvanced;
             FilterText = savedText ?? string.Empty;
             UpdateCanApply();
@@ -318,11 +337,38 @@ public partial class FileFilterPane : UserControl
         else if (!string.IsNullOrWhiteSpace(FilterText))
             vm.InitFromPatterns(FilterText.Trim());
 
+        // Restore saved user-edited FCL text (preserves comments, formatting)
+        if (_windowState is { SavedFclText: { } savedText })
+            vm.RestoreSavedFclText(savedText);
+
         var dialog = new FclFilterWindow(vm)
         {
             Owner = Window.GetWindow(this)
         };
+
+        // Restore saved window layout for this backup set (if any)
+        if (_windowState is { } ws)
+        {
+            dialog.WindowStartupLocation = WindowStartupLocation.Manual;
+            dialog.Left = ws.Left;
+            dialog.Top = ws.Top;
+            dialog.Width = ws.Width;
+            dialog.Height = ws.Height;
+            if (ws.IsProgramPaneOpen)
+                dialog.RestoreProgramPaneOpen(ws.ProgramColumnWidth);
+            if (!string.IsNullOrWhiteSpace(ws.SavedFclText))
+                dialog.ProgramTextBox.Text = ws.SavedFclText;
+        }
+
         dialog.ShowDialog();
+
+        // Capture the window layout so it persists across re-opens for this set
+        _windowState = new FclFilterWindowState(
+            dialog.Width, dialog.Height,
+            dialog.Left, dialog.Top,
+            vm.IsProgramPaneOpen,
+            dialog.ProgramColumnWidth,
+            vm.AppliedFclText);
 
         // Process result
         if (wasCleared)
@@ -362,6 +408,7 @@ public partial class FileFilterPane : UserControl
         _advancedExpression = null;
         _advancedConditionCount = 0;
         _advancedGroupCount = 0;
+        _windowState = null;
         HasAdvancedFilter = false;
         UpdateCanApply();
         AdvancedFilterTooltip = "Open the advanced filter editor";
@@ -378,7 +425,7 @@ public partial class FileFilterPane : UserControl
         // Summary in the textbox
         var condWord = _advancedConditionCount == 1 ? "condition" : "conditions";
         var groupWord = _advancedGroupCount == 1 ? "group" : "groups";
-        FilterText = $"[{_advancedConditionCount} {condWord} in {_advancedGroupCount} {groupWord} — click Advanced to edit]";
+        FilterText = $"[{_advancedConditionCount} {condWord} in {_advancedGroupCount} {groupWord}]";
 
         // Tooltip on the Advanced button
         AdvancedFilterTooltip = $"Advanced filter: {_advancedConditionCount} {condWord} in {_advancedGroupCount} {groupWord}";

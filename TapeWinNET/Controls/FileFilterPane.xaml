@@ -51,9 +51,8 @@
                 <TextBox.Style>
                     <Style TargetType="TextBox">
                         <Style.Triggers>
-                            <!-- Gray italic when showing advanced summary (read-only) -->
+                            <!-- Grayed out when showing advanced summary (read-only) -->
                             <DataTrigger Binding="{Binding HasAdvancedFilter, ElementName=Root}" Value="True">
-                                <Setter Property="FontStyle" Value="Italic"/>
                                 <Setter Property="Foreground" Value="Gray"/>
                                 <Setter Property="Cursor" Value="Arrow"/>
                             </DataTrigger>
