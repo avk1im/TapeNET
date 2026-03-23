@@ -69,6 +69,12 @@ public class FclConditionGroupVM : ViewModelBase
     /// </summary>
     public event Action<FclConditionGroupVM>? GroupEmptied;
 
+    /// <summary>
+    /// Raised when any condition row in this group is modified, or when
+    /// conditions are added/removed — signals a visual program change.
+    /// </summary>
+    public event Action? Modified;
+
     // ─────────────────────────────────────────────────────
     //  Public methods
     // ─────────────────────────────────────────────────────
@@ -80,8 +86,10 @@ public class FclConditionGroupVM : ViewModelBase
     {
         var row = new FclConditionRowVM();
         row.RemoveRequested += OnConditionRemoveRequested;
+        row.Modified += OnConditionModified;
         Conditions.Add(row);
         UpdateCanRemove();
+        Modified?.Invoke();
         return row;
     }
 
@@ -129,7 +137,10 @@ public class FclConditionGroupVM : ViewModelBase
     public void Clear()
     {
         foreach (var row in Conditions)
+        {
             row.RemoveRequested -= OnConditionRemoveRequested;
+            row.Modified -= OnConditionModified;
+        }
         Conditions.Clear();
     }
 
@@ -140,6 +151,7 @@ public class FclConditionGroupVM : ViewModelBase
     private void OnConditionRemoveRequested(FclConditionRowVM row)
     {
         row.RemoveRequested -= OnConditionRemoveRequested;
+        row.Modified -= OnConditionModified;
         Conditions.Remove(row);
 
         if (Conditions.Count == 0)
@@ -150,8 +162,11 @@ public class FclConditionGroupVM : ViewModelBase
         else
         {
             UpdateCanRemove();
+            Modified?.Invoke();
         }
     }
+
+    private void OnConditionModified() => Modified?.Invoke();
 
     /// <summary>
     /// Updates <see cref="FclConditionRowVM.CanRemove"/> on all rows.

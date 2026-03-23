@@ -20,6 +20,7 @@ public class FclFilterWindowVM : ViewModelBase
     private string? _appliedFclText;
     private bool _isProgramPaneOpen;
     private bool _isFclTextModified;
+    private bool _isVisualModified;
     private FclDiagnostic? _selectedDiagnostic;
     private bool _isDnfCompatible = true;
     private string? _nonDnfMessage;
@@ -48,7 +49,7 @@ public class FclFilterWindowVM : ViewModelBase
         AddGroupCommand = new RelayCommand(_ => AddGroup());
         ApplyVisualToTextCommand = new RelayCommand(
             _ => SyncVisualToText(),
-            _ => IsFclTextModified);
+            _ => IsVisualModified || IsFclTextModified);
         ApplyTextToVisualCommand = new RelayCommand(
             _ => SyncTextToVisual(),
             _ => IsFclTextModified && IsProgramPaneOpen);
@@ -122,7 +123,21 @@ public class FclFilterWindowVM : ViewModelBase
     /// to the visual editor.
     /// </summary>
     public string ProgramPaneHeader =>
-        IsFclTextModified ? "FCL Program ●" : "FCL Program";
+        IsFclTextModified ? "Program ●" : "Program";
+
+    /// <summary>
+    /// Whether the visual condition editor has been modified since the last sync.
+    /// Used to enable the "Update →" button independently of text modifications.
+    /// </summary>
+    public bool IsVisualModified
+    {
+        get => _isVisualModified;
+        private set
+        {
+            if (SetProperty(ref _isVisualModified, value))
+                CommandManager.InvalidateRequerySuggested();
+        }
+    }
 
     /// <summary>
     /// The FCL text that was used when the filter was applied via the
@@ -294,6 +309,7 @@ public class FclFilterWindowVM : ViewModelBase
         }
 
         IsFclTextModified = false;
+        IsVisualModified = false;
         ClearDiagnostics();
         IsDnfCompatible = true;
         NonDnfMessage = null;
@@ -421,8 +437,10 @@ public class FclFilterWindowVM : ViewModelBase
         group.AddCondition();
         group.RemoveRequested += OnGroupRemoveRequested;
         group.GroupEmptied += OnGroupRemoveRequested;
+        group.Modified += OnVisualModified;
         Groups.Add(group);
         UpdateGroupStates();
+        IsVisualModified = true;
         return group;
     }
 
@@ -430,6 +448,7 @@ public class FclFilterWindowVM : ViewModelBase
     {
         group.RemoveRequested -= OnGroupRemoveRequested;
         group.GroupEmptied -= OnGroupRemoveRequested;
+        group.Modified -= OnVisualModified;
         group.Clear();
         Groups.Remove(group);
 
@@ -438,6 +457,8 @@ public class FclFilterWindowVM : ViewModelBase
             AddGroup();
         else
             UpdateGroupStates();
+
+        IsVisualModified = true;
     }
 
     /// <summary>
@@ -460,6 +481,7 @@ public class FclFilterWindowVM : ViewModelBase
         {
             group.RemoveRequested -= OnGroupRemoveRequested;
             group.GroupEmptied -= OnGroupRemoveRequested;
+            group.Modified -= OnVisualModified;
             group.Clear();
         }
         Groups.Clear();
@@ -478,6 +500,7 @@ public class FclFilterWindowVM : ViewModelBase
             var groupVm = new FclConditionGroupVM { IsFirst = Groups.Count == 0 };
             groupVm.RemoveRequested += OnGroupRemoveRequested;
             groupVm.GroupEmptied += OnGroupRemoveRequested;
+            groupVm.Modified += OnVisualModified;
 
             foreach (var literal in literals)
             {
@@ -558,4 +581,6 @@ public class FclFilterWindowVM : ViewModelBase
         if (IsProgramPaneOpen && !IsFclTextModified)
             SyncVisualToText();
     }
+
+    private void OnVisualModified() => IsVisualModified = true;
 }

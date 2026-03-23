@@ -167,16 +167,32 @@ public partial class MainViewModel
 
     /// <summary>
     /// Gets or sets whether all files are checked for restore.
-    /// Setter checks or unchecks every item in FileList.
+    /// Getter returns <c>true</c> (all checked), <c>false</c> (none checked),
+    /// or <c>null</c> (some checked) for tri-state display.
+    /// Setter checks or unchecks every item in FileList — the three-state
+    /// WPF cycle (false→true→null→false) is mapped so clicking always
+    /// toggles between all-checked and all-unchecked.
     /// </summary>
-    public bool AreAllFilesChecked
+    public bool? AreAllFilesChecked
     {
-        get => FileList.Count > 0 && FileList.All(f => f.IsCheckedForRestore);
+        get
+        {
+            if (FileList.Count == 0) return false;
+            bool any = FileList.Any(f => f.IsCheckedForRestore);
+            if (!any) return false;
+            return FileList.All(f => f.IsCheckedForRestore) ? true : null;
+        }
         set
         {
+            // Three-state cycle: false→true→null→false.
+            //  true  = user clicked from unchecked       → check all
+            //  null  = user clicked from fully checked   → uncheck all
+            //  false = user clicked from indeterminate   → check all
+            bool check = value != null;
             foreach (var item in FileList)
-                item.IsCheckedForRestore = value;
+                item.IsCheckedForRestore = check;
             OnPropertyChanged(nameof(AreAllFilesChecked));
+            UpdateTableHeader();
             CommandManager.InvalidateRequerySuggested();
         }
     }
@@ -192,6 +208,7 @@ public partial class MainViewModel
     public void OnFileCheckChanged()
     {
         OnPropertyChanged(nameof(AreAllFilesChecked));
+        UpdateTableHeader();
         CommandManager.InvalidateRequerySuggested();
     }
 

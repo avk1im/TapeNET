@@ -341,8 +341,9 @@
                                                 <DataTemplate>
                                                     <CheckBox IsChecked="{Binding DataContext.AreAllFilesChecked,
                                                                           RelativeSource={RelativeSource AncestorType=Window}}"
-                                                              HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                              ToolTip="Select / deselect all files"/>
+                                                               IsThreeState="True"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                               ToolTip="Select / deselect all files"/>
                                                 </DataTemplate>
                                             </GridViewColumn.HeaderTemplate>
                                             <GridViewColumn.CellTemplate>

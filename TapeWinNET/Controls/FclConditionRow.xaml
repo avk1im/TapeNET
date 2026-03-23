@@ -127,7 +127,7 @@
                         </Style.Triggers>
                     </Style>
                 </StackPanel.Style>
-                <TextBox Text="{Binding SizeValue, UpdateSourceTrigger=PropertyChanged}"
+                <TextBox Text="{Binding SizeValue}"
                          VerticalContentAlignment="Center"
                          Width="100"/>
                 <ComboBox ItemsSource="{x:Static vm:FclConditionRowVM.AllSizeUnits}"

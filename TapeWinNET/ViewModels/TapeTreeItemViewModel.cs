@@ -153,6 +153,14 @@ public class TapeTreeItemViewModel : ViewModelBase
     /// </summary>
     public Func<Task>? SavedFilterState { get; set; }
 
+    /// <summary>
+    /// <see cref="TapeFileInfo"/> references of files that were checked for restore
+    /// when the user last navigated away from this backup set. <c>null</c> when no
+    /// files were checked. Uses reference equality against the stable TOC objects
+    /// (~8 bytes per entry on x64), so lookups are O(1).
+    /// </summary>
+    public HashSet<TapeFileInfo>? SavedCheckedFiles { get; set; }
+
     public static TapeTreeItemViewModel CreateDriveItem(int driveNumber, string deviceName)
     {
         return new TapeTreeItemViewModel

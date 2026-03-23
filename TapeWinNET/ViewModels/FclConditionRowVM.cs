@@ -77,7 +77,7 @@ public class FclConditionRowVM : ViewModelBase
     public bool IsNegated
     {
         get => _isNegated;
-        set => SetProperty(ref _isNegated, value);
+        set { if (SetProperty(ref _isNegated, value)) Modified?.Invoke(); }
     }
 
     /// <summary>The selected field (left-hand side of the condition).</summary>
@@ -100,6 +100,8 @@ public class FclConditionRowVM : ViewModelBase
 
             // Clear value inputs on category change to avoid stale state.
             ClearValueInputs();
+
+            Modified?.Invoke();
         }
     }
 
@@ -107,7 +109,7 @@ public class FclConditionRowVM : ViewModelBase
     public FclOperator? SelectedOperator
     {
         get => _selectedOperator;
-        set => SetProperty(ref _selectedOperator, value);
+        set { if (SetProperty(ref _selectedOperator, value)) Modified?.Invoke(); }
     }
 
     // ─────────────────────────────────────────────────────
@@ -120,7 +122,7 @@ public class FclConditionRowVM : ViewModelBase
     public string ValueText
     {
         get => _valueText;
-        set => SetProperty(ref _valueText, value);
+        set { if (SetProperty(ref _valueText, value)) Modified?.Invoke(); }
     }
 
     /// <summary>
@@ -134,6 +136,7 @@ public class FclConditionRowVM : ViewModelBase
             if (!SetProperty(ref _dateValue, value))
                 return;
             OnPropertyChanged(nameof(RelativeDateHint));
+            Modified?.Invoke();
         }
     }
 
@@ -149,6 +152,7 @@ public class FclConditionRowVM : ViewModelBase
             if (!SetProperty(ref _isRelativeDate, value))
                 return;
             OnPropertyChanged(nameof(RelativeDateHint));
+            Modified?.Invoke();
         }
     }
 
@@ -178,21 +182,21 @@ public class FclConditionRowVM : ViewModelBase
     public double SizeValue
     {
         get => _sizeValue;
-        set => SetProperty(ref _sizeValue, value);
+        set { if (SetProperty(ref _sizeValue, value)) Modified?.Invoke(); }
     }
 
     /// <summary>Unit for the size value (KB, MB, GB, etc.).</summary>
     public FclSizeUnit SelectedSizeUnit
     {
         get => _selectedSizeUnit;
-        set => SetProperty(ref _selectedSizeUnit, value);
+        set { if (SetProperty(ref _selectedSizeUnit, value)) Modified?.Invoke(); }
     }
 
     /// <summary>Selected attribute value — used for Attributes field.</summary>
     public FclAttribute? SelectedAttribute
     {
         get => _selectedAttribute;
-        set => SetProperty(ref _selectedAttribute, value);
+        set { if (SetProperty(ref _selectedAttribute, value)) Modified?.Invoke(); }
     }
 
     // ─────────────────────────────────────────────────────
@@ -249,6 +253,12 @@ public class FclConditionRowVM : ViewModelBase
     /// <see cref="FclConditionGroupVM"/> subscribes to perform the removal.
     /// </summary>
     public event Action<FclConditionRowVM>? RemoveRequested;
+
+    /// <summary>
+    /// Raised when any data property (field, operator, value, negation) changes,
+    /// signalling that the visual program has been modified.
+    /// </summary>
+    public event Action? Modified;
 
     // ─────────────────────────────────────────────────────
     //  AST conversion: ViewModel → Expression

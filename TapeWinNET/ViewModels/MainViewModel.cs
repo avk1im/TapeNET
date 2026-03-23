@@ -60,6 +60,7 @@ public partial class MainViewModel : ViewModelBase
     // File filter fields
     private List<FileListItem>? _unfilteredFileList;
     private bool _isFileFilterActive;
+    private bool _isIncrementalFileView;
     private int _fileFilteredCount;
     private int _fileTotalCount;
 
@@ -362,6 +363,8 @@ public partial class MainViewModel : ViewModelBase
             IsFileFilterActive = false;
             FileFilteredCount = FileList.Count;
             FileTotalCount = FileList.Count;
+            UpdateTableHeader();
+            OnPropertyChanged(nameof(AreAllFilesChecked));
 
             // Clear saved state so navigating away and back won't re-apply
             if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet)
@@ -380,6 +383,8 @@ public partial class MainViewModel : ViewModelBase
         IsFileFilterActive = true;
         FileFilteredCount = filtered.Count;
         FileTotalCount = source.Count;
+        UpdateTableHeader();
+        OnPropertyChanged(nameof(AreAllFilesChecked));
 
         // Save the restore delegate so the filter survives navigation
         if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet)
@@ -391,6 +396,87 @@ public partial class MainViewModel : ViewModelBase
     {
         _unfilteredFileList = null;
         IsFileFilterActive = false;
+        _isIncrementalFileView = false;
+    }
+
+    /// <summary>
+    /// Recomputes <see cref="TableHeader"/> from the current total, filtered,
+    /// and selected file counts. Format examples:
+    /// <list type="bullet">
+    ///   <item>"Files (61)"</item>
+    ///   <item>"Files (61 → 11 filtered)"</item>
+    ///   <item>"Files (61 → 5 selected)"</item>
+    ///   <item>"Files (61 → 11 filtered → 5 selected)"</item>
+    ///   <item>"Files (61 incl. incremental → 11 filtered → 5 selected)"</item>
+    /// </list>
+    /// </summary>
+    private void UpdateTableHeader()
+    {
+        string total = _isIncrementalFileView
+            ? $"{FileTotalCount} incl. incremental"
+            : $"{FileTotalCount}";
+
+        bool hasFilter = IsFileFilterActive && FileFilteredCount != FileTotalCount;
+        int selectedCount = FileList.Count(f => f.IsCheckedForRestore);
+
+        if (!hasFilter && selectedCount == 0)
+        {
+            TableHeader = $"Files ({total})";
+            return;
+        }
+
+        var header = $"Files ({total}";
+        if (hasFilter)
+            header += $" → {FileFilteredCount} filtered";
+        if (selectedCount > 0)
+            header += $" → {selectedCount} selected";
+        header += ")";
+
+        TableHeader = header;
+    }
+
+    /// <summary>
+    /// Saves the checked-for-restore state of the current file list onto the
+    /// active backup-set tree item. Uses the full (unfiltered) list so that
+    /// checked files hidden by a filter are preserved.  Stores stable
+    /// <see cref="TapeFileInfo"/> references for O(1) lookup during restore.
+    /// </summary>
+    private void SaveCheckedFileState()
+    {
+        if (_selectedTreeItem?.ItemType != TreeItemType.BackupSet)
+            return;
+
+        var source = _unfilteredFileList ?? FileList;
+        if (source.Count == 0)
+        {
+            _selectedTreeItem.SavedCheckedFiles = null;
+            return;
+        }
+
+        HashSet<TapeFileInfo>? checkedFiles = null;
+        foreach (var item in source)
+        {
+            if (item.IsCheckedForRestore)
+                (checkedFiles ??= []).Add(item.FileInfo);
+        }
+        _selectedTreeItem.SavedCheckedFiles = checkedFiles;
+    }
+
+    /// <summary>
+    /// Restores checked-for-restore state from the active tree item's
+    /// <see cref="TapeTreeItemViewModel.SavedCheckedFiles"/> onto the
+    /// current <see cref="FileList"/>.
+    /// </summary>
+    private void RestoreCheckedFileState()
+    {
+        if (_selectedTreeItem?.SavedCheckedFiles is not { Count: > 0 } saved)
+            return;
+
+        foreach (var item in FileList)
+        {
+            if (saved.Contains(item.FileInfo))
+                item.IsCheckedForRestore = true;
+        }
     }
 
     #endregion
@@ -427,6 +513,9 @@ public partial class MainViewModel : ViewModelBase
 
     public void OnTreeItemSelected(TapeTreeItemViewModel item)
     {
+        // Persist checked-for-restore state of the backup set we're leaving
+        SaveCheckedFileState();
+
         _selectedTreeItem = item;
 
         switch (item.ItemType)
@@ -1236,12 +1325,12 @@ public partial class MainViewModel : ViewModelBase
                     }
                 }
                 files = allFiles;
-                TableHeader = $"Files ({allFiles.Count} total, including incremental)";
+                _isIncrementalFileView = true;
             }
             else
             {
                 files = setTOC;
-                TableHeader = $"Files ({setTOC.Count})";
+                _isIncrementalFileView = false;
             }
 
             var newFileList = new List<FileListItem>();
@@ -1252,6 +1341,12 @@ public partial class MainViewModel : ViewModelBase
             FileList = newFileList;
             FileTotalCount = newFileList.Count;
             FileFilteredCount = newFileList.Count;
+
+            // Restore checked-for-restore state (before filter re-applies;
+            //  filtered list reuses the same objects so checked state survives)
+            RestoreCheckedFileState();
+            UpdateTableHeader();
+            OnPropertyChanged(nameof(AreAllFilesChecked));
 
             StatusMessage = $"Set #{setIndex} | #{altIndex}: {FileList.Count} file(s)";
 
