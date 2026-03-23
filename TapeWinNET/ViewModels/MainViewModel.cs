@@ -1316,7 +1316,7 @@ public partial class MainViewModel : ViewModelBase
             {
                 // For incremental sets, include files from dependent sets
                 var allFiles = new List<TapeFileInfo>();
-                var filesBySets = toc.SelectFiles(incremental: true, filePatterns: null);
+                var filesBySets = toc.SelectFiles(incremental: true, filter: null);
                 foreach (var setFiles in filesBySets)
                 {
                     if (setFiles != null)

@@ -18,6 +18,7 @@ using Microsoft.Extensions.Logging.Abstractions; // for NullLoggerFactory
 #endif
 
 using System.Collections.ObjectModel;
+using TapeConNET;
 using System.Reflection;
 using System.Diagnostics.CodeAnalysis;
 
@@ -1451,6 +1452,8 @@ void UniversalRestore(List<string> values, TapeFileRestoreBaseAgent agent, OnFil
         // Check if any file matching patterns have been specified
         //  Notice that if values[0] is a number, it's interpreted as a set index, not a file pattern
         List<string> patterns = (values.Count > 0 && int.TryParse(values[0], out _)) ? values[1..] : values;
+        // Build an ITapeFileFilter from the patterns (null = all files)
+        ITapeFileFilter? fileFilter = (patterns.Count > 0) ? new FclTapeFileFilter(patterns) : null;
         // Output patterns if any
         if (patterns.Count > 0)
         {
@@ -1463,15 +1466,8 @@ void UniversalRestore(List<string> values, TapeFileRestoreBaseAgent agent, OnFil
             Console.WriteLine($"iii {restoringName} all files in the current set");
 
         bool result = incremental ?
-        (
-            (patterns.Count > 0) ?
-                agent.RestoreFilesFromCurrentSetInc(patterns, ignoreFailures: true, fileProcessor) :
-                agent.RestoreAllFilesFromCurrentSetInc(ignoreFailures: true, fileProcessor)
-        ) : (
-            (patterns.Count > 0) ?
-                agent.RestoreFilesFromCurrentSet(patterns, ignoreFailures: true, fileProcessor) :
-                agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, fileProcessor)
-        );
+            agent.RestoreFilesFromCurrentSetInc(fileFilter, ignoreFailures: true, fileProcessor) :
+            agent.RestoreFilesFromCurrentSet(fileFilter, ignoreFailures: true, fileProcessor);
 
         stopwatch.Stop();
 
@@ -1654,7 +1650,8 @@ void HandleList(List<string> values)
             int setFiles = 0;
             long setSize = 0;
 
-            var tfisBySets = toc.SelectFiles(incremental, (patterns.Count > 0) ? patterns : null); // null means all files in the set
+            ITapeFileFilter? listFilter = (patterns.Count > 0) ? new FclTapeFileFilter(patterns) : null;
+            var tfisBySets = toc.SelectFiles(incremental, listFilter); // null means all files in the set
             // notice even non-incremental sets can be continued from the previous set on the previous volume
 
             for (int i = 0; i < tfisBySets.Length; i++)

@@ -50,6 +50,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\FclNET\FclNET.csproj" />
     <ProjectReference Include="..\TapeLibNET\TapeLibNET.csproj" />
   </ItemGroup>
 

@@ -414,20 +414,6 @@ namespace TapeLibNET
         public static bool PatternsHaveWildcards(List<string> patterns) =>
             patterns.Exists(p => p.Contains('*') || p.Contains('?') || p.EndsWith('\\'));
 
-        // Returns a list of TapeFileInfo objects that match the given file patterns
-        //  Null patterns means select all files
-        //  Empty patterns means select no files
-        //  If returns null, it means all files from the set
-        public List<TapeFileInfo>? SelectFiles(List<string>? filePatterns = null)
-        {
-            if (filePatterns == null)
-                return null; // null means all files in set
-            if (filePatterns.Count == 0)
-                return []; // empty list means no files
-
-            return SelectFiles(new WildcardFileFilter(filePatterns));
-        }
-
         /// <summary>
         /// Returns a list of <see cref="TapeFileInfo"/> objects that pass the given filter.
         /// A <c>null</c> filter means select all files.
@@ -446,20 +432,6 @@ namespace TapeLibNET
             }
 
             return (filesSelected.Count == Count) ? null /* null means all files in set */ : filesSelected;
-        }
-
-        // Returns a linked list of TapeFileInfo objects that match the given file patterns
-        //  Null patterns means select all files
-        //  Empty patterns means select no files
-        //  Doesn't return "null means all files" shortcut since the list might need editing
-        internal LinkedList<TapeFileInfo> SelectFilesAsLinkedList(List<string>? filePatterns = null)
-        {
-            if (filePatterns == null)
-                return new(m_tapeFileInfos); // list all files -- don't use "null means all files" shortcut
-            if (filePatterns.Count == 0)
-                return []; // empty list means no files
-
-            return SelectFilesAsLinkedList(new WildcardFileFilter(filePatterns));
         }
 
         /// <summary>
@@ -857,20 +829,6 @@ namespace TapeLibNET
                     return true;
             } // for i
             return false;
-        }
-
-        // Considering incremental sets, select files from the current and previous set(s) that match the given patterns
-        //  null patterns means consider all files
-        //  Return an array of lists of files from the latest set, 2nd latest, 3rd latest, etc.
-        //  A null list means all files from the corresponding set
-        public List<TapeFileInfo>?[] SelectFiles(bool incremental, List<string>? filePatterns = null)
-        {
-            if (filePatterns == null)
-                return SelectFiles(incremental, (ITapeFileFilter?)null);
-            if (filePatterns.Count == 0)
-                return [[]]; // empty patterns means no files
-
-            return SelectFiles(incremental, new WildcardFileFilter(filePatterns));
         }
 
         /// <summary>

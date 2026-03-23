@@ -13,6 +13,9 @@ public partial class RestoreWindow : Window
     {
         InitializeComponent();
         DataContext = viewModel;
+
+        // Wire filter pane callback to the ViewModel
+        FileFilterPaneControl.FilterRequested = viewModel.OnFilterApplied;
     }
 
     private void ItemCheckBox_Changed(object sender, RoutedEventArgs e)

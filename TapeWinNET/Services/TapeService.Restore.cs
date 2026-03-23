@@ -32,7 +32,7 @@ public partial class TapeService
     /// <param name="mode">The restore flavor to execute.</param>
     /// <param name="setIndexes">Backup set indexes to restore from (1-based). Multiple sets are combined into a single pass.</param>
     /// <param name="incremental">Whether to traverse the incremental chain for each set.</param>
-    /// <param name="filePatterns">Optional file filter patterns (null = all files).</param>
+    /// <param name="fileFilter">Optional file filter (null = all files).</param>
     /// <param name="targetDirectory">Target directory for Restore mode (ignored for Validate/Verify).</param>
     /// <param name="recurseSubdirectories">Whether to recreate subdirectory structure (Restore only).</param>
     /// <param name="handleExisting">How to handle existing files (Restore only).</param>
@@ -50,7 +50,7 @@ public partial class TapeService
         RestoreMode mode,
         List<int> setIndexes,
         bool incremental,
-        List<string>? filePatterns,
+        ITapeFileFilter? fileFilter,
         string? targetDirectory,
         bool recurseSubdirectories,
         TapeHowToHandleExisting handleExisting,
@@ -142,8 +142,8 @@ public partial class TapeService
                     }
                     if (mode == RestoreMode.Restore && !string.IsNullOrEmpty(targetDirectory))
                         logInfoSub($"Target directory: {targetDirectory}");
-                    if (filePatterns != null && filePatterns.Count > 0)
-                        logInfoSub($"File patterns ({filePatterns.Count:N0}): {JoinTruncated(filePatterns, ", ", 256)}");
+                    if (fileFilter != null)
+                        logInfoSub($"File filter active");
 
                     // Create progress handler
                     var progressHandler = new GuiRestoreProgressHandler(
@@ -158,7 +158,7 @@ public partial class TapeService
                     Status($"{modeName} files...");
 
                     bool result = agent.RestoreFilesFromSets(
-                        setIndexes, incremental, filePatterns,
+                        setIndexes, incremental, fileFilter,
                         ignoreFailures: true, progressHandler);
 
                     // The agent catches TapeAbortRequestedException internally and returns false,

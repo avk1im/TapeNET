@@ -533,29 +533,29 @@ namespace TapeLibNET
 
 
         // Considers multi-volume case
-        public bool RestoreFilesFromCurrentSet(List<string> filePatterns, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+        public bool RestoreFilesFromCurrentSet(ITapeFileFilter? fileFilter, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting restoring files from current set #{Set}", TOC.CurrentSetIndex);
 
             _stats.Reset();
-            return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filePatterns), ignoreFailures, fileNotify);
-        } // RestoreFilesFromCurrentSet(List<string>)
+            return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, fileFilter), ignoreFailures, fileNotify);
+        } // RestoreFilesFromCurrentSet(ITapeFileFilter?)
 
         // Considers incremental backup sets, starting from the current set. Can resume from / continue onto another volume.
-        public bool RestoreFilesFromCurrentSetInc(List<string>? filePatterns, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+        public bool RestoreFilesFromCurrentSetInc(ITapeFileFilter? fileFilter, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting incrementally restoring files from current set #{Set}", TOC.CurrentSetIndex);
 
             _stats.Reset();
-            return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, filePatterns), ignoreFailures, fileNotify);
-        } // RestoreFilesFromCurrentSetInc(List<string>)
+            return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, fileFilter), ignoreFailures, fileNotify);
+        } // RestoreFilesFromCurrentSetInc(ITapeFileFilter?)
 
         public bool RestoreAllFilesFromCurrentSet(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting restoring all files from current set #{Set}", TOC.CurrentSetIndex);
 
             _stats.Reset();
-            return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filePatterns: null), ignoreFailures, fileNotify);
+            return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filter: null), ignoreFailures, fileNotify);
         } // RestoreAllFilesFromCurrentSet()
 
         // Considers incremental backup sets, starting from the current set
@@ -564,7 +564,7 @@ namespace TapeLibNET
             m_logger.LogTrace("Starting incrementally restoring all files from current set #{Set}", TOC.CurrentSetIndex);
 
             _stats.Reset();
-            return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, filePatterns: null), ignoreFailures, fileNotify);
+            return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, filter: null), ignoreFailures, fileNotify);
         } // RestoreAllFilesFromCurrentSetInc()
 
 
@@ -575,13 +575,13 @@ namespace TapeLibNET
         /// </summary>
         /// <param name="setIndexes">List of set indexes to restore (1-based standard indexes).</param>
         /// <param name="incremental">Whether to traverse each set's incremental chain.</param>
-        /// <param name="filePatterns">Optional file filter patterns (null = all files).</param>
+        /// <param name="fileFilter">Optional file filter (null = all files).</param>
         /// <param name="ignoreFailures">If true, continue past individual file failures.</param>
         /// <param name="fileNotify">Optional progress/error notification callback.</param>
         public bool RestoreFilesFromSets(
             List<int> setIndexes,
             bool incremental,
-            List<string>? filePatterns = null,
+            ITapeFileFilter? fileFilter = null,
             bool ignoreFailures = true,
             ITapeFileNotifiable? fileNotify = null)
         {
@@ -603,13 +603,13 @@ namespace TapeLibNET
             // Select files for the newest set first
             int newestIdx = stdIndexes[0];
             TOC.CurrentSetIndex = newestIdx;
-            var combined = TOC.SelectFiles(incremental, filePatterns);
+            var combined = TOC.SelectFiles(incremental, fileFilter);
 
             // Combine with selections from remaining (older) sets
             for (int i = 1; i < stdIndexes.Count; i++)
             {
                 TOC.CurrentSetIndex = stdIndexes[i];
-                var selected = TOC.SelectFiles(incremental, filePatterns);
+                var selected = TOC.SelectFiles(incremental, fileFilter);
                 combined = TOC.CombineSelectedFiles(combined, newestIdx, selected, stdIndexes[i]);
             }
 

@@ -5,14 +5,14 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
         xmlns:converters="clr-namespace:TapeWinNET.Converters"
+        xmlns:controls="clr-namespace:TapeWinNET.Controls"
         d:DataContext="{d:DesignInstance Type=vm:RestoreViewModel}"
         mc:Ignorable="d"
         Title="{Binding DialogTitle}"
-        Width="660"
-        SizeToContent="Height"
-        MaxHeight="720"
+        Width="660" Height="600"
+        MinWidth="500" MinHeight="420"
         WindowStartupLocation="CenterOwner"
-        ResizeMode="NoResize"
+        ResizeMode="CanResizeWithGrip"
         ShowInTaskbar="False">
 
     <Window.Resources>
@@ -22,7 +22,7 @@
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*" MinHeight="120"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -45,8 +45,7 @@
         <GroupBox Grid.Row="1" Header="{Binding ItemsGroupHeader}" Margin="0,0,0,12">
             <Grid Margin="8">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" MaxHeight="280"/>
-                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
@@ -64,8 +63,9 @@
                             <GridViewColumn Width="28">
                                 <GridViewColumn.HeaderTemplate>
                                     <DataTemplate>
-                                        <CheckBox IsChecked="{Binding DataContext.AreAllChecked,
+                                        <CheckBox IsChecked="{Binding DataContext.AreAllSetsChecked,
                                                               RelativeSource={RelativeSource AncestorType=Window}}"
+                                                  IsThreeState="True"
                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
                                                   ToolTip="Select / deselect all"/>
                                     </DataTemplate>
@@ -89,7 +89,7 @@
                                             DisplayMemberBinding="{Binding IndexDisplay}"/>
                             <GridViewColumn Header="Description" Width="170"
                                             DisplayMemberBinding="{Binding Description}"/>
-                            <GridViewColumn Header="Files" Width="55"
+                            <GridViewColumn Header="Files" Width="90"
                                             DisplayMemberBinding="{Binding FileCountFormatted}"/>
                             <GridViewColumn Header="Inc?" Width="40"
                                             DisplayMemberBinding="{Binding IncrementalDisplay}"/>
@@ -107,12 +107,13 @@
                           Visibility="{Binding IsFilesListVisible, Converter={StaticResource BoolToVis}}">
                     <ListView.View>
                         <GridView>
-                            <!-- Checkbox column -->
+                            <!-- Checkbox column (tri-state for file mode) -->
                             <GridViewColumn Width="28">
                                 <GridViewColumn.HeaderTemplate>
                                     <DataTemplate>
-                                        <CheckBox IsChecked="{Binding DataContext.AreAllChecked,
+                                        <CheckBox IsChecked="{Binding DataContext.AreAllFilesChecked,
                                                               RelativeSource={RelativeSource AncestorType=Window}}"
+                                                  IsThreeState="True"
                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
                                                   ToolTip="Select / deselect all files"/>
                                     </DataTemplate>
@@ -136,27 +137,12 @@
                     </ListView.View>
                 </ListView>
 
-                <!-- File Patterns (set mode only) -->
-                <Grid Grid.Row="1" Margin="0,8,0,0"
-                      Visibility="{Binding ShowFilePatterns, Converter={StaticResource BoolToVis}}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="File patterns (optional):"
-                               VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <TextBox Grid.Column="1"
-                             Text="{Binding FilePatterns, UpdateSourceTrigger=PropertyChanged}"
-                             VerticalContentAlignment="Center"/>
-                </Grid>
-
-                <!-- Help text (set mode only) -->
-                <TextBlock Grid.Row="2"
-                           Text="Separate patterns with ;  Use * and ?  Example: C:\Docs\*.doc?; D:\Projects\MyApp\"
-                           FontSize="10" Foreground="DarkGray"
-                           HorizontalAlignment="Right"
-                           Margin="0,2,0,0"
-                           Visibility="{Binding ShowFilePatterns, Converter={StaticResource BoolToVis}}"/>
+                <!-- File Filter Pane (both modes) -->
+                <controls:FileFilterPane Grid.Row="1"
+                                         x:Name="FileFilterPaneControl"
+                                         TotalCount="{Binding FileTotalCount}"
+                                         FilteredCount="{Binding FileFilteredCount}"
+                                         IsFilterActive="{Binding IsFilterActive}"/>
             </Grid>
         </GroupBox>
 

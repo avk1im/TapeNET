@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Windows.Media.Imaging;
 using Windows.Win32.System.SystemServices; // for Helpers
 
@@ -71,7 +71,75 @@ public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bo
 
     public int FileCount => _setTOC.Count;
 
-    public string FileCountFormatted => _setTOC.Count.ToString("N0");
+    // --- Async filter infrastructure ---
+    private ITapeFileFilter? _fileFilter;
+    private int? _filteredFileCount;
+    private CancellationTokenSource? _filterCts;
+
+    /// <summary>
+    /// Optional file filter. When set, <see cref="FilteredFileCount"/> is computed
+    ///  asynchronously via <see cref="TapeSetTOC.SelectFiles(ITapeFileFilter?)"/>.
+    /// Multiple items compute in parallel. Setting a new filter cancels any
+    ///  in-progress computation. Setting to null clears the filtered count.
+    /// </summary>
+    public ITapeFileFilter? FileFilter
+    {
+        get => _fileFilter;
+        set
+        {
+            // Cancel any in-progress computation
+            _filterCts?.Cancel();
+            _filterCts?.Dispose();
+            _fileFilter = value;
+
+            if (value is null)
+            {
+                _filterCts = null;
+                _filteredFileCount = null;
+                FilterTask = Task.CompletedTask;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FilteredFileCount)));
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FileCountFormatted)));
+            }
+            else
+            {
+                var cts = new CancellationTokenSource();
+                _filterCts = cts;
+                FilterTask = ComputeFilteredCountAsync(value, cts.Token);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Number of files after filtering, or null if no filter is active (or still computing).
+    /// Computed automatically when <see cref="FileFilter"/> is set.
+    /// </summary>
+    public int? FilteredFileCount => _filteredFileCount;
+
+    /// <summary>
+    /// Awaitable task for the current filter computation.
+    /// Callers can <c>await Task.WhenAll(...)</c> across multiple items for parallel filtering.
+    /// </summary>
+    public Task FilterTask { get; private set; } = Task.CompletedTask;
+
+    private async Task ComputeFilteredCountAsync(ITapeFileFilter filter, CancellationToken ct)
+    {
+        int count = await Task.Run(
+            () => _setTOC.SelectFiles(filter)?.Count ?? _setTOC.Count, ct);
+
+        if (ct.IsCancellationRequested)
+            return;
+
+        _filteredFileCount = count;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FilteredFileCount)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FileCountFormatted)));
+    }
+
+    /// <summary>
+    /// Display format: plain count or "total → filtered" when a filter narrows results.
+    /// </summary>
+    public string FileCountFormatted => _filteredFileCount is int filtered && filtered != _setTOC.Count
+        ? $"{_setTOC.Count:N0} \u2192 {filtered:N0}" /* right arrow */
+        : _setTOC.Count.ToString("N0");
 
     public DateTime CreatedOn => _setTOC.CreationTime;
 

@@ -386,7 +386,7 @@ public partial class MainViewModel
         var targetDirectory = request.TargetDirectory;
         var recurseSubdirectories = request.RecurseSubdirectories;
         var handleExisting = request.HandleExisting;
-        var filePatterns = request.FilePatterns;
+        var fileFilter = request.FileFilter;
 
         string modeName = mode switch
         {
@@ -415,7 +415,7 @@ public partial class MainViewModel
                     mode,
                     setIndexes,
                     incremental,
-                    filePatterns,
+                    fileFilter,
                     targetDirectory,
                     recurseSubdirectories: recurseSubdirectories,
                     handleExisting,

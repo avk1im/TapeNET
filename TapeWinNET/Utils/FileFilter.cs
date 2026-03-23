@@ -10,6 +10,10 @@ namespace TapeWinNET.Utils;
 /// </summary>
 public sealed class FclTapeFileFilter(FclEvaluator evaluator) : ITapeFileFilter
 {
+    public FclTapeFileFilter(List<string> filePatterns)
+        : this(FclPipeline.CreateWildcardEvaluator(filePatterns))
+    { }
+
     /// <inheritdoc />
     public bool Matches(in TapeFileDescriptor fileDescr)
     {
@@ -68,6 +72,7 @@ public static class FileFilter
         });
     }
 
+    /* // not used anymore
     /// <summary>
     /// Filters a list of items asynchronously on a background thread using
     /// DOS-style wildcard patterns. Uses <see cref="FclPipeline.CreateWildcardEvaluator(string)"/>
@@ -92,4 +97,5 @@ public static class FileFilter
             }
         );
     }
+    */
 }
