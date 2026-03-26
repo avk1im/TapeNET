@@ -241,7 +241,7 @@ public partial class FileFilterPane : UserControl
             if (string.IsNullOrEmpty(text))
                 return;
 
-            var patterns = FileFilter.ParsePatterns(text);
+            var patterns = FclTapeFileFilter.ParsePatterns(text);
             if (patterns.Count == 0)
                 return;
 

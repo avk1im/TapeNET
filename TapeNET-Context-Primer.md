@@ -10,12 +10,12 @@ The **TapeNET** solution (`D:\Documents.DEV\Projects\TapeNET`) targets **.NET 8 
 | `FclNET` | Class library | FCL (File Conditions Language) — DSL for file filtering by name, path, size, date, attributes |
 | `FclAiNET` | Class library | AI-assisted natural language → FCL translation using `Microsoft.Extensions.AI` |
 | `TapeConNET` | Console app | CLI tape backup utility (`tapecon`) — flag-based command-line interface |
-| `TapeWinNET` | WPF app | GUI tape backup manager — MVVM, tree-based navigation, log pane |
+| `TapeWinNET` | WPF app | GUI tape backup manager — MVVM, tree-based navigation, log pane, FCL-based file filtering |
 | `FclAiNET.Test` | Console app | Interactive NL → FCL REPL for testing AI translation |
 
-**Test projects:** `FclNET.Tests` (xUnit, 390+ tests covering lexer, parser, validator, evaluator, formatter, pipeline).
+**Test projects:** `FclNET.Tests` (xUnit, 469+ tests covering lexer, parser, validator, evaluator, formatter, pipeline).
 
-**Dependencies:** The apps depend on the libraries. `FclNET` has no dependencies on other solution projects. `FclAiNET` depends on `FclNET`. The tape projects (`TapeLibNET`, `TapeConNET`, `TapeWinNET`) are independent of the FCL projects (so far; `TapeWinNET` will integrate FclNET for advanced file filtering).
+**Dependencies:** The apps depend on the libraries. `FclNET` has no dependencies on other solution projects. `FclAiNET` depends on `FclNET`. `TapeWinNET` and `TapeConNET` depend on `FclNET` for file filtering via the `FclTapeFileFilter` adapter (see below). `TapeLibNET` remains independent of the FCL projects.
 
 Git repo: `https://github.com/avk1im/TapeNET`, branch `dev`.
 
@@ -204,6 +204,42 @@ Callers never track their own counters — they just read the snapshot. `StatsUn
 
 ---
 
+## File Filtering Integration (FclNET ↔ TapeLibNET)
+
+### ITapeFileFilter pipeline
+
+`TapeLibNET` defines a minimal `ITapeFileFilter` interface (`bool Matches(in TapeFileDescriptor)`) used throughout the restore/validate/verify pipeline. Both `TapeWinNET` and `TapeConNET` provide an `FclTapeFileFilter` adapter that bridges `TapeFileDescriptor` → `FclFileInfo` → `FclEvaluator.Evaluate()`, keeping the library agnostic of FCL internals.
+
+The filter flows through the pipeline as:
+
+```
+FclEvaluator → FclTapeFileFilter : ITapeFileFilter → TapeRestoreAgent → TapeSetTOC.SelectFiles(filter)
+```
+
+`TapeSetTOC.SelectFiles(ITapeFileFilter?)` returns `List<TapeFileInfo>?` where `null` means "all files match" (null-means-all convention).
+
+### FileFilterPane (WPF reusable control)
+
+`Controls/FileFilterPane` is a reusable `UserControl` embedded in both the MainWindow files pane and the RestoreWindow. It supports two modes:
+
+- **Pattern mode** — DOS-style wildcard filtering (`*`, `?`) with semicolon-separated patterns, entered directly in the text box.
+- **Advanced mode** — Full FCL filter built via `FclFilterWindow`, a modal dialog with a visual DNF condition editor (left pane) and an FCL text editor (right pane) with bidirectional sync. The filter pane shows a read-only summary; editing requires reopening the dialog.
+
+When applied, the pane builds an `FclEvaluator` and passes it to the host via a `FilterRequested` callback. The host (MainViewModel or RestoreViewModel) stores an opaque restore delegate on the navigation item so the filter survives navigation.
+
+### BackupSetListItem async filter infrastructure
+
+`BackupSetListItem` exposes an `ITapeFileFilter? FileFilter` property that triggers parallel, cancellable filtered-count computation via `Task.Run`. Key members:
+
+- `FileFilter` — setter cancels any in-progress `CancellationTokenSource`, starts new `Task.Run` computation (or clears on `null`).
+- `FilteredFileCount` — read-only cached `int?`; `null` while computing or when no filter is active.
+- `FilterTask` — awaitable `Task` for the current computation; callers use `Task.WhenAll(...)` across items for parallel filtering.
+- `FileCountFormatted` — displays `"61 \u2192 49"` when filtered, plain `"61"` otherwise.
+
+This design is reused across the RestoreWindow (set-mode aggregate stats) and the MainWindow (backup set table).
+
+---
+
 ## TapeWinNET — WPF App Architecture
 
 ### MVVM pattern
@@ -214,14 +250,15 @@ Callers never track their own counters — they just read the snapshot. `StatsUn
   - `MainViewModel.Backup.cs` — backup commands, progress properties, backup dialog flow
   - `MainViewModel.Restore.cs` — restore/validate/verify commands, progress properties, restore dialog flow
 - **Commands**: `AsyncRelayCommand` (async), `RelayCommand` (sync). All check `IsBusy` for canExecute.
-- **Dialog ViewModels**: `NewBackupSetViewModel`, `RestoreViewModel`, `OpenVirtualDriveViewModel` — each with OK/Cancel callbacks.
+- **Dialog ViewModels**: `NewBackupSetViewModel`, `RestoreViewModel`, `OpenVirtualDriveViewModel`, `FclFilterWindowVM` — each with OK/Cancel callbacks.
+- **`RestoreViewModel`** supports two modes: set-based (backup sets with tri-state select-all, per-set filtered counts, aggregate stats) and file-based (individual files with tri-state select-all, FCL filtering). Both modes embed a `FileFilterPane` and use async `ApplyFilterToBackupSetsAsync` / `FileFilter.FilterAsync` for parallel computation.
 
 ### TapeService (service layer)
 
 `TapeService` is a partial class split across:
 - `TapeService.cs` — drive management, media loading, TOC, events (`LogMessageReceived`, `StatusChanged`)
 - `TapeService.Backup.cs` — `ExecuteBackupAsync(...)` with `GuiBackupProgressHandler`
-- `TapeService.Restore.cs` — `ExecuteRestoreAsync(...)` with `GuiRestoreProgressHandler`, `RestoreMode` enum
+- `TapeService.Restore.cs` — `ExecuteRestoreAsync(...)` with `GuiRestoreProgressHandler`, `RestoreMode` enum, `ITapeFileFilter?` support
 
 Both GUI progress handlers implement `ITapeFileNotifiable` and follow the same pattern:
 1. No own counting — all stats come from the library snapshot via `Sync(in TapeFileStatistics)`
@@ -256,6 +293,7 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 - **Content pane**: Switches between `DriveInfo`, `MediaInfo`, `BackupSetInfo` via `ContentPaneType` enum.
 - **Progress**: Backup/Restore each have their own progress panel with percent bar, text, current-file display, abort button.
 - **Set indexes**: Dual display format `#{standard} | {alt}` where standard counts up from oldest (1-based) and alt counts down from newest (0, -1, -2...).
+- **File filtering**: `FileFilterPane` with dynamic stats in the GroupBox header (e.g. `"Files (1,234 \u2192 567 filtered \u2192 42 selected)"`), filter state persistence across tree navigation, tri-state select-all checkboxes for both files and backup sets.
 
 ---
 
@@ -281,21 +319,26 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 - ✅ Structured `LogEntry`-based logging with `WarningLevel` icons, colors, sub-entry indentation
 - ✅ Virtual drive support with IO speed simulation
 - ✅ New Backup Set dialog, Restore dialog, Open Virtual Drive dialog
-- ✅ FCL language: lexer, parser, validator, evaluator, formatter, pipeline API (390+ tests)
+- ✅ FCL language: lexer, parser, validator, evaluator, formatter, pipeline API (469+ tests)
 - ✅ FCL AI translator: natural language → FCL via LLM, with tool-calling and direct modes, provider auto-discovery
+- ✅ Advanced file filtering integration: `FclTapeFileFilter` adapter bridging FclNET → `ITapeFileFilter` for the restore/validate/verify pipeline
+- ✅ `FileFilterPane` reusable control: pattern mode (wildcards) + advanced mode (`FclFilterWindow` with visual DNF editor and FCL text editor)
+- ✅ MainWindow file filtering: filter-as-you-type for backup set files with dynamic stats header, filter state persistence across navigation
+- ✅ RestoreWindow file filtering: both set-mode (per-set async filtered counts, aggregate stats) and file-mode (FCL-filtered file list) with tri-state select-all
 
 ## What's Next (Planned)
 
 - `TapeWinNET`: Additional UI polish and workflow refinements
 - `TapeLibNET`: Polishing, validation, & hardening of the core functionality
 - `TapeLibNET`: Proper commenting of the code, esp. public API and complex logic areas
-- `TapeConNET`: Service updates to keep in sync with library changes
+- `TapeConNET`: Service updates to keep in sync with library changes. Consider switching to classes from the top-level program structure.
 
 - `TapeWinNET`: UI enhancement features
 1. Log export / clear — The log pane caps at 1000 entries but there's no way to save or clear it. A "Save Log..." and "Clear Log" in the context menu or View menu would be useful for troubleshooting long operations.
-2. [WIP] File filter/search in the backup set table — When browsing a set with thousands of files, a quick filter text box above the file ListView (filter-as-you-type by filename pattern) would be very handy. Low-cost given fileList is already a List<FileListItem> that gets swapped wholesale.
-3. [DONE] Window state persistence — Remember window size, position, splitter proportions, and the last-opened drive number between sessions. Could live alongside the MRU file in %LocalAppData%\TapeWinNET\. JSON serializer based implementation.
-4. Operation-complete notification — A FlashWindowEx or system notification when a long backup/restore finishes while the window is in the background. Tape operations can run for hours; easy to miss completion.
-5. Delete most-recent backup set — Removing the newest set from the TOC (the library likely supports this via TapeTOC manipulation + TOC rewrite). Useful when the last backup was accidental or corrupt.
-6. Capacity usage bar — A small visual bar in the Media properties or status bar showing used/remaining as a colored segment bar, broken down by set. Quick situational awareness without reading numbers.
+2. [DONE] File filter/search in the backup set table — `FileFilterPane` with pattern mode (wildcards) and advanced mode (full FCL via `FclFilterWindow`). Dynamic stats in the GroupBox header, filter state persistence across tree navigation.
+3. Advanced file filtering for Backup — Integrate the `FileFilterPane` into the Backup workflow (New Backup Set dialog or pre-backup file selection) to allow FCL-based filtering of which files to include in a backup operation.
+4. [DONE] Window state persistence — Remember window size, position, splitter proportions, and the last-opened drive number between sessions. JSON serializer based implementation in `%LocalAppData%\TapeWinNET\`.
+5. Operation-complete notification — A FlashWindowEx or system notification when a long backup/restore finishes while the window is in the background. Tape operations can run for hours; easy to miss completion.
+6. Delete most-recent backup set — Removing the newest set from the TOC (the library likely supports this via TapeTOC manipulation + TOC rewrite). Useful when the last backup was accidental or corrupt.
+7. Capacity usage bar — A small visual bar in the Media properties or status bar showing used/remaining as a colored segment bar, broken down by set. Quick situational awareness without reading numbers.
 

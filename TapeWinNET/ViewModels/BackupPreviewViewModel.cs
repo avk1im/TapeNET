@@ -14,8 +14,8 @@ namespace TapeWinNET.ViewModels;
 /// </summary>
 public class BackupPreviewFileItem : INotifyPropertyChanged
 {
-    private static BitmapSource? _fileIcon;
-    private static bool _iconLoaded;
+    private static readonly BitmapSource? _fileIcon;
+    //private static bool _iconLoaded;
 
     private bool _isSelected = true;
 
@@ -27,7 +27,7 @@ public class BackupPreviewFileItem : INotifyPropertyChanged
             _fileIcon?.Freeze();
         }
         catch { }
-        _iconLoaded = true;
+        //_iconLoaded = true;
     }
 
     public BackupPreviewFileItem(string fullPath)
@@ -59,7 +59,7 @@ public class BackupPreviewFileItem : INotifyPropertyChanged
         }
     }
 
-    public BitmapSource? Icon => _fileIcon;
+    public static BitmapSource? Icon => _fileIcon;
     public string FullPath { get; }
     public string FileName { get; }
     public string Directory { get; }

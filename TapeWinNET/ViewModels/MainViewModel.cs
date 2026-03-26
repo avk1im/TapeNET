@@ -58,11 +58,9 @@ public partial class MainViewModel : ViewModelBase
     private ContentPaneType _contentType = ContentPaneType.DriveInfo;
 
     // File filter fields
-    private List<FileListItem>? _unfilteredFileList;
-    private bool _isFileFilterActive;
+    private FilteredFileList? _filteredFiles;
+    private Dictionary<TapeFileInfo, FileListItem>? _fileListItemsByFile;
     private bool _isIncrementalFileView;
-    private int _fileFilteredCount;
-    private int _fileTotalCount;
 
     // Backup fields are in MainViewModel.Backup.cs
 
@@ -323,25 +321,13 @@ public partial class MainViewModel : ViewModelBase
     #region File Filter Properties
 
     /// <summary>Whether a file filter is currently applied.</summary>
-    public bool IsFileFilterActive
-    {
-        get => _isFileFilterActive;
-        set => SetProperty(ref _isFileFilterActive, value);
-    }
+    public bool IsFileFilterActive => _filteredFiles?.IsFiltered ?? false;
 
     /// <summary>Number of files currently displayed (after filtering).</summary>
-    public int FileFilteredCount
-    {
-        get => _fileFilteredCount;
-        set => SetProperty(ref _fileFilteredCount, value);
-    }
+    public int FileFilteredCount => _filteredFiles?.Count ?? FileList.Count;
 
     /// <summary>Total number of files before filtering.</summary>
-    public int FileTotalCount
-    {
-        get => _fileTotalCount;
-        set => SetProperty(ref _fileTotalCount, value);
-    }
+    public int FileTotalCount => _filteredFiles?.SourceCount ?? FileList.Count;
 
     /// <summary>
     /// Called by the View when the FileFilterPane requests a filter operation.
@@ -352,41 +338,17 @@ public partial class MainViewModel : ViewModelBase
     /// Null when the filter is being disabled.</param>
     public async Task OnFileFilterApplied(FclEvaluator? evaluator, Func<Task>? reapplyAction)
     {
-        if (evaluator is null)
-        {
-            // Disable filter — restore original list
-            if (_unfilteredFileList != null)
-            {
-                FileList = _unfilteredFileList;
-                _unfilteredFileList = null;
-            }
-            IsFileFilterActive = false;
-            FileFilteredCount = FileList.Count;
-            FileTotalCount = FileList.Count;
-            UpdateTableHeader();
-            OnPropertyChanged(nameof(AreAllFilesChecked));
-
-            // Clear saved state so navigating away and back won't re-apply
-            if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet)
-                _selectedTreeItem.SavedFilterState = null;
+        if (_filteredFiles is null)
             return;
-        }
 
-        // Cache the original list if not already cached
-        _unfilteredFileList ??= FileList;
+        // Set the filter (null disables, non-null starts async computation)
+        _filteredFiles.Filter = evaluator is not null ? new FclTapeFileFilter(evaluator) : null;
+        await _filteredFiles.FilterTask;
 
-        var source = _unfilteredFileList;
-        var filtered = await Utils.FileFilter.FilterAsync(
-            source, evaluator, item => item.FileInfo.FileDescr);
+        RebuildFileListFromFilteredFiles();
+        NotifyFilterPropertiesChanged();
 
-        FileList = filtered;
-        IsFileFilterActive = true;
-        FileFilteredCount = filtered.Count;
-        FileTotalCount = source.Count;
-        UpdateTableHeader();
-        OnPropertyChanged(nameof(AreAllFilesChecked));
-
-        // Save the restore delegate so the filter survives navigation
+        // Save/clear the restore delegate so the filter survives navigation
         if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet)
             _selectedTreeItem.SavedFilterState = reapplyAction;
     }
@@ -394,8 +356,8 @@ public partial class MainViewModel : ViewModelBase
     /// <summary>Resets the ViewModel-side filter state (used when loading new content).</summary>
     private void ClearFileFilter()
     {
-        _unfilteredFileList = null;
-        IsFileFilterActive = false;
+        _filteredFiles = null;
+        _fileListItemsByFile = null;
         _isIncrementalFileView = false;
     }
 
@@ -412,12 +374,14 @@ public partial class MainViewModel : ViewModelBase
     /// </summary>
     private void UpdateTableHeader()
     {
+        int totalCount = FileTotalCount;
         string total = _isIncrementalFileView
-            ? $"{FileTotalCount} incl. incremental"
-            : $"{FileTotalCount}";
+            ? $"{totalCount} incl. incremental"
+            : $"{totalCount}";
 
-        bool hasFilter = IsFileFilterActive && FileFilteredCount != FileTotalCount;
-        int selectedCount = FileList.Count(f => f.IsCheckedForRestore);
+        bool hasFilter = IsFileFilterActive;
+        int filteredCount = FileFilteredCount;
+        int selectedCount = _filteredFiles?.FilteredCheckedCount ?? 0;
 
         if (!hasFilter && selectedCount == 0)
         {
@@ -427,7 +391,7 @@ public partial class MainViewModel : ViewModelBase
 
         var header = $"Files ({total}";
         if (hasFilter)
-            header += $" → {FileFilteredCount} filtered";
+            header += $" → {filteredCount} filtered";
         if (selectedCount > 0)
             header += $" → {selectedCount} selected";
         header += ")";
@@ -436,47 +400,42 @@ public partial class MainViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Saves the checked-for-restore state of the current file list onto the
-    /// active backup-set tree item. Uses the full (unfiltered) list so that
-    /// checked files hidden by a filter are preserved.  Stores stable
-    /// <see cref="TapeFileInfo"/> references for O(1) lookup during restore.
+    /// Persists the <see cref="FilteredFileList"/> onto the current tree item
+    /// so that filter and checked state survive navigation.
     /// </summary>
-    private void SaveCheckedFileState()
+    private void SaveFilteredFilesState()
     {
-        if (_selectedTreeItem?.ItemType != TreeItemType.BackupSet)
-            return;
-
-        var source = _unfilteredFileList ?? FileList;
-        if (source.Count == 0)
-        {
-            _selectedTreeItem.SavedCheckedFiles = null;
-            return;
-        }
-
-        HashSet<TapeFileInfo>? checkedFiles = null;
-        foreach (var item in source)
-        {
-            if (item.IsCheckedForRestore)
-                (checkedFiles ??= []).Add(item.FileInfo);
-        }
-        _selectedTreeItem.SavedCheckedFiles = checkedFiles;
+        if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet && _filteredFiles is not null)
+            _selectedTreeItem.FilteredFiles = _filteredFiles;
     }
 
     /// <summary>
-    /// Restores checked-for-restore state from the active tree item's
-    /// <see cref="TapeTreeItemViewModel.SavedCheckedFiles"/> onto the
-    /// current <see cref="FileList"/>.
+    /// Rebuilds <see cref="FileList"/> from the current <see cref="_filteredFiles"/> view.
+    /// Reuses existing <see cref="FileListItem"/> instances via the lookup dictionary.
     /// </summary>
-    private void RestoreCheckedFileState()
+    private void RebuildFileListFromFilteredFiles()
     {
-        if (_selectedTreeItem?.SavedCheckedFiles is not { Count: > 0 } saved)
+        if (_filteredFiles is null || _fileListItemsByFile is null)
             return;
 
-        foreach (var item in FileList)
+        var newFileList = new List<FileListItem>(_filteredFiles.Count);
+        foreach (var fileInfo in _filteredFiles)
         {
-            if (saved.Contains(item.FileInfo))
-                item.IsCheckedForRestore = true;
+            if (_fileListItemsByFile.TryGetValue(fileInfo, out var item))
+                newFileList.Add(item);
         }
+        FileList = newFileList;
+    }
+
+    /// <summary>Fires PropertyChanged for all filter-related properties.</summary>
+    private void NotifyFilterPropertiesChanged()
+    {
+        OnPropertyChanged(nameof(IsFileFilterActive));
+        OnPropertyChanged(nameof(FileFilteredCount));
+        OnPropertyChanged(nameof(FileTotalCount));
+        OnPropertyChanged(nameof(AreAllFilesChecked));
+        UpdateTableHeader();
+        CommandManager.InvalidateRequerySuggested();
     }
 
     #endregion
@@ -513,8 +472,8 @@ public partial class MainViewModel : ViewModelBase
 
     public void OnTreeItemSelected(TapeTreeItemViewModel item)
     {
-        // Persist checked-for-restore state of the backup set we're leaving
-        SaveCheckedFileState();
+        // Persist filter + checked state of the backup set we're leaving
+        SaveFilteredFilesState();
 
         _selectedTreeItem = item;
 
@@ -1309,9 +1268,8 @@ public partial class MainViewModel : ViewModelBase
             PropertyList.Add(new PropertyItem("Continued on Next Volume", 
                 toc.IsCurrentSetContOnNextVolume ? "Yes" : "No"));
 
-            // Populate files table
-            // Get files, potentially including incremental sets
-            IEnumerable<TapeFileInfo> files;
+            // Populate files table — reuse FilteredFileList from tree item if available
+            IReadOnlyList<TapeFileInfo> sourceFiles;
             if (ShowIncrementalSets && setTOC.Incremental)
             {
                 // For incremental sets, include files from dependent sets
@@ -1324,31 +1282,62 @@ public partial class MainViewModel : ViewModelBase
                         allFiles.AddRange(setFiles);
                     }
                 }
-                files = allFiles;
+                sourceFiles = allFiles;
                 _isIncrementalFileView = true;
             }
             else
             {
-                files = setTOC;
+                sourceFiles = setTOC;
                 _isIncrementalFileView = false;
             }
 
-            var newFileList = new List<FileListItem>();
-            foreach (var fileInfo in files)
+            // Reuse the FilteredFileList from the tree item if source matches,
+            //  otherwise create a fresh one
+            var savedFiltered = _selectedTreeItem?.FilteredFiles;
+            if (savedFiltered is not null && savedFiltered.Source == sourceFiles)
             {
-                newFileList.Add(new FileListItem(fileInfo, ShowFullPathname));
+                _filteredFiles = savedFiltered;
             }
-            FileList = newFileList;
-            FileTotalCount = newFileList.Count;
-            FileFilteredCount = newFileList.Count;
+            else
+            {
+                _filteredFiles = new FilteredFileList(sourceFiles);
 
-            // Restore checked-for-restore state (before filter re-applies;
-            //  filtered list reuses the same objects so checked state survives)
-            RestoreCheckedFileState();
-            UpdateTableHeader();
-            OnPropertyChanged(nameof(AreAllFilesChecked));
+                // If there was a saved instance with checked state, migrate it
+                if (savedFiltered is { CheckedCount: > 0 })
+                {
+                    _filteredFiles.SetChecked(savedFiltered.CheckedItems, true);
+                }
+            }
 
-            StatusMessage = $"Set #{setIndex} | #{altIndex}: {FileList.Count} file(s)";
+            // Build FileListItem proxies (one per source file) and lookup dict
+            _fileListItemsByFile = new Dictionary<TapeFileInfo, FileListItem>(sourceFiles.Count);
+            var newFileList = new List<FileListItem>(sourceFiles.Count);
+            foreach (var fileInfo in sourceFiles)
+            {
+                var item = new FileListItem(_filteredFiles, fileInfo, ShowFullPathname);
+                newFileList.Add(item);
+                _fileListItemsByFile[fileInfo] = item;
+            }
+
+            // If a filter is active, show only filtered files
+            if (_filteredFiles.IsFiltered)
+            {
+                var filteredList = new List<FileListItem>(_filteredFiles.Count);
+                foreach (var fileInfo in _filteredFiles)
+                {
+                    if (_fileListItemsByFile.TryGetValue(fileInfo, out var item))
+                        filteredList.Add(item);
+                }
+                FileList = filteredList;
+            }
+            else
+            {
+                FileList = newFileList;
+            }
+
+            NotifyFilterPropertiesChanged();
+
+            StatusMessage = $"Set #{setIndex} | #{altIndex}: {FileTotalCount} file(s)";
 
             // Restore saved filter if the user previously filtered this backup set
             if (_selectedTreeItem?.SavedFilterState is { } restoreAction)

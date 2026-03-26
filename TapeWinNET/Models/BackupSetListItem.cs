@@ -3,24 +3,39 @@ using System.Windows.Media.Imaging;
 using Windows.Win32.System.SystemServices; // for Helpers
 
 using TapeLibNET;
+using TapeWinNET.Utils;
 
 namespace TapeWinNET.Models;
 
 /// <summary>
 /// Represents a backup set item for display in the backup sets ListView.
+/// Uses <see cref="FilteredFileList"/> for per-set async filtering and count display.
 /// </summary>
-public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bool isOnCurrentVolume) : INotifyPropertyChanged
+public class BackupSetListItem : INotifyPropertyChanged
 {
     private static BitmapSource? _backupSetIcon;
     private static bool _iconLoaded;
 
-    private readonly TapeSetTOC _setTOC = setTOC;
-    private readonly int _setIndex = setIndex;
-    private readonly int _altIndex = altIndex;
+    private readonly TapeSetTOC _setTOC;
+    private readonly int _setIndex;
+    private readonly int _altIndex;
+    private readonly bool _isOnCurrentVolume;
+    private readonly FilteredFileList _filteredFiles;
 
     static BackupSetListItem()
     {
         LoadIcon();
+    }
+
+    public BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bool isOnCurrentVolume)
+    {
+        _setTOC = setTOC;
+        _setIndex = setIndex;
+        _altIndex = altIndex;
+        _isOnCurrentVolume = isOnCurrentVolume;
+
+        _filteredFiles = new FilteredFileList(setTOC);
+        _filteredFiles.FilterCompleted += OnFilterCompleted;
     }
 
     private static void LoadIcon()
@@ -44,13 +59,13 @@ public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bo
     /// <summary>
     /// Gets the icon for backup set items.
     /// </summary>
-    public BitmapSource? Icon => _backupSetIcon;
+    public static BitmapSource? Icon => _backupSetIcon;
 
     /// <summary>
     /// Whether this backup set resides on the currently loaded volume.
     /// Used to dim icons of sets from previous volumes.
     /// </summary>
-    public bool IsOnCurrentVolume => isOnCurrentVolume;
+    public bool IsOnCurrentVolume => _isOnCurrentVolume;
 
     /// <summary>
     /// Standard set index (1-based, from oldest to newest)
@@ -71,65 +86,33 @@ public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bo
 
     public int FileCount => _setTOC.Count;
 
-    // --- Async filter infrastructure ---
-    private ITapeFileFilter? _fileFilter;
-    private int? _filteredFileCount;
-    private CancellationTokenSource? _filterCts;
+    /// <summary>The internal <see cref="FilteredFileList"/> for this set.</summary>
+    public FilteredFileList FilteredFiles => _filteredFiles;
 
     /// <summary>
-    /// Optional file filter. When set, <see cref="FilteredFileCount"/> is computed
-    ///  asynchronously via <see cref="TapeSetTOC.SelectFiles(ITapeFileFilter?)"/>.
-    /// Multiple items compute in parallel. Setting a new filter cancels any
-    ///  in-progress computation. Setting to null clears the filtered count.
+    /// Optional file filter. When set, the <see cref="FilteredFiles"/> computes
+    ///  the filtered count asynchronously. Setting to null clears the filter.
     /// </summary>
     public ITapeFileFilter? FileFilter
     {
-        get => _fileFilter;
-        set
-        {
-            // Cancel any in-progress computation
-            _filterCts?.Cancel();
-            _filterCts?.Dispose();
-            _fileFilter = value;
-
-            if (value is null)
-            {
-                _filterCts = null;
-                _filteredFileCount = null;
-                FilterTask = Task.CompletedTask;
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FilteredFileCount)));
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FileCountFormatted)));
-            }
-            else
-            {
-                var cts = new CancellationTokenSource();
-                _filterCts = cts;
-                FilterTask = ComputeFilteredCountAsync(value, cts.Token);
-            }
-        }
+        get => _filteredFiles.Filter;
+        set => _filteredFiles.Filter = value;
     }
 
     /// <summary>
     /// Number of files after filtering, or null if no filter is active (or still computing).
     /// Computed automatically when <see cref="FileFilter"/> is set.
     /// </summary>
-    public int? FilteredFileCount => _filteredFileCount;
+    public int? FilteredFileCount => _filteredFiles.IsFiltered ? _filteredFiles.Count : null;
 
     /// <summary>
     /// Awaitable task for the current filter computation.
     /// Callers can <c>await Task.WhenAll(...)</c> across multiple items for parallel filtering.
     /// </summary>
-    public Task FilterTask { get; private set; } = Task.CompletedTask;
+    public Task FilterTask => _filteredFiles.FilterTask;
 
-    private async Task ComputeFilteredCountAsync(ITapeFileFilter filter, CancellationToken ct)
+    private void OnFilterCompleted()
     {
-        int count = await Task.Run(
-            () => _setTOC.SelectFiles(filter)?.Count ?? _setTOC.Count, ct);
-
-        if (ct.IsCancellationRequested)
-            return;
-
-        _filteredFileCount = count;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FilteredFileCount)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FileCountFormatted)));
     }
@@ -137,7 +120,7 @@ public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bo
     /// <summary>
     /// Display format: plain count or "total → filtered" when a filter narrows results.
     /// </summary>
-    public string FileCountFormatted => _filteredFileCount is int filtered && filtered != _setTOC.Count
+    public string FileCountFormatted => FilteredFileCount is int filtered && filtered != _setTOC.Count
         ? $"{_setTOC.Count:N0} \u2192 {filtered:N0}" /* right arrow */
         : _setTOC.Count.ToString("N0");
 

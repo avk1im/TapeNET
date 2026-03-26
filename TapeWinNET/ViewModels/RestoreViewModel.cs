@@ -56,11 +56,9 @@ public class RestoreViewModel : ViewModelBase
     private HandleExistingOption _selectedHandleExisting = HandleExistingOption.All[0]; // Keep Both
 
     // Filter infrastructure
-    private List<FileListItem>? _unfilteredFiles;
+    private FilteredFileList? _filteredFiles;
+    private Dictionary<TapeFileInfo, FileListItem>? _fileListItemsByFile;
     private FclEvaluator? _storedEvaluator;
-    private bool _isFilterActive;
-    private int _fileTotalCount;
-    private int _fileFilteredCount;
     private string _itemsGroupHeader = string.Empty;
 
     /// <summary>Whether this dialog operates on individual files rather than backup sets.</summary>
@@ -93,8 +91,6 @@ public class RestoreViewModel : ViewModelBase
         _incremental = preSelectedSets.Any(s => s.IsIncremental);
 
         // Initialize aggregate file stats
-        _fileTotalCount = preSelectedSets.Sum(s => s.FileCount);
-        _fileFilteredCount = _fileTotalCount;
         UpdateItemsGroupHeader();
 
         BrowseTargetCommand = new RelayCommand(BrowseTarget);
@@ -105,7 +101,7 @@ public class RestoreViewModel : ViewModelBase
     /// <summary>Constructor for file-based restore.</summary>
     public RestoreViewModel(
         RestoreMode mode,
-        List<FileListItem> preSelectedFiles,
+        IReadOnlyList<TapeFileInfo> preSelectedFiles,
         int setIndex,
         bool isIncremental,
         Action<RestoreRequest> onStart,
@@ -118,15 +114,21 @@ public class RestoreViewModel : ViewModelBase
         _fileSetIndex = setIndex;
         _recurseSubdirectories = false; // in file mode, pre-assume user only wants the specific files, not subdirs
 
-        _files = preSelectedFiles;
-        foreach (var item in preSelectedFiles)
-            item.IsCheckedForRestore = true;
+        // Create own FilteredFileList and FileListItems (dialog owns its checked state)
+        _filteredFiles = new FilteredFileList(preSelectedFiles);
+        _filteredFiles.SetAllChecked(true);
+
+        _fileListItemsByFile = new Dictionary<TapeFileInfo, FileListItem>(preSelectedFiles.Count);
+        var items = new List<FileListItem>(preSelectedFiles.Count);
+        foreach (var fi in preSelectedFiles)
+        {
+            var item = new FileListItem(_filteredFiles, fi, showFullPath: false);
+            items.Add(item);
+            _fileListItemsByFile[fi] = item;
+        }
+        _files = items;
 
         _incremental = isIncremental;
-
-        // Initialize file stats
-        _fileTotalCount = preSelectedFiles.Count;
-        _fileFilteredCount = _fileTotalCount;
         UpdateItemsGroupHeader();
 
         BrowseTargetCommand = new RelayCommand(BrowseTarget);
@@ -161,24 +163,31 @@ public class RestoreViewModel : ViewModelBase
     }
 
     /// <summary>Whether a file filter is currently active.</summary>
-    public bool IsFilterActive
-    {
-        get => _isFilterActive;
-        private set => SetProperty(ref _isFilterActive, value);
-    }
+    public bool IsFilterActive => _filteredFiles?.IsFiltered
+        ?? BackupSets.Any(b => b.FileFilter is not null);
 
     /// <summary>Total number of files (before filtering). Bound to FileFilterPane.TotalCount.</summary>
     public int FileTotalCount
     {
-        get => _fileTotalCount;
-        private set => SetProperty(ref _fileTotalCount, value);
+        get
+        {
+            if (IsFileMode)
+                return _filteredFiles?.SourceCount ?? 0;
+            var checkedSets = BackupSets.Where(b => b.IsCheckedForRestore);
+            return checkedSets.Sum(s => s.FileCount);
+        }
     }
 
     /// <summary>Number of files after filtering. Bound to FileFilterPane.FilteredCount.</summary>
     public int FileFilteredCount
     {
-        get => _fileFilteredCount;
-        private set => SetProperty(ref _fileFilteredCount, value);
+        get
+        {
+            if (IsFileMode)
+                return _filteredFiles?.Count ?? 0;
+            var checkedSets = BackupSets.Where(b => b.IsCheckedForRestore);
+            return checkedSets.Sum(s => s.FilteredFileCount ?? s.FileCount);
+        }
     }
 
     /// <summary>Available handle-existing options for the combo box.</summary>
@@ -331,22 +340,22 @@ public class RestoreViewModel : ViewModelBase
     /// </summary>
     public bool? AreAllFilesChecked
     {
-        get
-        {
-            if (Files.Count == 0) return false;
-            bool any = Files.Any(f => f.IsCheckedForRestore);
-            if (!any) return false;
-            return Files.All(f => f.IsCheckedForRestore) ? true : null;
-        }
+        get => _filteredFiles?.AreAllFilteredChecked ?? false;
         set
         {
+            if (_filteredFiles is null)
+                return;
+
             // Three-state cycle: false→true→null→false.
             //  true  = user clicked from unchecked       → check all
             //  null  = user clicked from fully checked   → uncheck all
             //  false = user clicked from indeterminate   → check all
-            bool check = value != null;
+            _filteredFiles.SetFilteredChecked(value != null);
+
+            // Notify all visible FileListItem rows
             foreach (var item in Files)
-                item.IsCheckedForRestore = check;
+                item.NotifyIsCheckedChanged();
+
             OnPropertyChanged(nameof(AreAllFilesChecked));
             UpdateItemsGroupHeader();
             OnPropertyChanged(nameof(CanStart));
@@ -379,7 +388,8 @@ public class RestoreViewModel : ViewModelBase
             foreach (var item in BackupSets)
                 item.IsCheckedForRestore = check;
             OnPropertyChanged(nameof(AreAllSetsChecked));
-            UpdateAggregateStats();
+            OnPropertyChanged(nameof(FileTotalCount));
+            OnPropertyChanged(nameof(FileFilteredCount));
             UpdateItemsGroupHeader();
             OnPropertyChanged(nameof(CanStart));
             CommandManager.InvalidateRequerySuggested();
@@ -387,7 +397,7 @@ public class RestoreViewModel : ViewModelBase
     }
 
     public bool CanStart => IsFileMode
-        ? Files.Any(f => f.IsCheckedForRestore)
+        ? (_filteredFiles?.CheckedCount ?? 0) > 0
         : BackupSets.Any(b => b.IsCheckedForRestore);
 
     /// <summary>Called from code-behind when a row checkbox is toggled.</summary>
@@ -401,7 +411,8 @@ public class RestoreViewModel : ViewModelBase
         else
         {
             OnPropertyChanged(nameof(AreAllSetsChecked));
-            UpdateAggregateStats();
+            OnPropertyChanged(nameof(FileTotalCount));
+            OnPropertyChanged(nameof(FileFilteredCount));
             UpdateItemsGroupHeader();
         }
         OnPropertyChanged(nameof(CanStart));
@@ -442,15 +453,23 @@ public class RestoreViewModel : ViewModelBase
         if (IsFileMode)
         {
             checkedIndexes = [_fileSetIndex];
-            var checkedPaths = Files
-                .Where(f => f.IsCheckedForRestore)
-                .Select(f => f.FullPath)
-                .ToList();
 
-            if (checkedPaths.Count == 0)
+            // Build a path-based filter from the checked files
+            if (_filteredFiles is { CheckedCount: > 0 })
+            {
+                var checkedPaths = _filteredFiles.CheckedItems
+                    .Select(fi => fi.FileDescr.FullName)
+                    .ToList();
+
+                if (checkedPaths.Count == 0)
+                    return;
+
+                fileFilter = new FclTapeFileFilter(checkedPaths);
+            }
+            else
+            {
                 return;
-
-            fileFilter = new FclTapeFileFilter(checkedPaths);
+            }
         }
         else
         {
@@ -495,29 +514,17 @@ public class RestoreViewModel : ViewModelBase
 
         if (IsFileMode)
         {
-            if (evaluator is null)
-            {
-                // Disable filter — restore original file list
-                if (_unfilteredFiles != null)
-                {
-                    Files = _unfilteredFiles;
-                    _unfilteredFiles = null;
-                }
-                IsFilterActive = false;
-                FileTotalCount = Files.Count;
-                FileFilteredCount = Files.Count;
-            }
-            else
-            {
-                // Apply filter — narrow visible file list
-                _unfilteredFiles ??= Files;
-                var filtered = await FileFilter.FilterAsync(
-                    _unfilteredFiles, evaluator, item => item.FileInfo.FileDescr);
-                Files = filtered;
-                IsFilterActive = true;
-                FileTotalCount = _unfilteredFiles.Count;
-                FileFilteredCount = filtered.Count;
-            }
+            if (_filteredFiles is null)
+                return;
+
+            // Set the filter (null disables, non-null starts async computation)
+            _filteredFiles.Filter = evaluator is not null ? new FclTapeFileFilter(evaluator) : null;
+            await _filteredFiles.FilterTask;
+
+            RebuildFileListFromFilteredFiles();
+            OnPropertyChanged(nameof(IsFilterActive));
+            OnPropertyChanged(nameof(FileTotalCount));
+            OnPropertyChanged(nameof(FileFilteredCount));
             OnPropertyChanged(nameof(AreAllFilesChecked));
             OnPropertyChanged(nameof(CanStart));
         }
@@ -525,9 +532,10 @@ public class RestoreViewModel : ViewModelBase
         {
             // Set mode — push filter into each BackupSetListItem (async parallel),
             //  then re-sum cached per-item results
-            IsFilterActive = evaluator is not null;
             await ApplyFilterToBackupSetsAsync(evaluator);
-            UpdateAggregateStats();
+            OnPropertyChanged(nameof(IsFilterActive));
+            OnPropertyChanged(nameof(FileTotalCount));
+            OnPropertyChanged(nameof(FileFilteredCount));
         }
 
         UpdateItemsGroupHeader();
@@ -550,15 +558,21 @@ public class RestoreViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Sums <see cref="BackupSetListItem.FileCount"/> and
-    ///  <see cref="BackupSetListItem.FilteredFileCount"/> across checked sets.
-    /// Uses cached per-item values — no I/O, safe to call synchronously.
+    /// Rebuilds <see cref="Files"/> from the current <see cref="_filteredFiles"/> view.
+    /// Reuses existing <see cref="FileListItem"/> instances via the lookup dictionary.
     /// </summary>
-    private void UpdateAggregateStats()
+    private void RebuildFileListFromFilteredFiles()
     {
-        var checkedSets = BackupSets.Where(b => b.IsCheckedForRestore).ToList();
-        FileTotalCount = checkedSets.Sum(s => s.FileCount);
-        FileFilteredCount = checkedSets.Sum(s => s.FilteredFileCount ?? s.FileCount);
+        if (_filteredFiles is null || _fileListItemsByFile is null)
+            return;
+
+        var newFileList = new List<FileListItem>(_filteredFiles.Count);
+        foreach (var fileInfo in _filteredFiles)
+        {
+            if (_fileListItemsByFile.TryGetValue(fileInfo, out var item))
+                newFileList.Add(item);
+        }
+        Files = newFileList;
     }
 
     /// <summary>
@@ -569,10 +583,11 @@ public class RestoreViewModel : ViewModelBase
         if (IsFileMode)
         {
             int total = FileTotalCount;
-            bool hasFilter = IsFilterActive && FileFilteredCount != total;
-            int selectedCount = Files.Count(f => f.IsCheckedForRestore);
+            bool hasFilter = IsFilterActive;
+            int selectedCount = _filteredFiles?.FilteredCheckedCount ?? 0;
+            int filteredCount = FileFilteredCount;
 
-            if (!hasFilter && selectedCount == Files.Count)
+            if (!hasFilter && selectedCount == filteredCount)
             {
                 ItemsGroupHeader = $"Files to process ({total})";
                 return;
@@ -580,8 +595,8 @@ public class RestoreViewModel : ViewModelBase
 
             var header = $"Files to process ({total}";
             if (hasFilter)
-                header += $" → {FileFilteredCount} filtered";
-            if (selectedCount < Files.Count)
+                header += $" → {filteredCount} filtered";
+            if (selectedCount < filteredCount)
                 header += $" → {selectedCount} selected";
             header += ")";
             ItemsGroupHeader = header;
@@ -589,7 +604,8 @@ public class RestoreViewModel : ViewModelBase
         else
         {
             int total = FileTotalCount;
-            bool hasFilter = IsFilterActive && FileFilteredCount != total;
+            int filtered = FileFilteredCount;
+            bool hasFilter = IsFilterActive && filtered != total;
 
             if (!hasFilter)
             {
@@ -599,7 +615,7 @@ public class RestoreViewModel : ViewModelBase
                 return;
             }
 
-            ItemsGroupHeader = $"Backup sets to process ({total:N0} → {FileFilteredCount:N0} filtered)";
+            ItemsGroupHeader = $"Backup sets to process ({total:N0} → {filtered:N0} filtered)";
         }
     }
 

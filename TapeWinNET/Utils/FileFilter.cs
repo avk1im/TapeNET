@@ -10,6 +10,11 @@ namespace TapeWinNET.Utils;
 /// </summary>
 public sealed class FclTapeFileFilter(FclEvaluator evaluator) : ITapeFileFilter
 {
+    /// <summary>
+    /// Alterantive constructor that creates a wildcard evaluator from a list of
+    /// file patterns specified by <paramref name="filePatterns"/>.
+    /// </summary>
+    /// <param name="filePatterns">The list of file patterns to create the wildcard evaluator from.</param>
     public FclTapeFileFilter(List<string> filePatterns)
         : this(FclPipeline.CreateWildcardEvaluator(filePatterns))
     { }
@@ -25,15 +30,7 @@ public sealed class FclTapeFileFilter(FclEvaluator evaluator) : ITapeFileFilter
             fileDescr.Attributes);
         return evaluator.Evaluate(snapshot);
     }
-}
 
-/// <summary>
-/// Utility class for filtering file lists using DOS-style wildcard patterns.
-/// Patterns support * and ? wildcards and semicolon-separated lists.
-/// Designed for large lists — <see cref="FilterAsync{T}"/> runs matching on a background thread.
-/// </summary>
-public static class FileFilter
-{
     /// <summary>
     /// Parses a semicolon-separated wildcard pattern string into a list of trimmed,
     /// non-empty individual patterns.
@@ -43,59 +40,4 @@ public static class FileFilter
         return [..input
             .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)];
     }
-
-    /// <summary>
-    /// Filters a list of items asynchronously on a background thread using a
-    /// pre-built <see cref="FclEvaluator"/>. Returns only items that match.
-    /// </summary>
-    /// <typeparam name="T">Item type.</typeparam>
-    /// <param name="source">The full unfiltered list.</param>
-    /// <param name="evaluator">A ready-to-use FCL evaluator.</param>
-    /// <param name="pathSelector">Function to extract the full file path from an item.</param>
-    /// <returns>A new filtered list.</returns>
-    public static Task<List<T>> FilterAsync<T>(
-        IReadOnlyList<T> source,
-        FclEvaluator evaluator,
-        Func<T, TapeFileDescriptor> descriptorMaker)
-    {
-        return Task.Run(() =>
-        {
-            var result = new List<T>();
-            var filter = new FclTapeFileFilter(evaluator);
-            foreach (var item in source)
-            {
-                var descriptor = descriptorMaker(item);
-                if (filter.Matches(descriptor))
-                    result.Add(item);
-            }
-            return result;
-        });
-    }
-
-    /* // not used anymore
-    /// <summary>
-    /// Filters a list of items asynchronously on a background thread using
-    /// DOS-style wildcard patterns. Uses <see cref="FclPipeline.CreateWildcardEvaluator(string)"/>
-    /// for behavioral consistency with FclNET. Returns only items whose full path
-    /// matches at least one pattern.
-    /// </summary>
-    /// <typeparam name="T">Item type.</typeparam>
-    /// <param name="source">The full unfiltered list.</param>
-    /// <param name="patterns">Wildcard patterns already parsed into a list.</param>
-    /// <param name="pathSelector">Function to extract the full file path from an item.</param>
-    /// <returns>A new filtered list.</returns>
-    public static Task<List<T>> FilterAsync<T>(
-        IReadOnlyList<T> source,
-        List<string> patterns,
-        Func<T, string> pathSelector)
-    {
-        var evaluator = FclPipeline.CreateWildcardEvaluator(patterns);
-        return FilterAsync(source, evaluator, item =>
-            {
-                var path = pathSelector(item);
-                return new TapeFileDescriptor(path);
-            }
-        );
-    }
-    */
 }

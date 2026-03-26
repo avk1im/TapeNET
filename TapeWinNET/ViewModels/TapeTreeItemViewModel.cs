@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Windows.Media.Imaging;
 
 using TapeLibNET;
+using TapeWinNET.Utils;
 
 namespace TapeWinNET.ViewModels;
 
@@ -154,12 +155,11 @@ public class TapeTreeItemViewModel : ViewModelBase
     public Func<Task>? SavedFilterState { get; set; }
 
     /// <summary>
-    /// <see cref="TapeFileInfo"/> references of files that were checked for restore
-    /// when the user last navigated away from this backup set. <c>null</c> when no
-    /// files were checked. Uses reference equality against the stable TOC objects
-    /// (~8 bytes per entry on x64), so lookups are O(1).
+    /// Centralized filtered file list for this backup set node. Carries filter state,
+    ///  checked-for-restore state, and filtered statistics across tree navigation.
+    ///  Created on first visit, reused on subsequent visits. <c>null</c> for non-set nodes.
     /// </summary>
-    public HashSet<TapeFileInfo>? SavedCheckedFiles { get; set; }
+    public FilteredFileList? FilteredFiles { get; set; }
 
     public static TapeTreeItemViewModel CreateDriveItem(int driveNumber, string deviceName)
     {

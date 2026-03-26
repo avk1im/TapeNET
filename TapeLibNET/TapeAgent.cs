@@ -95,8 +95,14 @@ namespace TapeLibNET
         /// <summary>Read-only reference to the current statistics.</summary>
         public ref readonly TapeFileStatistics Statistics => ref _stats;
 
-        // checked periodically if the entire operation should be aborted
-        public bool IsAbortRequested { get; set; }
+        // Checked periodically if the entire operation should be aborted
+        //  Uses olatile field instead of auto-property — fixes the theoretical data race
+        private volatile bool _isAbortRequested = false;
+        public bool IsAbortRequested
+        {
+            get => _isAbortRequested;
+            set => _isAbortRequested = value;
+        }
 
 #if DEBUG
         /// <summary>

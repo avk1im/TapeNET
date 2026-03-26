@@ -169,28 +169,28 @@ public partial class MainViewModel
     /// Gets or sets whether all files are checked for restore.
     /// Getter returns <c>true</c> (all checked), <c>false</c> (none checked),
     /// or <c>null</c> (some checked) for tri-state display.
-    /// Setter checks or unchecks every item in FileList — the three-state
-    /// WPF cycle (false→true→null→false) is mapped so clicking always
-    /// toggles between all-checked and all-unchecked.
+    /// Setter checks or unchecks every item in the current filtered view — the
+    /// three-state WPF cycle (false→true→null→false) is mapped so clicking
+    /// always toggles between all-checked and all-unchecked.
     /// </summary>
     public bool? AreAllFilesChecked
     {
-        get
-        {
-            if (FileList.Count == 0) return false;
-            bool any = FileList.Any(f => f.IsCheckedForRestore);
-            if (!any) return false;
-            return FileList.All(f => f.IsCheckedForRestore) ? true : null;
-        }
+        get => _filteredFiles?.AreAllFilteredChecked ?? false;
         set
         {
+            if (_filteredFiles is null)
+                return;
+
             // Three-state cycle: false→true→null→false.
             //  true  = user clicked from unchecked       → check all
             //  null  = user clicked from fully checked   → uncheck all
             //  false = user clicked from indeterminate   → check all
-            bool check = value != null;
+            _filteredFiles.SetFilteredChecked(value != null);
+
+            // Notify all visible FileListItem rows
             foreach (var item in FileList)
-                item.IsCheckedForRestore = check;
+                item.NotifyIsCheckedChanged();
+
             OnPropertyChanged(nameof(AreAllFilesChecked));
             UpdateTableHeader();
             CommandManager.InvalidateRequerySuggested();
@@ -202,7 +202,7 @@ public partial class MainViewModel
     /// or selected (clicked) in the file ListView.
     /// </summary>
     private bool HasFilesCheckedForRestore =>
-        FileList.Any(f => f.IsCheckedForRestore) || SelectedFile != null;
+        (_filteredFiles is { CheckedCount: > 0 }) || SelectedFile != null;
 
     /// <summary>Called from code-behind when a file row checkbox is toggled.</summary>
     public void OnFileCheckChanged()
@@ -316,7 +316,7 @@ public partial class MainViewModel
     private void StartRestoreForSelectedFiles(RestoreMode mode, string? targetDirectory = null)
     {
         var toc = _tapeService.TOC;
-        if (toc == null)
+        if (toc == null || _filteredFiles == null)
             return;
 
         // Determine the set index from the current tree selection
@@ -326,14 +326,25 @@ public partial class MainViewModel
         else
             return;
 
-        var checkedFiles = FileList.Where(f => f.IsCheckedForRestore).ToList();
-
-        // Fall back to the ListView-selected file if none are explicitly checkmarked
-        if (checkedFiles.Count == 0 && SelectedFile != null)
-            checkedFiles = [SelectedFile];
-
-        if (checkedFiles.Count == 0)
+        // Collect checked TapeFileInfo references from FilteredFileList
+        IReadOnlyList<TapeFileInfo> checkedFiles;
+        if (_filteredFiles.CheckedCount == _filteredFiles.Count) // all checked
+        {
+            checkedFiles = _filteredFiles; // take all
+        }
+        else if (_filteredFiles.CheckedCount > 0)
+        {
+            checkedFiles = [.. _filteredFiles.CheckedItems];
+        }
+        else if (SelectedFile != null)
+        {
+            // Fall back to the ListView-selected file if none are explicitly checkmarked
+            checkedFiles = [SelectedFile.FileInfo];
+        }
+        else
+        {
             return;
+        }
 
         toc.CurrentSetIndex = setIndex;
         var setTOC = toc.CurrentSetTOC;
