@@ -64,6 +64,11 @@ public class RestoreViewModel : ViewModelBase
     /// <summary>Whether this dialog operates on individual files rather than backup sets.</summary>
     public bool IsFileMode { get; }
 
+    /// <summary>The dialog-local <see cref="FilteredFileList"/> for file mode.
+    ///  Used by RestoreWindow to wire <see cref="Controls.FileFilterPane.FilterTarget"/>.
+    ///  <c>null</c> in set mode.</summary>
+    public FilteredFileList? FilterTargetList => _filteredFiles;
+
     /// <summary>Set index for file mode (the single set the files come from).</summary>
     private readonly int _fileSetIndex;
 
@@ -164,7 +169,7 @@ public class RestoreViewModel : ViewModelBase
 
     /// <summary>Whether a file filter is currently active.</summary>
     public bool IsFilterActive => _filteredFiles?.IsFiltered
-        ?? BackupSets.Any(b => b.FileFilter is not null);
+        ?? _storedEvaluator is not null;
 
     /// <summary>Total number of files (before filtering). Bound to FileFilterPane.TotalCount.</summary>
     public int FileTotalCount
@@ -503,58 +508,77 @@ public class RestoreViewModel : ViewModelBase
     #region Filter Methods
 
     /// <summary>
-    /// Callback for the <see cref="Controls.FileFilterPane"/>.
-    /// Called when the user applies or disables a filter.
+    /// Direct-mode callback for file mode. Called by <see cref="Controls.FileFilterPane"/>
+    ///  after applying or disabling a filter on <see cref="FilterTargetList"/>.
     /// </summary>
-    /// <param name="evaluator">Ready-to-use FCL evaluator, or null to disable.</param>
-    /// <param name="reapplyAction">Opaque delegate that restores the pane's UI state (unused in dialog).</param>
+    public async Task OnFilterStateChanged(Func<Task>? restoreAction)
+    {
+        if (_filteredFiles is null)
+            return;
+
+        RebuildFileListFromFilteredFiles();
+        OnPropertyChanged(nameof(IsFilterActive));
+        OnPropertyChanged(nameof(FileTotalCount));
+        OnPropertyChanged(nameof(FileFilteredCount));
+        OnPropertyChanged(nameof(AreAllFilesChecked));
+        OnPropertyChanged(nameof(CanStart));
+        UpdateItemsGroupHeader();
+        CommandManager.InvalidateRequerySuggested();
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Callback-mode handler for set mode. Called by <see cref="Controls.FileFilterPane"/>
+    ///  when <see cref="Controls.FileFilterPane.FilterRequested"/> is used.
+    /// </summary>
     public async Task OnFilterApplied(FclEvaluator? evaluator, Func<Task>? reapplyAction)
     {
         _storedEvaluator = evaluator;
 
-        if (IsFileMode)
-        {
-            if (_filteredFiles is null)
-                return;
-
-            // Set the filter (null disables, non-null starts async computation)
-            _filteredFiles.Filter = evaluator is not null ? new FclTapeFileFilter(evaluator) : null;
-            await _filteredFiles.FilterTask;
-
-            RebuildFileListFromFilteredFiles();
-            OnPropertyChanged(nameof(IsFilterActive));
-            OnPropertyChanged(nameof(FileTotalCount));
-            OnPropertyChanged(nameof(FileFilteredCount));
-            OnPropertyChanged(nameof(AreAllFilesChecked));
-            OnPropertyChanged(nameof(CanStart));
-        }
-        else
-        {
-            // Set mode — push filter into each BackupSetListItem (async parallel),
-            //  then re-sum cached per-item results
-            await ApplyFilterToBackupSetsAsync(evaluator);
-            OnPropertyChanged(nameof(IsFilterActive));
-            OnPropertyChanged(nameof(FileTotalCount));
-            OnPropertyChanged(nameof(FileFilteredCount));
-        }
+        // Set mode — create temp FilteredFileLists per set and push counts
+        await ApplyFilterToBackupSetsAsync(evaluator);
+        OnPropertyChanged(nameof(IsFilterActive));
+        OnPropertyChanged(nameof(FileTotalCount));
+        OnPropertyChanged(nameof(FileFilteredCount));
 
         UpdateItemsGroupHeader();
         CommandManager.InvalidateRequerySuggested();
     }
 
     /// <summary>
-    /// Pushes the filter into each <see cref="BackupSetListItem"/> so it can
-    ///  self-compute its <see cref="BackupSetListItem.FilteredFileCount"/> asynchronously.
-    /// Each item runs on a thread-pool thread in parallel, with cancellation support.
+    /// Creates a temporary <see cref="FilteredFileList"/> per backup set, runs the
+    ///  filter computation in parallel, then pushes the resulting
+    ///  <see cref="BackupSetListItem.FilteredFileCount"/> back to each item.
     /// </summary>
     private async Task ApplyFilterToBackupSetsAsync(FclEvaluator? evaluator)
     {
         ITapeFileFilter? filter = evaluator is not null ? new FclTapeFileFilter(evaluator) : null;
+
+        if (filter is null)
+        {
+            // Clear all filtered counts
+            foreach (var item in BackupSets)
+                item.FilteredFileCount = null;
+            return;
+        }
+
+        // Create temp FilteredFileLists and start parallel computation
+        var tempLists = new List<(BackupSetListItem Item, FilteredFileList FFL)>(BackupSets.Count);
         foreach (var item in BackupSets)
-            item.FileFilter = filter;
+        {
+            var ffl = new FilteredFileList(item.SetTOC);
+            ffl.Filter = filter;
+            tempLists.Add((item, ffl));
+        }
 
         // Await all parallel filter computations
-        await Task.WhenAll(BackupSets.Select(b => b.FilterTask));
+        await Task.WhenAll(tempLists.Select(t => t.FFL.FilterTask));
+
+        // Push results back to BackupSetListItems
+        foreach (var (item, ffl) in tempLists)
+        {
+            item.FilteredFileCount = ffl.IsFiltered ? ffl.Count : null;
+        }
     }
 
     /// <summary>

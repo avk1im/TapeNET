@@ -33,8 +33,8 @@ namespace TapeWinNET
 
             ApplySettings(_viewModel.Settings);
 
-            // Wire filter pane callback to the ViewModel
-            FileFilterPaneControl.FilterRequested = _viewModel.OnFileFilterApplied;
+            // Wire filter pane to ViewModel via direct mode
+            FileFilterPaneControl.FilterStateChanged = _viewModel.OnFilterStateChanged;
 
             // Subscribe to collection changes to auto-scroll log
             _viewModel.LogMessages.CollectionChanged += (s, e) =>
@@ -90,12 +90,22 @@ namespace TapeWinNET
             _viewModel.Cleanup();
         }
 
-        private void TreeView_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+        private async void TreeView_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
         {
             if (e.NewValue is TapeTreeItemViewModel item)
             {
                 FileFilterPaneControl.Reset();
                 _viewModel.OnTreeItemSelected(item);
+
+                // Point the filter pane at the current set's FilteredFileList
+                FileFilterPaneControl.FilterTarget = _viewModel.ActiveFilterTarget;
+
+                // If the set had a saved filter, restore the pane UI and re-apply
+                if (_viewModel.PendingFilterRestore is { } restore)
+                {
+                    _viewModel.PendingFilterRestore = null;
+                    await restore();
+                }
             }
         }
 

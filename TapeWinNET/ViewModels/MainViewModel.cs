@@ -5,8 +5,6 @@ using System.Windows.Input;
 
 using Windows.Win32.System.SystemServices; // for Helpers
 
-using FclNET;
-
 using TapeLibNET;
 using TapeLibNET.Virtual;
 using TapeWinNET.Converters;
@@ -57,10 +55,10 @@ public partial class MainViewModel : ViewModelBase
     private TapeTreeItemViewModel? _selectedTreeItem;
     private ContentPaneType _contentType = ContentPaneType.DriveInfo;
 
-    // File filter fields
-    private FilteredFileList? _filteredFiles;
-    private Dictionary<TapeFileInfo, FileListItem>? _fileListItemsByFile;
-    private bool _isIncrementalFileView;
+    // TOC view model — owns BackupSetViews with per-set FilteredFileList,
+    //  checked state, filter state, and FileListItem dictionaries.
+    private TOCView? _tocView;
+    private BackupSetView? _currentSetView;
 
     // Backup fields are in MainViewModel.Backup.cs
 
@@ -321,44 +319,44 @@ public partial class MainViewModel : ViewModelBase
     #region File Filter Properties
 
     /// <summary>Whether a file filter is currently applied.</summary>
-    public bool IsFileFilterActive => _filteredFiles?.IsFiltered ?? false;
+    public bool IsFileFilterActive => _currentSetView?.FilteredFiles.IsFiltered ?? false;
 
     /// <summary>Number of files currently displayed (after filtering).</summary>
-    public int FileFilteredCount => _filteredFiles?.Count ?? FileList.Count;
+    public int FileFilteredCount => _currentSetView?.FilteredFiles.Count ?? FileList.Count;
 
     /// <summary>Total number of files before filtering.</summary>
-    public int FileTotalCount => _filteredFiles?.SourceCount ?? FileList.Count;
+    public int FileTotalCount => _currentSetView?.FilteredFiles.SourceCount ?? FileList.Count;
+
+    /// <summary>The <see cref="FilteredFileList"/> the View layer should wire as
+    ///  <see cref="Controls.FileFilterPane.FilterTarget"/>. Null when no backup set
+    ///  is loaded.</summary>
+    public FilteredFileList? ActiveFilterTarget => _currentSetView?.FilteredFiles;
+
+    /// <summary>Opaque delegate that restores the filter pane’s UI state for the
+    ///  current backup set. Set after <c>LoadBackupSetInfo</c> when the set had
+    ///  a saved filter; consumed by the View layer and then cleared.</summary>
+    public Func<Task>? PendingFilterRestore { get; set; }
 
     /// <summary>
-    /// Called by the View when the FileFilterPane requests a filter operation.
+    /// Called by the View layer after a direct-mode filter apply/disable.
+    ///  Stores the restore delegate on the current <see cref="BackupSetView"/>,
+    ///  rebuilds the display list, and refreshes all filter-related bindings.
     /// </summary>
-    /// <param name="evaluator">Ready-to-use FCL evaluator, or null to disable the filter.</param>
-    /// <param name="reapplyAction">Opaque delegate that restores the filter pane's UI state
-    /// and re-applies the filter. Stored on the tree item so the filter survives navigation.
-    /// Null when the filter is being disabled.</param>
-    public async Task OnFileFilterApplied(FclEvaluator? evaluator, Func<Task>? reapplyAction)
+    public async Task OnFilterStateChanged(Func<Task>? restoreAction)
     {
-        if (_filteredFiles is null)
+        if (_currentSetView is null)
             return;
 
-        // Set the filter (null disables, non-null starts async computation)
-        _filteredFiles.Filter = evaluator is not null ? new FclTapeFileFilter(evaluator) : null;
-        await _filteredFiles.FilterTask;
-
-        RebuildFileListFromFilteredFiles();
+        _currentSetView.SavedFilterState = restoreAction;
+        FileList = _currentSetView.BuildDisplayList(ShowFullPathname);
         NotifyFilterPropertiesChanged();
-
-        // Save/clear the restore delegate so the filter survives navigation
-        if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet)
-            _selectedTreeItem.SavedFilterState = reapplyAction;
+        await Task.CompletedTask;
     }
 
     /// <summary>Resets the ViewModel-side filter state (used when loading new content).</summary>
     private void ClearFileFilter()
     {
-        _filteredFiles = null;
-        _fileListItemsByFile = null;
-        _isIncrementalFileView = false;
+        _currentSetView = null;
     }
 
     /// <summary>
@@ -372,16 +370,16 @@ public partial class MainViewModel : ViewModelBase
     ///   <item>"Files (61 incl. incremental → 11 filtered → 5 selected)"</item>
     /// </list>
     /// </summary>
-    private void UpdateTableHeader()
+    private void UpdateFileTableHeader()
     {
         int totalCount = FileTotalCount;
-        string total = _isIncrementalFileView
+        string total = (_currentSetView?.IsIncrementalView ?? false)
             ? $"{totalCount} incl. incremental"
             : $"{totalCount}";
 
         bool hasFilter = IsFileFilterActive;
         int filteredCount = FileFilteredCount;
-        int selectedCount = _filteredFiles?.FilteredCheckedCount ?? 0;
+        int selectedCount = _currentSetView?.FilteredFiles.FilteredCheckedCount ?? 0;
 
         if (!hasFilter && selectedCount == 0)
         {
@@ -399,34 +397,6 @@ public partial class MainViewModel : ViewModelBase
         TableHeader = header;
     }
 
-    /// <summary>
-    /// Persists the <see cref="FilteredFileList"/> onto the current tree item
-    /// so that filter and checked state survive navigation.
-    /// </summary>
-    private void SaveFilteredFilesState()
-    {
-        if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet && _filteredFiles is not null)
-            _selectedTreeItem.FilteredFiles = _filteredFiles;
-    }
-
-    /// <summary>
-    /// Rebuilds <see cref="FileList"/> from the current <see cref="_filteredFiles"/> view.
-    /// Reuses existing <see cref="FileListItem"/> instances via the lookup dictionary.
-    /// </summary>
-    private void RebuildFileListFromFilteredFiles()
-    {
-        if (_filteredFiles is null || _fileListItemsByFile is null)
-            return;
-
-        var newFileList = new List<FileListItem>(_filteredFiles.Count);
-        foreach (var fileInfo in _filteredFiles)
-        {
-            if (_fileListItemsByFile.TryGetValue(fileInfo, out var item))
-                newFileList.Add(item);
-        }
-        FileList = newFileList;
-    }
-
     /// <summary>Fires PropertyChanged for all filter-related properties.</summary>
     private void NotifyFilterPropertiesChanged()
     {
@@ -434,7 +404,7 @@ public partial class MainViewModel : ViewModelBase
         OnPropertyChanged(nameof(FileFilteredCount));
         OnPropertyChanged(nameof(FileTotalCount));
         OnPropertyChanged(nameof(AreAllFilesChecked));
-        UpdateTableHeader();
+        UpdateFileTableHeader();
         CommandManager.InvalidateRequerySuggested();
     }
 
@@ -472,9 +442,6 @@ public partial class MainViewModel : ViewModelBase
 
     public void OnTreeItemSelected(TapeTreeItemViewModel item)
     {
-        // Persist filter + checked state of the backup set we're leaving
-        SaveFilteredFilesState();
-
         _selectedTreeItem = item;
 
         switch (item.ItemType)
@@ -893,10 +860,12 @@ public partial class MainViewModel : ViewModelBase
     private void UpdateTreeForDriveOnly(int driveNumber)
     {
         TreeItems.Clear();
+        _tocView = null;
+        _currentSetView = null;
         var driveItem = TapeTreeItemViewModel.CreateDriveItem(driveNumber, _tapeService.DeviceName);
         TreeItems.Add(driveItem);
         WindowTitle = $"TapeWin - Drive {driveNumber}";
-        
+
         // Show drive info when only drive is available
         LoadDriveInfo();
     }
@@ -904,6 +873,7 @@ public partial class MainViewModel : ViewModelBase
     private void UpdateTreeFromTOC(int driveNumber)
     {
         TreeItems.Clear();
+        _currentSetView = null;
 
         var toc = _tapeService.TOC;
         if (toc == null)
@@ -911,6 +881,8 @@ public partial class MainViewModel : ViewModelBase
             UpdateTreeForDriveOnly(driveNumber);
             return;
         }
+
+        _tocView = new TOCView(toc);
 
         // Create drive node
         var driveItem = TapeTreeItemViewModel.CreateDriveItem(driveNumber, _tapeService.DeviceName);
@@ -1231,7 +1203,7 @@ public partial class MainViewModel : ViewModelBase
     private void LoadBackupSetInfo(int setIndex)
     {
         var toc = _tapeService.TOC;
-        if (toc == null)
+        if (toc == null || _tocView == null)
             return;
 
         PropertyList.Clear();
@@ -1268,80 +1240,20 @@ public partial class MainViewModel : ViewModelBase
             PropertyList.Add(new PropertyItem("Continued on Next Volume", 
                 toc.IsCurrentSetContOnNextVolume ? "Yes" : "No"));
 
-            // Populate files table — reuse FilteredFileList from tree item if available
-            IReadOnlyList<TapeFileInfo> sourceFiles;
-            if (ShowIncrementalSets && setTOC.Incremental)
-            {
-                // For incremental sets, include files from dependent sets
-                var allFiles = new List<TapeFileInfo>();
-                var filesBySets = toc.SelectFiles(incremental: true, filter: null);
-                foreach (var setFiles in filesBySets)
-                {
-                    if (setFiles != null)
-                    {
-                        allFiles.AddRange(setFiles);
-                    }
-                }
-                sourceFiles = allFiles;
-                _isIncrementalFileView = true;
-            }
-            else
-            {
-                sourceFiles = setTOC;
-                _isIncrementalFileView = false;
-            }
+            // Get or create the BackupSetView (handles incremental file resolution,
+            //  caching, and checked-state migration)
+            var setView = _tocView.GetOrCreate(setIndex, ShowIncrementalSets);
+            _currentSetView = setView;
 
-            // Reuse the FilteredFileList from the tree item if source matches,
-            //  otherwise create a fresh one
-            var savedFiltered = _selectedTreeItem?.FilteredFiles;
-            if (savedFiltered is not null && savedFiltered.Source == sourceFiles)
-            {
-                _filteredFiles = savedFiltered;
-            }
-            else
-            {
-                _filteredFiles = new FilteredFileList(sourceFiles);
-
-                // If there was a saved instance with checked state, migrate it
-                if (savedFiltered is { CheckedCount: > 0 })
-                {
-                    _filteredFiles.SetChecked(savedFiltered.CheckedItems, true);
-                }
-            }
-
-            // Build FileListItem proxies (one per source file) and lookup dict
-            _fileListItemsByFile = new Dictionary<TapeFileInfo, FileListItem>(sourceFiles.Count);
-            var newFileList = new List<FileListItem>(sourceFiles.Count);
-            foreach (var fileInfo in sourceFiles)
-            {
-                var item = new FileListItem(_filteredFiles, fileInfo, ShowFullPathname);
-                newFileList.Add(item);
-                _fileListItemsByFile[fileInfo] = item;
-            }
-
-            // If a filter is active, show only filtered files
-            if (_filteredFiles.IsFiltered)
-            {
-                var filteredList = new List<FileListItem>(_filteredFiles.Count);
-                foreach (var fileInfo in _filteredFiles)
-                {
-                    if (_fileListItemsByFile.TryGetValue(fileInfo, out var item))
-                        filteredList.Add(item);
-                }
-                FileList = filteredList;
-            }
-            else
-            {
-                FileList = newFileList;
-            }
+            // Build the display list (creates FileListItem proxies as needed)
+            FileList = setView.BuildDisplayList(ShowFullPathname);
 
             NotifyFilterPropertiesChanged();
 
             StatusMessage = $"Set #{setIndex} | #{altIndex}: {FileTotalCount} file(s)";
 
-            // Restore saved filter if the user previously filtered this backup set
-            if (_selectedTreeItem?.SavedFilterState is { } restoreAction)
-                _ = restoreAction();
+            // Queue a pending filter restore if the user previously filtered this set
+            PendingFilterRestore = setView.SavedFilterState;
         }
         catch (Exception ex)
         {

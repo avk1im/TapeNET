@@ -220,23 +220,62 @@ FclEvaluator → FclTapeFileFilter : ITapeFileFilter → TapeRestoreAgent → Ta
 
 ### FileFilterPane (WPF reusable control)
 
-`Controls/FileFilterPane` is a reusable `UserControl` embedded in both the MainWindow files pane and the RestoreWindow. It supports two modes:
+`Controls/FileFilterPane` is a reusable `UserControl` embedded in both the MainWindow files pane and the RestoreWindow. It supports two filter input modes:
 
 - **Pattern mode** — DOS-style wildcard filtering (`*`, `?`) with semicolon-separated patterns, entered directly in the text box.
 - **Advanced mode** — Full FCL filter built via `FclFilterWindow`, a modal dialog with a visual DNF condition editor (left pane) and an FCL text editor (right pane) with bidirectional sync. The filter pane shows a read-only summary; editing requires reopening the dialog.
 
-When applied, the pane builds an `FclEvaluator` and passes it to the host via a `FilterRequested` callback. The host (MainViewModel or RestoreViewModel) stores an opaque restore delegate on the navigation item so the filter survives navigation.
+The pane supports two **dispatch modes** for host integration:
 
-### BackupSetListItem async filter infrastructure
+1. **Direct mode** — set `FilterTarget` to a `FilteredFileList`. The pane applies the filter directly (sets `FilterTarget.Filter`) and awaits completion, then calls `FilterStateChanged` with a restore delegate. Used by `MainViewModel` (main window) and `RestoreViewModel` file mode.
+2. **Callback mode** — set `FilterRequested`. The host receives the `FclEvaluator` + restore delegate and applies the filter itself. Used by `RestoreViewModel` set mode (which creates temporary `FilteredFileList` instances per backup set).
 
-`BackupSetListItem` exposes an `ITapeFileFilter? FileFilter` property that triggers parallel, cancellable filtered-count computation via `Task.Run`. Key members:
+Direct mode takes priority when `FilterTarget` is non-null. The pane captures its full UI state (text, advanced expression, window layout) into the restore delegate for both apply and disable, so the filter definition survives navigation even when disabled.
 
-- `FileFilter` — setter cancels any in-progress `CancellationTokenSource`, starts new `Task.Run` computation (or clears on `null`).
-- `FilteredFileCount` — read-only cached `int?`; `null` while computing or when no filter is active.
-- `FilterTask` — awaitable `Task` for the current computation; callers use `Task.WhenAll(...)` across items for parallel filtering.
-- `FileCountFormatted` — displays `"61 \u2192 49"` when filtered, plain `"61"` otherwise.
+### FilteredFileList — Centralized Async Filtering (`TapeWinNET/Utils/`)
 
-This design is reused across the RestoreWindow (set-mode aggregate stats) and the MainWindow (backup set table).
+`FilteredFileList` is the standard, reusable async filtering mechanism throughout TapeWinNET. It wraps any `IReadOnlyList<TapeFileInfo>` source and centralizes three concerns that were previously scattered across multiple ViewModels:
+
+1. **Async filter computation** — setting `Filter` (an `ITapeFileFilter?`) cancels any in-progress run and starts a new `Task.Run` computation. Setting `null` resets synchronously. `FilterTask` is awaitable; `FilterCompleted` fires on the UI thread when the run finishes.
+2. **Checked (selected) state** — a `HashSet<TapeFileInfo>` stores which files are checked for restore. `IsChecked`, `SetChecked` (single and batch), `SetFilteredChecked`, `SetAllChecked`, `ClearChecked`.
+3. **Incremental statistics** — `CheckedCount`, `CheckedTotalSize`, `FilteredCheckedCount`, `FilteredCheckedTotalSize`, `AreAllFilteredChecked` (tri-state `bool?`). Single-item changes update stats incrementally; bulk changes recompute from scratch.
+
+It also implements `IReadOnlyList<TapeFileInfo>` (the filtered view) and `INotifyPropertyChanged`, so instances can chain as source for another `FilteredFileList` and bind directly in XAML.
+
+**Thread model:** `Filter` setter and all checked-state methods must be called from the UI thread. Filter computation runs on the thread pool; all `PropertyChanged` and `FilterCompleted` notifications fire on the UI thread via the captured `SynchronizationContext`.
+
+**Usage across the app:**
+- `MainViewModel` — one `FilteredFileList` per backup set, owned by the corresponding `BackupSetView` inside a session-level `TOCView`. `FileListItem` proxies hold an owner reference and delegate `IsCheckedForRestore` to it. See **TOCView / BackupSetView** below.
+- `BackupSetListItem` — lightweight display model for the RestoreWindow set list. Does *not* own a `FilteredFileList`; instead receives externally computed `FilteredFileCount` and `CheckedFileCount` values pushed by `RestoreViewModel` after parallel filtering.
+- `RestoreViewModel` (file mode) — creates its own `FilteredFileList` from the pre-selected `List<TapeFileInfo>`, owns checked state and filter for the dialog lifetime.
+- `RestoreViewModel` (set mode) — creates temporary `FilteredFileList` instances per backup set during `ApplyFilterToBackupSetsAsync`, runs parallel filter, then pushes `FilteredFileCount` / `CheckedFileCount` to each `BackupSetListItem`.
+
+### TOCView / BackupSetView — Per-Session Data Model (`TapeWinNET/Models/TOCView.cs`)
+
+The `TOCView` / `BackupSetView` pair formalizes the data model for backup-set file content, decoupling it from the tree UI (`TapeTreeItemViewModel`).
+
+**`BackupSetView`** — per-set snapshot, encapsulates:
+- `SourceFiles` (`IReadOnlyList<TapeFileInfo>`) — the resolved file list (flat from `TapeSetTOC`, or merged incremental chain).
+- `FilteredFiles` (`FilteredFileList`) — async filtering + checked state over `SourceFiles`.
+- `SavedFilterState` (`Func<Task>?`) — opaque restore delegate from `FileFilterPane`. Stored per set so the filter definition and pane UI state survive tree navigation, even when the filter is disabled.
+- Lazy `FileListItem` dictionary — created on first `BuildDisplayList(showFullPath)` call, refreshed when the full-path toggle changes.
+- `MigrateCheckedState(previous)` — carries over checked items when a view is replaced (e.g. `ShowIncrementalSets` toggle).
+
+**`TOCView`** — session-level container:
+- Wraps a `TapeTOC` and owns a `BackupSetView?[]` indexed by 1-based set index.
+- `GetOrCreate(setIndex, showIncrementalSets)` — returns the cached view if the incremental-view flag still matches, otherwise creates a new one with checked-state migration.
+- `GetAllCheckedFiles()` — aggregates checked items across all populated set views.
+- Lives on `MainViewModel` as `_tocView`; the currently displayed set is `_currentSetView`.
+
+**Data flow:**
+```
+TapeTOC → TOCView.GetOrCreate(setIndex) → BackupSetView
+  BackupSetView.FilteredFiles.Filter = FclTapeFileFilter  → async computation
+  BackupSetView.BuildDisplayList(showFullPath) → List<FileListItem> → ListView binding
+  BackupSetView.SavedFilterState = FileFilterPane restore delegate
+```
+
+**`TapeTreeItemViewModel`** is now purely UI/navigation — it carries display name, icon, set index, and children, but no data-model fields. The `Tag` property can store an opaque reference, but `FilteredFiles` and `SavedFilterState` have moved to `BackupSetView`.
 
 ---
 
@@ -246,12 +285,12 @@ This design is reused across the RestoreWindow (set-mode aggregate stats) and th
 
 - **`ViewModelBase`** — `INotifyPropertyChanged` base with `SetProperty`.
 - **`MainViewModel`** — split across partial classes:
-  - `MainViewModel.cs` — core: tree management, property/file/set display, logging helpers, virtual drive
+  - `MainViewModel.cs` — core: tree management, TOCView ownership (`_tocView`, `_currentSetView`), property/file/set display, logging helpers, virtual drive
   - `MainViewModel.Backup.cs` — backup commands, progress properties, backup dialog flow
   - `MainViewModel.Restore.cs` — restore/validate/verify commands, progress properties, restore dialog flow
 - **Commands**: `AsyncRelayCommand` (async), `RelayCommand` (sync). All check `IsBusy` for canExecute.
 - **Dialog ViewModels**: `NewBackupSetViewModel`, `RestoreViewModel`, `OpenVirtualDriveViewModel`, `FclFilterWindowVM` — each with OK/Cancel callbacks.
-- **`RestoreViewModel`** supports two modes: set-based (backup sets with tri-state select-all, per-set filtered counts, aggregate stats) and file-based (individual files with tri-state select-all, FCL filtering). Both modes embed a `FileFilterPane` and use async `ApplyFilterToBackupSetsAsync` / `FileFilter.FilterAsync` for parallel computation.
+- **`RestoreViewModel`** supports two modes: set-based (backup sets with tri-state select-all, per-set filtered counts pushed to `BackupSetListItem`, aggregate stats) and file-based (individual files with tri-state select-all, FCL filtering via own `FilteredFileList`). Both modes embed a `FileFilterPane`. Set mode creates temporary `FilteredFileList` instances per set during `ApplyFilterToBackupSetsAsync` (parallel `Task.WhenAll`); file mode uses direct-mode `FilterTarget` wiring.
 
 ### TapeService (service layer)
 
@@ -293,7 +332,7 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 - **Content pane**: Switches between `DriveInfo`, `MediaInfo`, `BackupSetInfo` via `ContentPaneType` enum.
 - **Progress**: Backup/Restore each have their own progress panel with percent bar, text, current-file display, abort button.
 - **Set indexes**: Dual display format `#{standard} | {alt}` where standard counts up from oldest (1-based) and alt counts down from newest (0, -1, -2...).
-- **File filtering**: `FileFilterPane` with dynamic stats in the GroupBox header (e.g. `"Files (1,234 \u2192 567 filtered \u2192 42 selected)"`), filter state persistence across tree navigation, tri-state select-all checkboxes for both files and backup sets.
+- **File filtering**: `FileFilterPane` user control with dynamic stats in the GroupBox header (e.g. `"Files (1,234 \u2192 567 filtered \u2192 42 selected)"`), filter state persistence across tree navigation, tri-state select-all checkboxes for both files and backup sets.
 
 ---
 
@@ -325,6 +364,8 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 - ✅ `FileFilterPane` reusable control: pattern mode (wildcards) + advanced mode (`FclFilterWindow` with visual DNF editor and FCL text editor)
 - ✅ MainWindow file filtering: filter-as-you-type for backup set files with dynamic stats header, filter state persistence across navigation
 - ✅ RestoreWindow file filtering: both set-mode (per-set async filtered counts, aggregate stats) and file-mode (FCL-filtered file list) with tri-state select-all
+- ✅ `FilteredFileList` centralized async filtering: single class in `TapeWinNET/Utils/` replacing duplicated filter + checked-state + statistics infrastructure across `MainViewModel`, `BackupSetListItem`, and `RestoreViewModel`
+- ✅ `TOCView` / `BackupSetView` data model: per-session container decoupling file-list data (source files, filtered view, checked state, filter persistence) from the tree UI (`TapeTreeItemViewModel`). `FileFilterPane` dual-mode dispatch (direct + callback) with filter state preserved across navigation even when disabled.
 
 ## What's Next (Planned)
 

@@ -3,13 +3,13 @@ using System.Windows.Media.Imaging;
 using Windows.Win32.System.SystemServices; // for Helpers
 
 using TapeLibNET;
-using TapeWinNET.Utils;
 
 namespace TapeWinNET.Models;
 
 /// <summary>
 /// Represents a backup set item for display in the backup sets ListView.
-/// Uses <see cref="FilteredFileList"/> for per-set async filtering and count display.
+///  Filter and checked counts are externally managed and pushed in via
+///  <see cref="FilteredFileCount"/> and <see cref="CheckedFileCount"/>.
 /// </summary>
 public class BackupSetListItem : INotifyPropertyChanged
 {
@@ -20,7 +20,6 @@ public class BackupSetListItem : INotifyPropertyChanged
     private readonly int _setIndex;
     private readonly int _altIndex;
     private readonly bool _isOnCurrentVolume;
-    private readonly FilteredFileList _filteredFiles;
 
     static BackupSetListItem()
     {
@@ -33,9 +32,6 @@ public class BackupSetListItem : INotifyPropertyChanged
         _setIndex = setIndex;
         _altIndex = altIndex;
         _isOnCurrentVolume = isOnCurrentVolume;
-
-        _filteredFiles = new FilteredFileList(setTOC);
-        _filteredFiles.FilterCompleted += OnFilterCompleted;
     }
 
     private static void LoadIcon()
@@ -86,41 +82,47 @@ public class BackupSetListItem : INotifyPropertyChanged
 
     public int FileCount => _setTOC.Count;
 
-    /// <summary>The internal <see cref="FilteredFileList"/> for this set.</summary>
-    public FilteredFileList FilteredFiles => _filteredFiles;
-
     /// <summary>
-    /// Optional file filter. When set, the <see cref="FilteredFiles"/> computes
-    ///  the filtered count asynchronously. Setting to null clears the filter.
+    /// Number of files after filtering, or <c>null</c> when no filter narrows results.
+    ///  Set externally (e.g. by <c>RestoreViewModel</c>) after async filter computation.
     /// </summary>
-    public ITapeFileFilter? FileFilter
+    private int? _filteredFileCount;
+    public int? FilteredFileCount
     {
-        get => _filteredFiles.Filter;
-        set => _filteredFiles.Filter = value;
+        get => _filteredFileCount;
+        set
+        {
+            if (_filteredFileCount != value)
+            {
+                _filteredFileCount = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FilteredFileCount)));
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FileCountFormatted)));
+            }
+        }
     }
 
     /// <summary>
-    /// Number of files after filtering, or null if no filter is active (or still computing).
-    /// Computed automatically when <see cref="FileFilter"/> is set.
+    /// Number of checked (selected) files, or <c>null</c> when nothing is checked.
+    ///  Set externally for future "restore checked" functionality.
     /// </summary>
-    public int? FilteredFileCount => _filteredFiles.IsFiltered ? _filteredFiles.Count : null;
-
-    /// <summary>
-    /// Awaitable task for the current filter computation.
-    /// Callers can <c>await Task.WhenAll(...)</c> across multiple items for parallel filtering.
-    /// </summary>
-    public Task FilterTask => _filteredFiles.FilterTask;
-
-    private void OnFilterCompleted()
+    private int? _checkedFileCount;
+    public int? CheckedFileCount
     {
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FilteredFileCount)));
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FileCountFormatted)));
+        get => _checkedFileCount;
+        set
+        {
+            if (_checkedFileCount != value)
+            {
+                _checkedFileCount = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CheckedFileCount)));
+            }
+        }
     }
 
     /// <summary>
     /// Display format: plain count or "total → filtered" when a filter narrows results.
     /// </summary>
-    public string FileCountFormatted => FilteredFileCount is int filtered && filtered != _setTOC.Count
+    public string FileCountFormatted => _filteredFileCount is int filtered && filtered != _setTOC.Count
         ? $"{_setTOC.Count:N0} \u2192 {filtered:N0}" /* right arrow */
         : _setTOC.Count.ToString("N0");
 

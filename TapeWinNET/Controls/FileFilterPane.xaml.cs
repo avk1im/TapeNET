@@ -25,7 +25,7 @@ internal record FclFilterWindowState(
     string? SavedFclText);
 
 /// <summary>
-/// Reusable filter pane for file lists. Supports two modes:
+/// Reusable filter pane for file lists. Supports two filter input modes:
 /// <list type="bullet">
 ///   <item><b>Pattern mode:</b> DOS-style wildcard filtering (*, ?) with
 ///         semicolon-separated patterns entered in the text box.</item>
@@ -34,10 +34,16 @@ internal record FclFilterWindowState(
 ///         editing requires reopening the dialog.</item>
 /// </list>
 /// <para>
-/// The pane fully owns its UI state and the advanced filter expression.
-/// When the filter is applied, it builds an <see cref="FclEvaluator"/> and
-/// passes it to the host via <see cref="FilterRequested"/>. The host stores
-/// an opaque restore delegate on the navigation item for later re-application.
+/// <b>Host wiring:</b> The pane supports two dispatch modes:
+/// <list type="number">
+///   <item><b>Direct mode</b> — set <see cref="FilterTarget"/> to a
+///         <see cref="FilteredFileList"/>. The pane sets the filter directly
+///         and awaits completion, then calls <see cref="FilterStateChanged"/>
+///         with the restore delegate.</item>
+///   <item><b>Callback mode</b> — set <see cref="FilterRequested"/>. The host
+///         receives the evaluator + restore delegate and applies the filter itself.</item>
+/// </list>
+/// Direct mode takes priority when <see cref="FilterTarget"/> is non-null.
 /// </para>
 /// </summary>
 public partial class FileFilterPane : UserControl
@@ -59,8 +65,24 @@ public partial class FileFilterPane : UserControl
     ///   <item><c>restoreAction</c> — opaque delegate that restores this pane's state
     ///         and re-applies the filter on navigation. Null when disabling.</item>
     /// </list>
+    /// Used in <b>callback mode</b> (when <see cref="FilterTarget"/> is null).
     /// </summary>
     public Func<FclEvaluator?, Func<Task>?, Task>? FilterRequested { get; set; }
+
+    /// <summary>
+    /// Direct-mode filter target. When set, the pane applies the filter directly
+    ///  to this <see cref="FilteredFileList"/> instead of going through
+    ///  <see cref="FilterRequested"/>.
+    /// </summary>
+    public FilteredFileList? FilterTarget { get; set; }
+
+    /// <summary>
+    /// Called after a direct-mode filter apply/disable completes. The parameter
+    ///  is the restore delegate (<c>null</c> when disabling). The host typically
+    ///  rebuilds its display list and stores the delegate on the current
+    ///  <see cref="Models.BackupSetView.SavedFilterState"/>.
+    /// </summary>
+    public Func<Func<Task>?, Task>? FilterStateChanged { get; set; }
 
     public FileFilterPane()
     {
@@ -221,10 +243,13 @@ public partial class FileFilterPane : UserControl
 
     /// <summary>
     /// Applies the current filter (pattern or advanced) to the file list.
+    /// Uses direct mode (<see cref="FilterTarget"/>) when available,
+    ///  otherwise falls back to <see cref="FilterRequested"/> callback mode.
     /// </summary>
     private async Task ApplyFilterAsync()
     {
-        if (FilterRequested == null)
+        bool directMode = FilterTarget is not null;
+        if (!directMode && FilterRequested is null)
             return;
 
         FclEvaluator? evaluator;
@@ -248,32 +273,24 @@ public partial class FileFilterPane : UserControl
             evaluator = FclPipeline.CreateWildcardEvaluator(patterns);
         }
 
-        // Capture state for the restore delegate
-        var savedExpression = _advancedExpression;
-        var savedConditionCount = _advancedConditionCount;
-        var savedGroupCount = _advancedGroupCount;
-        var savedText = FilterText;
-        var savedHasAdvanced = HasAdvancedFilter;
-        var savedWindowState = _windowState;
-
-        Task reapplyAction()
-        {
-            // Restore the pane's UI state
-            _advancedExpression = savedExpression;
-            _advancedConditionCount = savedConditionCount;
-            _advancedGroupCount = savedGroupCount;
-            _windowState = savedWindowState;
-            HasAdvancedFilter = savedHasAdvanced;
-            FilterText = savedText ?? string.Empty;
-            UpdateCanApply();
-            UpdateAdvancedUI();
-            return ApplyFilterAsync();
-        }
+        var reapplyAction = CaptureRestoreAction(reapply: true);
 
         IsBusy = true;
         try
         {
-            await FilterRequested(evaluator, reapplyAction);
+            if (directMode)
+            {
+                // Direct mode — apply filter to FilterTarget, then notify host
+                FilterTarget!.Filter = new FclTapeFileFilter(evaluator);
+                await FilterTarget.FilterTask;
+                if (FilterStateChanged is not null)
+                    await FilterStateChanged(reapplyAction);
+            }
+            else
+            {
+                // Callback mode — delegate to host
+                await FilterRequested!(evaluator, reapplyAction);
+            }
         }
         finally
         {
@@ -284,21 +301,63 @@ public partial class FileFilterPane : UserControl
     /// <summary>
     /// Disables the active filter without clearing the definition.
     /// The user can re-apply later without rebuilding the filter.
+    /// The filter state is still saved so it survives backup-set navigation.
     /// </summary>
     private async Task DisableFilterAsync()
     {
-        if (FilterRequested == null)
+        bool directMode = FilterTarget is not null;
+        if (!directMode && FilterRequested is null)
             return;
+
+        // Save the current definition so it can be restored after navigation
+        var restoreAction = CaptureRestoreAction(reapply: false);
 
         IsBusy = true;
         try
         {
-            await FilterRequested(null, null);
+            if (directMode)
+            {
+                FilterTarget!.Filter = null;
+                if (FilterStateChanged is not null)
+                    await FilterStateChanged(restoreAction);
+            }
+            else
+            {
+                await FilterRequested!(null, restoreAction);
+            }
         }
         finally
         {
             IsBusy = false;
         }
+    }
+
+    /// <summary>
+    /// Captures the current pane state (filter text, advanced expression, window layout)
+    ///  and returns a delegate that restores it. If <paramref name="reapply"/> is true,
+    ///  the delegate also re-applies the filter after restoring the UI.
+    /// </summary>
+    private Func<Task> CaptureRestoreAction(bool reapply)
+    {
+        var savedExpression = _advancedExpression;
+        var savedConditionCount = _advancedConditionCount;
+        var savedGroupCount = _advancedGroupCount;
+        var savedText = FilterText;
+        var savedHasAdvanced = HasAdvancedFilter;
+        var savedWindowState = _windowState;
+
+        return () =>
+        {
+            _advancedExpression = savedExpression;
+            _advancedConditionCount = savedConditionCount;
+            _advancedGroupCount = savedGroupCount;
+            _windowState = savedWindowState;
+            HasAdvancedFilter = savedHasAdvanced;
+            FilterText = savedText ?? string.Empty;
+            UpdateCanApply();
+            UpdateAdvancedUI();
+            return reapply ? ApplyFilterAsync() : Task.CompletedTask;
+        };
     }
 
     #endregion

@@ -37,7 +37,7 @@ public sealed class FclTapeFileFilter(FclEvaluator evaluator) : ITapeFileFilter
     /// </summary>
     public static List<string> ParsePatterns(string input)
     {
-        return [..input
+        return [.. input
             .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)];
     }
 }

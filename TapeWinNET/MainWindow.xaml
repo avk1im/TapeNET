@@ -417,6 +417,7 @@
                                             <DataTemplate>
                                                 <CheckBox IsChecked="{Binding DataContext.AreAllBackupSetsChecked,
                                                                       RelativeSource={RelativeSource AncestorType=Window}}"
+                                                          IsThreeState="True"
                                                           HorizontalAlignment="Center" VerticalAlignment="Center"
                                                           ToolTip="Select / deselect all"/>
                                             </DataTemplate>

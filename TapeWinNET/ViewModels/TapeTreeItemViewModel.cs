@@ -2,7 +2,6 @@ using System.Collections.ObjectModel;
 using System.Windows.Media.Imaging;
 
 using TapeLibNET;
-using TapeWinNET.Utils;
 
 namespace TapeWinNET.ViewModels;
 
@@ -146,20 +145,6 @@ public class TapeTreeItemViewModel : ViewModelBase
     // Convenience properties for specific item types
     public int? SetIndex => ItemType == TreeItemType.BackupSet ? Tag as int? : null;
     public int? VolumeNumber => ItemType == TreeItemType.Tape ? Tag as int? : null;
-
-    /// <summary>
-    /// Opaque restore delegate created by <see cref="Controls.FileFilterPane"/>.
-    /// When invoked, it restores the filter pane's UI state and re-applies the filter.
-    /// Stored per backup-set tree node so the filter survives navigation.
-    /// </summary>
-    public Func<Task>? SavedFilterState { get; set; }
-
-    /// <summary>
-    /// Centralized filtered file list for this backup set node. Carries filter state,
-    ///  checked-for-restore state, and filtered statistics across tree navigation.
-    ///  Created on first visit, reused on subsequent visits. <c>null</c> for non-set nodes.
-    /// </summary>
-    public FilteredFileList? FilteredFiles { get; set; }
 
     public static TapeTreeItemViewModel CreateDriveItem(int driveNumber, string deviceName)
     {

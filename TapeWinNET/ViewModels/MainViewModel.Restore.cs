@@ -153,13 +153,25 @@ public partial class MainViewModel
     /// Gets or sets whether all backup sets are checked for restore.
     /// Setter checks or unchecks every item in BackupSetList.
     /// </summary>
-    public bool AreAllBackupSetsChecked
+    public bool? AreAllBackupSetsChecked
     {
-        get => BackupSetList.Count > 0 && BackupSetList.All(b => b.IsCheckedForRestore);
+        get => BackupSetList.Count == 0 ? false
+            : BackupSetList.All(b => b.IsCheckedForRestore) ? true
+            : BackupSetList.All(b => !b.IsCheckedForRestore) ? false
+            : null;
         set
         {
+            if (BackupSetList.Count == 0)
+                return;
+
+            // Three-state cycle: false→true→null→false.
+            //  true  = user clicked from unchecked       → check all
+            //  null  = user clicked from fully checked   → uncheck all
+            //  false = user clicked from indeterminate   → check all
+
             foreach (var item in BackupSetList)
-                item.IsCheckedForRestore = value;
+                item.IsCheckedForRestore = value != null;
+
             OnPropertyChanged(nameof(AreAllBackupSetsChecked));
             CommandManager.InvalidateRequerySuggested();
         }
@@ -175,24 +187,24 @@ public partial class MainViewModel
     /// </summary>
     public bool? AreAllFilesChecked
     {
-        get => _filteredFiles?.AreAllFilteredChecked ?? false;
+        get => _currentSetView is { } sv ? sv.FilteredFiles.AreAllFilteredChecked : false;
         set
         {
-            if (_filteredFiles is null)
+            if (_currentSetView is null)
                 return;
 
             // Three-state cycle: false→true→null→false.
             //  true  = user clicked from unchecked       → check all
             //  null  = user clicked from fully checked   → uncheck all
             //  false = user clicked from indeterminate   → check all
-            _filteredFiles.SetFilteredChecked(value != null);
+            _currentSetView.FilteredFiles.SetFilteredChecked(value != null);
 
             // Notify all visible FileListItem rows
             foreach (var item in FileList)
                 item.NotifyIsCheckedChanged();
 
             OnPropertyChanged(nameof(AreAllFilesChecked));
-            UpdateTableHeader();
+            UpdateFileTableHeader();
             CommandManager.InvalidateRequerySuggested();
         }
     }
@@ -202,13 +214,13 @@ public partial class MainViewModel
     /// or selected (clicked) in the file ListView.
     /// </summary>
     private bool HasFilesCheckedForRestore =>
-        (_filteredFiles is { CheckedCount: > 0 }) || SelectedFile != null;
+        (_currentSetView is { } sv && sv.FilteredFiles.CheckedCount > 0) || SelectedFile != null;
 
     /// <summary>Called from code-behind when a file row checkbox is toggled.</summary>
     public void OnFileCheckChanged()
     {
         OnPropertyChanged(nameof(AreAllFilesChecked));
-        UpdateTableHeader();
+        UpdateFileTableHeader();
         CommandManager.InvalidateRequerySuggested();
     }
 
@@ -316,7 +328,8 @@ public partial class MainViewModel
     private void StartRestoreForSelectedFiles(RestoreMode mode, string? targetDirectory = null)
     {
         var toc = _tapeService.TOC;
-        if (toc == null || _filteredFiles == null)
+        var filteredFiles = _currentSetView?.FilteredFiles;
+        if (toc == null || filteredFiles == null)
             return;
 
         // Determine the set index from the current tree selection
@@ -328,13 +341,13 @@ public partial class MainViewModel
 
         // Collect checked TapeFileInfo references from FilteredFileList
         IReadOnlyList<TapeFileInfo> checkedFiles;
-        if (_filteredFiles.CheckedCount == _filteredFiles.Count) // all checked
+        if (filteredFiles.CheckedCount == filteredFiles.Count) // all checked
         {
-            checkedFiles = _filteredFiles; // take all
+            checkedFiles = filteredFiles; // take all
         }
-        else if (_filteredFiles.CheckedCount > 0)
+        else if (filteredFiles.CheckedCount > 0)
         {
-            checkedFiles = [.. _filteredFiles.CheckedItems];
+            checkedFiles = [.. filteredFiles.CheckedItems];
         }
         else if (SelectedFile != null)
         {

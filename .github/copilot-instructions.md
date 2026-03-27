@@ -13,10 +13,10 @@ The **TapeNET** solution (`D:\Documents.DEV\Projects\TapeNET`) targets **.NET 8 
 | `TapeWinNET` | WPF app | GUI tape backup manager — MVVM, tree-based navigation, log pane, dialogs for backup and restore |
 | `FclAiNET.Test` | Console app | Interactive NL → FCL REPL for testing AI translation |
 
-**Test projects:** `FclNET.Tests` (xUnit, 390+ tests).
+**Test projects:** `FclNET.Tests` (xUnit, 469+ tests).
 
 - The apps depend on the libraries; `FclNET` has no project dependencies; `FclAiNET` depends on `FclNET`.
-- The tape projects (`TapeLibNET`, `TapeConNET`, `TapeWinNET`) are currently independent of the FCL projects.
+- `TapeWinNET` and `TapeConNET` depend on `FclNET` for file filtering via the `FclTapeFileFilter` adapter. `TapeLibNET` remains independent of the FCL projects.
 - Hence no need to e.g. parse the apps when working on the libraries.
 - Only if a comprehensive understanding of the whole solution is required, refer to `D:\Documents.DEV\Projects\TapeNET\TapeNET-Context-Primer.md`.
 
@@ -53,6 +53,14 @@ The **TapeNET** solution (`D:\Documents.DEV\Projects\TapeNET`) targets **.NET 8 
 - **`IFclAiInteraction` callback pattern:** Modeled after TapeLibNET's `ITapeFileNotifiable` — a minimal interface that the library calls into, letting each app decide how to present the interaction.
 - **Provider-agnostic via `IChatClient`:** All AI interaction goes through `Microsoft.Extensions.AI` abstractions. No direct OpenAI/Ollama SDK calls outside `FclAiProviderFactory`.
 - **System prompt is self-contained:** `FclAiSystemPrompt` contains a condensed FCL reference optimized for LLM consumption. When the FCL language changes, update the prompt alongside the spec.
+
+## For WPF App: Data model conventions
+
+- **`TOCView` / `BackupSetView`** own per-set data (source files, `FilteredFileList`, checked state, saved filter state). `TapeTreeItemViewModel` is purely UI/navigation — no data-model fields.
+- **`MainViewModel`** owns `_tocView` (session-level) and `_currentSetView` (currently displayed set). Views are created lazily via `TOCView.GetOrCreate`.
+- **`BackupSetListItem`** is a lightweight display model — it does not own a `FilteredFileList`. `FilteredFileCount` and `CheckedFileCount` are pushed externally.
+- **`FileFilterPane` dual-mode dispatch:** Direct mode (`FilterTarget` + `FilterStateChanged`) when the host has a `FilteredFileList` reference. Callback mode (`FilterRequested`) when the host manages filtering itself (e.g. RestoreWindow set mode).
+- **Filter state persistence:** `CaptureRestoreAction(reapply)` captures the pane's full state into a restore delegate. Stored on `BackupSetView.SavedFilterState` for both applied and disabled filters, so the definition survives navigation.
 
 ## For WPF App: Structured logging — LogEntry + WarningLevel
 
