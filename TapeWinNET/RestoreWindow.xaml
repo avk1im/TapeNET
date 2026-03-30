@@ -8,8 +8,8 @@
         d:DataContext="{d:DesignInstance Type=vm:RestoreViewModel}"
         mc:Ignorable="d"
         Title="{Binding DialogTitle}"
-        Width="720" Height="420"
-        MinWidth="600" MinHeight="360"
+        Width="820" Height="600"
+        MinWidth="650" MinHeight="460"
         WindowStartupLocation="CenterOwner"
         ResizeMode="CanResizeWithGrip"
         ShowInTaskbar="False">
@@ -20,18 +20,20 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Main content: 2-column layout -->
+        <!-- Main content: 2-column layout with splitter -->
         <Grid Grid.Row="0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" MinWidth="280"/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="260" MinWidth="240"/>
             </Grid.ColumnDefinitions>
 
             <!-- Left: Backup sets summary table -->
-            <GroupBox Grid.Column="0" Header="{Binding ItemsGroupHeader}" Margin="0,0,12,0">
+            <GroupBox Grid.Column="0" Header="{Binding ItemsGroupHeader}" Margin="0,0,4,0">
                 <ListView ItemsSource="{Binding BackupSets}"
                           CheckBox.Checked="ItemCheckBox_Changed"
                           CheckBox.Unchecked="ItemCheckBox_Changed"
+                          CheckBox.Indeterminate="ItemCheckBox_Changed"
                           VirtualizingPanel.IsVirtualizing="True"
                           VirtualizingPanel.VirtualizationMode="Recycling"
                           Margin="4">
@@ -51,6 +53,7 @@
                                 <GridViewColumn.CellTemplate>
                                     <DataTemplate>
                                         <CheckBox IsChecked="{Binding IsCheckedForRestore, Mode=TwoWay}"
+                                                  IsThreeState="{Binding HasPartialSelection}"
                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                     </DataTemplate>
                                 </GridViewColumn.CellTemplate>
@@ -65,7 +68,7 @@
                             </GridViewColumn>
                             <GridViewColumn Header="Set #" Width="55"
                                             DisplayMemberBinding="{Binding IndexDisplay}"/>
-                            <GridViewColumn Header="Description" Width="120"
+                            <GridViewColumn Header="Description" Width="140"
                                             DisplayMemberBinding="{Binding Description}"/>
                             <GridViewColumn Header="Selected" Width="65"
                                             DisplayMemberBinding="{Binding SelectedFileCountFormatted}"/>
@@ -80,8 +83,17 @@
                 </ListView>
             </GroupBox>
 
+            <!-- Splitter -->
+            <GridSplitter Grid.Column="1" Width="4"
+                          HorizontalAlignment="Center"
+                          VerticalAlignment="Stretch"
+                          Background="LightGray"/>
+
             <!-- Right: Options panel -->
-            <StackPanel Grid.Column="1" Width="240">
+            <ScrollViewer Grid.Column="2" Margin="4,0,0,0"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+            <StackPanel>
                 <!-- Operation Selection -->
                 <GroupBox Header="Operation" Margin="0,0,0,8">
                     <StackPanel Margin="8">
@@ -134,7 +146,12 @@
                     <StackPanel Margin="8">
                         <CheckBox Content="Include incremental chain"
                                   IsChecked="{Binding Incremental}"
-                                  Margin="0,0,0,6"/>
+                                  Margin="0,0,0,4"/>
+                        <CheckBox Content="This volume only"
+                                  IsChecked="{Binding ThisVolumeOnly}"
+                                  IsEnabled="{Binding IsThisVolumeOnlyEnabled}"
+                                  Margin="0,4,0,6"
+                                  ToolTip="Confine operation to backup sets on the current volume"/>
                         <TextBlock Text="Handle existing:" Margin="0,0,0,4"
                                    IsEnabled="{Binding IsHandleExistingEnabled}"/>
                         <ComboBox ItemsSource="{Binding HandleExistingOptions}"
@@ -152,23 +169,53 @@
                         </Border>
                     </StackPanel>
                 </GroupBox>
+
+                <!-- Preview -->
+                <GroupBox Header="Preview" Margin="0,8,0,0">
+                    <Grid Margin="8">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Total files:" Margin="0,0,8,4"/>
+                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding PreviewTotalFiles}" FontWeight="SemiBold"/>
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Total size:" Margin="0,0,8,4"/>
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding PreviewTotalSize}"/>
+
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Multivolume:" Margin="0,0,8,0"/>
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding PreviewMultivolume}"/>
+                    </Grid>
+                </GroupBox>
             </StackPanel>
+            </ScrollViewer>
         </Grid>
 
         <!-- Buttons -->
-        <StackPanel Grid.Row="1"
-                    Orientation="Horizontal"
-                    HorizontalAlignment="Right"
-                    Margin="0,12,0,0">
-            <Button Content="Cancel"
-                    Command="{Binding CancelCommand}"
-                    IsCancel="True"
-                    Width="80"
-                    Margin="0,0,8,0"/>
-            <Button Content="{Binding ActionButtonText}"
-                    Command="{Binding StartCommand}"
-                    IsDefault="True"
-                    Width="100"/>
-        </StackPanel>
+        <Grid Grid.Row="1" Margin="0,12,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                <Button Content="Remove Unchecked"
+                        Command="{Binding RemoveUncheckedSetsCommand}"
+                        Width="120"
+                        ToolTip="Remove all unchecked backup sets from the list"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Cancel"
+                        Command="{Binding CancelCommand}"
+                        IsCancel="True"
+                        Width="80"
+                        Margin="0,0,8,0"/>
+                <Button Content="{Binding ActionButtonText}"
+                        Command="{Binding StartCommand}"
+                        IsDefault="True"
+                        Width="100"/>
+            </StackPanel>
+        </Grid>
     </Grid>
 </Window>

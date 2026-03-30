@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
 
+using Windows.Win32.System.SystemServices; // for Helpers
+
 using TapeLibNET;
 using TapeWinNET.Converters;
 using TapeWinNET.Models;
@@ -49,11 +51,17 @@ public class RestoreViewModel : ViewModelBase
 
     private RestoreMode _mode;
     private bool _incremental;
+    private bool _thisVolumeOnly;
     private bool _restoreToOriginal = true;
     private bool _recurseSubdirectories;
     private string _targetDirectory = string.Empty;
     private HandleExistingOption _selectedHandleExisting = HandleExistingOption.All[0]; // Keep Both
     private string _itemsGroupHeader = string.Empty;
+
+    /// <summary>
+    /// Tracks whether any sets come from a different volume, cached at construction.
+    /// </summary>
+    private readonly bool _isMultivolume;
 
     public RestoreViewModel(
         RestoreMode mode,
@@ -66,22 +74,31 @@ public class RestoreViewModel : ViewModelBase
         _mode = mode;
         _recurseSubdirectories = true; // pre-assume user wants to include subdirs
 
-        // Populate the local collection (all pre-checked)
+        // sort preSelectedSets by SetIndex descending (newest to oldest)
+        preSelectedSets.Sort((a, b) => b.SetIndex.CompareTo(a.SetIndex));
+
+        // Populate the local collection (keep checked files as-is)
         foreach (var item in preSelectedSets)
-        {
             BackupSets.Add(item);
-            item.IsCheckedForRestore = true;
-        }
+
+        // Detect multivolume: sets span more than one volume, or any set is continued from prev
+        var volumes = preSelectedSets.Select(s => s.Volume).Distinct().ToList();
+        _isMultivolume = volumes.Count > 1
+            || preSelectedSets.Any(s => s.ContinuedFromPrevVolume);
 
         // Auto-detect incremental: check if any selected set is incremental
         _incremental = preSelectedSets.Any(s => s.IsIncremental);
 
-        // Initialize aggregate summary
+        // Initialize aggregate summaries
         UpdateItemsGroupHeader();
+        UpdatePreview();
 
         BrowseTargetCommand = new RelayCommand(BrowseTarget);
         StartCommand = new RelayCommand(ExecuteStart, _ => CanStart);
         CancelCommand = new RelayCommand(_ => _onCancel());
+        RemoveUncheckedSetsCommand = new RelayCommand(
+            _ => RemoveUncheckedSets(),
+            _ => BackupSets.Any(b => b.IsCheckedForRestore == false));
     }
 
     #region Properties
@@ -96,13 +113,20 @@ public class RestoreViewModel : ViewModelBase
         private set => SetProperty(ref _itemsGroupHeader, value);
     }
 
-    /// <summary>Total number of files across all checked sets.</summary>
+    /// <summary>
+    /// Total number of files across all checked sets.
+    ///  For fully checked sets (<c>true</c>), counts all files;
+    ///  for partially checked sets (<c>null</c>), counts only the checked files.
+    /// </summary>
     public int TotalFileCount
     {
         get
         {
-            var checkedSets = BackupSets.Where(b => b.IsCheckedForRestore != false);
-            return checkedSets.Sum(s => s.CheckedFileCount ?? s.FileCount);
+            return BackupSets
+                .Where(b => b.IsCheckedForRestore != false)
+                .Sum(s => s.IsCheckedForRestore == true
+                    ? s.FileCount
+                    : (s.CheckedFileCount ?? s.FileCount));
         }
     }
 
@@ -171,6 +195,34 @@ public class RestoreViewModel : ViewModelBase
         get => _incremental;
         set => SetProperty(ref _incremental, value);
     }
+
+    /// <summary>
+    /// Whether to confine the operation to backup sets on the current volume only.
+    ///  When checked, unchecks all sets not on the current volume. Only enabled
+    ///  when the selection spans multiple volumes.
+    /// </summary>
+    public bool ThisVolumeOnly
+    {
+        get => _thisVolumeOnly;
+        set
+        {
+            if (SetProperty(ref _thisVolumeOnly, value) && value)
+            {
+                // Uncheck all sets that aren't on the current volume
+                foreach (var item in BackupSets)
+                {
+                    if (!item.IsOnCurrentVolume)
+                        item.IsCheckedForRestore = false;
+                }
+                NotifySelectionChanged();
+            }
+        }
+    }
+
+    /// <summary>
+    /// "This volume only" is enabled only when multivolume is detected.
+    /// </summary>
+    public bool IsThisVolumeOnlyEnabled => _isMultivolume;
 
     /// <summary>Whether to restore files to their original locations.</summary>
     public bool RestoreToOriginal
@@ -248,6 +300,37 @@ public class RestoreViewModel : ViewModelBase
         _ => string.Empty
     };
 
+    #region Preview Properties
+
+    private string _previewTotalFiles = string.Empty;
+    private string _previewTotalSize = string.Empty;
+    private string _previewMultivolume = string.Empty;
+
+    /// <summary>Total file count across all checked sets, formatted.</summary>
+    public string PreviewTotalFiles
+    {
+        get => _previewTotalFiles;
+        private set => SetProperty(ref _previewTotalFiles, value);
+    }
+
+    /// <summary>Total file size across all checked sets, formatted.</summary>
+    public string PreviewTotalSize
+    {
+        get => _previewTotalSize;
+        private set => SetProperty(ref _previewTotalSize, value);
+    }
+
+    /// <summary>
+    /// Multivolume status: "No" for single-volume, or "Vol #1 \u2013 #3" for multi-volume.
+    /// </summary>
+    public string PreviewMultivolume
+    {
+        get => _previewMultivolume;
+        private set => SetProperty(ref _previewMultivolume, value);
+    }
+
+    #endregion
+
     /// <summary>
     /// Whether all backup sets are checked (set mode).
     /// Tri-state: true (all), false (none), null (some).
@@ -272,24 +355,37 @@ public class RestoreViewModel : ViewModelBase
             bool check = value != null;
             foreach (var item in BackupSets)
                 item.IsCheckedForRestore = check;
-            OnPropertyChanged(nameof(AreAllSetsChecked));
-            OnPropertyChanged(nameof(TotalFileCount));
-            UpdateItemsGroupHeader();
-            OnPropertyChanged(nameof(CanStart));
-            CommandManager.InvalidateRequerySuggested();
+
+            // If checking all includes non-current-volume sets, uncheck "This volume only"
+            if (check && _thisVolumeOnly && BackupSets.Any(b => !b.IsOnCurrentVolume))
+            {
+                _thisVolumeOnly = false;
+                OnPropertyChanged(nameof(ThisVolumeOnly));
+            }
+
+            NotifySelectionChanged();
         }
     }
 
     public bool CanStart => BackupSets.Any(b => b.IsCheckedForRestore != false);
 
-    /// <summary>Called from code-behind when a set checkbox is toggled.</summary>
-    public void OnItemCheckChanged()
+    /// <summary>
+    /// Called from code-behind when a set checkbox is toggled.
+    ///  The 3-state cycling is handled by the WPF CheckBox itself (enabled via
+    ///  <see cref="BackupSetListItem.HasPartialSelection"/>). We only need to
+    ///  handle the "This volume only" interlock and update dependent properties.
+    /// </summary>
+    public void OnItemCheckChanged(BackupSetListItem? changedItem = null)
     {
-        OnPropertyChanged(nameof(AreAllSetsChecked));
-        OnPropertyChanged(nameof(TotalFileCount));
-        UpdateItemsGroupHeader();
-        OnPropertyChanged(nameof(CanStart));
-        CommandManager.InvalidateRequerySuggested();
+        // If a non-current-volume set is (re-)checked, uncheck "This volume only"
+        if (changedItem is { IsOnCurrentVolume: false, IsCheckedForRestore: not false }
+            && _thisVolumeOnly)
+        {
+            _thisVolumeOnly = false;
+            OnPropertyChanged(nameof(ThisVolumeOnly));
+        }
+
+        NotifySelectionChanged();
     }
 
     #endregion
@@ -299,6 +395,7 @@ public class RestoreViewModel : ViewModelBase
     public ICommand BrowseTargetCommand { get; }
     public ICommand StartCommand { get; }
     public ICommand CancelCommand { get; }
+    public ICommand RemoveUncheckedSetsCommand { get; }
 
     #endregion
 
@@ -361,10 +458,80 @@ public class RestoreViewModel : ViewModelBase
         // e.g. "Backup sets to process (2 of 3 sets — 1,234 files)"
         if (checkedSets == BackupSets.Count)
             ItemsGroupHeader = totalFiles > 0
-                ? $"Backup sets to process ({totalFiles:N0} files)"
+                ? $"Backup sets to process ({BackupSets.Count} sets \u2192 {totalFiles:N0} files)"
                 : "Backup sets to process";
         else
-            ItemsGroupHeader = $"Backup sets to process ({checkedSets} of {BackupSets.Count} sets \u2014 {totalFiles:N0} files)";
+            ItemsGroupHeader = $"Backup sets to process ({checkedSets} of {BackupSets.Count} sets \u2192 {totalFiles:N0} files)";
+    }
+
+    /// <summary>
+    /// Recomputes the Preview section (total files, total size, multivolume status)
+    ///  from the currently checked sets.
+    /// </summary>
+    private void UpdatePreview()
+    {
+        var checkedSets = BackupSets.Where(b => b.IsCheckedForRestore != false).ToList();
+
+        if (checkedSets.Count == 0)
+        {
+            PreviewTotalFiles = "\u2014";
+            PreviewTotalSize = "\u2014";
+            PreviewMultivolume = "\u2014";
+            return;
+        }
+
+        // Total files: reuse TotalFileCount which correctly distinguishes
+        //  true (all files) from null (partial — only checked files)
+        PreviewTotalFiles = TotalFileCount.ToString("N0");
+
+        // Total size: for fully checked (true) or indeterminate-but-all-originally, use full set size;
+        //  for partial selections, we approximate with full set size (exact per-file is in TOCView data model)
+        long totalSize = checkedSets.Sum(s => s.TotalSize);
+        PreviewTotalSize = Helpers.BytesToStringLong(totalSize);
+
+        // Multivolume: determine volume range across checked sets
+        var volumes = checkedSets.Select(s => s.Volume).Distinct().OrderBy(v => v).ToList();
+        bool anyContinued = checkedSets.Any(s => s.ContinuedFromPrevVolume);
+
+        if (volumes.Count <= 1 && !anyContinued)
+        {
+            PreviewMultivolume = "No";
+        }
+        else
+        {
+            int minVol = volumes[0];
+            int maxVol = volumes[^1];
+            // If a set is continued from a previous volume, the actual range extends one below
+            if (anyContinued && minVol > 1)
+                minVol--;
+            PreviewMultivolume = $"Vol #{minVol} \u2013 #{maxVol}";
+        }
+    }
+
+    /// <summary>
+    /// Centralized notification after any selection state change. Updates all
+    ///  dependent properties, preview, group header, and command states.
+    /// </summary>
+    private void NotifySelectionChanged()
+    {
+        OnPropertyChanged(nameof(AreAllSetsChecked));
+        OnPropertyChanged(nameof(TotalFileCount));
+        UpdateItemsGroupHeader();
+        UpdatePreview();
+        OnPropertyChanged(nameof(CanStart));
+        CommandManager.InvalidateRequerySuggested();
+    }
+
+    /// <summary>
+    /// Removes all unchecked backup sets from the list.
+    /// </summary>
+    private void RemoveUncheckedSets()
+    {
+        var unchecked_ = BackupSets.Where(b => b.IsCheckedForRestore == false).ToList();
+        foreach (var item in unchecked_)
+            BackupSets.Remove(item);
+
+        NotifySelectionChanged();
     }
 
     #endregion

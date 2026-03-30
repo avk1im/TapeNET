@@ -9,6 +9,7 @@ using TapeWinNET.Converters;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
 using TapeWinNET.Utils;
+using System.Diagnostics;
 
 namespace TapeWinNET.ViewModels;
 
@@ -181,63 +182,48 @@ public partial class MainViewModel
     private void StartRestore(RestoreMode mode, string? targetDirectory)
     {
         var toc = _tapeService.TOC;
-        if (toc == null)
+        if (toc == null || _tocView == null)
             return;
 
-        // Build the per-set selection from MainWindow checkmarks
-        var checkedFilesBySet = _tocView?.GetCheckedFilesBySet()
-            ?? new Dictionary<int, IReadOnlyList<TapeFileInfo>?>();
+        // Build display items for the selected sets
+        var setItems = _tocView.BuildBackupSetItemList(checkedOnly: true);
 
         // Fall back to selected set(s) when no explicit file checkmarks exist
-        if (checkedFilesBySet.Count == 0)
+        if (setItems.Count == 0)
         {
             var fallbackIndexes = SelectedSetIndexes;
             if (fallbackIndexes.Count == 0)
                 return;
             foreach (var idx in fallbackIndexes)
-                checkedFilesBySet[idx] = null; // null = all files in set
-        }
-
-        // Build display items for the affected sets
-        var setItems = new List<BackupSetListItem>();
-        foreach (var idx in checkedFilesBySet.Keys)
-        {
-            var existing = BackupSetList.FirstOrDefault(b => b.SetIndex == idx);
-            if (existing != null)
-            {
-                setItems.Add(existing);
-            }
-            else
             {
                 // Set wasn't in the BackupSetList (e.g. tree-selected set); create ad-hoc item
                 var setTOC = toc[idx];
                 var altIdx = toc.SetIndexToAlt(idx);
-                setItems.Add(new BackupSetListItem(setTOC, idx, altIdx, setTOC.Volume == toc.Volume));
+                var item = new BackupSetListItem(setTOC, idx, altIdx, setTOC.Volume == toc.Volume)
+                {
+                    IsCheckedForRestore = true, // select all fiels
+                    CheckedFileCount = setTOC.Count
+                };
+                setItems.Add(item);            
             }
         }
 
         if (setItems.Count == 0)
             return;
 
-        // Capture the dictionary for use in the _onStart callback
-        var capturedDict = checkedFilesBySet;
-
         var viewModel = new RestoreViewModel(
             mode,
             setItems,
             request =>
             {
-                // Merge dialog's set selection with MainWindow's per-file selection.
-                //  The dialog only does set-level (un)checking; per-file selections
-                //  come from the captured MainWindow dictionary.
-                var finalDict = new Dictionary<int, IReadOnlyList<TapeFileInfo>?>();
-                foreach (var idx in request.CheckedFilesBySet.Keys)
-                    finalDict[idx] = capturedDict.TryGetValue(idx, out var files) ? files : null;
-
-                var enrichedRequest = request with { CheckedFilesBySet = finalDict };
+                var updatedRequest = request with
+                {
+                    CheckedFilesBySet = _tocView?.FromCheckedBackupSetsToFilesBySet(setItems)
+                        ?? []
+                };
 
                 Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
-                _ = ExecuteRestoreAsync(enrichedRequest);
+                _ = ExecuteRestoreAsync(updatedRequest);
             },
             () =>
             {

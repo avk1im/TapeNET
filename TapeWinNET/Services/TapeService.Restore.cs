@@ -168,7 +168,7 @@ public partial class TapeService
                         combined, ignoreFailures: true, progressHandler);
 
                     // The agent catches TapeAbortRequestedException internally and returns false,
-                    // so we detect abort via the flag rather than catching the exception.
+                    //  so we detect abort via the flag rather than catching the exception.
                     bool wasAborted = agent.IsAbortRequested;
 
                     // Handle multi-volume continuation

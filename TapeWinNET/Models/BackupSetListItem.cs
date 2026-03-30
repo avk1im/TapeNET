@@ -106,7 +106,7 @@ public class BackupSetListItem : INotifyPropertyChanged
     /// Display format for the "Filtered" column: filtered count or "--" when no filter is active.
     /// </summary>
     public string FilteredFileCountFormatted => _filteredFileCount is int count
-        ? count.ToString("N0") : "--";
+        ? count.ToString("N0") : "\u2014";
 
     /// <summary>
     /// Number of checked (selected) files, or <c>null</c> when nothing is checked.
@@ -132,7 +132,7 @@ public class BackupSetListItem : INotifyPropertyChanged
     /// Display format for the "Selected" column: checked count or "--" when nothing is checked.
     /// </summary>
     public string SelectedFileCountFormatted => _checkedFileCount is int count and > 0
-        ? count.ToString("N0") : "--";
+        ? count.ToString("N0") : "\u2014";
 
     /// <summary>
     /// Display format: plain count or "total → filtered" when a filter narrows results.
@@ -155,11 +155,17 @@ public class BackupSetListItem : INotifyPropertyChanged
 
     public int Volume => _setTOC.Volume;
 
+    public bool ContinuedFromPrevVolume => _setTOC.ContinuedFromPrevVolume;
+
     /// <summary>
-    /// Total logical file size for this backup set (sum of all file lengths), formatted.
+    /// Total logical file size for this backup set (sum of all file lengths).
     /// </summary>
-    public string TotalSizeFormatted => Helpers.BytesToString(
-        _setTOC.Sum(tfi => tfi.FileDescr.Length));
+    public long TotalSize => _setTOC.Sum(tfi => tfi.FileDescr.Length);
+
+    /// <summary>
+    /// Total logical file size for this backup set, formatted.
+    /// </summary>
+    public string TotalSizeFormatted => Helpers.BytesToString(TotalSize);
 
     public TapeSetTOC SetTOC => _setTOC;
 
@@ -184,6 +190,14 @@ public class BackupSetListItem : INotifyPropertyChanged
             }
         }
     }
+
+    /// <summary>
+    /// Whether this item has a partial file selection (some but not all files checked).
+    ///  Derived from <see cref="CheckedFileCount"/> vs <see cref="FileCount"/>.
+    ///  Used in RestoreWindow to enable 3-state checkbox cycling so the user can
+    ///  toggle between all files, no files, and the original partial selection.
+    /// </summary>
+    public bool HasPartialSelection => _checkedFileCount is > 0 and var c && c < FileCount;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 }

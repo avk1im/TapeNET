@@ -1,5 +1,7 @@
 using System.Windows;
+using System.Windows.Controls;
 
+using TapeWinNET.Models;
 using TapeWinNET.ViewModels;
 
 namespace TapeWinNET;
@@ -16,5 +18,9 @@ public partial class RestoreWindow : Window
     }
 
     private void ItemCheckBox_Changed(object sender, RoutedEventArgs e)
-        => (DataContext as RestoreViewModel)?.OnItemCheckChanged();
+    {
+        // Identify the specific BackupSetListItem whose checkbox was toggled
+        var item = (e.OriginalSource as CheckBox)?.DataContext as BackupSetListItem;
+        (DataContext as RestoreViewModel)?.OnItemCheckChanged(item);
+    }
 }

@@ -254,6 +254,9 @@ public partial class MainViewModel : ViewModelBase
         get => _contentType;
         set
         {
+            if (value != ContentPaneType.BackupSetInfo)
+                _currentSetView = null; // important to prevent backup set-only UI changes e.g. table header
+
             if (SetProperty(ref _contentType, value))
             {
                 OnPropertyChanged(nameof(IsTableVisible));
@@ -1145,7 +1148,6 @@ public partial class MainViewModel : ViewModelBase
         BackupSetList.Clear();
         FileList = [];
         ContentType = ContentPaneType.MediaInfo;
-        _currentSetView = null; // we will be in media info mode, not backup set info mode
         PropertiesHeader = "Media Properties";
 
         var toc = _tapeService.TOC;
@@ -1184,8 +1186,12 @@ public partial class MainViewModel : ViewModelBase
         // Populate backup sets table (newest-first, with checked-state sync)
         _tocView ??= new TOCView(toc);
         TableHeader = $"Backup Sets ({toc.Count})";
-        foreach (var item in _tocView.BuildBackupSetItemList(toc.Volume))
+        foreach (var item in _tocView.BuildBackupSetItemList())
             BackupSetList.Add(item);
+
+        // Refresh the header "select all" checkbox — items may carry partial
+        //  (null) checked state from per-file selections in a previous visit.
+        OnPropertyChanged(nameof(AreAllBackupSetsChecked));
 
         var mediaName = toc.Description ?? "Volume #" + toc.Volume;
         StatusMessage = _tapeService.IsTOCFromFile

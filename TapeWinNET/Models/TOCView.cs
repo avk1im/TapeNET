@@ -197,18 +197,19 @@ public class TOCView
     public Dictionary<int, IReadOnlyList<TapeFileInfo>?> GetCheckedFilesBySet()
     {
         var result = new Dictionary<int, IReadOnlyList<TapeFileInfo>?>();
-        for (int i = 1; i <= _toc.Count; i++)
+        // remember to parse sets in reverse from newest to oldest
+        for (int i = _toc.Count; i > 0; i--)
         {
             if (_setViews[i] is not { } view)
+                continue; // skip sets that have never been accessed
+
+            var ffiles = view.FilteredFiles;
+            if (ffiles.CheckedCount == 0)
                 continue;
 
-            var ff = view.FilteredFiles;
-            if (ff.CheckedCount == 0)
-                continue;
-
-            // null means all files in set — no need to materialize the list
-            result[i] = (ff.CheckedCount == ff.SourceCount) ? null
-                : [.. ff.CheckedItems];
+            result[i] = (ffiles.CheckedCount == ffiles.SourceCount)
+                ? null // null means all files in set — no need to materialize the list
+                : [.. ffiles.CheckedItems];
         }
         return result;
     }
@@ -228,6 +229,7 @@ public class TOCView
         return total;
     }
 
+    /* // implemented by below overload with checkedOnly flag
     /// <summary>
     /// Builds the backup set display list with checked-state sync from existing
     ///  <see cref="BackupSetView"/> instances. Sets are ordered newest-first
@@ -236,9 +238,7 @@ public class TOCView
     /// Mirrors <see cref="BackupSetView.BuildFileItemList"/> at the TOC level.
     /// </para>
     /// </summary>
-    /// <param name="currentVolume">Volume number to determine
-    ///  <see cref="BackupSetListItem.IsOnCurrentVolume"/>.</param>
-    public List<BackupSetListItem> BuildBackupSetItemList(int currentVolume)
+    public List<BackupSetListItem> BuildBackupSetItemList()
     {
         var list = new List<BackupSetListItem>(_toc.Count);
 
@@ -246,7 +246,7 @@ public class TOCView
         {
             int setIndex = _toc.SetIndexToAlt(alt);
             var setTOC = _toc[setIndex];
-            var item = new BackupSetListItem(setTOC, setIndex, alt, setTOC.Volume == currentVolume);
+            var item = new BackupSetListItem(setTOC, setIndex, alt, setTOC.Volume == _toc.Volume);
 
             // Sync checked and filtered state from existing BackupSetView (user may have
             //  checked/filtered files before navigating back to the media view)
@@ -266,5 +266,93 @@ public class TOCView
         }
 
         return list;
+    }
+    */
+
+    /// <summary>
+    /// Builds the backup set display list with checked-state sync from existing
+    ///  <see cref="BackupSetView"/> instances. Sets are ordered newest-first
+    ///  (alternative index 0 down to <see cref="TapeTOC.MinSetIndex"/>).
+    /// <para>
+    /// Mirrors <see cref="BackupSetView.BuildFileItemList"/> at the TOC level.
+    /// </para>
+    /// </summary>
+    /// <param name="checkedOnly">Whether to include only sets with at least one checked file.</param>
+    public List<BackupSetListItem> BuildBackupSetItemList(bool checkedOnly = false)
+    {
+        var list = new List<BackupSetListItem>(_toc.Count);
+
+        for (int alt = 0; alt >= _toc.MinSetIndex; alt--)
+        {
+            int setIndex = _toc.SetIndexToAlt(alt);
+            var setTOC = _toc[setIndex];
+
+            // Sync checked and filtered state from existing BackupSetView (user may have
+            //  checked/filtered files before navigating back to the media view)
+            if (_setViews[setIndex] is { } view)
+            {
+                var ffiles = view.FilteredFiles;
+                int checkedCount = ffiles.CheckedCount;
+                if (checkedOnly && checkedCount == 0)
+                    continue; // skip sets with no checked files when building a checked-only list
+
+                var item = new BackupSetListItem(setTOC, setIndex, alt, setTOC.Volume == _toc.Volume);
+                int sourceCount = ffiles.SourceCount;
+                item.CheckedFileCount = checkedCount > 0 ? checkedCount : null;
+                item.FilteredFileCount = ffiles.IsFiltered ? ffiles.Count : null;
+                item.IsCheckedForRestore = checkedCount == 0 ? false
+                    : checkedCount == sourceCount ? true
+                    : null; // partial
+                list.Add(item);
+            }
+            else if (!checkedOnly)
+            {
+                // Create a default item without checked nor filtered files 
+                var item = new BackupSetListItem(setTOC, setIndex, alt, setTOC.Volume == _toc.Volume);
+                list.Add(item);
+            }
+        }
+
+        return list;
+    }
+
+    /// <summary>
+    /// Maps from backup set indexes to the lists of checked files for each set.
+    /// <para>
+    /// A <c>null</c> value means "all files in set" (every file is checked).
+    /// A non-null list contains only the checked files from that set.
+    /// Sets with no checked files (or never accessed) are absent from the dictionary.
+    /// </para>
+    /// </summary>
+    /// <remarks>The backup set items must've been generated for this TOCView</remarks>
+    /// <param name="backupSetItems">A list of backup set items to process</param>
+    /// <returns>A dictionary mapping each backup set index to a list of checked files in that set</returns>
+    public Dictionary<int, IReadOnlyList<TapeFileInfo>?> FromCheckedBackupSetsToFilesBySet(
+        IReadOnlyList<BackupSetListItem> backupSetItems)
+    {
+        var result = new Dictionary<int, IReadOnlyList<TapeFileInfo>?>();
+
+        foreach (var item in backupSetItems)
+        {
+            if (item.CheckedFileCount == 0)
+                continue; // skip sets with no checked files
+
+            if (item.IsCheckedForRestore == true)
+            {
+                // All files in set are checked -> can skip materializing the list
+                result[item.SetIndex] = null; // null means all files in set
+                continue;
+            }
+
+            int setIndex = item.SetIndex;
+            if (_setViews[setIndex] is not { } view)
+                continue; // skip sets that have never been accessed
+            
+            var ffiles = view.FilteredFiles;
+            result[setIndex] = (ffiles.CheckedCount == ffiles.SourceCount)
+                ? null // null means all files in set — no need to materialize the list
+                : [.. ffiles.CheckedItems];
+        }
+        return result;
     }
 }
