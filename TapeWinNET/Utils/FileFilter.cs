@@ -10,15 +10,6 @@ namespace TapeWinNET.Utils;
 /// </summary>
 public sealed class FclTapeFileFilter(FclEvaluator evaluator) : ITapeFileFilter
 {
-    /// <summary>
-    /// Alterantive constructor that creates a wildcard evaluator from a list of
-    /// file patterns specified by <paramref name="filePatterns"/>.
-    /// </summary>
-    /// <param name="filePatterns">The list of file patterns to create the wildcard evaluator from.</param>
-    public FclTapeFileFilter(List<string> filePatterns)
-        : this(FclPipeline.CreateWildcardEvaluator(filePatterns))
-    { }
-
     /// <inheritdoc />
     public bool Matches(in TapeFileDescriptor fileDescr)
     {

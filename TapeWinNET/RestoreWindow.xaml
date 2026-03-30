@@ -5,58 +5,36 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
         xmlns:converters="clr-namespace:TapeWinNET.Converters"
-        xmlns:controls="clr-namespace:TapeWinNET.Controls"
         d:DataContext="{d:DesignInstance Type=vm:RestoreViewModel}"
         mc:Ignorable="d"
         Title="{Binding DialogTitle}"
-        Width="660" Height="600"
-        MinWidth="500" MinHeight="420"
+        Width="720" Height="420"
+        MinWidth="600" MinHeight="360"
         WindowStartupLocation="CenterOwner"
         ResizeMode="CanResizeWithGrip"
         ShowInTaskbar="False">
 
-    <Window.Resources>
-        <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVis"/>
-    </Window.Resources>
-
     <Grid Margin="16">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*" MinHeight="120"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*" MinHeight="100"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Operation Selection (no GroupBox, just radio buttons) -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
-            <RadioButton Content="Restore"
-                         IsChecked="{Binding IsRestoreMode}"
-                         Margin="0,0,20,0"/>
-            <RadioButton Content="Validate"
-                         IsChecked="{Binding IsValidateMode}"
-                         Margin="24,0,20,0"/>
-            <RadioButton Content="Verify"
-                         IsChecked="{Binding IsVerifyMode}"
-                         Margin="24,0,20,0"/>
-        </StackPanel>
+        <!-- Main content: 2-column layout -->
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" MinWidth="280"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
 
-        <!-- Backup Sets -->
-        <GroupBox Grid.Row="1" Header="{Binding ItemsGroupHeader}" Margin="0,0,0,12">
-            <Grid Margin="8">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="*"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-
-                <!-- Sets Table (set mode) -->
-                <ListView Grid.Row="0"
-                          ItemsSource="{Binding BackupSets}"
+            <!-- Left: Backup sets summary table -->
+            <GroupBox Grid.Column="0" Header="{Binding ItemsGroupHeader}" Margin="0,0,12,0">
+                <ListView ItemsSource="{Binding BackupSets}"
                           CheckBox.Checked="ItemCheckBox_Changed"
                           CheckBox.Unchecked="ItemCheckBox_Changed"
                           VirtualizingPanel.IsVirtualizing="True"
                           VirtualizingPanel.VirtualizationMode="Recycling"
-                          Visibility="{Binding IsSetsListVisible, Converter={StaticResource BoolToVis}}">
+                          Margin="4">
                     <ListView.View>
                         <GridView>
                             <!-- Checkbox column -->
@@ -87,139 +65,101 @@
                             </GridViewColumn>
                             <GridViewColumn Header="Set #" Width="55"
                                             DisplayMemberBinding="{Binding IndexDisplay}"/>
-                            <GridViewColumn Header="Description" Width="170"
+                            <GridViewColumn Header="Description" Width="120"
                                             DisplayMemberBinding="{Binding Description}"/>
-                            <GridViewColumn Header="Files" Width="90"
+                            <GridViewColumn Header="Selected" Width="65"
+                                            DisplayMemberBinding="{Binding SelectedFileCountFormatted}"/>
+                            <GridViewColumn Header="Files" Width="55"
                                             DisplayMemberBinding="{Binding FileCountFormatted}"/>
-                            <GridViewColumn Header="Inc?" Width="40"
+                            <GridViewColumn Header="Size" Width="65"
+                                            DisplayMemberBinding="{Binding TotalSizeFormatted}"/>
+                            <GridViewColumn Header="Inc?" Width="38"
                                             DisplayMemberBinding="{Binding IncrementalDisplay}"/>
                         </GridView>
                     </ListView.View>
                 </ListView>
+            </GroupBox>
 
-                <!-- Files Table (file mode) -->
-                <ListView Grid.Row="0"
-                          ItemsSource="{Binding Files}"
-                          CheckBox.Checked="ItemCheckBox_Changed"
-                          CheckBox.Unchecked="ItemCheckBox_Changed"
-                          VirtualizingPanel.IsVirtualizing="True"
-                          VirtualizingPanel.VirtualizationMode="Recycling"
-                          Visibility="{Binding IsFilesListVisible, Converter={StaticResource BoolToVis}}">
-                    <ListView.View>
-                        <GridView>
-                            <!-- Checkbox column (tri-state for file mode) -->
-                            <GridViewColumn Width="28">
-                                <GridViewColumn.HeaderTemplate>
-                                    <DataTemplate>
-                                        <CheckBox IsChecked="{Binding DataContext.AreAllFilesChecked,
-                                                              RelativeSource={RelativeSource AncestorType=Window}}"
-                                                  IsThreeState="True"
-                                                  HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                  ToolTip="Select / deselect all files"/>
-                                    </DataTemplate>
-                                </GridViewColumn.HeaderTemplate>
-                                <GridViewColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <CheckBox IsChecked="{Binding IsCheckedForRestore, Mode=TwoWay}"
-                                                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                    </DataTemplate>
-                                </GridViewColumn.CellTemplate>
-                            </GridViewColumn>
-                            <GridViewColumn Header="Name" Width="180"
-                                            DisplayMemberBinding="{Binding FileName}"/>
-                            <GridViewColumn Header="Size" Width="75"
-                                            DisplayMemberBinding="{Binding SizeFormatted}"/>
-                            <GridViewColumn Header="Modified" Width="120"
-                                            DisplayMemberBinding="{Binding LastModified}"/>
-                            <GridViewColumn Header="Path" Width="200"
-                                            DisplayMemberBinding="{Binding FullPath}"/>
-                        </GridView>
-                    </ListView.View>
-                </ListView>
-
-                <!-- File Filter Pane (both modes) -->
-                <controls:FileFilterPane Grid.Row="1"
-                                         x:Name="FileFilterPaneControl"
-                                         TotalCount="{Binding FileTotalCount}"
-                                         FilteredCount="{Binding FileFilteredCount}"
-                                         IsFilterActive="{Binding IsFilterActive}"/>
-            </Grid>
-        </GroupBox>
-
-        <!-- Restore To -->
-        <GroupBox Grid.Row="2" Header="Restore to" Margin="0,0,0,12"
-                  IsEnabled="{Binding IsRestoreToEnabled}">
-            <StackPanel Margin="8">
-                <RadioButton Content="Original location"
-                             IsChecked="{Binding RestoreToOriginal}"
-                             Margin="0,0,0,6"/>
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <RadioButton Grid.Column="0" Content="Target directory:"
-                                 IsChecked="{Binding RestoreToTargetDir}"
-                                 VerticalAlignment="Center"
-                                 Margin="0,0,8,0"/>
-                    <TextBox Grid.Column="1"
-                             Text="{Binding TargetDirectory, UpdateSourceTrigger=PropertyChanged}"
-                             VerticalContentAlignment="Center"
-                             IsEnabled="{Binding IsTargetDirectoryInputEnabled}"
-                             Margin="0,0,8,0"/>
-                    <Button Grid.Column="2"
-                            Content="Browse..."
-                            Command="{Binding BrowseTargetCommand}"
-                            IsEnabled="{Binding IsTargetDirectoryInputEnabled}"
-                            Padding="12,4"/>
-                </Grid>
-                <CheckBox Content="Restore with subdirectories"
-                          IsChecked="{Binding RecurseSubdirectories}"
-                          IsEnabled="{Binding IsRecurseSubdirsEnabled}"
-                          Margin="20,6,0,0"/>
-            </StackPanel>
-        </GroupBox>
-
-        <!-- Options -->
-        <GroupBox Grid.Row="3" Header="Options" Margin="0,0,0,12">
-            <StackPanel Margin="8">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="140"/>
-                    </Grid.ColumnDefinitions>
-                    <CheckBox Grid.Column="0"
-                              Content="Include incremental chain"
-                              IsChecked="{Binding Incremental}"
-                              VerticalAlignment="Center"/>
-                    <TextBlock Grid.Column="1" Text="Handle existing:"
-                               VerticalAlignment="Center" Margin="12,0,8,0"
-                               IsEnabled="{Binding IsHandleExistingEnabled}"/>
-                    <ComboBox Grid.Column="2"
-                              ItemsSource="{Binding HandleExistingOptions}"
-                              SelectedItem="{Binding SelectedHandleExisting}"
-                              IsEnabled="{Binding IsHandleExistingEnabled}"/>
-                </Grid>
-
-                <!-- Handle-existing warning -->
-                <Border Style="{StaticResource WarningPanelStyle}">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
-                                   FontSize="13" Margin="0,0,6,0"/>
-                        <TextBlock Text="{Binding WarningMessage}"
-                                   VerticalAlignment="Center" TextWrapping="Wrap"/>
+            <!-- Right: Options panel -->
+            <StackPanel Grid.Column="1" Width="240">
+                <!-- Operation Selection -->
+                <GroupBox Header="Operation" Margin="0,0,0,8">
+                    <StackPanel Margin="8">
+                        <RadioButton Content="Restore"
+                                     IsChecked="{Binding IsRestoreMode}"
+                                     Margin="0,0,0,4"/>
+                        <RadioButton Content="Validate"
+                                     IsChecked="{Binding IsValidateMode}"
+                                     Margin="0,0,0,4"/>
+                        <RadioButton Content="Verify"
+                                     IsChecked="{Binding IsVerifyMode}"/>
                     </StackPanel>
-                </Border>
+                </GroupBox>
+
+                <!-- Restore To -->
+                <GroupBox Header="Restore to" Margin="0,0,0,8"
+                          IsEnabled="{Binding IsRestoreToEnabled}">
+                    <StackPanel Margin="8">
+                        <RadioButton Content="Original location"
+                                     IsChecked="{Binding RestoreToOriginal}"
+                                     Margin="0,0,0,4"/>
+                        <RadioButton Content="Target directory:"
+                                     IsChecked="{Binding RestoreToTargetDir}"
+                                     Margin="0,0,0,4"/>
+                        <Grid Margin="20,0,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0"
+                                     Text="{Binding TargetDirectory, UpdateSourceTrigger=PropertyChanged}"
+                                     VerticalContentAlignment="Center"
+                                     IsEnabled="{Binding IsTargetDirectoryInputEnabled}"
+                                     Margin="0,0,4,0"/>
+                            <Button Grid.Column="1"
+                                    Content="..."
+                                    Command="{Binding BrowseTargetCommand}"
+                                    IsEnabled="{Binding IsTargetDirectoryInputEnabled}"
+                                    Width="28" Padding="0"/>
+                        </Grid>
+                        <CheckBox Content="Include subdirectories"
+                                  IsChecked="{Binding RecurseSubdirectories}"
+                                  IsEnabled="{Binding IsRecurseSubdirsEnabled}"
+                                  Margin="20,4,0,0"/>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- Options -->
+                <GroupBox Header="Options">
+                    <StackPanel Margin="8">
+                        <CheckBox Content="Include incremental chain"
+                                  IsChecked="{Binding Incremental}"
+                                  Margin="0,0,0,6"/>
+                        <TextBlock Text="Handle existing:" Margin="0,0,0,4"
+                                   IsEnabled="{Binding IsHandleExistingEnabled}"/>
+                        <ComboBox ItemsSource="{Binding HandleExistingOptions}"
+                                  SelectedItem="{Binding SelectedHandleExisting}"
+                                  IsEnabled="{Binding IsHandleExistingEnabled}"/>
+
+                        <!-- Handle-existing warning -->
+                        <Border Style="{StaticResource WarningPanelStyle}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
+                                           FontSize="13" Margin="0,0,6,0"/>
+                                <TextBlock Text="{Binding WarningMessage}"
+                                           VerticalAlignment="Center" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </GroupBox>
             </StackPanel>
-        </GroupBox>
+        </Grid>
 
         <!-- Buttons -->
-        <StackPanel Grid.Row="4"
+        <StackPanel Grid.Row="1"
                     Orientation="Horizontal"
                     HorizontalAlignment="Right"
-                    Margin="0,4,0,0">
+                    Margin="0,12,0,0">
             <Button Content="Cancel"
                     Command="{Binding CancelCommand}"
                     IsCancel="True"

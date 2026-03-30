@@ -51,6 +51,7 @@
         <ContextMenu x:Key="MediaContextMenu" x:Shared="False"
                      DataContext="{Binding PlacementTarget.Tag, RelativeSource={RelativeSource Self}}">
             <MenuItem Header="_New Backup..." Command="{Binding NewBackupCommand}"/>
+            <MenuItem Header="Restore _All Sets..." Command="{Binding RestoreAllSetsCommand}"/>
             <Separator/>
             <MenuItem Header="Re_name..." Command="{Binding RenameSelectedCommand}"/>
             <MenuItem Header="_Reread TOC" Command="{Binding RereadTOCCommand}"/>
@@ -66,9 +67,9 @@
         <!-- Context menu: Backup set / Restore actions (shared by TreeView and ListViews) -->
         <ContextMenu x:Key="RestoreContextMenu" x:Shared="False"
                      DataContext="{Binding PlacementTarget.Tag, RelativeSource={RelativeSource Self}}">
-            <MenuItem Header="_Restore..." Command="{Binding RestoreCommand}"/>
-            <MenuItem Header="Va_lidate..." Command="{Binding ValidateCommand}"/>
-            <MenuItem Header="Veri_fy..." Command="{Binding VerifyCommand}"/>
+            <MenuItem Header="{Binding RestoreCommandText}" Command="{Binding RestoreCommand}"/>
+            <MenuItem Header="{Binding ValidateCommandText}" Command="{Binding ValidateCommand}"/>
+            <MenuItem Header="{Binding VerifyCommandText}" Command="{Binding VerifyCommand}"/>
             <Separator/>
             <MenuItem Header="Re_name..." Command="{Binding RenameSelectedCommand}"/>
         </ContextMenu>
@@ -213,9 +214,9 @@
                           Visibility="{Binding IsBackupInProgress, Converter={StaticResource BoolToVis}}"/>
             </MenuItem>
             <MenuItem Header="_Restore">
-                <MenuItem Header="_Restore..." Command="{Binding RestoreCommand}"/>
-                <MenuItem Header="Va_lidate..." Command="{Binding ValidateCommand}"/>
-                <MenuItem Header="Veri_fy..." Command="{Binding VerifyCommand}"/>
+                <MenuItem Header="{Binding RestoreCommandText}" Command="{Binding RestoreCommand}"/>
+                <MenuItem Header="{Binding ValidateCommandText}" Command="{Binding ValidateCommand}"/>
+                <MenuItem Header="{Binding VerifyCommandText}" Command="{Binding VerifyCommand}"/>
                 <Separator Visibility="{Binding IsRestoreInProgress, Converter={StaticResource BoolToVis}}"/>
                 <MenuItem Header="Abort _Operation" Command="{Binding AbortRestoreCommand}"
                           Visibility="{Binding IsRestoreInProgress, Converter={StaticResource BoolToVis}}"/>
@@ -399,7 +400,6 @@
                                   CheckBox.Checked="BackupSetCheckBox_Changed"
                                   CheckBox.Unchecked="BackupSetCheckBox_Changed"
                                   PreviewMouseLeftButtonDown="DragSource_PreviewMouseLeftButtonDown"
-                                  PreviewMouseLeftButtonUp="BackupSetList_PreviewMouseLeftButtonUp"
                                   MouseMove="DragSource_MouseMove"
                                   Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}"
                                   VirtualizingPanel.IsVirtualizing="True"
@@ -425,7 +425,7 @@
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
                                                 <CheckBox IsChecked="{Binding IsCheckedForRestore, Mode=TwoWay}"
-                                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>
                                     </GridViewColumn>
@@ -458,6 +458,30 @@
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock Text="{Binding FileCountFormatted}"
+                                                           Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Filtered" Width="60">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding FilteredFileCountFormatted}"
+                                                           Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Selected" Width="60">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding SelectedFileCountFormatted}"
+                                                           Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Size" Width="70">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding TotalSizeFormatted}"
                                                            Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>

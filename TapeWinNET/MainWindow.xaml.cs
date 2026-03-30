@@ -179,7 +179,18 @@ namespace TapeWinNET
             => _viewModel.OnFileCheckChanged();
 
         private void BackupSetCheckBox_Changed(object sender, RoutedEventArgs e)
-            => _viewModel.OnBackupSetCheckChanged();
+        {
+            // Per-item checkbox: propagate checked state to the underlying FilteredFileList
+            if (e.OriginalSource is System.Windows.Controls.CheckBox cb
+                && cb.DataContext is BackupSetListItem item)
+            {
+                _viewModel.SyncBackupSetCheckedState(item);
+                return;
+            }
+
+            // Header checkbox: handled by AreAllBackupSetsChecked setter binding
+            _viewModel.OnBackupSetCheckChanged();
+        }
 
         /// <summary>
         /// Toggles the checkbox when clicking anywhere on a file row (not just the checkbox itself).
@@ -193,17 +204,6 @@ namespace TapeWinNET
                 file.IsCheckedForRestore = !file.IsCheckedForRestore;
         }
 
-        /// <summary>
-        /// Toggles the checkbox when clicking anywhere on a backup set row (not just the checkbox itself).
-        /// </summary>
-        private void BackupSetList_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-        {
-            if (IsFromCheckBoxOrHeader(e.OriginalSource as DependencyObject))
-                return;
-
-            if (FindListViewItemAndDataContext<BackupSetListItem>(e.OriginalSource as DependencyObject) is { } set)
-                set.IsCheckedForRestore = !set.IsCheckedForRestore;
-        }
 
         /// <summary>
         /// Walks the visual tree up from the click target to find the ListViewItem,

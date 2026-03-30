@@ -63,6 +63,63 @@ public partial class MainViewModel
         set => SetProperty(ref _currentRestoreFile, value);
     }
 
+    /// <summary>
+    /// Dynamic menu text for the Restore command, reflecting the current selection.
+    /// Examples: "Restore 53 files selected...", "Restore set #3 | -1...", "Restore..."
+    /// </summary>
+    public string RestoreCommandText => GetCommandText("Restore");
+
+    /// <summary>
+    /// Dynamic menu text for the Validate command, reflecting the current selection.
+    /// </summary>
+    public string ValidateCommandText => GetCommandText("Validate");
+
+    /// <summary>
+    /// Dynamic menu text for the Verify command, reflecting the current selection.
+    /// </summary>
+    public string VerifyCommandText => GetCommandText("Verify");
+
+    /// <summary>
+    /// Builds the command menu text for a given mode verb. Appends a selection summary
+    ///  when files are checked or a set is selected. Always ends with "...".
+    /// </summary>
+    private string GetCommandText(string verb)
+    {
+        var summary = GetSelectionSummaryText();
+        return summary != null ? $"{verb} {summary}..." : $"{verb}...";
+    }
+
+    /// <summary>
+    /// Returns a concise description of the current restore selection, or <c>null</c>
+    ///  when nothing actionable is selected.
+    /// <para>
+    /// Priority: (1) checked files across sets → "N files selected",
+    ///  (2) tree/list selected set → "set #std | alt",
+    ///  (3) null.
+    /// </para>
+    /// </summary>
+    private string? GetSelectionSummaryText()
+    {
+        // (1) Checked files across all backup set views
+        int checkedCount = _tocView?.GetTotalCheckedCount() ?? 0;
+        if (checkedCount > 0)
+            return $"{checkedCount:N0} files selected";
+
+        // (2) Tree or list selected backup set (no per-file selection)
+        if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet
+            && _selectedTreeItem.SetIndex is int treeIdx)
+        {
+            var item = BackupSetList.FirstOrDefault(b => b.SetIndex == treeIdx);
+            if (item != null)
+                return $"set #{item.IndexDisplay}";
+        }
+
+        if (SelectedBackupSet is { } selSet)
+            return $"set #{selSet.IndexDisplay}";
+
+        return null;
+    }
+
     #endregion
 
     #region Restore Commands
@@ -70,6 +127,7 @@ public partial class MainViewModel
     public ICommand RestoreCommand { get; private set; } = null!;
     public ICommand ValidateCommand { get; private set; } = null!;
     public ICommand VerifyCommand { get; private set; } = null!;
+    public ICommand RestoreAllSetsCommand { get; private set; } = null!;
     public ICommand AbortRestoreCommand { get; private set; } = null!;
 
     /// <summary>
@@ -86,7 +144,28 @@ public partial class MainViewModel
         VerifyCommand = new RelayCommand(
             _ => StartRestore(RestoreMode.Verify),
             _ => CanStartRestore);
+        RestoreAllSetsCommand = new RelayCommand(
+            _ => StartRestoreAllSets(),
+            _ => CanRestoreAllSets);
         AbortRestoreCommand = new RelayCommand(AbortRestore, _ => IsRestoreInProgress);
+    }
+
+    /// <summary>
+    /// Whether the "Restore All Sets" command should be enabled.
+    /// Requires: not busy, media loaded, TOC available with at least one set.
+    /// </summary>
+    private bool CanRestoreAllSets =>
+        !IsBusy && _tapeService.IsMediaLoaded && _tapeService.TOC is { Count: > 0 };
+
+    /// <summary>
+    /// Checks all backup sets (all files) and starts a restore operation.
+    ///  Available from the Media context menu for quick "restore everything" action.
+    /// </summary>
+    private void StartRestoreAllSets()
+    {
+        // Check all sets (propagates to FilteredFileLists)
+        AreAllBackupSetsChecked = true;
+        StartRestore(RestoreMode.Restore);
     }
 
     private void StartRestore(RestoreMode mode)
@@ -94,12 +173,89 @@ public partial class MainViewModel
         StartRestore(mode, targetDirectory: null);
     }
 
+    /// <summary>
+    /// Unified entry point for restore/validate/verify operations.
+    /// Builds the checked-files-by-set dictionary from MainWindow checkmarks
+    /// (single source of truth), resolves display items, and opens RestoreWindow.
+    /// </summary>
     private void StartRestore(RestoreMode mode, string? targetDirectory)
     {
-        if (HasFilesCheckedForRestore && IsFileTableVisible)
-            StartRestoreForSelectedFiles(mode, targetDirectory);
-        else
-            StartRestoreForSelectedSet(mode, targetDirectory);
+        var toc = _tapeService.TOC;
+        if (toc == null)
+            return;
+
+        // Build the per-set selection from MainWindow checkmarks
+        var checkedFilesBySet = _tocView?.GetCheckedFilesBySet()
+            ?? new Dictionary<int, IReadOnlyList<TapeFileInfo>?>();
+
+        // Fall back to selected set(s) when no explicit file checkmarks exist
+        if (checkedFilesBySet.Count == 0)
+        {
+            var fallbackIndexes = SelectedSetIndexes;
+            if (fallbackIndexes.Count == 0)
+                return;
+            foreach (var idx in fallbackIndexes)
+                checkedFilesBySet[idx] = null; // null = all files in set
+        }
+
+        // Build display items for the affected sets
+        var setItems = new List<BackupSetListItem>();
+        foreach (var idx in checkedFilesBySet.Keys)
+        {
+            var existing = BackupSetList.FirstOrDefault(b => b.SetIndex == idx);
+            if (existing != null)
+            {
+                setItems.Add(existing);
+            }
+            else
+            {
+                // Set wasn't in the BackupSetList (e.g. tree-selected set); create ad-hoc item
+                var setTOC = toc[idx];
+                var altIdx = toc.SetIndexToAlt(idx);
+                setItems.Add(new BackupSetListItem(setTOC, idx, altIdx, setTOC.Volume == toc.Volume));
+            }
+        }
+
+        if (setItems.Count == 0)
+            return;
+
+        // Capture the dictionary for use in the _onStart callback
+        var capturedDict = checkedFilesBySet;
+
+        var viewModel = new RestoreViewModel(
+            mode,
+            setItems,
+            request =>
+            {
+                // Merge dialog's set selection with MainWindow's per-file selection.
+                //  The dialog only does set-level (un)checking; per-file selections
+                //  come from the captured MainWindow dictionary.
+                var finalDict = new Dictionary<int, IReadOnlyList<TapeFileInfo>?>();
+                foreach (var idx in request.CheckedFilesBySet.Keys)
+                    finalDict[idx] = capturedDict.TryGetValue(idx, out var files) ? files : null;
+
+                var enrichedRequest = request with { CheckedFilesBySet = finalDict };
+
+                Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
+                _ = ExecuteRestoreAsync(enrichedRequest);
+            },
+            () =>
+            {
+                Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
+            });
+
+        // Pre-fill target directory (e.g. from drag-to-Explorer)
+        if (targetDirectory != null)
+        {
+            viewModel.RestoreToTargetDir = true;
+            viewModel.TargetDirectory = targetDirectory;
+        }
+
+        var window = new RestoreWindow(viewModel)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        window.ShowDialog();
     }
 
     /// <summary>
@@ -151,13 +307,14 @@ public partial class MainViewModel
 
     /// <summary>
     /// Gets or sets whether all backup sets are checked for restore.
-    /// Setter checks or unchecks every item in BackupSetList.
+    /// Setter checks or unchecks every item in BackupSetList, propagating
+    ///  to underlying <see cref="FilteredFileList"/>s and updating counts.
     /// </summary>
     public bool? AreAllBackupSetsChecked
     {
         get => BackupSetList.Count == 0 ? false
-            : BackupSetList.All(b => b.IsCheckedForRestore) ? true
-            : BackupSetList.All(b => !b.IsCheckedForRestore) ? false
+            : BackupSetList.All(b => b.IsCheckedForRestore == true) ? true
+            : BackupSetList.All(b => b.IsCheckedForRestore == false) ? false
             : null;
         set
         {
@@ -169,10 +326,38 @@ public partial class MainViewModel
             //  null  = user clicked from fully checked   → uncheck all
             //  false = user clicked from indeterminate   → check all
 
+            bool check = value != null;
             foreach (var item in BackupSetList)
-                item.IsCheckedForRestore = value != null;
+            {
+                // Ensure the BackupSetView exists when checking, so checked state
+                //  propagates to FilteredFileList even for non-visited sets.
+                var view = _tocView?[item.SetIndex];
+                if (view == null && check && _tocView != null)
+                    view = _tocView.GetOrCreate(item.SetIndex, ShowIncrementalSets);
+
+                if (view != null)
+                {
+                    view.FilteredFiles.SetAllChecked(check);
+                    item.CheckedFileCount = check ? view.FilteredFiles.SourceCount : null;
+                }
+                else
+                {
+                    item.CheckedFileCount = null;
+                }
+                item.IsCheckedForRestore = check;
+            }
+
+            // If the currently displayed set is affected, refresh file checkmarks
+            if (_currentSetView != null)
+            {
+                foreach (var fi in FileList)
+                    fi.NotifyIsCheckedChanged();
+                OnPropertyChanged(nameof(AreAllFilesChecked));
+                UpdateFileTableHeader();
+            }
 
             OnPropertyChanged(nameof(AreAllBackupSetsChecked));
+            NotifyCommandTextChanged();
             CommandManager.InvalidateRequerySuggested();
         }
     }
@@ -216,19 +401,120 @@ public partial class MainViewModel
     private bool HasFilesCheckedForRestore =>
         (_currentSetView is { } sv && sv.FilteredFiles.CheckedCount > 0) || SelectedFile != null;
 
-    /// <summary>Called from code-behind when a file row checkbox is toggled.</summary>
+    /// <summary>
+    /// Called from code-behind when a file row checkbox is toggled.
+    ///  Pushes the new tri-state and checked count back to the set-level
+    ///  <see cref="BackupSetListItem"/>.
+    /// </summary>
     public void OnFileCheckChanged()
     {
+        // Push tri-state and count back to the set-level display item
+        if (_currentSetView is { } sv)
+        {
+            var setItem = BackupSetList.FirstOrDefault(b => b.SetIndex == sv.SetIndex);
+            if (setItem != null)
+            {
+                int checked_ = sv.FilteredFiles.CheckedCount;
+                int total = sv.FilteredFiles.SourceCount;
+                setItem.CheckedFileCount = checked_ > 0 ? checked_ : null;
+                setItem.IsCheckedForRestore = checked_ == 0 ? false
+                    : checked_ == total ? true
+                    : null; // partial
+            }
+        }
+
         OnPropertyChanged(nameof(AreAllFilesChecked));
+        OnPropertyChanged(nameof(AreAllBackupSetsChecked));
         UpdateFileTableHeader();
+        NotifyCommandTextChanged();
         CommandManager.InvalidateRequerySuggested();
     }
 
-    /// <summary>Called from code-behind when a backup set row checkbox is toggled.</summary>
+    /// <summary>
+    /// Notifies all backup-set-level properties after a check state change.
+    ///  Called after individual item changes and from <see cref="AreAllBackupSetsChecked"/> setter.
+    /// </summary>
     public void OnBackupSetCheckChanged()
     {
         OnPropertyChanged(nameof(AreAllBackupSetsChecked));
+        NotifyCommandTextChanged();
         CommandManager.InvalidateRequerySuggested();
+    }
+
+    /// <summary>
+    /// Toggles a backup set's checked state and propagates to the underlying
+    ///  <see cref="FilteredFileList"/> if the set has been navigated to.
+    ///  Called from code-behind on row click (where <see cref="BackupSetListItem.IsCheckedForRestore"/>
+    ///  has not yet been changed).
+    /// </summary>
+    public void ToggleBackupSetChecked(BackupSetListItem item)
+    {
+        // true → false (uncheck all), false/null → true (check all)
+        bool check = item.IsCheckedForRestore != true;
+        ApplyBackupSetCheckedState(item, check);
+    }
+
+    /// <summary>
+    /// Synchronizes a backup set item's file-level checked state with its current
+    ///  <see cref="BackupSetListItem.IsCheckedForRestore"/> value. Called from
+    ///  code-behind after the WPF checkbox binding has already updated the property.
+    /// </summary>
+    public void SyncBackupSetCheckedState(BackupSetListItem item)
+    {
+        bool check = item.IsCheckedForRestore != false;
+        ApplyBackupSetCheckedState(item, check);
+    }
+
+    /// <summary>
+    /// Applies a definite checked/unchecked state to a backup set, propagating
+    ///  to the underlying <see cref="FilteredFileList"/> and updating display counters.
+    ///  Force-creates the <see cref="BackupSetView"/> when needed so that
+    ///  <see cref="TOCView.GetCheckedFilesBySet"/> picks up the checked state
+    ///  even for sets the user has not navigated to yet.
+    /// </summary>
+    private void ApplyBackupSetCheckedState(BackupSetListItem item, bool check)
+    {
+        // Ensure the BackupSetView exists so checked state is tracked in FilteredFileList.
+        //  Non-visited sets won't have a view yet — create one on demand when checking.
+        var view = _tocView?[item.SetIndex];
+        if (view == null && check && _tocView != null)
+            view = _tocView.GetOrCreate(item.SetIndex, ShowIncrementalSets);
+
+        if (view != null)
+        {
+            view.FilteredFiles.SetAllChecked(check);
+            item.CheckedFileCount = check ? view.FilteredFiles.SourceCount : null;
+        }
+        else
+        {
+            item.CheckedFileCount = null;
+        }
+
+        // After set-level toggle, state is always definite (true or false);
+        //  indeterminate (null) only arises from per-file selection.
+        item.IsCheckedForRestore = check;
+
+        // If this is the currently displayed set, refresh file checkmarks
+        if (_currentSetView?.SetIndex == item.SetIndex)
+        {
+            foreach (var fi in FileList)
+                fi.NotifyIsCheckedChanged();
+            OnPropertyChanged(nameof(AreAllFilesChecked));
+            UpdateFileTableHeader();
+        }
+
+        OnBackupSetCheckChanged();
+    }
+
+    /// <summary>
+    /// Fires PropertyChanged for all dynamic command text properties.
+    ///  Called whenever the selection state changes (file checks, set checks, tree selection).
+    /// </summary>
+    private void NotifyCommandTextChanged()
+    {
+        OnPropertyChanged(nameof(RestoreCommandText));
+        OnPropertyChanged(nameof(ValidateCommandText));
+        OnPropertyChanged(nameof(VerifyCommandText));
     }
 
     /// <summary>
@@ -240,8 +526,9 @@ public partial class MainViewModel
         get
         {
             // First try: checked backup sets in the list view (multi-select via checkboxes)
+            //  Include fully checked (true) and partially checked (null/indeterminate) sets
             var checkedSets = BackupSetList
-                .Where(b => b.IsCheckedForRestore)
+                .Where(b => b.IsCheckedForRestore != false)
                 .Select(b => b.SetIndex)
                 .ToList();
 
@@ -264,153 +551,14 @@ public partial class MainViewModel
 
     #region Private Methods - Restore Operations
 
-    private void StartRestoreForSelectedSet(RestoreMode mode, string? targetDirectory = null)
-    {
-        var setIndexes = SelectedSetIndexes;
-        if (setIndexes.Count == 0)
-            return;
-
-        var toc = _tapeService.TOC;
-        if (toc == null)
-            return;
-
-        // Gather the BackupSetListItem objects for the selected indexes
-        var preSelectedSets = setIndexes
-            .Select(idx => BackupSetList.FirstOrDefault(b => b.SetIndex == idx))
-            .Where(b => b != null)
-            .Cast<BackupSetListItem>()
-            .ToList();
-
-        // If selection came from tree view (not from checkboxes), find or create the item
-        if (preSelectedSets.Count == 0 && setIndexes.Count > 0)
-        {
-            foreach (var idx in setIndexes)
-            {
-                var setTOC = toc[idx];
-                var altIdx = toc.SetIndexToAlt(idx);
-                preSelectedSets.Add(new BackupSetListItem(setTOC, idx, altIdx, setTOC.Volume == toc.Volume));
-            }
-        }
-
-        if (preSelectedSets.Count == 0)
-            return;
-
-        var viewModel = new RestoreViewModel(
-            mode,
-            preSelectedSets,
-            request =>
-            {
-                // Close the dialog
-                Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
-
-                // Execute the operation with the gathered settings
-                _ = ExecuteRestoreAsync(request);
-            },
-            () =>
-            {
-                Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
-            });
-
-        // Pre-fill target directory (e.g. from drag-to-Explorer)
-        if (targetDirectory != null)
-        {
-            viewModel.RestoreToTargetDir = true;
-            viewModel.TargetDirectory = targetDirectory;
-        }
-
-        var window = new RestoreWindow(viewModel)
-        {
-            Owner = Application.Current.MainWindow
-        };
-        window.ShowDialog();
-    }
-
-    private void StartRestoreForSelectedFiles(RestoreMode mode, string? targetDirectory = null)
-    {
-        var toc = _tapeService.TOC;
-        var filteredFiles = _currentSetView?.FilteredFiles;
-        if (toc == null || filteredFiles == null)
-            return;
-
-        // Determine the set index from the current tree selection
-        int setIndex;
-        if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet && _selectedTreeItem.SetIndex.HasValue)
-            setIndex = _selectedTreeItem.SetIndex.Value;
-        else
-            return;
-
-        // Collect checked TapeFileInfo references from FilteredFileList
-        IReadOnlyList<TapeFileInfo> checkedFiles;
-        if (filteredFiles.CheckedCount == filteredFiles.Count) // all checked
-        {
-            checkedFiles = filteredFiles; // take all
-        }
-        else if (filteredFiles.CheckedCount > 0)
-        {
-            checkedFiles = [.. filteredFiles.CheckedItems];
-        }
-        else if (SelectedFile != null)
-        {
-            // Fall back to the ListView-selected file if none are explicitly checkmarked
-            checkedFiles = [SelectedFile.FileInfo];
-        }
-        else
-        {
-            return;
-        }
-
-        toc.CurrentSetIndex = setIndex;
-        var setTOC = toc.CurrentSetTOC;
-
-        /*
-        // Optional behavior: if all files in the set are checked, go to set restore dialog
-        //  Might not be what the user expects when they explicitly checked every file
-        if (setTOC.Count == checkedFiles.Count)
-        {
-            // All files are checked —> shortcut to full set restore
-            StartRestoreForSelectedSet(mode, targetDirectory);
-            return;
-        }
-        */
-
-        var viewModel = new RestoreViewModel(
-            mode,
-            checkedFiles,
-            setIndex,
-            setTOC.Incremental,
-            request =>
-            {
-                Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
-                _ = ExecuteRestoreAsync(request);
-            },
-            () =>
-            {
-                Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
-            });
-
-        // Pre-fill target directory (e.g. from drag-to-Explorer)
-        if (targetDirectory != null)
-        {
-            viewModel.RestoreToTargetDir = true;
-            viewModel.TargetDirectory = targetDirectory;
-        }
-
-        var window = new RestoreWindow(viewModel)
-        {
-            Owner = Application.Current.MainWindow
-        };
-        window.ShowDialog();
-    }
-
     private async Task ExecuteRestoreAsync(RestoreRequest request)
     {
         var mode = request.Mode;
-        var setIndexes = request.SetIndexes;
+        var checkedFilesBySet = request.CheckedFilesBySet;
         var incremental = request.Incremental;
         var targetDirectory = request.TargetDirectory;
         var recurseSubdirectories = request.RecurseSubdirectories;
         var handleExisting = request.HandleExisting;
-        var fileFilter = request.FileFilter;
 
         string modeName = mode switch
         {
@@ -437,9 +585,8 @@ public partial class MainViewModel
             {
                 await _tapeService.ExecuteRestoreAsync(
                     mode,
-                    setIndexes,
+                    checkedFilesBySet,
                     incremental,
-                    fileFilter,
                     targetDirectory,
                     recurseSubdirectories: recurseSubdirectories,
                     handleExisting,

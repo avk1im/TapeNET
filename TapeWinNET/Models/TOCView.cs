@@ -48,7 +48,7 @@ public class BackupSetView(int setIndex, bool isIncrementalView,
     /// </summary>
     /// <param name="showFullPath">Whether file names show the full path.</param>
     /// <returns>A new list of <see cref="FileListItem"/> for binding.</returns>
-    public List<FileListItem> BuildDisplayList(bool showFullPath)
+    public List<FileListItem> BuildFileItemList(bool showFullPath)
     {
         EnsureFileListItems(showFullPath);
 
@@ -183,5 +183,88 @@ public class TOCView
                 result.AddRange(view.FilteredFiles.CheckedItems);
         }
         return result;
+    }
+
+    /// <summary>
+    /// Builds a dictionary of checked files per backup set, suitable for
+    ///  <see cref="TapeTOC.SelectFilesFromSets"/>.
+    /// <para>
+    /// A <c>null</c> value means "all files in set" (every file is checked).
+    /// A non-null list contains only the checked files from that set.
+    /// Sets with no checked files (or never accessed) are absent from the dictionary.
+    /// </para>
+    /// </summary>
+    public Dictionary<int, IReadOnlyList<TapeFileInfo>?> GetCheckedFilesBySet()
+    {
+        var result = new Dictionary<int, IReadOnlyList<TapeFileInfo>?>();
+        for (int i = 1; i <= _toc.Count; i++)
+        {
+            if (_setViews[i] is not { } view)
+                continue;
+
+            var ff = view.FilteredFiles;
+            if (ff.CheckedCount == 0)
+                continue;
+
+            // null means all files in set — no need to materialize the list
+            result[i] = (ff.CheckedCount == ff.SourceCount) ? null
+                : [.. ff.CheckedItems];
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Returns the total number of checked files across all populated set views,
+    ///  without materializing the file lists.
+    /// </summary>
+    public int GetTotalCheckedCount()
+    {
+        int total = 0;
+        for (int i = 1; i <= _toc.Count; i++)
+        {
+            if (_setViews[i] is { } view)
+                total += view.FilteredFiles.CheckedCount;
+        }
+        return total;
+    }
+
+    /// <summary>
+    /// Builds the backup set display list with checked-state sync from existing
+    ///  <see cref="BackupSetView"/> instances. Sets are ordered newest-first
+    ///  (alternative index 0 down to <see cref="TapeTOC.MinSetIndex"/>).
+    /// <para>
+    /// Mirrors <see cref="BackupSetView.BuildFileItemList"/> at the TOC level.
+    /// </para>
+    /// </summary>
+    /// <param name="currentVolume">Volume number to determine
+    ///  <see cref="BackupSetListItem.IsOnCurrentVolume"/>.</param>
+    public List<BackupSetListItem> BuildBackupSetItemList(int currentVolume)
+    {
+        var list = new List<BackupSetListItem>(_toc.Count);
+
+        for (int alt = 0; alt >= _toc.MinSetIndex; alt--)
+        {
+            int setIndex = _toc.SetIndexToAlt(alt);
+            var setTOC = _toc[setIndex];
+            var item = new BackupSetListItem(setTOC, setIndex, alt, setTOC.Volume == currentVolume);
+
+            // Sync checked and filtered state from existing BackupSetView (user may have
+            //  checked/filtered files before navigating back to the media view)
+            if (_setViews[setIndex] is { } existingView)
+            {
+                var ff = existingView.FilteredFiles;
+                int checkedCount = ff.CheckedCount;
+                int sourceCount = ff.SourceCount;
+                item.CheckedFileCount = checkedCount > 0 ? checkedCount : null;
+                item.FilteredFileCount = ff.IsFiltered ? ff.Count : null;
+                item.IsCheckedForRestore = checkedCount == 0 ? false
+                    : checkedCount == sourceCount ? true
+                    : null; // partial
+            }
+
+            list.Add(item);
+        }
+
+        return list;
     }
 }

@@ -572,6 +572,7 @@ namespace TapeLibNET
         /// Restores files from multiple backup sets, combining their file selections.
         /// Each set's incremental chain is resolved independently, then the selections are merged
         /// so that files are read from tape in a single forward pass.
+        /// Uses <see cref="TapeTOC.SelectFilesFromSets"/> for centralized file selection logic.
         /// </summary>
         /// <param name="setIndexes">List of set indexes to restore (1-based standard indexes).</param>
         /// <param name="incremental">Whether to traverse each set's incremental chain.</param>
@@ -590,30 +591,37 @@ namespace TapeLibNET
 
             _stats.Reset();
 
-            // Normalize to standard indexes, deduplicate, sort from newest to oldest
-            var stdIndexes = setIndexes
-                .Select(i => TOC.SetIndexToStd(i))
-                .Distinct()
-                .OrderByDescending(i => i)
-                .ToList();
-
             m_logger.LogTrace("Restoring files from {Count} set(s): {Sets}",
-                stdIndexes.Count, string.Join(", ", stdIndexes.Select(i => $"#{i}")));
+                setIndexes.Count, string.Join(", ", setIndexes.Select(i => $"#{i}")));
 
-            // Select files for the newest set first
-            int newestIdx = stdIndexes[0];
-            TOC.CurrentSetIndex = newestIdx;
-            var combined = TOC.SelectFiles(incremental, fileFilter);
-
-            // Combine with selections from remaining (older) sets
-            for (int i = 1; i < stdIndexes.Count; i++)
+            // Build the dictionary expected by TapeTOC.SelectFilesFromSets.
+            //  null value = all files matching the filter for that set.
+            //  When a filter is present, pre-select matching files per set.
+            var checkedFilesBySet = new Dictionary<int, IReadOnlyList<TapeFileInfo>?>(setIndexes.Count);
+            foreach (int idx in setIndexes)
             {
-                TOC.CurrentSetIndex = stdIndexes[i];
-                var selected = TOC.SelectFiles(incremental, fileFilter);
-                combined = TOC.CombineSelectedFiles(combined, newestIdx, selected, stdIndexes[i]);
+                int stdIdx = TOC.SetIndexToStd(idx);
+                if (checkedFilesBySet.ContainsKey(stdIdx))
+                    continue; // deduplicate
+
+                if (fileFilter is null)
+                {
+                    checkedFilesBySet[stdIdx] = null; // all files
+                }
+                else
+                {
+                    // Pre-filter the set's files through the ITapeFileFilter
+                    var setTOC = TOC[stdIdx];
+                    var matching = setTOC.SelectFiles(fileFilter);
+                    checkedFilesBySet[stdIdx] = matching; // null = all match, list = subset
+                }
             }
 
-            // Set current to the newest set and restore the combined selection
+            var combined = TOC.SelectFilesFromSets(incremental, checkedFilesBySet);
+
+            // SelectFilesFromSets preserves CurrentSetIndex. Set it to the newest
+            //  selected set for RestoreFilesFromCurrentSetDown, which iterates downward.
+            int newestIdx = checkedFilesBySet.Keys.Select(TOC.SetIndexToStd).Max();
             TOC.CurrentSetIndex = newestIdx;
             return RestoreFilesFromCurrentSetDown(combined, ignoreFailures, fileNotify);
         }

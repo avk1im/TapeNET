@@ -241,7 +241,11 @@ public partial class MainViewModel : ViewModelBase
     public BackupSetListItem? SelectedBackupSet
     {
         get => _selectedBackupSet;
-        set => SetProperty(ref _selectedBackupSet, value);
+        set
+        {
+            if (SetProperty(ref _selectedBackupSet, value))
+                NotifyCommandTextChanged();
+        }
         // Navigation now triggered by double-click or Enter, not selection change
     }
 
@@ -348,7 +352,7 @@ public partial class MainViewModel : ViewModelBase
             return;
 
         _currentSetView.SavedFilterState = restoreAction;
-        FileList = _currentSetView.BuildDisplayList(ShowFullPathname);
+        FileList = _currentSetView.BuildFileItemList(ShowFullPathname);
         NotifyFilterPropertiesChanged();
         await Task.CompletedTask;
     }
@@ -374,14 +378,14 @@ public partial class MainViewModel : ViewModelBase
     {
         int totalCount = FileTotalCount;
         string total = (_currentSetView?.IsIncrementalView ?? false)
-            ? $"{totalCount} incl. incremental"
-            : $"{totalCount}";
+            ? $"{totalCount:N0} incl. incremental"
+            : $"{totalCount:N0}";
 
         bool hasFilter = IsFileFilterActive;
         int filteredCount = FileFilteredCount;
-        int selectedCount = _currentSetView?.FilteredFiles.FilteredCheckedCount ?? 0;
+        int checkedCount = _currentSetView?.FilteredFiles.CheckedCount ?? 0;
 
-        if (!hasFilter && selectedCount == 0)
+        if (!hasFilter && checkedCount == 0)
         {
             TableHeader = $"Files ({total})";
             return;
@@ -389,9 +393,9 @@ public partial class MainViewModel : ViewModelBase
 
         var header = $"Files ({total}";
         if (hasFilter)
-            header += $" → {filteredCount} filtered";
-        if (selectedCount > 0)
-            header += $" → {selectedCount} selected";
+            header += $" → {filteredCount:N0} filtered";
+        if (checkedCount > 0)
+            header += $" → {checkedCount:N0} selected";
         header += ")";
 
         TableHeader = header;
@@ -459,6 +463,9 @@ public partial class MainViewModel : ViewModelBase
                 }
                 break;
         }
+
+        // Selection change may affect dynamic command menu text
+        NotifyCommandTextChanged();
     }
 
     public void Cleanup()
@@ -920,22 +927,12 @@ public partial class MainViewModel : ViewModelBase
 
     private void SelectMostRecentSet()
     {
-        // Find and select the most recent (first) backup set
+        // Select the tape/media node to show the backup sets table overview
         if (TreeItems.Count > 0 && TreeItems[0].Children.Count > 0)
         {
             var tapeNode = TreeItems[0].Children[0];
-            if (tapeNode.Children.Count > 0)
-            {
-                var firstSet = tapeNode.Children[0]; // Changed from [^1] to [0]
-                firstSet.IsSelected = true;
-                OnTreeItemSelected(firstSet);
-            }
-            else
-            {
-                // No backup sets, select the tape node to show media info
-                tapeNode.IsSelected = true;
-                OnTreeItemSelected(tapeNode);
-            }
+            tapeNode.IsSelected = true;
+            OnTreeItemSelected(tapeNode);
         }
         else if (TreeItems.Count > 0)
         {
@@ -1145,9 +1142,10 @@ public partial class MainViewModel : ViewModelBase
     private void LoadMediaInfo()
     {
         PropertyList.Clear();
-        FileList = [];
         BackupSetList.Clear();
+        FileList = [];
         ContentType = ContentPaneType.MediaInfo;
+        _currentSetView = null; // we will be in media info mode, not backup set info mode
         PropertiesHeader = "Media Properties";
 
         var toc = _tapeService.TOC;
@@ -1183,16 +1181,11 @@ public partial class MainViewModel : ViewModelBase
         PropertyList.Add(new PropertyItem("Continued on Next Volume", 
             toc.ContinuedOnNextVolume ? "Yes" : "No"));
 
-        // Populate backup sets table in the alternative order: from latest (0) down to oldest (toc.MinSetIndex)
+        // Populate backup sets table (newest-first, with checked-state sync)
+        _tocView ??= new TOCView(toc);
         TableHeader = $"Backup Sets ({toc.Count})";
-        int currentVolume = toc.Volume;
-        for (int alt = 0; alt >= toc.MinSetIndex; alt--)
-        {
-            int setIndex = toc.SetIndexToAlt(alt); // this also converts from alt to regular index
-            var setTOC = toc[setIndex];
-            // Not used currently, but could be for an alternative view
-            BackupSetList.Add(new BackupSetListItem(setTOC, setIndex, alt, setTOC.Volume == currentVolume));
-        }
+        foreach (var item in _tocView.BuildBackupSetItemList(toc.Volume))
+            BackupSetList.Add(item);
 
         var mediaName = toc.Description ?? "Volume #" + toc.Volume;
         StatusMessage = _tapeService.IsTOCFromFile
@@ -1207,10 +1200,11 @@ public partial class MainViewModel : ViewModelBase
             return;
 
         PropertyList.Clear();
-        FileList = [];
         BackupSetList.Clear();
         ClearFileFilter();
+        FileList = [];
         ContentType = ContentPaneType.BackupSetInfo;
+        TableHeader = "Files"; // Reset early to avoid showing stale backup-set header
 
         try
         {
@@ -1246,7 +1240,7 @@ public partial class MainViewModel : ViewModelBase
             _currentSetView = setView;
 
             // Build the display list (creates FileListItem proxies as needed)
-            FileList = setView.BuildDisplayList(ShowFullPathname);
+            FileList = setView.BuildFileItemList(ShowFullPathname);
 
             NotifyFilterPropertiesChanged();
 

@@ -30,9 +30,9 @@ public partial class TapeService
     /// Executes a restore, validate, or verify operation with the specified parameters.
     /// </summary>
     /// <param name="mode">The restore flavor to execute.</param>
-    /// <param name="setIndexes">Backup set indexes to restore from (1-based). Multiple sets are combined into a single pass.</param>
+    /// <param name="checkedFilesBySet">Per-set file selection. Keys are 1-based set indexes.
+    ///  A <c>null</c> value means all files in that set; a non-null list means only those files.</param>
     /// <param name="incremental">Whether to traverse the incremental chain for each set.</param>
-    /// <param name="fileFilter">Optional file filter (null = all files).</param>
     /// <param name="targetDirectory">Target directory for Restore mode (ignored for Validate/Verify).</param>
     /// <param name="recurseSubdirectories">Whether to recreate subdirectory structure (Restore only).</param>
     /// <param name="handleExisting">How to handle existing files (Restore only).</param>
@@ -48,9 +48,8 @@ public partial class TapeService
     /// </remarks>
     public Task ExecuteRestoreAsync(
         RestoreMode mode,
-        List<int> setIndexes,
+        Dictionary<int, IReadOnlyList<TapeFileInfo>?> checkedFilesBySet,
         bool incremental,
-        ITapeFileFilter? fileFilter,
         string? targetDirectory,
         bool recurseSubdirectories,
         TapeHowToHandleExisting handleExisting,
@@ -126,6 +125,10 @@ public partial class TapeService
                         logOk($"TOC restored with {toc.Count} backup set(s)");
                     }
 
+                    // Derive set indexes from the dictionary keys
+                    var setIndexes = checkedFilesBySet.Keys.OrderBy(i => i).ToList();
+                    bool hasPartialSelection = checkedFilesBySet.Values.Any(v => v != null);
+
                     // Log info about the sets being processed
                     foreach (var setIndex in setIndexes)
                     {
@@ -142,8 +145,8 @@ public partial class TapeService
                     }
                     if (mode == RestoreMode.Restore && !string.IsNullOrEmpty(targetDirectory))
                         logInfoSub($"Target directory: {targetDirectory}");
-                    if (fileFilter != null)
-                        logInfoSub($"File filter active");
+                    if (hasPartialSelection)
+                        logInfoSub($"Partial file selection active");
 
                     // Create progress handler
                     var progressHandler = new GuiRestoreProgressHandler(
@@ -154,12 +157,15 @@ public partial class TapeService
                         fileErrorCallback,
                         modeName);
 
-                    // Execute the restore operation
+                    // Select files and execute the restore operation
                     Status($"{modeName} files...");
 
-                    bool result = agent.RestoreFilesFromSets(
-                        setIndexes, incremental, fileFilter,
-                        ignoreFailures: true, progressHandler);
+                    var combined = toc.SelectFilesFromSets(incremental, checkedFilesBySet);
+                    int newestIdx = setIndexes.Max();
+                    toc.CurrentSetIndex = newestIdx;
+
+                    bool result = agent.RestoreFilesFromCurrentSetDown(
+                        combined, ignoreFailures: true, progressHandler);
 
                     // The agent catches TapeAbortRequestedException internally and returns false,
                     // so we detect abort via the flag rather than catching the exception.

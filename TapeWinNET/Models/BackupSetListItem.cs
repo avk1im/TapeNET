@@ -96,14 +96,22 @@ public class BackupSetListItem : INotifyPropertyChanged
             {
                 _filteredFileCount = value;
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FilteredFileCount)));
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FilteredFileCountFormatted)));
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FileCountFormatted)));
             }
         }
     }
 
     /// <summary>
+    /// Display format for the "Filtered" column: filtered count or "--" when no filter is active.
+    /// </summary>
+    public string FilteredFileCountFormatted => _filteredFileCount is int count
+        ? count.ToString("N0") : "--";
+
+    /// <summary>
     /// Number of checked (selected) files, or <c>null</c> when nothing is checked.
-    ///  Set externally for future "restore checked" functionality.
+    ///  Set externally (e.g. by <c>MainViewModel.ToggleBackupSetChecked</c>)
+    ///  after checked-state changes.
     /// </summary>
     private int? _checkedFileCount;
     public int? CheckedFileCount
@@ -115,9 +123,16 @@ public class BackupSetListItem : INotifyPropertyChanged
             {
                 _checkedFileCount = value;
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CheckedFileCount)));
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SelectedFileCountFormatted)));
             }
         }
     }
+
+    /// <summary>
+    /// Display format for the "Selected" column: checked count or "--" when nothing is checked.
+    /// </summary>
+    public string SelectedFileCountFormatted => _checkedFileCount is int count and > 0
+        ? count.ToString("N0") : "--";
 
     /// <summary>
     /// Display format: plain count or "total → filtered" when a filter narrows results.
@@ -140,13 +155,24 @@ public class BackupSetListItem : INotifyPropertyChanged
 
     public int Volume => _setTOC.Volume;
 
+    /// <summary>
+    /// Total logical file size for this backup set (sum of all file lengths), formatted.
+    /// </summary>
+    public string TotalSizeFormatted => Helpers.BytesToString(
+        _setTOC.Sum(tfi => tfi.FileDescr.Length));
+
     public TapeSetTOC SetTOC => _setTOC;
 
     /// <summary>
     /// Whether this backup set is checked for restore/validate/verify operations.
+    /// Tri-state: <c>true</c> = all files checked, <c>false</c> = unchecked,
+    ///  <c>null</c> = partially checked (some files selected). Sets that have never
+    ///  been navigated to can only be <c>false</c> or <c>true</c>; the indeterminate
+    ///  state arises only when a <see cref="BackupSetView"/> with partial file
+    ///  selection exists.
     /// </summary>
-    private bool _isCheckedForRestore;
-    public bool IsCheckedForRestore
+    private bool? _isCheckedForRestore = false;
+    public bool? IsCheckedForRestore
     {
         get => _isCheckedForRestore;
         set

@@ -979,6 +979,155 @@ namespace TapeLibNET
             return selAandB;
         }
 
+        /// <summary>
+        /// Selects files from multiple backup sets, resolving incremental chains as needed,
+        ///  and returns a combined array ready for
+        ///  <see cref="TapeFileRestoreBaseAgent.RestoreFilesFromCurrentSetDown"/>.
+        /// </summary>
+        /// <param name="incremental">Whether to traverse each set's incremental chain.</param>
+        /// <param name="checkedFilesBySet">
+        /// Dictionary mapping 1-based set indexes to the files selected by the user.
+        ///  A <c>null</c> value means "all files in set"; a non-null list means only those files
+        ///  (matched by <see cref="TapeFileDescriptor.FullName"/>, case-insensitive).
+        ///  Absent keys are not included in the result.
+        /// </param>
+        /// <returns>
+        /// An array of file lists from newest to oldest set, compatible with
+        ///  <see cref="TapeFileRestoreBaseAgent.RestoreFilesFromCurrentSetDown"/>.
+        ///  A <c>null</c> entry means all files from the corresponding set.
+        /// </returns>
+        public List<TapeFileInfo>?[] SelectFilesFromSets(
+            bool incremental,
+            Dictionary<int, IReadOnlyList<TapeFileInfo>?> checkedFilesBySet)
+        {
+            if (checkedFilesBySet.Count == 0)
+                return [];
+
+            // Normalize to standard indexes, sort newest-first
+            var stdIndexes = checkedFilesBySet.Keys
+                .Select(SetIndexToStd)
+                .Distinct()
+                .OrderByDescending(i => i)
+                .ToList();
+
+            int newestIdx = stdIndexes[0];
+            int savedCurrSet = m_currSetInternal; // save — SelectFiles modifies CurrentSetIndex
+
+            try
+            {
+                // Select files for the newest set
+                CurrentSetIndex = newestIdx;
+                var combined = SelectFilesForOneSet(newestIdx, incremental, checkedFilesBySet[newestIdx]);
+
+                // Combine with selections from remaining (older) sets
+                for (int i = 1; i < stdIndexes.Count; i++)
+                {
+                    int idx = stdIndexes[i];
+                    CurrentSetIndex = idx;
+                    var selected = SelectFilesForOneSet(idx, incremental, checkedFilesBySet[idx]);
+                    combined = CombineSelectedFiles(combined, newestIdx, selected, idx);
+                }
+
+                return combined;
+            }
+            finally
+            {
+                m_currSetInternal = savedCurrSet; // restore — this method is side-effect-free
+            }
+        }
+
+        /// <summary>
+        /// Selects files from a single set, optionally resolving its incremental chain.
+        ///  <paramref name="checkedFiles"/> == null means "all files" (delegates to
+        ///  <see cref="SelectFiles(bool, ITapeFileFilter?)"/>).
+        ///  Otherwise, only files whose <see cref="TapeFileDescriptor.FullName"/> matches
+        ///  one of the checked entries are kept.
+        /// </summary>
+        /// <remarks>Assumes <see cref="CurrentSetIndex"/> is already set to
+        ///  <paramref name="setIndex"/>.</remarks>
+        private List<TapeFileInfo>?[] SelectFilesForOneSet(
+            int setIndex, bool incremental, IReadOnlyList<TapeFileInfo>? checkedFiles)
+        {
+            // "All files" — delegate to the filter-based path (null filter = all files)
+            if (checkedFiles is null)
+                return SelectFiles(incremental, filter: null);
+
+            Debug.Assert(CurrentSetIndex == setIndex);
+            var setTOC = this[setIndex];
+
+            // Build a HashSet of wanted filenames for fast lookup
+            var wantedNames = new HashSet<string>(
+                checkedFiles.Select(f => f.FileDescr.FullName),
+                StringComparer.OrdinalIgnoreCase);
+
+            if (!incremental || !setTOC.Incremental) // non-incremental case
+            {
+                // Directly pick matching TapeFileInfo entries from the set(s)
+                var picked = PickFilesByName(setTOC, wantedNames);
+
+                if (setTOC.ContinuedFromPrevVolume && SetIndexToInternal(setIndex) > 0)
+                {
+                    // Also pick from the continuation set on the previous volume
+                    var prevSet = m_setTOCs[SetIndexToInternal(setIndex) - 1];
+                    return [picked, PickFilesByName(prevSet, wantedNames)];
+                }
+                return [picked];
+            }
+            else // incremental chain — integrate wanted-name filtering into chain traversal
+            {
+                int firstNonInc = LastNonIncSetInternal;
+                Debug.Assert(firstNonInc <= m_currSetInternal);
+
+                var filesSelected = new List<TapeFileInfo>?[m_currSetInternal - firstNonInc + 1];
+                var alreadySelected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                for (int i = m_currSetInternal; i >= firstNonInc; i--)
+                {
+                    var setFiles = m_setTOCs[i];
+                    List<TapeFileInfo>? picked = null;
+
+                    foreach (var tfi in setFiles)
+                    {
+                        string name = tfi.FileDescr.FullName;
+                        // Only keep files the user wants AND that haven't been selected
+                        //  from a newer set already (incremental dedup)
+                        if (wantedNames.Contains(name) && alreadySelected.Add(name))
+                        {
+                            picked ??= [];
+                            picked.Add(tfi);
+                        }
+                    }
+
+                    // "null means all files in set" when every file in the set was picked
+                    filesSelected[m_currSetInternal - i] =
+                        (picked is not null && picked.Count == setFiles.Count) ? null : picked;
+                }
+
+                return filesSelected;
+            }
+        }
+
+        /// <summary>
+        /// Picks <see cref="TapeFileInfo"/> entries from a <see cref="TapeSetTOC"/> whose
+        ///  <see cref="TapeFileDescriptor.FullName"/> is in <paramref name="wantedNames"/>.
+        ///  Returns <c>null</c> when all files match ("null means all" convention).
+        /// </summary>
+        private static List<TapeFileInfo>? PickFilesByName(TapeSetTOC setTOC,
+            HashSet<string> wantedNames)
+        {
+            List<TapeFileInfo>? picked = null;
+            foreach (var tfi in setTOC)
+            {
+                if (wantedNames.Contains(tfi.FileDescr.FullName))
+                {
+                    picked ??= [];
+                    picked.Add(tfi);
+                }
+            }
+            // null means all files in set
+            return (picked is not null && picked.Count == setTOC.Count) ? null : picked;
+        }
+
         // Compute total file size on tape -- considering block sizes per set
         // onVolumeOnly : if true, only compute for sets on the current volume; otherwise, compute for all sets
         public long ComputeTotalFileSizeOnTape(uint defaultBlockSize = 0, bool onVolumeOnly = true)

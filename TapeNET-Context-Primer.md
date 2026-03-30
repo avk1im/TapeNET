@@ -15,7 +15,7 @@ The **TapeNET** solution (`D:\Documents.DEV\Projects\TapeNET`) targets **.NET 8 
 
 **Test projects:** `FclNET.Tests` (xUnit, 469+ tests covering lexer, parser, validator, evaluator, formatter, pipeline).
 
-**Dependencies:** The apps depend on the libraries. `FclNET` has no dependencies on other solution projects. `FclAiNET` depends on `FclNET`. `TapeWinNET` and `TapeConNET` depend on `FclNET` for file filtering via the `FclTapeFileFilter` adapter (see below). `TapeLibNET` remains independent of the FCL projects.
+**Dependencies:** The apps depend on the libraries. `FclNET` has no dependencies on other solution projects. `FclAiNET` depends on `FclNET`. `TapeWinNET` depends on `FclNET` for file filtering in the MainWindow via the `FclTapeFileFilter` adapter (the restore pipeline uses a dictionary-based selection path — see below). `TapeConNET` depends on `FclNET` for its `ITapeFileFilter`-based restore path. `TapeLibNET` remains independent of the FCL projects.
 
 Git repo: `https://github.com/avk1im/TapeNET`, branch `dev`.
 
@@ -156,6 +156,12 @@ TapeTOC                           — table of contents: media description, back
   TapeSetTOC                      — per-set file list, block size, hash algorithm, flags
     TapeFileInfo                  — file descriptor + block position + hash
 
+TapeTOC file selection (side-effect-free, dictionary-based):
+  SelectFilesFromSets(incremental, checkedFilesBySet) — multi-set selection
+  SelectFilesForOneSet(setIndex, incremental, selectedFiles) — single-set with chain traversal
+  PickFilesByName(setFiles, selectedFiles) — name-based matching into a set
+  CombineSelectedFiles(perSetLists) — merges per-set results into a flat list
+
 TapeFileAgent (base)              — TOC backup/restore, Notify* wrappers, TapeFileStatistics
   TapeFileBackupAgent             — backup with multi-volume support (TapeBackupContext)
   TapeFileRestoreBaseAgent        — restore/validate/verify base
@@ -206,29 +212,34 @@ Callers never track their own counters — they just read the snapshot. `StatsUn
 
 ## File Filtering Integration (FclNET ↔ TapeLibNET)
 
-### ITapeFileFilter pipeline
+### ITapeFileFilter and dictionary-based selection
 
-`TapeLibNET` defines a minimal `ITapeFileFilter` interface (`bool Matches(in TapeFileDescriptor)`) used throughout the restore/validate/verify pipeline. Both `TapeWinNET` and `TapeConNET` provide an `FclTapeFileFilter` adapter that bridges `TapeFileDescriptor` → `FclFileInfo` → `FclEvaluator.Evaluate()`, keeping the library agnostic of FCL internals.
+`TapeLibNET` defines a minimal `ITapeFileFilter` interface (`bool Matches(in TapeFileDescriptor)`) used by `TapeSetTOC.SelectFiles(filter)` where `null` means "all files match" (null-means-all convention).
 
-The filter flows through the pipeline as:
+**GUI restore pipeline (TapeWinNET):** File selection flows end-to-end as a `Dictionary<int, IReadOnlyList<TapeFileInfo>?>` — from MainWindow checkmarks through `TOCView.GetCheckedFilesBySet()` → `RestoreRequest.CheckedFilesBySet` → `TapeService.ExecuteRestoreAsync` → `TapeTOC.SelectFilesFromSets` → `agent.RestoreFilesFromCurrentSetDown`. No intermediate `ITapeFileFilter` conversion needed.
 
 ```
-FclEvaluator → FclTapeFileFilter : ITapeFileFilter → TapeRestoreAgent → TapeSetTOC.SelectFiles(filter)
+MainWindow checkmarks → TOCView.GetCheckedFilesBySet()
+  → RestoreRequest.CheckedFilesBySet
+    → TapeService → TapeTOC.SelectFilesFromSets(incremental, dict)
+      → agent.RestoreFilesFromCurrentSetDown(combined)
 ```
 
-`TapeSetTOC.SelectFiles(ITapeFileFilter?)` returns `List<TapeFileInfo>?` where `null` means "all files match" (null-means-all convention).
+**CLI restore pipeline (TapeConNET):** Uses the older `ITapeFileFilter`-based path via `RestoreFilesFromCurrentSet` / `RestoreFilesFromCurrentSetInc` APIs directly on the agent.
+
+**FCL file filtering (FileFilterPane):** `FclTapeFileFilter` adapter bridges `TapeFileDescriptor` → `FclFileInfo` → `FclEvaluator.Evaluate()` for real-time filtering in the MainWindow file list. Has a single constructor accepting `FclEvaluator` and a static `ParsePatterns` helper for wildcard input.
 
 ### FileFilterPane (WPF reusable control)
 
-`Controls/FileFilterPane` is a reusable `UserControl` embedded in both the MainWindow files pane and the RestoreWindow. It supports two filter input modes:
+`Controls/FileFilterPane` is a reusable `UserControl` embedded in the MainWindow files pane. It supports two filter input modes:
 
 - **Pattern mode** — DOS-style wildcard filtering (`*`, `?`) with semicolon-separated patterns, entered directly in the text box.
 - **Advanced mode** — Full FCL filter built via `FclFilterWindow`, a modal dialog with a visual DNF condition editor (left pane) and an FCL text editor (right pane) with bidirectional sync. The filter pane shows a read-only summary; editing requires reopening the dialog.
 
 The pane supports two **dispatch modes** for host integration:
 
-1. **Direct mode** — set `FilterTarget` to a `FilteredFileList`. The pane applies the filter directly (sets `FilterTarget.Filter`) and awaits completion, then calls `FilterStateChanged` with a restore delegate. Used by `MainViewModel` (main window) and `RestoreViewModel` file mode.
-2. **Callback mode** — set `FilterRequested`. The host receives the `FclEvaluator` + restore delegate and applies the filter itself. Used by `RestoreViewModel` set mode (which creates temporary `FilteredFileList` instances per backup set).
+1. **Direct mode** — set `FilterTarget` to a `FilteredFileList`. The pane applies the filter directly (sets `FilterTarget.Filter`) and awaits completion, then calls `FilterStateChanged` with a restore delegate. Used by `MainViewModel` (main window).
+2. **Callback mode** — set `FilterRequested`. The host receives the `FclEvaluator` + restore delegate and applies the filter itself. Available for future use by other hosts that manage filtering themselves.
 
 Direct mode takes priority when `FilterTarget` is non-null. The pane captures its full UI state (text, advanced expression, window layout) into the restore delegate for both apply and disable, so the filter definition survives navigation even when disabled.
 
@@ -246,9 +257,7 @@ It also implements `IReadOnlyList<TapeFileInfo>` (the filtered view) and `INotif
 
 **Usage across the app:**
 - `MainViewModel` — one `FilteredFileList` per backup set, owned by the corresponding `BackupSetView` inside a session-level `TOCView`. `FileListItem` proxies hold an owner reference and delegate `IsCheckedForRestore` to it. See **TOCView / BackupSetView** below.
-- `BackupSetListItem` — lightweight display model for the RestoreWindow set list. Does *not* own a `FilteredFileList`; instead receives externally computed `FilteredFileCount` and `CheckedFileCount` values pushed by `RestoreViewModel` after parallel filtering.
-- `RestoreViewModel` (file mode) — creates its own `FilteredFileList` from the pre-selected `List<TapeFileInfo>`, owns checked state and filter for the dialog lifetime.
-- `RestoreViewModel` (set mode) — creates temporary `FilteredFileList` instances per backup set during `ApplyFilterToBackupSetsAsync`, runs parallel filter, then pushes `FilteredFileCount` / `CheckedFileCount` to each `BackupSetListItem`.
+- `BackupSetListItem` — lightweight display model for the RestoreWindow set list. Does *not* own a `FilteredFileList`. Tri-state `IsCheckedForRestore` (`bool?`) for per-set selection. `SelectedFileCountFormatted` and `TotalSizeFormatted` properties for the compact RestoreWindow display. `CheckedFileCount` tracks per-file selections pushed from the MainWindow via `OnFileCheckChanged`.
 
 ### TOCView / BackupSetView — Per-Session Data Model (`TapeWinNET/Models/TOCView.cs`)
 
@@ -265,6 +274,8 @@ The `TOCView` / `BackupSetView` pair formalizes the data model for backup-set fi
 - Wraps a `TapeTOC` and owns a `BackupSetView?[]` indexed by 1-based set index.
 - `GetOrCreate(setIndex, showIncrementalSets)` — returns the cached view if the incremental-view flag still matches, otherwise creates a new one with checked-state migration.
 - `GetAllCheckedFiles()` — aggregates checked items across all populated set views.
+- `GetCheckedFilesBySet()` — builds a `Dictionary<int, IReadOnlyList<TapeFileInfo>?>` for `TapeTOC.SelectFilesFromSets`. `null` value = all files in set, non-null = specific checked files.
+- `GetTotalCheckedCount()` — total checked file count across all sets.
 - Lives on `MainViewModel` as `_tocView`; the currently displayed set is `_currentSetView`.
 
 **Data flow:**
@@ -290,14 +301,15 @@ TapeTOC → TOCView.GetOrCreate(setIndex) → BackupSetView
   - `MainViewModel.Restore.cs` — restore/validate/verify commands, progress properties, restore dialog flow
 - **Commands**: `AsyncRelayCommand` (async), `RelayCommand` (sync). All check `IsBusy` for canExecute.
 - **Dialog ViewModels**: `NewBackupSetViewModel`, `RestoreViewModel`, `OpenVirtualDriveViewModel`, `FclFilterWindowVM` — each with OK/Cancel callbacks.
-- **`RestoreViewModel`** supports two modes: set-based (backup sets with tri-state select-all, per-set filtered counts pushed to `BackupSetListItem`, aggregate stats) and file-based (individual files with tri-state select-all, FCL filtering via own `FilteredFileList`). Both modes embed a `FileFilterPane`. Set mode creates temporary `FilteredFileList` instances per set during `ApplyFilterToBackupSetsAsync` (parallel `Task.WhenAll`); file mode uses direct-mode `FilterTarget` wiring.
+- **`RestoreViewModel`** — compact confirmation dialog (376 lines). Displays pre-selected backup sets with tri-state select-all, aggregate file/size stats, and `RestoreRequest` output. `ExecuteStart` builds a `Dictionary<int, IReadOnlyList<TapeFileInfo>?>` with `null` values (all files) for each checked set. The MainWindow `StartRestore` callback merges this with per-file selections from `TOCView.GetCheckedFilesBySet()` before passing to `TapeService`.
+- **`RestoreRequest`** — record: `(Mode, CheckedFilesBySet, Incremental, TargetDirectory, RecurseSubdirectories, HandleExisting)`. `CheckedFilesBySet` is the primary data carrier — no separate `SetIndexes` or `FileFilter` fields.
 
 ### TapeService (service layer)
 
 `TapeService` is a partial class split across:
 - `TapeService.cs` — drive management, media loading, TOC, events (`LogMessageReceived`, `StatusChanged`)
 - `TapeService.Backup.cs` — `ExecuteBackupAsync(...)` with `GuiBackupProgressHandler`
-- `TapeService.Restore.cs` — `ExecuteRestoreAsync(...)` with `GuiRestoreProgressHandler`, `RestoreMode` enum, `ITapeFileFilter?` support
+- `TapeService.Restore.cs` — `ExecuteRestoreAsync(mode, checkedFilesBySet, incremental, ...)` with `GuiRestoreProgressHandler`, `RestoreMode` enum. Accepts `Dictionary<int, IReadOnlyList<TapeFileInfo>?>` directly, calls `TapeTOC.SelectFilesFromSets` + `agent.RestoreFilesFromCurrentSetDown` without intermediate `ITapeFileFilter` conversion
 
 Both GUI progress handlers implement `ITapeFileNotifiable` and follow the same pattern:
 1. No own counting — all stats come from the library snapshot via `Sync(in TapeFileStatistics)`
@@ -360,12 +372,15 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 - ✅ New Backup Set dialog, Restore dialog, Open Virtual Drive dialog
 - ✅ FCL language: lexer, parser, validator, evaluator, formatter, pipeline API (469+ tests)
 - ✅ FCL AI translator: natural language → FCL via LLM, with tool-calling and direct modes, provider auto-discovery
-- ✅ Advanced file filtering integration: `FclTapeFileFilter` adapter bridging FclNET → `ITapeFileFilter` for the restore/validate/verify pipeline
+- ✅ Advanced file filtering integration: `FclTapeFileFilter` adapter bridging FclNET → `ITapeFileFilter` for MainWindow file list filtering and TapeConNET restore
 - ✅ `FileFilterPane` reusable control: pattern mode (wildcards) + advanced mode (`FclFilterWindow` with visual DNF editor and FCL text editor)
 - ✅ MainWindow file filtering: filter-as-you-type for backup set files with dynamic stats header, filter state persistence across navigation
-- ✅ RestoreWindow file filtering: both set-mode (per-set async filtered counts, aggregate stats) and file-mode (FCL-filtered file list) with tri-state select-all
+- ✅ RestoreWindow: compact 2-column confirmation dialog (720×420) with set table (tri-state checkboxes, Selected/Size columns) and stacked options panels
 - ✅ `FilteredFileList` centralized async filtering: single class in `TapeWinNET/Utils/` replacing duplicated filter + checked-state + statistics infrastructure across `MainViewModel`, `BackupSetListItem`, and `RestoreViewModel`
 - ✅ `TOCView` / `BackupSetView` data model: per-session container decoupling file-list data (source files, filtered view, checked state, filter persistence) from the tree UI (`TapeTreeItemViewModel`). `FileFilterPane` dual-mode dispatch (direct + callback) with filter state preserved across navigation even when disabled.
+- ✅ End-to-end dictionary-based restore selection: `Dictionary<int, IReadOnlyList<TapeFileInfo>?>` flows from MainWindow checkmarks → `TOCView.GetCheckedFilesBySet()` → `RestoreRequest` → `TapeService` → `TapeTOC.SelectFilesFromSets` → `RestoreFilesFromCurrentSetDown`. No intermediate `ITapeFileFilter` conversion.
+- ✅ TapeLibNET file selection infrastructure: `TapeTOC.SelectFilesFromSets`, `SelectFilesForOneSet`, `PickFilesByName` — side-effect-free, dictionary-based multi-set selection with incremental chain traversal
+- ✅ MainWindow restore/validate/verify: dynamic command text reflecting checked sets/files, tri-state set checkboxes propagating to `FilteredFileList`, per-file check changes pushing back to `BackupSetListItem` tri-state, `RestoreAllSetsCommand` for quick access
 
 ## What's Next (Planned)
 
