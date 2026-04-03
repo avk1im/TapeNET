@@ -525,9 +525,18 @@ public class BackupRestoreRoundTripTests
         string restoreDir1 = Path.Combine(Path.GetTempPath(), $"TapeNET_Restore_{Guid.NewGuid():N}");
         try
         {
+            var notifiable1 = new TestNotifiable();
             using var restoreAgent1 = fixture.CreateRestoreAgent(restoreDir1);
             fixture.TOC.CurrentSetIndex = 1;
-            Assert.True(restoreAgent1.RestoreAllFilesFromCurrentSet());
+            bool result1 = restoreAgent1.RestoreAllFilesFromCurrentSet(fileNotify: notifiable1);
+            Assert.True(result1,
+                $"Restore set 1 failed for {profile}: " +
+                $"DriveErr={fixture.Drive.LastError}, Stats=[Total={restoreAgent1.Statistics.FilesTotal}," +
+                $"Processed={restoreAgent1.Statistics.FilesProcessed}," +
+                $"Succeeded={restoreAgent1.Statistics.FilesSucceeded}," +
+                $"Failed={restoreAgent1.Statistics.FilesFailed}," +
+                $"Skipped={restoreAgent1.Statistics.FilesSkipped}]," +
+                $" Failures={string.Join("; ", notifiable1.FilesFailed.Select(f => $"{f.FileDescr.FullName}: {f.Exception.Message}"))}");
 
             FileComparer.AssertFilesMatch(tree1.RootPath, tree1.Files,
                 RestoreEquivalentRoot(restoreDir1, tree1.RootPath));
@@ -541,9 +550,18 @@ public class BackupRestoreRoundTripTests
         string restoreDir2 = Path.Combine(Path.GetTempPath(), $"TapeNET_Restore_{Guid.NewGuid():N}");
         try
         {
+            var notifiable2 = new TestNotifiable();
             using var restoreAgent2 = fixture.CreateRestoreAgent(restoreDir2);
             fixture.TOC.CurrentSetIndex = 2;
-            Assert.True(restoreAgent2.RestoreAllFilesFromCurrentSet());
+            bool result2 = restoreAgent2.RestoreAllFilesFromCurrentSet(fileNotify: notifiable2);
+            Assert.True(result2,
+                $"Restore set 2 failed for {profile}: " +
+                $"DriveErr={fixture.Drive.LastError}, Stats=[Total={restoreAgent2.Statistics.FilesTotal}," +
+                $"Processed={restoreAgent2.Statistics.FilesProcessed}," +
+                $"Succeeded={restoreAgent2.Statistics.FilesSucceeded}," +
+                $"Failed={restoreAgent2.Statistics.FilesFailed}," +
+                $"Skipped={restoreAgent2.Statistics.FilesSkipped}]," +
+                $" Failures={string.Join("; ", notifiable2.FilesFailed.Select(f => $"{f.FileDescr.FullName}: {f.Exception.Message}"))}");
 
             FileComparer.AssertFilesMatch(tree2.RootPath, tree2.Files,
                 RestoreEquivalentRoot(restoreDir2, tree2.RootPath));

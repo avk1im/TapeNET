@@ -831,6 +831,7 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
 
     public override long GetPosition()
     {
+        ResetError(); // match Win32 backend: each API call resets stale error state
         return m_currentMedia?.CurrentBlock ?? -1;
     }
 
@@ -946,8 +947,31 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
             return false;
         }
 
-        // For virtual tape, sequential filemarks behave same as regular filemarks
-        return SpaceFilemarks(count);
+        ResetError();
+
+        if (m_currentMedia == null)
+        {
+            SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
+            return false;
+        }
+
+        m_currentMedia.ResetOdometer();
+        int moved = m_currentMedia.SpaceSequentialMarks(TapeMarkType.Filemark, count);
+        ThrottleMovementFromOdometer(m_searchRateBytesPerSecond);
+
+        if (!m_currentMedia.WentOK)
+        {
+            SetError(m_currentMedia.LastError);
+            return false;
+        }
+
+        if (moved != count)
+        {
+            SetError(count > 0 ? WIN32_ERROR.ERROR_NO_DATA_DETECTED : WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA);
+            return false;
+        }
+
+        return true;
     }
 
     #endregion

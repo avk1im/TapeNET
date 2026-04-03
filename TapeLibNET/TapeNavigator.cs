@@ -207,9 +207,9 @@ namespace TapeLibNET
                 {
                     if (WentOK)
                         MoveToNextContentSetmark(count - 1); // moves to just before the target SM; account for 1 SM in front of target set
-                    //if (LastErrorWin32 == WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA) // might hit the very beginning of the first set
-                    //    which would mean we're at the beginning of the first set - yet cannot know if that's the right one!
-                    if (WentOK)
+                    if ((WIN32_ERROR)LastError == WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA)
+                        ResetError(); // hit the very beginning → oldest set has no preceding SM, we're already at its start
+                    else if (WentOK)
                         MoveToNextContentSetmark(); // move to just after the correct setmark -- the beginning of the target set
                 }
                 else if (count > 0)
@@ -237,7 +237,7 @@ namespace TapeLibNET
                 {
                     if (WentOK)
                         MoveToNextContentSetmark(count - 1); // moves to just before the target setmark
-                    if (LastErrorWin32 == WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA && TargetContentSet == 0) // we hit the beginning of the first set
+                    if ((WIN32_ERROR)LastError == WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA && TargetContentSet == 0) // we hit the beginning of the first set
                         ResetError(); // if that's the target one, all good -> otherwise we let the error stay
                     else
                         if (WentOK)
@@ -627,7 +627,9 @@ namespace TapeLibNET
                 
                 // Since we're inside TOC, we only need to move back by TargetContentSet setmarks, then forward by 1
                 MoveToNextContentSetmark(TargetContentSet); // moves to just before the target SM
-                if (WentOK)
+                if ((WIN32_ERROR)LastError == WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA)
+                    ResetError(); // hit BOM → oldest set has no preceding SM, we're already at its start
+                else if (WentOK)
                     MoveToNextContentSetmark(); // move to just after the correct setmark -- the beginning of the target set
 
                 if (WentOK)
@@ -674,7 +676,7 @@ namespace TapeLibNET
             }
             else
             {
-                MoveToEndOfConternInternal();
+                MoveToEndOfContentInternal();
             }
 
             return base.MoveToBeginOfTOC();
@@ -685,7 +687,7 @@ namespace TapeLibNET
 
         #region *** Content positioning ***
 
-        private void MoveToEndOfConternInternal()
+        private void MoveToEndOfContentInternal()
         {
             // QUIRK in Quantum SDLT: it seems necessary to rewind before going to the end of the data
             Drive.Rewind();
@@ -711,7 +713,7 @@ namespace TapeLibNET
                 return true;
             }
 
-            MoveToEndOfConternInternal();
+            MoveToEndOfContentInternal();
 
             return base.MoveToEndOfContent();
         } // MoveToEndOfContent()
@@ -841,9 +843,17 @@ namespace TapeLibNET
             if (WentOK)
                 SeekBackwardBeforeTOCMark();
             if (WentOK)
+            {
                 Drive.MoveToNextFilemark(-1); // move to before the last content FM
-            if (WentOK)
-                Drive.MoveToNextFilemark(1); // move to after the last FM
+                if (WentOK)
+                    Drive.MoveToNextFilemark(1); // move to after the last FM
+            }
+            else
+            {
+                // No TOC mark found -> assume no content/TOC on media, just rewind to the beginning
+                ResetError();
+                Drive.Rewind();
+            }
 
             return base.MoveToEndOfContent();
         }

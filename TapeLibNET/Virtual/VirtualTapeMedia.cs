@@ -753,6 +753,78 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         return moved * direction;
     }
 
+    /// <summary>
+    /// Spaces over a sequence of consecutive tape marks of the specified type.
+    /// Unlike SpaceMarks, requires all marks to be adjacent (no data blocks or other mark types between them).
+    /// Forward (count &gt; 0): ends AFTER the last mark of the sequence.
+    /// Backward (count &lt; 0): ends AT (before) the first mark of the sequence (closest to BOT).
+    /// </summary>
+    public int SpaceSequentialMarks(TapeMarkType markType, int count)
+    {
+        ResetError();
+        if (count == 0) return 0;
+
+        long fromBlock = m_currentBlock;
+        SyncVirtualBlockIndex();
+        int target = Math.Abs(count);
+
+        if (count > 0)
+        {
+            int consecutive = 0;
+            while (m_currentVirtualBlockIndex < m_virtualBlocks.Count)
+            {
+                var vb = m_virtualBlocks[m_currentVirtualBlockIndex];
+                m_currentBlock = vb.EndBlock;
+                m_currentVirtualBlockIndex++;
+
+                if (vb.IsMark && vb.MarkType == markType)
+                {
+                    consecutive++;
+                    if (consecutive >= target)
+                    {
+                        AccumulateOdometer(fromBlock, m_currentBlock);
+                        return count; // success
+                    }
+                }
+                else
+                {
+                    consecutive = 0; // non-matching block resets the consecutive count
+                }
+            }
+
+            SetError(WIN32_ERROR.ERROR_NO_DATA_DETECTED);
+        }
+        else // count < 0
+        {
+            int consecutive = 0;
+            while (m_currentVirtualBlockIndex > 0)
+            {
+                m_currentVirtualBlockIndex--;
+                var vb = m_virtualBlocks[m_currentVirtualBlockIndex];
+                m_currentBlock = vb.BeginAtBlock;
+
+                if (vb.IsMark && vb.MarkType == markType)
+                {
+                    consecutive++;
+                    if (consecutive >= target)
+                    {
+                        AccumulateOdometer(fromBlock, m_currentBlock);
+                        return count; // success
+                    }
+                }
+                else
+                {
+                    consecutive = 0; // non-matching block resets the consecutive count
+                }
+            }
+
+            SetError(WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA);
+        }
+
+        AccumulateOdometer(fromBlock, m_currentBlock);
+        return 0; // not found
+    }
+
     /// <summary>Rewinds to beginning of tape.</summary>
     public void Rewind()
     {
