@@ -22,35 +22,43 @@ public class TapeNavigatorTests
     #region *** Test Data ***
 
     /// <summary>All three drive profiles for parameterized theories.</summary>
+#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> AllProfiles =>
     [
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
         DriveProfile.SeqFilemarks,
     ];
+#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     /// <summary>Profiles that use actual setmarks (not emulated via filemarks).</summary>
+#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> SetmarkProfiles =>
     [
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
     ];
+#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     /// <summary>Profiles that use filemarks to emulate setmarks.</summary>
+#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> FilemarkProfiles =>
     [
         DriveProfile.SeqFilemarks,
     ];
+#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     /// <summary>
     /// Profiles where the TOC resides "in set" (content partition), meaning
     /// writing content invalidates the TOC.
     /// </summary>
+#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> TOCInSetProfiles =>
     [
         DriveProfile.Setmarks,
         DriveProfile.SeqFilemarks,
     ];
+#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     #endregion
 
@@ -211,7 +219,7 @@ public class TapeNavigatorTests
     [MemberData(nameof(AllProfiles))]
     public void Navigator_StaticConstants_AreCorrect(DriveProfile profile)
     {
-        var (fixture, nav) = CreateNavigator(profile);
+        var (fixture, _) = CreateNavigator(profile);
         using var _ = fixture;
 
         Assert.Equal(int.MinValue, TapeNavigator.UnknownSet);

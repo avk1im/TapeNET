@@ -293,6 +293,12 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
     public override bool SupportsSetmarks => m_capabilities.SupportsSetmarks;
     public override bool SupportsSeqFilemarks => m_capabilities.SupportsSeqFilemarks;
 
+    /// <summary>The content partition media (for test diagnostics).</summary>
+    internal VirtualTapeMedia? ContentMedia => m_contentMedia;
+
+    /// <summary>The initiator partition media (for test diagnostics). Null if no initiator partition.</summary>
+    internal VirtualTapeMedia? InitiatorMedia => m_initiatorMedia;
+
     #endregion
 
     #region *** Drive Operations ***

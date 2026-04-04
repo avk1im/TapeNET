@@ -472,15 +472,12 @@ namespace TapeLibNET
             // [content][SM][EOM] <-- we're here
             if (WentOK)
                 MoveToNextContentSetmark(-1); // this will bring us to right before the last setmark
+            
             if (WentOK)
-            {
                 MoveToNextContentSetmark(1); // Finally go 1 setmark forward to after the setmark -- the to-be-written content data
-            }
             else
-            {
                 // assume there's no data written yet -- we must be at the begining of the content partion, as we wish
                 ResetError();
-            }
 
             return base.MoveToEndOfContent();
         }

@@ -844,12 +844,16 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         }
     }
 
-    /// <summary>Seeks to end of data.</summary>
+    /// <summary>Seeks to end of data. Also positions the backing stream so writes append correctly.</summary>
     public void SeekToEnd()
     {
         long fromBlock = m_currentBlock;
         m_currentVirtualBlockIndex = m_virtualBlocks.Count;
         m_currentBlock = TotalBlockCount;
+
+        // Position stream at end of written data so WriteBlocks appends (rather than overwrites)
+        try { m_stream.Position = m_bytesWritten; } catch { /* best effort */ }
+
         AccumulateOdometer(fromBlock, m_currentBlock);
         ResetError();
     }

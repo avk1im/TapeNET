@@ -51,7 +51,9 @@ public abstract class TapeDriveBackend : ErrorManageableBase, IDisposable
 {
     #region *** Constructor ***
 
+#pragma warning disable IDE0290 // "Use primary constructor" - primary cannot be protected
     protected TapeDriveBackend(ILoggerFactory loggerFactory)
+#pragma warning restore IDE0290 // Use primary constructor
         : base(loggerFactory.CreateLogger<TapeDriveBackend>())
     {
         LoggerFactory = loggerFactory;

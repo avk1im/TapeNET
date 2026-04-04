@@ -1,0 +1,247 @@
+﻿Test run for D:\Documents.DEV\Projects\TapeNET\TapeLibNET.Tests\bin\Debug\net8.0-windows\TapeLibNET.Tests.dll (.NETCoreApp,Version=v8.0)
+A total of 1 test files matched the specified pattern.
+D:\Documents.DEV\Projects\TapeNET\TapeLibNET.Tests\bin\Debug\net8.0-windows\TapeLibNET.Tests.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 8.0.25)
+[xUnit.net 00:00:00.07]   Discovering: TapeLibNET.Tests
+[xUnit.net 00:00:00.22]   Discovered:  TapeLibNET.Tests
+[xUnit.net 00:00:00.23]   Starting:    TapeLibNET.Tests
+[xUnit.net 00:00:00.36]   Finished:    TapeLibNET.Tests
+  Passed TapeLibNET.Tests.PartitionsVsSetmarksComparisonTests.TwoSets_Partitions_NavigatorTrace [88 ms]
+  Standard Output Messages:
+ ====== Backing up Set 1 ======
+ [TRC] TapeDriveBackend: Backend[VTAPE0]: IO rate set to unlimited
+ [TRC] TapeDriveBackend: Backend[VTAPE0]: Locate rate set to unlimited
+ [TRC] TapeDriveBackend: Backend[VTAPE0]: Search rate set to unlimited
+ [TRC] TapeDrive: Drive #0: Reopening
+ [TRC] TapeDrive: Drive #0: Closing
+ [TRC] TapeDriveBackend: Backend[VTAPE0]: Closed virtual drive
+ [TRC] TapeDrive: Drive #0: Closed
+ [TRC] TapeDriveBackend: Backend[VTAPE0]: Opened virtual drive
+ [TRC] TapeDriveBackend: Backend[VTAPE0]: Set drive parameters (virtual - accepted)
+ [TRC] TapeDrive: Drive #0: Drive reopened
+ [TRC] TapeDriveBackend: Backend[VTAPE0 [System.IO.MemoryStream]]: Created new content media (mode: OpenOrCreate)
+ [TRC] TapeDriveBackend: Backend[VTAPE0 [System.IO.MemoryStream | System.IO.MemoryStream]]: Created new initiator media (mode: OpenOrCreate)
+ [TRC] TapeDriveBackend: Backend[VTAPE0 [System.IO.MemoryStream | System.IO.MemoryStream]]: Media loaded
+ [TRC] TapeDrive: Drive #0: Media loaded
+ [TRC] TapeDrive: Drive #0: Media prepared
+ [TRC] TapeNavigator: Drive #0: Created Navigator of type TapeLibNET.TapeNavigatorTOCInPartition
+ [TRC] TapeStreamManager: Drive #0: Navigator of type TapeLibNET.TapeNavigatorTOCInPartition created
+ [TRC] TapeFileAgent: Starting backing up 4 files to current set #1
+ [TRC] TapeNavigator: Drive #0: FmksMode set to True
+ [TRC] TapeStreamManager: Drive #0: Transitioning from MediaPrepared to WritingContent
+ [TRC] TapeNavigator: Drive #0: Moving to target content set 0
+ [TRC] TapeNavigator: Drive #0: Moving to the beginning of content partition
+ [TRC] TapeDrive: Drive #0: Moving to partition Content
+ [TRC] TapeDrive: Drive #0: Moved to partition Content
+ [TRC] TapeNavigator: Drive #0: Current partition after moving to Content is >Content<
+ [TRC] TapeNavigator: Drive #0: Moved to the beginning of content
+ [TRC] TapeNavigator: Drive #0: Moved to target content set 0
+ [TRC] TapeStreamManager: Drive #0: Transitioned to WritingContent
+ [TRC] TapeStreamManager: Drive #0: Began writing set; remaining capacity 209715200 B
+ [TRC] TapeFileAgent: Continuing (multi-volume) backup from file #1 >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_a56932d97af54414b389efb3ada8bf88\set1\file_0000.txt<
+ [TRC] TapeFileAgent: Backing up file #1 >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_a56932d97af54414b389efb3ada8bf88\set1\file_0000.txt< of length 5 KB
+ [TRC] TapeFileAgent: Backing up file >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_a56932d97af54414b389efb3ada8bf88\set1\file_0000.txt< in BackupFile
+ [TRC] TapeStreamManager: Drive #0: Began writing file
+ [TRC] TapeStream: Created TapeStream with buffer size 32768 byte
+ [TRC] TapeStreamManager: Drive #0: Write content stream produced for 5562 B, written so far 0 B, remaining 209715200 B
+ [TRC] TapeFileAgent: File >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_a56932d97af54414b389efb3ada8bf88\set1\file_0000.txt< backed up ok
+ [TRC] TapeStream: Disposing TapeStream with parameter True
+ [TRC] TapeDrive: Drive #0: Wrote 1 filemark(s)
+ [TRC] TapeNavigator: Drive #0: Wrote a content filemark
+ [TRC] TapeStreamManager: Drive #0: Ended writing file
+ [TRC] TapeStreamManager: Drive #0: Stream disposal handled
+ [TRC] TapeFileAgent: File #1 >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_a56932d97af54414b389efb3ada8bf88\set1\file_0000.txt< backed up ok
+ [TRC] TapeFileAgent: Backing up file #2 >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_a56932d97af54414b389efb3ada8bf88\set1\file_0001.dat< of length 7 KB
+ [TRC] TapeFileAgent: Backing up file >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_a56932d97af54414b389efb3ada8bf88\set1\file_0001.dat< in BackupFile
+ [TRC] TapeStreamManager: Drive #0: Began writing file
+ [TRC] TapeStream: Created TapeStream with buffer size 32768 byte
+ [TRC] TapeStreamManager: Drive #0: Write content stream produced for 7871 B, written so far 5574 B, remaining 209709626 B
+ [TRC] TapeFileAgent: File >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_a56932d97af54414b389efb3ada8bf88\set1\file_0001.dat< backed up ok
+ [TRC] TapeStream: Disposing TapeStream with parameter True
+ [TRC] TapeDrive: Drive #0: Wrote 1 filemark(s)
+ [TRC] TapeNavigator: Drive #0: Wrote a content filemark
+ [TRC] TapeStreamManager: Drive #0: Ended writing file
+ [TRC] TapeStreamManager: Drive #0: Stream disposal handled
+ [TRC] TapeFileAgent: File #2 >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_a56932d97af54414b389efb3ada8bf88\set1\file_0001.dat< backed up ok
+ [TRC] TapeFileAgent: Backing up file #3 >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_a56932d97af54414b389efb3ada8bf88\set1\file_0002.bin< of length 2 KB
+ [TRC] TapeFileAgent: Backing up file >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_a56932d97af54414b389efb3ada8bf88\set1\file_0002.bin< in BackupFile
+ [TRC] TapeStreamManager: Drive #0: Began writing file
+ [TRC] TapeStream: Created TapeStream with buffer size 32768 byte
+ [TRC] TapeStreamManager: Drive #0: Write content stream produced for 2960 B, written so far 13457 B, remaining 209701743 B
+ [TRC] TapeFileAgent: File >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_a56932d97af54414b389efb3ada8bf88\set1\file_0002.bin< backed up ok
+ [TRC] TapeStream: Disposing TapeStream with parameter True
+ [TRC] TapeDrive: Drive #0: Wrote 1 filemark(s)
+ [TRC] TapeNavigator: Drive #0: Wrote a content filemark
+ [TRC] TapeStreamManager: Drive #0: Ended writing file
+ [TRC] TapeStreamManager: Drive #0: Stream disposal handled
+ [TRC] TapeFileAgent: File #3 >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_a56932d97af54414b389efb3ada8bf88\set1\file_0002.bin< backed up ok
+ [TRC] TapeFileAgent: Backing up file #4 >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_a56932d97af54414b389efb3ada8bf88\set1\file_0003.log< of length 4 KB
+ [TRC] TapeFileAgent: Backing up file >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_a56932d97af54414b389efb3ada8bf88\set1\file_0003.log< in BackupFile
+ [TRC] TapeStreamManager: Drive #0: Began writing file
+ [TRC] TapeStream: Created TapeStream with buffer size 32768 byte
+ [TRC] TapeStreamManager: Drive #0: Write content stream produced for 4513 B, written so far 16429 B, remaining 209698771 B
+ [TRC] TapeFileAgent: File >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_a56932d97af54414b389efb3ada8bf88\set1\file_0003.log< backed up ok
+ [TRC] TapeStream: Disposing TapeStream with parameter True
+ [TRC] TapeDrive: Drive #0: Wrote 1 filemark(s)
+ [TRC] TapeNavigator: Drive #0: Wrote a content filemark
+ [TRC] TapeStreamManager: Drive #0: Ended writing file
+ [TRC] TapeStreamManager: Drive #0: Stream disposal handled
+ [TRC] TapeFileAgent: File #4 >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_a56932d97af54414b389efb3ada8bf88\set1\file_0003.log< backed up ok
+ ====== Saving TOC after Set 1 ======
+ [TRC] TapeFileAgent: Backing up TOC, 1st copy
+ [TRC] TapeDrive: Drive #0: Wrote 1 setmark(s)
+ [TRC] TapeNavigator: Drive #0: Wrote content setmark
+ [TRC] TapeStreamManager: Drive #0: Ended writing set
+ [TRC] TapeStreamManager: Drive #0: Content written
+ [TRC] TapeStreamManager: Drive #0: Transitioning from MediaPrepared to WritingTOC
+ [TRC] TapeNavigator: Drive #0: Moving to the beginning of TOC partition
+ [TRC] TapeDrive: Drive #0: Moving to partition Initiator
+ [TRC] TapeDrive: Drive #0: Moved to partition Initiator
+ [TRC] TapeNavigator: Drive #0: Current partition after moving to Initiator is >Initiator<
+ [TRC] TapeNavigator: Drive #0: Moved to the beginning of TOC
+ [TRC] TapeStreamManager: Drive #0: Transitioned to WritingTOC
+ [TRC] TapeStreamManager: Drive #0: Began writing file
+ [TRC] TapeStream: Created TapeStream with buffer size 32768 byte
+ [TRC] TapeStreamManager: Drive #0: Write TOC stream produced
+ [TRC] TapeStream: Disposing TapeStream with parameter True
+ [TRC] TapeDrive: Drive #0: Wrote 1 filemark(s)
+ [TRC] TapeNavigator: Drive #0: Wrote a TOC filemark
+ [TRC] TapeStreamManager: Drive #0: Ended writing file
+ [TRC] TapeStreamManager: Drive #0: Stream disposal handled
+ [TRC] TapeFileAgent: TOC 1st copy backed up ok
+ [TRC] TapeFileAgent: Backing up TOC, 2nd copy
+ [TRC] TapeStreamManager: Drive #0: Began writing file
+ [TRC] TapeStream: Created TapeStream with buffer size 32768 byte
+ [TRC] TapeStreamManager: Drive #0: Write TOC stream produced
+ [TRC] TapeStream: Disposing TapeStream with parameter True
+ [TRC] TapeDrive: Drive #0: Wrote 1 filemark(s)
+ [TRC] TapeNavigator: Drive #0: Wrote a TOC filemark
+ [TRC] TapeStreamManager: Drive #0: Ended writing file
+ [TRC] TapeStreamManager: Drive #0: Stream disposal handled
+ [TRC] TapeFileAgent: TOC 2nd copy backed up ok
+ [TRC] TapeFileAgent: Disposing TapeFileAgent with disposing parameter = True
+ 
+ ====== Backing up Set 2 ======
+ [TRC] TapeNavigator: Drive #0: Created Navigator of type TapeLibNET.TapeNavigatorTOCInPartition
+ [TRC] TapeStreamManager: Drive #0: Navigator of type TapeLibNET.TapeNavigatorTOCInPartition created
+ [TRC] TapeFileAgent: Starting backing up 3 files to current set #2
+ [TRC] TapeNavigator: Drive #0: FmksMode set to True
+ [TRC] TapeStreamManager: Drive #0: Transitioning from MediaPrepared to WritingContent
+ [TRC] TapeNavigator: Drive #0: Moving to target content set -1
+ [TRC] TapeNavigator: Drive #0: Moving to the end of content partition
+ [TRC] TapeDrive: Drive #0: Moving to partition Content
+ [TRC] TapeDrive: Drive #0: Moved to partition Content
+ [TRC] TapeNavigator: Drive #0: Current partition after moving to Content is >Content<
+ [TRC] TapeDrive: Drive #0: Fast forwarded to end
+ [TRC] TapeNavigator: Drive #0: Current partition after ffwd'ing to end is >Content<
+ [TRC] TapeDrive: Drive #0: Moved by -1 setmark(s)
+ [TRC] TapeNavigator: Drive #0: Moved by -1 content setmarks -> CurrentContentSet = 2147483647
+ [TRC] TapeDrive: Drive #0: Moved by 1 setmark(s)
+ [TRC] TapeNavigator: Drive #0: Moved by 1 content setmarks -> CurrentContentSet = -2147483648
+ [TRC] TapeNavigator: Drive #0: Moved to the end of content
+ [TRC] TapeNavigator: Drive #0: Moved to target content set -1
+ [TRC] TapeStreamManager: Drive #0: Transitioned to WritingContent
+ [TRC] TapeStreamManager: Drive #0: Began writing set; remaining capacity 209649664 B
+ [TRC] TapeFileAgent: Continuing (multi-volume) backup from file #1 >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_031a991b46bd43c2b75bad257c64e967\set2\file_0000.txt<
+ [TRC] TapeFileAgent: Backing up file #1 >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_031a991b46bd43c2b75bad257c64e967\set2\file_0000.txt< of length 9 KB
+ [TRC] TapeFileAgent: Backing up file >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_031a991b46bd43c2b75bad257c64e967\set2\file_0000.txt< in BackupFile
+ [TRC] TapeStreamManager: Drive #0: Began writing file
+ [TRC] TapeStream: Created TapeStream with buffer size 32768 byte
+ [TRC] TapeStreamManager: Drive #0: Write content stream produced for 9779 B, written so far 0 B, remaining 209649664 B
+ [TRC] TapeFileAgent: File >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_031a991b46bd43c2b75bad257c64e967\set2\file_0000.txt< backed up ok
+ [TRC] TapeStream: Disposing TapeStream with parameter True
+ [TRC] TapeDrive: Drive #0: Wrote 1 filemark(s)
+ [TRC] TapeNavigator: Drive #0: Wrote a content filemark
+ [TRC] TapeStreamManager: Drive #0: Ended writing file
+ [TRC] TapeStreamManager: Drive #0: Stream disposal handled
+ [TRC] TapeFileAgent: File #1 >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_031a991b46bd43c2b75bad257c64e967\set2\file_0000.txt< backed up ok
+ [TRC] TapeFileAgent: Backing up file #2 >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_031a991b46bd43c2b75bad257c64e967\set2\file_0001.dat< of length 5 KB
+ [TRC] TapeFileAgent: Backing up file >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_031a991b46bd43c2b75bad257c64e967\set2\file_0001.dat< in BackupFile
+ [TRC] TapeStreamManager: Drive #0: Began writing file
+ [TRC] TapeStream: Created TapeStream with buffer size 32768 byte
+ [TRC] TapeStreamManager: Drive #0: Write content stream produced for 6057 B, written so far 9791 B, remaining 209639873 B
+ [TRC] TapeFileAgent: File >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_031a991b46bd43c2b75bad257c64e967\set2\file_0001.dat< backed up ok
+ [TRC] TapeStream: Disposing TapeStream with parameter True
+ [TRC] TapeDrive: Drive #0: Wrote 1 filemark(s)
+ [TRC] TapeNavigator: Drive #0: Wrote a content filemark
+ [TRC] TapeStreamManager: Drive #0: Ended writing file
+ [TRC] TapeStreamManager: Drive #0: Stream disposal handled
+ [TRC] TapeFileAgent: File #2 >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_031a991b46bd43c2b75bad257c64e967\set2\file_0001.dat< backed up ok
+ [TRC] TapeFileAgent: Backing up file #3 >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_031a991b46bd43c2b75bad257c64e967\set2\file_0002.bin< of length 12 KB
+ [TRC] TapeFileAgent: Backing up file >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_031a991b46bd43c2b75bad257c64e967\set2\file_0002.bin< in BackupFile
+ [TRC] TapeStreamManager: Drive #0: Began writing file
+ [TRC] TapeStream: Created TapeStream with buffer size 32768 byte
+ [TRC] TapeStreamManager: Drive #0: Write content stream produced for 12323 B, written so far 15860 B, remaining 209633804 B
+ [TRC] TapeFileAgent: File >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_031a991b46bd43c2b75bad257c64e967\set2\file_0002.bin< backed up ok
+ [TRC] TapeStream: Disposing TapeStream with parameter True
+ [TRC] TapeDrive: Drive #0: Wrote 1 filemark(s)
+ [TRC] TapeNavigator: Drive #0: Wrote a content filemark
+ [TRC] TapeStreamManager: Drive #0: Ended writing file
+ [TRC] TapeStreamManager: Drive #0: Stream disposal handled
+ [TRC] TapeFileAgent: File #3 >C:\Users\avkli\AppData\Local\Temp\TapeNET_Test_031a991b46bd43c2b75bad257c64e967\set2\file_0002.bin< backed up ok
+ ====== Saving TOC after Set 2 ======
+ [TRC] TapeFileAgent: Backing up TOC, 1st copy
+ [TRC] TapeDrive: Drive #0: Wrote 1 setmark(s)
+ [TRC] TapeNavigator: Drive #0: Wrote content setmark
+ [TRC] TapeStreamManager: Drive #0: Ended writing set
+ [TRC] TapeStreamManager: Drive #0: Content written
+ [TRC] TapeStreamManager: Drive #0: Transitioning from MediaPrepared to WritingTOC
+ [TRC] TapeNavigator: Drive #0: Moving to the beginning of TOC partition
+ [TRC] TapeDrive: Drive #0: Moving to partition Initiator
+ [TRC] TapeDrive: Drive #0: Moved to partition Initiator
+ [TRC] TapeNavigator: Drive #0: Current partition after moving to Initiator is >Initiator<
+ [TRC] TapeNavigator: Drive #0: Moved to the beginning of TOC
+ [TRC] TapeStreamManager: Drive #0: Transitioned to WritingTOC
+ [TRC] TapeStreamManager: Drive #0: Began writing file
+ [TRC] TapeStream: Created TapeStream with buffer size 32768 byte
+ [TRC] TapeStreamManager: Drive #0: Write TOC stream produced
+ [TRC] TapeStream: Disposing TapeStream with parameter True
+ [TRC] TapeDrive: Drive #0: Wrote 1 filemark(s)
+ [TRC] TapeNavigator: Drive #0: Wrote a TOC filemark
+ [TRC] TapeStreamManager: Drive #0: Ended writing file
+ [TRC] TapeStreamManager: Drive #0: Stream disposal handled
+ [TRC] TapeFileAgent: TOC 1st copy backed up ok
+ [TRC] TapeFileAgent: Backing up TOC, 2nd copy
+ [TRC] TapeStreamManager: Drive #0: Began writing file
+ [TRC] TapeStream: Created TapeStream with buffer size 32768 byte
+ [TRC] TapeStreamManager: Drive #0: Write TOC stream produced
+ [TRC] TapeStream: Disposing TapeStream with parameter True
+ [TRC] TapeDrive: Drive #0: Wrote 1 filemark(s)
+ [TRC] TapeNavigator: Drive #0: Wrote a TOC filemark
+ [TRC] TapeStreamManager: Drive #0: Ended writing file
+ [TRC] TapeStreamManager: Drive #0: Stream disposal handled
+ [TRC] TapeFileAgent: TOC 2nd copy backed up ok
+ [TRC] TapeFileAgent: Disposing TapeFileAgent with disposing parameter = True
+ 
+ ====== Final Content Layout ======
+ === Partitions Content ===
+ System.IO.MemoryStream: 16 virtual blocks, 114688 bytes written, 16 logical blocks
+   [0] DATA blocks 0..0 (16384 bytes, bs=16384, stream@0)
+   [1] MARK(Filemark) @block 1
+   [2] DATA blocks 2..2 (16384 bytes, bs=16384, stream@16384)
+   [3] MARK(Filemark) @block 3
+   [4] DATA blocks 4..4 (16384 bytes, bs=16384, stream@32768)
+   [5] MARK(Filemark) @block 5
+   [6] DATA blocks 6..6 (16384 bytes, bs=16384, stream@49152)
+   [7] MARK(Filemark) @block 7
+   [8] MARK(Setmark) @block 8
+   [9] DATA blocks 9..9 (16384 bytes, bs=16384, stream@0)
+   [10] MARK(Filemark) @block 10
+   [11] DATA blocks 11..11 (16384 bytes, bs=16384, stream@16384)
+   [12] MARK(Filemark) @block 12
+   [13] DATA blocks 13..13 (16384 bytes, bs=16384, stream@32768)
+   [14] MARK(Filemark) @block 14
+   [15] MARK(Setmark) @block 15
+ 
+ [TRC] TapeDrive: Drive #0: Disposing
+ [TRC] VirtualTapeMedia: System.IO.MemoryStream: Saved state with 16 virtual blocks, 114688 bytes written
+ [TRC] VirtualTapeMedia: System.IO.MemoryStream: Saved state with 4 virtual blocks, 32768 bytes written
+ [TRC] TapeDriveBackend: Backend[VTAPE0]: Media unloaded
+ [TRC] TapeDriveBackend: Backend[VTAPE0]: Closed virtual drive
+
+
+
+Test Run Successful.
+Total tests: 1
+     Passed: 1
+ Total time: 0.8511 Seconds
