@@ -1,6 +1,7 @@
 ﻿using System.Formats.Asn1;
 using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 using Windows.Win32.Foundation;
 
 namespace Windows.Win32
@@ -388,4 +389,28 @@ namespace Windows.Win32
 
             } // TAPE_GET_DRIVE_PARAMETERS
         }
+
+    /// <summary>
+    /// Helpers for NTFS filesystem operations via CsWin32-generated P/Invoke.
+    /// </summary>
+    internal static class FileSystemHelpers
+    {
+        /// <summary>FSCTL_SET_SPARSE — marks a file as sparse on NTFS.</summary>
+        private const uint FSCTL_SET_SPARSE = 0x000900C4;
+
+        /// <summary>
+        /// Marks the file behind <paramref name="handle"/> as sparse on NTFS
+        ///  via <c>FSCTL_SET_SPARSE</c>.
+        /// </summary>
+        /// <returns><see langword="true"/> if the IOCTL succeeded.</returns>
+        internal static bool SetSparseFlag(SafeFileHandle handle)
+        {
+            unsafe
+            {
+                return PInvoke.DeviceIoControl(
+                    new HANDLE(handle.DangerousGetHandle()), FSCTL_SET_SPARSE,
+                    null, 0, null, 0, null, null);
+            }
+        }
+    }
 }

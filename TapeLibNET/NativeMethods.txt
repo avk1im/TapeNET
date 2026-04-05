@@ -14,7 +14,8 @@ EraseTape
 WriteFile
 ReadFile
 
-//DeviceIoControl
+// Used in TempFileTree (test helper) for FSCTL_SET_SPARSE on NTFS sparse files
+DeviceIoControl
 
 QueryPerformanceCounter
 QueryPerformanceFrequency

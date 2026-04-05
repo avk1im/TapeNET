@@ -997,6 +997,8 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
             m_disposed = true;
         }
+
+        GC.SuppressFinalize(this);
     }
 
     #endregion

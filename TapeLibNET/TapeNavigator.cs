@@ -24,7 +24,7 @@ namespace TapeLibNET
 
         #region *** Properties ***
 
-        public static long TOCCapacity => 16 * 1024 * 1024; // 16 MB
+        public static long TOCCapacity { get; set; } = 16 * 1024 * 1024; // 16 MB
         public static bool UseTOCMark { get; set; } = true; // only used if TOC is in set w/o setmarks
         public virtual bool TOCInvalidated { get; protected set; } = false;
 

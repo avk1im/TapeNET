@@ -1,3 +1,6 @@
+using System.Runtime.InteropServices;
+using Windows.Win32;
+
 namespace TapeLibNET.Tests.Helpers;
 
 /// <summary>
@@ -147,54 +150,216 @@ public sealed class TempFileTree : IDisposable
     /// <returns>Full paths of all edge-case files.</returns>
     public List<string> AddEdgeCases(uint blockSize = 16 * 1024)
     {
-        var created = new List<string>();
+        var created = new List<string>
+        {
+            // Zero-byte file
+            AddFile("edges/empty.dat", 0),
 
-        // Zero-byte file
-        created.Add(AddFile("edges/empty.dat", 0));
+            // Single byte
+            AddFile("edges/one_byte.dat", 1),
 
-        // Single byte
-        created.Add(AddFile("edges/one_byte.dat", 1));
+            // Exactly one block
+            AddFile("edges/exact_block.dat", blockSize),
 
-        // Exactly one block
-        created.Add(AddFile("edges/exact_block.dat", blockSize));
+            // Block + 1 (forces a second block with minimal content)
+            AddFile("edges/block_plus_one.dat", blockSize + 1),
 
-        // Block + 1 (forces a second block with minimal content)
-        created.Add(AddFile("edges/block_plus_one.dat", blockSize + 1));
+            // Two full blocks
+            AddFile("edges/two_blocks.dat", blockSize * 2),
 
-        // Two full blocks
-        created.Add(AddFile("edges/two_blocks.dat", blockSize * 2));
+            // Just under one block
+            AddFile("edges/block_minus_one.dat", blockSize - 1),
 
-        // Just under one block
-        created.Add(AddFile("edges/block_minus_one.dat", blockSize - 1));
+            // Larger file (~256 KB)
+            AddFile("edges/large_256k.dat", 256 * 1024),
 
-        // Larger file (~256 KB)
-        created.Add(AddFile("edges/large_256k.dat", 256 * 1024));
+            // Larger file (~1 MB)
+            AddFile("edges/large_1mb.dat", 1024 * 1024),
 
-        // Larger file (~1 MB)
-        created.Add(AddFile("edges/large_1mb.dat", 1024 * 1024));
+            // File name with spaces
+            AddFile("edges/file with spaces.txt", 100),
 
-        // File name with spaces
-        created.Add(AddFile("edges/file with spaces.txt", 100));
+            // File name with special characters
+            AddFile("edges/special (copy) [1] {test}.txt", 100),
 
-        // File name with special characters
-        created.Add(AddFile("edges/special (copy) [1] {test}.txt", 100));
+            // File name with dots
+            AddFile("edges/archive.2024.01.15.tar.gz", 200),
 
-        // File name with dots
-        created.Add(AddFile("edges/archive.2024.01.15.tar.gz", 200));
+            // Deeply nested directory
+            AddFile("edges/deep/nested/path/to/file.dat", 500),
 
-        // Deeply nested directory
-        created.Add(AddFile("edges/deep/nested/path/to/file.dat", 500));
+            // Read-only file
+            AddFile("edges/readonly.dat", 100, FileAttributes.ReadOnly),
 
-        // Read-only file
-        created.Add(AddFile("edges/readonly.dat", 100, FileAttributes.ReadOnly));
+            // Hidden file
+            AddFile("edges/hidden.dat", 100, FileAttributes.Hidden),
 
-        // Hidden file
-        created.Add(AddFile("edges/hidden.dat", 100, FileAttributes.Hidden));
-
-        // Archive attribute
-        created.Add(AddFile("edges/archive.dat", 100, FileAttributes.Archive));
+            // Archive attribute
+            AddFile("edges/archive.dat", 100, FileAttributes.Archive)
+        };
 
         return created;
+    }
+
+    #endregion
+
+    #region *** Sparse File Creation ***
+
+    /// <summary>Size of each pattern region written into sparse files.</summary>
+    private const int SparseRegionSize = 64 * 1024;
+
+    /// <summary>The 2 GB boundary — <c>int.MaxValue + 1</c>.</summary>
+    private const long Boundary2GB = 2L * 1024 * 1024 * 1024;
+
+    /// <summary>The 4 GB boundary — <c>uint.MaxValue + 1</c>.</summary>
+    private const long Boundary4GB = 4L * 1024 * 1024 * 1024;
+
+    /// <summary>
+    /// Creates an NTFS sparse file at the specified relative path.
+    /// The file has the given logical <paramref name="size"/> but only consumes disk
+    /// space for a few small pattern regions at strategic positions:
+    /// <list type="bullet">
+    ///   <item>Start of file (first 64 KB)</item>
+    ///   <item>Near the 2 GB boundary (straddles <c>int.MaxValue</c>)</item>
+    ///   <item>Near the 4 GB boundary (straddles <c>uint.MaxValue</c>)</item>
+    ///   <item>End of file (last 64 KB)</item>
+    /// </list>
+    /// Unwritten regions read back as zeros, which is fine for deterministic
+    /// backup → restore → compare round-trips.
+    /// </summary>
+    /// <param name="relativePath">Path relative to <see cref="RootPath"/>.</param>
+    /// <param name="size">Logical file size in bytes.</param>
+    /// <returns>Full path of the created sparse file.</returns>
+    public string AddSparseFile(string relativePath, long size)
+    {
+        string fullPath = Path.Combine(RootPath, relativePath);
+        string? dir = Path.GetDirectoryName(fullPath);
+        if (dir != null && !Directory.Exists(dir))
+            Directory.CreateDirectory(dir);
+
+        WriteSparsePatternFile(fullPath, size);
+
+        Files.Add(fullPath);
+        TotalSize += size;
+        return fullPath;
+    }
+
+    /// <summary>
+    /// Creates a sparse file and writes the repeating test pattern at key positions.
+    /// </summary>
+    private static void WriteSparsePatternFile(string path, long size)
+    {
+        using var fs = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
+
+        // Mark as sparse — requires NTFS; uses CsWin32-generated DeviceIoControl
+        if (!FileSystemHelpers.SetSparseFlag(fs.SafeFileHandle))
+        {
+            throw new InvalidOperationException(
+                $"Failed to set sparse flag (Win32 error {Marshal.GetLastWin32Error()}). " +
+                "Ensure the file is on an NTFS volume.");
+        }
+
+        // Set the logical file size — unallocated regions will read as zeros
+        fs.SetLength(size);
+
+        if (size == 0)
+            return;
+
+        int regionSize = (int)Math.Min(SparseRegionSize, size);
+        byte[] buffer = new byte[regionSize];
+        FillWithPattern(buffer);
+
+        // Region 1: start of file
+        WriteRegion(fs, 0, buffer, size);
+
+        // Region 2: straddle the 2 GB boundary (int.MaxValue)
+        if (size > Boundary2GB)
+            WriteRegion(fs, Boundary2GB - regionSize / 2, buffer, size);
+
+        // Region 3: straddle the 4 GB boundary (uint.MaxValue)
+        if (size > Boundary4GB)
+            WriteRegion(fs, Boundary4GB - regionSize / 2, buffer, size);
+
+        // Region 4: end of file (skip if it overlaps with the start region)
+        long endOffset = size - regionSize;
+        if (endOffset > regionSize)
+            WriteRegion(fs, endOffset, buffer, size);
+    }
+
+    /// <summary>Writes a pattern region at the given offset, clamped to file size.</summary>
+    private static void WriteRegion(FileStream fs, long offset, byte[] pattern, long fileSize)
+    {
+        if (offset < 0) offset = 0;
+        int toWrite = (int)Math.Min(pattern.Length, fileSize - offset);
+        if (toWrite <= 0) return;
+        fs.Position = offset;
+        fs.Write(pattern, 0, toWrite);
+    }
+
+    #endregion
+
+    #region *** File Modification ***
+
+    /// <summary>
+    /// Overwrites an existing file with version-tagged content, ensuring a newer
+    /// <see cref="FileInfo.LastWriteTime"/> for incremental backup detection.
+    /// The content is a repeating pattern that encodes the <paramref name="version"/>
+    /// so that restored files can be verified against the expected version.
+    /// </summary>
+    /// <param name="fullPath">Full path of the file to modify (must already exist).</param>
+    /// <param name="version">Logical version number encoded into the content pattern.</param>
+    /// <param name="size">New file size in bytes. If <c>null</c>, keeps the original size.</param>
+    public void ModifyFile(string fullPath, int version, long? size = null)
+    {
+        if (!File.Exists(fullPath))
+            throw new FileNotFoundException("Cannot modify a file that does not exist.", fullPath);
+
+        // Capture original size before overwriting
+        long originalSize = new FileInfo(fullPath).Length;
+        long targetSize = size ?? originalSize;
+
+        // Update TotalSize tracking
+        TotalSize += targetSize - originalSize;
+
+        // Ensure LastWriteTime will differ — wait briefly if needed
+        DateTime oldWrite = File.GetLastWriteTimeUtc(fullPath);
+
+        WriteVersionedPatternFile(fullPath, targetSize, version);
+
+        // Guarantee the timestamp advances (filesystem resolution can be coarse)
+        DateTime newWrite = File.GetLastWriteTimeUtc(fullPath);
+        if (newWrite <= oldWrite)
+        {
+            File.SetLastWriteTimeUtc(fullPath, oldWrite.AddSeconds(2));
+        }
+    }
+
+    /// <summary>
+    /// Writes a file filled with a version-tagged repeating pattern.
+    /// The pattern embeds the version number so byte-for-byte comparison
+    /// can distinguish different file versions.
+    /// </summary>
+    private static void WriteVersionedPatternFile(string path, long size, int version)
+    {
+        using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
+
+        if (size == 0)
+            return;
+
+        byte[] versionPattern = System.Text.Encoding.UTF8.GetBytes($"TapeNET-v{version:D4}-");
+
+        const int bufferSize = 64 * 1024;
+        byte[] buffer = new byte[(int)Math.Min(bufferSize, size)];
+        for (int i = 0; i < buffer.Length; i++)
+            buffer[i] = versionPattern[i % versionPattern.Length];
+
+        long remaining = size;
+        while (remaining > 0)
+        {
+            int toWrite = (int)Math.Min(buffer.Length, remaining);
+            fs.Write(buffer, 0, toWrite);
+            remaining -= toWrite;
+        }
     }
 
     #endregion

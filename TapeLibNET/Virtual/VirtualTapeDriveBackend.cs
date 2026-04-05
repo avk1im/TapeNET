@@ -174,6 +174,47 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
     }
 
     /// <summary>
+    /// Creates a memory-mapped virtual tape for testing large (&gt;2 GB) media.
+    /// Uses <see cref="LargeMemoryStream"/> backed by anonymous memory-mapped files,
+    /// avoiding the 2 GB limit of <see cref="MemoryStream"/>.
+    /// <para>
+    /// The OS commits physical pages only as they are touched, so the full capacity
+    /// is not immediately resident in RAM. However, the system page file must be large
+    /// enough to back the mapped region.
+    /// </para>
+    /// </summary>
+    public static VirtualTapeDriveBackend CreateMemoryMapBacked(
+        ILoggerFactory loggerFactory,
+        VirtualTapeDriveCapabilities? capabilities = null,
+        long contentCapacity = 4L * 1024 * 1024 * 1024,
+        long initiatorPartitionCapacity = 16 * 1024 * 1024)
+    {
+        var caps = capabilities ?? VirtualTapeDriveCapabilities.WithSetmarks;
+
+        // LargeMemoryStream for content — supports >2 GB via memory-mapped file
+        var contentStream = new LargeMemoryStream(contentCapacity);
+        // Metadata is always small — regular MemoryStream suffices
+        var contentMetadataStream = new MemoryStream();
+
+        Stream? initiatorStream = null;
+        Stream? initiatorMetadataStream = null;
+
+        if (caps.SupportsInitiatorPartition)
+        {
+            initiatorStream = new MemoryStream();
+            initiatorMetadataStream = new MemoryStream();
+        }
+
+        var backend = new VirtualTapeDriveBackend(loggerFactory, caps,
+            contentCapacity,
+            contentStream, ownsStreams: true, contentMetadataStream,
+            initiatorStream, initiatorMetadataStream,
+            initiatorPartitionCapacity);
+
+        return backend;
+    }
+
+    /// <summary>
     /// Creates a file-backed virtual tape with persistent metadata.
     /// </summary>
     /// <param name="loggerFactory">Logger factory for logging.</param>
@@ -629,6 +670,114 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
 
         m_logger.LogTrace("{Prefix}: Virtual media inserted from >{File}<", LogPrefix, contentFilePath);
     }
+
+    /// <summary>
+    /// Inserts new memory-backed virtual media into the drive.
+    /// Analogous to <see cref="InsertMedia"/> but uses <see cref="MemoryStream"/>
+    /// instead of file streams — useful for unit tests that need volume swapping
+    /// without touching the file system.
+    /// Call <see cref="LoadMedia"/> afterwards to initialize the media.
+    /// </summary>
+    /// <param name="contentCapacity">Capacity of the new content partition in bytes.</param>
+    /// <param name="initiatorPartitionCapacity">Capacity of the new initiator partition in bytes.</param>
+    public void InsertMemoryMedia(
+        long contentCapacity,
+        long initiatorPartitionCapacity = 0)
+    {
+        // Eject any currently loaded media first (flushes media + disposes streams)
+        if (m_hasMedia || m_contentStream != null)
+            UnloadMedia();
+
+        m_contentStream = new MemoryStream();
+        m_contentMetadataStream = new MemoryStream();
+
+        if (m_capabilities.SupportsInitiatorPartition && initiatorPartitionCapacity > 0)
+        {
+            m_initiatorStream = new MemoryStream();
+            m_initiatorMetadataStream = new MemoryStream();
+        }
+
+        m_contentCapacityForNew = contentCapacity;
+        m_initiatorCapacityForNew = initiatorPartitionCapacity;
+        MediaMode = FileMode.Create;
+
+        m_logger.LogTrace("{Prefix}: Memory-backed virtual media inserted (capacity: {Capacity})",
+            LogPrefix, contentCapacity);
+    }
+
+    /// <summary>
+    /// Captures the current memory-backed media streams as byte arrays.
+    /// Media must be unloaded (or not yet loaded) — call after <see cref="UnloadMedia"/>.
+    /// Used for saving a volume's state before swapping to another volume,
+    /// so it can be re-inserted later via <see cref="InsertMemoryMedia(MemoryMediaSnapshot)"/>.
+    /// </summary>
+    /// <returns>Snapshot of the media state, or <c>null</c> if streams are not memory-backed.</returns>
+    public MemoryMediaSnapshot? CaptureMemorySnapshot()
+    {
+        // Must be called while media is unloaded but streams still alive,
+        // OR while streams are externally managed (ownsStreams = false).
+        // After UnloadMedia with ownsStreams = true, streams are disposed — too late.
+        // So we capture BEFORE unloading, while media is still accessible.
+        if (m_contentMedia == null && m_contentStream == null)
+            return null;
+
+        // Flush media if loaded
+        m_contentMedia?.Flush();
+        m_initiatorMedia?.Flush();
+
+        byte[]? contentData = (m_contentStream as MemoryStream)?.ToArray();
+        byte[]? contentMeta = (m_contentMetadataStream as MemoryStream)?.ToArray();
+        byte[]? initData = (m_initiatorStream as MemoryStream)?.ToArray();
+        byte[]? initMeta = (m_initiatorMetadataStream as MemoryStream)?.ToArray();
+
+        if (contentData == null)
+            return null;
+
+        return new MemoryMediaSnapshot(contentData, contentMeta,
+            initData, initMeta,
+            m_contentCapacityForNew, m_initiatorCapacityForNew);
+    }
+
+    /// <summary>
+    /// Re-inserts previously captured memory-backed media.
+    /// Call <see cref="LoadMedia"/> afterwards to load the restored state.
+    /// </summary>
+    public void InsertMemoryMedia(MemoryMediaSnapshot snapshot)
+    {
+        if (m_hasMedia || m_contentStream != null)
+            UnloadMedia();
+
+        m_contentStream = new MemoryStream(snapshot.ContentData, 0, snapshot.ContentData.Length, writable: true, publiclyVisible: true);
+        m_contentMetadataStream = snapshot.ContentMetadata != null
+            ? new MemoryStream(snapshot.ContentMetadata, 0, snapshot.ContentMetadata.Length, writable: true, publiclyVisible: true)
+            : new MemoryStream();
+
+        if (m_capabilities.SupportsInitiatorPartition && snapshot.InitiatorData != null)
+        {
+            m_initiatorStream = new MemoryStream(snapshot.InitiatorData, 0, snapshot.InitiatorData.Length, writable: true, publiclyVisible: true);
+            m_initiatorMetadataStream = snapshot.InitiatorMetadata != null
+                ? new MemoryStream(snapshot.InitiatorMetadata, 0, snapshot.InitiatorMetadata.Length, writable: true, publiclyVisible: true)
+                : new MemoryStream();
+        }
+
+        m_contentCapacityForNew = snapshot.ContentCapacity;
+        m_initiatorCapacityForNew = snapshot.InitiatorCapacity;
+        MediaMode = FileMode.OpenOrCreate; // load existing state from the snapshot
+
+        m_logger.LogTrace("{Prefix}: Memory-backed virtual media re-inserted from snapshot", LogPrefix);
+    }
+
+    /// <summary>
+    /// Captures the byte-level state of memory-backed virtual media streams
+    /// so a volume can be re-inserted later.
+    /// </summary>
+    public record MemoryMediaSnapshot(
+        byte[] ContentData,
+        byte[]? ContentMetadata,
+        byte[]? InitiatorData,
+        byte[]? InitiatorMetadata,
+        long ContentCapacity,
+        long InitiatorCapacity);
 
     public override bool SetBlockSize(uint size)
     {

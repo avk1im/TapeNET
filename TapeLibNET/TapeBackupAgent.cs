@@ -13,6 +13,11 @@ namespace TapeLibNET
         private long BytesBackedupMarker { get; set; } = 0L;
         private long BytesBackedupInCurrentSet => BytesBackedup - BytesBackedupMarker;
 
+        // Tracks block-aligned tape consumption for the current set, used for accurate capacity checking.
+        //  Unlike BytesBackedupInCurrentSet (which tracks raw stream bytes), this accounts for
+        //  per-file block alignment padding that the tape physically consumes.
+        private long _tapeConsumptionInCurrentSet = 0;
+
         private bool BeginWriteContentForCurrentSet(bool newSet)
         {
             // If we were reading or writing, end it first - before setting the new set's parameters
@@ -38,12 +43,23 @@ namespace TapeLibNET
                 remainingCapacity -= TapeNavigator.TOCCapacity; // if TOC is in a content set, reserve space for it
 
             BytesBackedupMarker = BytesBackedup; // important in case of multi-volume backup continuation
+            _tapeConsumptionInCurrentSet = 0;
 
             return Manager.BeginWriteContent(remainingCapacity);
         }
         private TapeWriteStream? OpenWriteContentStream(long length)
         {
-            var stream = Manager.ProduceWriteContentStream(length, BytesBackedupInCurrentSet);
+            // Estimate actual tape footprint: file data + serialized header, rounded up to block boundary.
+            //  This is more accurate than raw file length for capacity checking, as each file on tape
+            //  consumes whole blocks due to block alignment padding.
+            long estimatedTapeSize = length;
+            if (length >= 0)
+            {
+                long blockSize = Drive.BlockSize;
+                estimatedTapeSize = (length + TapeFileInfo.EstimateSerializedHeaderSize() + blockSize - 1) / blockSize * blockSize;
+            }
+
+            var stream = Manager.ProduceWriteContentStream(estimatedTapeSize, _tapeConsumptionInCurrentSet);
             if (stream == null)
                 SyncErrorFrom(Manager);
             return stream;
@@ -98,6 +114,10 @@ namespace TapeLibNET
             // only if all went well, add the TOC entry
             TOC.CurrentSetTOC.Append(tfi);
             BytesBackedup += wstream.Length;
+
+            // Track block-aligned tape consumption for accurate capacity checking
+            long blockSize = Drive.BlockSize;
+            _tapeConsumptionInCurrentSet += (wstream.Length + blockSize - 1) / blockSize * blockSize;
 
             m_logger.LogTrace("File >{File}< backed up ok", fileInfo.FullName);
         } // BackupFile()

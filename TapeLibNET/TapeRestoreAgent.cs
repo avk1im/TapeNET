@@ -192,7 +192,7 @@ namespace TapeLibNET
                 RETRY:
                     fileFailedAction = FileFailedAction.Skip; // reset to skip to avoid infinite loop
 
-                    var tfi = tfis[index];
+                    var tfi = TOC.CurrentSetTOC[index]; // index is a position in the full set (from RefsToIndexes)
 
                     if (tfi == null || !tfi.IsValid)
                     {
@@ -211,15 +211,16 @@ namespace TapeLibNET
                             goto FAILURE;
                         }
                     }
-                    lastIndex = index;
-
                     if (!RestoreNextFile(tfi, ref fileFailedAction, fileNotify))
                     {
+                        lastIndex = index; // tape position uncertain after failure
                         m_logger.LogWarning("Failed to restore file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
                         goto FAILURE;
                     }
 
-                    // success
+                    // success — EndReadFile (called on stream disposal) already advanced past one filemark,
+                    //  so the tape is now positioned at the start of the next file (index + 1)
+                    lastIndex = index + 1;
                     m_logger.LogTrace("File >{File}< restored ok", tfi.FileDescr.FullName);
 
                     continue;

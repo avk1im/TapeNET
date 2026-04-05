@@ -644,9 +644,13 @@ namespace TapeLibNET
                 last.Volume = Volume;
                 last.Capacity = capacity;
                 last.Incremental = incremental && m_setTOCs.Count > 1; // the very first set shouldn't be incremental
+                    // Count > 1 means "there's at least one other set before this empty one."
+                    //  If Count == 1, the empty set IS the first set → not incremental.
             }
             else
-                m_setTOCs.Add(new TapeSetTOC(Volume, capacity, incremental && m_setTOCs.Count > 1));
+                m_setTOCs.Add(new TapeSetTOC(Volume, capacity, incremental && m_setTOCs.Count > 0));
+                    // Count > 0 means "there's at least one set already present before the one we're about to add."
+                    //  If Count == 0, we're adding the very first set → not incremental.
 
             Debug.Assert(m_setTOCs.Count > 0);
 
@@ -841,10 +845,15 @@ namespace TapeLibNET
         {
             if (!incremental || !CurrentSetTOC.Incremental) // non-incremental case
             {
-                return CurrentSetTOC.ContinuedFromPrevVolume && m_currSetInternal > 0 ?
-                    [ CurrentSetTOC.SelectFiles(filter),
-                        m_setTOCs[m_currSetInternal - 1].SelectFiles(filter) ] :
-                    [ CurrentSetTOC.SelectFiles(filter) ];
+                // Walk back through the full multi-volume continuation chain
+                List<List<TapeFileInfo>?> chain = [CurrentSetTOC.SelectFiles(filter)];
+                int idx = m_currSetInternal;
+                while (idx > 0 && m_setTOCs[idx].ContinuedFromPrevVolume)
+                {
+                    idx--;
+                    chain.Add(m_setTOCs[idx].SelectFiles(filter));
+                }
+                return [.. chain];
             }
             else // go down the incremental chain
             {

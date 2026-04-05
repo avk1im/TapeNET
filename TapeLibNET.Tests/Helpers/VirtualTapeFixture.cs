@@ -63,11 +63,17 @@ public sealed class VirtualTapeFixture : IDisposable
     /// <param name="contentCapacity">Content partition capacity in bytes.</param>
     /// <param name="loggerFactory">Optional logger factory (defaults to <see cref="NullLoggerFactory"/>).</param>
     /// <param name="mediaDescription">Optional description for the initial TOC.</param>
+    /// <param name="useMemoryMap">
+    /// When <c>true</c>, uses <see cref="VirtualTapeDriveBackend.CreateMemoryMapBacked"/>
+    /// (memory-mapped files) instead of <see cref="MemoryStream"/>-backed media.
+    /// Required for content capacities exceeding 2 GB.
+    /// </param>
     public VirtualTapeFixture(
         DriveProfile profile = DriveProfile.Setmarks,
         long contentCapacity = DefaultContentCapacity,
         ILoggerFactory? loggerFactory = null,
-        string mediaDescription = "Test Media")
+        string mediaDescription = "Test Media",
+        bool useMemoryMap = false)
     {
         LoggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
         Capabilities = ProfileToCapabilities(profile);
@@ -75,11 +81,11 @@ public sealed class VirtualTapeFixture : IDisposable
         long initCap = Capabilities.SupportsInitiatorPartition
             ? DefaultInitiatorCapacity : 0;
 
-        Backend = VirtualTapeDriveBackend.CreateMemoryBacked(
-            LoggerFactory,
-            Capabilities,
-            contentCapacity,
-            initCap);
+        Backend = useMemoryMap
+            ? VirtualTapeDriveBackend.CreateMemoryMapBacked(
+                LoggerFactory, Capabilities, contentCapacity, initCap)
+            : VirtualTapeDriveBackend.CreateMemoryBacked(
+                LoggerFactory, Capabilities, contentCapacity, initCap);
 
         // Ensure IO throttling is off — tests should run at memory speed
         Backend.IoRateBytesPerSecond = 0;

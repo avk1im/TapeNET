@@ -301,7 +301,7 @@ public class TapeDriveWin32Backend : TapeDriveBackend
         tapemark = false;
         eof = false;
 
-        uint read = 0;
+        uint read;
         bool bOK;
 
         unsafe
@@ -342,7 +342,7 @@ public class TapeDriveWin32Backend : TapeDriveBackend
         tapemark = false;
         eof = false;
 
-        uint written = 0;
+        uint written;
         bool bOK;
 
         unsafe
