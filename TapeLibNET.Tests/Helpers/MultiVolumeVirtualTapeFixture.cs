@@ -51,8 +51,11 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// <summary>Current volume number (1-based), mirrors <see cref="TapeTOC.Volume"/>.</summary>
     public int CurrentVolume => TOC.Volume;
 
-    /// <summary>Number of volumes created so far.</summary>
+    /// <summary>Number of volume snapshots saved (equals swaps performed).</summary>
     public int VolumeCount => _volumeSnapshots.Count;
+
+    /// <summary>Total volumes used (snapshots + current loaded volume).</summary>
+    public int TotalVolumes => _volumeSnapshots.Count + (Backend.ContentMedia != null ? 1 : 0);
 
     /// <summary>Content capacity per volume in bytes.</summary>
     public long ContentCapacity { get; }

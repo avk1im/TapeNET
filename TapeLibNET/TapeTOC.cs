@@ -453,21 +453,27 @@ namespace TapeLibNET
 
             return filesSelected; // don't use "null means all files" shortcut since the list might need editing
         }
-        // Compute the size of all files in the set on tape, consideing the block size
+        /// <summary>
+        /// Estimates the tape footprint of a single file: file data + serialized header,
+        ///  rounded up to the next block boundary.
+        /// </summary>
+        public static long EstimateFileSizeOnTape(long fileLength, uint blockSize)
+        {
+            long rawSize = fileLength + TapeFileInfo.EstimateSerializedHeaderSize();
+            if (blockSize <= 1)
+                return rawSize;
+            return (rawSize + blockSize - 1) / blockSize * blockSize;
+        }
+
+        // Compute the size of all files in the set on tape, considering the block size
         public long ComputeTotalFileSizeOnTape(uint defaultBlockSize = 0)
         {
             if (Count == 0)
                 return 0L;
-            long totalSize = 0L;
             uint blockSize = (BlockSize > 0) ? BlockSize : defaultBlockSize;
-            if (blockSize == 0)
-                blockSize = 1; // don't round up if block size is not specified
+            long totalSize = 0L;
             foreach (var tfi in this)
-            {
-                long fileSize = tfi.FileDescr.Length + TapeFileInfo.EstimateSerializedHeaderSize();
-                long blocks = (fileSize + blockSize - 1) / blockSize; // round up to next block
-                totalSize += blocks * blockSize;
-            }
+                totalSize += EstimateFileSizeOnTape(tfi.FileDescr.Length, blockSize);
             return totalSize;
         }
 
@@ -667,6 +673,7 @@ namespace TapeLibNET
                     HashAlgorithm = setTOC.HashAlgorithm,
                     Description = setTOC.Description,
                     BlockSize = setTOC.BlockSize,
+                    FmksMode = setTOC.FmksMode,
                     ContinuedFromPrevVolume = contFromPrevVolume && (m_setTOCs.Count > 0), // the very first set may not be continued
                 }
             );
@@ -794,7 +801,9 @@ namespace TapeLibNET
 
         #region *** File selection methods ***
 
-        // Find the latest non-incremental set -- returns internal index
+        // Find the latest non-incremental set -- returns internal index.
+        //  Walks back through the entire ContinuedFromPrevVolume chain so that
+        //  a full backup spanning 3+ volumes is fully included.
         private int LastNonIncSetInternal
         {
             get
@@ -804,12 +813,9 @@ namespace TapeLibNET
                 {
                     if (!m_setTOCs[i].Incremental)
                     {
-                        if (m_setTOCs[i].ContinuedFromPrevVolume)
-                        {
-                            // if a continued set, then also include the previous set, from the previous volume
-                            Debug.Assert(i > 0); // the very first set cannot be continued
+                        // Walk back through the entire continuation chain (may span multiple volumes)
+                        while (i > 0 && m_setTOCs[i].ContinuedFromPrevVolume)
                             i--;
-                        }
                         return i;
                     }
                 }

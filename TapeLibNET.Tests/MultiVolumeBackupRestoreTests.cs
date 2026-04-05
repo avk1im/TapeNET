@@ -85,8 +85,8 @@ public class MultiVolumeBackupRestoreTests
 
         // With 256KB capacity, 16KB block size, each 16KB file takes 2 blocks (32KB) on tape.
         // So at most 8 files per volume. With 16 files, we need 2 volumes.
-        Assert.True(fixture.VolumeCount >= 2,
-            $"Expected >=2 volumes, got {fixture.VolumeCount}. " +
+        Assert.True(fixture.TotalVolumes >= 2,
+            $"Expected >=2 volumes, got {fixture.TotalVolumes}. " +
             $"ContentCapacity={contentCap}, TOCCapacity={tocCap}, HasInitiatorPartition={hasInit}, " +
             $"BlockSize={blockSize}, FilesSucceeded={stats.FilesSucceeded}, " +
             $"TapeCapacity={tapeCapacity}, TapeRemaining={tapeRemaining}\n" +
@@ -117,8 +117,8 @@ public class MultiVolumeBackupRestoreTests
 
         Assert.Equal(FileCount, stats.FilesSucceeded);
         Assert.Equal(0, stats.FilesFailed);
-        Assert.True(fixture.VolumeCount >= 2,
-            $"Expected at least 2 volumes, got {fixture.VolumeCount}");
+        Assert.True(fixture.TotalVolumes >= 2,
+            $"Expected at least 2 volumes, got {fixture.TotalVolumes}");
 
         // The TOC should record volume continuation
         Assert.True(fixture.TOC.Count >= 2,
@@ -513,15 +513,14 @@ public class MultiVolumeBackupRestoreTests
         // Verify we actually spanned
         Assert.True(fixture.TOC.Count >= 2, "Expected multi-volume span");
 
-        // Find the continued set (ContinuedFromPrevVolume == true)
+        // Find the last continued set in the chain (ContinuedFromPrevVolume == true)
+        //  The restore logic walks backward from the current set through the chain,
+        //  so we must position at the end of the chain, not the beginning.
         int continuedSetIdx = -1;
         for (int i = 1; i <= fixture.TOC.Count; i++)
         {
             if (fixture.TOC[i].ContinuedFromPrevVolume)
-            {
                 continuedSetIdx = i;
-                break;
-            }
         }
         Assert.True(continuedSetIdx > 0, "Expected a continued set");
 

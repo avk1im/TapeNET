@@ -11,12 +11,8 @@ namespace TapeLibNET
     {
         // bytes backed up so far before we start writing a new set
         private long BytesBackedupMarker { get; set; } = 0L;
+        // payload bytes backed up so far in the current set (since the last marker)
         private long BytesBackedupInCurrentSet => BytesBackedup - BytesBackedupMarker;
-
-        // Tracks block-aligned tape consumption for the current set, used for accurate capacity checking.
-        //  Unlike BytesBackedupInCurrentSet (which tracks raw stream bytes), this accounts for
-        //  per-file block alignment padding that the tape physically consumes.
-        private long _tapeConsumptionInCurrentSet = 0;
 
         private bool BeginWriteContentForCurrentSet(bool newSet)
         {
@@ -43,23 +39,19 @@ namespace TapeLibNET
                 remainingCapacity -= TapeNavigator.TOCCapacity; // if TOC is in a content set, reserve space for it
 
             BytesBackedupMarker = BytesBackedup; // important in case of multi-volume backup continuation
-            _tapeConsumptionInCurrentSet = 0;
 
             return Manager.BeginWriteContent(remainingCapacity);
         }
         private TapeWriteStream? OpenWriteContentStream(long length)
         {
-            // Estimate actual tape footprint: file data + serialized header, rounded up to block boundary.
-            //  This is more accurate than raw file length for capacity checking, as each file on tape
-            //  consumes whole blocks due to block alignment padding.
-            long estimatedTapeSize = length;
-            if (length >= 0)
-            {
-                long blockSize = Drive.BlockSize;
-                estimatedTapeSize = (length + TapeFileInfo.EstimateSerializedHeaderSize() + blockSize - 1) / blockSize * blockSize;
-            }
+            // Estimate actual tape footprint via the shared block-alignment formula.
+            //  Use TOC.CurrentSetTOC.ComputeTotalFileSizeOnTape() as the single source of truth
+            //  for bytes already consumed in this set (accounts for per-file block padding).
+            long estimatedTapeSize = (length >= 0)
+                ? TapeSetTOC.EstimateFileSizeOnTape(length, Drive.BlockSize)
+                : length;
 
-            var stream = Manager.ProduceWriteContentStream(estimatedTapeSize, _tapeConsumptionInCurrentSet);
+            var stream = Manager.ProduceWriteContentStream(estimatedTapeSize, TOC.CurrentSetTOC.ComputeTotalFileSizeOnTape());
             if (stream == null)
                 SyncErrorFrom(Manager);
             return stream;
@@ -114,10 +106,6 @@ namespace TapeLibNET
             // only if all went well, add the TOC entry
             TOC.CurrentSetTOC.Append(tfi);
             BytesBackedup += wstream.Length;
-
-            // Track block-aligned tape consumption for accurate capacity checking
-            long blockSize = Drive.BlockSize;
-            _tapeConsumptionInCurrentSet += (wstream.Length + blockSize - 1) / blockSize * blockSize;
 
             m_logger.LogTrace("File >{File}< backed up ok", fileInfo.FullName);
         } // BackupFile()
@@ -192,14 +180,16 @@ namespace TapeLibNET
         }
 
         // The context with which we can resume backup on the next volume
-        private struct TapeBackupContext(List<string> fileList, bool ignoreFailures, ITapeFileNotifiable? fileNotify)
+        private struct TapeBackupContext(List<string> fileList, bool ignoreFailures, ITapeFileNotifiable? fileNotify, bool incremental)
         {
             internal readonly List<string> fileList = fileList;
             internal readonly bool ignoreFailures = ignoreFailures;
             internal readonly ITapeFileNotifiable? fileNotify = fileNotify;
+            internal readonly bool incremental = incremental; // preserve original incremental flag across volume swaps
 
             internal int fileIndex = 0;
             internal bool overallSuccess = true;
+            internal bool prevVolumeHasFiles = false; // true when the set on the previous volume had files written
         }
         private TapeBackupContext? MultiVolumeContext { get; set; } = null;
         public bool CanResumeToNextVolume => MultiVolumeContext != null;
@@ -224,9 +214,17 @@ namespace TapeLibNET
             TOC.Volume++;
             TOC.ContinuedOnNextVolume = false;
 
-            // create the new set TOC with the same settings as the last set of the previous volume
-            TOC.CloneCurrentSetTOC(contFromPrevVolume: true);
+            // Create the new set TOC with the same settings as the last set of the previous volume.
+            // contFromPrevVolume is true only when the set on the previous volume actually had files
+            //  written — otherwise RemoveLastEmptySet may have removed the empty set, and the
+            //  "current" set is now a different (earlier) one that should not be continued.
+            bool isContinuation = MultiVolumeContext.Value.prevVolumeHasFiles;
+            TOC.CloneCurrentSetTOC(contFromPrevVolume: isContinuation);
             TOC.CurrentSetTOC.Description += $" ({TOC.Volume})";
+
+            // Preserve the original incremental flag — CloneCurrentSetTOC may have cloned
+            //  a different set (e.g. after RemoveLastEmptySet removed the original empty set)
+            TOC.MarkCurrentSetIncremental(MultiVolumeContext.Value.incremental);
 
             return BackupFilesToCurrentSet(newSet: true);
         }
@@ -315,6 +313,11 @@ namespace TapeLibNET
                         m_logger.LogTrace("Setting up multi-volume backup from file #{Number} >{File}<", _stats.FilesProcessed + 1, bc.fileList[bc.fileIndex]);
                         BytesBackedupMarker = BytesBackedup;
 
+                        // Record whether the current set has files — needed by ResumeBackupToNextVolume
+                        //  to decide contFromPrevVolume (an empty set removed by RemoveLastEmptySet
+                        //  means the clone source will be a different, earlier set)
+                        bc.prevVolumeHasFiles = TOC.CurrentSetTOC.Count > 0;
+
                         // Make sure to set MultiVolumeContext before calling NotifyFileFailed()
                         //  so that CanResumeToNextVolume indicates true already
                         MultiVolumeContext = bc;
@@ -383,7 +386,7 @@ namespace TapeLibNET
             if (TOC.CurrentSetTOC.Incremental)
                 m_logger.LogTrace("Performing incremental backup to incremental set #{Set}", TOC.CurrentSetIndex);
 
-            MultiVolumeContext = new(fileList, ignoreFailures, fileNotify);
+            MultiVolumeContext = new(fileList, ignoreFailures, fileNotify, TOC.CurrentSetTOC.Incremental);
 
             return BackupFilesToCurrentSet(newSet);
         } // BackupFilesToCurrentSet()
