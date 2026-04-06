@@ -121,7 +121,20 @@ namespace TapeLibNET
         /// Counter for simulated failures. Incremented for each file processed.
         /// Instance-level so each agent tracks its own count.
         /// </summary>
-        protected int SimulatedFailureCounter { get; set; } = 0;
+        protected internal int SimulatedFailureCounter { get; set; } = 0;
+
+        /// <summary>
+        /// Bitmask controlling which TOC copies fail during backup/restore.
+        /// Bit 0 (value 1) = 1st copy fails, bit 1 (value 2) = 2nd copy fails.
+        /// 0 = no simulation, 3 = both copies fail.
+        /// </summary>
+        public static int SimulateTOCFailureMask { get; set; } = 0;
+
+        /// <summary>
+        /// Tracks which TOC copy is being processed (0 = 1st, 1 = 2nd).
+        /// Reset at the start of <see cref="BackupTOC"/> and <see cref="RestoreTOC"/>.
+        /// </summary>
+        protected int _tocCopyCounter = 0;
 #endif
 
 
@@ -245,6 +258,12 @@ namespace TapeLibNET
                 if (wstream == null)
                     return false;
 
+#if DEBUG
+                // Simulate TOC copy failure based on bitmask
+                if (SimulateTOCFailureMask != 0 && (SimulateTOCFailureMask & (1 << _tocCopyCounter++)) != 0)
+                    throw new IOException("Simulated TOC backup failure");
+#endif
+
                 // NOTE: no ThrowIfAbortRequested here — TOC writing is a critical
                 // data-integrity operation and must never be aborted.
 
@@ -265,7 +284,7 @@ namespace TapeLibNET
                     serializer.Serialize(hasher.GetCurrentHash()); // notice the hash bytes themselves aren't added to the hash!
 
 /*#if DEBUG
-                    // TEST FIXME: serialize a 55 MB dummy array
+                    // TEST: serialize a 55 MB dummy array
                     m_logger.LogTrace("***** Serializing dummy TOC array");
                     byte[] dummy = new byte[55 * 1024 * 1024];
                     serializer.Serialize(dummy);
@@ -284,6 +303,9 @@ namespace TapeLibNET
 
         public bool BackupTOC(bool enforce = false)
         {
+#if DEBUG
+            _tocCopyCounter = 0;
+#endif
             m_logger.LogTrace("Backing up TOC, 1st copy");
 
             if (enforce)
@@ -346,6 +368,12 @@ namespace TapeLibNET
                     m_logger.LogWarning("Failed to open TOC read stream in {Method}", nameof(RestoreTOCCore));
                     return false;
                 }
+
+#if DEBUG
+                // Simulate TOC copy failure based on bitmask
+                if (SimulateTOCFailureMask != 0 && (SimulateTOCFailureMask & (1 << _tocCopyCounter++)) != 0)
+                    throw new IOException("Simulated TOC restore failure");
+#endif
 
                 ThrowIfAbortRequested($"after openning TOC in {nameof(RestoreTOCCore)}");
 
@@ -410,6 +438,9 @@ namespace TapeLibNET
 
         public bool RestoreTOC()
         {
+#if DEBUG
+            _tocCopyCounter = 0;
+#endif
             // Since TOC is stored twice, if the first attempt fails, try again
             m_logger.LogTrace("Restoring TOC from 1st copy");
 

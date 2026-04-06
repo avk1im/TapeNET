@@ -89,29 +89,22 @@ namespace TapeLibNET
 
             // Compare both streams from the current position onwards
 
-            byte[] buffer1 = ByteBufferCache.ProduceBuffer(bufferSize);
-            byte[] buffer2 = ByteBufferCache.ProduceBuffer(buffer1.Length);
+            using var cache1 = new ByteBufferCache(bufferSize);
+            using var cache2 = new ByteBufferCache(bufferSize);
 
-            try
+            int read1, read2;
+            while ((read1 = stream1.Read(cache1.Buffer, 0, cache1.Capacity)) > 0)
             {
-                int read1, read2;
-                while ((read1 = stream1.Read(buffer1, 0, buffer1.Length)) > 0)
-                {
-                    read2 = stream2.Read(buffer2, 0, read1);
-                    if (read1 != read2)
-                        return false;
+                read2 = stream2.Read(cache2.Buffer, 0, read1);
+                if (read1 != read2)
+                    return false;
 
-                    if (!ByteArraysEqual(buffer1, buffer2))
-                        return false;
-                }
+                // Compare only the valid bytes, not the full (potentially oversized) pool arrays
+                if (!ByteArraysEqual(cache1.Buffer.AsSpan(0, read1), cache2.Buffer.AsSpan(0, read1)))
+                    return false;
+            }
 
-                return true;
-            }
-            finally
-            {
-                ByteBufferCache.RecycleBuffer(buffer1);
-                ByteBufferCache.RecycleBuffer(buffer2);
-            }
+            return true;
         }
 
     }

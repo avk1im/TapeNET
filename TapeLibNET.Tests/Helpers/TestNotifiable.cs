@@ -41,6 +41,29 @@ public class TestNotifiable : ITapeFileNotifiable
     /// </summary>
     public FileFailedAction FailedAction { get; set; } = FileFailedAction.Skip;
 
+    /// <summary>
+    /// Optional callback that overrides <see cref="FailedAction"/>.
+    /// Receives the file descriptor and exception; returns the desired action.
+    /// When set, <see cref="FailedAction"/> is ignored.
+    /// </summary>
+    public Func<TapeFileDescriptor, Exception, FileFailedAction>? FailedActionFunc { get; set; }
+
+    /// <summary>
+    /// When positive, <see cref="PreProcessFile"/> throws
+    /// <see cref="TapeAbortRequestedException"/> after this many files
+    /// have been posted as succeeded. Simulates a proactive user abort.
+    /// &lt;= 0 means disabled (default).
+    /// </summary>
+    public int AbortAfterNSucceeded { get; set; } = 0;
+
+    /// <summary>
+    /// When positive, <see cref="PostProcessFile"/> throws
+    /// <see cref="TapeAbortRequestedException"/> after this many files
+    /// have been posted as succeeded. Simulates abort after completion.
+    /// &lt;= 0 means disabled (default).
+    /// </summary>
+    public int AbortInPostProcessAfterN { get; set; } = 0;
+
     #endregion
 
     #region *** ITapeFileNotifiable ***
@@ -59,6 +82,10 @@ public class TestNotifiable : ITapeFileNotifiable
     {
         PreProcessed.Add(new PreProcessEvent(fileDescr, stats));
 
+        // Proactive abort: throw after N files have succeeded
+        if (AbortAfterNSucceeded > 0 && stats.FilesSucceeded >= AbortAfterNSucceeded)
+            throw new TapeAbortRequestedException($"Test abort after {stats.FilesSucceeded} succeeded files");
+
         // Skip if in the skip set
         return !FilesToSkip.Contains(fileDescr.FullName);
     }
@@ -66,13 +93,25 @@ public class TestNotifiable : ITapeFileNotifiable
     public bool PostProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
     {
         PostProcessed.Add(new PostProcessEvent(fileDescr, stats));
+
+        // Proactive abort: throw after N files have succeeded
+        if (AbortInPostProcessAfterN > 0 && stats.FilesSucceeded >= AbortInPostProcessAfterN)
+            throw new TapeAbortRequestedException($"Test abort in PostProcess after {stats.FilesSucceeded} succeeded files");
+
         return true;
     }
 
     public FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex, in TapeFileStatistics stats)
     {
         FilesFailed.Add(new FileFailedEvent(fileDescr, ex, stats));
-        return FailedAction;
+
+        // TapeAbortRequestedException (from PreProcess/PostProcess) routes through the
+        //  generic catch → OnFileFailed. We must cooperate by returning Abort so the
+        //  backup/restore loop actually stops.
+        if (ex is TapeAbortRequestedException)
+            return FileFailedAction.Abort;
+
+        return FailedActionFunc?.Invoke(fileDescr, ex) ?? FailedAction;
     }
 
     public void OnFileSkipped(TapeFileDescriptor fileDescr, in TapeFileStatistics stats)

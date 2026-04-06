@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics;
 
 
@@ -25,6 +26,7 @@ namespace TapeLibNET
         private readonly Stream m_inner;
         private readonly byte[] m_bufferA;
         private readonly byte[] m_bufferB;
+        private readonly int m_bufferSize;  // logical buffer size (ArrayPool may rent larger arrays)
         private byte[] m_fillBuffer;       // buffer currently being filled by Write()
         private int m_fillOffset;           // write position in m_fillBuffer
         private Task? m_pendingWrite;       // background write task (writing the other buffer to m_inner)
@@ -51,9 +53,9 @@ namespace TapeLibNET
             ArgumentOutOfRangeException.ThrowIfLessThan(bufferMultiplier, 2, nameof(bufferMultiplier));
 
             m_inner = inner;
-            int bufferSize = checked((int)(blockSize * (uint)bufferMultiplier));
-            m_bufferA = ByteBufferCache.ProduceBuffer(bufferSize);
-            m_bufferB = ByteBufferCache.ProduceBuffer(bufferSize);
+            m_bufferSize = checked((int)(blockSize * (uint)bufferMultiplier));
+            m_bufferA = ArrayPool<byte>.Shared.Rent(m_bufferSize);
+            m_bufferB = ArrayPool<byte>.Shared.Rent(m_bufferSize);
             m_fillBuffer = m_bufferA;
         }
 
@@ -71,7 +73,7 @@ namespace TapeLibNET
 
             while (count > 0)
             {
-                int remaining = m_fillBuffer.Length - m_fillOffset;
+                int remaining = m_bufferSize - m_fillOffset;
                 int toCopy = Math.Min(count, remaining);
 
                 Buffer.BlockCopy(buffer, offset, m_fillBuffer, m_fillOffset, toCopy);
@@ -80,7 +82,7 @@ namespace TapeLibNET
                 count -= toCopy;
                 m_accLength += toCopy;
 
-                if (m_fillOffset == m_fillBuffer.Length)
+                if (m_fillOffset == m_bufferSize)
                     SubmitAndSwap();
             }
         }
@@ -154,7 +156,7 @@ namespace TapeLibNET
                         Flush();
                     else
                     {
-                        // Ensure background task has completed before recycling its buffer
+                        // Ensure background task has completed before returning its buffer to the pool
                         try { m_pendingWrite?.GetAwaiter().GetResult(); } catch { }
                         m_pendingWrite = null;
                     }
@@ -162,8 +164,8 @@ namespace TapeLibNET
                 finally
                 {
                     m_disposed = true;
-                    ByteBufferCache.RecycleBuffer(m_bufferA);
-                    ByteBufferCache.RecycleBuffer(m_bufferB);
+                    ArrayPool<byte>.Shared.Return(m_bufferA);
+                    ArrayPool<byte>.Shared.Return(m_bufferB);
                 }
             }
 
@@ -219,6 +221,7 @@ namespace TapeLibNET
         private readonly Stream m_inner;
         private readonly byte[] m_bufferA;
         private readonly byte[] m_bufferB;
+        private readonly int m_bufferSize;  // logical buffer size (ArrayPool may rent larger arrays)
         private byte[] m_readBuffer;       // buffer currently being consumed by Read()
         private int m_readOffset;           // current read position in m_readBuffer
         private int m_readAvail;            // number of valid bytes in m_readBuffer
@@ -248,9 +251,9 @@ namespace TapeLibNET
             ArgumentOutOfRangeException.ThrowIfLessThan(bufferMultiplier, 2, nameof(bufferMultiplier));
 
             m_inner = inner;
-            int bufferSize = checked((int)(blockSize * (uint)bufferMultiplier));
-            m_bufferA = ByteBufferCache.ProduceBuffer(bufferSize);
-            m_bufferB = ByteBufferCache.ProduceBuffer(bufferSize);
+            m_bufferSize = checked((int)(blockSize * (uint)bufferMultiplier));
+            m_bufferA = ArrayPool<byte>.Shared.Rent(m_bufferSize);
+            m_bufferB = ArrayPool<byte>.Shared.Rent(m_bufferSize);
             m_readBuffer = m_bufferA;
         }
 
@@ -331,7 +334,7 @@ namespace TapeLibNET
             else
             {
                 // No pending read — fill current buffer synchronously (first call)
-                bytesRead = m_inner.Read(m_readBuffer, 0, m_readBuffer.Length);
+                bytesRead = m_inner.Read(m_readBuffer, 0, m_bufferSize);
             }
 
             m_readOffset = 0;
@@ -355,7 +358,7 @@ namespace TapeLibNET
                 return;
 
             var bgBuffer = (m_readBuffer == m_bufferA) ? m_bufferB : m_bufferA;
-            m_pendingRead = Task.Run(() => m_inner.Read(bgBuffer, 0, bgBuffer.Length));
+            m_pendingRead = Task.Run(() => m_inner.Read(bgBuffer, 0, m_bufferSize));
         }
 
         #endregion
@@ -374,7 +377,7 @@ namespace TapeLibNET
             {
                 try
                 {
-                    // Wait for any outstanding background read before recycling its buffer
+                    // Wait for any outstanding background read before returning its buffer to the pool
                     if (m_pendingRead != null)
                     {
                         try { m_pendingRead.GetAwaiter().GetResult(); } catch { }
@@ -384,8 +387,8 @@ namespace TapeLibNET
                 finally
                 {
                     m_disposed = true;
-                    ByteBufferCache.RecycleBuffer(m_bufferA);
-                    ByteBufferCache.RecycleBuffer(m_bufferB);
+                    ArrayPool<byte>.Shared.Return(m_bufferA);
+                    ArrayPool<byte>.Shared.Return(m_bufferB);
                 }
             }
 

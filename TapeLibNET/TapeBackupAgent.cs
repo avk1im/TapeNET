@@ -335,11 +335,12 @@ namespace TapeLibNET
                         return false;
                     }
 
-                    bc.overallSuccess = false;
-
                     var retryAction = NotifyFileFailed(bc.fileNotify, fileDescr, ex);
                     if (retryAction == FileFailedAction.Abort)
+                    {
+                        bc.overallSuccess = false;
                         break;
+                    }
                     else if (retryAction == FileFailedAction.Retry)
                     {
                         bc.fileIndex--; // decrement to retry same file
@@ -348,6 +349,7 @@ namespace TapeLibNET
                     }
                     // else Skip - continue to next file
 
+                    bc.overallSuccess = false;
                     if (!bc.ignoreFailures)
                         break;
                 } // catch

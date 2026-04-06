@@ -96,6 +96,16 @@ namespace TapeLibNET
 
                 rstream.LengthLimit = rstream.Length + tfi.FileDescr.Length; // this will activate LengthLimitMode
 
+#if DEBUG
+                // Simulate file restore failure for testing error handling
+                if (SimulateFailures)
+                {
+                    SimulatedFailureCounter++;
+                    if (SimulatedFailureCounter % FailEveryNthFile == 0)
+                        throw new IOException($"Simulated restore failure for file >{tfi.FileDescr.FullName}<");
+                }
+#endif
+
                 var hasher = CreateHasher(TOC.CurrentSetTOC.HashAlgorithm);
 
                 // Now invoke the pre- call back for possible filename or path modification or skipping the file altogether
@@ -230,15 +240,37 @@ namespace TapeLibNET
                     {
                         m_logger.LogTrace("Retrying file >{File}< as per file failed action", tfi.FileDescr.FullName);
 
-                        if (Navigator.MoveToNextContentFilemark(-1)) // FIXME: should we move by -2? and then by +1?
+                        // EndReadFile already advanced past the file's trailing filemark,
+                        //  so we must go back by 2 (past that FM and the preceding one),
+                        //  then forward by 1 (past the preceding FM to the start of the file's data)
+                        if (!Navigator.MoveToNextContentFilemark(-2))
                         {
-                            StatsUndoFailure(); // don't double-count
-                            goto RETRY;
+                            // the failure can happen if this is the very first file in the first set on volume
+                            if (index == 0 && TOC.CurrentSetIndexOnVolume == 0)
+                            {
+                                m_logger.LogTrace("Retrying first file on volume");
+                                Navigator.ResetError();
+                                StatsUndoFailure(); // don't double-count
+                                goto RETRY;
+                            }
+                            else
+                            {
+                                m_logger.LogWarning("Failed to move back to filemark for retrying file >{File}< in {Method}",
+                                    tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
+                            }
                         }
-                        else
+                        else // success: moved by -2 filemarks
                         {
-                            m_logger.LogWarning("Failed to move back to filemark for retrying file >{File}< in {Method}",
-                                tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
+                            if (Navigator.MoveToNextContentFilemark(1)) // move forward past the preceding FM to file data start
+                            {
+                                StatsUndoFailure(); // don't double-count
+                                goto RETRY;
+                            }
+                            else
+                            {
+                                m_logger.LogWarning("Failed to move forward to filemark for retrying file >{File}< in {Method}",
+                                    tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
+                            }
                         }
                     }
 
@@ -335,9 +367,11 @@ namespace TapeLibNET
             FileFailedAction fileFailedAction;
             bool lastFileFailed = false;
             LastFileSkipped = false;
+            int fileIndex = -1;
 
             foreach (var tfi in TOC.CurrentSetTOC)
             {
+                fileIndex++;
             RETRY:
                 fileFailedAction = FileFailedAction.Skip; // reset to skip to avoid infinite loop
 
@@ -378,15 +412,44 @@ namespace TapeLibNET
                 {
                     m_logger.LogTrace("Retrying file >{File}< as per file failed action", tfi.FileDescr.FullName);
 
-                    if (!Navigator.FmksMode || Navigator.MoveToNextContentFilemark(-1)) // FIXME: should we move by -2? and then by +1?
+                    if (!Navigator.FmksMode)
                     {
+                        // Non-FmksMode: block-based positioning handles retry without filemark navigation
                         StatsUndoFailure(); // don't double-count
                         goto RETRY;
                     }
-                    else
+
+                    // FmksMode: EndReadFile already advanced past the file's trailing filemark,
+                    //  so we must go back by 2 (past that FM and the preceding one),
+                    //  then forward by 1 (past the preceding FM to the start of the file's data)
+                    if (!Navigator.MoveToNextContentFilemark(-2))
                     {
-                        m_logger.LogWarning("Failed to move back to filemark for retrying file >{File}< in {Method}",
-                            tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
+                        // Move-back failure is expected for the very first file on the volume
+                        if (fileIndex == 0 && TOC.CurrentSetIndexOnVolume == 0)
+                        {
+                            m_logger.LogTrace("Retrying first file on volume");
+                            Navigator.ResetError();
+                            StatsUndoFailure(); // don't double-count
+                            goto RETRY;
+                        }
+                        else
+                        {
+                            m_logger.LogWarning("Failed to move back to filemark for retrying file >{File}< in {Method}",
+                                tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
+                        }
+                    }
+                    else // success: moved by -2 filemarks
+                    {
+                        if (Navigator.MoveToNextContentFilemark(1)) // move forward past the preceding FM to file data start
+                        {
+                            StatsUndoFailure(); // don't double-count
+                            goto RETRY;
+                        }
+                        else
+                        {
+                            m_logger.LogWarning("Failed to move forward to filemark for retrying file >{File}< in {Method}",
+                                tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
+                        }
                     }
                 }
 
