@@ -22,6 +22,25 @@ public enum RestoreMode
 }
 
 /// <summary>
+/// Summary statistics returned by a restore/validate/verify operation.
+/// Allows the caller to distinguish full success, partial failure, and
+///  "no files found" without needing an additional callback.
+/// </summary>
+public record RestoreOperationResult(
+    int FilesTotal,
+    int FilesProcessed,
+    int FilesSucceeded,
+    int FilesFailed,
+    long BytesProcessed)
+{
+    /// <summary>Files that were selected but never encountered on tape.</summary>
+    public int FilesMissing => FilesTotal - FilesProcessed;
+
+    /// <summary>Whether the operation completed without any issues.</summary>
+    public bool IsFullSuccess => FilesFailed == 0 && FilesMissing == 0 && FilesProcessed > 0;
+}
+
+/// <summary>
 /// Partial class containing restore/validate/verify operations for TapeService.
 /// </summary>
 public partial class TapeService
@@ -46,7 +65,7 @@ public partial class TapeService
     /// To abort a restore in progress, set Agent.IsAbortRequested = true.
     /// The agent is available via the Agent property during execution.
     /// </remarks>
-    public Task ExecuteRestoreAsync(
+    public Task<RestoreOperationResult> ExecuteRestoreAsync(
         RestoreMode mode,
         Dictionary<int, IReadOnlyList<TapeFileInfo>?> checkedFilesBySet,
         bool incremental,
@@ -70,6 +89,8 @@ public partial class TapeService
                 void logOkSub(string msg)      => logCallback(new LogEntry(WarningLevel.Completed, msg, true, DateTime.Now));
                 void logInfo(string msg)       => logCallback(new LogEntry(WarningLevel.Info, msg, false, DateTime.Now));
                 void logInfoSub(string msg)    => logCallback(new LogEntry(WarningLevel.Info, msg, true, DateTime.Now));
+                void logWarn(string msg)       => logCallback(new LogEntry(WarningLevel.Warning, msg, false, DateTime.Now));
+                void logWarnSub(string msg)    => logCallback(new LogEntry(WarningLevel.Warning, msg, true, DateTime.Now));
                 void logFail(string msg)       => logCallback(new LogEntry(WarningLevel.Failed, msg, false, DateTime.Now));
                 void logErr(string msg)        => logCallback(new LogEntry(WarningLevel.Error, msg, false, DateTime.Now));
 #pragma warning restore CS8321
@@ -164,7 +185,7 @@ public partial class TapeService
                     int newestIdx = setIndexes.Max();
                     toc.CurrentSetIndex = newestIdx;
 
-                    bool result = agent.RestoreFilesFromCurrentSetDown(
+                    bool success = agent.RestoreFilesFromCurrentSetDown(
                         combined, ignoreFailures: true, progressHandler);
 
                     // The agent catches TapeAbortRequestedException internally and returns false,
@@ -172,7 +193,7 @@ public partial class TapeService
                     bool wasAborted = agent.IsAbortRequested;
 
                     // Handle multi-volume continuation
-                    while (!wasAborted && !result && agent.CanResumeFromAnotherVolume)
+                    while (!wasAborted && !success && agent.CanResumeFromAnotherVolume)
                     {
                         int volumeNeeded = agent.VolumeToResumeFrom;
                         logInfo($"{modeName} requires Volume #{volumeNeeded} to continue");
@@ -220,28 +241,55 @@ public partial class TapeService
                         Status($"{modeName} files...");
 
                         // Step 5: Resume restore on the new volume
-                        result = agent.ResumeRestoreFromAnotherVolume();
+                        success = agent.ResumeRestoreFromAnotherVolume();
                         wasAborted = agent.IsAbortRequested;
-                    }
+                    } // while multi-volume continuation
+
+                    // The final tally
+                    var result = progressHandler.GenerateResult();
 
                     // Handle abort
                     if (wasAborted)
                     {
-                        logOk($"{modeName}: {progressHandler.FilesSucceeded:N0} file(s) succeeded before abort, {Helpers.BytesToString(agent.BytesRestored)}");
+                        logWarn($"{modeName}: aborting per user request");
+                        logInfoSub($"Before abort {result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(agent.BytesRestored)} processed of total {result.FilesTotal:N0} file(s)");
+                        // here we use agent.BytesRestored instead of result.BytesProcessed since the progressHandler.BatchEnd() might've been not called
                         throw new TapeAbortRequestedException("User requested abort");
                     }
 
                     // Log final results
-                    if (!result && !agent.CanResumeFromAnotherVolume && progressHandler.FilesFailed > 0)
+                    if (result.IsFullSuccess && (success || agent.CanResumeFromAnotherVolume)) // complete success
                     {
-                        logFail($"{modeName}: {progressHandler.FilesFailed:N0} file(s) of {progressHandler.FilesProcessed:N0} failed");
-                    }
-                    logOk($"{modeName}: {progressHandler.FilesSucceeded:N0} file(s) of {progressHandler.FilesProcessed:N0} succeeded, {Helpers.BytesToString(agent.BytesRestored)}");
-                    Status($"{modeName} complete");
-                    if (progressHandler.FilesFailed > 0)
-                        logFail($"{modeName} completed with errors");
-                    else
                         logOk($"{modeName} completed successfully");
+                        logOkSub($"{result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(result.BytesProcessed)} processed of total {result.FilesTotal:N0} file(s)");
+                    }
+                    else if (result.FilesFailed > 0) // errors
+                    {
+                        logFail($"{modeName} completed with {result.FilesFailed:N0} file(s) failed of total {result.FilesTotal:N0} file(s)");
+                        if (result.FilesProcessed > 0)
+                            logInfoSub($"{result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(result.BytesProcessed)} processed");
+                        if (result.FilesMissing > 0)
+                            logWarnSub($"{result.FilesMissing:N0} file(s) missing");
+                    }
+                    else if (result.FilesMissing > 0) // missing files
+                    {
+                        logWarn($"{modeName} completed with {result.FilesMissing:N0} file(s) missing of total {result.FilesTotal:N0} file(s)");
+                        if (result.FilesProcessed > 0)
+                            logInfoSub($"{result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(result.BytesProcessed)} processed");
+                    }
+                    else if (result.FilesProcessed == 0) // none processed
+                    {
+                        logWarn($"{modeName} completed with no files processed of total {result.FilesTotal:N0} file(s)");
+                    }
+                    else // unknown issues
+                    {
+                        logWarn($"{modeName} completed with issues.");
+                        logInfoSub($"{result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(result.BytesProcessed)} processed of total {result.FilesTotal:N0} file(s)");
+                    }
+
+                    Status($"{modeName} complete");
+
+                    return result;
                 }
                 catch (TapeAbortRequestedException)
                 {
@@ -300,6 +348,9 @@ public partial class TapeService
             BytesProcessed = stats.BytesProcessed;
         }
 
+        public RestoreOperationResult GenerateResult() =>
+            new(FilesTotal, FilesProcessed, FilesSucceeded, FilesFailed, BytesProcessed);
+
         private void ThrowIfAbortRequested()
         {
             if (agent.IsAbortRequested)
@@ -331,15 +382,17 @@ public partial class TapeService
 
         public bool PreProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
         {
+            Sync(stats);
             ThrowIfAbortRequested();
+
             currentFileCallback(fileDescr.FullName);
             return true;
         }
 
         public bool PostProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
         {
-            ThrowIfAbortRequested();
             Sync(stats);
+            ThrowIfAbortRequested();
 
             Log(WarningLevel.Completed, $"{Path.GetFileName(fileDescr.FullName)} ({Helpers.BytesToString(fileDescr.Length)})");
             progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
@@ -349,8 +402,8 @@ public partial class TapeService
 
         public FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex, in TapeFileStatistics stats)
         {
-            ThrowIfAbortRequested();
             Sync(stats);
+            ThrowIfAbortRequested();
 
             Log(WarningLevel.Failed, $"Failed: {fileDescr.FullName}");
             Log(WarningLevel.Failed, $"Error: {ex.Message}", sub: true);
@@ -383,8 +436,8 @@ public partial class TapeService
 
         public void OnFileSkipped(TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
         {
-            ThrowIfAbortRequested();
             Sync(stats);
+            ThrowIfAbortRequested();
 
             Log(WarningLevel.None, $"Skipped: {Path.GetFileName(fileDescr.FullName)}", sub: true);
         }

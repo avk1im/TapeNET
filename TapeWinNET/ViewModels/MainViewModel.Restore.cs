@@ -564,12 +564,13 @@ public partial class MainViewModel
         // Sticky state for "Skip All Errors" button in the error dialog
         bool skipAllErrors = false;
         int errorCount = 0;
+        RestoreOperationResult? operationResult = null;
 
         try
         {
             await Task.Run(async () =>
             {
-                await _tapeService.ExecuteRestoreAsync(
+                operationResult = await _tapeService.ExecuteRestoreAsync(
                     mode,
                     checkedFilesBySet,
                     incremental,
@@ -731,9 +732,14 @@ public partial class MainViewModel
             // Refresh tree after successful operation
             await RefreshAsync();
 
-            if (errorCount > 0)
+            // Determine outcome from both the file-error dialog count and
+            //  the operation result (which includes files-not-found on tape)
+            bool hasErrors = errorCount > 0
+                || (operationResult is { } r && !r.IsFullSuccess);
+
+            if (hasErrors)
             {
-                MessageBox.Show($"{modeName} completed with some errors. See log for details.",
+                MessageBox.Show($"{modeName} completed with issues. See log for details.",
                     $"{modeName} Complete", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
             else
