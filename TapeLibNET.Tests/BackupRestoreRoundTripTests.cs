@@ -18,12 +18,14 @@ public class BackupRestoreRoundTripTests
     #region *** Test Data ***
 
     /// <summary>All three drive profiles for parameterized theories.</summary>
+#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> AllProfiles =>
     [
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
         DriveProfile.SeqFilemarks,
     ];
+#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     /// <summary>
     /// Cross-product of drive profile × hash algorithm for round-trip theories.

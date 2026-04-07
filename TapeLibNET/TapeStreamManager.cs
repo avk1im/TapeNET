@@ -59,8 +59,11 @@ namespace TapeLibNET
                 return false;
             }
 
+            // Preserve application-level configuration from the old navigator
+            navigator.TOCCapacity = Navigator.TOCCapacity;
+
             RemoveErrorSource(Navigator);
-            
+
             Navigator = navigator;
             AddErrorSource(Navigator);
 

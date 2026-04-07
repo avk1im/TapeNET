@@ -556,7 +556,7 @@ void WriteMediaInformation(TapeTOC toc)
     Console.WriteLine($" ii Capacity: {Helpers.BytesToStringLong(drive.ContentCapacity)}");
     var used = toc.ComputeTotalFileSizeOnTape(drive.DefaultBlockSize);
     if (!drive.HasInitiatorPartition)
-        used += TapeNavigator.TOCCapacity; // if TOC is in set, it consumes content space
+        used += TapeNavigator.DefaultTOCCapacity; // if TOC is in set, it consumes content space
     var remaining = drive.ContentCapacity - used; //drive.GetContentRemainingCapacity();
     Console.WriteLine($" ii Used: {Helpers.BytesToStringLong(used)}");
     Console.WriteLine($" ii Remaining: {Helpers.BytesToStringLong(remaining)}");
@@ -860,7 +860,7 @@ void HandleFormat(List<string> values)
         Console.WriteLine("iii Enforcing single partition format");
     }
 
-    if (!drive.FormatMedia(enforceSinglePartition ? -1 : TapeNavigator.TOCCapacity))
+    if (!drive.FormatMedia(enforceSinglePartition ? -1 : TapeNavigator.DefaultTOCCapacity))
     {
         OnNonFatalError("!!! Couldn't format media. Error: " + drive.LastErrorMessage);
         return;

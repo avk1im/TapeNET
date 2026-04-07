@@ -21,7 +21,7 @@ namespace TapeLibNET
             base.Dispose(disposing);
         }
 
-        // { begin abstract method implementations
+        #region *** Abstract method implementations ***
         public override long Length => inner.Length;
         public override bool CanRead => inner.CanRead;
         public override bool CanWrite => inner.CanWrite;
@@ -47,7 +47,7 @@ namespace TapeLibNET
             OnWrite(buffer, offset, count);
             inner.Write(buffer, offset, count);
         }
-        // } end abstract method implementations
+        #endregion *** Abstract method implementations ***
 
     } // class FliterStream
 
@@ -55,7 +55,7 @@ namespace TapeLibNET
         bool ownInner = false) : FilterStream(inner, ownInner)
     {
 
-        // { begin abstract method implementations
+        #region *** Abstract method implementations ***
         protected override void OnRead(byte[] buffer, int offset, int count)
         {
             hasher.Append(new ReadOnlySpan<byte>(buffer, offset, count));
@@ -64,19 +64,13 @@ namespace TapeLibNET
         {
             hasher.Append(new ReadOnlySpan<byte>(buffer, offset, count));
         }
-        // } end abstract method implementations
+        #endregion *** Abstract method implementations ***
 
     } // class HashingStream
 
 
     public static class StreamHelpers
     {
-        // byte[] is implicitly convertible to ReadOnlySpan<byte>
-        private static bool ByteArraysEqual(ReadOnlySpan<byte> a1, ReadOnlySpan<byte> a2)
-        {
-            return a1.SequenceEqual(a2);
-        }
-
         // Surprisingly, class Stream doesn't offer CompareTo(Stream) method, so we have to implement it ourselves
         public static bool CompareTo(this Stream stream1, Stream stream2, int bufferSize = 81920) // same default buffer size as in Stream.CopyTo()
         {
@@ -100,7 +94,8 @@ namespace TapeLibNET
                     return false;
 
                 // Compare only the valid bytes, not the full (potentially oversized) pool arrays
-                if (!ByteArraysEqual(cache1.Buffer.AsSpan(0, read1), cache2.Buffer.AsSpan(0, read1)))
+                //  SequenceEqual on byte spans is SIMD-vectorized in .NET 8 (not byte-by-byte)
+                if (!cache1.Buffer.AsSpan(0, read1).SequenceEqual(cache2.Buffer.AsSpan(0, read2)))
                     return false;
             }
 

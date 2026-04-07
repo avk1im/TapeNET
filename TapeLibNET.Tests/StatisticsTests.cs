@@ -257,7 +257,7 @@ public class StatisticsTests
 
 #if DEBUG
     /// <summary>
-    /// Enables <see cref="TapeFileAgent.SimulateFailures"/> so that every Nth file
+    /// Enables <see cref="TapeFileAgent.SimulateFileFailures"/> so that every Nth file
     /// throws during backup. Asserts that <c>FilesFailed</c> increments and the
     /// invariant holds.
     /// </summary>
@@ -276,46 +276,36 @@ public class StatisticsTests
             FailedAction = FileFailedAction.Skip // skip failed files, continue
         };
 
-        // Configure simulated failures
-        TapeFileAgent.SimulateFailures = true;
-        TapeFileAgent.FailEveryNthFile = failEveryN;
-        try
-        {
-            using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = new VirtualTapeFixture(profile);
 
-            // Use the agent directly so we can control SimulateFailures timing
-            fixture.TOC.AddNewSetTOC(0, incremental: false);
-            fixture.TOC.CurrentSetTOC.Description = "Failure test";
-            fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
-            fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
-            fixture.TOC.CurrentSetTOC.FmksMode = true;
+        // Use the agent directly so we can control SimulateFileFailures timing
+        fixture.TOC.AddNewSetTOC(0, incremental: false);
+        fixture.TOC.CurrentSetTOC.Description = "Failure test";
+        fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
+        fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
+        fixture.TOC.CurrentSetTOC.FmksMode = true;
 
-            using var agent = fixture.CreateBackupAgent();
+        using var agent = fixture.CreateBackupAgent();
+        agent.SimulateFileFailures.Enabled = true;
+        agent.SimulateFileFailures.EveryNth = failEveryN;
 
-            bool success = agent.BackupFileListToCurrentSet(
-                newSet: true,
-                tree.Files,
-                ignoreFailures: true,
-                fileNotify: notifiable);
+        bool success = agent.BackupFileListToCurrentSet(
+            newSet: true,
+            tree.Files,
+            ignoreFailures: true,
+            fileNotify: notifiable);
 
-            // The operation should complete (ignoreFailures=true) even with some failures
-            notifiable.AssertStatsInvariant();
-            var stats = notifiable.BatchEnds[^1].Stats;
+        // The operation should complete (ignoreFailures=true) even with some failures
+        notifiable.AssertStatsInvariant();
+        var stats = notifiable.BatchEnds[^1].Stats;
 
-            Assert.Equal(fileCount, stats.FilesTotal);
-            Assert.Equal(fileCount, stats.FilesProcessed);
-            Assert.True(stats.FilesFailed > 0, "Expected at least one simulated failure");
-            Assert.Equal(fileCount, stats.FilesSucceeded + stats.FilesFailed + stats.FilesSkipped);
+        Assert.Equal(fileCount, stats.FilesTotal);
+        Assert.Equal(fileCount, stats.FilesProcessed);
+        Assert.True(stats.FilesFailed > 0, "Expected at least one simulated failure");
+        Assert.Equal(fileCount, stats.FilesSucceeded + stats.FilesFailed + stats.FilesSkipped);
 
-            // Verify that OnFileFailed callbacks were invoked
-            Assert.Equal(stats.FilesFailed, notifiable.FilesFailed.Count);
-        }
-        finally
-        {
-            // Always reset to avoid polluting other tests
-            TapeFileAgent.SimulateFailures = false;
-            TapeFileAgent.FailEveryNthFile = 2;
-        }
+        // Verify that OnFileFailed callbacks were invoked
+        Assert.Equal(stats.FilesFailed, notifiable.FilesFailed.Count);
     }
 #endif
 

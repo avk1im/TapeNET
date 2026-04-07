@@ -106,29 +106,19 @@ namespace TapeLibNET
 
 #if DEBUG
         /// <summary>
-        /// When true, simulates file operation failures for testing error handling.
-        /// Can be used by backup, restore, and other derived agent classes.
+        /// Simulates file operation failures for testing error handling.
+        /// Instance-level so concurrent agents (or parallel tests) don't interfere.
+        /// Replaces the former SimulateFailures / FailEveryNthFile / SimulatedFailureCounter fields.
         /// </summary>
-        public static bool SimulateFailures { get; set; } = false;
-
-        /// <summary>
-        /// Controls the frequency of simulated failures (every Nth file fails).
-        /// Default is 2, meaning every 2nd file fails when SimulateFailures is true.
-        /// </summary>
-        public static int FailEveryNthFile { get; set; } = 2;
-
-        /// <summary>
-        /// Counter for simulated failures. Incremented for each file processed.
-        /// Instance-level so each agent tracks its own count.
-        /// </summary>
-        protected internal int SimulatedFailureCounter { get; set; } = 0;
+        public FailureSimulator SimulateFileFailures { get; } = new();
 
         /// <summary>
         /// Bitmask controlling which TOC copies fail during backup/restore.
         /// Bit 0 (value 1) = 1st copy fails, bit 1 (value 2) = 2nd copy fails.
         /// 0 = no simulation, 3 = both copies fail.
+        /// Instance-level so concurrent agents don't interfere.
         /// </summary>
-        public static int SimulateTOCFailureMask { get; set; } = 0;
+        public int SimulateTOCFailureMask { get; set; } = 0;
 
         /// <summary>
         /// Tracks which TOC copy is being processed (0 = 1st, 1 = 2nd).

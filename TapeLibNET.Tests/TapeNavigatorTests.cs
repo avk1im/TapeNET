@@ -163,40 +163,22 @@ public class TapeNavigatorTests
     [Fact]
     public void ProduceNavigator_SeqFilemarks_ReturnsTOCInSetWithFmksAndTOCMark()
     {
-        // Default: UseTOCMark = true → should produce WithFmksAndTOCMark
-        bool originalUseTOCMark = TapeNavigator.UseTOCMark;
-        try
-        {
-            TapeNavigator.UseTOCMark = true;
-            using var fixture = new VirtualTapeFixture(DriveProfile.SeqFilemarks);
-            var nav = TapeNavigator.ProduceNavigator(fixture.Drive);
+        // Default: useTOCMark = true → should produce WithFmksAndTOCMark
+        using var fixture = new VirtualTapeFixture(DriveProfile.SeqFilemarks);
+        var nav = TapeNavigator.ProduceNavigator(fixture.Drive, useTOCMark: true);
 
-            Assert.NotNull(nav);
-            Assert.IsType<TapeNavigatorTOCInSetWithFmksAndTOCMark>(nav);
-        }
-        finally
-        {
-            TapeNavigator.UseTOCMark = originalUseTOCMark;
-        }
+        Assert.NotNull(nav);
+        Assert.IsType<TapeNavigatorTOCInSetWithFmksAndTOCMark>(nav);
     }
 
     [Fact]
     public void ProduceNavigator_SeqFilemarks_NoTOCMark_ReturnsTOCInSetWithFmks()
     {
-        bool originalUseTOCMark = TapeNavigator.UseTOCMark;
-        try
-        {
-            TapeNavigator.UseTOCMark = false;
-            using var fixture = new VirtualTapeFixture(DriveProfile.SeqFilemarks);
-            var nav = TapeNavigator.ProduceNavigator(fixture.Drive);
+        using var fixture = new VirtualTapeFixture(DriveProfile.SeqFilemarks);
+        var nav = TapeNavigator.ProduceNavigator(fixture.Drive, useTOCMark: false);
 
-            Assert.NotNull(nav);
-            Assert.IsType<TapeNavigatorTOCInSetWithFmks>(nav);
-        }
-        finally
-        {
-            TapeNavigator.UseTOCMark = originalUseTOCMark;
-        }
+        Assert.NotNull(nav);
+        Assert.IsType<TapeNavigatorTOCInSetWithFmks>(nav);
     }
 
     #endregion
@@ -224,7 +206,7 @@ public class TapeNavigatorTests
 
         Assert.Equal(int.MinValue, TapeNavigator.UnknownSet);
         Assert.Equal(int.MinValue + 1, TapeNavigator.InTOCSet);
-        Assert.True(TapeNavigator.TOCCapacity > 0);
+        Assert.True(TapeNavigator.DefaultTOCCapacity > 0);
     }
 
     #endregion
@@ -1084,91 +1066,64 @@ public class TapeNavigatorTests
     [Fact]
     public void WithFmksAndTOCMark_OnBeginWriteTOC_WritesTocMark()
     {
-        bool originalUseTOCMark = TapeNavigator.UseTOCMark;
-        try
-        {
-            TapeNavigator.UseTOCMark = true;
-            using var fixture = new VirtualTapeFixture(DriveProfile.SeqFilemarks);
-            var nav = TapeNavigator.ProduceNavigator(fixture.Drive)!;
+        using var fixture = new VirtualTapeFixture(DriveProfile.SeqFilemarks);
+        var nav = TapeNavigator.ProduceNavigator(fixture.Drive, useTOCMark: true)!;
 
-            // Write a content set first
-            nav.OnBeginWriteContent();
-            WriteContentSet(nav, 4);
-            nav.OnContentWritten();
+        // Write a content set first
+        nav.OnBeginWriteContent();
+        WriteContentSet(nav, 4);
+        nav.OnContentWritten();
 
-            long beforeTOCMark = nav.GetCurrentBlock();
-            nav.OnBeginWriteTOC(); // This should write the TOC mark
-            long afterTOCMark = nav.GetCurrentBlock();
+        long beforeTOCMark = nav.GetCurrentBlock();
+        nav.OnBeginWriteTOC(); // This should write the TOC mark
+        long afterTOCMark = nav.GetCurrentBlock();
 
-            Assert.True(afterTOCMark > beforeTOCMark,
-                "OnBeginWriteTOC should write a TOC mark, advancing the position");
-            Assert.Equal(TapeNavigator.InTOCSet, nav.CurrentContentSet);
-        }
-        finally
-        {
-            TapeNavigator.UseTOCMark = originalUseTOCMark;
-        }
+        Assert.True(afterTOCMark > beforeTOCMark,
+            "OnBeginWriteTOC should write a TOC mark, advancing the position");
+        Assert.Equal(TapeNavigator.InTOCSet, nav.CurrentContentSet);
     }
 
     [Fact]
     public void WithFmksAndTOCMark_WriteContentThenTOC_NavigateBack()
     {
-        bool originalUseTOCMark = TapeNavigator.UseTOCMark;
-        try
-        {
-            TapeNavigator.UseTOCMark = true;
-            using var fixture = new VirtualTapeFixture(DriveProfile.SeqFilemarks);
-            var nav = TapeNavigator.ProduceNavigator(fixture.Drive)!;
+        using var fixture = new VirtualTapeFixture(DriveProfile.SeqFilemarks);
+        var nav = TapeNavigator.ProduceNavigator(fixture.Drive, useTOCMark: true)!;
 
-            var starts = WriteFullTapeLayout(nav, setCount: 2, blocksPerSet: 4);
+        var starts = WriteFullTapeLayout(nav, setCount: 2, blocksPerSet: 4);
 
-            // Navigate to begin of content
-            Assert.True(nav.MoveToBeginOfContent());
-            Assert.Equal(0, nav.CurrentContentSet);
-            Assert.Equal(starts[0], nav.GetCurrentBlock());
+        // Navigate to begin of content
+        Assert.True(nav.MoveToBeginOfContent());
+        Assert.Equal(0, nav.CurrentContentSet);
+        Assert.Equal(starts[0], nav.GetCurrentBlock());
 
-            // Navigate to end of content
-            Assert.True(nav.MoveToEndOfContent());
-            Assert.Equal(-1, nav.CurrentContentSet);
+        // Navigate to end of content
+        Assert.True(nav.MoveToEndOfContent());
+        Assert.Equal(-1, nav.CurrentContentSet);
 
-            // Navigate to TOC
-            Assert.True(nav.MoveToBeginOfTOC());
-            Assert.Equal(TapeNavigator.InTOCSet, nav.CurrentContentSet);
-        }
-        finally
-        {
-            TapeNavigator.UseTOCMark = originalUseTOCMark;
-        }
+        // Navigate to TOC
+        Assert.True(nav.MoveToBeginOfTOC());
+        Assert.Equal(TapeNavigator.InTOCSet, nav.CurrentContentSet);
     }
 
     [Fact]
     public void WithFmksAndTOCMark_TOCInvalidated_InteractionWithNavigation()
     {
-        bool originalUseTOCMark = TapeNavigator.UseTOCMark;
-        try
-        {
-            TapeNavigator.UseTOCMark = true;
-            using var fixture = new VirtualTapeFixture(DriveProfile.SeqFilemarks);
-            var nav = TapeNavigator.ProduceNavigator(fixture.Drive)!;
+        using var fixture = new VirtualTapeFixture(DriveProfile.SeqFilemarks);
+        var nav = TapeNavigator.ProduceNavigator(fixture.Drive, useTOCMark: true)!;
 
-            // Write initial layout
-            var starts = WriteFullTapeLayout(nav, setCount: 1, blocksPerSet: 4);
-            Assert.False(nav.TOCInvalidated); // TOC was just written
+        // Write initial layout
+        var starts = WriteFullTapeLayout(nav, setCount: 1, blocksPerSet: 4);
+        Assert.False(nav.TOCInvalidated); // TOC was just written
 
-            // Now write more content → TOC becomes invalidated
-            nav.OnBeginWriteContent();
-            WriteContentSet(nav, 4, 0x55);
-            nav.OnContentWritten();
-            Assert.True(nav.TOCInvalidated);
+        // Now write more content → TOC becomes invalidated
+        nav.OnBeginWriteContent();
+        WriteContentSet(nav, 4, 0x55);
+        nav.OnContentWritten();
+        Assert.True(nav.TOCInvalidated);
 
-            // Write the TOC again
-            WriteTOCRegion(nav);
-            Assert.False(nav.TOCInvalidated);
-        }
-        finally
-        {
-            TapeNavigator.UseTOCMark = originalUseTOCMark;
-        }
+        // Write the TOC again
+        WriteTOCRegion(nav);
+        Assert.False(nav.TOCInvalidated);
     }
 
     #endregion
@@ -1179,70 +1134,52 @@ public class TapeNavigatorTests
     [Fact]
     public void WithFmks_NoTOCMark_NavigatesCorrectly()
     {
-        bool originalUseTOCMark = TapeNavigator.UseTOCMark;
-        try
-        {
-            TapeNavigator.UseTOCMark = false;
-            using var fixture = new VirtualTapeFixture(DriveProfile.SeqFilemarks);
-            var nav = TapeNavigator.ProduceNavigator(fixture.Drive)!;
-            Assert.IsType<TapeNavigatorTOCInSetWithFmks>(nav);
+        using var fixture = new VirtualTapeFixture(DriveProfile.SeqFilemarks);
+        var nav = TapeNavigator.ProduceNavigator(fixture.Drive, useTOCMark: false)!;
+        Assert.IsType<TapeNavigatorTOCInSetWithFmks>(nav);
 
-            var starts = WriteFullTapeLayout(nav, setCount: 2, blocksPerSet: 4);
+        var starts = WriteFullTapeLayout(nav, setCount: 2, blocksPerSet: 4);
 
-            // Navigate to set 0
-            nav.TargetContentSet = 0;
-            Assert.True(nav.MoveToTargetContentSet());
-            Assert.Equal(0, nav.CurrentContentSet);
-            Assert.Equal(starts[0], nav.GetCurrentBlock());
+        // Navigate to set 0
+        nav.TargetContentSet = 0;
+        Assert.True(nav.MoveToTargetContentSet());
+        Assert.Equal(0, nav.CurrentContentSet);
+        Assert.Equal(starts[0], nav.GetCurrentBlock());
 
-            // Navigate to set 1
-            nav.TargetContentSet = 1;
-            Assert.True(nav.MoveToTargetContentSet());
-            Assert.Equal(1, nav.CurrentContentSet);
-            Assert.Equal(starts[1], nav.GetCurrentBlock());
+        // Navigate to set 1
+        nav.TargetContentSet = 1;
+        Assert.True(nav.MoveToTargetContentSet());
+        Assert.Equal(1, nav.CurrentContentSet);
+        Assert.Equal(starts[1], nav.GetCurrentBlock());
 
-            // Navigate to end of content
-            Assert.True(nav.MoveToEndOfContent());
-            Assert.Equal(-1, nav.CurrentContentSet);
+        // Navigate to end of content
+        Assert.True(nav.MoveToEndOfContent());
+        Assert.Equal(-1, nav.CurrentContentSet);
 
-            // Navigate to TOC
-            Assert.True(nav.MoveToBeginOfTOC());
-            Assert.Equal(TapeNavigator.InTOCSet, nav.CurrentContentSet);
-        }
-        finally
-        {
-            TapeNavigator.UseTOCMark = originalUseTOCMark;
-        }
+        // Navigate to TOC
+        Assert.True(nav.MoveToBeginOfTOC());
+        Assert.Equal(TapeNavigator.InTOCSet, nav.CurrentContentSet);
     }
 
     [Fact]
     public void WithFmks_NoTOCMark_NegativeIndexing()
     {
-        bool originalUseTOCMark = TapeNavigator.UseTOCMark;
-        try
-        {
-            TapeNavigator.UseTOCMark = false;
-            using var fixture = new VirtualTapeFixture(DriveProfile.SeqFilemarks);
-            var nav = TapeNavigator.ProduceNavigator(fixture.Drive)!;
+        using var fixture = new VirtualTapeFixture(DriveProfile.SeqFilemarks);
+        var nav = TapeNavigator.ProduceNavigator(fixture.Drive, useTOCMark: false)!;
 
-            var starts = WriteFullTapeLayout(nav, setCount: 3, blocksPerSet: 4);
+        var starts = WriteFullTapeLayout(nav, setCount: 3, blocksPerSet: 4);
 
-            // Navigate to -2 (most recent)
-            nav.TargetContentSet = -2;
-            Assert.True(nav.MoveToTargetContentSet());
-            Assert.Equal(-2, nav.CurrentContentSet);
-            Assert.Equal(starts[2], nav.GetCurrentBlock());
+        // Navigate to -2 (most recent)
+        nav.TargetContentSet = -2;
+        Assert.True(nav.MoveToTargetContentSet());
+        Assert.Equal(-2, nav.CurrentContentSet);
+        Assert.Equal(starts[2], nav.GetCurrentBlock());
 
-            // Navigate to -4 (oldest)
-            nav.TargetContentSet = -4;
-            Assert.True(nav.MoveToTargetContentSet());
-            Assert.Equal(-4, nav.CurrentContentSet);
-            Assert.Equal(starts[0], nav.GetCurrentBlock());
-        }
-        finally
-        {
-            TapeNavigator.UseTOCMark = originalUseTOCMark;
-        }
+        // Navigate to -4 (oldest)
+        nav.TargetContentSet = -4;
+        Assert.True(nav.MoveToTargetContentSet());
+        Assert.Equal(-4, nav.CurrentContentSet);
+        Assert.Equal(starts[0], nav.GetCurrentBlock());
     }
 
     #endregion

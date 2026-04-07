@@ -9,7 +9,7 @@ namespace TapeLibNET.Tests;
 /// via <see cref="ITapeFileNotifiable"/>, empty-set removal, and the dual-TOC
 /// copy resilience mechanism.
 /// <para>
-/// All tests that use <c>SimulateFailures</c> or <c>SimulateTOCFailureMask</c>
+/// All tests that use <c>SimulateFileFailures</c> or <c>SimulateTOCFailureMask</c>
 /// are <c>#if DEBUG</c>-only because those fields exist only in Debug builds.
 /// </para>
 /// </summary>
@@ -74,7 +74,8 @@ public class ErrorHandlingTests
         List<string> fileList,
         bool ignoreFailures,
         ITapeFileNotifiable? notifiable,
-        string description = "Error Test Set")
+        string description = "Error Test Set",
+        Action<TapeFileAgent>? configureAgent = null)
     {
         fixture.TOC.AddNewSetTOC(0, incremental: false);
         fixture.TOC.CurrentSetTOC.Description = description;
@@ -83,6 +84,7 @@ public class ErrorHandlingTests
         fixture.TOC.CurrentSetTOC.FmksMode = true;
 
         using var agent = fixture.CreateBackupAgent();
+        configureAgent?.Invoke(agent);
 
         return agent.BackupFileListToCurrentSet(
             newSet: true,
@@ -99,9 +101,11 @@ public class ErrorHandlingTests
         VirtualTapeFixture fixture,
         string targetDir,
         bool ignoreFailures,
-        ITapeFileNotifiable? notifiable)
+        ITapeFileNotifiable? notifiable,
+        Action<TapeFileAgent>? configureAgent = null)
     {
         using var agent = fixture.CreateRestoreAgent(targetDir);
+        configureAgent?.Invoke(agent);
         return agent.RestoreAllFilesFromCurrentSet(ignoreFailures, notifiable);
     }
 
@@ -128,30 +132,21 @@ public class ErrorHandlingTests
 
         var notifiable = new TestNotifiable { FailedAction = FileFailedAction.Skip };
 
-        TapeFileAgent.SimulateFailures = true;
-        TapeFileAgent.FailEveryNthFile = failEveryN;
-        try
-        {
-            using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = new VirtualTapeFixture(profile);
 
-            bool success = BackupFilesRaw(fixture, tree.Files, ignoreFailures: true, notifiable);
+        bool success = BackupFilesRaw(fixture, tree.Files, ignoreFailures: true, notifiable,
+            configureAgent: a => { a.SimulateFileFailures.Enabled = true; a.SimulateFileFailures.EveryNth = failEveryN; });
 
-            // Operation should complete (ignoreFailures=true)
-            notifiable.AssertStatsInvariant();
-            var stats = notifiable.BatchEnds[^1].Stats;
+        // Operation should complete (ignoreFailures=true)
+        notifiable.AssertStatsInvariant();
+        var stats = notifiable.BatchEnds[^1].Stats;
 
-            int expectedFailed = fileCount / failEveryN;
-            Assert.Equal(fileCount, stats.FilesTotal);
-            Assert.Equal(fileCount, stats.FilesProcessed);
-            Assert.Equal(expectedFailed, stats.FilesFailed);
-            Assert.Equal(fileCount - expectedFailed, stats.FilesSucceeded);
-            Assert.Equal(expectedFailed, notifiable.FilesFailed.Count);
-        }
-        finally
-        {
-            TapeFileAgent.SimulateFailures = false;
-            TapeFileAgent.FailEveryNthFile = 2;
-        }
+        int expectedFailed = fileCount / failEveryN;
+        Assert.Equal(fileCount, stats.FilesTotal);
+        Assert.Equal(fileCount, stats.FilesProcessed);
+        Assert.Equal(expectedFailed, stats.FilesFailed);
+        Assert.Equal(fileCount - expectedFailed, stats.FilesSucceeded);
+        Assert.Equal(expectedFailed, notifiable.FilesFailed.Count);
     }
 
     /// <summary>
@@ -177,33 +172,24 @@ public class ErrorHandlingTests
                 retriedFiles.Add(fd.FullName) ? FileFailedAction.Retry : FileFailedAction.Skip
         };
 
-        TapeFileAgent.SimulateFailures = true;
-        TapeFileAgent.FailEveryNthFile = failEveryN;
-        try
-        {
-            using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = new VirtualTapeFixture(profile);
 
-            bool success = BackupFilesRaw(fixture, tree.Files, ignoreFailures: true, notifiable);
+        bool success = BackupFilesRaw(fixture, tree.Files, ignoreFailures: true, notifiable,
+            configureAgent: a => { a.SimulateFileFailures.Enabled = true; a.SimulateFileFailures.EveryNth = failEveryN; });
 
-            Assert.True(success, "Backup with retries should succeed");
+        Assert.True(success, "Backup with retries should succeed");
 
-            notifiable.AssertStatsInvariant();
-            var stats = notifiable.BatchEnds[^1].Stats;
+        notifiable.AssertStatsInvariant();
+        var stats = notifiable.BatchEnds[^1].Stats;
 
-            // All files should succeed after retry
-            Assert.Equal(fileCount, stats.FilesTotal);
-            Assert.Equal(fileCount, stats.FilesProcessed);
-            Assert.Equal(fileCount, stats.FilesSucceeded);
-            Assert.Equal(0, stats.FilesFailed);
+        // All files should succeed after retry
+        Assert.Equal(fileCount, stats.FilesTotal);
+        Assert.Equal(fileCount, stats.FilesProcessed);
+        Assert.Equal(fileCount, stats.FilesSucceeded);
+        Assert.Equal(0, stats.FilesFailed);
 
-            // OnFileFailed was called for each initial failure (then StatsUndoFailure reverted)
-            Assert.True(notifiable.FilesFailed.Count > 0, "Expected at least one initial failure before retry");
-        }
-        finally
-        {
-            TapeFileAgent.SimulateFailures = false;
-            TapeFileAgent.FailEveryNthFile = 2;
-        }
+        // OnFileFailed was called for each initial failure (then StatsUndoFailure reverted)
+        Assert.True(notifiable.FilesFailed.Count > 0, "Expected at least one initial failure before retry");
     }
 
     /// <summary>
@@ -222,42 +208,34 @@ public class ErrorHandlingTests
 
         var notifiable = new TestNotifiable { FailedAction = FileFailedAction.Abort };
 
-        TapeFileAgent.SimulateFailures = true;
-        TapeFileAgent.FailEveryNthFile = failEveryN;
-        try
-        {
-            using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = new VirtualTapeFixture(profile);
 
-            fixture.TOC.AddNewSetTOC(0, incremental: false);
-            fixture.TOC.CurrentSetTOC.Description = "Abort test";
-            fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
-            fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
-            fixture.TOC.CurrentSetTOC.FmksMode = true;
+        fixture.TOC.AddNewSetTOC(0, incremental: false);
+        fixture.TOC.CurrentSetTOC.Description = "Abort test";
+        fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
+        fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
+        fixture.TOC.CurrentSetTOC.FmksMode = true;
 
-            using var agent = fixture.CreateBackupAgent();
+        using var agent = fixture.CreateBackupAgent();
+        agent.SimulateFileFailures.Enabled = true;
+        agent.SimulateFileFailures.EveryNth = failEveryN;
 
-            bool success = agent.BackupFileListToCurrentSet(
-                newSet: true,
-                tree.Files,
-                ignoreFailures: true, // even with ignoreFailures, Abort overrides
-                fileNotify: notifiable);
+        bool success = agent.BackupFileListToCurrentSet(
+            newSet: true,
+            tree.Files,
+            ignoreFailures: true, // even with ignoreFailures, Abort overrides
+            fileNotify: notifiable);
 
-            Assert.False(success, "Backup should fail when user requests abort");
-            Assert.True(agent.IsAbortRequested, "IsAbortRequested should be set");
+        Assert.False(success, "Backup should fail when user requests abort");
+        Assert.True(agent.IsAbortRequested, "IsAbortRequested should be set");
 
-            notifiable.AssertStatsInvariant();
-            var stats = notifiable.BatchEnds[^1].Stats;
+        notifiable.AssertStatsInvariant();
+        var stats = notifiable.BatchEnds[^1].Stats;
 
-            // Should have processed fewer files than total (stopped at abort)
-            Assert.True(stats.FilesProcessed < fileCount,
-                $"Expected fewer than {fileCount} processed, got {stats.FilesProcessed}");
-            Assert.Equal(1, stats.FilesFailed); // exactly one failure before abort
-        }
-        finally
-        {
-            TapeFileAgent.SimulateFailures = false;
-            TapeFileAgent.FailEveryNthFile = 2;
-        }
+        // Should have processed fewer files than total (stopped at abort)
+        Assert.True(stats.FilesProcessed < fileCount,
+            $"Expected fewer than {fileCount} processed, got {stats.FilesProcessed}");
+        Assert.Equal(1, stats.FilesFailed); // exactly one failure before abort
     }
 
     /// <summary>
@@ -278,47 +256,38 @@ public class ErrorHandlingTests
 
         var backupNotify = new TestNotifiable { FailedAction = FileFailedAction.Skip };
 
-        TapeFileAgent.SimulateFailures = true;
-        TapeFileAgent.FailEveryNthFile = failEveryN;
-        try
+        using var fixture = new VirtualTapeFixture(profile);
+
+        // Backup with simulated failures
+        bool backupOk = BackupFilesRaw(fixture, tree.Files, ignoreFailures: true, backupNotify,
+            configureAgent: a => { a.SimulateFileFailures.Enabled = true; a.SimulateFileFailures.EveryNth = failEveryN; });
+        var backupStats = backupNotify.BatchEnds[^1].Stats;
+        int succeededCount = backupStats.FilesSucceeded;
+        Assert.True(succeededCount > 0, "Expected at least one succeeded file");
+
+        // TOC should contain only the succeeded files
+        Assert.Equal(succeededCount, fixture.TOC.CurrentSetTOC.Count);
+
+        // Verify each TOC entry references a valid source file (by name)
+        var succeededNames = backupNotify.PostProcessed
+            .Select(p => p.FileDescr.FullName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var tfi in fixture.TOC.CurrentSetTOC)
         {
-            using var fixture = new VirtualTapeFixture(profile);
-
-            // Backup with simulated failures
-            bool backupOk = BackupFilesRaw(fixture, tree.Files, ignoreFailures: true, backupNotify);
-            var backupStats = backupNotify.BatchEnds[^1].Stats;
-            int succeededCount = backupStats.FilesSucceeded;
-            Assert.True(succeededCount > 0, "Expected at least one succeeded file");
-
-            // TOC should contain only the succeeded files
-            Assert.Equal(succeededCount, fixture.TOC.CurrentSetTOC.Count);
-
-            // Verify each TOC entry references a valid source file (by name)
-            var succeededNames = backupNotify.PostProcessed
-                .Select(p => p.FileDescr.FullName)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var tfi in fixture.TOC.CurrentSetTOC)
-            {
-                Assert.NotNull(tfi);
-                Assert.True(tfi!.IsValid, $"TOC entry should be valid: {tfi.FileDescr.FullName}");
-                Assert.Contains(tfi.FileDescr.FullName, succeededNames);
-            }
-
-            // Failed files should NOT appear in the TOC
-            var failedNames = backupNotify.FilesFailed
-                .Select(f => f.FileDescr.FullName)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var tfi in fixture.TOC.CurrentSetTOC)
-            {
-                Assert.DoesNotContain(tfi!.FileDescr.FullName, failedNames);
-            }
+            Assert.NotNull(tfi);
+            Assert.True(tfi!.IsValid, $"TOC entry should be valid: {tfi.FileDescr.FullName}");
+            Assert.Contains(tfi.FileDescr.FullName, succeededNames);
         }
-        finally
+
+        // Failed files should NOT appear in the TOC
+        var failedNames = backupNotify.FilesFailed
+            .Select(f => f.FileDescr.FullName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var tfi in fixture.TOC.CurrentSetTOC)
         {
-            TapeFileAgent.SimulateFailures = false;
-            TapeFileAgent.FailEveryNthFile = 2;
+            Assert.DoesNotContain(tfi!.FileDescr.FullName, failedNames);
         }
     }
 
@@ -345,30 +314,21 @@ public class ErrorHandlingTests
 
         var notifiable = new TestNotifiable { FailedAction = FileFailedAction.Skip };
 
+        using var fixture = new VirtualTapeFixture(profile);
+
         // Fail every file
-        TapeFileAgent.SimulateFailures = true;
-        TapeFileAgent.FailEveryNthFile = 1;
-        try
-        {
-            using var fixture = new VirtualTapeFixture(profile);
+        bool success = BackupFilesRaw(fixture, tree.Files, ignoreFailures: true, notifiable,
+            configureAgent: a => { a.SimulateFileFailures.Enabled = true; a.SimulateFileFailures.EveryNth = 1; });
 
-            bool success = BackupFilesRaw(fixture, tree.Files, ignoreFailures: true, notifiable);
+        notifiable.AssertStatsInvariant();
+        var stats = notifiable.BatchEnds[^1].Stats;
 
-            notifiable.AssertStatsInvariant();
-            var stats = notifiable.BatchEnds[^1].Stats;
+        Assert.Equal(fileCount, stats.FilesFailed);
+        Assert.Equal(0, stats.FilesSucceeded);
 
-            Assert.Equal(fileCount, stats.FilesFailed);
-            Assert.Equal(0, stats.FilesSucceeded);
-
-            // The set should be empty → removable
-            Assert.Equal(0, fixture.TOC.CurrentSetTOC.Count);
-            Assert.True(fixture.TOC.RemoveLastEmptySet(), "Empty set should be removable");
-        }
-        finally
-        {
-            TapeFileAgent.SimulateFailures = false;
-            TapeFileAgent.FailEveryNthFile = 2;
-        }
+        // The set should be empty → removable
+        Assert.Empty(fixture.TOC.CurrentSetTOC);
+        Assert.True(fixture.TOC.RemoveLastEmptySet(), "Empty set should be removable");
     }
 
 #endif // DEBUG
@@ -401,7 +361,7 @@ public class ErrorHandlingTests
         Assert.Equal(0, stats.FilesSucceeded);
 
         // The set should be empty → removable
-        Assert.Equal(0, fixture.TOC.CurrentSetTOC.Count);
+        Assert.Empty(fixture.TOC.CurrentSetTOC);
         Assert.True(fixture.TOC.RemoveLastEmptySet(), "Empty set should be removable");
     }
 
@@ -530,10 +490,8 @@ public class ErrorHandlingTests
             // Restore with simulated failures
             var notifiable = new TestNotifiable { FailedAction = FileFailedAction.Skip };
 
-            TapeFileAgent.SimulateFailures = true;
-            TapeFileAgent.FailEveryNthFile = failEveryN;
-
-            bool restoreOk = RestoreAllFiles(fixture, restoreDir, ignoreFailures: true, notifiable);
+            bool restoreOk = RestoreAllFiles(fixture, restoreDir, ignoreFailures: true, notifiable,
+                configureAgent: a => { a.SimulateFileFailures.Enabled = true; a.SimulateFileFailures.EveryNth = failEveryN; });
 
             notifiable.AssertStatsInvariant();
             var stats = notifiable.BatchEnds[^1].Stats;
@@ -547,8 +505,6 @@ public class ErrorHandlingTests
         }
         finally
         {
-            TapeFileAgent.SimulateFailures = false;
-            TapeFileAgent.FailEveryNthFile = 2;
             TryDeleteDirectory(restoreDir);
         }
     }
@@ -587,14 +543,13 @@ public class ErrorHandlingTests
                     retriedFiles.Add(fd.FullName) ? FileFailedAction.Retry : FileFailedAction.Skip
             };
 
-            TapeFileAgent.SimulateFailures = true;
-            TapeFileAgent.FailEveryNthFile = failEveryN;
-
             // Create agent directly so we can offset the failure counter:
             //  counter 2 → file 1 bumps to 3 (3%3=0 → fail, first-file-on-volume path),
             //  file 3 → counter 6 (fail, two-step filemark retry), file 5 → counter 9 (fail)
             using var agent = fixture.CreateRestoreAgent(restoreDir);
-            agent.SimulatedFailureCounter = failEveryN - 1;
+            agent.SimulateFileFailures.Enabled = true;
+            agent.SimulateFileFailures.EveryNth = failEveryN;
+            agent.SimulateFileFailures.Counter = failEveryN - 1;
 
             bool restoreOk = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, notifiable);
 
@@ -609,8 +564,6 @@ public class ErrorHandlingTests
         }
         finally
         {
-            TapeFileAgent.SimulateFailures = false;
-            TapeFileAgent.FailEveryNthFile = 2;
             TryDeleteDirectory(restoreDir);
         }
     }
@@ -641,10 +594,10 @@ public class ErrorHandlingTests
             // Restore with simulated failures + Abort
             var notifiable = new TestNotifiable { FailedAction = FileFailedAction.Abort };
 
-            TapeFileAgent.SimulateFailures = true;
-            TapeFileAgent.FailEveryNthFile = failEveryN;
-
             using var agent = fixture.CreateRestoreAgent(restoreDir);
+            agent.SimulateFileFailures.Enabled = true;
+            agent.SimulateFileFailures.EveryNth = failEveryN;
+
             bool restoreOk = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, notifiable);
 
             Assert.False(restoreOk, "Restore should fail on abort");
@@ -659,8 +612,6 @@ public class ErrorHandlingTests
         }
         finally
         {
-            TapeFileAgent.SimulateFailures = false;
-            TapeFileAgent.FailEveryNthFile = 2;
             TryDeleteDirectory(restoreDir);
         }
     }
@@ -738,34 +689,23 @@ public class ErrorHandlingTests
         using var tree = new TempFileTree();
         tree.AddFiles("toc1", count: fileCount, minSize: 100, maxSize: 4 * 1024);
 
-        TapeFileAgent.SimulateTOCFailureMask = 0;
-        try
-        {
-            using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = new VirtualTapeFixture(profile);
 
-            // Backup files normally
-            fixture.BackupFiles(tree.Files);
-            int expectedSets = fixture.TOC.Count;
+        // Backup files normally
+        fixture.BackupFiles(tree.Files);
+        int expectedSets = fixture.TOC.Count;
 
-            // Now re-write TOC with 1st copy failing (bit 0 = 1)
-            TapeFileAgent.SimulateTOCFailureMask = 1;
+        // Now re-write TOC with 1st copy failing (bit 0 = 1)
+        using var writeAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        writeAgent.SimulateTOCFailureMask = 1;
+        bool tocWriteOk = writeAgent.BackupTOC(enforce: true);
+        Assert.True(tocWriteOk, "BackupTOC should succeed when only 1st copy fails");
 
-            using var writeAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
-            bool tocWriteOk = writeAgent.BackupTOC(enforce: true);
-            Assert.True(tocWriteOk, "BackupTOC should succeed when only 1st copy fails");
-
-            // Restore TOC — should recover from the 2nd copy
-            TapeFileAgent.SimulateTOCFailureMask = 0;
-
-            using var readAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
-            bool tocReadOk = readAgent.RestoreTOC();
-            Assert.True(tocReadOk, "RestoreTOC should succeed from 2nd copy");
-            Assert.Equal(expectedSets, readAgent.TOC.Count);
-        }
-        finally
-        {
-            TapeFileAgent.SimulateTOCFailureMask = 0;
-        }
+        // Restore TOC — should recover from the 2nd copy
+        using var readAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        bool tocReadOk = readAgent.RestoreTOC();
+        Assert.True(tocReadOk, "RestoreTOC should succeed from 2nd copy");
+        Assert.Equal(expectedSets, readAgent.TOC.Count);
     }
 
     /// <summary>
@@ -781,25 +721,16 @@ public class ErrorHandlingTests
         using var tree = new TempFileTree();
         tree.AddFiles("toc2", count: fileCount, minSize: 100, maxSize: 4 * 1024);
 
-        TapeFileAgent.SimulateTOCFailureMask = 0;
-        try
-        {
-            using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = new VirtualTapeFixture(profile);
 
-            // Backup files normally first (writes a valid TOC)
-            fixture.BackupFiles(tree.Files);
+        // Backup files normally first (writes a valid TOC)
+        fixture.BackupFiles(tree.Files);
 
-            // Now try to re-write TOC with both copies failing (bits 0+1 = 3)
-            TapeFileAgent.SimulateTOCFailureMask = 3;
-
-            using var writeAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
-            bool tocWriteOk = writeAgent.BackupTOC(enforce: true);
-            Assert.False(tocWriteOk, "BackupTOC should fail when both copies fail");
-        }
-        finally
-        {
-            TapeFileAgent.SimulateTOCFailureMask = 0;
-        }
+        // Now try to re-write TOC with both copies failing (bits 0+1 = 3)
+        using var writeAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        writeAgent.SimulateTOCFailureMask = 3;
+        bool tocWriteOk = writeAgent.BackupTOC(enforce: true);
+        Assert.False(tocWriteOk, "BackupTOC should fail when both copies fail");
     }
 
 #endif // DEBUG
@@ -823,27 +754,18 @@ public class ErrorHandlingTests
         using var tree = new TempFileTree();
         tree.AddFiles("tocr1", count: fileCount, minSize: 100, maxSize: 4 * 1024);
 
-        TapeFileAgent.SimulateTOCFailureMask = 0;
-        try
-        {
-            using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = new VirtualTapeFixture(profile);
 
-            // Backup files and TOC normally
-            fixture.BackupFiles(tree.Files);
-            int expectedSets = fixture.TOC.Count;
+        // Backup files and TOC normally
+        fixture.BackupFiles(tree.Files);
+        int expectedSets = fixture.TOC.Count;
 
-            // Now restore TOC with 1st copy failing during read (bit 0 = 1)
-            TapeFileAgent.SimulateTOCFailureMask = 1;
-
-            using var readAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
-            bool tocReadOk = readAgent.RestoreTOC();
-            Assert.True(tocReadOk, "RestoreTOC should succeed from 2nd copy when 1st fails");
-            Assert.Equal(expectedSets, readAgent.TOC.Count);
-        }
-        finally
-        {
-            TapeFileAgent.SimulateTOCFailureMask = 0;
-        }
+        // Now restore TOC with 1st copy failing during read (bit 0 = 1)
+        using var readAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        readAgent.SimulateTOCFailureMask = 1;
+        bool tocReadOk = readAgent.RestoreTOC();
+        Assert.True(tocReadOk, "RestoreTOC should succeed from 2nd copy when 1st fails");
+        Assert.Equal(expectedSets, readAgent.TOC.Count);
     }
 
     /// <summary>
@@ -859,25 +781,16 @@ public class ErrorHandlingTests
         using var tree = new TempFileTree();
         tree.AddFiles("tocr2", count: fileCount, minSize: 100, maxSize: 4 * 1024);
 
-        TapeFileAgent.SimulateTOCFailureMask = 0;
-        try
-        {
-            using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = new VirtualTapeFixture(profile);
 
-            // Backup files and TOC normally
-            fixture.BackupFiles(tree.Files);
+        // Backup files and TOC normally
+        fixture.BackupFiles(tree.Files);
 
-            // Both copies fail during restore (bits 0+1+2 = 7 covers the 3rd attempt too)
-            TapeFileAgent.SimulateTOCFailureMask = 7;
-
-            using var readAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
-            bool tocReadOk = readAgent.RestoreTOC();
-            Assert.False(tocReadOk, "RestoreTOC should fail when all copies fail");
-        }
-        finally
-        {
-            TapeFileAgent.SimulateTOCFailureMask = 0;
-        }
+        // Both copies fail during restore (bits 0+1+2 = 7 covers the 3rd attempt too)
+        using var readAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        readAgent.SimulateTOCFailureMask = 7;
+        bool tocReadOk = readAgent.RestoreTOC();
+        Assert.False(tocReadOk, "RestoreTOC should fail when all copies fail");
     }
 
 #endif // DEBUG

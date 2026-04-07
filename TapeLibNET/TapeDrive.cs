@@ -75,6 +75,15 @@ public class TapeDrive : ErrorManageableBase, IDisposable
     /// <summary>The underlying backend implementation (Win32 or Virtual).</summary>
     public TapeDriveBackend Backend => m_backend;
 
+    /// <summary>
+    /// Maximum time to wait for a tape operation (forwarded to the backend).
+    /// </summary>
+    public TimeSpan OperationTimeout
+    {
+        get => m_backend.OperationTimeout;
+        set => m_backend.OperationTimeout = value;
+    }
+
     public uint DriveNumber => m_backend.DriveNumber;
     public string DriveDeviceName => m_backend.DeviceName;
 

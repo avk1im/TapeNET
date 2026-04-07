@@ -68,6 +68,16 @@ public abstract class TapeDriveBackend : ErrorManageableBase, IDisposable
 
     #endregion
 
+    #region *** Timeout ***
+
+    /// <summary>
+    /// Maximum time to wait for a tape operation to complete when using polled (bImmediate) mode.
+    /// Default is 5 minutes. Set to <see cref="Timeout.InfiniteTimeSpan"/> to wait indefinitely.
+    /// </summary>
+    public TimeSpan OperationTimeout { get; set; } = TimeSpan.FromMinutes(5);
+
+    #endregion
+
     #region *** Abstract State Properties ***
 
     public abstract bool IsOpen { get; }

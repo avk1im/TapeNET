@@ -13,7 +13,7 @@ The **TapeNET** solution (`D:\Documents.DEV\Projects\TapeNET`) targets **.NET 8 
 | `TapeWinNET` | WPF app | GUI tape backup manager — MVVM, tree-based navigation, log pane, FCL-based file filtering |
 | `FclAiNET.Test` | Console app | Interactive NL → FCL REPL for testing AI translation |
 
-**Test projects:** `FclNET.Tests` (xUnit, 469+ tests covering lexer, parser, validator, evaluator, formatter, pipeline).
+**Test projects:** `FclNET.Tests` (xUnit, 469+ tests covering lexer, parser, validator, evaluator, formatter, pipeline). `TapeLibNET.Tests` (xUnit, 1,029+ tests covering virtual drives, navigation, streams, TOC serialization, backup/restore agents, incremental chains, multi-volume, error handling).
 
 **Dependencies:** The apps depend on the libraries. `FclNET` has no dependencies on other solution projects. `FclAiNET` depends on `FclNET`. `TapeWinNET` depends on `FclNET` for file filtering in the MainWindow via the `FclTapeFileFilter` adapter (the restore pipeline uses a dictionary-based selection path — see below). `TapeConNET` depends on `FclNET` for its `ITapeFileFilter`-based restore path. `TapeLibNET` remains independent of the FCL projects.
 
@@ -197,6 +197,48 @@ Callers never track their own counters — they just read the snapshot. `StatsUn
 ### Virtual drive support
 
 `VirtualTapeDriveBackend` provides file-backed virtual tape drives for testing without hardware. Created via `VirtualTapeDriveBackend.CreateFileBacked(...)` with configurable capabilities (`WithPartitions` / `WithSetmarks`), capacity, and IO speed simulation.
+
+---
+
+## TapeLibNET.Tests — Library Test Suite
+
+xUnit test project with **1,029+ tests** across 16 test classes, all running against memory-backed virtual tape drives (no hardware required). Parallel execution is disabled globally due to shared virtual drive state.
+
+### Drive profiles
+
+Tests are parameterized via `[Theory]` + `[MemberData]` across three `DriveProfile` configurations: `Setmarks`, `Partitions`, `SeqFilemarks` — ensuring consistent behavior across all tape partitioning strategies.
+
+### Test coverage areas
+
+| Class | Scope |
+|-------|-------|
+| `VirtualDriveBasicTests` | Virtual drive creation, capabilities, basic I/O |
+| `TapeNavigatorTests` | Tape positioning — partitions, filemarks, blocks |
+| `TapeStreamManagerTests` | Stream lifecycle, read/write coordination |
+| `TapeStreamBufferTests` | Low-level buffer packing/unpacking (pure unit tests) |
+| `BufferedTapeStreamTests` | Buffered stream read/write round-trips |
+| `TapeTOCRoundTripTests` | TOC serialization/deserialization fidelity |
+| `TapeBackupAgentTests` | Backup agent — single set, append, overwrite |
+| `TapeRestoreAgentTests` | Restore/validate/verify agents |
+| `BackupRestoreRoundTripTests` | End-to-end backup → restore with byte-level verification |
+| `IncrementalBackupRestoreTests` | Multi-wave incremental chains with modified/added/deleted files |
+| `MultiVolumeBackupRestoreTests` | End-of-media continuation across volumes |
+| `FileEdgeCaseTests` | Empty files, long paths, special characters |
+| `LargeFileTests` | Files exceeding single-block sizes |
+| `StatisticsTests` | `TapeFileStatistics` / `ITapeFileNotifiable` callback correctness |
+| `ErrorHandlingTests` | Skip/Retry/Abort failure policies via `OnFileFailed` |
+| `PartitionsVsSetmarksComparisonTests` | Cross-profile behavioral equivalence |
+
+### Key test helpers (`Helpers/`)
+
+| Helper | Role |
+|--------|------|
+| `VirtualTapeFixture` | Factory for memory-backed virtual drives with pre-configured `DriveProfile`; creates agents, TOC, and convenience `BackupFiles` method |
+| `MultiVolumeVirtualTapeFixture` | Extends `VirtualTapeFixture` for capacity-limited multi-volume scenarios |
+| `TempFileTree` | Deterministic temp directory + file generation with configurable sizes and timestamps; auto-cleanup via `IDisposable` |
+| `TestNotifiable` | `ITapeFileNotifiable` recorder — captures all callbacks with assertion helpers (`AssertAllSucceeded`, `AssertFileCount`, etc.) |
+| `FileComparer` | Byte-for-byte comparison of original vs. restored files |
+| `XunitLoggerFactory` | `ILoggerFactory` bridge routing library log output to xUnit's `ITestOutputHelper` |
 
 ---
 

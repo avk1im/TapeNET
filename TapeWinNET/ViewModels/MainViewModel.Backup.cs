@@ -223,7 +223,7 @@ public partial class MainViewModel
         int errorCount = 0;
 
 #if DEBUG
-        //TapeFileAgent.SimulateFailures = true;
+        //agent.SimulateFileFailures.Enabled = true; // set on agent instance after creation
 #endif
 
         try

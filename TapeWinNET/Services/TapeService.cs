@@ -333,7 +333,7 @@ public partial class TapeService : IDisposable
     /// </summary>
     /// <param name="initiatorPartitionSize">
     /// Size of the initiator partition for TOC placement.
-    /// Use <see cref="TapeNavigator.TOCCapacity"/> to create an initiator partition,
+    /// Use <see cref="TapeNavigator.DefaultTOCCapacity"/> to create an initiator partition,
     /// or -1 for single-partition (TOC in set) mode.
     /// </param>
     /// <param name="mediaName">Description for the new media. If null, a default name is generated.</param>
@@ -891,6 +891,8 @@ public partial class TapeService : IDisposable
         _agent?.Dispose();
         _drive?.Dispose();
         _loggerFactory.Dispose();
+
+        GC.SuppressFinalize(this);
     }
 
     #endregion

@@ -10,6 +10,14 @@ namespace Windows.Win32
     {
         public static class Helpers
         {
+            /// <summary>
+            /// WAIT_TIMEOUT (258) — not included in CsWin32's WIN32_ERROR enum.
+            ///  Used by the tape backend to signal that a polled operation exceeded OperationTimeout.
+            ///  Compare against <see cref="IErrorManageable.LastError"/> (uint).
+            /// </summary>
+            public const uint WAIT_TIMEOUT = 258;
+            internal const WIN32_ERROR WIN32_ERROR_WAIT_TIMEOUT = (WIN32_ERROR)WAIT_TIMEOUT;
+
             public static double ToPrecision(double value, int precision)
             {
                 if (precision < 0 || precision > 15)

@@ -36,7 +36,7 @@ namespace TapeLibNET
 
             var remainingCapacity = Drive.ContentCapacity - TOC.ComputeTotalFileSizeOnTape();
             if (!Drive.HasInitiatorPartition)
-                remainingCapacity -= TapeNavigator.TOCCapacity; // if TOC is in a content set, reserve space for it
+                remainingCapacity -= Navigator.TOCCapacity; // if TOC is in a content set, reserve space for it
 
             BytesBackedupMarker = BytesBackedup; // important in case of multi-volume backup continuation
 
@@ -73,12 +73,11 @@ namespace TapeLibNET
 
 #if DEBUG
             // Simulate failures for testing error handling
-            // Set SimulateFailures to true to enable, and FailEveryNthFile to control frequency
-            if (SimulateFailures && ++SimulatedFailureCounter % FailEveryNthFile == 0)
+            if (SimulateFileFailures.ShouldFailNow())
             {
                 m_logger.LogWarning("SIMULATED failure for file #{Counter} >{File}<", 
-                    SimulatedFailureCounter, fileInfo.FullName);
-                throw new IOException($"Simulated backup failure for testing (file #{SimulatedFailureCounter})");
+                    SimulateFileFailures.Counter, fileInfo.FullName);
+                throw new IOException($"Simulated backup failure for testing (file #{SimulateFileFailures.Counter})");
             }
 #endif
 

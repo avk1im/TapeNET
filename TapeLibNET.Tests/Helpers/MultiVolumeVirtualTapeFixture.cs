@@ -60,6 +60,13 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// <summary>Content capacity per volume in bytes.</summary>
     public long ContentCapacity { get; }
 
+    /// <summary>
+    /// TOC capacity override applied to each agent's navigator.
+    /// Defaults to <see cref="DefaultTOCCapacity"/> (32 KB) so the library's
+    /// software capacity check works correctly on small test volumes.
+    /// </summary>
+    public long TOCCapacityOverride { get; set; } = DefaultTOCCapacity;
+
     #endregion
 
     #region *** Volume Snapshot Management ***
@@ -156,11 +163,6 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
         Backend.LocateRateBytesPerSecond = 0;
         Backend.SearchRateBytesPerSecond = 0;
 
-        // Override TOC capacity reservation so the library's software capacity
-        // check works correctly on small test volumes (default 16 MB >> 256 KB).
-        _savedTOCCapacity = TapeNavigator.TOCCapacity;
-        TapeNavigator.TOCCapacity = DefaultTOCCapacity;
-
         Drive = new TapeDrive(LoggerFactory, Backend);
 
         // Full lifecycle: open → load → prepare
@@ -178,14 +180,22 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
     /// <summary>Creates a backup agent bound to this fixture's drive and TOC.</summary>
     public TapeFileBackupAgent CreateBackupAgent()
-        => new(Drive, TOC);
+    {
+        var agent = new TapeFileBackupAgent(Drive, TOC);
+        agent.Navigator.TOCCapacity = TOCCapacityOverride;
+        return agent;
+    }
 
     /// <summary>Creates a restore agent with target directory.</summary>
     public TapeFileRestoreAgentEx CreateRestoreAgent(
         string targetDir,
         bool recurseSubdirs = true,
         TapeHowToHandleExisting handleExisting = TapeHowToHandleExisting.Overwrite)
-        => new(Drive, targetDir, recurseSubdirs, handleExisting, TOC);
+    {
+        var agent = new TapeFileRestoreAgentEx(Drive, targetDir, recurseSubdirs, handleExisting, TOC);
+        agent.Navigator.TOCCapacity = TOCCapacityOverride;
+        return agent;
+    }
 
     #endregion
 
@@ -197,6 +207,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     public void SaveTOC()
     {
         using var agent = new TapeFileAgent(Drive, TOC);
+        agent.Navigator.TOCCapacity = TOCCapacityOverride;
         if (!agent.BackupTOC())
             Assert.True(agent.BackupTOC(enforce: true), "Failed to save TOC to tape (even with enforce)");
     }
@@ -207,6 +218,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     public void LoadTOC()
     {
         using var agent = new TapeFileAgent(Drive, TOC);
+        agent.Navigator.TOCCapacity = TOCCapacityOverride;
         Assert.True(agent.RestoreTOC(), "Failed to restore TOC from tape");
         TOC = agent.TOC;
     }
@@ -359,13 +371,9 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
     #region *** Dispose ***
 
-    /// <summary>Saved original TOCCapacity to restore in <see cref="Dispose"/>.</summary>
-    private readonly long _savedTOCCapacity;
-
     public void Dispose()
     {
         Drive.Dispose();
-        TapeNavigator.TOCCapacity = _savedTOCCapacity;
     }
 
     #endregion

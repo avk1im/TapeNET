@@ -24,8 +24,15 @@ namespace TapeLibNET
 
         #region *** Properties ***
 
-        public static long TOCCapacity { get; set; } = 16 * 1024 * 1024; // 16 MB
-        public static bool UseTOCMark { get; set; } = true; // only used if TOC is in set w/o setmarks
+        /// <summary>Default TOC capacity used when no override is specified (16 MB).</summary>
+        public const long DefaultTOCCapacity = 16 * 1024 * 1024; // 16 MB
+
+        /// <summary>
+        /// Maximum space reserved for the TOC area on this tape.
+        /// Instance-level so that concurrent tape operations (or tests) don't interfere.
+        /// </summary>
+        public long TOCCapacity { get; set; } = DefaultTOCCapacity;
+
         public virtual bool TOCInvalidated { get; protected set; } = false;
 
         // The content set next to read. Can be counted either from the beginning or the end of content.
@@ -58,7 +65,17 @@ namespace TapeLibNET
             m_logger.LogTrace("Drive #{Drive}: Created Navigator of type {Type}", DriveNumber, GetType());
         }
 
-        public static TapeNavigator? ProduceNavigator(TapeDrive drive)
+        /// <summary>
+        /// Creates the appropriate <see cref="TapeNavigator"/> subclass for the loaded media.
+        /// </summary>
+        /// <param name="drive">The tape drive with loaded media.</param>
+        /// <param name="useTOCMark">
+        /// When <c>true</c> (default) and the drive uses sequential filemarks (no setmarks,
+        ///  no initiator partition), a dedicated TOC marker sequence is written to help locate
+        ///  the TOC. Only affects the <see cref="TapeNavigatorTOCInSetWithFmksAndTOCMark"/>
+        ///  vs. <see cref="TapeNavigatorTOCInSetWithFmks"/> choice.
+        /// </param>
+        public static TapeNavigator? ProduceNavigator(TapeDrive drive, bool useTOCMark = true)
         {
             if (!drive.IsMediaLoaded)
                 return null;
@@ -69,9 +86,9 @@ namespace TapeLibNET
             if (drive.SupportsSetmarks)
                 return new TapeNavigatorTOCInSetWithSmks(drive);
 
-            if (drive.SupportsSeqFilemarks && UseTOCMark)
+            if (drive.SupportsSeqFilemarks && useTOCMark)
                 return new TapeNavigatorTOCInSetWithFmksAndTOCMark(drive);
-                    
+
             return new TapeNavigatorTOCInSetWithFmks(drive);
         }
 

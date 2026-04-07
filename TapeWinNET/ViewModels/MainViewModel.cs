@@ -1169,7 +1169,7 @@ public partial class MainViewModel : ViewModelBase
 
         var used = toc.ComputeTotalFileSizeOnTape(_tapeService.DefaultBlockSize);
         if (!_tapeService.HasInitiatorPartition)
-            used += TapeNavigator.TOCCapacity; // if TOC is in set, it consumes content space
+            used += TapeNavigator.DefaultTOCCapacity; // if TOC is in set, it consumes content space
         var remaining = _tapeService.Capacity - used; //_tapeService.GetRemainingCapacity();
 
         PropertyList.Add(new PropertyItem("Used", Helpers.BytesToStringLong(used)));
@@ -1644,7 +1644,7 @@ public partial class MainViewModel : ViewModelBase
         try
         {
             long initiatorPartitionSize = formatViewModel.CreateInitiatorPartition
-                ? TapeNavigator.TOCCapacity : -1;
+                ? TapeNavigator.DefaultTOCCapacity : -1;
 
             var success = await _tapeService.FormatMediaAsync(initiatorPartitionSize, formatViewModel.MediaName);
 
@@ -1736,7 +1736,7 @@ public partial class MainViewModel : ViewModelBase
 
             BusyMessage = "Formatting media...";
             long initiatorPartitionSize = formatViewModel.CreateInitiatorPartition
-                ? TapeNavigator.TOCCapacity : -1;
+                ? TapeNavigator.DefaultTOCCapacity : -1;
 
             if (!await _tapeService.FormatMediaAsync(initiatorPartitionSize, formatViewModel.MediaName))
             {

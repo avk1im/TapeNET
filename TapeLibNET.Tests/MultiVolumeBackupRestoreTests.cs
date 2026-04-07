@@ -66,7 +66,7 @@ public class MultiVolumeBackupRestoreTests
 
         // Verify capacity
         long contentCap = fixture.Drive.ContentCapacity;
-        long tocCap = TapeNavigator.TOCCapacity;
+        long tocCap = MultiVolumeVirtualTapeFixture.DefaultTOCCapacity;
         bool hasInit = fixture.Drive.HasInitiatorPartition;
         uint blockSize = fixture.Drive.BlockSize;
 

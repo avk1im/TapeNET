@@ -21,6 +21,25 @@ public sealed class TempFileTree : IDisposable
     /// <summary>Default repeating byte pattern for file content.</summary>
     private static readonly byte[] s_pattern = "TapeNET-TestData-"u8.ToArray();
 
+    /// <summary>Environment variable for specifying the base path for temp file trees.</summary>
+    /// <remarks>
+    /// To set under PowerShell persistently, use
+    /// [System.Environment]::SetEnvironmentVariable("TAPELIBNET_TESTS_PATH", "D:\Temp\", "User")
+    /// <para>
+    /// To set just for the session, use
+    /// $env:TAPELIBNET_TESTS_PATH = "D:\Temp\"
+    /// </para>
+    /// <para>
+    /// To update for the session from the persistent setting, use
+    /// $env:TAPELIBNET_TESTS_PATH = [System.Environment]::GetEnvironmentVariable("TAPELIBNET_TESTS_PATH", "User")
+    /// </para>
+    /// <para>
+    /// To check the current value, use
+    /// echo $env:TAPELIBNET_TESTS_PATH
+    /// </para>
+    /// </remarks>
+    public const string EnvVarBasePath = "TAPELIBNET_TESTS_PATH";
+
     #endregion
 
     #region *** Properties ***
@@ -49,8 +68,19 @@ public sealed class TempFileTree : IDisposable
     public TempFileTree(int seed = DefaultSeed, string? basePath = null)
     {
         Seed = seed;
+
+        if (string.IsNullOrEmpty(basePath))
+        {
+            // Get environment variable TAPELIBNET_TESTS_PATH
+            string? envPath = Environment.GetEnvironmentVariable(EnvVarBasePath);
+            if (!string.IsNullOrEmpty(envPath))
+                basePath = envPath;
+            else
+                basePath = Path.GetTempPath();
+        }
+
         RootPath = Path.Combine(
-            basePath ?? Path.GetTempPath(),
+            basePath,
             $"TapeNET_Test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(RootPath);
     }

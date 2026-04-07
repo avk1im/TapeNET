@@ -98,11 +98,9 @@ namespace TapeLibNET
 
 #if DEBUG
                 // Simulate file restore failure for testing error handling
-                if (SimulateFailures)
+                if (SimulateFileFailures.ShouldFailNow())
                 {
-                    SimulatedFailureCounter++;
-                    if (SimulatedFailureCounter % FailEveryNthFile == 0)
-                        throw new IOException($"Simulated restore failure for file >{tfi.FileDescr.FullName}<");
+                    throw new IOException($"Simulated restore failure for file >{tfi.FileDescr.FullName}< (#{SimulateFileFailures.Counter})");
                 }
 #endif
 
