@@ -545,6 +545,7 @@ public partial class MainViewModel
         var targetDirectory = request.TargetDirectory;
         var recurseSubdirectories = request.RecurseSubdirectories;
         var handleExisting = request.HandleExisting;
+        var uncheckProcessedFiles = request.UncheckProcessedFiles;
 
         string modeName = mode switch
         {
@@ -729,10 +730,21 @@ public partial class MainViewModel
                 );
             });
 
-            // Refresh tree after successful operation
+            // Uncheck successfully processed files before refreshing the UI —
+            //  RefreshAsync rebuilds BackupSetList from _tocView which already
+            //  reflects the updated checked state, so no manual UI sync needed.
+            if (uncheckProcessedFiles && operationResult is { ProcessedFiles.Count: > 0 } result2
+                && _tocView != null)
+            {
+                var processedBySet = result2.ProcessedFiles
+                    .ToDictionary(kvp => kvp.Key, kvp => (IReadOnlyList<TapeFileInfo>?)kvp.Value);
+                _tocView.SetCheckedFilesBySet(processedBySet, isChecked: false);
+            }
+
+            // Refresh tree after operation — rebuilds BackupSetList with updated checked state
             await RefreshAsync();
 
-            // Determine outcome from both the file-error dialog count and
+            // Determine outcome
             //  the operation result (which includes files-not-found on tape)
             bool hasErrors = errorCount > 0
                 || (operationResult is { } r && !r.IsFullSuccess);

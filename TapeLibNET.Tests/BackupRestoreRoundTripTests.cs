@@ -538,7 +538,7 @@ public class BackupRestoreRoundTripTests
                 $"Succeeded={restoreAgent1.Statistics.FilesSucceeded}," +
                 $"Failed={restoreAgent1.Statistics.FilesFailed}," +
                 $"Skipped={restoreAgent1.Statistics.FilesSkipped}]," +
-                $" Failures={string.Join("; ", notifiable1.FilesFailed.Select(f => $"{f.FileDescr.FullName}: {f.Exception.Message}"))}");
+                $" Failures={string.Join("; ", notifiable1.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}");
 
             FileComparer.AssertFilesMatch(tree1.RootPath, tree1.Files,
                 RestoreEquivalentRoot(restoreDir1, tree1.RootPath));
@@ -563,7 +563,7 @@ public class BackupRestoreRoundTripTests
                 $"Succeeded={restoreAgent2.Statistics.FilesSucceeded}," +
                 $"Failed={restoreAgent2.Statistics.FilesFailed}," +
                 $"Skipped={restoreAgent2.Statistics.FilesSkipped}]," +
-                $" Failures={string.Join("; ", notifiable2.FilesFailed.Select(f => $"{f.FileDescr.FullName}: {f.Exception.Message}"))}");
+                $" Failures={string.Join("; ", notifiable2.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}");
 
             FileComparer.AssertFilesMatch(tree2.RootPath, tree2.Files,
                 RestoreEquivalentRoot(restoreDir2, tree2.RootPath));

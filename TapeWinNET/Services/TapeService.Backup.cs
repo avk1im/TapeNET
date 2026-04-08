@@ -477,7 +477,8 @@ public partial class TapeService
     {
         var invalidChars = Path.GetInvalidFileNameChars();
         var sanitized = new string(
-            (toc.Description ?? "tape").Select(c => invalidChars.Contains(c) ? '_' : c).ToArray()).Trim();
+                [.. (toc.Description ?? "tape").Select(c => invalidChars.Contains(c) ? '_' : c)]
+            ).Trim();
 
         if (string.IsNullOrWhiteSpace(sanitized))
             sanitized = "tape";
@@ -559,30 +560,30 @@ public partial class TapeService
             _progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
         }
 
-        public bool PreProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
+        public bool PreProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats)
         {
             ThrowIfAbortRequested();
-            _currentFileCallback(fileDescr.FullName);
+            _currentFileCallback(fileInfo.FileDescr.FullName);
             return true;
         }
 
-        public bool PostProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
+        public bool PostProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats)
         {
             ThrowIfAbortRequested();
             Sync(stats);
 
-            Log(WarningLevel.Completed, $"{Path.GetFileName(fileDescr.FullName)} ({Helpers.BytesToString(fileDescr.Length)})");
+            Log(WarningLevel.Completed, $"{Path.GetFileName(fileInfo.FileDescr.FullName)} ({Helpers.BytesToString(fileInfo.FileDescr.Length)})", sub: true);
             _progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
 
             return true;
         }
 
-        public FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex, in TapeFileStatistics stats)
+        public FileFailedAction OnFileFailed(TapeFileInfo fileInfo, Exception ex, in TapeFileStatistics stats)
         {
             ThrowIfAbortRequested();
             Sync(stats);
 
-            Log(WarningLevel.Failed, $"Failed: {fileDescr.FullName}");
+            Log(WarningLevel.Failed, $"Failed: {fileInfo.FileDescr.FullName}");
             Log(WarningLevel.Failed, $"Error: {ex.Message}", sub: true);
 
             _progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
@@ -597,7 +598,7 @@ public partial class TapeService
             }
 
             // Show error dialog via callback - the callback handles sticky choices (e.g. Skip All)
-            var result = _fileErrorCallback(fileDescr.FullName, ex.Message);
+            var result = _fileErrorCallback(fileInfo.FileDescr.FullName, ex.Message);
 
             if (result == FileFailedAction.Abort)
             {
@@ -612,12 +613,12 @@ public partial class TapeService
             return result;
         }
 
-        public void OnFileSkipped(TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
+        public void OnFileSkipped(TapeFileInfo fileInfo, in TapeFileStatistics stats)
         {
             ThrowIfAbortRequested();
             Sync(stats);
 
-            Log(WarningLevel.None, $"Skipped: {Path.GetFileName(fileDescr.FullName)}", sub: true);
+            Log(WarningLevel.None, $"Skipped: {Path.GetFileName(fileInfo.FileDescr.FullName)}", sub: true);
         }
     }
 

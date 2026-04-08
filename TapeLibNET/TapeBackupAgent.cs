@@ -57,14 +57,15 @@ namespace TapeLibNET
             return stream;
         }
 
-        // throws if any failure -- for the caller to catch
-        private void BackupFile(FileInfo fileInfo)
+        // Writes the file data to tape and sets the hash on tfi.
+        //  Does not modify the TOC — the caller appends tfi on success.
+        //  Throws if any failure — for the caller to catch.
+        private void BackupFile(TapeFileInfo tfi)
         {
-            m_logger.LogTrace("Backing up file >{File}< in {Method}", fileInfo.FullName, nameof(BackupFile));
+            m_logger.LogTrace("Backing up file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(BackupFile));
 
-            using var wstream = OpenWriteContentStream(fileInfo.Length) ??
-                throw new IOException($"Failed to open content write stream for >{fileInfo.FullName}<", (int)LastError);
-            TapeFileInfo tfi = new(TOC.GenerateUID(), Drive.BlockCounter, fileInfo);
+            using var wstream = OpenWriteContentStream(tfi.FileDescr.Length) ??
+                throw new IOException($"Failed to open content write stream for >{tfi.FileDescr.FullName}<", (int)LastError);
             var hasher = CreateHasher(TOC.CurrentSetTOC.HashAlgorithm);
 
             TapeSerializer ts = new(wstream);
@@ -76,12 +77,13 @@ namespace TapeLibNET
             if (SimulateFileFailures.ShouldFailNow())
             {
                 m_logger.LogWarning("SIMULATED failure for file #{Counter} >{File}<", 
-                    SimulateFileFailures.Counter, fileInfo.FullName);
+                    SimulateFileFailures.Counter, tfi.FileDescr.FullName);
                 throw new IOException($"Simulated backup failure for testing (file #{SimulateFileFailures.Counter})");
             }
 #endif
 
             // Double-buffer file data to overlap file reads with tape writes
+            var fileInfo = tfi.FileDescr.CreateFileInfo();
             using (var buffered = new BufferedTapeWriteStream(wstream, Drive.BlockSize))
             {
                 if (hasher == null)
@@ -102,11 +104,9 @@ namespace TapeLibNET
             if (hasher != null)
                 tfi.Hash = hasher.GetCurrentHash();
 
-            // only if all went well, add the TOC entry
-            TOC.CurrentSetTOC.Append(tfi);
             BytesBackedup += wstream.Length;
 
-            m_logger.LogTrace("File >{File}< backed up ok", fileInfo.FullName);
+            m_logger.LogTrace("File >{File}< backed up ok", tfi.FileDescr.FullName);
         } // BackupFile()
 
 
@@ -253,48 +253,43 @@ namespace TapeLibNET
             // The main loop thru the file list
             for (; bc.fileIndex < bc.fileList.Count; bc.fileIndex++) // use for int instead if foreach to know the index for multi-volume backup
             {
-                var fileName = bc.fileList[bc.fileIndex]; // use an additional variable since we might modify file name
+                var fileName = bc.fileList[bc.fileIndex];
 
                 FileInfo fileInfo = new (fileName);
-                TapeFileDescriptor fileDescr = new (fileInfo); // the constructor will check if the file exists
+                // Create the real TapeFileInfo upfront — BackupFile() only handles tape I/O,
+                //  TOC.Append() happens here on success
+                TapeFileInfo tfi = new(TOC.GenerateUID(), Drive.BlockCounter, fileInfo);
 
                 try
                 {
                     // first check for abort request
                     ThrowIfAbortRequested(nameof(BackupFileListToCurrentSet));
 
-                    if (bc.fileNotify != null)
+                    if (!NotifyPreProcessFile(bc.fileNotify, tfi))
                     {
-                        if (!NotifyPreProcessFile(bc.fileNotify, ref fileDescr))
-                        {
-                            NotifyFileSkipped(bc.fileNotify, fileDescr);
-                            m_logger.LogTrace("File #{Number} >{File}< skipped per pre-processor request", _stats.FilesProcessed, fileName);
-                            continue; // not a failure, yet post-processing not called
-                        }
-                        // the pre-processor may have modified the file name => re-create fileInfo
-                        fileName = fileDescr.FullName;
-                        fileInfo = fileDescr.CreateFileInfo();
+                        NotifyFileSkipped(bc.fileNotify, tfi);
+                        m_logger.LogTrace("File #{Number} >{File}< skipped per pre-processor request", _stats.FilesProcessed, fileName);
+                        continue; // not a failure, yet post-processing not called
                     }
 
                     if (!fileInfo.Exists)
                         throw new FileNotFoundException($"File not found", fileName);
-
-                    fileDescr.FillFrom(fileInfo); // fill in the rest of the file descriptor from the file info, now that we know it exists
 
                     m_logger.LogTrace("Backing up file #{Number} >{File}< of length {Length}",
                         _stats.FilesProcessed + 1, fileName, Helpers.BytesToString(fileInfo.Length));
 
                     if (TOC.CurrentSetTOC.Incremental && TOC.IsFileUptodateInc(fileInfo))
                     {
-                        NotifyFileSkipped(bc.fileNotify, fileDescr);
+                        NotifyFileSkipped(bc.fileNotify, tfi);
                         m_logger.LogTrace("File #{Number} >{File}< found up-to-date in an incremental set -> skipping", _stats.FilesProcessed, fileName);
                         continue; // not a failure, yet post-processing not called
                     }
 
-                    BackupFile(fileInfo);
+                    BackupFile(tfi);
 
-                    // success
-                    NotifyPostProcessFile(bc.fileNotify, ref fileDescr);
+                    // success — append to TOC and notify
+                    TOC.CurrentSetTOC.Append(tfi);
+                    NotifyPostProcessFile(bc.fileNotify, tfi);
 
                     m_logger.LogTrace("File #{Number} >{File}< backed up ok", _stats.FilesProcessed, fileName);
                 }
@@ -323,7 +318,7 @@ namespace TapeLibNET
 
                         // Report the file as failed (stats updated by NotifyFileFailed),
                         //  then undo the failure since the file will be re-tried on next volume
-                        if (NotifyFileFailed(bc.fileNotify, fileDescr, ex) == FileFailedAction.Abort)
+                        if (NotifyFileFailed(bc.fileNotify, tfi, ex) == FileFailedAction.Abort)
                             break;
                         StatsUndoFailure(); // the file will be re-tried on next volume
 
@@ -334,7 +329,7 @@ namespace TapeLibNET
                         return false;
                     }
 
-                    var retryAction = NotifyFileFailed(bc.fileNotify, fileDescr, ex);
+                    var retryAction = NotifyFileFailed(bc.fileNotify, tfi, ex);
                     if (retryAction == FileFailedAction.Abort)
                     {
                         bc.overallSuccess = false;

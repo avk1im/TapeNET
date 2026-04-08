@@ -8,7 +8,7 @@
         d:DataContext="{d:DesignInstance Type=vm:RestoreViewModel}"
         mc:Ignorable="d"
         Title="{Binding DialogTitle}"
-        Width="820" Height="600"
+        Width="820" Height="620"
         MinWidth="650" MinHeight="460"
         WindowStartupLocation="CenterOwner"
         ResizeMode="CanResizeWithGrip"
@@ -150,8 +150,12 @@
                         <CheckBox Content="This volume only"
                                   IsChecked="{Binding ThisVolumeOnly}"
                                   IsEnabled="{Binding IsThisVolumeOnlyEnabled}"
-                                  Margin="0,4,0,6"
+                                  Margin="0,4,0,4"
                                   ToolTip="Confine operation to backup sets on the current volume"/>
+                        <CheckBox Content="Uncheck processed files"
+                                  IsChecked="{Binding UncheckProcessedFiles}"
+                                  Margin="0,4,0,8"
+                                  ToolTip="After the operation, uncheck successfully processed files; leave unprocessed ones checked"/>
                         <TextBlock Text="Handle existing:" Margin="0,0,0,4"
                                    IsEnabled="{Binding IsHandleExistingEnabled}"/>
                         <ComboBox ItemsSource="{Binding HandleExistingOptions}"

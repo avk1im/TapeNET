@@ -169,7 +169,7 @@ public class ErrorHandlingTests
         var notifiable = new TestNotifiable
         {
             FailedActionFunc = (fd, _) =>
-                retriedFiles.Add(fd.FullName) ? FileFailedAction.Retry : FileFailedAction.Skip
+                retriedFiles.Add(fd.FileDescr.FullName) ? FileFailedAction.Retry : FileFailedAction.Skip
         };
 
         using var fixture = new VirtualTapeFixture(profile);
@@ -270,7 +270,7 @@ public class ErrorHandlingTests
 
         // Verify each TOC entry references a valid source file (by name)
         var succeededNames = backupNotify.PostProcessed
-            .Select(p => p.FileDescr.FullName)
+            .Select(p => p.FileInfo.FileDescr.FullName)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         foreach (var tfi in fixture.TOC.CurrentSetTOC)
@@ -282,7 +282,7 @@ public class ErrorHandlingTests
 
         // Failed files should NOT appear in the TOC
         var failedNames = backupNotify.FilesFailed
-            .Select(f => f.FileDescr.FullName)
+            .Select(f => f.FileInfo.FileDescr.FullName)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         foreach (var tfi in fixture.TOC.CurrentSetTOC)
@@ -540,7 +540,7 @@ public class ErrorHandlingTests
             var notifiable = new TestNotifiable
             {
                 FailedActionFunc = (fd, _) =>
-                    retriedFiles.Add(fd.FullName) ? FileFailedAction.Retry : FileFailedAction.Skip
+                    retriedFiles.Add(fd.FileDescr.FullName) ? FileFailedAction.Retry : FileFailedAction.Skip
             };
 
             // Create agent directly so we can offset the failure counter:

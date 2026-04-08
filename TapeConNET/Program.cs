@@ -1813,34 +1813,34 @@ abstract class OnFileEventProcessor(TapeTOC toc, bool quiteMode, string processi
         }
     }
 
-    public virtual bool PreProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
+    public virtual bool PreProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats)
     {
-        Console.Write($" ii {processingName} >{fileDescr.FullName}< : {Helpers.BytesToString(fileDescr.Length)} ");
+        Console.Write($" ii {processingName} >{fileInfo.FileDescr.FullName}< : {Helpers.BytesToString(fileInfo.FileDescr.Length)} ");
         return true;
 
     }
 
-    // called for a chance to modify the fileDescr after restoring the file. If returns false, skip applying fileDescr
-    public virtual bool PostProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
+    // called after successfully processing the file
+    public virtual bool PostProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats)
     {
         // write just the file name
-        Console.WriteLine($"OK >{Path.GetFileName(fileDescr.FullName)}<");
+        Console.WriteLine($"OK >{Path.GetFileName(fileInfo.FileDescr.FullName)}<");
         Sync(stats);
         return true;
     }
 
-    // called when a file error occurs during restoring the file
-    public virtual FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex, in TapeFileStatistics stats)
+    // called when a file error occurs during processing the file
+    public virtual FileFailedAction OnFileFailed(TapeFileInfo fileInfo, Exception ex, in TapeFileStatistics stats)
     {
-        Console.WriteLine($"!!! Failed {processingName} file >{Path.GetFileName(fileDescr.FullName)}<. Exception: {ex}");
+        Console.WriteLine($"!!! Failed {processingName} file >{Path.GetFileName(fileInfo.FileDescr.FullName)}<. Exception: {ex}");
         Sync(stats);
 
         return MessageGetFileAction("??? Retry the file?");
     }
-    public virtual void OnFileSkipped(TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
+    public virtual void OnFileSkipped(TapeFileInfo fileInfo, in TapeFileStatistics stats)
     {
         // write just the file name
-        Console.WriteLine($"Skipped >{Path.GetFileName(fileDescr.FullName)}<");
+        Console.WriteLine($"Skipped >{Path.GetFileName(fileInfo.FileDescr.FullName)}<");
         Sync(stats);
     }
 
@@ -1848,16 +1848,16 @@ abstract class OnFileEventProcessor(TapeTOC toc, bool quiteMode, string processi
 
 class OnFileBackupProcessor(TapeTOC toc, bool quiteMode) : OnFileEventProcessor(toc, quiteMode, "Backing up")
 {
-    public override bool PreProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
+    public override bool PreProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats)
     {
-        FileInfo fileInfo = new(fileDescr.FullName);
-        if (!fileInfo.Exists) // just for illustration -- the agent will check if file exists anyways
+        FileInfo fi = new(fileInfo.FileDescr.FullName);
+        if (!fi.Exists) // just for illustration -- the agent will check if file exists anyways
         {
-            Console.WriteLine($" !! >{fileDescr.FullName}< file not found -> skipping");
+            Console.WriteLine($" !! >{fileInfo.FileDescr.FullName}< file not found -> skipping");
             return false;
         }
 
-        return base.PreProcessFile(ref fileDescr, in stats); // call the base class method
+        return base.PreProcessFile(fileInfo, in stats); // call the base class method
     }
 }
 

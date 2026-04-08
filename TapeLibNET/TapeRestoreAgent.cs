@@ -106,13 +106,13 @@ namespace TapeLibNET
 
                 var hasher = CreateHasher(TOC.CurrentSetTOC.HashAlgorithm);
 
-                // Now invoke the pre- call back for possible filename or path modification or skipping the file altogether
-                var fileDescr = tfi.FileDescr; // we create a copy to avoid modifying the original tfi.FileDescr
+                // Now invoke the pre- call back for skipping the file altogether
+                var fileDescr = tfi.FileDescr; // copy for internal pre-processing (target dir, handle existing)
                 // call the internal pre-processor first to ensure it always runs
-                if (!PreProcessFileInternal(ref fileDescr) || !NotifyPreProcessFile(fileNotify, ref fileDescr))
+                if (!PreProcessFileInternal(ref fileDescr) || !NotifyPreProcessFile(fileNotify, tfi))
                 {
                     FileSkippedInternal(tfi.FileDescr);
-                    NotifyFileSkipped(fileNotify, tfi.FileDescr);
+                    NotifyFileSkipped(fileNotify, tfi);
 
                     m_logger.LogTrace("Skipping file >{File}< per pre-processor request", tfi.FileDescr.FullName);
 
@@ -147,8 +147,8 @@ namespace TapeLibNET
 
                 BytesRestored += rstream.Length;
 
-                // Now invoke the post- call back for possible attribute modification
-                if (NotifyPostProcessFile(fileNotify, ref fileDescr))
+                // Now invoke the post- call back
+                if (NotifyPostProcessFile(fileNotify, tfi))
                     // now apply the attributes to the file -- an exception e.g. File Not Found can be thrown here
                     return PostProcessFileInternal(fileDescr, fileInfo);
 
@@ -158,7 +158,7 @@ namespace TapeLibNET
             {
                 SetError(ex); // we've already set the right error code & message in the exception
 
-                fileFailedAction = NotifyFileFailed(fileNotify, tfi.FileDescr, ex);
+                fileFailedAction = NotifyFileFailed(fileNotify, tfi, ex);
 
                 m_logger.LogWarning("Exception {Exception} while processing file >{File}<", ex, tfi.FileDescr.FullName);
 

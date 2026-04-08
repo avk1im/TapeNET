@@ -225,10 +225,16 @@ public sealed class FilteredFileList(IReadOnlyList<TapeFileInfo> source) : IRead
     ///  batch — more efficient than calling <see cref="SetChecked(TapeFileInfo, bool)"/>
     ///  in a loop. Does not fire <see cref="CheckedChanged"/> per item.
     /// </summary>
-    public void SetChecked(IEnumerable<TapeFileInfo> items, bool isChecked)
+    /// <param name="clearTheRest">If <c>true</c>, unchecks all items not in the given list. Useful for "check
+    ///  only these" scenarios. Used only if <paramref name="isChecked"/> is <c>true</c>. <c>false</c> by default.
+    /// </param>
+    public void SetChecked(IEnumerable<TapeFileInfo> items, bool isChecked, bool clearTheRest = false)
     {
         if (isChecked)
         {
+            if (clearTheRest)
+                _checkedItems.Clear();
+
             foreach (var item in items)
                 _checkedItems.Add(item);
         }

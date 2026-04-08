@@ -58,16 +58,16 @@ namespace TapeLibNET
         // The following methods may throw TapeAbortRequestedException to abort the entire operation (not just the file)
 
         /// <summary>Called before processing a file. Return false to skip the file.</summary>
-        bool PreProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats);
+        bool PreProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats);
 
         /// <summary>Called after successfully processing a file. Return false to skip applying file attributes.</summary>
-        bool PostProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats);
+        bool PostProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats);
 
         /// <summary>Called when a file error occurs. Returns how to proceed.</summary>
-        FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex, in TapeFileStatistics stats);
+        FileFailedAction OnFileFailed(TapeFileInfo fileInfo, Exception ex, in TapeFileStatistics stats);
 
         /// <summary>Called when a file is skipped.</summary>
-        void OnFileSkipped(TapeFileDescriptor fileDescr, in TapeFileStatistics stats);
+        void OnFileSkipped(TapeFileInfo fileInfo, in TapeFileStatistics stats);
     }
 
 
@@ -622,13 +622,13 @@ namespace TapeLibNET
             }
         }
 
-        protected bool NotifyPreProcessFile(ITapeFileNotifiable? fileNotify, ref TapeFileDescriptor fileDescr)
+        protected bool NotifyPreProcessFile(ITapeFileNotifiable? fileNotify, TapeFileInfo fileInfo)
         {
             if (fileNotify != null)
             {
                 try
                 {
-                    return fileNotify.PreProcessFile(ref fileDescr, in _stats);
+                    return fileNotify.PreProcessFile(fileInfo, in _stats);
                 }
                 catch (TapeAbortRequestedException ex1)
                 {
@@ -642,17 +642,17 @@ namespace TapeLibNET
             }
             return true;
         }
-        protected bool NotifyPostProcessFile(ITapeFileNotifiable? fileNotify, ref TapeFileDescriptor fileDescr)
+        protected bool NotifyPostProcessFile(ITapeFileNotifiable? fileNotify, TapeFileInfo fileInfo)
         {
             _stats.FilesProcessed++;
             _stats.FilesSucceeded++;
-            _stats.BytesProcessed += fileDescr.Length;
+            _stats.BytesProcessed += fileInfo.FileDescr.Length;
 
             if (fileNotify != null)
             {
                 try
                 {
-                    return fileNotify.PostProcessFile(ref fileDescr, in _stats);
+                    return fileNotify.PostProcessFile(fileInfo, in _stats);
                 }
                 catch (TapeAbortRequestedException ex1)
                 {
@@ -671,7 +671,7 @@ namespace TapeLibNET
         //  returns FileFailedAction.Abort instead, so the caller can handle it.
         //  Sets IsAbortRequested when the result is Abort, so outer loops and the
         //  service layer can detect the abort without relying solely on the return value.
-        protected FileFailedAction NotifyFileFailed(ITapeFileNotifiable? fileNotify, TapeFileDescriptor fileDescr, Exception ex)
+        protected FileFailedAction NotifyFileFailed(ITapeFileNotifiable? fileNotify, TapeFileInfo fileInfo, Exception ex)
         {
             _stats.FilesProcessed++;
             _stats.FilesFailed++;
@@ -682,7 +682,7 @@ namespace TapeLibNET
             {
                 try
                 {
-                    result = fileNotify.OnFileFailed(fileDescr, ex, in _stats);
+                    result = fileNotify.OnFileFailed(fileInfo, ex, in _stats);
                 }
                 catch (TapeAbortRequestedException ex1)
                 {
@@ -701,7 +701,7 @@ namespace TapeLibNET
 
             return result;
         }
-        protected void NotifyFileSkipped(ITapeFileNotifiable? fileNotify, TapeFileDescriptor fileDescr)
+        protected void NotifyFileSkipped(ITapeFileNotifiable? fileNotify, TapeFileInfo fileInfo)
         {
             _stats.FilesProcessed++;
             _stats.FilesSkipped++;
@@ -710,7 +710,7 @@ namespace TapeLibNET
             {
                 try
                 {
-                    fileNotify.OnFileSkipped(fileDescr, in _stats);
+                    fileNotify.OnFileSkipped(fileInfo, in _stats);
                 }
                 catch (TapeAbortRequestedException ex1)
                 {

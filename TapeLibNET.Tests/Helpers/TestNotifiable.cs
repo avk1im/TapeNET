@@ -10,10 +10,10 @@ public class TestNotifiable : ITapeFileNotifiable
 
     public record BatchStartEvent(int SetIndex, TapeFileStatistics Stats);
     public record BatchEndEvent(int SetIndex, TapeFileStatistics Stats);
-    public record PreProcessEvent(TapeFileDescriptor FileDescr, TapeFileStatistics Stats);
-    public record PostProcessEvent(TapeFileDescriptor FileDescr, TapeFileStatistics Stats);
-    public record FileFailedEvent(TapeFileDescriptor FileDescr, Exception Exception, TapeFileStatistics Stats);
-    public record FileSkippedEvent(TapeFileDescriptor FileDescr, TapeFileStatistics Stats);
+    public record PreProcessEvent(TapeFileInfo FileInfo, TapeFileStatistics Stats);
+    public record PostProcessEvent(TapeFileInfo FileInfo, TapeFileStatistics Stats);
+    public record FileFailedEvent(TapeFileInfo FileInfo, Exception Exception, TapeFileStatistics Stats);
+    public record FileSkippedEvent(TapeFileInfo FileInfo, TapeFileStatistics Stats);
 
     #endregion
 
@@ -43,10 +43,10 @@ public class TestNotifiable : ITapeFileNotifiable
 
     /// <summary>
     /// Optional callback that overrides <see cref="FailedAction"/>.
-    /// Receives the file descriptor and exception; returns the desired action.
+    /// Receives the file info and exception; returns the desired action.
     /// When set, <see cref="FailedAction"/> is ignored.
     /// </summary>
-    public Func<TapeFileDescriptor, Exception, FileFailedAction>? FailedActionFunc { get; set; }
+    public Func<TapeFileInfo, Exception, FileFailedAction>? FailedActionFunc { get; set; }
 
     /// <summary>
     /// When positive, <see cref="PreProcessFile"/> throws
@@ -78,21 +78,21 @@ public class TestNotifiable : ITapeFileNotifiable
         BatchEnds.Add(new BatchEndEvent(setIndex, stats));
     }
 
-    public bool PreProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
+    public bool PreProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats)
     {
-        PreProcessed.Add(new PreProcessEvent(fileDescr, stats));
+        PreProcessed.Add(new PreProcessEvent(fileInfo, stats));
 
         // Proactive abort: throw after N files have succeeded
         if (AbortAfterNSucceeded > 0 && stats.FilesSucceeded >= AbortAfterNSucceeded)
             throw new TapeAbortRequestedException($"Test abort after {stats.FilesSucceeded} succeeded files");
 
         // Skip if in the skip set
-        return !FilesToSkip.Contains(fileDescr.FullName);
+        return !FilesToSkip.Contains(fileInfo.FileDescr.FullName);
     }
 
-    public bool PostProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
+    public bool PostProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats)
     {
-        PostProcessed.Add(new PostProcessEvent(fileDescr, stats));
+        PostProcessed.Add(new PostProcessEvent(fileInfo, stats));
 
         // Proactive abort: throw after N files have succeeded
         if (AbortInPostProcessAfterN > 0 && stats.FilesSucceeded >= AbortInPostProcessAfterN)
@@ -101,9 +101,9 @@ public class TestNotifiable : ITapeFileNotifiable
         return true;
     }
 
-    public FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex, in TapeFileStatistics stats)
+    public FileFailedAction OnFileFailed(TapeFileInfo fileInfo, Exception ex, in TapeFileStatistics stats)
     {
-        FilesFailed.Add(new FileFailedEvent(fileDescr, ex, stats));
+        FilesFailed.Add(new FileFailedEvent(fileInfo, ex, stats));
 
         // TapeAbortRequestedException (from PreProcess/PostProcess) routes through the
         //  generic catch → OnFileFailed. We must cooperate by returning Abort so the
@@ -111,12 +111,12 @@ public class TestNotifiable : ITapeFileNotifiable
         if (ex is TapeAbortRequestedException)
             return FileFailedAction.Abort;
 
-        return FailedActionFunc?.Invoke(fileDescr, ex) ?? FailedAction;
+        return FailedActionFunc?.Invoke(fileInfo, ex) ?? FailedAction;
     }
 
-    public void OnFileSkipped(TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
+    public void OnFileSkipped(TapeFileInfo fileInfo, in TapeFileStatistics stats)
     {
-        FilesSkipped.Add(new FileSkippedEvent(fileDescr, stats));
+        FilesSkipped.Add(new FileSkippedEvent(fileInfo, stats));
     }
 
     #endregion

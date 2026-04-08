@@ -99,17 +99,11 @@ public class BackupSetView(int setIndex, bool isIncrementalView,
 /// the tree UI structure.
 /// </para>
 /// </summary>
-public class TOCView
+/// <remarks>Creates a new <see cref="TOCView"/> for the given TOC.</remarks>
+public class TOCView(TapeTOC toc)
 {
-    private readonly TapeTOC _toc;
-    private readonly BackupSetView?[] _setViews; // 1-based: [0] unused
-
-    /// <summary>Creates a new <see cref="TOCView"/> for the given TOC.</summary>
-    public TOCView(TapeTOC toc)
-    {
-        _toc = toc;
-        _setViews = new BackupSetView?[toc.Count + 1];
-    }
+    private readonly TapeTOC _toc = toc;
+    private BackupSetView?[] _setViews = new BackupSetView?[toc.Count + 1]; // 1-based: [0] unused
 
     /// <summary>The underlying TOC this view represents.</summary>
     public TapeTOC TOC => _toc;
@@ -171,6 +165,32 @@ public class TOCView
     }
 
     /// <summary>
+    /// Refreshes only the existing views -- to carry over the checkd state
+    /// <para>
+    /// Call when TOC might have been modified, e.g. after a backup
+    /// </summary>
+    /// <param name="showIncrementalSets"></param>
+    public void Refresh(bool showIncrementalSets, bool refreshSets = false)
+    {
+        // Notice TOC size might've changed -> resize _setViews if needed
+        if (_setViews.Length != _toc.Count + 1)
+        {
+            Array.Resize(ref _setViews, _toc.Count + 1);
+        }
+
+        // TOC sets are immutable, hence below is unnecessary, unless a compelling reason
+        if (refreshSets)
+        {
+            // touch up only the existing set views
+            for (int i = 1; i <= _toc.Count; i++)
+            {
+                if (_setViews[i] is not null)
+                    GetOrCreate(i, showIncrementalSets);
+            }
+        }
+    }
+
+    /// <summary>
     /// Collects all checked files across every populated <see cref="BackupSetView"/>.
     /// Views that have never been accessed are skipped.
     /// </summary>
@@ -183,6 +203,21 @@ public class TOCView
                 result.AddRange(view.FilteredFiles.CheckedItems);
         }
         return result;
+    }
+
+    /// <summary>
+    /// Returns the total number of checked files across all populated set views,
+    ///  without materializing the file lists.
+    /// </summary>
+    public int GetTotalCheckedCount()
+    {
+        int total = 0;
+        for (int i = 1; i <= _toc.Count; i++)
+        {
+            if (_setViews[i] is { } view)
+                total += view.FilteredFiles.CheckedCount;
+        }
+        return total;
     }
 
     /// <summary>
@@ -215,18 +250,35 @@ public class TOCView
     }
 
     /// <summary>
-    /// Returns the total number of checked files across all populated set views,
-    ///  without materializing the file lists.
+    /// Applies a checked/unchecked state to files identified by the per-set dictionary.
+    /// A <c>null</c> value means all files in that set; a non-null list targets only
+    /// those specific files. Uses the batch <see cref="FilteredFileList.SetChecked"/>
+    /// overload for efficiency. Skips sets whose views have not been created yet.
     /// </summary>
-    public int GetTotalCheckedCount()
+    public void SetCheckedFilesBySet(Dictionary<int, IReadOnlyList<TapeFileInfo>?> checkedFilesBySet, bool isChecked)
     {
-        int total = 0;
-        for (int i = 1; i <= _toc.Count; i++)
+        // Iterate over populated set views and look up in the dictionary —
+        //  array-indexed access is O(1) and avoids redundant dictionary enumeration
+        //  when only a subset of views exist.
+        for (int i = 1; i < _setViews.Length; i++)
         {
-            if (_setViews[i] is { } view)
-                total += view.FilteredFiles.CheckedCount;
+            if (_setViews[i] is not { } view)
+                continue;
+
+            if (!checkedFilesBySet.TryGetValue(i, out var chfiles))
+                continue;
+
+            var ffiles = view.FilteredFiles;
+            if (chfiles == null)
+            {
+                // null means all files in set
+                ffiles.SetAllChecked(isChecked);
+            }
+            else
+            {
+                ffiles.SetChecked(chfiles, isChecked);
+            }
         }
-        return total;
     }
 
     /* // implemented by below overload with checkedOnly flag

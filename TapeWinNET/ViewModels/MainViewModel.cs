@@ -892,7 +892,10 @@ public partial class MainViewModel : ViewModelBase
             return;
         }
 
-        _tocView = new TOCView(toc);
+        if (_tocView?.TOC == toc)
+            _tocView.Refresh(ShowIncrementalSets);
+        else
+            _tocView = new TOCView(toc);
 
         // Create drive node
         var driveItem = TapeTreeItemViewModel.CreateDriveItem(driveNumber, _tapeService.DeviceName);

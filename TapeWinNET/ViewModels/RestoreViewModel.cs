@@ -22,7 +22,8 @@ public record RestoreRequest(
     bool Incremental,
     string? TargetDirectory,
     bool RecurseSubdirectories,
-    TapeHowToHandleExisting HandleExisting);
+    TapeHowToHandleExisting HandleExisting,
+    bool UncheckProcessedFiles);
 
 /// <summary>
 /// Represents an option in the "Handle existing files" combo box.
@@ -54,6 +55,7 @@ public class RestoreViewModel : ViewModelBase
     private bool _thisVolumeOnly;
     private bool _restoreToOriginal = true;
     private bool _recurseSubdirectories;
+    private bool _uncheckProcessedFiles = true;
     private string _targetDirectory = string.Empty;
     private HandleExistingOption _selectedHandleExisting = HandleExistingOption.All[0]; // Keep Both
     private string _itemsGroupHeader = string.Empty;
@@ -284,6 +286,16 @@ public class RestoreViewModel : ViewModelBase
     /// <summary>Whether the handle-existing combo is enabled (Restore mode only).</summary>
     public bool IsHandleExistingEnabled => _mode == RestoreMode.Restore;
 
+    /// <summary>
+    /// Whether to uncheck successfully processed files after the operation completes.
+    /// This makes it easy to identify unprocessed files and retry the operation.
+    /// </summary>
+    public bool UncheckProcessedFiles
+    {
+        get => _uncheckProcessedFiles;
+        set => SetProperty(ref _uncheckProcessedFiles, value);
+    }
+
     /// <summary>Warning level for the options panel.</summary>
     public WarningLevel WarningLevel => _mode == RestoreMode.Restore ? _selectedHandleExisting.Value switch
     {
@@ -432,7 +444,8 @@ public class RestoreViewModel : ViewModelBase
             Incremental: _incremental,
             TargetDirectory: targetDir,
             RecurseSubdirectories: targetDir != null && _recurseSubdirectories,
-            HandleExisting: _selectedHandleExisting.Value);
+            HandleExisting: _selectedHandleExisting.Value,
+            UncheckProcessedFiles: _uncheckProcessedFiles);
 
         _onStart(request);
     }

@@ -38,6 +38,13 @@ public record RestoreOperationResult(
 
     /// <summary>Whether the operation completed without any issues.</summary>
     public bool IsFullSuccess => FilesFailed == 0 && FilesMissing == 0 && FilesProcessed > 0;
+
+    /// <summary>
+    /// Per-set dictionary of successfully processed files, populated by
+    ///  <see cref="TapeService.GuiRestoreProgressHandler"/>. Used to uncheck
+    ///  processed files after the operation when the user opts in.
+    /// </summary>
+    public Dictionary<int, List<TapeFileInfo>> ProcessedFiles { get; init; } = [];
 }
 
 /// <summary>
@@ -84,7 +91,8 @@ public partial class TapeService
             lock (_lock)
             {
                 // Local log helpers for concise structured logging
-#pragma warning disable CS8321 // some log helpers not used (yet), but might be later
+#pragma warning disable IDE0079 // Remove unnecessary suppression
+#pragma warning disable CS8321 // some log helpers might not be used (yet), but might be later
                 void logOk(string msg)         => logCallback(new LogEntry(WarningLevel.Completed, msg, false, DateTime.Now));
                 void logOkSub(string msg)      => logCallback(new LogEntry(WarningLevel.Completed, msg, true, DateTime.Now));
                 void logInfo(string msg)       => logCallback(new LogEntry(WarningLevel.Info, msg, false, DateTime.Now));
@@ -94,6 +102,7 @@ public partial class TapeService
                 void logFail(string msg)       => logCallback(new LogEntry(WarningLevel.Failed, msg, false, DateTime.Now));
                 void logErr(string msg)        => logCallback(new LogEntry(WarningLevel.Error, msg, false, DateTime.Now));
 #pragma warning restore CS8321
+#pragma warning restore IDE0079 // Remove unnecessary suppression
 
                 if (_drive == null || !_drive.IsMediaLoaded)
                 {
@@ -333,6 +342,7 @@ public partial class TapeService
         public int FilesFailed { get; private set; }
         public int FilesSucceeded { get; private set; }
         public long BytesProcessed { get; private set; }
+        public Dictionary<int, List<TapeFileInfo>> ProcessedFiles { get; private set; } = [];
 
         private bool _abortLogged;
 
@@ -349,7 +359,10 @@ public partial class TapeService
         }
 
         public RestoreOperationResult GenerateResult() =>
-            new(FilesTotal, FilesProcessed, FilesSucceeded, FilesFailed, BytesProcessed);
+            new(FilesTotal, FilesProcessed, FilesSucceeded, FilesFailed, BytesProcessed)
+            {
+                ProcessedFiles = ProcessedFiles
+            };
 
         private void ThrowIfAbortRequested()
         {
@@ -362,6 +375,21 @@ public partial class TapeService
                 }
                 throw new TapeAbortRequestedException("User requested abort");
             }
+        }
+
+        private void AddToProcessed(in TapeFileInfo fileInfo)
+        {
+            var toc = agent.TOC;
+            int setIndex = toc.CurrentSetIndex;
+
+            // Add the file to the processed list for this set
+            if (!ProcessedFiles.TryGetValue(setIndex, out List<TapeFileInfo>? value))
+            {
+                value = [];
+                ProcessedFiles[setIndex] = value;
+            }
+
+            value.Add(fileInfo);
         }
 
         public void BatchStart(int setIndex, in TapeFileStatistics stats)
@@ -380,32 +408,34 @@ public partial class TapeService
             progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
         }
 
-        public bool PreProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
+        public bool PreProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats)
         {
             Sync(stats);
             ThrowIfAbortRequested();
 
-            currentFileCallback(fileDescr.FullName);
+            currentFileCallback(fileInfo.FileDescr.FullName);
             return true;
         }
 
-        public bool PostProcessFile(ref TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
+        public bool PostProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats)
         {
             Sync(stats);
             ThrowIfAbortRequested();
 
-            Log(WarningLevel.Completed, $"{Path.GetFileName(fileDescr.FullName)} ({Helpers.BytesToString(fileDescr.Length)})");
+            Log(WarningLevel.Completed, $"{Path.GetFileName(fileInfo.FileDescr.FullName)} {Helpers.BytesToString(fileInfo.FileDescr.Length)}", sub: true);
             progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
 
+            AddToProcessed(fileInfo);
+
             return true;
         }
 
-        public FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex, in TapeFileStatistics stats)
+        public FileFailedAction OnFileFailed(TapeFileInfo fileInfo, Exception ex, in TapeFileStatistics stats)
         {
             Sync(stats);
             ThrowIfAbortRequested();
 
-            Log(WarningLevel.Failed, $"Failed: {fileDescr.FullName}");
+            Log(WarningLevel.Failed, $"Failed: {fileInfo.FileDescr.FullName}");
             Log(WarningLevel.Failed, $"Error: {ex.Message}", sub: true);
 
             progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
@@ -419,7 +449,7 @@ public partial class TapeService
                 return FileFailedAction.Skip;
             }
 
-            var result = fileErrorCallback(fileDescr.FullName, ex.Message);
+            var result = fileErrorCallback(fileInfo.FileDescr.FullName, ex.Message);
 
             if (result == FileFailedAction.Abort)
             {
@@ -434,12 +464,12 @@ public partial class TapeService
             return result;
         }
 
-        public void OnFileSkipped(TapeFileDescriptor fileDescr, in TapeFileStatistics stats)
+        public void OnFileSkipped(TapeFileInfo fileInfo, in TapeFileStatistics stats)
         {
             Sync(stats);
             ThrowIfAbortRequested();
 
-            Log(WarningLevel.None, $"Skipped: {Path.GetFileName(fileDescr.FullName)}", sub: true);
+            Log(WarningLevel.None, $"Skipped: {Path.GetFileName(fileInfo.FileDescr.FullName)}", sub: true);
         }
     }
 
