@@ -5,6 +5,7 @@ using Windows.Win32.System.SystemServices; // for Helpers
 
 using TapeLibNET;
 using TapeWinNET.Converters;
+using TapeWinNET.Models;
 
 namespace TapeWinNET.Services;
 
@@ -260,21 +261,21 @@ public partial class TapeService
                     // Handle abort
                     if (wasAborted)
                     {
-                        logWarn($"{modeName}: aborting per user request");
-                        logInfoSub($"Before abort {result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(agent.BytesRestored)} processed of total {result.FilesTotal:N0} file(s)");
-                        // here we use agent.BytesRestored instead of result.BytesProcessed since the progressHandler.BatchEnd() might've been not called
+                        logWarn($"{modeName} of total {result.FilesTotal:N0} file(s): aborting per user request");
+                        var bytesProcessed = long.Max(result.BytesProcessed, agent.BytesRestored); // in case BatchEnd wasn't called due to abort
+                        logInfoSub($"Before abort {result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(bytesProcessed)} processed");
                         throw new TapeAbortRequestedException("User requested abort");
                     }
 
                     // Log final results
                     if (result.IsFullSuccess && (success || agent.CanResumeFromAnotherVolume)) // complete success
                     {
-                        logOk($"{modeName} completed successfully");
-                        logOkSub($"{result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(result.BytesProcessed)} processed of total {result.FilesTotal:N0} file(s)");
+                        logOk($"{modeName} of total {result.FilesTotal:N0} file(s) completed successfully");
+                        logOkSub($"{result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(result.BytesProcessed)} processed");
                     }
                     else if (result.FilesFailed > 0) // errors
                     {
-                        logFail($"{modeName} completed with {result.FilesFailed:N0} file(s) failed of total {result.FilesTotal:N0} file(s)");
+                        logFail($"{modeName} of total {result.FilesTotal:N0} file(s) completed with {result.FilesFailed:N0} file(s) failed");
                         if (result.FilesProcessed > 0)
                             logInfoSub($"{result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(result.BytesProcessed)} processed");
                         if (result.FilesMissing > 0)
@@ -282,18 +283,18 @@ public partial class TapeService
                     }
                     else if (result.FilesMissing > 0) // missing files
                     {
-                        logWarn($"{modeName} completed with {result.FilesMissing:N0} file(s) missing of total {result.FilesTotal:N0} file(s)");
+                        logWarn($"{modeName} of total {result.FilesTotal:N0} file(s) completed with {result.FilesMissing:N0} file(s) missing");
                         if (result.FilesProcessed > 0)
                             logInfoSub($"{result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(result.BytesProcessed)} processed");
                     }
                     else if (result.FilesProcessed == 0) // none processed
                     {
-                        logWarn($"{modeName} completed with no files processed of total {result.FilesTotal:N0} file(s)");
+                        logWarn($"{modeName} of total {result.FilesTotal:N0} file(s) completed with no files processed");
                     }
                     else // unknown issues
                     {
-                        logWarn($"{modeName} completed with issues.");
-                        logInfoSub($"{result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(result.BytesProcessed)} processed of total {result.FilesTotal:N0} file(s)");
+                        logWarn($"{modeName} of total {result.FilesTotal:N0} file(s) completed with issues.");
+                        logInfoSub($"{result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(result.BytesProcessed)} processed");
                     }
 
                     Status($"{modeName} complete");
@@ -422,7 +423,7 @@ public partial class TapeService
             Sync(stats);
             ThrowIfAbortRequested();
 
-            Log(WarningLevel.Completed, $"{Path.GetFileName(fileInfo.FileDescr.FullName)} {Helpers.BytesToString(fileInfo.FileDescr.Length)}", sub: true);
+            Log(WarningLevel.Completed, $"'{Path.GetFileName(fileInfo.FileDescr.FullName)}' {Helpers.BytesToString(fileInfo.FileDescr.Length)}", sub: true);
             progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
 
             AddToProcessed(fileInfo);
@@ -435,7 +436,7 @@ public partial class TapeService
             Sync(stats);
             ThrowIfAbortRequested();
 
-            Log(WarningLevel.Failed, $"Failed: {fileInfo.FileDescr.FullName}");
+            Log(WarningLevel.Failed, $"Failed: '{fileInfo.FileDescr.FullName}'");
             Log(WarningLevel.Failed, $"Error: {ex.Message}", sub: true);
 
             progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);

@@ -231,6 +231,21 @@
                           IsCheckable="True" 
                           IsChecked="{Binding ShowIncrementalSets}"/>
             </MenuItem>
+            <MenuItem Header="_Log">
+                <MenuItem Header="_Auto-scroll" 
+                          IsCheckable="True" 
+                          IsChecked="{Binding IsAutoScrollEnabled}"/>
+                <MenuItem Header="Show _Timestamps" 
+                          IsCheckable="True" 
+                          IsChecked="{Binding ShowTimestamps}"/>
+                <Separator/>
+                <MenuItem Header="_Filter Log" Command="{Binding FocusLogFilterCommand}"/>
+                <Separator/>
+                <MenuItem Header="_Save Log to File…" Command="{Binding SaveLogCommand}"/>
+                <MenuItem Header="{Binding MirrorLogMenuHeader}" Command="{Binding MirrorLogCommand}"/>
+                <Separator/>
+                <MenuItem Header="_Clear Log" Command="{Binding ClearLogCommand}"/>
+            </MenuItem>
             <MenuItem Header="_Help">
                 <MenuItem Header="_About" Command="{Binding AboutCommand}"/>
             </MenuItem>
@@ -620,69 +635,175 @@
                       Background="LightGray" />
         
         <!-- Log/Message Pane -->
-        <GroupBox Grid.Row="3" Header="Messages" Margin="4">
-            <ListBox ItemsSource="{Binding LogMessages}"
-                     x:Name="LogListBox"
-                     FontFamily="Consolas"
-                     FontSize="11"
-                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                     HorizontalContentAlignment="Stretch"
-                     Style="{StaticResource VirtualizedListBoxStyle}">
-                <ListBox.ItemTemplate>
-                    <DataTemplate DataType="{x:Type converters:LogEntry}">
-                        <TextBlock Text="{Binding DisplayText}"
-                                   TextTrimming="CharacterEllipsis"
-                                   ToolTip="{Binding DisplayText}">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock">
-                                    <Style.Triggers>
-                                        <!-- Sub-bullets: indent, keep default color -->
-                                        <DataTrigger Binding="{Binding IsSub}" Value="True">
-                                            <Setter Property="Margin" Value="16,0,0,0"/>
-                                        </DataTrigger>
-                                        <!-- Level-based coloring (only for non-sub entries) -->
-                                        <MultiDataTrigger>
-                                            <MultiDataTrigger.Conditions>
-                                                <Condition Binding="{Binding Level}" Value="{x:Static converters:WarningLevel.Error}"/>
-                                                <Condition Binding="{Binding IsSub}" Value="False"/>
-                                            </MultiDataTrigger.Conditions>
-                                            <Setter Property="Foreground" Value="{StaticResource WarningFg.Error}" />
-                                        </MultiDataTrigger>
-                                        <MultiDataTrigger>
-                                            <MultiDataTrigger.Conditions>
-                                                <Condition Binding="{Binding Level}" Value="{x:Static converters:WarningLevel.Failed}"/>
-                                                <Condition Binding="{Binding IsSub}" Value="False"/>
-                                            </MultiDataTrigger.Conditions>
-                                            <Setter Property="Foreground" Value="{StaticResource WarningFg.Failed}" />
-                                        </MultiDataTrigger>
-                                        <MultiDataTrigger>
-                                            <MultiDataTrigger.Conditions>
-                                                <Condition Binding="{Binding Level}" Value="{x:Static converters:WarningLevel.Warning}"/>
-                                                <Condition Binding="{Binding IsSub}" Value="False"/>
-                                            </MultiDataTrigger.Conditions>
-                                            <Setter Property="Foreground" Value="{StaticResource WarningFg.Warning}" />
-                                        </MultiDataTrigger>
-                                        <MultiDataTrigger>
-                                            <MultiDataTrigger.Conditions>
-                                                <Condition Binding="{Binding Level}" Value="{x:Static converters:WarningLevel.Info}"/>
-                                                <Condition Binding="{Binding IsSub}" Value="False"/>
-                                            </MultiDataTrigger.Conditions>
-                                            <Setter Property="Foreground" Value="{StaticResource WarningFg.Info}" />
-                                        </MultiDataTrigger>
-                                        <MultiDataTrigger>
-                                            <MultiDataTrigger.Conditions>
-                                                <Condition Binding="{Binding Level}" Value="{x:Static converters:WarningLevel.Completed}"/>
-                                                <Condition Binding="{Binding IsSub}" Value="False"/>
-                                            </MultiDataTrigger.Conditions>
-                                            <Setter Property="Foreground" Value="{StaticResource WarningFg.Completed}" />
-                                        </MultiDataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
+        <GroupBox Grid.Row="3" Header="{Binding LogPaneHeader}" Margin="4">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition x:Name="LogFilterColumn" Width="80" MinWidth="24"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Log list (binds to ICollectionView for severity filtering) -->
+                <ListBox ItemsSource="{Binding LogMessagesView}"
+                         x:Name="LogListBox"
+                         Grid.Column="0"
+                         FontFamily="Consolas"
+                         FontSize="11"
+                         SelectionMode="Extended"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.ScrollChanged="LogScrollViewer_ScrollChanged"
+                         HorizontalContentAlignment="Stretch"
+                         Style="{StaticResource VirtualizedListBoxStyle}">
+                    <ListBox.CommandBindings>
+                        <CommandBinding Command="ApplicationCommands.Copy"
+                                        Executed="LogCopy_Executed"
+                                        CanExecute="LogCopy_CanExecute"/>
+                    </ListBox.CommandBindings>
+                    <ListBox.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="_Copy" Command="ApplicationCommands.Copy"/>
+                            <Separator/>
+                            <MenuItem Header="_Auto-scroll"
+                                      IsCheckable="True"
+                                      IsChecked="{Binding IsAutoScrollEnabled}"/>
+                            <MenuItem Header="Show _Timestamps"
+                                      IsCheckable="True"
+                                      IsChecked="{Binding ShowTimestamps}"/>
+                            <Separator/>
+                            <MenuItem Header="_Filter Log" Command="{Binding FocusLogFilterCommand}"/>
+                            <Separator/>
+                            <MenuItem Header="_Save Log to File…" Command="{Binding SaveLogCommand}"/>
+                            <MenuItem Header="{Binding MirrorLogMenuHeader}" Command="{Binding MirrorLogCommand}"/>
+                            <Separator/>
+                            <MenuItem Header="_Clear Log" Command="{Binding ClearLogCommand}"/>
+                        </ContextMenu>
+                    </ListBox.ContextMenu>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="{x:Type models:LogEntry}">
+                            <TextBlock TextTrimming="CharacterEllipsis">
+                                <TextBlock.Text>
+                                    <MultiBinding Converter="{x:Static converters:LogDisplayTextConverter.Instance}">
+                                        <Binding/><!-- LogEntry -->
+                                        <Binding Path="DataContext.ShowTimestamps"
+                                                 RelativeSource="{RelativeSource AncestorType=ListBox}"/>
+                                    </MultiBinding>
+                                </TextBlock.Text>
+                                <TextBlock.ToolTip>
+                                    <MultiBinding Converter="{x:Static converters:LogDisplayTextConverter.Instance}">
+                                        <Binding/><!-- LogEntry -->
+                                        <Binding Path="DataContext.ShowTimestamps"
+                                                 RelativeSource="{RelativeSource AncestorType=ListBox}"/>
+                                    </MultiBinding>
+                                </TextBlock.ToolTip>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Style.Triggers>
+                                            <!-- Sub-bullets: indent, keep default color -->
+                                            <DataTrigger Binding="{Binding IsSub}" Value="True">
+                                                <Setter Property="Margin" Value="16,0,0,0"/>
+                                            </DataTrigger>
+                                            <!-- Level-based coloring (only for non-sub entries) -->
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding Level}" Value="{x:Static models:WarningLevel.Error}"/>
+                                                    <Condition Binding="{Binding IsSub}" Value="False"/>
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Foreground" Value="{StaticResource WarningFg.Error}" />
+                                            </MultiDataTrigger>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding Level}" Value="{x:Static models:WarningLevel.Failed}"/>
+                                                    <Condition Binding="{Binding IsSub}" Value="False"/>
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Foreground" Value="{StaticResource WarningFg.Failed}" />
+                                            </MultiDataTrigger>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding Level}" Value="{x:Static models:WarningLevel.Warning}"/>
+                                                    <Condition Binding="{Binding IsSub}" Value="False"/>
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Foreground" Value="{StaticResource WarningFg.Warning}" />
+                                            </MultiDataTrigger>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding Level}" Value="{x:Static models:WarningLevel.Info}"/>
+                                                    <Condition Binding="{Binding IsSub}" Value="False"/>
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Foreground" Value="{StaticResource WarningFg.Info}" />
+                                            </MultiDataTrigger>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding Level}" Value="{x:Static models:WarningLevel.Completed}"/>
+                                                    <Condition Binding="{Binding IsSub}" Value="False"/>
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Foreground" Value="{StaticResource WarningFg.Completed}" />
+                                            </MultiDataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <!-- Splitter between log list and filter sub-pane -->
+                <GridSplitter Grid.Column="1" Width="4"
+                              HorizontalAlignment="Center"
+                              VerticalAlignment="Stretch"
+                              Background="LightGray"/>
+
+                <!-- Severity filter checkboxes sub-pane -->
+                <StackPanel Grid.Column="2" Margin="4,2,2,2"
+                            x:Name="LogFilterPanel">
+                    <TextBlock Text="Log Filter" Margin="0,0,0,4"/>
+                    <!-- Info (covers None + Info) — blue checkbox -->
+                    <CheckBox IsChecked="{Binding ShowLogInfo}" Margin="0,1"
+                              x:Name="LogFilterInfoCheckBox">
+                        <CheckBox.Background>
+                            <!-- Notice: use the same colors as in WarningBg.Info etc. brushes, s. App.xaml -->
+                            <SolidColorBrush Color="#FFCCE5FF"/>
+                        </CheckBox.Background>
+                        <CheckBox.Content>
+                            <TextBlock Text="ℹ Info" FontSize="11"
+                                       Foreground="{StaticResource WarningFg.Info}"/>
+                        </CheckBox.Content>
+                    </CheckBox>
+                    <!-- Completed — green checkbox -->
+                    <CheckBox IsChecked="{Binding ShowLogCompleted}" Margin="0,1">
+                        <CheckBox.Background>
+                            <SolidColorBrush Color="#FFCCFFCC"/>
+                        </CheckBox.Background>
+                        <CheckBox.Content>
+                            <TextBlock Text="✓ Completed" FontSize="11"
+                                       Foreground="{StaticResource WarningFg.Completed}"/>
+                        </CheckBox.Content>
+                    </CheckBox>
+                    <!-- Warning — orange checkbox -->
+                    <CheckBox IsChecked="{Binding ShowLogWarning}" Margin="0,1">
+                        <CheckBox.Background>
+                            <SolidColorBrush Color="#FFFFF0CC"/>
+                        </CheckBox.Background>
+                        <CheckBox.Content>
+                            <TextBlock Text="⚠ Warning" FontSize="11"
+                                       Foreground="{StaticResource WarningFg.Warning}"/>
+                        </CheckBox.Content>
+                    </CheckBox>
+                    <!-- Error (covers Error + Failed) — red checkbox -->
+                    <CheckBox IsChecked="{Binding ShowLogError}" Margin="0,1">
+                        <CheckBox.Background>
+                            <SolidColorBrush Color="#FFFFCCCC"/>
+                        </CheckBox.Background>
+                        <CheckBox.Content>
+                            <TextBlock Text="⚠ Error" FontSize="11"
+                                       Foreground="{StaticResource WarningFg.Error}"/>
+                        </CheckBox.Content>
+                    </CheckBox>
+                    <!-- Sub-detail entries (IsSub) — no colored background -->
+                    <Separator Margin="0,3,0,2"/>
+                    <CheckBox IsChecked="{Binding ShowLogDetails}" Margin="0,1"
+                              Content="Details" FontSize="11"/>
+                </StackPanel>
+            </Grid>
         </GroupBox>
         
         <!-- Status Bar -->

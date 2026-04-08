@@ -4,6 +4,7 @@ using System.Windows.Input;
 using Windows.Win32.System.SystemServices; // for Helpers
 
 using TapeWinNET.Converters;
+using TapeWinNET.Models;
 
 using TapeLibNET;
 using TapeLibNET.Virtual;
@@ -251,15 +252,7 @@ public partial class MainViewModel
                         });
                     },
                     // Log message callback
-                    entry =>
-                    {
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            LogMessages.Add(entry);
-                            while (LogMessages.Count > 1000)
-                                LogMessages.RemoveAt(0);
-                        });
-                    },
+                    entry => AddLog(entry),
                     // File error callback - returns FileFailedAction
                     (filePath, error) =>
                     {

@@ -427,7 +427,7 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 ## What's Next (Planned)
 
 - `TapeWinNET`: Additional UI polish and workflow refinements
-- `TapeLibNET`: Polishing, validation, & hardening of the core functionality
+- `TapeLibNET`: Polishing, validation, & hardening of the core functionality, while using and expanding `TapeLibNET.Tests`
 - `TapeLibNET`: Proper commenting of the code, esp. public API and complex logic areas
 - `TapeConNET`: Service updates to keep in sync with library changes. Consider switching to classes from the top-level program structure.
 

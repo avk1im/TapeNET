@@ -86,6 +86,9 @@ public partial class MainViewModel : ViewModelBase
         ExitCommand = new RelayCommand(Exit);
         AboutCommand = new RelayCommand(ShowAbout);
 
+        // Initialize log commands (from MainViewModel.Log.cs)
+        InitializeLogCommands();
+
         // Initialize backup commands (from MainViewModel.Backup.cs)
         InitializeBackupCommands();
 
@@ -313,7 +316,7 @@ public partial class MainViewModel : ViewModelBase
     }
 
     public ObservableCollection<BackupSetListItem> BackupSetList { get; } = [];
-    public ObservableCollection<LogEntry> LogMessages { get; } = [];
+    // LogMessages is in MainViewModel.Log.cs
 
     /// <summary>Menu items for the Recent Virtual Drives submenu.</summary>
     public ObservableCollection<DriveMenuItem> RecentVirtualDriveMenuItems { get; } = [];
@@ -473,6 +476,8 @@ public partial class MainViewModel : ViewModelBase
 
     public void Cleanup()
     {
+        _logFlushTimer?.Stop();
+        StopMirroring();
         _tapeService.Dispose();
     }
 
@@ -1317,24 +1322,7 @@ public partial class MainViewModel : ViewModelBase
 
     #endregion
 
-    #region Private Methods — Logging
-
-    private void AddLog(LogEntry entry)
-    {
-        Application.Current.Dispatcher.Invoke(() =>
-        {
-            LogMessages.Add(entry);
-            while (LogMessages.Count > 1000)
-                LogMessages.RemoveAt(0);
-        });
-    }
-
-    private void LogInfo(string msg)    => AddLog(new LogEntry(WarningLevel.Info, msg, false, DateTime.Now));
-    private void LogOk(string msg)      => AddLog(new LogEntry(WarningLevel.Completed, msg, false, DateTime.Now));
-    private void LogWarn(string msg)    => AddLog(new LogEntry(WarningLevel.Warning, msg, false, DateTime.Now));
-    private void LogErr(string msg)     => AddLog(new LogEntry(WarningLevel.Error, msg, false, DateTime.Now));
-
-    #endregion
+    // Logging region is in MainViewModel.Log.cs
 
     #region Private Methods - Event Handlers
 
@@ -1351,19 +1339,7 @@ public partial class MainViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsIoSpeedEnabled));
     }
 
-    private void OnLogMessageReceived(object? sender, LogEntry entry)
-    {
-        Application.Current.Dispatcher.Invoke(() =>
-        {
-            LogMessages.Add(entry);
-
-            // Keep log size manageable
-            while (LogMessages.Count > 1000)
-            {
-                LogMessages.RemoveAt(0);
-            }
-        });
-    }
+    // OnLogMessageReceived is in MainViewModel.Log.cs
 
     private void OnStatusChanged(object? sender, string status)
     {

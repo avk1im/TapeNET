@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging.Abstractions; // for NullLoggerFactory
 using TapeLibNET;
 using TapeLibNET.Virtual;
 using TapeWinNET.Converters;
+using TapeWinNET.Models;
 
 namespace TapeWinNET.Services;
 

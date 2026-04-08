@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:TapeWinNET"
              xmlns:converters="clr-namespace:TapeWinNET.Converters"
+             xmlns:models="clr-namespace:TapeWinNET.Models"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
         <ResourceDictionary>
@@ -32,8 +33,8 @@
             <SolidColorBrush x:Key="WarningBr.Warning"   Color="#FFCC9900"/>
             <SolidColorBrush x:Key="WarningBg.Failed"    Color="#FFFFDDD0"/>
             <SolidColorBrush x:Key="WarningBr.Failed"    Color="#FFCC4400"/>
-            <SolidColorBrush x:Key="WarningBg.Info"       Color="#FFCCE5FF"/>
-            <SolidColorBrush x:Key="WarningBr.Info"       Color="#FF3399CC"/>
+            <SolidColorBrush x:Key="WarningBg.Info"      Color="#FFCCE5FF"/>
+            <SolidColorBrush x:Key="WarningBr.Info"      Color="#FF3399CC"/>
             <SolidColorBrush x:Key="WarningBg.Completed" Color="#FFCCFFCC"/>
             <SolidColorBrush x:Key="WarningBr.Completed" Color="#FF00CC00"/>
 
@@ -41,7 +42,7 @@
             <SolidColorBrush x:Key="WarningFg.Error"     Color="Red"/>
             <SolidColorBrush x:Key="WarningFg.Warning"   Color="Orange"/>
             <SolidColorBrush x:Key="WarningFg.Failed"    Color="#FFCC4400"/>
-            <SolidColorBrush x:Key="WarningFg.Info"       Color="Blue"/>
+            <SolidColorBrush x:Key="WarningFg.Info"      Color="Blue"/>
             <SolidColorBrush x:Key="WarningFg.Completed" Color="Green"/>
 
             <!-- Shared warning panel style for dialog windows.
@@ -57,27 +58,27 @@
                 <Setter Property="Background" Value="Transparent"/>
                 <Setter Property="BorderBrush" Value="Transparent"/>
                 <Style.Triggers>
-                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static converters:WarningLevel.Error}">
+                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static models:WarningLevel.Error}">
                         <Setter Property="Background" Value="{StaticResource WarningBg.Error}"/>
                         <Setter Property="BorderBrush" Value="{StaticResource WarningBr.Error}"/>
                         <Setter Property="Visibility" Value="Visible"/>
                     </DataTrigger>
-                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static converters:WarningLevel.Warning}">
+                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static models:WarningLevel.Warning}">
                         <Setter Property="Background" Value="{StaticResource WarningBg.Warning}"/>
                         <Setter Property="BorderBrush" Value="{StaticResource WarningBr.Warning}"/>
                         <Setter Property="Visibility" Value="Visible"/>
                     </DataTrigger>
-                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static converters:WarningLevel.Failed}">
+                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static models:WarningLevel.Failed}">
                         <Setter Property="Background" Value="{StaticResource WarningBg.Failed}"/>
                         <Setter Property="BorderBrush" Value="{StaticResource WarningBr.Failed}"/>
                         <Setter Property="Visibility" Value="Visible"/>
                     </DataTrigger>
-                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static converters:WarningLevel.Info}">
+                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static models:WarningLevel.Info}">
                         <Setter Property="Background" Value="{StaticResource WarningBg.Info}"/>
                         <Setter Property="BorderBrush" Value="{StaticResource WarningBr.Info}"/>
                         <Setter Property="Visibility" Value="Visible"/>
                     </DataTrigger>
-                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static converters:WarningLevel.Completed}">
+                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static models:WarningLevel.Completed}">
                         <Setter Property="Background" Value="{StaticResource WarningBg.Completed}"/>
                         <Setter Property="BorderBrush" Value="{StaticResource WarningBr.Completed}"/>
                         <Setter Property="Visibility" Value="Visible"/>

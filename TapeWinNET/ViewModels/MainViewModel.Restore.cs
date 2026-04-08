@@ -588,15 +588,7 @@ public partial class MainViewModel
                         });
                     },
                     // Log message callback
-                    entry =>
-                    {
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            LogMessages.Add(entry);
-                            while (LogMessages.Count > 1000)
-                                LogMessages.RemoveAt(0);
-                        });
-                    },
+                    entry => AddLog(entry),
                     // File error callback
                     (filePath, error) =>
                     {

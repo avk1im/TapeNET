@@ -42,6 +42,21 @@ public class AppSettings
 
     #endregion
 
+    #region Log Pane
+
+    public bool ShowTimestamps { get; set; } = true;
+
+    // Severity filter checkboxes (all visible by default)
+    public bool ShowLogInfo { get; set; } = true;
+    public bool ShowLogCompleted { get; set; } = true;
+    public bool ShowLogWarning { get; set; } = true;
+    public bool ShowLogError { get; set; } = true;
+    public bool ShowLogDetails { get; set; } = true;
+
+    public double? LogFilterPaneWidth { get; set; }
+
+    #endregion
+
     #region Stream-level API
 
     public void Save(Stream stream)

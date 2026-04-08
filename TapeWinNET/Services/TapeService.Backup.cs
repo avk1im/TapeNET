@@ -5,6 +5,7 @@ using Windows.Win32.System.SystemServices; // for Helpers
 
 using TapeLibNET;
 using TapeWinNET.Converters;
+using TapeWinNET.Models;
 
 namespace TapeWinNET.Services;
 

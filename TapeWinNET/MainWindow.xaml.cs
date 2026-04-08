@@ -5,6 +5,8 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
+using Microsoft.Win32;
 using TapeWinNET.Utils;
 using TapeWinNET.ViewModels;
 using TapeWinNET.Models;
@@ -24,6 +26,10 @@ namespace TapeWinNET
         private Point _dragStartPoint;
         private bool _dragStartValid;
 
+        // True while a programmatic ScrollIntoView is in progress, so that
+        //  the ScrollChanged handler ignores the resulting scroll event.
+        private bool _suppressScrollCheck;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -36,22 +42,56 @@ namespace TapeWinNET
             // Wire filter pane to ViewModel via direct mode
             FileFilterPaneControl.FilterStateChanged = _viewModel.OnFilterStateChanged;
 
-            // Subscribe to collection changes to auto-scroll log
-            _viewModel.LogMessages.CollectionChanged += (s, e) =>
+            // Focus the filter sub-pane when the "Filter Log" command is invoked
+            _viewModel.RequestFocusLogFilter += () =>
             {
-                if (e.NewItems != null && LogListBox.Items.Count > 0)
+                Dispatcher.BeginInvoke(() =>
                 {
-                    // Instead of: LogListBox.ScrollIntoView(LogListBox.Items[^1]);
-                    // defer scroll to avoid conflicts with ItemContainerGenerator during collection changes
-                    Dispatcher.BeginInvoke(() =>
-                    {
-                        if (LogListBox.Items.Count > 0)
-                        {
-                            LogListBox.ScrollIntoView(LogListBox.Items[^1]);
-                        }
-                    });
+                    // Ensure the filter column is visible (expand if collapsed)
+                    if (LogFilterColumn.Width.Value < 40)
+                        LogFilterColumn.Width = new GridLength(80);
 
-                }
+                    LogFilterInfoCheckBox.Focus();
+
+                    // Pulse each checkbox background from its pastel toward the vivid
+                    //  label foreground color and back, to draw the user's eye
+                    foreach (var cb in LogFilterPanel.Children.OfType<CheckBox>())
+                    {
+                        if (cb.Background is SolidColorBrush bgBrush
+                            && cb.Content is TextBlock { Foreground: SolidColorBrush fgBrush })
+                        {
+                            var pulse = new ColorAnimation(fgBrush.Color, TimeSpan.FromMilliseconds(300))
+                            {
+                                AutoReverse = true,
+                                RepeatBehavior = new RepeatBehavior(2),
+                                FillBehavior = FillBehavior.Stop
+                            };
+                            bgBrush.BeginAnimation(SolidColorBrush.ColorProperty, pulse);
+                        }
+                    }
+                });
+            };
+
+            // Save Log / Mirror Log: ViewModel asks for a file path, View shows dialog
+            _viewModel.RequestSaveLogFilePath += () => ShowLogSaveDialog("Save Log");
+            _viewModel.RequestMirrorLogFilePath += () => ShowLogSaveDialog("Mirror Log");
+
+            // Auto-scroll: the ViewModel raises RequestAutoScroll after each batch flush
+            //  when the user hasn't scrolled away from the bottom.
+            _viewModel.RequestAutoScroll += () =>
+            {
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (LogListBox.Items.Count > 0)
+                    {
+                        _suppressScrollCheck = true;
+                        LogListBox.ScrollIntoView(LogListBox.Items[^1]);
+                        // Clear after layout / scroll events have been processed
+                        Dispatcher.BeginInvoke(
+                            () => _suppressScrollCheck = false,
+                            System.Windows.Threading.DispatcherPriority.ContextIdle);
+                    }
+                });
             };
 
             Loaded += MainWindow_Loaded;
@@ -218,6 +258,77 @@ namespace TapeWinNET
         }
 
 
+        #region Log Pane — Auto-scroll Lock
+
+        /// <summary>
+        /// Detects whether the user has scrolled away from the bottom of the log pane.
+        /// Ignores programmatic scrolls (flagged via <see cref="_suppressScrollCheck"/>)
+        /// and pure extent changes (items added without scroll movement).
+        /// </summary>
+        private void LogScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
+        {
+            // Ignore scroll events triggered by our own ScrollIntoView
+            if (_suppressScrollCheck)
+                return;
+
+            // Ignore pure extent changes (items added/removed) that didn't
+            //  move the viewport — these fire on every ObservableCollection.Add
+            if (e.VerticalChange == 0 && e.ExtentHeightChange != 0)
+                return;
+
+            double scrollableHeight = e.ExtentHeight - e.ViewportHeight;
+            bool atBottom = scrollableHeight <= 0
+                || e.VerticalOffset >= scrollableHeight - 2;
+
+            _viewModel.IsAutoScrollEnabled = atBottom;
+        }
+
+        #endregion
+
+        #region Log Pane — Save / Mirror to File
+
+        /// <summary>
+        /// Shows a SaveFileDialog for log file output and returns the selected path,
+        /// or null if the user cancelled.
+        /// </summary>
+        private string? ShowLogSaveDialog(string title)
+        {
+            var dlg = new SaveFileDialog
+            {
+                Title = title,
+                Filter = "Log files (*.log)|*.log|Text files (*.txt)|*.txt|CSV files (*.csv)|*.csv|All files (*.*)|*.*",
+                DefaultExt = ".log",
+                FileName = $"TapeNET-{DateTime.Now:yyyyMMdd-HHmmss}.log"
+            };
+
+            return dlg.ShowDialog(this) == true ? dlg.FileName : null;
+        }
+
+        #endregion
+
+        #region Log Pane — Copy
+
+        private void LogCopy_CanExecute(object sender, CanExecuteRoutedEventArgs e)
+            => e.CanExecute = LogListBox.SelectedItems.Count > 0;
+
+        /// <summary>
+        /// Copies the selected log entries to the clipboard as newline-separated text.
+        /// Respects the current <see cref="MainViewModel.ShowTimestamps"/> setting.
+        /// </summary>
+        private void LogCopy_Executed(object sender, ExecutedRoutedEventArgs e)
+        {
+            bool showTs = _viewModel.ShowTimestamps;
+            var text = string.Join(Environment.NewLine,
+                LogListBox.SelectedItems
+                    .OfType<LogEntry>()
+                    .Select(entry => entry.FormatDisplayText(showTs)));
+
+            if (!string.IsNullOrEmpty(text))
+                Clipboard.SetDataObject(text);
+        }
+
+        #endregion
+
         #region Window State Persistence
 
         private void ApplySettings(AppSettings settings)
@@ -268,6 +379,17 @@ namespace TapeWinNET
                 h = Math.Clamp(h, PropertiesPaneRow.MinHeight, PropertiesPaneRow.MaxHeight);
                 PropertiesPaneRow.Height = new GridLength(h);
             }
+
+            // Restore log pane settings
+            _viewModel.ShowTimestamps = settings.ShowTimestamps;
+            _viewModel.ShowLogInfo = settings.ShowLogInfo;
+            _viewModel.ShowLogCompleted = settings.ShowLogCompleted;
+            _viewModel.ShowLogWarning = settings.ShowLogWarning;
+            _viewModel.ShowLogError = settings.ShowLogError;
+            _viewModel.ShowLogDetails = settings.ShowLogDetails;
+
+            if (settings.LogFilterPaneWidth.HasValue && settings.LogFilterPaneWidth.Value >= LogFilterColumn.MinWidth)
+                LogFilterColumn.Width = new GridLength(settings.LogFilterPaneWidth.Value);
         }
 
         private void SaveSettings()
@@ -296,6 +418,15 @@ namespace TapeWinNET
             settings.TreePaneWidth = TreePaneColumn.ActualWidth;
             settings.LogPaneHeight = LogPaneRow.ActualHeight;
             settings.PropertiesPaneHeight = PropertiesPaneRow.ActualHeight;
+
+            // Save log pane settings
+            settings.ShowTimestamps = _viewModel.ShowTimestamps;
+            settings.ShowLogInfo = _viewModel.ShowLogInfo;
+            settings.ShowLogCompleted = _viewModel.ShowLogCompleted;
+            settings.ShowLogWarning = _viewModel.ShowLogWarning;
+            settings.ShowLogError = _viewModel.ShowLogError;
+            settings.ShowLogDetails = _viewModel.ShowLogDetails;
+            settings.LogFilterPaneWidth = LogFilterColumn.ActualWidth;
 
             // Let the ViewModel save its own state (last drive info)
             _viewModel.SaveSettings();

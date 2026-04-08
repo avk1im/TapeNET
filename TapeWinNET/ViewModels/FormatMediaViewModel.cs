@@ -1,6 +1,7 @@
 using System.Windows.Input;
 
 using TapeWinNET.Converters;
+using TapeWinNET.Models;
 using TapeWinNET.Services;
 
 namespace TapeWinNET.ViewModels;

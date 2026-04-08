@@ -5,6 +5,7 @@ using Microsoft.Win32;
 
 using TapeLibNET.Virtual;
 using TapeWinNET.Converters;
+using TapeWinNET.Models;
 using TapeWinNET.Services;
 
 namespace TapeWinNET.ViewModels;
