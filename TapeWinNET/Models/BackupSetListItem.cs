@@ -11,27 +11,20 @@ namespace TapeWinNET.Models;
 ///  Filter and checked counts are externally managed and pushed in via
 ///  <see cref="FilteredFileCount"/> and <see cref="CheckedFileCount"/>.
 /// </summary>
-public class BackupSetListItem : INotifyPropertyChanged
+public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bool isOnCurrentVolume)
+    : INotifyPropertyChanged
 {
     private static BitmapSource? _backupSetIcon;
     private static bool _iconLoaded;
 
-    private readonly TapeSetTOC _setTOC;
-    private readonly int _setIndex;
-    private readonly int _altIndex;
-    private readonly bool _isOnCurrentVolume;
+    private readonly TapeSetTOC _setTOC = setTOC;
+    private readonly int _setIndex = setIndex;
+    private readonly int _altIndex = altIndex;
+    private readonly bool _isOnCurrentVolume = isOnCurrentVolume;
 
     static BackupSetListItem()
     {
         LoadIcon();
-    }
-
-    public BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bool isOnCurrentVolume)
-    {
-        _setTOC = setTOC;
-        _setIndex = setIndex;
-        _altIndex = altIndex;
-        _isOnCurrentVolume = isOnCurrentVolume;
     }
 
     private static void LoadIcon()

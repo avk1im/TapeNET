@@ -96,7 +96,8 @@ public partial class MainViewModel
     /// <para>
     /// Priority: (1) checked files across sets → "N files selected",
     ///  (2) tree/list selected set → "set #std | alt",
-    ///  (3) null.
+    ///  (3) media loaded with sets → "all sets",
+    ///  (4) null.
     /// </para>
     /// </summary>
     private string? GetSelectionSummaryText()
@@ -107,16 +108,15 @@ public partial class MainViewModel
             return $"{checkedCount:N0} files selected";
 
         // (2) Tree or list selected backup set (no per-file selection)
-        if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet
-            && _selectedTreeItem.SetIndex is int treeIdx)
-        {
-            var item = BackupSetList.FirstOrDefault(b => b.SetIndex == treeIdx);
-            if (item != null)
-                return $"set #{item.IndexDisplay}";
-        }
+        if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet)
+            return $"set #{_selectedTreeItem.IndexDisplay}";
 
         if (SelectedBackupSet is { } selSet)
             return $"set #{selSet.IndexDisplay}";
+
+        // (3) No specific selection — all sets when media is loaded
+        if (_tapeService.TOC is { Count: > 0 })
+            return "all sets";
 
         return null;
     }
@@ -159,14 +159,19 @@ public partial class MainViewModel
         !IsBusy && _tapeService.IsMediaLoaded && _tapeService.TOC is { Count: > 0 };
 
     /// <summary>
-    /// Checks all backup sets (all files) and starts a restore operation.
+    /// Creates ad-hoc items for all backup sets and opens the RestoreWindow.
     ///  Available from the Media context menu for quick "restore everything" action.
+    ///  Does not alter the check state of existing <see cref="BackupSetListItem"/>s,
+    ///  so cancelling the dialog leaves the UI unchanged.
     /// </summary>
     private void StartRestoreAllSets()
     {
-        // Check all sets (propagates to FilteredFileLists)
-        AreAllBackupSetsChecked = true;
-        StartRestore(RestoreMode.Restore);
+        var toc = _tapeService.TOC;
+        if (toc == null || _tocView == null || toc.Count == 0)
+            return;
+
+        var setItems = CreateAdHocSetItems(); // for all sets
+        OpenRestoreWindow(RestoreMode.Restore, setItems, targetDirectory: null);
     }
 
     private void StartRestore(RestoreMode mode)
@@ -178,6 +183,7 @@ public partial class MainViewModel
     /// Unified entry point for restore/validate/verify operations.
     /// Builds the checked-files-by-set dictionary from MainWindow checkmarks
     /// (single source of truth), resolves display items, and opens RestoreWindow.
+    /// Falls back to all sets when nothing specific is selected.
     /// </summary>
     private void StartRestore(RestoreMode mode, string? targetDirectory)
     {
@@ -192,25 +198,24 @@ public partial class MainViewModel
         if (setItems.Count == 0)
         {
             var fallbackIndexes = SelectedSetIndexes;
-            if (fallbackIndexes.Count == 0)
-                return;
-            foreach (var idx in fallbackIndexes)
-            {
-                // Set wasn't in the BackupSetList (e.g. tree-selected set); create ad-hoc item
-                var setTOC = toc[idx];
-                var altIdx = toc.SetIndexToAlt(idx);
-                var item = new BackupSetListItem(setTOC, idx, altIdx, setTOC.Volume == toc.Volume)
-                {
-                    IsCheckedForRestore = true, // select all fiels
-                    CheckedFileCount = setTOC.Count
-                };
-                setItems.Add(item);            
-            }
+            // If nothing explicitly selected, fall back to all sets
+            setItems = CreateAdHocSetItems(fallbackIndexes.Count > 0 ? fallbackIndexes : null);
         }
 
         if (setItems.Count == 0)
             return;
 
+        OpenRestoreWindow(mode, setItems, targetDirectory);
+    }
+
+    /// <summary>
+    /// Creates the <see cref="RestoreViewModel"/>, applies optional pre-fill, and shows
+    ///  the <see cref="RestoreWindow"/> dialog. Shared by <see cref="StartRestore"/> and
+    ///  <see cref="StartRestoreAllSets"/>.
+    /// </summary>
+    private void OpenRestoreWindow(RestoreMode mode, List<BackupSetListItem> setItems,
+        string? targetDirectory)
+    {
         var viewModel = new RestoreViewModel(
             mode,
             setItems,
@@ -242,6 +247,37 @@ public partial class MainViewModel
             Owner = Application.Current.MainWindow
         };
         window.ShowDialog();
+    }
+
+    /// <summary>
+    /// Creates ad-hoc <see cref="BackupSetListItem"/>s for the given set indexes,
+    ///  marked as fully checked for restore. Used when the user has not explicitly
+    ///  checked individual files (e.g. tree-selected set, or "all sets" fallback).
+    /// </summary>
+    /// <param name="setIndexes">
+    /// The 1-based set indexes to create items for. If null, creates for all sets in the TOC.
+    /// </param>
+    private List<BackupSetListItem> CreateAdHocSetItems(List<int>? setIndexes = null)
+    {
+        var toc = _tapeService.TOC;
+        if (toc == null)
+            return [];
+
+        if (setIndexes == null)
+            setIndexes = [.. Enumerable.Range(1, toc.Count)];
+
+        var items = new List<BackupSetListItem>(setIndexes.Count);
+        foreach (var idx in setIndexes)
+        {
+            var setTOC = toc[idx];
+            var altIdx = toc.SetIndexToAlt(idx);
+            items.Add(new BackupSetListItem(setTOC, idx, altIdx, setTOC.Volume == toc.Volume)
+            {
+                IsCheckedForRestore = true,
+                CheckedFileCount = setTOC.Count
+            });
+        }
+        return items;
     }
 
     /// <summary>
@@ -285,11 +321,13 @@ public partial class MainViewModel
 
     /// <summary>
     /// Whether restore/validate/verify commands should be enabled.
-    /// Requires: not busy, media loaded, TOC available, and at least one backup set selected.
+    /// Requires: not busy, media loaded, TOC available with at least one set.
+    ///  When nothing specific is selected, "all sets" is the implicit target.
     /// </summary>
     private bool CanStartRestore =>
-        !IsBusy && _tapeService.IsMediaLoaded && _tapeService.TOC != null
-        && (SelectedSetIndexes.Count > 0 || HasFilesCheckedForRestore);
+        CanRestoreAllSets
+        || (!IsBusy && _tapeService.IsMediaLoaded && _tapeService.TOC != null
+            && (SelectedSetIndexes.Count > 0 || HasFilesCheckedForRestore));
 
     /// <summary>
     /// Gets or sets whether all backup sets are checked for restore.

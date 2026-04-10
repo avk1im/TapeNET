@@ -361,27 +361,41 @@ Both GUI progress handlers implement `ITapeFileNotifiable` and follow the same p
 
 ### Structured logging — LogEntry + WarningLevel
 
+`WarningLevel`, `LogEntry`, and `WarningLevelHelper` live in `Models/LogEntry.cs`:
+
 ```csharp
 public enum WarningLevel { None, Completed, Info, Warning, Failed, Error }
 
 public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime Timestamp)
 {
-    public string DisplayText { get; }  // "[HH:mm:ss] ⚠ Message" or "[HH:mm:ss] Message" (sub/None)
+    public string DisplayText { get; }              // always with timestamp
+    public string FormatDisplayText(bool showTimestamp); // shared by converter + clipboard copy
 }
 ```
 
 - Icons come from `WarningLevelHelper.GetIcon(Level)`: ✓ ℹ ⚠ ✗ ⚠ (per level)
 - Non-sub entries show icon + level-based foreground color
 - Sub entries show no icon, default color, 16px left margin indent
-- `LogMessages` is `ObservableCollection<LogEntry>` on `MainViewModel`
 - Service-level `Log`/`LogInfo`/`LogOk`/`LogWarn`/`LogErr` helpers in `TapeService.cs` emit via the `LogMessageReceived` event
-- ViewModel-level `AddLog`/`LogInfo`/`LogOk`/`LogWarn`/`LogErr` helpers dispatch to the UI thread
 - Local log helpers (`logOk`, `logInfo`, `logFail`, `logErr`, etc.) are defined at the top of `ExecuteBackupAsync`/`ExecuteRestoreAsync` with `#pragma warning disable CS8321` for unused variants
+
+**`MainViewModel.Log.cs`** — dedicated partial class owning all log pane state and behavior:
+
+- **Batched ingestion** — `ConcurrentQueue<LogEntry>` + `DispatcherTimer` (150 ms) flushes buffered entries to the UI in batches. `AddLog` / `LogInfo` / `LogOk` / `LogWarn` / `LogErr` helpers enqueue from any thread.
+- **Smart pruning** — 10K cap, 8K target. Priority-based removal: None → Info → Completed → Warning → Failed → Error, preserving high-severity entries as long as possible.
+- **Severity filtering** — `ICollectionView` with filter predicate driven by four checkboxes (`ShowLogInfo`, `ShowLogCompleted`, `ShowLogWarning`, `ShowLogError`) plus a `ShowLogDetails` toggle. Filter sub-pane with colored checkboxes using `WarningFg.*` brushes. `LogPaneHeader` shows "visible / total" when filtered.
+- **Timestamp toggle** — `ShowTimestamps` controls display via `LogDisplayTextConverter` (persisted).
+- **Auto-scroll lock** — `IsAutoScrollEnabled` + `RequestAutoScroll` event. `_suppressScrollCheck` flag distinguishes programmatic `ScrollIntoView` from user scrolls; cleared at `DispatcherPriority.ContextIdle`.
+- **Save Log to File** — writes all `LogMessages` to a text or CSV file (UTF-8 BOM). Format detected by extension.
+- **Mirror Log to File** — toggle command: opens a `StreamWriter` (AutoFlush) and writes each flushed entry in real time. `MirrorLogMenuHeader` swaps between "Mirror Log to File…" / "Stop Mirroring Log". `LogPaneHeader` appends `[mirroring to 'file']` when active. CSV mode writes header row; text mode writes session banners.
+- **Copy** — `ApplicationCommands.Copy` on the `ListBox` with `SelectionMode="Extended"`. Copies selected entries via `FormatDisplayText(showTimestamp)`, joined by newlines.
+- **File output formats** — `.log`/`.txt` use `FormatLogLine` (`[HH:mm:ss] [LVL] message` with ASCII-safe tags), `.csv` uses `FormatLogCsv` (RFC 4180: `Timestamp,Level,Detail,Message`). Format shared by Save and Mirror.
+- **Persisted state** — `ShowTimestamps`, four filter bools, `LogFilterPaneWidth` saved in `AppSettings`.
 
 ### UI conventions
 
 - **App.xaml resources**: Centralized `WarningBg.*`, `WarningBr.*`, `WarningFg.*` brushes for all warning levels. `WarningPanelStyle` for dialog warning panels with `DataTrigger`s on `WarningLevel`.
-- **Log pane**: `ListBox` with Consolas 11pt, `DataTemplate` typed to `LogEntry`, `MultiDataTrigger` for level-based coloring (only non-sub entries), `DataTrigger` for sub-entry indent.
+- **Log pane**: `ListBox` with Consolas 11pt, `SelectionMode="Extended"`, `DataTemplate` typed to `LogEntry`, `MultiDataTrigger` for level-based coloring (only non-sub entries), `DataTrigger` for sub-entry indent. Severity filter sub-pane with `GridSplitter`. Top-level "Log" menu + context menu with Copy, Auto-scroll, Timestamps, Filter, Save, Mirror, Clear.
 - **Tree view**: Drive → Tape → BackupSets, with `TapeTreeItemViewModel`. Sets listed newest-first.
 - **Content pane**: Switches between `DriveInfo`, `MediaInfo`, `BackupSetInfo` via `ContentPaneType` enum.
 - **Progress**: Backup/Restore each have their own progress panel with percent bar, text, current-file display, abort button.
@@ -392,14 +406,14 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 
 ## Throughout the Project: Coding Conventions
 
-- **C# 12 / .NET 8** features: primary constructors, collection expressions (`\[]`), file-scoped namespaces, records, `required` members where appropriate. Prefer primary constructors where applicable.
+- **C# 12 / .NET 8** features: primary constructors, collection expressions (`[]`), file-scoped namespaces, records, `required` members where appropriate. Prefer primary constructors where applicable.
 - Provide **comments**, especially to match existing style, introduce new functionality sections, or explain complex logic.
 - For **multi-line comments**, indent the comments on the following lines by an additional space.
 - **Maximize reuse** of existing code, avoid duplication of functionality, ensure consistent behavior and UX throughout the project. Place common functionality in a helper method or class.
 - **Constants** for commonly used values, repeated string literals, magic numbers, and formatting patterns.
 - **Nullable** usage practice: apply and follow consistently, minimize overriding with `!` unless absolutely necessary - always explain such ab exception in a comment.
 - **Existing libraries only** — no new packages without necessity.
-- **Naming**: PascalCase for public members, `\_camelCase` for private fields (`m\_mfcStyle` in TapeLibNET for historical reasons), `camelCase` for local functions/variables.
+- **Naming**: PascalCase for public members, `_camelCase` for private fields (`m_mfcStyle` in TapeLibNET for historical reasons), `camelCase` for local functions/variables.
 - **`Helpers.BytesToString` / `Helpers.BytesToStringLong`** from `Windows.Win32.System.SystemServices` for human-readable byte sizes.
 
 ---
@@ -409,7 +423,7 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 - ✅ Full backup workflow (single & multi-volume, incremental, append/overwrite, filemarks/blob mode)
 - ✅ Full restore/validate/verify workflow (single & multi-volume, incremental chain traversal, file patterns)
 - ✅ Unified `TapeFileStatistics` across library → CLI → GUI (no duplicate counting)
-- ✅ Structured `LogEntry`-based logging with `WarningLevel` icons, colors, sub-entry indentation
+- ✅ Structured `LogEntry`-based logging with `WarningLevel` icons, colors, sub-entry indentation. Full log pane: batched ingestion, smart pruning (10K cap), severity filtering, auto-scroll lock, timestamp toggle, save/mirror to file (text + CSV), copy, clear. `MainViewModel.Log.cs` partial class. Types in `Models/LogEntry.cs`.
 - ✅ Virtual drive support with IO speed simulation
 - ✅ New Backup Set dialog, Restore dialog, Open Virtual Drive dialog
 - ✅ FCL language: lexer, parser, validator, evaluator, formatter, pipeline API (469+ tests)
@@ -432,7 +446,7 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 - `TapeConNET`: Service updates to keep in sync with library changes. Consider switching to classes from the top-level program structure.
 
 - `TapeWinNET`: UI enhancement features
-1. Log export / clear — The log pane caps at 1000 entries but there's no way to save or clear it. A "Save Log..." and "Clear Log" in the context menu or View menu would be useful for troubleshooting long operations.
+1. [DONE] Log export / clear — Full log pane with batched ingestion (10K cap, smart pruning), severity filtering, auto-scroll lock, timestamp toggle, Save Log / Mirror Log to file (text + CSV), copy (Ctrl+C, multi-select), clear. `MainViewModel.Log.cs` partial class, top-level Log menu + context menu.
 2. [DONE] File filter/search in the backup set table — `FileFilterPane` with pattern mode (wildcards) and advanced mode (full FCL via `FclFilterWindow`). Dynamic stats in the GroupBox header, filter state persistence across tree navigation.
 3. Advanced file filtering for Backup — Integrate the `FileFilterPane` into the Backup workflow (New Backup Set dialog or pre-backup file selection) to allow FCL-based filtering of which files to include in a backup operation.
 4. [DONE] Window state persistence — Remember window size, position, splitter proportions, and the last-opened drive number between sessions. JSON serializer based implementation in `%LocalAppData%\TapeWinNET\`.

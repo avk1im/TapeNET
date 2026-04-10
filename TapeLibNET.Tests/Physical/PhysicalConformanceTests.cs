@@ -126,10 +126,15 @@ public class PhysicalConformanceTests(PhysicalDriveFixtureWrapper fixtureWrapper
             "Tape should not be write-protected for conformance tests");
         _output.WriteLine($"Capacity: {mediaParams.Capacity:N0} bytes, Block: {mediaParams.BlockSize}");
         _output.WriteLine($"HasInitiatorPartition: {mediaParams.HasInitiatorPartition}");
+        _output.WriteLine($"UsesPartition (fixture mode): {fixture.UsesPartition}");
 
-        if (caps.SupportsInitiatorPartition)
+        // Partition presence must match the fixture's format mode
+        if (fixture.UsesPartition)
             Assert.True(mediaParams.HasInitiatorPartition,
-                "Formatted media should have initiator partition");
+                "Partition mode: formatted media should have initiator partition");
+        else
+            Assert.False(mediaParams.HasInitiatorPartition,
+                "NoPartition mode: media should not have initiator partition");
     }
 
     #endregion

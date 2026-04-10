@@ -32,13 +32,14 @@ public record RestoreOperationResult(
     int FilesProcessed,
     int FilesSucceeded,
     int FilesFailed,
+    int FilesSkipped,
     long BytesProcessed)
 {
     /// <summary>Files that were selected but never encountered on tape.</summary>
     public int FilesMissing => FilesTotal - FilesProcessed;
 
     /// <summary>Whether the operation completed without any issues.</summary>
-    public bool IsFullSuccess => FilesFailed == 0 && FilesMissing == 0 && FilesProcessed > 0;
+    public bool IsFullSuccess => FilesFailed == 0 && FilesSkipped == 0 && FilesMissing == 0 && FilesProcessed > 0;
 
     /// <summary>
     /// Per-set dictionary of successfully processed files, populated by
@@ -158,43 +159,39 @@ public partial class TapeService
 
                     // Derive set indexes from the dictionary keys
                     var setIndexes = checkedFilesBySet.Keys.OrderBy(i => i).ToList();
-                    bool hasPartialSelection = checkedFilesBySet.Values.Any(v => v != null);
 
-                    // Log info about the sets being processed
+                    // Select files and build the work package
+                    var combined = toc.SelectFilesFromSets(incremental, checkedFilesBySet);
+                    int newestIdx = setIndexes.Max();
+                    toc.CurrentSetIndex = newestIdx;
+
+                    // Log compact initial summary using the assembled work package
+                    var (totalFiles, perSet) = toc.GetFileCounts(combined, newestIdx);
+                    logInfo($"{modeName} {totalFiles:N0} file(s) from {perSet.Count} set(s)");
                     foreach (var setIndex in setIndexes)
                     {
                         toc.CurrentSetIndex = setIndex;
-                        var setTOC = toc.CurrentSetTOC;
-
-                        logInfo($"{modeName} backup set #{setIndex} | {toc.SetIndexToAlt(setIndex)}: {setTOC.Description}");
-                        logInfoSub($"Files in set: {setTOC.Count:N0}");
-                        logInfoSub($"Block size: {Helpers.BytesToString(setTOC.BlockSize)}");
-                        logInfoSub($"Hash algorithm: {setTOC.HashAlgorithm}");
-                        logInfoSub($"Incremental: {(setTOC.Incremental ? "Yes" : "No")}");
-                        if (incremental && setTOC.Incremental)
-                            logInfoSub($"{modeName} incremental backup set including earlier dependent sets");
+                        int count = perSet.GetValueOrDefault(setIndex);
+                        logInfoSub($"From set #{setIndex} | {toc.SetIndexToAlt(setIndex)}: {toc.CurrentSetTOC.Description}: {count:N0} file(s)");
                     }
                     if (mode == RestoreMode.Restore && !string.IsNullOrEmpty(targetDirectory))
                         logInfoSub($"Target directory: {targetDirectory}");
-                    if (hasPartialSelection)
-                        logInfoSub($"Partial file selection active");
+                    toc.CurrentSetIndex = newestIdx; // restore after iterating
 
                     // Create progress handler
                     var progressHandler = new GuiRestoreProgressHandler(
                         agent,
+                        totalFiles,
                         logCallback,
                         progressCallback,
                         currentFileCallback,
                         fileErrorCallback,
                         modeName);
 
-                    // Select files and execute the restore operation
                     Status($"{modeName} files...");
 
-                    var combined = toc.SelectFilesFromSets(incremental, checkedFilesBySet);
-                    int newestIdx = setIndexes.Max();
-                    toc.CurrentSetIndex = newestIdx;
-
+                    // Call agent to do the actual work —
+                    //  this will trigger callbacks for progress and file-level events
                     bool success = agent.RestoreFilesFromCurrentSetDown(
                         combined, ignoreFailures: true, progressHandler);
 
@@ -261,41 +258,49 @@ public partial class TapeService
                     // Handle abort
                     if (wasAborted)
                     {
-                        logWarn($"{modeName} of total {result.FilesTotal:N0} file(s): aborting per user request");
+                        logWarn($"{modeName} of {result.FilesTotal:N0} file(s): aborting per user request");
                         var bytesProcessed = long.Max(result.BytesProcessed, agent.BytesRestored); // in case BatchEnd wasn't called due to abort
-                        logInfoSub($"Before abort {result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(bytesProcessed)} processed");
+                        logInfoSub($"Before abort: {result.FilesSucceeded:N0} succeeded, {Helpers.BytesToString(bytesProcessed)} processed");
                         throw new TapeAbortRequestedException("User requested abort");
                     }
 
-                    // Log final results
-                    if (result.IsFullSuccess && (success || agent.CanResumeFromAnotherVolume)) // complete success
+                    // Log final results — determine headline level, then emit uniform stats
+                    WarningLevel headlineLevel;
+                    string headlineMsg;
+                    if (result.IsFullSuccess && (success || agent.CanResumeFromAnotherVolume))
                     {
-                        logOk($"{modeName} of total {result.FilesTotal:N0} file(s) completed successfully");
-                        logOkSub($"{result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(result.BytesProcessed)} processed");
+                        headlineLevel = WarningLevel.Completed;
+                        headlineMsg = $"{modeName} of {result.FilesTotal:N0} file(s) completed successfully";
                     }
-                    else if (result.FilesFailed > 0) // errors
+                    else if (result.FilesFailed > 0)
                     {
-                        logFail($"{modeName} of total {result.FilesTotal:N0} file(s) completed with {result.FilesFailed:N0} file(s) failed");
-                        if (result.FilesProcessed > 0)
-                            logInfoSub($"{result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(result.BytesProcessed)} processed");
-                        if (result.FilesMissing > 0)
-                            logWarnSub($"{result.FilesMissing:N0} file(s) missing");
+                        headlineLevel = WarningLevel.Failed;
+                        headlineMsg = $"{modeName} of {result.FilesTotal:N0} file(s) completed with {result.FilesFailed:N0} failed";
                     }
-                    else if (result.FilesMissing > 0) // missing files
+                    else if (result.FilesProcessed == 0)
                     {
-                        logWarn($"{modeName} of total {result.FilesTotal:N0} file(s) completed with {result.FilesMissing:N0} file(s) missing");
-                        if (result.FilesProcessed > 0)
-                            logInfoSub($"{result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(result.BytesProcessed)} processed");
+                        headlineLevel = WarningLevel.Warning;
+                        headlineMsg = $"{modeName} of {result.FilesTotal:N0} file(s) completed — no files processed";
                     }
-                    else if (result.FilesProcessed == 0) // none processed
+                    else
                     {
-                        logWarn($"{modeName} of total {result.FilesTotal:N0} file(s) completed with no files processed");
+                        headlineLevel = WarningLevel.Warning;
+                        headlineMsg = $"{modeName} of {result.FilesTotal:N0} file(s) completed with issues";
                     }
-                    else // unknown issues
+
+                    logCallback(new LogEntry(headlineLevel, headlineMsg, false, DateTime.Now));
+
+                    // Uniform stats sub-line (always shown when files were processed)
+                    if (result.FilesProcessed > 0)
                     {
-                        logWarn($"{modeName} of total {result.FilesTotal:N0} file(s) completed with issues.");
-                        logInfoSub($"{result.FilesSucceeded:N0} file(s) succeeded of {result.FilesProcessed:N0} file(s), {Helpers.BytesToString(result.BytesProcessed)} processed");
+                        var parts = new List<string>(4) { $"{result.FilesSucceeded:N0} succeeded" };
+                        if (result.FilesFailed > 0) parts.Add($"{result.FilesFailed:N0} failed");
+                        if (result.FilesSkipped > 0) parts.Add($"{result.FilesSkipped:N0} skipped");
+                        parts.Add($"{Helpers.BytesToString(result.BytesProcessed)} processed");
+                        logInfoSub(string.Join(", ", parts));
                     }
+                    if (result.FilesMissing > 0)
+                        logWarnSub($"{result.FilesMissing:N0} file(s) not found on tape");
 
                     Status($"{modeName} complete");
 
@@ -328,9 +333,11 @@ public partial class TapeService
     /// Progress handler for GUI restore/validate/verify operations.
     /// Implements ITapeFileNotifiable to bridge between the restore agent and the UI.
     /// All statistics come from the library via <see cref="TapeFileStatistics"/>.
+    /// Per-batch (per-set) statistics are derived as deltas from successive snapshots.
     /// </summary>
     private class GuiRestoreProgressHandler(
         TapeFileAgent agent,
+        int TotalFilesToProcess,
         Action<LogEntry> logCallback,
         Action<int, int, long> progressCallback,
         Action<string> currentFileCallback,
@@ -342,9 +349,12 @@ public partial class TapeService
         public int FilesTotal { get; private set; }
         public int FilesFailed { get; private set; }
         public int FilesSucceeded { get; private set; }
+        public int FilesSkipped { get; private set; }
         public long BytesProcessed { get; private set; }
         public Dictionary<int, List<TapeFileInfo>> ProcessedFiles { get; private set; } = [];
 
+        /// <summary>Snapshot taken at each BatchStart for computing per-set deltas.</summary>
+        private TapeFileStatistics _batchStartSnapshot;
         private bool _abortLogged;
 
         private void Log(WarningLevel level, string msg, bool sub = false)
@@ -356,11 +366,12 @@ public partial class TapeService
             FilesProcessed = stats.FilesProcessed;
             FilesSucceeded = stats.FilesSucceeded;
             FilesFailed = stats.FilesFailed;
+            FilesSkipped = stats.FilesSkipped;
             BytesProcessed = stats.BytesProcessed;
         }
 
         public RestoreOperationResult GenerateResult() =>
-            new(FilesTotal, FilesProcessed, FilesSucceeded, FilesFailed, BytesProcessed)
+            new(FilesTotal, FilesProcessed, FilesSucceeded, FilesFailed, FilesSkipped, BytesProcessed)
             {
                 ProcessedFiles = ProcessedFiles
             };
@@ -395,18 +406,32 @@ public partial class TapeService
 
         public void BatchStart(int setIndex, in TapeFileStatistics stats)
         {
+            _batchStartSnapshot = stats; // capture snapshot for computing per-set deltas in BatchEnd
             Sync(stats);
             var toc = agent.TOC;
-            Log(WarningLevel.Info, $"Starting {modeName.ToLowerInvariant()} of {stats.FilesTotal:N0} files from set #{setIndex} | {toc.SetIndexToAlt(setIndex)}...");
-            progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
+
+            Log(WarningLevel.Info, $"Set #{setIndex} | {toc.SetIndexToAlt(setIndex)}: starting {modeName.ToLowerInvariant()}...");
+            progressCallback(stats.FilesProcessed, TotalFilesToProcess, stats.BytesProcessed);
         }
 
         public void BatchEnd(int setIndex, in TapeFileStatistics stats)
         {
             Sync(stats);
             var toc = agent.TOC;
-            Log(WarningLevel.Info, $"{modeName} from set #{setIndex} | {toc.SetIndexToAlt(setIndex)} complete: {stats.FilesSucceeded:N0} succeeded, {stats.FilesFailed:N0} failed");
-            progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
+
+            // Compute per-set statistics as delta from the snapshot taken at BatchStart
+            var batch = stats.Delta(in _batchStartSnapshot);
+
+            // Build a concise per-set summary
+            var level = batch.FilesFailed > 0 ? WarningLevel.Failed
+                      : batch.FilesSkipped > 0 ? WarningLevel.Warning
+                      : WarningLevel.Completed;
+            var parts = new List<string>(3) { $"{batch.FilesSucceeded:N0} succeeded" };
+            if (batch.FilesFailed > 0) parts.Add($"{batch.FilesFailed:N0} failed");
+            if (batch.FilesSkipped > 0) parts.Add($"{batch.FilesSkipped:N0} skipped");
+
+            Log(level, $"Set #{setIndex} | {toc.SetIndexToAlt(setIndex)} complete: {string.Join(", ", parts)}");
+            progressCallback(stats.FilesProcessed, TotalFilesToProcess, stats.BytesProcessed);
         }
 
         public bool PreProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats)
@@ -424,7 +449,7 @@ public partial class TapeService
             ThrowIfAbortRequested();
 
             Log(WarningLevel.Completed, $"'{Path.GetFileName(fileInfo.FileDescr.FullName)}' {Helpers.BytesToString(fileInfo.FileDescr.Length)}", sub: true);
-            progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
+            progressCallback(stats.FilesProcessed, TotalFilesToProcess, stats.BytesProcessed);
 
             AddToProcessed(fileInfo);
 
@@ -439,7 +464,7 @@ public partial class TapeService
             Log(WarningLevel.Failed, $"Failed: '{fileInfo.FileDescr.FullName}'");
             Log(WarningLevel.Failed, $"Error: {ex.Message}", sub: true);
 
-            progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
+            progressCallback(stats.FilesProcessed, TotalFilesToProcess, stats.BytesProcessed);
 
             // Don't show file error dialog for end-of-media errors —
             // the multi-volume logic handles these

@@ -1052,6 +1052,36 @@ namespace TapeLibNET
         }
 
         /// <summary>
+        /// Returns per-set file counts from a pre-assembled <paramref name="combined"/> selection
+        ///  array (as produced by <see cref="SelectFilesFromSets"/>), plus the overall total.
+        ///  A <c>null</c> entry in <paramref name="combined"/> means "all files in set", so the
+        ///  count comes from the corresponding <see cref="SetTOC"/>.
+        /// </summary>
+        /// <param name="combined">Selection array (index 0 = newest set, running down to oldest).</param>
+        /// <param name="newestSetIndex">Standard 1-based index of the newest set (slot 0).</param>
+        /// <returns>
+        /// A tuple of (<c>totalFiles</c>, <c>perSet</c>) where <c>perSet</c> maps standard
+        ///  set index → number of files targeted for that set. Sets with zero files are omitted.
+        /// </returns>
+        public (int totalFiles, Dictionary<int, int> perSet) GetFileCounts(
+            List<TapeFileInfo>?[] combined, int newestSetIndex)
+        {
+            var perSet = new Dictionary<int, int>();
+            int total = 0;
+
+            for (int i = 0; i < combined.Length; i++)
+            {
+                int setIndex = newestSetIndex - i;
+                int count = combined[i]?.Count ?? this[setIndex].Count;
+                if (count > 0)
+                    perSet[setIndex] = count;
+                total += count;
+            }
+
+            return (total, perSet);
+        }
+
+        /// <summary>
         /// Selects files from a single set, optionally resolving its incremental chain.
         ///  <paramref name="checkedFiles"/> == null means "all files" (delegates to
         ///  <see cref="SelectFiles(bool, ITapeFileFilter?)"/>).

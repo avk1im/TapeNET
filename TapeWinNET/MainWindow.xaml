@@ -394,11 +394,21 @@
                                 </ListView.ContextMenu>
                             </ListView>
 
-                            <!-- Splitter between file list and filter pane -->
-                            <GridSplitter Grid.Row="1" Height="4"
+                            <!-- Splitter between file list and filter pane (snaps to full / compact / hidden) -->
+                            <controls:SnappingGridSplitter Grid.Row="1" Height="4"
                                           HorizontalAlignment="Stretch"
                                           VerticalAlignment="Center"
-                                          Background="LightGray"/>
+                                          Background="LightGray"
+                                          TargetIndex="2">
+                                <controls:SnappingGridSplitter.SnapZones>
+                                    <!-- Hidden: catches everything from 0 up to 14px -->
+                                    <controls:SnapZone Value="0"  LowerRange="9999" UpperRange="12"/>
+                                    <!-- Compact (button row only): catches 14–36px range -->
+                                    <controls:SnapZone Value="26" LowerRange="16"   UpperRange="8"/>
+                                    <!-- Full (natural size): catches 8px below measured height and above -->
+                                    <controls:SnapZone IsAutoSize="True" LowerRange="8" UpperRange="9999"/>
+                                </controls:SnappingGridSplitter.SnapZones>
+                            </controls:SnappingGridSplitter>
 
                             <!-- File Filter Pane -->
                             <controls:FileFilterPane Grid.Row="2"
@@ -640,7 +650,7 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition x:Name="LogFilterColumn" Width="80" MinWidth="24"/>
+                    <ColumnDefinition x:Name="LogFilterColumn" Width="80"/>
                 </Grid.ColumnDefinitions>
 
                 <!-- Log list (binds to ICollectionView for severity filtering) -->
@@ -746,11 +756,23 @@
                     </ListBox.ItemTemplate>
                 </ListBox>
 
-                <!-- Splitter between log list and filter sub-pane -->
-                <GridSplitter Grid.Column="1" Width="4"
+                <!-- Splitter between log list and filter sub-pane (snaps to full / checkboxes / hidden) -->
+                <controls:SnappingGridSplitter Grid.Column="1" Width="4"
                               HorizontalAlignment="Center"
                               VerticalAlignment="Stretch"
-                              Background="LightGray"/>
+                              Background="LightGray"
+                              ResizeDirection="Columns"
+                              TargetIndex="2">
+                    <controls:SnappingGridSplitter.SnapZones>
+                        <!-- Hidden: catches everything from 0 up to 12px -->
+                        <controls:SnapZone Value="0"  LowerRange="9999" UpperRange="12"/>
+                        <!-- Checkboxes only: catches 12–42px range -->
+                        <controls:SnapZone Value="24" LowerRange="12"   UpperRange="18"/>
+                        <!-- Free-range zone: 34–68px — no snap, user picks any width -->
+                        <!-- Fully shown (natural width): catches 12px below measured width and above -->
+                        <controls:SnapZone IsAutoSize="True" LowerRange="12" UpperRange="9999"/>
+                    </controls:SnappingGridSplitter.SnapZones>
+                </controls:SnappingGridSplitter>
 
                 <!-- Severity filter checkboxes sub-pane -->
                 <StackPanel Grid.Column="2" Margin="4,2,2,2"

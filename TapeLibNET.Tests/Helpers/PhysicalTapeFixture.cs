@@ -23,6 +23,13 @@ public static class PhysicalTestEnv
     public const string TimeoutSeconds = "TAPELIBNET_PHYSICAL_TIMEOUT";
 
     /// <summary>
+    /// When set to any non-empty value (e.g. "1"), forces formatting <em>without</em>
+    /// an initiator partition even on drives that support one. This exercises the
+    /// <c>TapeNavigatorTOCInSet</c> code path on partition-capable hardware.
+    /// </summary>
+    public const string ForceNoPartition = "TAPELIBNET_PHYSICAL_NO_PARTITION";
+
+    /// <summary>
     /// Maximum number of drives to probe when <see cref="DriveNumbers"/> is not set.
     /// </summary>
     public const int MaxProbeNumber = 9;
@@ -89,6 +96,13 @@ public sealed class PhysicalTapeFixture : IDisposable
     /// <summary>Human-readable description of the drive for test output.</summary>
     public string DriveDescription { get; }
 
+    /// <summary>
+    /// Whether the tape is formatted with an initiator partition.
+    /// <c>true</c> when the drive supports partitions and
+    /// <see cref="PhysicalTestEnv.ForceNoPartition"/> is not set.
+    /// </summary>
+    public bool UsesPartition { get; }
+
     #endregion
 
     #region *** Construction ***
@@ -115,8 +129,18 @@ public sealed class PhysicalTapeFixture : IDisposable
         // Configure timeout from environment or default
         Drive.OperationTimeout = GetConfiguredTimeout();
 
-        // Open drive
-        if (!Drive.ReopenDrive(driveNumber))
+        // Open drive (retry with delay — tape driver may need time to release after a prior process)
+        const int maxOpenRetries = 3;
+        const int openRetryDelayMs = 5000;
+        bool opened = false;
+        for (int attempt = 1; attempt <= maxOpenRetries; attempt++)
+        {
+            opened = Drive.ReopenDrive(driveNumber);
+            if (opened) break;
+            if (attempt < maxOpenRetries)
+                System.Threading.Thread.Sleep(openRetryDelayMs);
+        }
+        if (!opened)
             throw new InvalidOperationException($"Failed to open physical tape drive #{driveNumber}");
 
         // Load media
@@ -133,14 +157,15 @@ public sealed class PhysicalTapeFixture : IDisposable
             throw new InvalidOperationException(
                 $"Drive #{driveNumber} doesn't match any known DriveProfile. {DriveDescription}");
 
-        // Format media (creates partitions if supported)
+        // Determine partition mode: use partition unless the env var forces it off
+        bool forceNoPartition = !string.IsNullOrEmpty(
+            Environment.GetEnvironmentVariable(PhysicalTestEnv.ForceNoPartition));
+        UsesPartition = Capabilities.SupportsInitiatorPartition && !forceNoPartition;
+
+        // Format media
         if (format)
         {
-            bool formatOk = Capabilities.SupportsInitiatorPartition
-                ? Drive.FormatMedia(4L * 1024 * 1024) // 4 MB initiator partition
-                : Drive.FormatMedia();
-
-            if (!formatOk)
+            if (!FormatTape())
                 throw new InvalidOperationException($"Failed to format tape in drive #{driveNumber}");
         }
 
@@ -262,11 +287,7 @@ public sealed class PhysicalTapeFixture : IDisposable
         if (!RecoverDrive())
             return false;
 
-        bool formatOk = Capabilities.SupportsInitiatorPartition
-            ? Drive.FormatMedia(4L * 1024 * 1024)
-            : Drive.FormatMedia();
-
-        if (!formatOk)
+        if (!FormatTape())
         {
             IsFailed = true;
             return false;
@@ -280,6 +301,17 @@ public sealed class PhysicalTapeFixture : IDisposable
         MediaParams = mediaParams;
 
         return IsHealthy;
+    }
+
+    /// <summary>
+    /// Formats the tape according to <see cref="UsesPartition"/>.
+    /// Creates a 4 MB initiator partition when enabled, plain format otherwise.
+    /// </summary>
+    private bool FormatTape()
+    {
+        return UsesPartition
+            ? Drive.FormatMedia(4L * 1024 * 1024)
+            : Drive.FormatMedia();
     }
 
     #endregion

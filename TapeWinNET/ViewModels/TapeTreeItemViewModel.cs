@@ -24,7 +24,7 @@ public class TapeTreeItemViewModel : ViewModelBase
     private bool _isExpanded;
     private bool _isSelected;
     private TreeItemType _itemType;
-    private object? _tag;
+    private int _tag;
     private bool _isOnCurrentVolume = true;
     private bool _isTOCFromFile;
     private bool _isInMemory;
@@ -63,6 +63,8 @@ public class TapeTreeItemViewModel : ViewModelBase
         get => _displayName;
         set => SetProperty(ref _displayName, value);
     }
+
+    public string IndexDisplay { get; private set; } = string.Empty;
 
     public bool IsExpanded
     {
@@ -130,9 +132,10 @@ public class TapeTreeItemViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Additional data associated with this item (e.g., set index for BackupSet items)
+    /// Numeric identifier for this item: drive number (Drive), volume number (Tape),
+    ///  or 1-based set index (BackupSet).
     /// </summary>
-    public object? Tag
+    public int Tag
     {
         get => _tag;
         set => SetProperty(ref _tag, value);
@@ -143,14 +146,15 @@ public class TapeTreeItemViewModel : ViewModelBase
     public TapeTreeItemViewModel? Parent { get; set; }
 
     // Convenience properties for specific item types
-    public int? SetIndex => ItemType == TreeItemType.BackupSet ? Tag as int? : null;
-    public int? VolumeNumber => ItemType == TreeItemType.Tape ? Tag as int? : null;
+    public int? SetIndex => ItemType == TreeItemType.BackupSet ? Tag : null;
+    public int? VolumeNumber => ItemType == TreeItemType.Tape ? Tag : null;
 
     public static TapeTreeItemViewModel CreateDriveItem(int driveNumber, string deviceName)
     {
         return new TapeTreeItemViewModel
         {
             DisplayName = $"Drive {driveNumber}: {deviceName}",
+            IndexDisplay = string.Empty,
             ItemType = TreeItemType.Drive,
             Tag = driveNumber,
             IsExpanded = true
@@ -175,6 +179,7 @@ public class TapeTreeItemViewModel : ViewModelBase
         var item = new TapeTreeItemViewModel
         {
             DisplayName = displayName,
+            IndexDisplay = string.Empty,
             ItemType = TreeItemType.Tape,
             Tag = toc.Volume,
             Parent = parent,
@@ -185,16 +190,21 @@ public class TapeTreeItemViewModel : ViewModelBase
         return item;
     }
 
-    public static TapeTreeItemViewModel CreateBackupSetItem(TapeSetTOC setTOC, int setIndex, int totalSets, TapeTreeItemViewModel parent, bool isOnCurrentVolume)
+    public static TapeTreeItemViewModel CreateBackupSetItem(TapeTOC toc, int setIndex, TapeTreeItemViewModel parent)
     {
-        var altIndex = -(totalSets - setIndex);
+        var setTOC = toc[setIndex];
+        var altIndex = toc.SetIndexToAlt(setIndex);
         var description = string.IsNullOrEmpty(setTOC.Description) 
-            ? "Unnamed Set" 
+            ? "[Unnamed Set]" 
             : setTOC.Description;
-        
+        var indexDisplay = $"{setIndex} | {altIndex}";
+        bool isOnCurrentVolume = setTOC.Volume == toc.Volume;
+
         var item = new TapeTreeItemViewModel
         {
-            DisplayName = $"Set #{setIndex} | {altIndex}: {description}",
+            // Display format: "1 | -2" for set 1 of 3
+            DisplayName = $"Set #{indexDisplay}: {description}",
+            IndexDisplay = indexDisplay,
             ItemType = TreeItemType.BackupSet,
             Tag = setIndex,
             Parent = parent,

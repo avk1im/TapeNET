@@ -377,13 +377,36 @@ public partial class TapeService
 
                         _toc = toc; // Update service TOC reference
 
-                        // Log results for this volume
-                        logOk($"Backed up {progressHandler.FilesSucceeded:N0} file(s) of {progressHandler.FilesProcessed:N0}, {Helpers.BytesToString(agent.BytesBackedup)}");
-                        if (!result && progressHandler.FilesFailed > 0)
+                        // Log results for this volume — headline level + uniform stats
+                        WarningLevel headlineLevel;
+                        string headlineMsg;
+                        if (progressHandler.FilesFailed > 0)
                         {
-                            logFail($"{progressHandler.FilesFailed:N0} file(s) of {progressHandler.FilesProcessed:N0} failed to back up");
+                            headlineLevel = WarningLevel.Failed;
+                            headlineMsg = $"Backed up {progressHandler.FilesTotal:N0} file(s) with {progressHandler.FilesFailed:N0} failed";
                         }
-                        logOkSub($"Remaining media capacity: {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
+                        else if (progressHandler.FilesSkipped > 0)
+                        {
+                            headlineLevel = WarningLevel.Warning;
+                            headlineMsg = $"Backed up {progressHandler.FilesTotal:N0} file(s) with {progressHandler.FilesSkipped:N0} skipped";
+                        }
+                        else
+                        {
+                            headlineLevel = WarningLevel.Completed;
+                            headlineMsg = $"Backed up {progressHandler.FilesTotal:N0} file(s) successfully";
+                        }
+                        logCallback(new LogEntry(headlineLevel, headlineMsg, false, DateTime.Now));
+
+                        // Uniform stats sub-line
+                        if (progressHandler.FilesProcessed > 0)
+                        {
+                            var parts = new List<string>(4) { $"{progressHandler.FilesSucceeded:N0} succeeded" };
+                            if (progressHandler.FilesFailed > 0) parts.Add($"{progressHandler.FilesFailed:N0} failed");
+                            if (progressHandler.FilesSkipped > 0) parts.Add($"{progressHandler.FilesSkipped:N0} skipped");
+                            parts.Add($"{Helpers.BytesToString(agent.BytesBackedup)} written");
+                            logInfoSub(string.Join(", ", parts));
+                        }
+                        logInfoSub($"Remaining media capacity: {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
 
                         // If backup was aborted, TOC has been saved — break out
                         if (wasAborted)
@@ -499,6 +522,7 @@ public partial class TapeService
     /// Progress handler for GUI backup operations.
     /// Implements ITapeFileNotifiable to bridge between TapeFileBackupAgent and the UI.
     /// All statistics come from the library via <see cref="TapeFileStatistics"/>.
+    /// Per-batch statistics are derived as deltas from successive snapshots.
     /// </summary>
     private class GuiBackupProgressHandler(
         TapeFileAgent agent,
@@ -507,23 +531,20 @@ public partial class TapeService
         Action<string> currentFileCallback,
         Func<string, string, FileFailedAction> fileErrorCallback) : ITapeFileNotifiable
     {
-        private readonly TapeFileAgent _agent = agent;
-        private readonly Action<LogEntry> _logCallback = logCallback;
-        private readonly Action<int, int, long> _progressCallback = progressCallback;
-        private readonly Action<string> _currentFileCallback = currentFileCallback;
-        private readonly Func<string, string, FileFailedAction> _fileErrorCallback = fileErrorCallback;
-
         // Convenience accessors — always reflect the latest library snapshot
         public int FilesProcessed { get; private set; }
         public int FilesTotal { get; private set; }
         public int FilesFailed { get; private set; }
         public int FilesSucceeded { get; private set; }
+        public int FilesSkipped { get; private set; }
         public long BytesProcessed { get; private set; }
 
+        /// <summary>Snapshot taken at each BatchStart for computing per-batch deltas.</summary>
+        private TapeFileStatistics _batchStartSnapshot;
         private bool _abortLogged;
 
         private void Log(WarningLevel level, string msg, bool sub = false)
-            => _logCallback(new LogEntry(level, msg, sub, DateTime.Now));
+            => logCallback(new LogEntry(level, msg, sub, DateTime.Now));
 
         private void Sync(in TapeFileStatistics stats)
         {
@@ -531,12 +552,13 @@ public partial class TapeService
             FilesProcessed = stats.FilesProcessed;
             FilesSucceeded = stats.FilesSucceeded;
             FilesFailed = stats.FilesFailed;
+            FilesSkipped = stats.FilesSkipped;
             BytesProcessed = stats.BytesProcessed;
         }
 
         private void ThrowIfAbortRequested()
         {
-            if (_agent.IsAbortRequested)
+            if (agent.IsAbortRequested)
             {
                 if (!_abortLogged)
                 {
@@ -549,22 +571,38 @@ public partial class TapeService
 
         public void BatchStart(int setIndex, in TapeFileStatistics stats)
         {
+            _batchStartSnapshot = stats; // capture snapshot for computing per-batch deltas in BatchEnd
             Sync(stats);
-            Log(WarningLevel.Info, $"Starting backup of {stats.FilesTotal:N0} files to set #{setIndex}...");
-            _progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
+            var toc = agent.TOC;
+
+            Log(WarningLevel.Info, $"Set #{setIndex} | {toc.SetIndexToAlt(setIndex)}: starting backup...");
+            progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
         }
 
         public void BatchEnd(int setIndex, in TapeFileStatistics stats)
         {
             Sync(stats);
-            Log(WarningLevel.Info, $"Backup batch complete: {stats.FilesSucceeded:N0} succeeded, {stats.FilesFailed:N0} failed");
-            _progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
+            var toc = agent.TOC;
+
+            // Compute per-batch statistics as delta from the snapshot taken at BatchStart
+            var batch = stats.Delta(in _batchStartSnapshot);
+
+            // Build a concise per-batch summary
+            var level = batch.FilesFailed > 0 ? WarningLevel.Failed
+                      : batch.FilesSkipped > 0 ? WarningLevel.Warning
+                      : WarningLevel.Completed;
+            var parts = new List<string>(3) { $"{batch.FilesSucceeded:N0} succeeded" };
+            if (batch.FilesFailed > 0) parts.Add($"{batch.FilesFailed:N0} failed");
+            if (batch.FilesSkipped > 0) parts.Add($"{batch.FilesSkipped:N0} skipped");
+
+            Log(level, $"Set #{setIndex} | {toc.SetIndexToAlt(setIndex)} complete: {string.Join(", ", parts)}");
+            progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
         }
 
         public bool PreProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats)
         {
             ThrowIfAbortRequested();
-            _currentFileCallback(fileInfo.FileDescr.FullName);
+            currentFileCallback(fileInfo.FileDescr.FullName);
             return true;
         }
 
@@ -573,8 +611,8 @@ public partial class TapeService
             ThrowIfAbortRequested();
             Sync(stats);
 
-            Log(WarningLevel.Completed, $"{Path.GetFileName(fileInfo.FileDescr.FullName)} ({Helpers.BytesToString(fileInfo.FileDescr.Length)})", sub: true);
-            _progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
+            Log(WarningLevel.Completed, $"'{Path.GetFileName(fileInfo.FileDescr.FullName)}' {Helpers.BytesToString(fileInfo.FileDescr.Length)}", sub: true);
+            progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
 
             return true;
         }
@@ -584,10 +622,10 @@ public partial class TapeService
             ThrowIfAbortRequested();
             Sync(stats);
 
-            Log(WarningLevel.Failed, $"Failed: {fileInfo.FileDescr.FullName}");
+            Log(WarningLevel.Failed, $"Failed: '{fileInfo.FileDescr.FullName}'");
             Log(WarningLevel.Failed, $"Error: {ex.Message}", sub: true);
 
-            _progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
+            progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
 
             // Don't show file error dialog for end-of-media errors —
             // the multi-volume logic in BackupFilesToCurrentSet handles these
@@ -599,7 +637,7 @@ public partial class TapeService
             }
 
             // Show error dialog via callback - the callback handles sticky choices (e.g. Skip All)
-            var result = _fileErrorCallback(fileInfo.FileDescr.FullName, ex.Message);
+            var result = fileErrorCallback(fileInfo.FileDescr.FullName, ex.Message);
 
             if (result == FileFailedAction.Abort)
             {

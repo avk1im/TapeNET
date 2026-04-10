@@ -61,7 +61,7 @@
                 </TextBox.Style>
                 <TextBox.InputBindings>
                     <KeyBinding Key="Return"
-                                Command="{Binding ToggleFilterCommand, ElementName=Root}"/>
+                                Command="{Binding ApplyFilterCommand, ElementName=Root}"/>
                 </TextBox.InputBindings>
             </TextBox>
 

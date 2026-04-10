@@ -89,6 +89,9 @@ public partial class FileFilterPane : UserControl
         ToggleFilterCommand = new RelayCommand(
             async _ => await ToggleFilterAsync(),
             _ => !IsBusy && (IsFilterActive || CanApplyFilter));
+        ApplyFilterCommand = new RelayCommand(
+            async _ => await ApplyFilterAsync(),
+            _ => !IsBusy && CanApplyFilter);
         AdvancedFilterCommand = new RelayCommand(
             _ => OpenAdvancedFilter(),
             _ => !IsBusy);
@@ -197,6 +200,12 @@ public partial class FileFilterPane : UserControl
     #region Commands
 
     public ICommand ToggleFilterCommand { get; }
+    /// <summary>
+    /// Always (re-)applies the current filter. Used by the text box Enter key
+    ///  so that editing patterns and pressing Enter updates the active filter
+    ///  instead of toggling it off.
+    /// </summary>
+    public ICommand ApplyFilterCommand { get; }
     public ICommand AdvancedFilterCommand { get; }
 
     #endregion

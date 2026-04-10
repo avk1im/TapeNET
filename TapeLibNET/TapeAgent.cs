@@ -48,6 +48,21 @@ namespace TapeLibNET
 
         /// <summary>Reset all counters to zero.</summary>
         public void Reset() => this = default;
+
+        /// <summary>
+        /// Returns a new <see cref="TapeFileStatistics"/> whose counters are the difference
+        ///  between this snapshot and an earlier <paramref name="baseline"/> snapshot.
+        ///  Useful for computing per-batch statistics from the running totals.
+        /// </summary>
+        public readonly TapeFileStatistics Delta(in TapeFileStatistics baseline) => new()
+        {
+            FilesTotal = FilesTotal - baseline.FilesTotal,
+            FilesProcessed = FilesProcessed - baseline.FilesProcessed,
+            FilesSucceeded = FilesSucceeded - baseline.FilesSucceeded,
+            FilesFailed = FilesFailed - baseline.FilesFailed,
+            FilesSkipped = FilesSkipped - baseline.FilesSkipped,
+            BytesProcessed = BytesProcessed - baseline.BytesProcessed
+        };
     }
 
     public interface ITapeFileNotifiable

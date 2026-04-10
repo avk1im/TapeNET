@@ -916,12 +916,9 @@ public partial class MainViewModel : ViewModelBase
 
         // Add backup sets (from latest to oldest for consistency with alt index display)
         int totalSets = toc.Count;
-        int currentVolume = toc.Volume;
         for (int i = totalSets; i >= 1; i--)
         {
-            var setTOC = toc[i];
-            var setItem = TapeTreeItemViewModel.CreateBackupSetItem(setTOC, i, totalSets, tapeItem,
-                setTOC.Volume == currentVolume);
+            var setItem = TapeTreeItemViewModel.CreateBackupSetItem(toc, i, tapeItem);
             tapeItem.Children.Add(setItem);
         }
 
