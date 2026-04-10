@@ -118,11 +118,12 @@ if ($Build) {
 }
 
 # ── Determine partition passes ───────────────────────────────────────────────
-$passes = switch ($PartitionMode) {
-    "Both"        { @("Partition", "NoPartition") }
-    "Partition"   { @("Partition") }
-    "NoPartition" { @("NoPartition") }
-}
+# Wrap in @() so single-branch results stay an array (strict mode blocks .Count on scalars)
+$passes = @(switch ($PartitionMode) {
+    "Both"        { "Partition"; "NoPartition" }
+    "Partition"   { "Partition" }
+    "NoPartition" { "NoPartition" }
+})
 $multiPass = $passes.Count -gt 1
 
 # ── Run passes ───────────────────────────────────────────────────────────────
@@ -176,23 +177,66 @@ foreach ($pass in $passes) {
 
         $layerStart = Get-Date
 
-        # Run dotnet test as a child process with full output capture
-        $proc = Start-Process -PassThru -NoNewWindow `
-            -FilePath "dotnet" `
-            -ArgumentList "test $testProject --filter `"$filterExpr`" --logger `"console;verbosity=detailed`" --no-build" `
-            -WorkingDirectory $solutionDir `
-            -RedirectStandardOutput $logFile `
-            -RedirectStandardError $errFile
+        # Run dotnet test with real-time output streaming.
+        #  Uses [Process] directly instead of Start-Process so we can read
+        #  stdout line-by-line and display test results as they complete.
+        $psi = [System.Diagnostics.ProcessStartInfo]@{
+            FileName               = "dotnet"
+            Arguments              = "test $testProject --filter `"$filterExpr`" --logger `"console;verbosity=detailed`" --no-build"
+            WorkingDirectory       = $solutionDir
+            UseShellExecute        = $false
+            RedirectStandardOutput = $true
+            RedirectStandardError  = $true
+        }
 
-        # Wait up to 60 minutes per layer
-        $finished = $proc.WaitForExit(3600000)
+        $proc = [System.Diagnostics.Process]::new()
+        $proc.StartInfo = $psi
+        $proc.Start() | Out-Null
 
+        # Capture stderr asynchronously to avoid deadlock
+        $stderrTask = $proc.StandardError.ReadToEndAsync()
+
+        # Watchdog: kill the process after 60 minutes.
+        #  When fired, the kill causes ReadLine() to return null, exiting the loop.
+        $watchdog = Start-Job -ScriptBlock {
+            param($procId, $ms)
+            Start-Sleep -Milliseconds $ms
+            try { Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue } catch { }
+        } -ArgumentList $proc.Id, 3600000
+
+        # Read stdout line-by-line — test results appear as they complete
+        $stdoutLines = [System.Collections.Generic.List[string]]::new()
+        while ($null -ne ($line = $proc.StandardOutput.ReadLine())) {
+            $stdoutLines.Add($line)
+
+            # Display individual test results in real-time
+            if ($line -match '^\s+(Passed|Failed|Skipped)\s+.+\[') {
+                $trimmed = $line.Trim()
+                $lineColor = if ($trimmed -match '^Passed') { 'DarkGreen' }
+                             elseif ($trimmed -match '^Failed') { 'Red' }
+                             else { 'DarkYellow' }
+                Write-Host "    $trimmed" -ForegroundColor $lineColor
+            }
+        }
+
+        # stdout EOF — process has closed its output stream
+        $proc.WaitForExit()
         $layerDuration = (Get-Date) - $layerStart
 
-        if (-not $finished) {
-            Write-Host "  TIMEOUT after 60 minutes — killing" -ForegroundColor Red
-            $proc | Stop-Process -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 5
+        # Detect timeout: if watchdog job completed, it fired and killed the process
+        $timedOut = $watchdog.State -eq 'Completed'
+        Stop-Job $watchdog -ErrorAction SilentlyContinue
+        Remove-Job $watchdog -Force -ErrorAction SilentlyContinue
+
+        # Capture stderr and write both streams to log files
+        $stderrContent = $stderrTask.GetAwaiter().GetResult()
+        ($stdoutLines -join [Environment]::NewLine) | Set-Content -Path $logFile -Encoding utf8
+        if ($stderrContent) {
+            $stderrContent | Set-Content -Path $errFile -Encoding utf8
+        }
+
+        if ($timedOut) {
+            Write-Host "  TIMEOUT after 60 minutes — killed" -ForegroundColor Red
             $results += [PSCustomObject]@{
                 Pass     = $pass
                 Layer    = $layer
@@ -203,10 +247,9 @@ foreach ($pass in $passes) {
             continue
         }
 
-        # Parse results from stdout and stderr (dotnet test writes the summary
-        #  line to stderr when stdout is redirected)
-        $logContent = Get-Content $logFile -Raw -ErrorAction SilentlyContinue
-        $errContent = Get-Content $errFile -Raw -ErrorAction SilentlyContinue
+        # Parse results from captured output (no file re-reads needed)
+        $logContent = $stdoutLines -join "`n"
+        $errContent = $stderrContent
         $passed  = 0; $failed = 0; $skipped = 0
 
         # Try to parse the summary line: "Passed!  - Failed: 0, Passed: 1, ..."
@@ -220,15 +263,12 @@ foreach ($pass in $passes) {
             $passed  = [int]$Matches[2]
             $skipped = [int]$Matches[3]
         } else {
-            # Fallback: count individual test-result lines from stdout.
+            # Fallback: count individual test-result lines from captured stdout.
             # Real results look like "  Passed TestName [duration]" with a bracket;
             # skip lines like "Failed to initialize..." that lack one.
-            $logLines2 = Get-Content $logFile -ErrorAction SilentlyContinue
-            if ($logLines2) {
-                $passed  = @($logLines2 | Select-String -Pattern "^\s+Passed\s+.+\[").Count
-                $failed  = @($logLines2 | Select-String -Pattern "^\s+Failed\s+.+\[").Count
-                $skipped = @($logLines2 | Select-String -Pattern "^\s+Skipped\s+.+\[").Count
-            }
+            $passed  = @($stdoutLines | Select-String -Pattern "^\s+Passed\s+.+\[").Count
+            $failed  = @($stdoutLines | Select-String -Pattern "^\s+Failed\s+.+\[").Count
+            $skipped = @($stdoutLines | Select-String -Pattern "^\s+Skipped\s+.+\[").Count
         }
 
         $status = if ($failed -gt 0) { "FAILED" }
@@ -245,16 +285,6 @@ foreach ($pass in $passes) {
         }
 
         Write-Host "  $status — Passed: $passed, Failed: $failed, Skipped: $skipped ($($layerDuration.ToString('hh\:mm\:ss')))" -ForegroundColor $color
-
-        # Show individual test results
-        $logLines = Get-Content $logFile -ErrorAction SilentlyContinue
-        $logLines | Select-String -Pattern "^\s+(Passed|Failed|Skipped)\s+" | ForEach-Object {
-            $line = $_.Line.Trim()
-            $lineColor = if ($line -match "^Passed") { "DarkGreen" }
-                         elseif ($line -match "^Failed") { "Red" }
-                         else { "DarkYellow" }
-            Write-Host "    $line" -ForegroundColor $lineColor
-        }
 
         $results += [PSCustomObject]@{
             Pass     = $pass

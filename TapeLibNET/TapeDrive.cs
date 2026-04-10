@@ -400,11 +400,15 @@ public class TapeDrive : ErrorManageableBase, IDisposable
             return false;
         }
 
+        // Backend format succeeded — clear any stale errors (e.g. from prior I/O failures)
+        //  so the post-format step chain can proceed.
+        ResetError();
+
         // Reload after format
-        if (WentOK)
-            m_backend.LoadMedia();
+        m_backend.LoadMedia();
+
         // RefreshMediaParams first: EnsureOnContentPartition needs HasInitiatorPartition
-        // from m_mediaParams. No wrong caching here — m_onContentPartition is false.
+        //  from m_mediaParams. No wrong caching here — m_onContentPartition is false.
         if (WentOK)
             RefreshMediaParams();
         if (WentOK)

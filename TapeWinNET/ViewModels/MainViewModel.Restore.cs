@@ -263,8 +263,7 @@ public partial class MainViewModel
         if (toc == null)
             return [];
 
-        if (setIndexes == null)
-            setIndexes = [.. Enumerable.Range(1, toc.Count)];
+        setIndexes ??= [.. Enumerable.Range(1, toc.Count)];
 
         var items = new List<BackupSetListItem>(setIndexes.Count);
         foreach (var idx in setIndexes)

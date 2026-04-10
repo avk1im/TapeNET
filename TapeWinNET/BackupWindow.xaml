@@ -1,0 +1,395 @@
+<Window x:Class="TapeWinNET.BackupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
+        xmlns:converters="clr-namespace:TapeWinNET.Converters"
+        xmlns:controls="clr-namespace:TapeWinNET.Controls"
+        d:DataContext="{d:DesignInstance Type=vm:BackupViewModel}"
+        mc:Ignorable="d"
+        Title="New Backup Set"
+        Width="960" Height="680"
+        MinWidth="700" MinHeight="480"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResizeWithGrip"
+        ShowInTaskbar="False">
+
+    <Window.Resources>
+        <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVis"/>
+    </Window.Resources>
+
+    <Window.InputBindings>
+        <KeyBinding Key="Delete" Command="{Binding RemoveSelectedCommand}"/>
+        <KeyBinding Key="OemPlus" Command="{Binding AddFilesCommand}"/>
+        <KeyBinding Key="Add" Command="{Binding AddFilesCommand}"/>
+        <KeyBinding Key="OemPlus" Modifiers="Control" Command="{Binding AddFolderCommand}"/>
+        <KeyBinding Key="Add" Modifiers="Control" Command="{Binding AddFolderCommand}"/>
+        <KeyBinding Key="Escape" Command="{Binding CancelCommand}"/>
+    </Window.InputBindings>
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Main content: 2-column layout with splitter -->
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" MinWidth="340"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="260" MinWidth="240"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- ═══════════════════════════════════════
+                 Left: Sources pane (upper) + Files pane (lower)
+                 ═══════════════════════════════════════ -->
+            <Grid Grid.Column="0" Margin="0,0,4,0">
+                <Grid.RowDefinitions>
+                    <!-- Source add toolbar -->
+                    <RowDefinition Height="Auto"/>
+                    <!-- Sources (Folders) pane -->
+                    <RowDefinition Height="*" MinHeight="80"/>
+                    <!-- Splitter between sources and files -->
+                    <RowDefinition Height="Auto"/>
+                    <!-- Files pane (collapsible) -->
+                    <RowDefinition Height="220" MinHeight="0"/>
+                </Grid.RowDefinitions>
+
+                <!-- Source toolbar: Add Files, Add Folder, Pattern input, Remove Unchecked -->
+                <Grid Grid.Row="0" Margin="0,0,0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*" MinWidth="60"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Button Grid.Column="0" Content="Add Files..."
+                            Command="{Binding AddFilesCommand}"
+                            Width="80" Margin="0,0,4,0"
+                            ToolTip="Add files (keyboard: +)"/>
+                    <Button Grid.Column="1" Content="Add Folder..."
+                            Command="{Binding AddFolderCommand}"
+                            Width="90" Margin="0,0,8,0"
+                            ToolTip="Add folder (keyboard: Ctrl++)"/>
+                    <TextBlock Grid.Column="2" Text="Patterns:"
+                               VerticalAlignment="Center" Margin="8,0,4,0"/>
+                    <TextBox Grid.Column="3"
+                             Text="{Binding PatternInput, UpdateSourceTrigger=PropertyChanged}"
+                             VerticalContentAlignment="Center"
+                             Margin="0,0,4,0">
+                        <TextBox.InputBindings>
+                            <KeyBinding Key="Return" Command="{Binding AddPatternsCommand}"/>
+                        </TextBox.InputBindings>
+                    </TextBox>
+                    <Button Grid.Column="4" Content="+"
+                            Command="{Binding AddPatternsCommand}"
+                            Width="24" Margin="0,0,8,0" ToolTip="Add pattern(s)"/>
+                    <Button Grid.Column="5" Content="Remove Unchecked"
+                            Command="{Binding RemoveSelectedCommand}"
+                            Padding="8,1"
+                            ToolTip="Remove all unchecked source entries"/>
+                </Grid>
+
+                <!-- Sources (Folders) pane -->
+                <GroupBox Grid.Row="1" Header="Sources">
+                    <Grid>
+                    <ListView x:Name="SourceList"
+                              ItemsSource="{Binding SourceItems}"
+                              SelectedItem="{Binding SelectedSource}"
+                              CheckBox.Checked="SourceCheckBox_Changed"
+                              CheckBox.Unchecked="SourceCheckBox_Changed"
+                              CheckBox.Indeterminate="SourceCheckBox_Changed"
+                              AllowDrop="True"
+                              DragOver="SourceList_DragOver"
+                              Drop="SourceList_Drop"
+                              VirtualizingPanel.IsVirtualizing="True"
+                              VirtualizingPanel.VirtualizationMode="Recycling"
+                              Margin="4"
+                              SelectionChanged="SourceList_SelectionChanged">
+                        <ListView.View>
+                            <GridView>
+                                <!-- Checkbox column -->
+                                <GridViewColumn Width="28">
+                                    <GridViewColumn.HeaderTemplate>
+                                        <DataTemplate>
+                                            <CheckBox IsChecked="{Binding DataContext.AreAllSourcesChecked,
+                                                                  RelativeSource={RelativeSource AncestorType=Window}}"
+                                                      IsThreeState="True"
+                                                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                      ToolTip="Select / deselect all sources"/>
+                                        </DataTemplate>
+                                    </GridViewColumn.HeaderTemplate>
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <CheckBox IsChecked="{Binding IsCheckedForBackup, Mode=TwoWay}"
+                                                      IsThreeState="{Binding HasPartialSelection}"
+                                                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <!-- Icon column -->
+                                <GridViewColumn Width="28">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Image Width="16" Height="16" Source="{Binding Icon}"/>
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="Source" Width="200"
+                                                DisplayMemberBinding="{Binding Pattern}"/>
+                                <GridViewColumn Header="Selected" Width="60"
+                                                DisplayMemberBinding="{Binding SelectedFileCountFormatted}"/>
+                                <GridViewColumn Header="Files" Width="55"
+                                                DisplayMemberBinding="{Binding FileCountFormatted}"/>
+                                <GridViewColumn Header="Size" Width="65"
+                                                DisplayMemberBinding="{Binding SelectedSizeFormatted}"/>
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+                        <!-- Drop hint overlay -->
+                        <TextBlock Text="Drop Files and Folders here"
+                                   FontSize="16" Foreground="LightGray"
+                                   HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                   Margin="0,0,16,8"
+                                   IsHitTestVisible="False"/>
+                    </Grid>
+                </GroupBox>
+
+                <!-- Splitter between sources and files (snaps to full / compact / hidden) -->
+                <controls:SnappingGridSplitter Grid.Row="2" Height="4"
+                                               HorizontalAlignment="Stretch"
+                                               VerticalAlignment="Center"
+                                               Background="LightGray"
+                                               TargetIndex="3">
+                    <controls:SnappingGridSplitter.SnapZones>
+                        <!-- Hidden: catches everything from 0 up to 40px -->
+                        <controls:SnapZone Value="0"   LowerRange="9999" UpperRange="40"/>
+                        <!-- Compact (filter bar only): catches 40–80px range -->
+                        <controls:SnapZone Value="60"  LowerRange="20"   UpperRange="20"/>
+                        <!-- Full (natural size): catches 30px below measured height and above -->
+                        <controls:SnapZone IsAutoSize="True" LowerRange="30" UpperRange="9999"/>
+                    </controls:SnappingGridSplitter.SnapZones>
+                </controls:SnappingGridSplitter>
+
+                <!-- Files pane (lower, collapsible) -->
+                <GroupBox Grid.Row="3" x:Name="FilesPaneGroup">
+                    <GroupBox.Header>
+                        <TextBlock>
+                            <Run Text="Files"/>
+                            <Run Text="—" Foreground="Gray"/>
+                            <Run x:Name="FilesPaneSourceName" Text="(select a source)" Foreground="Gray"/>
+                        </TextBlock>
+                    </GroupBox.Header>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition x:Name="FileFilterPaneRow" Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- File list -->
+                        <ListView Grid.Row="0"
+                                  x:Name="FileList"
+                                  ItemsSource="{Binding CurrentFileItems}"
+                                  CheckBox.Checked="FileCheckBox_Changed"
+                                  CheckBox.Unchecked="FileCheckBox_Changed"
+                                  VirtualizingPanel.IsVirtualizing="True"
+                                  VirtualizingPanel.VirtualizationMode="Recycling">
+                            <ListView.View>
+                                <GridView>
+                                    <!-- Checkbox column with tri-state header -->
+                                    <GridViewColumn Width="28">
+                                        <GridViewColumn.HeaderTemplate>
+                                            <DataTemplate>
+                                                <CheckBox IsChecked="{Binding DataContext.AreAllFilesChecked,
+                                                                      RelativeSource={RelativeSource AncestorType=Window}}"
+                                                          IsThreeState="True"
+                                                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                          ToolTip="Select / deselect all files"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.HeaderTemplate>
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox IsChecked="{Binding IsCheckedForRestore, Mode=TwoWay}"
+                                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <!-- Icon column -->
+                                    <GridViewColumn Width="28">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Image Width="16" Height="16" Source="{Binding Icon}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Name" Width="180"
+                                                    DisplayMemberBinding="{Binding FileName}"/>
+                                    <GridViewColumn Header="Size" Width="70"
+                                                    DisplayMemberBinding="{Binding SizeFormatted}"/>
+                                    <GridViewColumn Header="Modified" Width="120"
+                                                    DisplayMemberBinding="{Binding LastModified}"/>
+                                    <GridViewColumn Header="Path" Width="200"
+                                                    DisplayMemberBinding="{Binding FullPath}"/>
+                                </GridView>
+                            </ListView.View>
+                        </ListView>
+
+                        <!-- Splitter between file list and filter pane -->
+                        <controls:SnappingGridSplitter Grid.Row="1" Height="4"
+                                                       HorizontalAlignment="Stretch"
+                                                       VerticalAlignment="Center"
+                                                       Background="LightGray"
+                                                       TargetIndex="2">
+                            <controls:SnappingGridSplitter.SnapZones>
+                                <controls:SnapZone Value="0"  LowerRange="9999" UpperRange="12"/>
+                                <controls:SnapZone Value="26" LowerRange="16"   UpperRange="8"/>
+                                <controls:SnapZone IsAutoSize="True" LowerRange="8" UpperRange="9999"/>
+                            </controls:SnappingGridSplitter.SnapZones>
+                        </controls:SnappingGridSplitter>
+
+                        <!-- File Filter Pane -->
+                        <controls:FileFilterPane Grid.Row="2"
+                                                 x:Name="FileFilterPaneControl"/>
+                    </Grid>
+                </GroupBox>
+            </Grid>
+
+            <!-- Vertical splitter between left and right panels -->
+            <GridSplitter Grid.Column="1" Width="4"
+                          HorizontalAlignment="Center"
+                          VerticalAlignment="Stretch"
+                          Background="LightGray"/>
+
+            <!-- ═══════════════════════════════════════
+                 Right: Options panel (scrollable)
+                 ═══════════════════════════════════════ -->
+            <ScrollViewer Grid.Column="2" Margin="4,0,0,0"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+                    <!-- Description -->
+                    <GroupBox Header="Description" Margin="0,0,0,8">
+                        <TextBox Text="{Binding Description, UpdateSourceTrigger=PropertyChanged}"
+                                 Margin="8" AcceptsReturn="False"/>
+                    </GroupBox>
+
+                    <!-- Write Options -->
+                    <GroupBox Header="Options" Margin="0,0,0,8">
+                        <StackPanel Margin="8">
+                            <CheckBox Content="Include subdirectories"
+                                      IsChecked="{Binding IncludeSubdirectories}"
+                                      Margin="0,0,0,4"/>
+                            <CheckBox Content="Incremental backup"
+                                      IsChecked="{Binding IncrementalBackup}"
+                                      Margin="0,0,0,4"/>
+                            <CheckBox Content="Use filemarks"
+                                      IsChecked="{Binding UseFilemarks}"
+                                      Margin="0,0,0,8"
+                                      ToolTip="Use filemarks between files (uncheck for blob mode)"/>
+
+                            <!-- Block size -->
+                            <TextBlock Text="Block size:" Margin="0,0,0,4"/>
+                            <ComboBox ItemsSource="{Binding BlockSizeOptions}"
+                                      SelectedIndex="{Binding SelectedBlockSizeIndex}"
+                                      Margin="0,0,0,8"/>
+
+                            <!-- Hash algorithm -->
+                            <TextBlock Text="Hash algorithm:" Margin="0,0,0,4"/>
+                            <ComboBox ItemsSource="{Binding HashOptions}"
+                                      SelectedIndex="{Binding SelectedHashIndex}"/>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <!-- Append / Overwrite -->
+                    <GroupBox Header="Media" Margin="0,0,0,8">
+                        <StackPanel Margin="8">
+                            <RadioButton Content="Append after set:"
+                                         IsChecked="{Binding AppendToSet}"
+                                         Margin="0,0,0,4"/>
+                            <ComboBox ItemsSource="{Binding AppendOptions}"
+                                      SelectedItem="{Binding SelectedAppendOption}"
+                                      DisplayMemberPath="DisplayText"
+                                      IsEnabled="{Binding AppendToSet}"
+                                      Margin="20,0,0,4"/>
+                            <RadioButton Content="Overwrite entire media"
+                                         IsChecked="{Binding OverwriteMedia}"
+                                         Margin="0,4,0,0"/>
+
+                            <!-- Warning panel -->
+                            <Border Style="{StaticResource WarningPanelStyle}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
+                                               FontSize="13" Margin="0,0,6,0"/>
+                                    <TextBlock Text="{Binding WarningMessage}"
+                                               VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <!-- Auto-scan -->
+                    <GroupBox Header="Scanning" Margin="0,0,0,8">
+                        <StackPanel Margin="8">
+                            <CheckBox Content="Auto-scan when adding sources"
+                                      IsChecked="{Binding AutoScan}"
+                                      Margin="0,0,0,4"/>
+                            <Button Content="Scan All Now"
+                                    Command="{Binding ScanAllCommand}"
+                                    HorizontalAlignment="Left"
+                                    Width="100"/>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <!-- Preview -->
+                    <GroupBox Header="Preview" Margin="0,0,0,0">
+                        <Grid Margin="8">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Total files:" Margin="0,0,8,4"/>
+                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding PreviewTotalFiles}"/>
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Total size:" Margin="0,0,8,4"/>
+                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding PreviewTotalSize}"/>
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Checked files:" Margin="0,0,8,4"/>
+                            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding PreviewCheckedFiles}" FontWeight="SemiBold"/>
+
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Checked size:" Margin="0,0,8,0"/>
+                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding PreviewCheckedSize}" FontWeight="SemiBold"/>
+                        </Grid>
+                    </GroupBox>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- Button bar -->
+        <Grid Grid.Row="1" Margin="0,12,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Cancel"
+                        Command="{Binding CancelCommand}"
+                        IsCancel="True"
+                        Width="80"
+                        Margin="0,0,8,0"/>
+                <Button Content="Start Backup"
+                        Command="{Binding StartBackupCommand}"
+                        IsDefault="True"
+                        Width="100"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
