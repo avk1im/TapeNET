@@ -623,8 +623,17 @@ public class BackupViewModel : ViewModelBase
         OnPropertyChanged(nameof(AreAllSourcesChecked));
         CommandManager.InvalidateRequerySuggested();
 
-        if (AutoScan)
+        // Single files resolve synchronously (no disk enumeration needed)
+        if (entry.SourceType == BackupSourceType.SingleFile)
+        {
+            _sourceView.ResolveSingleFile(entry);
+            _sourceView.SyncListItem(listItem);
+            UpdatePreview();
+        }
+        else if (AutoScan)
+        {
             _ = ScanSourceAsync(listItem);
+        }
     }
 
     /// <summary>

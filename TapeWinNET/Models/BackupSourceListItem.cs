@@ -25,6 +25,7 @@ public class BackupSourceListItem(BackupSourceEntry entry) : INotifyPropertyChan
     // Scan state
     private int _fileCount;          // 0 = not scanned or empty
     private bool _isScanning;
+    private bool _isScanned;         // true once first scan completes
 
     // Checked / selected state — pushed by the view model
     private int _selectedFileCount;
@@ -52,7 +53,7 @@ public class BackupSourceListItem(BackupSourceEntry entry) : INotifyPropertyChan
     {
         get => _fileCount;
         set => SetProperty(ref _fileCount, value,
-            [nameof(FileCountFormatted)]);
+            [nameof(FileCountFormatted), nameof(HasPartialSelection)]);
     }
 
     /// <summary>Whether this source is currently being scanned.</summary>
@@ -60,14 +61,24 @@ public class BackupSourceListItem(BackupSourceEntry entry) : INotifyPropertyChan
     {
         get => _isScanning;
         set => SetProperty(ref _isScanning, value,
-            [nameof(FileCountFormatted)]);
+            [nameof(FileCountFormatted), nameof(SelectedFileCountFormatted)]);
+    }
+
+    /// <summary>Whether this source has completed at least one scan.</summary>
+    public bool IsScanned
+    {
+        get => _isScanned;
+        set => SetProperty(ref _isScanned, value,
+            [nameof(FileCountFormatted), nameof(SelectedFileCountFormatted)]);
     }
 
     /// <summary>
-    /// Display format for file count: "1,234" or "Scanning…" while active.
+    /// Display format for file count: "Scanning…" while active,
+    /// "…" when not yet scanned, or "1,234" / "—" after scan.
     /// </summary>
     public string FileCountFormatted => _isScanning
         ? "Scanning\u2026"
+        : !_isScanned ? "\u2026"
         : _fileCount > 0 ? _fileCount.ToString("N0") : "\u2014";
 
     // ─────────────────────────────────────────────────
@@ -79,7 +90,7 @@ public class BackupSourceListItem(BackupSourceEntry entry) : INotifyPropertyChan
     {
         get => _selectedFileCount;
         set => SetProperty(ref _selectedFileCount, value,
-            [nameof(SelectedFileCountFormatted)]);
+            [nameof(SelectedFileCountFormatted), nameof(HasPartialSelection)]);
     }
 
     /// <summary>Total size of selected files.</summary>
@@ -91,9 +102,12 @@ public class BackupSourceListItem(BackupSourceEntry entry) : INotifyPropertyChan
     }
 
     /// <summary>
-    /// Display format for the "Selected" column: count or "—" when nothing selected.
+    /// Display format for the "Selected" column: "…" when not yet scanned,
+    /// count when files are selected, or "—" when nothing selected.
     /// </summary>
-    public string SelectedFileCountFormatted => _selectedFileCount > 0
+    public string SelectedFileCountFormatted => !_isScanned && !_isScanning
+        ? "\u2026"
+        : _selectedFileCount > 0
         ? _selectedFileCount.ToString("N0") : "\u2014";
 
     /// <summary>

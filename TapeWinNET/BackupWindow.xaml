@@ -13,7 +13,10 @@
         MinWidth="700" MinHeight="480"
         WindowStartupLocation="CenterOwner"
         ResizeMode="CanResizeWithGrip"
-        ShowInTaskbar="False">
+        ShowInTaskbar="False"
+        AllowDrop="True"
+        DragOver="Window_DragOver"
+        Drop="Window_Drop">
 
     <Window.Resources>
         <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVis"/>
@@ -104,9 +107,6 @@
                               CheckBox.Checked="SourceCheckBox_Changed"
                               CheckBox.Unchecked="SourceCheckBox_Changed"
                               CheckBox.Indeterminate="SourceCheckBox_Changed"
-                              AllowDrop="True"
-                              DragOver="SourceList_DragOver"
-                              Drop="SourceList_Drop"
                               VirtualizingPanel.IsVirtualizing="True"
                               VirtualizingPanel.VirtualizationMode="Recycling"
                               Margin="4"
@@ -160,21 +160,11 @@
                     </Grid>
                 </GroupBox>
 
-                <!-- Splitter between sources and files (snaps to full / compact / hidden) -->
-                <controls:SnappingGridSplitter Grid.Row="2" Height="4"
-                                               HorizontalAlignment="Stretch"
-                                               VerticalAlignment="Center"
-                                               Background="LightGray"
-                                               TargetIndex="3">
-                    <controls:SnappingGridSplitter.SnapZones>
-                        <!-- Hidden: catches everything from 0 up to 40px -->
-                        <controls:SnapZone Value="0"   LowerRange="9999" UpperRange="40"/>
-                        <!-- Compact (filter bar only): catches 40–80px range -->
-                        <controls:SnapZone Value="60"  LowerRange="20"   UpperRange="20"/>
-                        <!-- Full (natural size): catches 30px below measured height and above -->
-                        <controls:SnapZone IsAutoSize="True" LowerRange="30" UpperRange="9999"/>
-                    </controls:SnappingGridSplitter.SnapZones>
-                </controls:SnappingGridSplitter>
+                <!-- Splitter between sources and files -->
+                <GridSplitter Grid.Row="2" Height="4"
+                              HorizontalAlignment="Stretch"
+                              VerticalAlignment="Center"
+                              Background="LightGray"/>
 
                 <!-- Files pane (lower, collapsible) -->
                 <GroupBox Grid.Row="3" x:Name="FilesPaneGroup">

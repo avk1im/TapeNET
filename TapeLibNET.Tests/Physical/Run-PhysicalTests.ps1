@@ -196,16 +196,24 @@ foreach ($pass in $passes) {
         # Capture stderr asynchronously to avoid deadlock
         $stderrTask = $proc.StandardError.ReadToEndAsync()
 
-        # Watchdog: kill the process after 60 minutes.
-        #  When fired, the kill causes ReadLine() to return null, exiting the loop.
+        # Watchdog: kill the process tree after 120 minutes (2 hours).
+        #  Uses taskkill /T to kill the dotnet process AND its children (testhost.exe).
+        #  Stop-Process alone would kill only dotnet; testhost inherits the stdout pipe
+        #  handle, so ReadLine() would keep blocking until testhost exits on its own.
+        $timeoutMs = 2 * 3600000
         $watchdog = Start-Job -ScriptBlock {
             param($procId, $ms)
             Start-Sleep -Milliseconds $ms
-            try { Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue } catch { }
-        } -ArgumentList $proc.Id, 3600000
+            try { & taskkill /T /F /PID $procId 2>$null } catch { }
+            # instead of:             
+            #  try { Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue } catch { }
+            #  which would kill dotnet only, not testhost, as explained above
+        } -ArgumentList $proc.Id, $timeoutMs
 
         # Read stdout line-by-line — test results appear as they complete
         $stdoutLines = [System.Collections.Generic.List[string]]::new()
+        # Track whether we're inside a failure detail block to show error context
+        $inFailureBlock = $false
         while ($null -ne ($line = $proc.StandardOutput.ReadLine())) {
             $stdoutLines.Add($line)
 
@@ -216,6 +224,22 @@ foreach ($pass in $passes) {
                              elseif ($trimmed -match '^Failed') { 'Red' }
                              else { 'DarkYellow' }
                 Write-Host "    $trimmed" -ForegroundColor $lineColor
+                # Start capturing failure details after a Failed line
+                $inFailureBlock = $trimmed -match '^Failed'
+            }
+            # Show failure context: Error Message and key Standard Output lines
+            elseif ($inFailureBlock) {
+                if ($line -match '^\s+Error Message:') {
+                    Write-Host "      $($line.Trim())" -ForegroundColor Red
+                }
+                elseif ($line -match '^\s+Stack Trace:') {
+                    # Show first stack frame only (the assert location)
+                    $inFailureBlock = $false
+                }
+                elseif ($line -match '^\s{3,}\S') {
+                    # Indented content under Error Message (the actual message text)
+                    Write-Host "      $($line.Trim())" -ForegroundColor Red
+                }
             }
         }
 
@@ -236,7 +260,7 @@ foreach ($pass in $passes) {
         }
 
         if ($timedOut) {
-            Write-Host "  TIMEOUT after 60 minutes — killed" -ForegroundColor Red
+            Write-Host "  TIMEOUT after $($timeoutMs / 60000) minutes — killed" -ForegroundColor Red
             $results += [PSCustomObject]@{
                 Pass     = $pass
                 Layer    = $layer

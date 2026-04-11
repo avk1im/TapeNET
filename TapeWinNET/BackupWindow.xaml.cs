@@ -156,7 +156,7 @@ public partial class BackupWindow : Window
     //  Drag-and-drop (files/folders from Explorer)
     // ─────────────────────────────────────────────────
 
-    private void SourceList_DragOver(object sender, DragEventArgs e)
+    private void Window_DragOver(object sender, DragEventArgs e)
     {
         e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop)
             ? DragDropEffects.Copy
@@ -164,7 +164,7 @@ public partial class BackupWindow : Window
         e.Handled = true;
     }
 
-    private void SourceList_Drop(object sender, DragEventArgs e)
+    private void Window_Drop(object sender, DragEventArgs e)
     {
         if (e.Data.GetDataPresent(DataFormats.FileDrop) &&
             e.Data.GetData(DataFormats.FileDrop) is string[] paths)

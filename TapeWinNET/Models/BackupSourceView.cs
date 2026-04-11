@@ -29,7 +29,7 @@ public class BackupSourceSetView
     /// </summary>
     /// <param name="sourceFiles">Resolved disk files wrapped in
     ///  <see cref="BackupSourceFileInfo"/>.</param>
-    public BackupSourceSetView(IReadOnlyList<TapeFileInfo> sourceFiles)
+    public BackupSourceSetView(IReadOnlyList<BackupSourceFileInfo> sourceFiles)
     {
         SourceFiles = sourceFiles;
         FilteredFiles = new FilteredFileList(sourceFiles);
@@ -39,7 +39,7 @@ public class BackupSourceSetView
     }
 
     /// <summary>The resolved source file list (disk files as <see cref="BackupSourceFileInfo"/>).</summary>
-    public IReadOnlyList<TapeFileInfo> SourceFiles { get; }
+    public IReadOnlyList<BackupSourceFileInfo> SourceFiles { get; }
 
     /// <summary>Filtered view + checked state over <see cref="SourceFiles"/>.</summary>
     public FilteredFileList FilteredFiles { get; }
@@ -189,6 +189,24 @@ public class BackupSourceView
     // ─────────────────────────────────────────────────
 
     /// <summary>
+    /// Synchronously resolves a single-file source entry. For
+    /// <see cref="BackupSourceType.SingleFile"/> sources, no disk enumeration
+    /// is needed — we just wrap the <see cref="FileInfo"/> directly.
+    /// </summary>
+    /// <returns>The new set view, or <c>null</c> if the file doesn't exist.</returns>
+    public BackupSourceSetView? ResolveSingleFile(BackupSourceEntry entry)
+    {
+        var fi = new FileInfo(entry.Pattern);
+        if (!fi.Exists)
+            return null;
+
+        var tfi = new BackupSourceFileInfo(GenerateUID(), fi);
+        var view = new BackupSourceSetView([tfi]);
+        SetView(entry, view);
+        return view;
+    }
+
+    /// <summary>
     /// Resolves disk files for a source entry on a worker thread. Builds
     /// <see cref="BackupSourceFileInfo"/> wrappers and creates a new
     /// <see cref="BackupSourceSetView"/>. The returned view has all files
@@ -227,12 +245,12 @@ public class BackupSourceView
     /// <see cref="BackupSourceFileInfo"/>. Runs on the thread pool.
     ///  Uses <see cref="IncludeSubdirectories"/> for recursion depth.
     /// </summary>
-    private List<TapeFileInfo> EnumerateFiles(
+    private List<BackupSourceFileInfo> EnumerateFiles(
         BackupSourceEntry entry,
         Action<int>? progress,
         CancellationToken ct)
     {
-        var result = new List<TapeFileInfo>();
+        var result = new List<BackupSourceFileInfo>();
         int count = 0;
 
         void AddFile(FileInfo fi)
@@ -391,6 +409,7 @@ public class BackupSourceView
         if (_setViews.TryGetValue(listItem.Entry, out var view))
         {
             var ff = view.FilteredFiles;
+            listItem.IsScanned = true;
             listItem.FileCount = ff.SourceCount;
             listItem.SelectedFileCount = ff.CheckedCount;
             listItem.SelectedSize = ff.CheckedTotalSize;
