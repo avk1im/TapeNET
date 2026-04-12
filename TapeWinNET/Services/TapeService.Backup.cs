@@ -191,15 +191,26 @@ public partial class TapeService
                     //  result=false → abort, volume full (CanResumeToNextVolume), or hard failure
                     // In all cases, the TOC must be cleaned up and saved to tape.
                     bool wasAborted = false;
+
+                    // Timing — accumulate data and TOC times separately across multi-volume iterations;
+                    //  user interaction time between volumes is excluded
+                    var dataTimer = new Stopwatch();
+                    var tocTimer = new Stopwatch();
+                    long dataElapsedUs = 0;
+                    long tocElapsedUs = 0;
+
                     do
                     {
                         Status($"Backing up files...");
 
+                        dataTimer.Restart();
                         bool result = agent.CanResumeToNextVolume
                             ? agent.ResumeBackupToNextVolume()
                             : listContainsPatterns ?
                                 agent.BackupFilesToCurrentSet(newSet, fileList, includeSubdirectories, ignoreFailures: true, progressHandler)
                                 : agent.BackupFileListToCurrentSet(newSet, fileList, ignoreFailures: true, progressHandler);
+                        dataTimer.Stop();
+                        dataElapsedUs += dataTimer.ElapsedMicroseconds;
 
                         // The agent catches TapeAbortRequestedException internally and returns false,
                         // so we detect abort via the flag rather than catching the exception.
@@ -299,6 +310,8 @@ public partial class TapeService
                         if (!noFilesBackedUp && !agent.CanResumeToNextVolume)
                             toc.ContinuedOnNextVolume = false;
 
+                        tocTimer.Restart();
+
                         if (!wasAborted)
                         {
                             Status("Saving TOC...");
@@ -375,6 +388,9 @@ public partial class TapeService
                             logOk("TOC backed up successfully");
                         }
 
+                        tocTimer.Stop();
+                        tocElapsedUs += tocTimer.ElapsedMicroseconds;
+
                         _toc = toc; // Update service TOC reference
 
                         // Log results for this volume — headline level + uniform stats
@@ -405,6 +421,15 @@ public partial class TapeService
                             if (progressHandler.FilesSkipped > 0) parts.Add($"{progressHandler.FilesSkipped:N0} skipped");
                             parts.Add($"{Helpers.BytesToString(agent.BytesBackedup)} written");
                             logInfoSub(string.Join(", ", parts));
+
+                            // Timing sub-line: elapsed time, data rate, and TOC save time
+                            double dataSecs = dataElapsedUs / 1e6;
+                            double tocSecs = tocElapsedUs / 1e6;
+                            var timingParts = new List<string>(3) { FormatElapsed(dataSecs) };
+                            string rate = FormatDataRate(agent.BytesBackedup, dataSecs);
+                            if (rate.Length > 0) timingParts.Add(rate);
+                            if (tocSecs >= 1.0) timingParts.Add($"TOC save {FormatElapsed(tocSecs)}");
+                            logInfoSub(string.Join(", ", timingParts));
                         }
                         logInfoSub($"Remaining media capacity: {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
 
@@ -469,6 +494,15 @@ public partial class TapeService
                     if (wasAborted)
                     {
                         logOk("TOC saved after abort");
+                        // Log timing even on abort
+                        double abortDataSecs = dataElapsedUs / 1e6;
+                        var abortParts = new List<string>(3)
+                        {
+                            $"Before abort: {Helpers.BytesToString(agent.BytesBackedup)} written"
+                        };
+                        string abortRate = FormatDataRate(agent.BytesBackedup, abortDataSecs);
+                        if (abortRate.Length > 0) abortParts.Add(abortRate);
+                        logInfoSub(string.Join(", ", abortParts));
                         Status("Backup aborted");
                         throw new TapeAbortRequestedException("User requested abort");
                     }

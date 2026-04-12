@@ -42,7 +42,6 @@ namespace TapeLibNET
             }
 
             Navigator = navigator;
-            AddErrorSource(Navigator);
 
             m_logger.LogTrace("Drive #{Drive}: Navigator of type {Type} created", DriveNumber, Navigator.GetType());
 
@@ -62,10 +61,7 @@ namespace TapeLibNET
             // Preserve application-level configuration from the old navigator
             navigator.TOCCapacity = Navigator.TOCCapacity;
 
-            RemoveErrorSource(Navigator);
-
             Navigator = navigator;
-            AddErrorSource(Navigator);
 
             m_logger.LogTrace("Drive #{Drive}: Created new Navigator of type {Type}", DriveNumber, Navigator.GetType());
 

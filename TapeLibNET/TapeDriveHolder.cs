@@ -22,7 +22,6 @@ public abstract class ErrorManageableBase(ILogger logger) : IErrorManageable
     #region *** Private Fields ***
 
     private WIN32_ERROR m_errorOwn = WIN32_ERROR.NO_ERROR;
-    private WIN32_ERROR m_stickyError = WIN32_ERROR.NO_ERROR;
     private string m_errorMessageOwn = string.Empty;
 
     #endregion
@@ -32,14 +31,11 @@ public abstract class ErrorManageableBase(ILogger logger) : IErrorManageable
     protected readonly ILogger m_logger = logger;
 
     #endregion
-    #region *** Constructor ***
-
-    #endregion
 
     #region *** IErrorManageable Implementation ***
 
-    public uint LastError => (uint)LastErrorWin32;
-    public string LastErrorMessage => m_errorMessageOwn;
+    public virtual uint LastError => (uint)LastErrorWin32;
+    public virtual string LastErrorMessage => m_errorMessageOwn;
 
     public virtual void ResetError()
     {
@@ -57,24 +53,11 @@ public abstract class ErrorManageableBase(ILogger logger) : IErrorManageable
         set => SetError(value);
     }
 
-    /// <summary>Previous significant error (before last reset).</summary>
-    internal WIN32_ERROR LastStickyErrorWin32 => m_stickyError;
-    internal uint LastStickyError => (uint)LastStickyErrorWin32;
-
-    /// <summary>Returns last error if set, otherwise the sticky error.</summary>
-    internal WIN32_ERROR LastSignificantErrorWin32 =>
-        LastErrorWin32 == WIN32_ERROR.NO_ERROR ? LastStickyErrorWin32 : LastErrorWin32;
-    public uint LastSignificantError => (uint)LastSignificantErrorWin32;
-    public string LastSignificantErrorMessage => Marshal.GetPInvokeErrorMessage((int)LastSignificantError);
-
-    public bool WentOK => m_errorOwn == WIN32_ERROR.NO_ERROR;
-    public bool WentBad => !WentOK;
+    public virtual bool WentOK => m_errorOwn == WIN32_ERROR.NO_ERROR;
+    public virtual bool WentBad => !WentOK;
 
     internal void SetError(WIN32_ERROR error, string? message = null)
     {
-        if (m_errorOwn != WIN32_ERROR.NO_ERROR)
-            m_stickyError = m_errorOwn;
-
         m_errorOwn = error;
         m_errorMessageOwn = string.IsNullOrEmpty(message)
             ? Marshal.GetPInvokeErrorMessage((int)error)
@@ -136,21 +119,25 @@ public abstract class ErrorManageableBase(ILogger logger) : IErrorManageable
     #endregion
 }
 
+/// <summary>
+/// Base class for tape components that hold a <see cref="TapeDrive"/> reference.
+/// Provides a two-tier error model: own error (set explicitly via <see cref="ErrorManageableBase.SetError"/>)
+/// takes precedence, with the shared <see cref="Drive"/> as fallback.
+/// <para>
+/// <see cref="ResetError"/> clears both own and Drive error state, ensuring a clean
+/// slate before each operation. Subclasses that need to surface errors from intermediate
+/// layers (e.g., Agent surfacing Manager errors) should use explicit
+/// <see cref="ErrorManageableBase.SyncErrorFrom"/> calls in failure paths.
+/// </para>
+/// </summary>
 public class TapeDriveHolder<T> : ErrorManageableBase
 {
-    #region *** Private Fields ***
-
-    private readonly List<IErrorManageable> m_errorSources;
-
-    #endregion
-
     #region *** Constructor ***
 
     public TapeDriveHolder(TapeDrive drive)
         : base(drive.LoggerFactory.CreateLogger<T>())
     {
         Drive = drive;
-        m_errorSources = [drive];
     }
 
     #endregion
@@ -163,52 +150,22 @@ public class TapeDriveHolder<T> : ErrorManageableBase
 
     #endregion
 
-    #region *** Error Handling - Extended ***
+    #region *** Error Handling — Own + Drive Fallback ***
 
-    public new uint LastError => base.LastError != 0 ? base.LastError : (uint)GetErrorFromSources();
-    public new string LastErrorMessage => base.LastError != 0 ? base.LastErrorMessage : GetErrorMessageFromSources();
+    /// <summary>Own error if set, otherwise Drive error.</summary>
+    public override uint LastError => base.LastError != 0 ? base.LastError : Drive.LastError;
 
-    public new bool WentOK => LastError == 0;
-    public new bool WentBad => !WentOK;
+    /// <summary>Own error message if own error is set, otherwise Drive error message.</summary>
+    public override string LastErrorMessage => base.LastError != 0 ? base.LastErrorMessage : Drive.LastErrorMessage;
 
+    public override bool WentOK => LastError == 0;
+    public override bool WentBad => !WentOK;
+
+    /// <summary>Resets own error and Drive error state.</summary>
     public override void ResetError()
     {
         base.ResetError();
-        foreach (var source in m_errorSources)
-            source.ResetError();
-    }
-
-    protected void AddErrorSource(IErrorManageable source)
-    {
-        if (!m_errorSources.Contains(source))
-            m_errorSources.Add(source);
-    }
-
-    protected void RemoveErrorSource(IErrorManageable source)
-    {
-        m_errorSources.Remove(source);
-    }
-
-    private WIN32_ERROR GetErrorFromSources()
-    {
-        for (int i = m_errorSources.Count - 1; i >= 0; i--)
-        {
-            var error = (WIN32_ERROR)m_errorSources[i].LastError;
-            if (error != WIN32_ERROR.NO_ERROR)
-                return error;
-        }
-        return WIN32_ERROR.NO_ERROR;
-    }
-
-    private string GetErrorMessageFromSources()
-    {
-        for (int i = m_errorSources.Count - 1; i >= 0; i--)
-        {
-            var error = (WIN32_ERROR)m_errorSources[i].LastError;
-            if (error != WIN32_ERROR.NO_ERROR)
-                return m_errorSources[i].LastErrorMessage;
-        }
-        return string.Empty;
+        Drive.ResetError();
     }
 
     #endregion

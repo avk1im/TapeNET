@@ -190,10 +190,18 @@ public partial class TapeService
 
                     Status($"{modeName} files...");
 
+                    // Timing — accumulate data-processing time across multi-volume iterations;
+                    //  user interaction time between volumes is excluded
+                    var dataTimer = new Stopwatch();
+                    long dataElapsedUs = 0;
+
                     // Call agent to do the actual work —
                     //  this will trigger callbacks for progress and file-level events
+                    dataTimer.Start();
                     bool success = agent.RestoreFilesFromCurrentSetDown(
                         combined, ignoreFailures: true, progressHandler);
+                    dataTimer.Stop();
+                    dataElapsedUs += dataTimer.ElapsedMicroseconds;
 
                     // The agent catches TapeAbortRequestedException internally and returns false,
                     //  so we detect abort via the flag rather than catching the exception.
@@ -248,7 +256,10 @@ public partial class TapeService
                         Status($"{modeName} files...");
 
                         // Step 5: Resume restore on the new volume
+                        dataTimer.Restart();
                         success = agent.ResumeRestoreFromAnotherVolume();
+                        dataTimer.Stop();
+                        dataElapsedUs += dataTimer.ElapsedMicroseconds;
                         wasAborted = agent.IsAbortRequested;
                     } // while multi-volume continuation
 
@@ -260,7 +271,15 @@ public partial class TapeService
                     {
                         logWarn($"{modeName} of {result.FilesTotal:N0} file(s): aborting per user request");
                         var bytesProcessed = long.Max(result.BytesProcessed, agent.BytesRestored); // in case BatchEnd wasn't called due to abort
-                        logInfoSub($"Before abort: {result.FilesSucceeded:N0} succeeded, {Helpers.BytesToString(bytesProcessed)} processed");
+                        double abortSecs = dataElapsedUs / 1e6;
+                        var abortParts = new List<string>(3)
+                        {
+                            $"Before abort: {result.FilesSucceeded:N0} succeeded",
+                            $"{Helpers.BytesToString(bytesProcessed)} processed"
+                        };
+                        string abortRate = FormatDataRate(bytesProcessed, abortSecs);
+                        if (abortRate.Length > 0) abortParts.Add(abortRate);
+                        logInfoSub(string.Join(", ", abortParts));
                         throw new TapeAbortRequestedException("User requested abort");
                     }
 
@@ -298,6 +317,13 @@ public partial class TapeService
                         if (result.FilesSkipped > 0) parts.Add($"{result.FilesSkipped:N0} skipped");
                         parts.Add($"{Helpers.BytesToString(result.BytesProcessed)} processed");
                         logInfoSub(string.Join(", ", parts));
+
+                        // Timing sub-line: elapsed time and data rate
+                        double dataSecs = dataElapsedUs / 1e6;
+                        var timingParts = new List<string>(2) { FormatElapsed(dataSecs) };
+                        string rate = FormatDataRate(result.BytesProcessed, dataSecs);
+                        if (rate.Length > 0) timingParts.Add(rate);
+                        logInfoSub(string.Join(", ", timingParts));
                     }
                     if (result.FilesMissing > 0)
                         logWarnSub($"{result.FilesMissing:N0} file(s) not found on tape");
@@ -326,6 +352,33 @@ public partial class TapeService
             }
         });
     }
+
+    #region Timing Helpers
+
+    /// <summary>
+    /// Formats an elapsed duration as a human-readable string.
+    /// </summary>
+    private static string FormatElapsed(double totalSeconds)
+    {
+        if (totalSeconds < 1.0) return "< 1s";
+        var ts = TimeSpan.FromSeconds(totalSeconds);
+        if (ts.TotalMinutes < 1) return $"{ts.Seconds}s";
+        if (ts.TotalHours < 1) return $"{ts.Minutes}m {ts.Seconds:D2}s";
+        return $"{(int)ts.TotalHours}h {ts.Minutes:D2}m {ts.Seconds:D2}s";
+    }
+
+    /// <summary>
+    /// Formats a data rate as "X.XX MB/s" (or appropriate unit).
+    /// Returns empty string if duration is too short or no bytes.
+    /// </summary>
+    private static string FormatDataRate(long bytes, double totalSeconds)
+    {
+        if (totalSeconds < 0.001 || bytes <= 0) return string.Empty;
+        long bytesPerSecond = (long)(bytes / totalSeconds);
+        return $"{Helpers.BytesToString(bytesPerSecond)}/s";
+    }
+
+    #endregion
 
     #region Helper Classes - Restore
 

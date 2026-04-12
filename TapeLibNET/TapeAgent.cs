@@ -184,7 +184,6 @@ namespace TapeLibNET
         public TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : base(drive)
         {
             Manager = new (drive);
-            AddErrorSource(Manager);
             TOC = legacyTOC ?? [];
         }
 
@@ -382,6 +381,11 @@ namespace TapeLibNET
                 if (rstream == null)
                 {
                     m_logger.LogWarning("Failed to open TOC read stream in {Method}", nameof(RestoreTOCCore));
+                    // Capture Manager/Drive/Navigator error before retries reset it
+                    if (Manager.WentBad)
+                        SetError(Manager.LastError, Manager.LastErrorMessage);
+                    else
+                        SetError(WIN32_ERROR.ERROR_INVALID_STATE, "Failed to open TOC read stream");
                     return false;
                 }
 
@@ -408,6 +412,7 @@ namespace TapeLibNET
                     else
                     {
                         m_logger.LogWarning("Failed to deserialize TOC in {Method}", nameof(RestoreTOCCore));
+                        SetError(WIN32_ERROR.ERROR_INVALID_DATA, "Failed to deserialize TOC: data not found or unreadable");
                         return false;
                     }
                 }
@@ -440,6 +445,7 @@ namespace TapeLibNET
                     else
                     {
                         m_logger.LogWarning("Failed to deserialize TOC in {Method}", nameof(RestoreTOCCore));
+                        SetError(WIN32_ERROR.ERROR_INVALID_DATA, "Failed to deserialize TOC: data not found or unreadable");
                         return false;
                     }
 
@@ -448,6 +454,9 @@ namespace TapeLibNET
             catch (Exception ex)
             {
                 m_logger.LogWarning("Exception {Exception} while restoring TOC", ex);
+                // Stream disposal (using var) already cleared Manager/Drive errors;
+                //  capture the exception on the agent so callers see a meaningful message
+                SetError(ex);
                 return false;
             }
         }
