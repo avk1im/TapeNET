@@ -299,7 +299,7 @@ public partial class TapeService : IDisposable
                     _agent?.Dispose();
                     _agent = new TapeFileAgent(_drive, new TapeTOC(description));
 
-                    if (!_agent.BackupTOC())
+                    if (!_agent.BackupInitialTOC())
                     {
                         LastError = _agent.LastErrorMessage;
                         LogErr($"Couldn't save initial TOC. Error: {LastError}");
@@ -377,7 +377,7 @@ public partial class TapeService : IDisposable
                     var description = mediaName ?? $"Media created {DateTime.Now:yyyy-MM-dd HH:mm}";
                     _agent = new TapeFileAgent(_drive, new TapeTOC(description));
 
-                    if (!_agent.BackupTOC())
+                    if (!_agent.BackupInitialTOC())
                     {
                         LastError = _agent.LastErrorMessage;
                         LogErr($"Couldn't save initial TOC. Error: {LastError}");

@@ -773,7 +773,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
 
     private void SetOptimalMediaParams()
     {
-        SetBlockSize(c_defaultBlockSize);
+        SetBlockSize(uint.Max(c_defaultBlockSize, DefaultBlockSize));
     }
 
     #endregion

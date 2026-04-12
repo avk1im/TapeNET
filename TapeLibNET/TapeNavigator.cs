@@ -55,6 +55,13 @@ namespace TapeLibNET
         public static int InTOCSet => UnknownSet + 1;
         internal void ResetContentSet() => CurrentContentSet = UnknownSet;
 
+        /// <summary>
+        /// Informs the navigator that the media is known to be blank (e.g. just formatted).
+        /// Sets <see cref="CurrentContentSet"/> to −1 ("end of empty content"), so that
+        /// <see cref="MoveToBeginOfTOC"/> can proceed without searching for an existing TOC.
+        /// </summary>
+        internal void AssumeBlankMedia() => CurrentContentSet = -1;
+
         #endregion // Properties
 
 
@@ -745,6 +752,18 @@ namespace TapeLibNET
 
         #endregion // Constants
 
+
+        #region *** Private fields ***
+
+        // Tracks whether the physical TOC mark sequence (gap + 3 filemarks) needs to be
+        //  (re)written. Separate from base-class TOCInvalidated which tracks TOC *data*
+        //  staleness. Set true when content overwrites the mark area, false when a seek
+        //  confirms the mark is still present on tape or after WriteTOCMark() succeeds.
+        private bool m_tocMarkInvalidated = true;
+
+        #endregion // Private fields
+
+
         #region *** Constructors ***
 
         internal TapeNavigatorTOCInSetWithFmksAndTOCMark(TapeDrive drive) : base(drive) { }
@@ -756,8 +775,18 @@ namespace TapeLibNET
         
         public override void OnBeginWriteTOC()
         {
-            WriteTOCMark();
+            // Only write a new TOC mark if the previous one was invalidated
+            //  (overwritten by content). When the navigator already found and
+            //  positioned past an existing mark in MoveToBeginOfTOC(), reuse it.
+            if (m_tocMarkInvalidated)
+                WriteTOCMark();
             base.OnBeginWriteTOC();
+        }
+
+        public override void OnContentWritten()
+        {
+            m_tocMarkInvalidated = true;
+            base.OnContentWritten();
         }
 
         #endregion // Notifications
@@ -775,7 +804,7 @@ namespace TapeLibNET
             if (CurrentContentSet == -1)
             {
                 // We're already at the beginning of the TOC marker
-                if (TOCInvalidated) //  ...but if we were writing content, we've overwritten the marker
+                if (m_tocMarkInvalidated) //  ...but if we were writing content, we've overwritten the marker
                 {
                     ; // ...but we'll write it again in BeginWriteTOC() -> stay at the end of content
                 }
@@ -885,7 +914,10 @@ namespace TapeLibNET
                 Drive.WriteFilemark(FmksAsTOCMark);
 
             if (WentOK)
+            {
+                m_tocMarkInvalidated = false;
                 m_logger.LogTrace("Drive #{Drive}: Wrote TOC mark", DriveNumber);
+            }
             else
                 LogErrorAsDebug("Failed to write TOC mark");
 
@@ -899,7 +931,10 @@ namespace TapeLibNET
             Drive.MovePastSeqFilemarks(FmksAsTOCMark); // need + 1 to move past the last filemark
 
             if (WentOK)
+            {
+                m_tocMarkInvalidated = false; // mark confirmed present on tape
                 m_logger.LogTrace("Drive #{Drive}: Moved forward past TOC mark", DriveNumber);
+            }
             else
                 LogErrorAsDebug("Failed to seek forward past TOC mark");
 
@@ -913,7 +948,10 @@ namespace TapeLibNET
             Drive.MovePastSeqFilemarks(-FmksAsTOCMark);
 
             if (WentOK)
+            {
+                m_tocMarkInvalidated = false; // mark confirmed present on tape
                 m_logger.LogTrace("Drive #{Drive}: Moved backward before TOC mark", DriveNumber);
+            }
             else
                 LogErrorAsDebug("Failed to seek backward before TOC mark");
 

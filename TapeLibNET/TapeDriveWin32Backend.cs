@@ -21,6 +21,14 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
     private TAPE_GET_DRIVE_PARAMETERS? m_driveParams = null;
     private TAPE_GET_MEDIA_PARAMETERS? m_mediaParams = null;
 
+    // Runtime-detected opcodes that require blocking mode (bImmediate=false).
+    // QUIRK: Some drives (e.g. DLT-V4) reject bImmediate=true for certain
+    //  operations with ERROR_INVALID_FUNCTION. Discovered at runtime and
+    //  cached for all subsequent calls until the drive is closed.
+    private readonly HashSet<TAPE_POSITION_METHOD> m_blockingPositionOps = [];
+    private readonly HashSet<PREPARE_TAPE_OPERATION> m_blockingPrepareOps = [];
+    private readonly HashSet<TAPEMARK_TYPE> m_blockingTapemarkOps = [];
+
     #endregion
 
 #if DEBUG
@@ -65,6 +73,14 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
         WIN32_ERROR.ERROR_FILEMARK_DETECTED,
         WIN32_ERROR.ERROR_SETMARK_DETECTED,
         WIN32_ERROR.ERROR_END_OF_MEDIA,
+    ];
+
+    // Errors treated as "still in progress" during PollForCompletion.
+    // QUIRK DLT-V4: GetTapeStatus may return ERROR_IO_DEVICE instead of
+    //  ERROR_NOT_READY while a bImmediate operation is still executing.
+    private static readonly WIN32_ERROR[] c_waitableErrors = [
+        WIN32_ERROR.ERROR_NOT_READY,
+        WIN32_ERROR.ERROR_IO_DEVICE,
     ];
 
     private const int c_maxPollDelayMs = 500;
@@ -141,6 +157,9 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
         m_driveHandle.Close();
         m_driveParams = null;
         m_mediaParams = null;
+        m_blockingPositionOps.Clear();
+        m_blockingPrepareOps.Clear();
+        m_blockingTapemarkOps.Clear();
     }
 
     public override bool SetDriveParameters(bool compression, bool ecc, bool dataPadding, bool reportSetmarks, uint eotWarningZoneSize)
@@ -292,7 +311,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
         if (WentOK)
         {
             // Re-load media to refresh parameters after formatting
-            Op(() => InvokePrepareTape(PREPARE_TAPE_OPERATION.TAPE_LOAD)).WithPoll().Run();
+            Op(() => InvokePrepareTape(PREPARE_TAPE_OPERATION.TAPE_LOAD)).WithRetry().WithPoll().Run();
             RefreshMediaParams();
             m_logger.LogTrace("{Prefix}: Formatted media", LogPrefix);
         }
@@ -420,7 +439,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
             return false;
         }
 
-        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, 0, block)).WithPoll().Run();
+        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, 0, block)).WithRetry().WithPoll().Run();
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Moved to block {Block}", LogPrefix, block);
@@ -443,10 +462,10 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
         // QUIRK Sony AIT: must go to partition 1 before partition 2+
         if (win32Partition > 1)
         {
-            Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, 1, 0)).WithPoll().Run();
+            Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, 1, 0)).WithRetry().WithPoll().Run();
         }
 
-        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, win32Partition, block)).WithPoll().Run();
+        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, win32Partition, block)).WithRetry().WithPoll().Run();
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Moved to partition {Partition} block {Block}", LogPrefix, partition, block);
@@ -487,7 +506,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
             return false;
         }
 
-        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_REWIND, 0 /*partition ignored*/, 0)).WithPoll().Run();
+        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_REWIND, 0 /*partition ignored*/, 0)).WithRetry().WithPoll().Run();
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Rewound", LogPrefix);
@@ -506,7 +525,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
         }
 
         uint win32Partition = MapPartitionToWin32(partition);
-        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_SPACE_END_OF_DATA, win32Partition, 0)).WithPoll().Run();
+        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_SPACE_END_OF_DATA, win32Partition, 0)).WithRetry().WithPoll().Run();
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Seeked to end of partition {Partition}", LogPrefix, partition);
@@ -524,7 +543,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
             return false;
         }
 
-        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_SPACE_FILEMARKS, 0, count)).WithPoll().Run();
+        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_SPACE_FILEMARKS, 0, count)).WithRetry().WithPoll().Run();
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Spaced {Count} filemark(s)", LogPrefix, count);
@@ -548,7 +567,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
             return true;
         }
 
-        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_SPACE_SETMARKS, 0, count)).WithPoll().Run();
+        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_SPACE_SETMARKS, 0, count)).WithRetry().WithPoll().Run();
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Spaced {Count} setmark(s)", LogPrefix, count);
@@ -566,7 +585,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
             return false;
         }
 
-        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_SPACE_SEQUENTIAL_FMKS, 0, count)).WithPoll().Run();
+        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_SPACE_SEQUENTIAL_FMKS, 0, count)).WithRetry().WithPoll().Run();
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Spaced {Count} sequential filemark(s)", LogPrefix, count);
@@ -588,7 +607,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
             return false;
         }
 
-        Op(() => InvokeWriteTapemark(TAPEMARK_TYPE.TAPE_FILEMARKS, count)).WithPoll().Run();
+        Op(() => InvokeWriteTapemark(TAPEMARK_TYPE.TAPE_FILEMARKS, count)).WithRetry().WithPoll().Run();
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Wrote {Count} filemark(s)", LogPrefix, count);
@@ -606,7 +625,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
             return false;
         }
 
-        Op(() => InvokeWriteTapemark(TAPEMARK_TYPE.TAPE_SETMARKS, count)).WithPoll().Run();
+        Op(() => InvokeWriteTapemark(TAPEMARK_TYPE.TAPE_SETMARKS, count)).WithRetry().WithPoll().Run();
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Wrote {Count} setmark(s)", LogPrefix, count);
@@ -732,7 +751,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
         {
             SetError(PInvoke.GetTapeStatus(m_driveHandle));
 
-            if (LastErrorWin32 != WIN32_ERROR.ERROR_NOT_READY)
+            if (!c_waitableErrors.Contains(LastErrorWin32))
                 return WentOK; // Completed (NO_ERROR) or failed with a real error
 
             if (OperationTimeout != Timeout.InfiniteTimeSpan && sw.Elapsed >= OperationTimeout)
@@ -753,36 +772,68 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
         : current == 0 ? 1            // then: 1ms
         : Math.Min(current * 4, c_maxPollDelayMs); // quadruple until cap
 
-    // === Invoke Helpers (bImmediate = true) ===
+    // === Immediate-or-Blocking Dispatch ===
 
-    /// <summary>Invokes SetTapePosition with bImmediate=true.</summary>
-    private bool InvokeSetPosition(TAPE_POSITION_METHOD method, uint partition, long offset)
+    /// <summary>
+    /// Invokes a tape operation, preferring bImmediate=true. If the driver
+    /// rejects immediate mode with ERROR_INVALID_FUNCTION, falls back to
+    /// blocking and remembers the opcode for direct-blocking on future calls.
+    /// </summary>
+    private bool InvokeImmediateOrBlocking<TOpcode>(
+        TOpcode opcode, HashSet<TOpcode> blockingOpcodes,
+        Func<bool, bool> invoke) where TOpcode : notnull
     {
-        SetError(PInvoke.SetTapePosition(m_driveHandle, method, partition,
-            Helpers.LoDWORD(offset), Helpers.HiDWORD(offset), true));
-        return WentOK;
+        if (!blockingOpcodes.Contains(opcode))
+        {
+            if (invoke(true))
+                return true;
+
+            if (LastErrorWin32 != WIN32_ERROR.ERROR_INVALID_FUNCTION)
+                return false; // Real error — propagate
+
+            // QUIRK: Drive rejected bImmediate=true for this operation.
+            blockingOpcodes.Add(opcode);
+            m_logger.LogInformation("{Prefix}: {Opcode} requires blocking mode — remembered for future calls",
+                LogPrefix, opcode);
+        }
+
+        return invoke(false);
     }
 
-    /// <summary>Invokes PrepareTape with bImmediate=true.</summary>
-    private bool InvokePrepareTape(PREPARE_TAPE_OPERATION operation)
-    {
-        SetError(PInvoke.PrepareTape(m_driveHandle, operation, true));
-        return WentOK;
-    }
+    // === Invoke Helpers ===
 
-    /// <summary>Invokes PrepareTape with bImmediate=false (blocking).</summary>
+    /// <summary>Invokes SetTapePosition with automatic immediate-to-blocking fallback.</summary>
+    private bool InvokeSetPosition(TAPE_POSITION_METHOD method, uint partition, long offset) =>
+        InvokeImmediateOrBlocking(method, m_blockingPositionOps, immediate =>
+        {
+            SetError(PInvoke.SetTapePosition(m_driveHandle, method, partition,
+                Helpers.LoDWORD(offset), Helpers.HiDWORD(offset), immediate));
+            return WentOK;
+        });
+
+    /// <summary>Invokes PrepareTape with automatic immediate-to-blocking fallback.</summary>
+    private bool InvokePrepareTape(PREPARE_TAPE_OPERATION operation) =>
+        InvokeImmediateOrBlocking(operation, m_blockingPrepareOps, immediate =>
+        {
+            SetError(PInvoke.PrepareTape(m_driveHandle, operation, immediate));
+            return WentOK;
+        });
+
+    /// <summary>Invokes PrepareTape with bImmediate=false (blocking).
+    /// Used by <see cref="LoadMedia"/> for explicit blocking fallback on timeout.</summary>
     private bool InvokePrepareTapeBlocking(PREPARE_TAPE_OPERATION operation)
     {
         SetError(PInvoke.PrepareTape(m_driveHandle, operation, false));
         return WentOK;
     }
 
-    /// <summary>Invokes WriteTapemark with bImmediate=true.</summary>
-    private bool InvokeWriteTapemark(TAPEMARK_TYPE type, uint count)
-    {
-        SetError(PInvoke.WriteTapemark(m_driveHandle, type, count, true));
-        return WentOK;
-    }
+    /// <summary>Invokes WriteTapemark with automatic immediate-to-blocking fallback.</summary>
+    private bool InvokeWriteTapemark(TAPEMARK_TYPE type, uint count) =>
+        InvokeImmediateOrBlocking(type, m_blockingTapemarkOps, immediate =>
+        {
+            SetError(PInvoke.WriteTapemark(m_driveHandle, type, count, immediate));
+            return WentOK;
+        });
 
     // === Parameter & Mapping Helpers ===
 

@@ -344,6 +344,17 @@ namespace TapeLibNET
             return result1 || result2;
         }
 
+        /// <summary>
+        /// Backs up the TOC onto media that is known to be blank (e.g. just formatted).
+        /// Equivalent to <see cref="BackupTOC()"/> but tells the navigator that no
+        /// existing TOC mark or content needs to be located first.
+        /// </summary>
+        public bool BackupInitialTOC()
+        {
+            Navigator.AssumeBlankMedia();
+            return BackupTOC();
+        }
+
 #endregion // *** TOC Backup ***
 
         #region *** TOC Restore ***

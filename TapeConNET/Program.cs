@@ -872,7 +872,7 @@ void HandleFormat(List<string> values)
     Console.WriteLine("\n>>> Creating initial TOC...");
     
     using var agent = new TapeFileAgent(drive, new TapeTOC(setDescription ?? $"Media created on {DateTime.Now}"));
-    if (agent.BackupTOC())
+    if (agent.BackupInitialTOC())
     {
         legacyTOC = agent.TOC;
         Console.WriteLine("vvv Initial TOC created and saved ok");
