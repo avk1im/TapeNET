@@ -149,9 +149,10 @@ public partial class TapeService
                     {
                         logInfo("Restoring TOC from tape...");
                         Status("Reading TOC...");
-                        if (!agent.RestoreTOC())
+                        var tocResult = agent.RestoreTOC();
+                        if (!tocResult)
                         {
-                            throw new InvalidOperationException($"Couldn't restore TOC: {agent.LastErrorMessage}");
+                            throw new InvalidOperationException($"Couldn't restore TOC: {tocResult.ErrorMessage}");
                         }
                         _toc = toc;
                         logOk($"TOC restored with {toc.Count} backup set(s)");
@@ -509,28 +510,27 @@ public partial class TapeService
             return true;
         }
 
-        public FileFailedAction OnFileFailed(TapeFileInfo fileInfo, Exception ex, in TapeFileStatistics stats)
+        public FileFailedAction OnFileFailed(TapeFileInfo fileInfo, TapeResult result, in TapeFileStatistics stats)
         {
             Sync(stats);
             ThrowIfAbortRequested();
 
             Log(WarningLevel.Failed, $"Failed: '{fileInfo.FileDescr.FullName}'");
-            Log(WarningLevel.Failed, $"Error: {ex.Message}", sub: true);
+            Log(WarningLevel.Failed, $"Error: {result.ErrorMessage}", sub: true);
 
             progressCallback(stats.FilesProcessed, TotalFilesToProcess, stats.BytesProcessed);
 
             // Don't show file error dialog for end-of-media errors —
             // the multi-volume logic handles these
-            if (ex is IOException ioEx &&
-                (ioEx.HResult == (int)WIN32_ERROR.ERROR_END_OF_MEDIA ||
-                 ioEx.HResult == (int)WIN32_ERROR.ERROR_NO_DATA_DETECTED))
+            if (result.ErrorCode == (uint)WIN32_ERROR.ERROR_END_OF_MEDIA ||
+                result.ErrorCode == (uint)WIN32_ERROR.ERROR_NO_DATA_DETECTED)
             {
                 return FileFailedAction.Skip;
             }
 
-            var result = fileErrorCallback(fileInfo.FileDescr.FullName, ex.Message);
+            var action = fileErrorCallback(fileInfo.FileDescr.FullName, result.ErrorMessage);
 
-            if (result == FileFailedAction.Abort)
+            if (action == FileFailedAction.Abort)
             {
                 if (!_abortLogged)
                 {
@@ -540,7 +540,7 @@ public partial class TapeService
                 throw new TapeAbortRequestedException("User requested abort");
             }
 
-            return result;
+            return action;
         }
 
         public void OnFileSkipped(TapeFileInfo fileInfo, in TapeFileStatistics stats)

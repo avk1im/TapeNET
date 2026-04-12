@@ -12,7 +12,7 @@ public class TestNotifiable : ITapeFileNotifiable
     public record BatchEndEvent(int SetIndex, TapeFileStatistics Stats);
     public record PreProcessEvent(TapeFileInfo FileInfo, TapeFileStatistics Stats);
     public record PostProcessEvent(TapeFileInfo FileInfo, TapeFileStatistics Stats);
-    public record FileFailedEvent(TapeFileInfo FileInfo, Exception Exception, TapeFileStatistics Stats);
+    public record FileFailedEvent(TapeFileInfo FileInfo, TapeResult Result, TapeFileStatistics Stats);
     public record FileSkippedEvent(TapeFileInfo FileInfo, TapeFileStatistics Stats);
 
     #endregion
@@ -43,10 +43,10 @@ public class TestNotifiable : ITapeFileNotifiable
 
     /// <summary>
     /// Optional callback that overrides <see cref="FailedAction"/>.
-    /// Receives the file info and exception; returns the desired action.
+    /// Receives the file info and failure result; returns the desired action.
     /// When set, <see cref="FailedAction"/> is ignored.
     /// </summary>
-    public Func<TapeFileInfo, Exception, FileFailedAction>? FailedActionFunc { get; set; }
+    public Func<TapeFileInfo, TapeResult, FileFailedAction>? FailedActionFunc { get; set; }
 
     /// <summary>
     /// When positive, <see cref="PreProcessFile"/> throws
@@ -101,17 +101,17 @@ public class TestNotifiable : ITapeFileNotifiable
         return true;
     }
 
-    public FileFailedAction OnFileFailed(TapeFileInfo fileInfo, Exception ex, in TapeFileStatistics stats)
+    public FileFailedAction OnFileFailed(TapeFileInfo fileInfo, TapeResult result, in TapeFileStatistics stats)
     {
-        FilesFailed.Add(new FileFailedEvent(fileInfo, ex, stats));
+        FilesFailed.Add(new FileFailedEvent(fileInfo, result, stats));
 
         // TapeAbortRequestedException (from PreProcess/PostProcess) routes through the
         //  generic catch → OnFileFailed. We must cooperate by returning Abort so the
         //  backup/restore loop actually stops.
-        if (ex is TapeAbortRequestedException)
+        if (result.ErrorCode == (uint)Windows.Win32.Foundation.WIN32_ERROR.ERROR_CANCELLED)
             return FileFailedAction.Abort;
 
-        return FailedActionFunc?.Invoke(fileInfo, ex) ?? FailedAction;
+        return FailedActionFunc?.Invoke(fileInfo, result) ?? FailedAction;
     }
 
     public void OnFileSkipped(TapeFileInfo fileInfo, in TapeFileStatistics stats)

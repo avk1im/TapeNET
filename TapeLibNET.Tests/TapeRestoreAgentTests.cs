@@ -162,7 +162,7 @@ public class TapeRestoreAgentTests
 
             Assert.True(success,
                 $"Restore failed for {profile}: " +
-                $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+                $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
             notifiable.AssertAllSucceeded(tree.Files.Count);
 
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
@@ -191,7 +191,7 @@ public class TapeRestoreAgentTests
 
             Assert.True(success,
                 $"Restore failed for {profile}/{hash}: " +
-                $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+                $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
             notifiable.AssertAllSucceeded(tree.Files.Count);
 
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
@@ -222,7 +222,7 @@ public class TapeRestoreAgentTests
 
         Assert.True(success,
             $"Validation failed for {profile}: " +
-            $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+            $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
         notifiable.AssertAllSucceeded(tree.Files.Count);
     }
 
@@ -240,7 +240,7 @@ public class TapeRestoreAgentTests
 
         Assert.True(success,
             $"Verification failed for {profile}: " +
-            $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+            $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
         notifiable.AssertAllSucceeded(tree.Files.Count);
     }
 
@@ -276,7 +276,7 @@ public class TapeRestoreAgentTests
 
             Assert.True(success,
                 $"Restore set 1 failed for {profile}: " +
-                $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+                $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
             notifiable.AssertAllSucceeded(tree1.Files.Count);
 
             FileComparer.AssertFilesMatch(tree1.RootPath, tree1.Files,
@@ -313,7 +313,7 @@ public class TapeRestoreAgentTests
 
             Assert.True(success,
                 $"Restore set 2 failed for {profile}: " +
-                $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+                $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
             notifiable.AssertAllSucceeded(tree2.Files.Count);
 
             FileComparer.AssertFilesMatch(tree2.RootPath, tree2.Files,
@@ -348,7 +348,7 @@ public class TapeRestoreAgentTests
             var (success1, notifiable1) = RestoreSet(fixture, 1, restoreDir1);
             Assert.True(success1,
                 $"Restore set 1 failed for {profile}: " +
-                $"Failures=[{string.Join("; ", notifiable1.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+                $"Failures=[{string.Join("; ", notifiable1.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
             notifiable1.AssertAllSucceeded(tree1.Files.Count);
 
             FileComparer.AssertFilesMatch(tree1.RootPath, tree1.Files,
@@ -366,7 +366,7 @@ public class TapeRestoreAgentTests
             var (success2, notifiable2) = RestoreSet(fixture, 2, restoreDir2);
             Assert.True(success2,
                 $"Restore set 2 failed for {profile}: " +
-                $"Failures=[{string.Join("; ", notifiable2.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+                $"Failures=[{string.Join("; ", notifiable2.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
             notifiable2.AssertAllSucceeded(tree2.Files.Count);
 
             FileComparer.AssertFilesMatch(tree2.RootPath, tree2.Files,
@@ -401,7 +401,7 @@ public class TapeRestoreAgentTests
             var (success2, notifiable2) = RestoreSet(fixture, 2, restoreDir2);
             Assert.True(success2,
                 $"Restore set 2 failed for {profile}: " +
-                $"Failures=[{string.Join("; ", notifiable2.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+                $"Failures=[{string.Join("; ", notifiable2.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
 
             FileComparer.AssertFilesMatch(tree2.RootPath, tree2.Files,
                 RestoreEquivalentRoot(restoreDir2, tree2.RootPath));
@@ -418,7 +418,7 @@ public class TapeRestoreAgentTests
             var (success1, notifiable1) = RestoreSet(fixture, 1, restoreDir1);
             Assert.True(success1,
                 $"Restore set 1 failed for {profile}: " +
-                $"Failures=[{string.Join("; ", notifiable1.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+                $"Failures=[{string.Join("; ", notifiable1.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
 
             FileComparer.AssertFilesMatch(tree1.RootPath, tree1.Files,
                 RestoreEquivalentRoot(restoreDir1, tree1.RootPath));
@@ -452,14 +452,14 @@ public class TapeRestoreAgentTests
         var (success1, notifiable1) = ValidateSet(fixture, 1);
         Assert.True(success1,
             $"Validate set 1 failed for {profile}: " +
-            $"Failures=[{string.Join("; ", notifiable1.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+            $"Failures=[{string.Join("; ", notifiable1.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
         notifiable1.AssertAllSucceeded(tree1.Files.Count);
 
         // Validate set 2
         var (success2, notifiable2) = ValidateSet(fixture, 2);
         Assert.True(success2,
             $"Validate set 2 failed for {profile}: " +
-            $"Failures=[{string.Join("; ", notifiable2.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+            $"Failures=[{string.Join("; ", notifiable2.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
         notifiable2.AssertAllSucceeded(tree2.Files.Count);
     }
 
@@ -481,14 +481,14 @@ public class TapeRestoreAgentTests
         var (success1, notifiable1) = VerifySet(fixture, 1);
         Assert.True(success1,
             $"Verify set 1 failed for {profile}: " +
-            $"Failures=[{string.Join("; ", notifiable1.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+            $"Failures=[{string.Join("; ", notifiable1.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
         notifiable1.AssertAllSucceeded(tree1.Files.Count);
 
         // Verify set 2
         var (success2, notifiable2) = VerifySet(fixture, 2);
         Assert.True(success2,
             $"Verify set 2 failed for {profile}: " +
-            $"Failures=[{string.Join("; ", notifiable2.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+            $"Failures=[{string.Join("; ", notifiable2.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
         notifiable2.AssertAllSucceeded(tree2.Files.Count);
     }
 
@@ -523,7 +523,7 @@ public class TapeRestoreAgentTests
 
             Assert.True(success,
                 $"Restore set 1 after TOC reload failed for {profile}: " +
-                $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+                $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
             notifiable.AssertAllSucceeded(tree1.Files.Count);
 
             FileComparer.AssertFilesMatch(tree1.RootPath, tree1.Files,
@@ -558,7 +558,7 @@ public class TapeRestoreAgentTests
 
             Assert.True(success,
                 $"Restore set 2 after TOC reload failed for {profile}: " +
-                $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+                $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
             notifiable.AssertAllSucceeded(tree2.Files.Count);
 
             FileComparer.AssertFilesMatch(tree2.RootPath, tree2.Files,
@@ -594,7 +594,7 @@ public class TapeRestoreAgentTests
             var (success1, notifiable1) = RestoreSet(fixture, 1, restoreDir1);
             Assert.True(success1,
                 $"Restore set 1 after reload failed for {profile}: " +
-                $"Failures=[{string.Join("; ", notifiable1.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+                $"Failures=[{string.Join("; ", notifiable1.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
             notifiable1.AssertAllSucceeded(tree1.Files.Count);
 
             FileComparer.AssertFilesMatch(tree1.RootPath, tree1.Files,
@@ -612,7 +612,7 @@ public class TapeRestoreAgentTests
             var (success2, notifiable2) = RestoreSet(fixture, 2, restoreDir2);
             Assert.True(success2,
                 $"Restore set 2 after reload failed for {profile}: " +
-                $"Failures=[{string.Join("; ", notifiable2.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+                $"Failures=[{string.Join("; ", notifiable2.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
             notifiable2.AssertAllSucceeded(tree2.Files.Count);
 
             FileComparer.AssertFilesMatch(tree2.RootPath, tree2.Files,
@@ -656,7 +656,7 @@ public class TapeRestoreAgentTests
 
             Assert.True(success,
                 $"Restore set 2 (middle) failed for {profile}: " +
-                $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+                $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
             notifiable.AssertAllSucceeded(tree2.Files.Count);
 
             FileComparer.AssertFilesMatch(tree2.RootPath, tree2.Files,
@@ -693,7 +693,7 @@ public class TapeRestoreAgentTests
 
             Assert.True(success,
                 $"Validate set {setIdx} failed for {profile}: " +
-                $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+                $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
             notifiable.AssertAllSucceeded(expectedCount);
         }
     }
@@ -777,7 +777,7 @@ public class TapeRestoreAgentTests
 
             Assert.True(success,
                 $"Edge case restore failed for {profile}: " +
-                $"Failures=[{string.Join("; ", restoreNotifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+                $"Failures=[{string.Join("; ", restoreNotifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
             restoreNotifiable.AssertAllSucceeded(tree.Files.Count);
 
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
@@ -878,13 +878,13 @@ public class TapeRestoreAgentTests
         var (v1ok, v1not) = ValidateSet(fixture, 1);
         Assert.True(v1ok,
             $"[NO RELOAD] Validate set 1 failed for {profile}: " +
-            $"Failures=[{string.Join("; ", v1not.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+            $"Failures=[{string.Join("; ", v1not.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
 
         // Validate set 2 (no TOC reload)
         var (v2ok, v2not) = ValidateSet(fixture, 2);
         Assert.True(v2ok,
             $"[NO RELOAD] Validate set 2 failed for {profile}: " +
-            $"Failures=[{string.Join("; ", v2not.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+            $"Failures=[{string.Join("; ", v2not.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
     }
 
     [Theory]
@@ -910,13 +910,13 @@ public class TapeRestoreAgentTests
         var (v1ok, v1not) = ValidateSet(fixture, 1);
         Assert.True(v1ok,
             $"[AFTER RELOAD] Validate set 1 failed for {profile}: " +
-            $"Failures=[{string.Join("; ", v1not.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+            $"Failures=[{string.Join("; ", v1not.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
 
         // Validate set 2
         var (v2ok, v2not) = ValidateSet(fixture, 2);
         Assert.True(v2ok,
             $"[AFTER RELOAD] Validate set 2 failed for {profile}: " +
-            $"Failures=[{string.Join("; ", v2not.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+            $"Failures=[{string.Join("; ", v2not.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
     }
 
     [Theory]
@@ -943,7 +943,7 @@ public class TapeRestoreAgentTests
         var (success, notifiable) = ValidateSet(fixture, 2);
         Assert.True(success,
             $"Validate middle set failed for {profile}: " +
-            $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+            $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
         notifiable.AssertAllSucceeded(tree2.Files.Count);
     }
 
@@ -964,7 +964,7 @@ public class TapeRestoreAgentTests
         var (success, notifiable) = ValidateSet(fixture, 1);
         Assert.True(success,
             $"Single-set validate after reload failed for {profile}: " +
-            $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+            $"Failures=[{string.Join("; ", notifiable.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
         notifiable.AssertAllSucceeded(tree.Files.Count);
     }
 
@@ -1001,7 +1001,7 @@ public class TapeRestoreAgentTests
             var (success1, notifiable1) = RestoreSet(fixture, 1, restoreDir1);
             Assert.True(success1,
                 $"Restore set 1 (16K) failed for {profile}: " +
-                $"Failures=[{string.Join("; ", notifiable1.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+                $"Failures=[{string.Join("; ", notifiable1.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
 
             FileComparer.AssertFilesMatch(tree1.RootPath, tree1.Files,
                 RestoreEquivalentRoot(restoreDir1, tree1.RootPath));
@@ -1009,7 +1009,7 @@ public class TapeRestoreAgentTests
             var (success2, notifiable2) = RestoreSet(fixture, 2, restoreDir2);
             Assert.True(success2,
                 $"Restore set 2 (32K) failed for {profile}: " +
-                $"Failures=[{string.Join("; ", notifiable2.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Exception.Message}"))}]");
+                $"Failures=[{string.Join("; ", notifiable2.FilesFailed.Select(f => $"{f.FileInfo.FileDescr.FullName}: {f.Result.ErrorMessage}"))}]");
 
             FileComparer.AssertFilesMatch(tree2.RootPath, tree2.Files,
                 RestoreEquivalentRoot(restoreDir2, tree2.RootPath));

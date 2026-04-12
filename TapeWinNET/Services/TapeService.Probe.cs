@@ -109,11 +109,12 @@ public partial class TapeService
                 // Set up abort handling via cancellation token
                 using var registration = cancellationToken.Register(() => agent.IsAbortRequested = true);
 
-                if (!agent.RestoreTOC())
+                var tocResult = agent.RestoreTOC();
+                if (!tocResult)
                 {
                     return new VirtualDriveProbeResult(
                         false, null, null, null, null,
-                        "Failed to read TOC - media may be empty or corrupted");
+                        $"Failed to read TOC: {tocResult.ErrorMessage}");
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();

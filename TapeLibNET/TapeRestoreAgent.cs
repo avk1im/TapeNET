@@ -481,10 +481,10 @@ namespace TapeLibNET
         public bool CanResumeFromAnotherVolume => MultiVolumeContext != null;
         public int VolumeToResumeFrom { get; private set; } = -1; // only valid if CanResumeFromAnotherVolume
 
-        public bool ResumeRestoreFromAnotherVolume()
+        public TapeResult ResumeRestoreFromAnotherVolume()
         {
             if (!CanResumeFromAnotherVolume)
-                return false;
+                return TapeResult.Fail(this);
 
             m_logger.LogTrace("Resuming multi-volume restore from new volume #{Volume}", VolumeToResumeFrom);
 
@@ -495,7 +495,7 @@ namespace TapeLibNET
             if (!Manager.RenewNavigator())
             {
                 LogErrorAsDebug("Failed to renew Navigator");
-                return false;
+                return TapeResult.Fail(this);
             }
 
             // Check if the newly provided volume is the right one by analyzing its TOC
@@ -506,20 +506,20 @@ namespace TapeLibNET
                 if (!RestoreTOC())
                 {
                     LogErrorAsWarning("Failed to restore TOC for new volume");
-                    return false;
+                    return TapeResult.Fail(this);
                 }
                 // Check if the new volume has the right volume number
                 if (TOC.Volume != VolumeToResumeFrom)
                 {
                     LogErrorAsWarning("Volume mismatch for new volume");
-                    return false;
+                    return TapeResult.Fail(this);
                 }
                 // As the final test, check the size of the next backup set to restore
                 int setIdx = MultiVolumeContext.Value.initialCurrSetIdx - MultiVolumeContext.Value.filesSelectedIdx;
                 if (TOC[setIdx].Count != orgTOC[setIdx].Count)
                 {
                     LogErrorAsWarning($"Set size mismatch on new volume for set #{setIdx}");
-                    return false;
+                    return TapeResult.Fail(this);
                 }
             }
             finally
@@ -530,7 +530,8 @@ namespace TapeLibNET
             TOC.Volume = VolumeToResumeFrom;
             // Ok to proceed with the new volume. Notice: Keep our current TOC, since we're restoring the whole file series using it
 
-            return RestoreFilesFromCurrentSetDownInt(null, MultiVolumeContext.Value.ignoreFailures, MultiVolumeContext.Value.fileNotify);
+            return RestoreFilesFromCurrentSetDownInt(null, MultiVolumeContext.Value.ignoreFailures, MultiVolumeContext.Value.fileNotify)
+                ? TapeResult.OK : TapeResult.Fail(this);
         } // ResumeRestoreOnAnotherVolume()
 
         private bool RestoreFilesFromCurrentSetDownInt(List<TapeFileInfo>?[]? filesSelected, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
@@ -585,48 +586,53 @@ namespace TapeLibNET
 
 
         // The public version for a completely pre-assembled list of files
-        public bool RestoreFilesFromCurrentSetDown(List<TapeFileInfo>?[] filesSelected, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+        public TapeResult RestoreFilesFromCurrentSetDown(List<TapeFileInfo>?[] filesSelected, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting restoring pre-selected files from current set #{Set} down", TOC.CurrentSetIndex);
 
             _stats.Reset();
-            return RestoreFilesFromCurrentSetDownInt(filesSelected, ignoreFailures, fileNotify);
+            return RestoreFilesFromCurrentSetDownInt(filesSelected, ignoreFailures, fileNotify)
+                ? TapeResult.OK : TapeResult.Fail(this);
         } // RestoreFilesFromCurrentSetDown(List<string>)
 
 
         // Considers multi-volume case
-        public bool RestoreFilesFromCurrentSet(ITapeFileFilter? fileFilter, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+        public TapeResult RestoreFilesFromCurrentSet(ITapeFileFilter? fileFilter, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting restoring files from current set #{Set}", TOC.CurrentSetIndex);
 
             _stats.Reset();
-            return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, fileFilter), ignoreFailures, fileNotify);
+            return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, fileFilter), ignoreFailures, fileNotify)
+                ? TapeResult.OK : TapeResult.Fail(this);
         } // RestoreFilesFromCurrentSet(ITapeFileFilter?)
 
         // Considers incremental backup sets, starting from the current set. Can resume from / continue onto another volume.
-        public bool RestoreFilesFromCurrentSetInc(ITapeFileFilter? fileFilter, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+        public TapeResult RestoreFilesFromCurrentSetInc(ITapeFileFilter? fileFilter, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting incrementally restoring files from current set #{Set}", TOC.CurrentSetIndex);
 
             _stats.Reset();
-            return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, fileFilter), ignoreFailures, fileNotify);
+            return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, fileFilter), ignoreFailures, fileNotify)
+                ? TapeResult.OK : TapeResult.Fail(this);
         } // RestoreFilesFromCurrentSetInc(ITapeFileFilter?)
 
-        public bool RestoreAllFilesFromCurrentSet(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+        public TapeResult RestoreAllFilesFromCurrentSet(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting restoring all files from current set #{Set}", TOC.CurrentSetIndex);
 
             _stats.Reset();
-            return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filter: null), ignoreFailures, fileNotify);
+            return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filter: null), ignoreFailures, fileNotify)
+                ? TapeResult.OK : TapeResult.Fail(this);
         } // RestoreAllFilesFromCurrentSet()
 
         // Considers incremental backup sets, starting from the current set
-        public bool RestoreAllFilesFromCurrentSetInc(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+        public TapeResult RestoreAllFilesFromCurrentSetInc(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting incrementally restoring all files from current set #{Set}", TOC.CurrentSetIndex);
 
             _stats.Reset();
-            return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, filter: null), ignoreFailures, fileNotify);
+            return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, filter: null), ignoreFailures, fileNotify)
+                ? TapeResult.OK : TapeResult.Fail(this);
         } // RestoreAllFilesFromCurrentSetInc()
 
 
@@ -641,7 +647,7 @@ namespace TapeLibNET
         /// <param name="fileFilter">Optional file filter (null = all files).</param>
         /// <param name="ignoreFailures">If true, continue past individual file failures.</param>
         /// <param name="fileNotify">Optional progress/error notification callback.</param>
-        public bool RestoreFilesFromSets(
+        public TapeResult RestoreFilesFromSets(
             List<int> setIndexes,
             bool incremental,
             ITapeFileFilter? fileFilter = null,
@@ -649,7 +655,7 @@ namespace TapeLibNET
             ITapeFileNotifiable? fileNotify = null)
         {
             if (setIndexes.Count == 0)
-                return true;
+                return TapeResult.OK;
 
             _stats.Reset();
 

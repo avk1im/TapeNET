@@ -241,10 +241,11 @@ public partial class TapeService : IDisposable
                     _agent?.Dispose();
                     _agent = new TapeFileAgent(_drive, null);
 
-                    if (!_agent.RestoreTOC())
+                    var tocResult = _agent.RestoreTOC();
+                    if (!tocResult)
                     {
-                        LastError = _agent.LastErrorMessage;
-                        LogErr($"Couldn't restore TOC. Error: {LastError}");
+                        LastError = tocResult.ErrorMessage;
+                        LogErr($"Couldn't restore TOC. Error: {tocResult.ErrorMessage}");
                         return false;
                     }
 
@@ -299,9 +300,10 @@ public partial class TapeService : IDisposable
                     _agent?.Dispose();
                     _agent = new TapeFileAgent(_drive, new TapeTOC(description));
 
-                    if (!_agent.BackupInitialTOC())
+                    var initResult = _agent.BackupInitialTOC();
+                    if (!initResult)
                     {
-                        LastError = _agent.LastErrorMessage;
+                        LastError = initResult.ErrorMessage;
                         LogErr($"Couldn't save initial TOC. Error: {LastError}");
                         return false;
                     }
@@ -377,9 +379,10 @@ public partial class TapeService : IDisposable
                     var description = mediaName ?? $"Media created {DateTime.Now:yyyy-MM-dd HH:mm}";
                     _agent = new TapeFileAgent(_drive, new TapeTOC(description));
 
-                    if (!_agent.BackupInitialTOC())
+                    var initResult = _agent.BackupInitialTOC();
+                    if (!initResult)
                     {
-                        LastError = _agent.LastErrorMessage;
+                        LastError = initResult.ErrorMessage;
                         LogErr($"Couldn't save initial TOC. Error: {LastError}");
                         return false;
                     }
@@ -483,10 +486,11 @@ public partial class TapeService : IDisposable
                     _agent?.Dispose();
                     _agent = new TapeFileAgent(_drive, null);
 
-                    if (!_agent.LoadTOCFromFile(filePath))
+                    var loadResult = _agent.LoadTOCFromFile(filePath);
+                    if (!loadResult)
                     {
-                        LastError = _agent.LastErrorMessage;
-                        LogErr($"Couldn't import TOC from file. Error: {LastError}");
+                        LastError = loadResult.ErrorMessage;
+                        LogErr($"Couldn't import TOC from file. Error: {loadResult.ErrorMessage}");
                         return false;
                     }
 
@@ -540,10 +544,11 @@ public partial class TapeService : IDisposable
                     _agent?.Dispose();
                     _agent = new TapeFileAgent(_drive!, _toc);
 
-                    if (!_agent.SaveTOCToFile(filePath))
+                    var saveResult = _agent.SaveTOCToFile(filePath);
+                    if (!saveResult)
                     {
-                        LastError = _agent.LastErrorMessage;
-                        LogErr($"Couldn't export TOC to file. Error: {LastError}");
+                        LastError = saveResult.ErrorMessage;
+                        LogErr($"Couldn't export TOC to file. Error: {saveResult.ErrorMessage}");
                         return false;
                     }
 
@@ -587,10 +592,11 @@ public partial class TapeService : IDisposable
                     _toc.Description = newName;
 
                     _agent = new TapeFileAgent(_drive, _toc);
-                    if (!_agent.BackupTOC())
+                    var tocResult = _agent.BackupTOC();
+                    if (!tocResult)
                     {
-                        LastError = "Failed to write TOC to media";
-                        LogErr(LastError);
+                        LastError = tocResult.ErrorMessage;
+                        LogErr($"Failed to write TOC to media: {tocResult.ErrorMessage}");
                         return false;
                     }
 
@@ -634,10 +640,11 @@ public partial class TapeService : IDisposable
                     setTOC.Description = newName;
 
                     _agent = new TapeFileAgent(_drive, _toc);
-                    if (!_agent.BackupTOC())
+                    var tocResult = _agent.BackupTOC();
+                    if (!tocResult)
                     {
-                        LastError = "Failed to write TOC to media";
-                        LogErr(LastError);
+                        LastError = tocResult.ErrorMessage;
+                        LogErr($"Failed to write TOC to media: {tocResult.ErrorMessage}");
                         return false;
                     }
 

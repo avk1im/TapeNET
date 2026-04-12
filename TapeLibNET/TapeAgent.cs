@@ -1,5 +1,6 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.IO.Hashing;
 using System.Linq;
@@ -24,6 +25,43 @@ namespace TapeLibNET
     }
 
     public enum FileFailedAction { Skip, Retry, Abort }
+
+    /// <summary>
+    /// Result type for compound tape operations that cross the Agent → Service boundary.
+    /// Carries error context as a value, immune to later state resets on Drive/Manager.
+    /// <para>
+    /// The internal layer (Drive, Navigator, Manager) continues to use <c>bool</c> + state;
+    ///  <see cref="TapeResult"/> is applied at the public Agent API surface only.
+    /// </para>
+    /// </summary>
+    public readonly record struct TapeResult(bool Success, uint ErrorCode = 0, string ErrorMessage = "")
+    {
+        /// <summary>Successful result with no error.</summary>
+        public static TapeResult OK => new(true);
+
+        /// <summary>Creates a failure result from an explicit error code and message.</summary>
+        public static TapeResult Fail(uint code, string msg) => new(false, code, msg);
+
+        /// <summary>Creates a failure result by capturing the current error state of an <see cref="ErrorManageableBase"/>.</summary>
+        public static TapeResult Fail(ErrorManageableBase source) => new(false, source.LastError, source.LastErrorMessage);
+
+        /// <summary>Creates a failure result from an exception, extracting HResult/NativeErrorCode where available.</summary>
+        public static TapeResult Fail(Exception ex)
+        {
+            uint code = ex switch
+            {
+                // Catches our TapeAbortRequestedException (derived from OperationCanceledException)
+                TapeAbortRequestedException or OperationCanceledException => (uint)WIN32_ERROR.ERROR_CANCELLED,
+                IOException ioex => (uint)ioex.HResult,
+                Win32Exception w32ex => (uint)w32ex.NativeErrorCode,
+                _ => (uint)WIN32_ERROR.ERROR_UNHANDLED_EXCEPTION
+            };
+            return new(false, code, ex.Message);
+        }
+
+        /// <summary>Allows <c>if (result)</c> and <c>if (!result)</c> usage, preserving existing call-site patterns.</summary>
+        public static implicit operator bool(TapeResult r) => r.Success;
+    }
 
     /// <summary>
     /// Cumulative file-operation statistics maintained by the tape agent.
@@ -79,7 +117,7 @@ namespace TapeLibNET
         bool PostProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats);
 
         /// <summary>Called when a file error occurs. Returns how to proceed.</summary>
-        FileFailedAction OnFileFailed(TapeFileInfo fileInfo, Exception ex, in TapeFileStatistics stats);
+        FileFailedAction OnFileFailed(TapeFileInfo fileInfo, TapeResult result, in TapeFileStatistics stats);
 
         /// <summary>Called when a file is skipped.</summary>
         void OnFileSkipped(TapeFileInfo fileInfo, in TapeFileStatistics stats);
@@ -305,7 +343,7 @@ namespace TapeLibNET
             }
         }
 
-        public bool BackupTOC(bool enforce = false)
+        public TapeResult BackupTOC(bool enforce = false)
         {
 #if DEBUG
             _tocCopyCounter = 0;
@@ -316,14 +354,14 @@ namespace TapeLibNET
             {
                 Manager.EndReadWrite();
                 Navigator.ResetContentSet();
-                
+
                 m_logger.LogTrace("Enforcing TOC backup by resetting content set");
             }
 
             if (!BeginWriteTOC())
             {
                 m_logger.LogError("Failed to begin TOC write in {Method}", nameof(BackupTOC));
-                return false;
+                return TapeResult.Fail(this);
             }
 
             // To ensure TOC integrity, backup TOC twice
@@ -340,7 +378,7 @@ namespace TapeLibNET
             else
                 m_logger.LogWarning("TOC 2nd copy backup failed");
 
-            return result1 || result2;
+            return (result1 || result2) ? TapeResult.OK : TapeResult.Fail(this);
         }
 
         /// <summary>
@@ -348,7 +386,7 @@ namespace TapeLibNET
         /// Equivalent to <see cref="BackupTOC()"/> but tells the navigator that no
         /// existing TOC mark or content needs to be located first.
         /// </summary>
-        public bool BackupInitialTOC()
+        public TapeResult BackupInitialTOC()
         {
             Navigator.AssumeBlankMedia();
             return BackupTOC();
@@ -461,7 +499,7 @@ namespace TapeLibNET
             }
         }
 
-        public bool RestoreTOC()
+        public TapeResult RestoreTOC()
         {
 #if DEBUG
             _tocCopyCounter = 0;
@@ -472,7 +510,7 @@ namespace TapeLibNET
             if (!BeginReadTOC())
             {
                 m_logger.LogError("Failed to begin TOC read in {Method}", nameof(RestoreTOC));
-                return false;
+                return TapeResult.Fail(this);
             }
 
             bool result = RestoreTOCCore();
@@ -503,7 +541,7 @@ namespace TapeLibNET
                 }
             }
 
-            return result;
+            return result ? TapeResult.OK : TapeResult.Fail(this);
         }
 
         #endregion // *** TOC Restore ***
@@ -520,8 +558,8 @@ namespace TapeLibNET
         /// as the on-tape copy. The file is self-validating via the appended hash.
         /// </summary>
         /// <param name="filePath">Full path to the file to create/overwrite.</param>
-        /// <returns>True if the TOC was saved successfully.</returns>
-        public bool SaveTOCToFile(string filePath)
+        /// <returns>Result indicating success or failure with error details.</returns>
+        public TapeResult SaveTOCToFile(string filePath)
         {
             try
             {
@@ -544,13 +582,13 @@ namespace TapeLibNET
                 }
 
                 m_logger.LogTrace("TOC saved to file successfully");
-                return true;
+                return TapeResult.OK;
             }
             catch (Exception ex)
             {
                 m_logger.LogWarning("Exception {Exception} saving TOC to file {Path}", ex, filePath);
                 SetError(ex, $"Failed to save TOC to file: {ex.Message}");
-                return false;
+                return TapeResult.Fail(this);
             }
         }
 
@@ -560,8 +598,8 @@ namespace TapeLibNET
         /// On success, the loaded TOC replaces the current <see cref="TOC"/> content.
         /// </summary>
         /// <param name="filePath">Full path to the TOC file to load.</param>
-        /// <returns>True if the TOC was loaded and validated successfully.</returns>
-        public bool LoadTOCFromFile(string filePath)
+        /// <returns>Result indicating success or failure with error details.</returns>
+        public TapeResult LoadTOCFromFile(string filePath)
         {
             try
             {
@@ -578,7 +616,7 @@ namespace TapeLibNET
                     {
                         m_logger.LogWarning("Failed to deserialize TOC from file {Path}", filePath);
                         SetError(WIN32_ERROR.ERROR_INVALID_DATA, "Failed to deserialize TOC from file");
-                        return false;
+                        return TapeResult.Fail(this);
                     }
                     TOC.CopyFrom(toc);
                 }
@@ -591,7 +629,7 @@ namespace TapeLibNET
                     {
                         m_logger.LogWarning("Failed to deserialize TOC from file {Path}", filePath);
                         SetError(WIN32_ERROR.ERROR_INVALID_DATA, "Failed to deserialize TOC from file");
-                        return false;
+                        return TapeResult.Fail(this);
                     }
 
                     byte[] hashBytesCheck1 = hasher.GetCurrentHash();
@@ -600,20 +638,20 @@ namespace TapeLibNET
                     {
                         m_logger.LogWarning("CRC check failed for TOC file {Path}", filePath);
                         SetError(WIN32_ERROR.ERROR_CRC, $"CRC check failed for TOC file. Hasher: {c_hashForTOC}");
-                        return false;
+                        return TapeResult.Fail(this);
                     }
 
                     TOC.CopyFrom(toc);
                 }
 
                 m_logger.LogTrace("TOC loaded from file successfully: {Sets} set(s)", TOC.Count);
-                return true;
+                return TapeResult.OK;
             }
             catch (Exception ex)
             {
                 m_logger.LogWarning("Exception {Exception} loading TOC from file {Path}", ex, filePath);
                 SetError(ex, $"Failed to load TOC from file: {ex.Message}");
-                return false;
+                return TapeResult.Fail(this);
             }
         }
 
@@ -712,12 +750,13 @@ namespace TapeLibNET
             _stats.FilesFailed++;
 
             FileFailedAction result = FileFailedAction.Skip;
+            var failResult = TapeResult.Fail(ex);
 
             if (fileNotify != null)
             {
                 try
                 {
-                    result = fileNotify.OnFileFailed(fileInfo, ex, in _stats);
+                    result = fileNotify.OnFileFailed(fileInfo, failResult, in _stats);
                 }
                 catch (TapeAbortRequestedException ex1)
                 {

@@ -626,9 +626,10 @@ void CheckDrive()
 bool RestoreTOC(TapeFileAgent agent)
 {
     Console.WriteLine(">>> Restoring TOC...");
-    if (!agent.RestoreTOC())
+    var tocResult = agent.RestoreTOC();
+    if (!tocResult)
     {
-        OnNonFatalError("!!! Couldn't restore TOC. Error: " + agent.LastErrorMessage);
+        OnNonFatalError("!!! Couldn't restore TOC. Error: " + tocResult.ErrorMessage);
         return false;
     }
     Console.WriteLine($"vvv TOC restored with {agent.TOC.Count} set(s); {agent.TOC.CurrentSetTOC.Count} file(s) in the last set");
@@ -1305,14 +1306,16 @@ void HandleBackup(List<string> values)
             else
                 Console.Write($">>> Backing up TOC...");
 
-            if (!agent.BackupTOC())
+            var tocResult = agent.BackupTOC();
+            if (!tocResult)
             {
-                OnNonFatalError("\n!!! Couldn't backup TOC. Error: " + agent.LastErrorMessage);
+                OnNonFatalError("\n!!! Couldn't backup TOC. Error: " + tocResult.ErrorMessage);
                 if (!toc.IsEmpty)
                 {
                     Console.WriteLine(">>> Attempting to enforce TOC backup...");
-                    if (!agent.BackupTOC(enforce: true))
-                        OnFatalError("!!! Couldn't enforce TOC backup. Error: " + agent.LastErrorMessage);
+                    var enforceResult = agent.BackupTOC(enforce: true);
+                    if (!enforceResult)
+                        OnFatalError("!!! Couldn't enforce TOC backup. Error: " + enforceResult.ErrorMessage);
                     else
                         Console.WriteLine("vvv Enforced TOC backup succeeded");
                 }
@@ -1465,7 +1468,7 @@ void UniversalRestore(List<string> values, TapeFileRestoreBaseAgent agent, OnFil
         else
             Console.WriteLine($"iii {restoringName} all files in the current set");
 
-        bool result = incremental ?
+        TapeResult result = incremental ?
             agent.RestoreFilesFromCurrentSetInc(fileFilter, ignoreFailures: true, fileProcessor) :
             agent.RestoreFilesFromCurrentSet(fileFilter, ignoreFailures: true, fileProcessor);
 
@@ -1493,16 +1496,16 @@ void UniversalRestore(List<string> values, TapeFileRestoreBaseAgent agent, OnFil
                 Console.WriteLine("vvv Media loaded ok");
 
                 stopwatch.Start(); // keep measuring the same time span
-                
+
                 result = agent.ResumeRestoreFromAnotherVolume();
-                
+
                 stopwatch.Stop();
             }
 
             if (!result)
             {
                 Console.WriteLine();
-                OnNonFatalError($"!!! {restoringName}: {fileProcessor.FailedCount} file(s) of {fileProcessor.ProcessedCount} failed. Error: " + agent.LastErrorMessage);
+                OnNonFatalError($"!!! {restoringName}: {fileProcessor.FailedCount} file(s) of {fileProcessor.ProcessedCount} failed. Error: " + result.ErrorMessage);
             }
         }
     }
@@ -1830,9 +1833,9 @@ abstract class OnFileEventProcessor(TapeTOC toc, bool quiteMode, string processi
     }
 
     // called when a file error occurs during processing the file
-    public virtual FileFailedAction OnFileFailed(TapeFileInfo fileInfo, Exception ex, in TapeFileStatistics stats)
+    public virtual FileFailedAction OnFileFailed(TapeFileInfo fileInfo, TapeResult result, in TapeFileStatistics stats)
     {
-        Console.WriteLine($"!!! Failed {processingName} file >{Path.GetFileName(fileInfo.FileDescr.FullName)}<. Exception: {ex}");
+        Console.WriteLine($"!!! Failed {processingName} file >{Path.GetFileName(fileInfo.FileDescr.FullName)}<. Error: 0x{result.ErrorCode:X8} >{result.ErrorMessage}<");
         Sync(stats);
 
         return MessageGetFileAction("??? Retry the file?");

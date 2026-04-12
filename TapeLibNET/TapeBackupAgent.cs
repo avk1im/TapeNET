@@ -193,10 +193,10 @@ namespace TapeLibNET
         private TapeBackupContext? MultiVolumeContext { get; set; } = null;
         public bool CanResumeToNextVolume => MultiVolumeContext != null;
 
-        public bool ResumeBackupToNextVolume()
+        public TapeResult ResumeBackupToNextVolume()
         {
             if (!CanResumeToNextVolume)
-                return false;
+                return TapeResult.Fail(this);
 
             m_logger.LogTrace("Resuming multi-volume backup for volume #{Volume}", TOC.Volume + 1);
 
@@ -204,7 +204,7 @@ namespace TapeLibNET
             if (!Manager.RenewNavigator())
             {
                 LogErrorAsDebug("Failed to renew Navigator");
-                return false;
+                return TapeResult.Fail(this);
             }
 
             Debug.Assert(MultiVolumeContext != null);
@@ -225,7 +225,8 @@ namespace TapeLibNET
             //  a different set (e.g. after RemoveLastEmptySet removed the original empty set)
             TOC.MarkCurrentSetIncremental(MultiVolumeContext.Value.incremental);
 
-            return BackupFilesToCurrentSet(newSet: true);
+            return BackupFilesToCurrentSet(newSet: true)
+                ? TapeResult.OK : TapeResult.Fail(this);
         }
 
         private bool BackupFilesToCurrentSet(bool newSet = true)
@@ -358,7 +359,7 @@ namespace TapeLibNET
             return bc.overallSuccess;
         }
 
-        public bool BackupFilesToCurrentSet(bool newSet, List<string> fileAndDirectoryPatterns, bool recurseSubdirs, bool ignoreFailures = true,
+        public TapeResult BackupFilesToCurrentSet(bool newSet, List<string> fileAndDirectoryPatterns, bool recurseSubdirs, bool ignoreFailures = true,
             ITapeFileNotifiable? fileNotify = null)
         {
             var fileList = BuildFileNameList(fileAndDirectoryPatterns, recurseSubdirs);
@@ -366,13 +367,13 @@ namespace TapeLibNET
             return BackupFileListToCurrentSet(newSet, fileList, ignoreFailures, fileNotify);
         } // BackupFilesToCurrentSet()
 
-        public bool BackupFileListToCurrentSet(bool newSet, List<string> fileList, bool ignoreFailures = true,
+        public TapeResult BackupFileListToCurrentSet(bool newSet, List<string> fileList, bool ignoreFailures = true,
             ITapeFileNotifiable? fileNotify = null)
         {
             if (fileList.Count == 0)
             {
                 m_logger.LogWarning("No files found to backup in {Method}", nameof(BackupFilesToCurrentSet));
-                return true; // no files found to back up -> treat as success
+                return TapeResult.OK; // no files found to back up -> treat as success
             }
 
             _stats.Reset();
@@ -384,7 +385,8 @@ namespace TapeLibNET
 
             MultiVolumeContext = new(fileList, ignoreFailures, fileNotify, TOC.CurrentSetTOC.Incremental);
 
-            return BackupFilesToCurrentSet(newSet);
+            return BackupFilesToCurrentSet(newSet)
+                ? TapeResult.OK : TapeResult.Fail(this);
         } // BackupFilesToCurrentSet()
 
 #if OLDCODE

@@ -323,12 +323,14 @@ public partial class TapeService
                             logInfo("Abort requested — saving TOC to preserve media integrity...");
                         }
 
-                        if (!agent.BackupTOC())
+                        var tocResult = agent.BackupTOC();
+                        if (!tocResult)
                         {
-                            logErr($"Couldn't backup TOC. Error: {agent.LastErrorMessage}");
+                            logErr($"Couldn't backup TOC. Error: {tocResult.ErrorMessage}");
                             logInfo("Attempting to enforce TOC backup...");
 
-                            if (!agent.BackupTOC(enforce: true))
+                            var enforceResult = agent.BackupTOC(enforce: true);
+                            if (!enforceResult)
                             {
                                 logErr("Couldn't enforce TOC backup");
 
@@ -350,7 +352,8 @@ public partial class TapeService
                                             break;
                                         }
 
-                                        if (agent.SaveTOCToFile(chosenPath))
+                                        var saveResult = agent.SaveTOCToFile(chosenPath);
+                                        if (saveResult)
                                         {
                                             logOk($"Emergency TOC exported to: {chosenPath}");
                                             logInfoSub("This file can be used to recover access to the media content");
@@ -360,7 +363,7 @@ public partial class TapeService
                                         }
                                         else
                                         {
-                                            logErr($"Failed to export emergency TOC to file: {agent.LastErrorMessage}");
+                                            logErr($"Failed to export emergency TOC to file: {saveResult.ErrorMessage}");
                                             if (attempt < 2)
                                                 logInfoSub("You can try a different location...");
                                         }
@@ -375,7 +378,7 @@ public partial class TapeService
                                 }
                                 else
                                 {
-                                    throw new InvalidOperationException($"Couldn't enforce TOC backup: {agent.LastErrorMessage}");
+                                    throw new InvalidOperationException($"Couldn't enforce TOC backup: {enforceResult.ErrorMessage}");
                                 }
                             }
                             else
@@ -651,29 +654,28 @@ public partial class TapeService
             return true;
         }
 
-        public FileFailedAction OnFileFailed(TapeFileInfo fileInfo, Exception ex, in TapeFileStatistics stats)
+        public FileFailedAction OnFileFailed(TapeFileInfo fileInfo, TapeResult result, in TapeFileStatistics stats)
         {
             ThrowIfAbortRequested();
             Sync(stats);
 
             Log(WarningLevel.Failed, $"Failed: '{fileInfo.FileDescr.FullName}'");
-            Log(WarningLevel.Failed, $"Error: {ex.Message}", sub: true);
+            Log(WarningLevel.Failed, $"Error: {result.ErrorMessage}", sub: true);
 
             progressCallback(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed);
 
             // Don't show file error dialog for end-of-media errors —
             // the multi-volume logic in BackupFilesToCurrentSet handles these
-            if (ex is IOException ioEx &&
-                (ioEx.HResult == (int)WIN32_ERROR.ERROR_END_OF_MEDIA ||
-                 ioEx.HResult == (int)WIN32_ERROR.ERROR_NO_DATA_DETECTED))
+            if (result.ErrorCode == (uint)WIN32_ERROR.ERROR_END_OF_MEDIA ||
+                result.ErrorCode == (uint)WIN32_ERROR.ERROR_NO_DATA_DETECTED)
             {
                 return FileFailedAction.Skip;
             }
 
             // Show error dialog via callback - the callback handles sticky choices (e.g. Skip All)
-            var result = fileErrorCallback(fileInfo.FileDescr.FullName, ex.Message);
+            var action = fileErrorCallback(fileInfo.FileDescr.FullName, result.ErrorMessage);
 
-            if (result == FileFailedAction.Abort)
+            if (action == FileFailedAction.Abort)
             {
                 if (!_abortLogged)
                 {
@@ -683,7 +685,7 @@ public partial class TapeService
                 throw new TapeAbortRequestedException("User requested abort");
             }
 
-            return result;
+            return action;
         }
 
         public void OnFileSkipped(TapeFileInfo fileInfo, in TapeFileStatistics stats)
