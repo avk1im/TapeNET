@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 
 using TapeWinNET.Models;
+using TapeWinNET.Utils;
 using TapeWinNET.ViewModels;
 
 namespace TapeWinNET;
@@ -34,6 +35,10 @@ public partial class BackupWindow : Window
         FileFilterPaneControl.FilterStateChanged = OnFilterStateChanged;
 
         Closing += (_, _) => ViewModel.Dispose();
+
+        // Enable shell-based drag-and-drop (works even when running elevated,
+        //  where WPF's OLE-based AllowDrop is broken by COM security)
+        Loaded += (_, _) => DragDropHelper.EnableFileDrop(this, paths => ViewModel.AddPaths(paths));
     }
 
     // ─────────────────────────────────────────────────
@@ -152,24 +157,4 @@ public partial class BackupWindow : Window
         }
     }
 
-    // ─────────────────────────────────────────────────
-    //  Drag-and-drop (files/folders from Explorer)
-    // ─────────────────────────────────────────────────
-
-    private void Window_DragOver(object sender, DragEventArgs e)
-    {
-        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop)
-            ? DragDropEffects.Copy
-            : DragDropEffects.None;
-        e.Handled = true;
     }
-
-    private void Window_Drop(object sender, DragEventArgs e)
-    {
-        if (e.Data.GetDataPresent(DataFormats.FileDrop) &&
-            e.Data.GetData(DataFormats.FileDrop) is string[] paths)
-        {
-            ViewModel.AddPaths(paths);
-        }
-    }
-}

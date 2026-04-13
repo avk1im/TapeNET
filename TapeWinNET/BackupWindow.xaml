@@ -13,10 +13,7 @@
         MinWidth="700" MinHeight="480"
         WindowStartupLocation="CenterOwner"
         ResizeMode="CanResizeWithGrip"
-        ShowInTaskbar="False"
-        AllowDrop="True"
-        DragOver="Window_DragOver"
-        Drop="Window_Drop">
+        ShowInTaskbar="False">
 
     <Window.Resources>
         <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVis"/>

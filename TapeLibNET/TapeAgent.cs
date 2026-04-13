@@ -125,15 +125,15 @@ namespace TapeLibNET
 
 
     // The base class handles TOC backup and restore
-    public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
+    public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDriveHolder<TapeFileAgent>(drive), IDisposable
     {
         private const uint c_fixedTOCBlockSize = 16 * 1024; // 16K
 
         // Hashing for TOC is fixed since it needs to be known upfront for each tape
         private readonly TapeHashAlgorithm c_hashForTOC = TapeHashAlgorithm.Crc64;
 
-        public TapeTOC TOC { get; init; } // TOC reference is guranteed immutable, so user may store
-        public TapeStreamManager Manager { get; init; }
+        public TapeTOC TOC { get; init; } = legacyTOC ?? [];
+        public TapeStreamManager Manager { get; init; } = new(drive);
         public TapeNavigator Navigator => Manager.Navigator;
 
         public long BytesBackedup { get; protected set; } = 0L;
@@ -217,14 +217,6 @@ namespace TapeLibNET
                 return (toEnd < toBegin) ? -2 - toEnd : toBegin;
             }
         }
-
-
-        public TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : base(drive)
-        {
-            Manager = new (drive);
-            TOC = legacyTOC ?? [];
-        }
-
 
         // implement IDisposable - do not override
         public void Dispose()

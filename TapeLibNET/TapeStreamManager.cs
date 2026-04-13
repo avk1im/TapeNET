@@ -108,10 +108,8 @@ namespace TapeLibNET
         {
             return nextState switch
             {
-                TapeState.WritingTOC => Navigator.MoveToBeginOfTOC(),
-                TapeState.ReadingTOC => Navigator.MoveToBeginOfTOC(),
-                TapeState.WritingContent => Navigator.MoveToTargetContentSet(),
-                TapeState.ReadingContent => Navigator.MoveToTargetContentSet(),
+                TapeState.WritingTOC or TapeState.ReadingTOC => Navigator.MoveToBeginOfTOC(),
+                TapeState.WritingContent or TapeState.ReadingContent => Navigator.MoveToTargetContentSet(),
                 _ => throw new ArgumentException($"Wrong state in ${nameof(MoveToLocationFor)}", nameof(nextState)),
             };
 

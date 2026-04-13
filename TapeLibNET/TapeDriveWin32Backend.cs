@@ -29,6 +29,21 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
     private readonly HashSet<PREPARE_TAPE_OPERATION> m_blockingPrepareOps = [];
     private readonly HashSet<TAPEMARK_TYPE> m_blockingTapemarkOps = [];
 
+    // QUIRK DAT-320: GetTapePosition may return ERROR_INVALID_FUNCTION when
+    //  called too soon after a bImmediate operation, even after polling reports
+    //  completion. Detected on first occurrence and enables pre-yield + retry.
+    private bool m_positionQueryNeedsRetry;
+
+    // QUIRK DAT-320: Partition switches via SetTapePosition(bImmediate=true)
+    //  appear to succeed — the call returns NO_ERROR and GetTapeStatus polling
+    //  completes — but the drive is not truly on the new partition. Subsequent
+    //  reads return end-of-data (wrong partition). The same opcode
+    //  (TAPE_LOGICAL_BLOCK) works fine in immediate mode for same-partition
+    //  seeks, so the opcode-based HashSet fallback cannot distinguish the two.
+    //  Detected on first occurrence via GetTapePosition verification and forces
+    //  all future partition switches to use bImmediate=false.
+    private bool m_partitionSwitchNeedsBlocking;
+
     #endregion
 
 #if DEBUG
@@ -54,6 +69,9 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
 
     private const int c_maxRetries = 4;
     private const int c_retryDelayMs = 1000;
+
+    private const int c_maxPollDelayMs = 1000;
+    private const int c_maxQueryRetries = 10;
 
     private static readonly WIN32_ERROR[] c_retryableErrors = [
         WIN32_ERROR.ERROR_BUS_RESET,
@@ -82,9 +100,6 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
         WIN32_ERROR.ERROR_NOT_READY,
         WIN32_ERROR.ERROR_IO_DEVICE,
     ];
-
-    private const int c_maxPollDelayMs = 500;
-
     #endregion
 
     #region *** State Properties ***
@@ -160,6 +175,8 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
         m_blockingPositionOps.Clear();
         m_blockingPrepareOps.Clear();
         m_blockingTapemarkOps.Clear();
+        m_positionQueryNeedsRetry = false;
+        m_partitionSwitchNeedsBlocking = false;
     }
 
     public override bool SetDriveParameters(bool compression, bool ecc, bool dataPadding, bool reportSetmarks, uint eotWarningZoneSize)
@@ -462,10 +479,10 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
         // QUIRK Sony AIT: must go to partition 1 before partition 2+
         if (win32Partition > 1)
         {
-            Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, 1, 0)).WithRetry().WithPoll().Run();
+            Op(() => InvokeSetPartition(1, 0)).WithRetry().Run();
         }
 
-        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, win32Partition, block)).WithRetry().WithPoll().Run();
+        Op(() => InvokeSetPartition(win32Partition, block)).WithRetry().Run();
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Moved to partition {Partition} block {Block}", LogPrefix, partition, block);
@@ -480,10 +497,9 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
         if (!HasMedia)
             return -1;
 
-        SetError(PInvoke.GetTapePosition(m_driveHandle, TAPE_POSITION_TYPE.TAPE_LOGICAL_POSITION,
-            out _, out uint blockLow, out uint blockHigh));
-
-        return WentOK ? Helpers.MakeLong(blockLow, blockHigh) : -1;
+        return InvokeGetTapePosition(out _, out uint blockLow, out uint blockHigh)
+            ? Helpers.MakeLong(blockLow, blockHigh)
+            : -1;
     }
 
     public override MediaPartition GetCurrentPartition()
@@ -491,11 +507,9 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
         if (!HasMedia)
             return MediaPartition.Current;
 
-        SetError(PInvoke.GetTapePosition(m_driveHandle, TAPE_POSITION_TYPE.TAPE_LOGICAL_POSITION,
-            out uint win32Partition, out _, out _));
-
-        return WentOK ? MapWin32ToPartition(win32Partition) : MediaPartition.Current;
-
+        return InvokeGetTapePosition(out uint win32Partition, out _, out _)
+            ? MapWin32ToPartition(win32Partition)
+            : MediaPartition.Current;
     }
 
     public override bool Rewind()
@@ -766,7 +780,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
         }
     }
 
-    /// <summary>Exponential backoff: yield → 1ms → 4 → 16 → … → 500ms cap.</summary>
+    /// <summary>Exponential backoff: yield → 1ms → 4 → 16 → … → 1000ms cap.</summary>
     private static int NextPollDelay(int current) =>
         current < 0 ? 0               // first: yield (Sleep(0))
         : current == 0 ? 1            // then: 1ms
@@ -811,6 +825,78 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
             return WentOK;
         });
 
+    /// <summary>
+    /// Partition-switch-specific positioning with verification-based blocking fallback.
+    /// <para>
+    /// QUIRK DAT-320: SetTapePosition with bImmediate=true for cross-partition seeks
+    /// reports success (NO_ERROR) and GetTapeStatus polling completes normally, yet the
+    /// drive silently stays on the old partition. Subsequent reads return end-of-data
+    /// because the head never actually moved. The only reliable indicator is
+    /// GetTapePosition: if it fails with ERROR_INVALID_FUNCTION after an apparently
+    /// successful immediate partition switch, the drive lied about completion.
+    /// </para>
+    /// <para>
+    /// This cannot be handled by the generic <see cref="InvokeImmediateOrBlocking{TOpcode}"/>
+    /// mechanism because the same opcode (TAPE_LOGICAL_BLOCK) works perfectly in immediate
+    /// mode for same-partition seeks — only cross-partition seeks are affected.
+    /// </para>
+    /// <para>
+    /// Strategy: First-strike detection — try immediate mode, verify with GetTapePosition.
+    /// On first verification failure, remember the quirk and switch all future partition
+    /// operations to blocking mode for the remainder of the session. Zero overhead on
+    /// drives that handle immediate partition switches correctly.
+    /// </para>
+    /// </summary>
+    private bool InvokeSetPartition(uint partition, long offset)
+    {
+        // Fast path: drive is known to need blocking for partition switches
+        if (m_partitionSwitchNeedsBlocking)
+            return InvokeSetPartitionBlocking(partition, offset);
+
+        // Try immediate mode (may use InvokeImmediateOrBlocking internally)
+        if (!Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, partition, offset)).WithPoll().Run())
+            return false; // Real error or timeout — propagate as-is
+
+        // Verify: did the drive actually complete the partition switch?
+        // On well-behaved drives this succeeds immediately. On DAT-320 it
+        // fails with ERROR_INVALID_FUNCTION, revealing the silent failure.
+        var gtpResult = (WIN32_ERROR)PInvoke.GetTapePosition(
+                m_driveHandle, TAPE_POSITION_TYPE.TAPE_LOGICAL_POSITION,
+                out _, out _, out _);
+        if (gtpResult != WIN32_ERROR.ERROR_INVALID_FUNCTION)
+        {
+            SetError(gtpResult);
+            return WentOK; // Verified — the drive genuinely completed the switch
+        }
+
+        // First strike: the drive accepted the immediate partition switch and
+        // reported completion, but GetTapePosition proves it didn't truly move.
+        // Remember for all future partition switches in this session.
+        m_partitionSwitchNeedsBlocking = true;
+        m_logger.LogInformation(
+            "{Prefix}: Partition switch requires blocking mode (verification failed) — remembered for future calls",
+            LogPrefix);
+
+        // Re-issue in blocking mode — this is the only retry the first call pays
+        return InvokeSetPartitionBlocking(partition, offset);
+    }
+
+    /// <summary>
+    /// Issues a blocking (bImmediate=false) partition switch followed by polling.
+    /// Used when <see cref="m_partitionSwitchNeedsBlocking"/> is set or as the
+    /// fallback after a failed immediate attempt in <see cref="InvokeSetPartition"/>.
+    /// </summary>
+    private bool InvokeSetPartitionBlocking(uint partition, long offset)
+    {
+        SetError(PInvoke.SetTapePosition(m_driveHandle, TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, partition,
+            Helpers.LoDWORD(offset), Helpers.HiDWORD(offset), false));
+
+        if (!WentOK)
+            return false;
+
+        return PollForCompletion();
+    }
+
     /// <summary>Invokes PrepareTape with automatic immediate-to-blocking fallback.</summary>
     private bool InvokePrepareTape(PREPARE_TAPE_OPERATION operation) =>
         InvokeImmediateOrBlocking(operation, m_blockingPrepareOps, immediate =>
@@ -834,6 +920,54 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
             SetError(PInvoke.WriteTapemark(m_driveHandle, type, count, immediate));
             return WentOK;
         });
+
+    /// <summary>
+    /// Queries tape position with automatic retry for drives that return
+    /// ERROR_INVALID_FUNCTION when queried too soon after a bImmediate operation.
+    /// Uses the same exponential backoff as <see cref="PollForCompletion"/>.
+    /// </summary>
+    private bool InvokeGetTapePosition(out uint win32Partition, out uint blockLow, out uint blockHigh)
+    {
+        // Pre-yield for known-quirky drives to prevent the first failed attempt
+        if (m_positionQueryNeedsRetry)
+            Thread.Sleep(0);
+
+        SetError(PInvoke.GetTapePosition(m_driveHandle, TAPE_POSITION_TYPE.TAPE_LOGICAL_POSITION,
+            out win32Partition, out blockLow, out blockHigh));
+
+        if (WentOK || LastErrorWin32 != WIN32_ERROR.ERROR_INVALID_FUNCTION)
+            return WentOK;
+
+        // First strike — remember for future pre-yields
+        if (!m_positionQueryNeedsRetry)
+        {
+            m_positionQueryNeedsRetry = true;
+            m_logger.LogInformation("{Prefix}: GetTapePosition needs post-operation settle time \u2014 remembered for future calls",
+                LogPrefix);
+        }
+
+        // Retry with exponential backoff (reuses NextPollDelay: 1ms \u2192 4 \u2192 16 \u2192 ...)
+        int delayMs = 0;
+        for (int attempt = 0; attempt < c_maxQueryRetries; attempt++)
+        {
+            delayMs = NextPollDelay(delayMs);
+            Thread.Sleep(delayMs);
+
+            SetError(PInvoke.GetTapePosition(m_driveHandle, TAPE_POSITION_TYPE.TAPE_LOGICAL_POSITION,
+                out win32Partition, out blockLow, out blockHigh));
+
+            if (WentOK || LastErrorWin32 != WIN32_ERROR.ERROR_INVALID_FUNCTION)
+            {
+                m_logger.LogInformation("{Prefix}: GetTapePosition succeeded after {Attempt} retries and up to {Delay}ms delay",
+                    LogPrefix, attempt + 1, delayMs);
+                return WentOK;
+            }
+        }
+
+        m_logger.LogWarning("{Prefix}: GetTapePosition failed after {MaxRetries} retries and up to {Delay}ms delay",
+            LogPrefix, c_maxQueryRetries, delayMs);
+        return false;
+    }
 
     // === Parameter & Mapping Helpers ===
 

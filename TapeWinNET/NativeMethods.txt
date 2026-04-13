@@ -6,6 +6,12 @@ SHGetStockIconInfo
 GetCursorPos
 GetWindowRect
 
+ChangeWindowMessageFilterEx
+RevokeDragDrop
+DragAcceptFiles
+DragQueryFile
+DragFinish
+
 WIN32_ERROR
 //NO_ERROR
 
