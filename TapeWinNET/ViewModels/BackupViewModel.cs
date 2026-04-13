@@ -59,7 +59,7 @@ public class BackupViewModel : ViewModelBase
 
     private readonly BackupSourceView _sourceView = new();
     private BackupSourceListItem? _selectedSource;
-    private CancellationTokenSource? _scanCts;
+    private readonly Dictionary<BackupSourceEntry, CancellationTokenSource> _scanCtsMap = [];
 
     // ─────────────────────────────────────────────────
     //  Files pane state
@@ -669,10 +669,12 @@ public class BackupViewModel : ViewModelBase
     /// </summary>
     public async Task ScanSourceAsync(BackupSourceListItem listItem)
     {
-        // Cancel any running scan for this source
-        CancelScan();
+        // Cancel any previous scan for this specific source
+        if (_scanCtsMap.Remove(listItem.Entry, out var oldCts))
+            oldCts.Cancel();
+
         var cts = new CancellationTokenSource();
-        _scanCts = cts;
+        _scanCtsMap[listItem.Entry] = cts;
 
         listItem.IsScanning = true;
 
@@ -702,8 +704,7 @@ public class BackupViewModel : ViewModelBase
         finally
         {
             listItem.IsScanning = false;
-            if (_scanCts == cts)
-                _scanCts = null;
+            _scanCtsMap.Remove(listItem.Entry, out _);
         }
     }
 
@@ -728,11 +729,12 @@ public class BackupViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Cancels any in-progress scan.</summary>
+    /// <summary>Cancels all in-progress scans.</summary>
     public void CancelScan()
     {
-        _scanCts?.Cancel();
-        _scanCts = null;
+        foreach (var cts in _scanCtsMap.Values)
+            cts.Cancel();
+        _scanCtsMap.Clear();
     }
 
     // ═════════════════════════════════════════════════
@@ -769,7 +771,8 @@ public class BackupViewModel : ViewModelBase
     /// <summary>
     /// Called from code-behind when a source checkbox is toggled in the Folders pane.
     /// Maps the tri-state toggle to check/uncheck all files in the source's
-    /// <see cref="FilteredFileList"/>.
+    /// <see cref="FilteredFileList"/>. Saves partial selection before overwriting
+    ///  with all/none, and restores it when the user clicks to indeterminate.
     /// </summary>
     public void OnSourceCheckChanged(BackupSourceListItem? changedItem = null)
     {
@@ -778,12 +781,25 @@ public class BackupViewModel : ViewModelBase
             var setView = _sourceView[changedItem.Entry];
             if (setView is not null)
             {
-                // Map tri-state: true → all, false → none, null → keep partial
+                // Map tri-state click cycle (false → true → null → false):
+                //  true  = check all   — save partial first so it can be restored
+                //  false = uncheck all — save partial first so it can be restored
+                //  null  = restore the previously saved partial selection
                 if (changedItem.IsCheckedForBackup == true)
+                {
+                    setView.SavePartialSelectionIfNeeded();
                     setView.FilteredFiles.SetAllChecked(true);
+                }
                 else if (changedItem.IsCheckedForBackup == false)
+                {
+                    setView.SavePartialSelectionIfNeeded();
                     setView.FilteredFiles.SetAllChecked(false);
-                // null (partial) — keep current per-file state
+                }
+                else
+                {
+                    // null (indeterminate) — restore saved partial selection
+                    setView.RestorePartialSelection();
+                }
             }
 
             // Refresh the list item's stats from the updated FilteredFileList

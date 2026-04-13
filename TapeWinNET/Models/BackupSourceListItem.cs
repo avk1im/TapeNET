@@ -31,6 +31,7 @@ public class BackupSourceListItem(BackupSourceEntry entry) : INotifyPropertyChan
     private int _selectedFileCount;
     private long _selectedSize;
     private bool? _isCheckedForBackup = true; // default: all files checked
+    private bool _canBeThreeState;
 
     /// <summary>The underlying source entry (path/pattern + type).</summary>
     public BackupSourceEntry Entry => _entry;
@@ -144,6 +145,17 @@ public class BackupSourceListItem(BackupSourceEntry entry) : INotifyPropertyChan
     /// </summary>
     public bool HasPartialSelection =>
         _selectedFileCount > 0 && _selectedFileCount < _fileCount;
+
+    /// <summary>
+    /// Whether the checkbox should support three-state clicking.
+    /// True when there is a current partial selection OR a saved partial
+    ///  selection that can be restored. Pushed by <see cref="BackupSourceView.SyncListItem"/>.
+    /// </summary>
+    public bool CanBeThreeState
+    {
+        get => _canBeThreeState;
+        set => SetProperty(ref _canBeThreeState, value);
+    }
 
     // ─────────────────────────────────────────────────
     //  INotifyPropertyChanged

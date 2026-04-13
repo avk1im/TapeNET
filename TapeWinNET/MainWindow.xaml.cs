@@ -96,6 +96,14 @@ namespace TapeWinNET
 
             Loaded += MainWindow_Loaded;
             Closing += MainWindow_Closing;
+
+            // Accept file/folder drops on the main window — opens BackupWindow
+            //  with the dropped items pre-populated (only when New Backup is available).
+            //  The canDrop predicate toggles DragAcceptFiles dynamically so the shell
+            //  shows a "no drop" cursor when the command is unavailable.
+            Loaded += (_, _) => DragDropHelper.EnableFileDrop(this,
+                paths => _viewModel.ShowNewBackupWindow(paths),
+                () => _viewModel.NewBackupCommand.CanExecute(null));
         }
 
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)

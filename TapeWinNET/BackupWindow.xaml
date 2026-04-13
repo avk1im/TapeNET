@@ -124,7 +124,7 @@
                                     <GridViewColumn.CellTemplate>
                                         <DataTemplate>
                                             <CheckBox IsChecked="{Binding IsCheckedForBackup, Mode=TwoWay}"
-                                                      IsThreeState="{Binding HasPartialSelection}"
+                                                      IsThreeState="{Binding CanBeThreeState}"
                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                         </DataTemplate>
                                     </GridViewColumn.CellTemplate>

@@ -68,6 +68,15 @@ public partial class MainViewModel
 
     private void ShowNewBackupWindow(object? parameter)
     {
+        ShowNewBackupWindow(paths: null);
+    }
+
+    /// <summary>
+    /// Opens the BackupWindow, optionally pre-populated with the given paths
+    ///  (e.g. from a drag-drop onto the MainWindow).
+    /// </summary>
+    internal void ShowNewBackupWindow(string[]? paths)
+    {
         var viewModel = new BackupViewModel(
             _tapeService,
             OnStartBackup,
@@ -76,7 +85,7 @@ public partial class MainViewModel
                 Application.Current.Windows.OfType<BackupWindow>().FirstOrDefault()?.Close();
             });
 
-        var window = new BackupWindow(viewModel)
+        var window = new BackupWindow(viewModel, paths)
         {
             Owner = Application.Current.MainWindow
         };

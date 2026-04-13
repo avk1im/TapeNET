@@ -16,7 +16,7 @@ public partial class BackupWindow : Window
 {
     private BackupViewModel ViewModel { get; }
 
-    public BackupWindow(BackupViewModel viewModel)
+    public BackupWindow(BackupViewModel viewModel, string[]? paths = null)
     {
         InitializeComponent();
         ViewModel = viewModel;
@@ -38,7 +38,11 @@ public partial class BackupWindow : Window
 
         // Enable shell-based drag-and-drop (works even when running elevated,
         //  where WPF's OLE-based AllowDrop is broken by COM security)
-        Loaded += (_, _) => DragDropHelper.EnableFileDrop(this, paths => ViewModel.AddPaths(paths));
+        Loaded += (_, _) => DragDropHelper.EnableFileDrop(this, p => ViewModel.AddPaths(p));
+
+        // Pre-populate sources from initial paths (e.g. dropped onto MainWindow)
+        if (paths is { Length: > 0 })
+            viewModel.AddPaths(paths);
     }
 
     // ─────────────────────────────────────────────────

@@ -22,6 +22,7 @@ public class BackupSourceSetView
 {
     private Dictionary<TapeFileInfo, FileListItem>? _fileListItems;
     private bool _lastShowFullPath;
+    private HashSet<TapeFileInfo>? _savedCheckedItems;
 
     /// <summary>
     /// Creates a new set view from the given resolved disk files.
@@ -98,6 +99,39 @@ public class BackupSourceSetView
             FilteredFiles.ClearChecked();
             FilteredFiles.SetChecked(toCheck, true);
         }
+    }
+
+    // ─────────────────────────────────────────────────
+    //  Partial selection save / restore
+    //   Enables the source checkbox three-state click cycle:
+    //   partial → none → all → partial (restored) → …
+    // ─────────────────────────────────────────────────
+
+    /// <summary>Whether a saved partial selection exists that can be restored.</summary>
+    public bool HasSavedPartialSelection => _savedCheckedItems is not null;
+
+    /// <summary>
+    /// Saves the current per-file checked state if it is partial (some but
+    ///  not all checked). Called before <c>SetAllChecked</c> overwrites it.
+    /// </summary>
+    public void SavePartialSelectionIfNeeded()
+    {
+        var ff = FilteredFiles;
+        if (ff.CheckedCount > 0 && ff.CheckedCount < ff.SourceCount)
+            _savedCheckedItems = new HashSet<TapeFileInfo>(ff.CheckedItems);
+    }
+
+    /// <summary>
+    /// Restores the previously saved partial selection into the
+    ///  <see cref="FilteredFileList"/> and clears the saved snapshot.
+    /// </summary>
+    public void RestorePartialSelection()
+    {
+        if (_savedCheckedItems is null)
+            return;
+
+        FilteredFiles.SetChecked(_savedCheckedItems, true, clearTheRest: true);
+        _savedCheckedItems = null;
     }
 
     /// <summary>
@@ -230,7 +264,7 @@ public class BackupSourceView
         Action<int>? progress = null)
     {
         var files = await Task.Run(() =>
-            EnumerateFiles(entry, progress, ct), ct).ConfigureAwait(false);
+            EnumerateFiles(entry, progress, ct), ct);
 
         if (ct.IsCancellationRequested)
             return null;
@@ -416,6 +450,11 @@ public class BackupSourceView
             listItem.IsCheckedForBackup = ff.CheckedCount == 0 ? false
                 : ff.CheckedCount == ff.SourceCount ? true
                 : null; // partial
+
+            // Enable three-state clicking when a partial selection exists now
+            //  or was saved before the user clicked all/none
+            listItem.CanBeThreeState = listItem.HasPartialSelection
+                || view.HasSavedPartialSelection;
         }
         else
         {
@@ -423,6 +462,7 @@ public class BackupSourceView
             listItem.SelectedFileCount = 0;
             listItem.SelectedSize = 0;
             listItem.IsCheckedForBackup = true; // default for unresolved
+            listItem.CanBeThreeState = false;
         }
     }
 }

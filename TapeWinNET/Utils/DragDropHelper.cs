@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Interop;
 
 using Windows.Win32;
@@ -62,6 +63,64 @@ internal static class DragDropHelper
                 if (msg == (int)WM_DROPFILES)
                 {
                     HandleFileDrop(new HDROP(wParam), onFilesDropped);
+                    handled = true;
+                }
+                return IntPtr.Zero;
+            });
+    }
+
+    /// <summary>
+    /// Enables shell-based file drag-drop with a dynamic drop-availability guard.
+    /// When <paramref name="canDrop"/> returns <c>false</c>, the shell shows the
+    ///  "no drop" cursor and any accidental drops are silently discarded.
+    /// </summary>
+    /// <param name="window">The WPF window to enable file drops on.</param>
+    /// <param name="onFilesDropped">
+    /// Callback invoked on the UI thread with the dropped file/folder paths.
+    /// </param>
+    /// <param name="canDrop">
+    /// Predicate re-evaluated on <see cref="CommandManager.RequerySuggested"/>.
+    /// Controls whether the shell shows a drop-allowed or "no drop" cursor.
+    /// </param>
+    internal static void EnableFileDrop(Window window, Action<string[]> onFilesDropped, Func<bool> canDrop)
+    {
+        var hwnd = new HWND(new WindowInteropHelper(window).Handle);
+        if (hwnd.IsNull)
+            return;
+
+        AllowMessageFilter(hwnd, WM_DROPFILES);
+        AllowMessageFilter(hwnd, WM_COPYGLOBALDATA);
+        PInvoke.RevokeDragDrop(hwnd);
+
+        // Set initial drop-accept state based on the predicate
+        bool lastEnabled = canDrop();
+        PInvoke.DragAcceptFiles(hwnd, lastEnabled);
+
+        // Toggle DragAcceptFiles when command availability changes
+        EventHandler reqHandler = (_, _) =>
+        {
+            bool enabled = canDrop();
+            if (enabled != lastEnabled)
+            {
+                lastEnabled = enabled;
+                PInvoke.DragAcceptFiles(hwnd, enabled);
+            }
+        };
+        CommandManager.RequerySuggested += reqHandler;
+
+        // Root the handler reference and unsubscribe on window close
+        window.Closed += (_, _) => CommandManager.RequerySuggested -= reqHandler;
+
+        // Hook WM_DROPFILES with guard
+        HwndSource.FromHwnd(hwnd)?.AddHook(
+            (IntPtr h, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) =>
+            {
+                if (msg == (int)WM_DROPFILES)
+                {
+                    if (canDrop())
+                        HandleFileDrop(new HDROP(wParam), onFilesDropped);
+                    else
+                        PInvoke.DragFinish(new HDROP(wParam));
                     handled = true;
                 }
                 return IntPtr.Zero;
