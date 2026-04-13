@@ -34,15 +34,17 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
     //  completion. Detected on first occurrence and enables pre-yield + retry.
     private bool m_positionQueryNeedsRetry;
 
-    // QUIRK DAT-320: Partition switches via SetTapePosition(bImmediate=true)
-    //  appear to succeed — the call returns NO_ERROR and GetTapeStatus polling
-    //  completes — but the drive is not truly on the new partition. Subsequent
-    //  reads return end-of-data (wrong partition). The same opcode
-    //  (TAPE_LOGICAL_BLOCK) works fine in immediate mode for same-partition
-    //  seeks, so the opcode-based HashSet fallback cannot distinguish the two.
-    //  Detected on first occurrence via GetTapePosition verification and forces
-    //  all future partition switches to use bImmediate=false.
-    private bool m_partitionSwitchNeedsBlocking;
+    // QUIRK DAT-320: SetTapePosition(bImmediate=true) for ANY operation may
+    //  silently fail — the call returns NO_ERROR and GetTapeStatus polling
+    //  completes, but the drive has not physically finished the operation.
+    //  Observed with TAPE_REWIND (position stays at old block), partition
+    //  switches (reads return wrong-partition data), and potentially any
+    //  long-distance seek. The driver's bImmediate implementation appears
+    //  fundamentally unreliable — it reports completion prematurely.
+    //  Every immediate-mode SetTapePosition is verified via a raw
+    //  GetTapePosition probe. On first verification failure, this flag
+    //  flips to true and ALL future positioning uses bImmediate=false.
+    private bool m_setPositionNeedsBlocking;
 
     #endregion
 
@@ -176,7 +178,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
         m_blockingPrepareOps.Clear();
         m_blockingTapemarkOps.Clear();
         m_positionQueryNeedsRetry = false;
-        m_partitionSwitchNeedsBlocking = false;
+        m_setPositionNeedsBlocking = false;
     }
 
     public override bool SetDriveParameters(bool compression, bool ecc, bool dataPadding, bool reportSetmarks, uint eotWarningZoneSize)
@@ -456,7 +458,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
             return false;
         }
 
-        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, 0, block)).WithRetry().WithPoll().Run();
+        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, 0, block)).WithRetry().Run();
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Moved to block {Block}", LogPrefix, block);
@@ -479,10 +481,10 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
         // QUIRK Sony AIT: must go to partition 1 before partition 2+
         if (win32Partition > 1)
         {
-            Op(() => InvokeSetPartition(1, 0)).WithRetry().Run();
+            Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, 1, 0)).WithRetry().Run();
         }
 
-        Op(() => InvokeSetPartition(win32Partition, block)).WithRetry().Run();
+        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, win32Partition, block)).WithRetry().Run();
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Moved to partition {Partition} block {Block}", LogPrefix, partition, block);
@@ -520,7 +522,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
             return false;
         }
 
-        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_REWIND, 0 /*partition ignored*/, 0)).WithRetry().WithPoll().Run();
+        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_REWIND, 0 /*partition ignored*/, 0)).WithRetry().Run();
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Rewound", LogPrefix);
@@ -539,7 +541,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
         }
 
         uint win32Partition = MapPartitionToWin32(partition);
-        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_SPACE_END_OF_DATA, win32Partition, 0)).WithRetry().WithPoll().Run();
+        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_SPACE_END_OF_DATA, win32Partition, 0)).WithRetry().Run();
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Seeked to end of partition {Partition}", LogPrefix, partition);
@@ -557,7 +559,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
             return false;
         }
 
-        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_SPACE_FILEMARKS, 0, count)).WithRetry().WithPoll().Run();
+        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_SPACE_FILEMARKS, 0, count)).WithRetry().Run();
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Spaced {Count} filemark(s)", LogPrefix, count);
@@ -581,7 +583,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
             return true;
         }
 
-        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_SPACE_SETMARKS, 0, count)).WithRetry().WithPoll().Run();
+        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_SPACE_SETMARKS, 0, count)).WithRetry().Run();
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Spaced {Count} setmark(s)", LogPrefix, count);
@@ -599,7 +601,7 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
             return false;
         }
 
-        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_SPACE_SEQUENTIAL_FMKS, 0, count)).WithRetry().WithPoll().Run();
+        Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_SPACE_SEQUENTIAL_FMKS, 0, count)).WithRetry().Run();
 
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Spaced {Count} sequential filemark(s)", LogPrefix, count);
@@ -816,84 +818,141 @@ public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBack
 
     // === Invoke Helpers ===
 
-    /// <summary>Invokes SetTapePosition with automatic immediate-to-blocking fallback.</summary>
-    private bool InvokeSetPosition(TAPE_POSITION_METHOD method, uint partition, long offset) =>
-        InvokeImmediateOrBlocking(method, m_blockingPositionOps, immediate =>
+    /// <summary>
+    /// Self-contained SetTapePosition dispatch: issues the command, polls for
+    /// completion, and verifies via GetTapePosition.
+    /// <para>
+    /// Callers use <c>Op(() => InvokeSetPosition(...)).WithRetry().Run()</c> — no
+    /// <c>.WithPoll()</c> needed because polling is handled internally. This is
+    /// necessary because the verification probe must run <em>after</em> polling
+    /// but <em>before</em> the caller sees success.
+    /// </para>
+    /// <para>
+    /// Three layers of quirk handling, each discovered at runtime:
+    /// </para>
+    /// <list type="number">
+    /// <item><description>
+    /// <b>DLT-V4 per-opcode rejection:</b> Some drives reject bImmediate=true
+    /// for specific opcodes (e.g. TAPE_SPACE_FILEMARKS) with ERROR_INVALID_FUNCTION
+    /// from SetTapePosition itself. Handled by <see cref="InvokeImmediateOrBlocking{TOpcode}"/>,
+    /// which remembers the opcode and uses blocking for that opcode only.
+    /// </description></item>
+    /// <item><description>
+    /// <b>DAT-320 premature completion (this method's verification):</b> The driver
+    /// accepts bImmediate=true and GetTapeStatus polling reports NO_ERROR, but the
+    /// drive has not physically finished. The verification probe catches this in
+    /// two ways: (a) GetTapePosition returns ERROR_INVALID_FUNCTION (observed for
+    /// partition switches), or (b) GetTapePosition returns NO_ERROR but with stale
+    /// position data that doesn't match the expected result (observed for rewind
+    /// where position stays at the old block instead of becoming 0). Position-value
+    /// verification is applied for operations with predictable targets: TAPE_REWIND
+    /// (must be 0) and TAPE_LOGICAL_BLOCK (must equal the requested offset).
+    /// On first verification failure of either kind, <see cref="m_setPositionNeedsBlocking"/>
+    /// flips permanently and ALL future positioning uses bImmediate=false.
+    /// </description></item>
+    /// <item><description>
+    /// <b>DAT-320 position query settle time:</b> Even after blocking operations,
+    /// GetTapePosition may need a brief settle delay. Handled separately by
+    /// <see cref="InvokeGetTapePosition"/> with its own first-strike flag.
+    /// </description></item>
+    /// </list>
+    /// </summary>
+    private bool InvokeSetPosition(TAPE_POSITION_METHOD method, uint partition, long offset)
+    {
+        // Fast path: drive is known to need blocking for all positioning.
+        // Bypasses InvokeImmediateOrBlocking entirely — the per-opcode HashSet
+        // is irrelevant once the driver is globally untrustworthy.
+        if (m_setPositionNeedsBlocking)
+        {
+            SetError(PInvoke.SetTapePosition(m_driveHandle, method, partition,
+                Helpers.LoDWORD(offset), Helpers.HiDWORD(offset), false));
+            if (!WentOK) return false;
+            return PollForCompletion();
+        }
+
+        // Try immediate mode with DLT-V4 per-opcode fallback
+        bool issued = InvokeImmediateOrBlocking(method, m_blockingPositionOps, immediate =>
         {
             SetError(PInvoke.SetTapePosition(m_driveHandle, method, partition,
                 Helpers.LoDWORD(offset), Helpers.HiDWORD(offset), immediate));
             return WentOK;
         });
+        if (!issued) return false;
 
-    /// <summary>
-    /// Partition-switch-specific positioning with verification-based blocking fallback.
-    /// <para>
-    /// QUIRK DAT-320: SetTapePosition with bImmediate=true for cross-partition seeks
-    /// reports success (NO_ERROR) and GetTapeStatus polling completes normally, yet the
-    /// drive silently stays on the old partition. Subsequent reads return end-of-data
-    /// because the head never actually moved. The only reliable indicator is
-    /// GetTapePosition: if it fails with ERROR_INVALID_FUNCTION after an apparently
-    /// successful immediate partition switch, the drive lied about completion.
-    /// </para>
-    /// <para>
-    /// This cannot be handled by the generic <see cref="InvokeImmediateOrBlocking{TOpcode}"/>
-    /// mechanism because the same opcode (TAPE_LOGICAL_BLOCK) works perfectly in immediate
-    /// mode for same-partition seeks — only cross-partition seeks are affected.
-    /// </para>
-    /// <para>
-    /// Strategy: First-strike detection — try immediate mode, verify with GetTapePosition.
-    /// On first verification failure, remember the quirk and switch all future partition
-    /// operations to blocking mode for the remainder of the session. Zero overhead on
-    /// drives that handle immediate partition switches correctly.
-    /// </para>
-    /// </summary>
-    private bool InvokeSetPartition(uint partition, long offset)
-    {
-        // Fast path: drive is known to need blocking for partition switches
-        if (m_partitionSwitchNeedsBlocking)
-            return InvokeSetPartitionBlocking(partition, offset);
+        // Poll for completion
+        if (!PollForCompletion()) return false;
 
-        // Try immediate mode (may use InvokeImmediateOrBlocking internally)
-        if (!Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, partition, offset)).WithPoll().Run())
-            return false; // Real error or timeout — propagate as-is
+        // Permanent supervision: verify that the drive genuinely completed the
+        // operation. Uses raw PInvoke — NOT InvokeGetTapePosition — because the
+        // retry wrapper would mask the ERROR_INVALID_FUNCTION we need to detect.
+        // On well-behaved drives this is a single cheap metadata query per call.
+        var probeResult = (WIN32_ERROR)PInvoke.GetTapePosition(
+            m_driveHandle, TAPE_POSITION_TYPE.TAPE_LOGICAL_POSITION,
+            out uint probePart, out uint probeLow, out uint probeHigh);
 
-        // Verify: did the drive actually complete the partition switch?
-        // On well-behaved drives this succeeds immediately. On DAT-320 it
-        // fails with ERROR_INVALID_FUNCTION, revealing the silent failure.
-        var gtpResult = (WIN32_ERROR)PInvoke.GetTapePosition(
-                m_driveHandle, TAPE_POSITION_TYPE.TAPE_LOGICAL_POSITION,
-                out _, out _, out _);
-        if (gtpResult != WIN32_ERROR.ERROR_INVALID_FUNCTION)
+        if (probeResult == WIN32_ERROR.ERROR_INVALID_FUNCTION)
         {
-            SetError(gtpResult);
-            return WentOK; // Verified — the drive genuinely completed the switch
+            // The drive isn't truly ready — detected via hard failure.
+            // Observed on DAT-320 for partition switches.
+            return SwitchToBlocking(method, partition, offset,
+                "GetTapePosition returned ERROR_INVALID_FUNCTION");
         }
 
-        // First strike: the drive accepted the immediate partition switch and
-        // reported completion, but GetTapePosition proves it didn't truly move.
-        // Remember for all future partition switches in this session.
-        m_partitionSwitchNeedsBlocking = true;
-        m_logger.LogInformation(
-            "{Prefix}: Partition switch requires blocking mode (verification failed) — remembered for future calls",
-            LogPrefix);
+        if (probeResult != WIN32_ERROR.NO_ERROR)
+        {
+            // Unexpected error from GetTapePosition — propagate as-is.
+            SetError(probeResult);
+            return false;
+        }
 
-        // Re-issue in blocking mode — this is the only retry the first call pays
-        return InvokeSetPartitionBlocking(partition, offset);
+        // GetTapePosition returned NO_ERROR — but is the position correct?
+        // QUIRK DAT-320: For TAPE_REWIND the firmware returns NO_ERROR with
+        //  the OLD position (e.g. 9 instead of 0) because the physical rewind
+        //  hasn't completed. For operations with known target positions, compare
+        //  the probe result to catch this stale-data variant.
+        long probePosition = Helpers.MakeLong(probeLow, probeHigh);
+        long? expectedPosition = method switch
+        {
+            TAPE_POSITION_METHOD.TAPE_REWIND => 0,
+            TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK => offset,
+            _ => null // Can't predict result for spacing operations
+        };
+
+        if (expectedPosition != null && probePosition != expectedPosition)
+        {
+            // Position mismatch — the drive reported success but hasn't
+            // physically reached the target. Same root cause, different symptom.
+            return SwitchToBlocking(method, partition, offset,
+                $"position mismatch (expected {expectedPosition}, got {probePosition})");
+        }
+
+        // For TAPE_LOGICAL_BLOCK with an explicit partition (> 0), also verify
+        // the drive actually switched partitions.
+        if (method == TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK && partition > 0 && probePart != partition)
+        {
+            return SwitchToBlocking(method, partition, offset,
+                $"partition mismatch (expected {partition}, got {probePart})");
+        }
+
+        // Verification passed — immediate mode is functioning for this call.
+        return true;
     }
 
     /// <summary>
-    /// Issues a blocking (bImmediate=false) partition switch followed by polling.
-    /// Used when <see cref="m_partitionSwitchNeedsBlocking"/> is set or as the
-    /// fallback after a failed immediate attempt in <see cref="InvokeSetPartition"/>.
+    /// First-strike handler: permanently switches all positioning to blocking mode
+    /// and re-issues the failed operation in blocking mode.
     /// </summary>
-    private bool InvokeSetPartitionBlocking(uint partition, long offset)
+    private bool SwitchToBlocking(TAPE_POSITION_METHOD method, uint partition, long offset, string reason)
     {
-        SetError(PInvoke.SetTapePosition(m_driveHandle, TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, partition,
+        m_setPositionNeedsBlocking = true;
+        m_logger.LogInformation(
+            "{Prefix}: {Method} verification failed ({Reason}) — ALL positioning switched to blocking mode for this session",
+            LogPrefix, method, reason);
+
+        // Re-issue in blocking mode — this is the one-time cost of detection
+        SetError(PInvoke.SetTapePosition(m_driveHandle, method, partition,
             Helpers.LoDWORD(offset), Helpers.HiDWORD(offset), false));
-
-        if (!WentOK)
-            return false;
-
+        if (!WentOK) return false;
         return PollForCompletion();
     }
 
