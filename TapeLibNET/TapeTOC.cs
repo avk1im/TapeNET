@@ -307,7 +307,6 @@ namespace TapeLibNET
         {
             m_tapeFileInfos.Add(tfi);
         }
-        internal void Clear() => m_tapeFileInfos.Clear(); // removes all file entries -> use with CAUTION!
         internal void CopyFrom(TapeSetTOC toc)
         {
             m_tapeFileInfos.Clear();
@@ -699,7 +698,16 @@ namespace TapeLibNET
             MakeLastSetCurrent();
         }
 
-        public void EmptyCurrentSet() => CurrentSetTOC.Clear(); // removes all file entries from the current set -> use with CAUTION!
+        /// <summary>
+        /// Replaces the current set with a fresh empty <see cref="TapeSetTOC"/>,
+        ///  preserving the volume assignment. Guarantees a new object identity
+        ///  so that consumers can detect the replacement via reference equality.
+        /// </summary>
+        public void ReplaceCurrentSetTOC(int capacity = 0, bool incremental = false)
+        {
+            m_setTOCs[m_currSetInternal] = new TapeSetTOC(Volume, capacity,
+                incremental && m_setTOCs.Count > 1); // the very first set shouldn't be incremental
+        }
 
         public bool RemoveLastEmptySet() // can only remove the last set, and only if it's empty
         {

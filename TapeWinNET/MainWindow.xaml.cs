@@ -465,7 +465,8 @@ namespace TapeWinNET
                 return;
 
             _dragStartValid = false; // prevent re-entry while DoDragDrop blocks
-            _viewModel.StartDragRestoreToExplorer((DependencyObject)sender);
+            DragDropHelper.RunAsDragSource(this, () =>
+                _viewModel.StartDragRestoreToExplorer((DependencyObject)sender));
         }
 
         /// <summary>

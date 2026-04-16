@@ -17,7 +17,7 @@ namespace TapeWinNET.Models;
 /// </para>
 /// </summary>
 public class BackupSetView(int setIndex, bool isIncrementalView,
-    IReadOnlyList<TapeFileInfo> sourceFiles)
+    IReadOnlyList<TapeFileInfo> sourceFiles, TapeSetTOC setTOC)
 {
     private Dictionary<TapeFileInfo, FileListItem>? _fileListItems;
     private bool _lastShowFullPath;
@@ -32,6 +32,13 @@ public class BackupSetView(int setIndex, bool isIncrementalView,
     /// <summary>The resolved source file list — flat (<see cref="TapeSetTOC"/>)
     ///  or merged incremental chain.</summary>
     public IReadOnlyList<TapeFileInfo> SourceFiles { get; } = sourceFiles;
+
+    /// <summary>The <see cref="TapeSetTOC"/> this view was built from.
+    ///  Used to detect staleness after TOC modification (e.g. after a backup).
+    ///  For flat views this equals <see cref="SourceFiles"/>; for incremental
+    ///  views the source files are synthesized but this still tracks the
+    ///  original set reference.</summary>
+    public TapeSetTOC SetTOC { get; } = setTOC;
 
     /// <summary>Filtered view + checked state over <see cref="SourceFiles"/>.</summary>
     public FilteredFileList FilteredFiles { get; } = new FilteredFileList(sourceFiles);
@@ -129,8 +136,10 @@ public class TOCView(TapeTOC toc)
         bool needsIncremental = showIncrementalSets && setTOC.Incremental;
         var existing = _setViews[setIndex];
 
-        // Reuse if the incremental-view flag still matches
-        if (existing is not null && existing.IsIncrementalView == needsIncremental)
+        // Reuse if the incremental-view flag still matches AND the underlying TapeSetTOC
+        //  is still the same object (guards against stale views after TOC modification)
+        if (existing is not null && existing.IsIncrementalView == needsIncremental
+            && ReferenceEquals(existing.SetTOC, setTOC))
             return existing;
 
         // Resolve source files
@@ -154,7 +163,7 @@ public class TOCView(TapeTOC toc)
             sourceFiles = setTOC;
         }
 
-        var view = new BackupSetView(setIndex, needsIncremental, sourceFiles);
+        var view = new BackupSetView(setIndex, needsIncremental, sourceFiles, setTOC);
 
         // Migrate checked state from the previous (stale) view
         if (existing is not null)
@@ -165,27 +174,43 @@ public class TOCView(TapeTOC toc)
     }
 
     /// <summary>
-    /// Refreshes only the existing views -- to carry over the checkd state
-    /// <para>
-    /// Call when TOC might have been modified, e.g. after a backup
+    /// Refreshes the view array after the TOC has been modified (e.g. after a backup).
+    /// Invalidates stale <see cref="BackupSetView"/> instances whose underlying
+    ///  <see cref="TapeSetTOC"/> has been replaced, so that subsequent
+    ///  <see cref="GetOrCreate"/> calls will rebuild them with the new source files.
+    /// Unchanged views are preserved to carry over checked state.
+    /// We don't checjk for incremental status, since GetOrCreate() handles the check.
     /// </summary>
-    /// <param name="showIncrementalSets"></param>
-    public void Refresh(bool showIncrementalSets, bool refreshSets = false)
+    /// <param name="showIncrementalSets">Current incremental display setting.</param>
+    /// <param name="refreshSets">Force re-creation of all existing views (e.g. when
+    ///  incremental display setting changed).</param>
+    public void Refresh(bool refreshSets = false)
     {
-        // Notice TOC size might've changed -> resize _setViews if needed
+        // TOC size might've changed -> resize _setViews if needed
         if (_setViews.Length != _toc.Count + 1)
         {
             Array.Resize(ref _setViews, _toc.Count + 1);
         }
 
-        // TOC sets are immutable, hence below is unnecessary, unless a compelling reason
-        if (refreshSets)
+        // Invalidate stale views: a view is stale when its SourceFiles no longer
+        //  references the current TapeSetTOC (backup may have replaced or emptied sets).
+        //  For incremental views the chain may have changed, so always invalidate those.
+        for (int i = 1; i <= _toc.Count; i++)
         {
-            // touch up only the existing set views
-            for (int i = 1; i <= _toc.Count; i++)
+            if (_setViews[i] is not { } view)
+                continue;
+
+            // A view is stale when its underlying TapeSetTOC was replaced
+            //  (e.g. backup overwrote the set). Incremental-mode mismatches are
+            //  handled by GetOrCreate with proper checked-state migration.
+            bool stale = !ReferenceEquals(view.SetTOC, _toc[i]);
+
+            if (refreshSets || stale)
             {
-                if (_setViews[i] is not null)
-                    GetOrCreate(i, showIncrementalSets);
+                // Clear the cached view; GetOrCreate will rebuild it on next access.
+                //  Don't migrate checked state here — the old files may no longer exist
+                //  in the new set, so carrying over checks would produce phantom counts.
+                _setViews[i] = null;
             }
         }
     }

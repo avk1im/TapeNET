@@ -11,9 +11,13 @@ public partial class FileErrorDialog : Window
     public FileFailedAction Result { get; private set; } = FileFailedAction.Skip;
     public bool SkipAllErrors { get; private set; }
 
-    public FileErrorDialog(string filePath, string errorMessage)
+    public FileErrorDialog(string filePath, string errorMessage, string operationName)
     {
         InitializeComponent();
+
+        Title = $"File {operationName} Error";
+        TitleTextBlock.Text = $"File {operationName} Error";
+        AbortButton.Content = $"Abort {operationName}";
 
         FilePathTextBox.Text = filePath;
         ErrorMessageTextBox.Text = errorMessage;

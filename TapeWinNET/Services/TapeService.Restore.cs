@@ -176,7 +176,7 @@ public partial class TapeService
                         logInfoSub($"From set #{setIndex} | {toc.SetIndexToAlt(setIndex)}: {toc.CurrentSetTOC.Description}: {count:N0} file(s)");
                     }
                     if (mode == RestoreMode.Restore && !string.IsNullOrEmpty(targetDirectory))
-                        logInfoSub($"Target directory: {targetDirectory}");
+                        logInfoSub($"Target folder: {targetDirectory}");
                     toc.CurrentSetIndex = newestIdx; // restore after iterating
 
                     // Create progress handler

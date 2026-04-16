@@ -115,7 +115,7 @@
                         <RadioButton Content="Original location"
                                      IsChecked="{Binding RestoreToOriginal}"
                                      Margin="0,0,0,4"/>
-                        <RadioButton Content="Target directory:"
+                        <RadioButton Content="Target folder:"
                                      IsChecked="{Binding RestoreToTargetDir}"
                                      Margin="0,0,0,4"/>
                         <Grid Margin="20,0,0,0">
@@ -134,7 +134,7 @@
                                     IsEnabled="{Binding IsTargetDirectoryInputEnabled}"
                                     Width="28" Padding="0"/>
                         </Grid>
-                        <CheckBox Content="Include subdirectories"
+                        <CheckBox Content="Include subfolders"
                                   IsChecked="{Binding RecurseSubdirectories}"
                                   IsEnabled="{Binding IsRecurseSubdirsEnabled}"
                                   Margin="20,4,0,0"/>

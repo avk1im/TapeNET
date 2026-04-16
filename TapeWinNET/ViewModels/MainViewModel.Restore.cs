@@ -637,7 +637,7 @@ public partial class MainViewModel
                         FileFailedAction result = FileFailedAction.Skip;
                         Application.Current.Dispatcher.Invoke(() =>
                         {
-                            var dialog = new FileErrorDialog(filePath, error)
+                            var dialog = new FileErrorDialog(filePath, error, modeName)
                             {
                                 Owner = Application.Current.MainWindow
                             };

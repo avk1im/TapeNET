@@ -118,6 +118,10 @@ public partial class TapeService
                     bool appendAfterSetUsed = false;
                     appendAfterSetIndex = toc.SetIndexToStd(appendAfterSetIndex); // ensure std form
 
+                    // Capacity hint for the new set's internal list — use the known file count
+                    //  for non-incremental, non-pattern backups; otherwise leave at 0 (unknown)
+                    int capacityHint = !incremental && !listContainsPatterns ? fileList.Count : 0;
+
                     // Mode 1: Append after specific set — save TOC copy for rollback
                     if (append && appendAfterSetIndex > toc.FirstSetOnVolume && appendAfterSetIndex < toc.LastSetOnVolume)
                     {
@@ -125,7 +129,7 @@ public partial class TapeService
                         backupTOC = new TapeTOC(toc);
                         appendAfterSetUsed = true;
                         toc.CurrentSetIndex = appendAfterSetIndex + 1;
-                        toc.EmptyCurrentSet(); // clear the target slot; will trigger newSet=false below
+                        toc.ReplaceCurrentSetTOC(capacityHint, incremental); // replace with fresh set; will trigger newSet=false below
                     }
                     // Mode 3: Overwrite — save TOC copy for rollback
                     else if (!append)
@@ -148,12 +152,12 @@ public partial class TapeService
                     {
                         if (toc.CurrentSetTOC.Count > 0)
                         {
-                            toc.AddNewSetTOC(0, incremental); // straight append: add new set
+                            toc.AddNewSetTOC(capacityHint, incremental); // straight append: add new set
                             newSet = true;
                         }
                         else
                         {
-                            toc.MarkCurrentSetIncremental(incremental); // reuse emptied slot (mode 1)
+                            toc.MarkCurrentSetIncremental(incremental); // reuse replaced slot (mode 1)
                             newSet = false;
                         }
                     }
@@ -173,7 +177,7 @@ public partial class TapeService
                     logInfoSub($"Hash algorithm: {hashAlgorithm}");
                     logInfoSub($"Incremental: {(incremental ? "Yes" : "No")}");
                     if (listContainsPatterns)
-                        logInfoSub($"Patterns / directories to backup: {fileList.Count:N0}");
+                        logInfoSub($"Patterns / folders to backup: {fileList.Count:N0}");
                     else
                         logInfoSub($"Files to backup: {fileList.Count:N0}");
 

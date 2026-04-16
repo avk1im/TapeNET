@@ -28,6 +28,35 @@ internal static class DragDropHelper
     private const uint WM_COPYGLOBALDATA = 0x0049;
 
     /// <summary>
+    /// Tracks windows with active shell drop so we can temporarily disable
+    ///  <c>DragAcceptFiles</c> during outgoing OLE drag (prevents drag-onto-self).
+    ///  The shell posts <c>WM_DROPFILES</c> asynchronously, so a simple boolean
+    ///  flag checked in the hook is insufficient — we must revoke acceptance.
+    /// </summary>
+    private static readonly HashSet<HWND> _dropEnabledWindows = [];
+
+    /// <summary>
+    /// Executes <paramref name="action"/> while suppressing incoming
+    ///  <c>WM_DROPFILES</c> on <paramref name="window"/> (prevents drag-onto-self).
+    /// Temporarily clears <c>WS_EX_ACCEPTFILES</c> so the shell shows a
+    ///  "no drop" cursor when hovering over the originating window.
+    /// </summary>
+    internal static void RunAsDragSource(Window window, Action action)
+    {
+        var hwnd = new HWND(new WindowInteropHelper(window).Handle);
+        bool wasEnabled = !hwnd.IsNull && _dropEnabledWindows.Contains(hwnd);
+
+        if (wasEnabled)
+            PInvoke.DragAcceptFiles(hwnd, false);
+        try { action(); }
+        finally
+        {
+            if (wasEnabled)
+                PInvoke.DragAcceptFiles(hwnd, true);
+        }
+    }
+
+    /// <summary>
     /// Enables shell-based file drag-drop on <paramref name="window"/>.
     /// Must be called from the <c>Loaded</c> event (or later) so that
     ///  WPF's auto-registered OLE drop target can be revoked first.
@@ -55,6 +84,8 @@ internal static class DragDropHelper
 
         // Tell the shell we accept WM_DROPFILES
         PInvoke.DragAcceptFiles(hwnd, true);
+        _dropEnabledWindows.Add(hwnd);
+        window.Closed += (_, _) => _dropEnabledWindows.Remove(hwnd);
 
         // Hook the window procedure to handle WM_DROPFILES
         HwndSource.FromHwnd(hwnd)?.AddHook(
@@ -95,6 +126,8 @@ internal static class DragDropHelper
         // Set initial drop-accept state based on the predicate
         bool lastEnabled = canDrop();
         PInvoke.DragAcceptFiles(hwnd, lastEnabled);
+        if (lastEnabled) _dropEnabledWindows.Add(hwnd);
+        window.Closed += (_, _) => _dropEnabledWindows.Remove(hwnd);
 
         // Toggle DragAcceptFiles when command availability changes
         EventHandler reqHandler = (_, _) =>
@@ -104,6 +137,8 @@ internal static class DragDropHelper
             {
                 lastEnabled = enabled;
                 PInvoke.DragAcceptFiles(hwnd, enabled);
+                if (enabled) _dropEnabledWindows.Add(hwnd);
+                else _dropEnabledWindows.Remove(hwnd);
             }
         };
         CommandManager.RequerySuggested += reqHandler;

@@ -417,7 +417,7 @@ public class RestoreViewModel : ViewModelBase
     {
         var dialog = new Microsoft.Win32.OpenFolderDialog
         {
-            Title = "Select Target Directory for Restore"
+            Title = "Select Target Folder for Restore"
         };
 
         if (!string.IsNullOrWhiteSpace(_targetDirectory))

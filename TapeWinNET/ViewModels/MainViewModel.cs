@@ -898,7 +898,7 @@ public partial class MainViewModel : ViewModelBase
         }
 
         if (_tocView?.TOC == toc)
-            _tocView.Refresh(ShowIncrementalSets);
+            _tocView.Refresh();
         else
             _tocView = new TOCView(toc);
 
@@ -1343,6 +1343,10 @@ public partial class MainViewModel : ViewModelBase
         Application.Current.Dispatcher.Invoke(() =>
         {
             StatusMessage = status;
+
+            // Mirror to BusyMessage so the progress overlay panel stays current
+            if (IsBusy)
+                BusyMessage = status;
         });
     }
 

@@ -1023,13 +1023,13 @@ void HandleCapacity(List<string> values)
 
 void HandleSubdirectories(List<string> values)
 {
-    bool subdirs = EvaluateOnOffFlag(values, "Subdirectory recursion", true, out bool flagSet);
+    bool subdirs = EvaluateOnOffFlag(values, "Subfolder recursion", true, out bool flagSet);
     if (!flagSet)
         return;
 
     subdirectoriesMode = subdirs;
 
-    Console.WriteLine($"vvv Subdirectory recursion is {(subdirectoriesMode ? "ON" : "OFF")}");
+    Console.WriteLine($"vvv Subfolder recursion is {(subdirectoriesMode ? "ON" : "OFF")}");
 }
 
 void HandleAppend(List<string> values)
@@ -1169,7 +1169,7 @@ void HandleBackup(List<string> values)
                             Debug.Assert(backupTOC != null);
                             // so NOT yet clip the TOC after the specified set -> to retain it's correct index on the volume!
                             toc.CurrentSetIndex = appendAfterSet.Value + 1; // this current set will get replaced by the new backup set
-                            toc.EmptyCurrentSet(); // prepare for the new backed up filed -> this will trigger newSet = false
+                            toc.ReplaceCurrentSetTOC(0, incremental); // replace with fresh set -> this will trigger newSet = false
                         }
                     }
                 }
@@ -1367,7 +1367,7 @@ void HandleTarget(List<string> values)
 {
     if (values.Count == 0)
     {
-        Console.WriteLine($"vvv Target directory REMOVED");
+        Console.WriteLine($"vvv Target folder REMOVED");
         targetDir = string.Empty;
     }
     else
@@ -1378,16 +1378,16 @@ void HandleTarget(List<string> values)
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"!!! Couldn't set target directory >{values[0]}<. Exception: {ex}");
-            if (MessageYesNoCancel($"Set target directory to current? (>{Directory.GetCurrentDirectory()}<)"))
+            Console.WriteLine($"!!! Couldn't set target folder >{values[0]}<. Exception: {ex}");
+            if (MessageYesNoCancel($"Set target folder to current? (>{Directory.GetCurrentDirectory()}<)"))
                 targetDir = Directory.GetCurrentDirectory();
             else
                 return;
         }
 
-        Console.WriteLine($"vvv Target directory set to >{targetDir}<");
+        Console.WriteLine($"vvv Target folder set to >{targetDir}<");
         if (!Directory.Exists(targetDir))
-            Console.WriteLine($"iii Target directory >{targetDir}< doesn't exist. Will attempt to create");
+            Console.WriteLine($"iii Target folder >{targetDir}< doesn't exist. Will attempt to create");
     }
 }
 
