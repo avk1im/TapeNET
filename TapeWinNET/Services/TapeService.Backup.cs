@@ -221,6 +221,7 @@ public partial class TapeService
                         wasAborted = agent.IsAbortRequested;
 
                         bool noFilesBackedUp = toc.CurrentSetTOC.Count == 0;
+                        bool skipTOCSave = false;
 
                         // --- TOC cleanup based on result ---
 
@@ -234,6 +235,7 @@ public partial class TapeService
 
                             // Success but no files (e.g. incremental with no changes, no matching files):
                             // undo TOC modifications and return without saving TOC to tape
+                            //  (unless the TOC on tape was invalidated by a prior write attempt)
                             if (noFilesBackedUp)
                             {
                                 logInfo("No files were backed up");
@@ -242,21 +244,34 @@ public partial class TapeService
                                 else
                                     toc.RemoveLastEmptySet();
                                 _toc = toc;
-                                return;
+                                skipTOCSave = !agent.Navigator.TOCInvalidated;
                             }
                         }
                         else // Backup had issues
                         {
                             if (wasAborted)
                             {
-                                // Abort: undo TOC modifications if no files were written;
-                                // TOC will still be saved to tape below to preserve media integrity
+                                // Abort: undo TOC modifications if no files were written.
+                                // However, if content was physically written to tape (e.g. a
+                                //  partial file write that failed with an I/O error before the
+                                //  abort was detected), reverting would leave the TOC referencing
+                                //  overwritten media positions — so we keep the current TOC state.
                                 if (noFilesBackedUp)
                                 {
-                                    if (backupTOC != null)
+                                    if (backupTOC != null && !agent.Manager.ContentWritten)
                                         toc.CopyFrom(backupTOC);
-                                    else
+                                    else if (backupTOC == null)
                                         toc.RemoveLastEmptySet();
+                                    // else: content was written but no file completed —
+                                    //  keep the (empty) new set; trim trailing sets if mode 1
+                                    else if (appendAfterSetUsed)
+                                        toc.RemoveSetsAfterCurrent();
+                                }
+                                else if (appendAfterSetUsed)
+                                {
+                                    // Files were written — trim any stale trailing sets
+                                    //  that were supposed to be replaced (mode 1)
+                                    toc.RemoveSetsAfterCurrent();
                                 }
                             }
                             else if (agent.CanResumeToNextVolume)
@@ -280,11 +295,23 @@ public partial class TapeService
                                 // Hard failure (no multi-volume resume possible)
                                 if (noFilesBackedUp)
                                 {
-                                    // No files written: restore original TOC or remove empty set
                                     if (backupTOC != null)
                                     {
-                                        toc.CopyFrom(backupTOC);
-                                        logErr("No files backed up");
+                                        if (!agent.Manager.ContentWritten)
+                                        {
+                                            // No content written to tape — safe to restore original TOC
+                                            toc.CopyFrom(backupTOC);
+                                            logErr("No files backed up");
+                                        }
+                                        else
+                                        {
+                                            // Content was physically written (partial file) —
+                                            //  cannot revert, old sets' data may be overwritten.
+                                            //  Keep the (empty) new set; trim trailing sets if mode 1.
+                                            if (appendAfterSetUsed)
+                                                toc.RemoveSetsAfterCurrent();
+                                            logErr("No files backed up — previous set data may be lost");
+                                        }
                                     }
                                     else
                                     {
@@ -293,15 +320,16 @@ public partial class TapeService
                                     }
 
                                     // If TOC on tape is still valid, skip re-saving it
-                                    if (!agent.Navigator.TOCInvalidated)
-                                    {
+                                    skipTOCSave = !agent.Navigator.TOCInvalidated;
+                                    if (skipTOCSave)
                                         _toc = toc;
-                                        return;
-                                    }
                                     // else: TOC on tape is stale → must save below
                                 }
                                 else
                                 {
+                                    // Some files succeeded — trim stale trailing sets (mode 1)
+                                    if (appendAfterSetUsed)
+                                        toc.RemoveSetsAfterCurrent();
                                     logFail($"Some files failed to back up");
                                 }
                             }
@@ -312,93 +340,102 @@ public partial class TapeService
                         // clear any stale multi-volume continuation flag from a previous session
                         // (e.g. user backed up onto a middle volume of an old multi-volume chain)
                         if (!noFilesBackedUp && !agent.CanResumeToNextVolume)
-                            toc.ContinuedOnNextVolume = false;
-
-                        tocTimer.Restart();
-
-                        if (!wasAborted)
                         {
-                            Status("Saving TOC...");
-                            logInfo("Backing up TOC...");
-                        }
-                        else
-                        {
-                            Status("Aborting — saving TOC...");
-                            logInfo("Abort requested — saving TOC to preserve media integrity...");
+                            if (toc.ContinuedOnNextVolume)
+                            { 
+                                toc.ContinuedOnNextVolume = false;
+                                skipTOCSave = false; // must save to clear the flag on tape
+                            }
                         }
 
-                        var tocResult = agent.BackupTOC();
-                        if (!tocResult)
+                        if (!skipTOCSave)
                         {
-                            logErr($"Couldn't backup TOC. Error: {tocResult.ErrorMessage}");
-                            logInfo("Attempting to enforce TOC backup...");
+                            tocTimer.Restart();
 
-                            var enforceResult = agent.BackupTOC(enforce: true);
-                            if (!enforceResult)
+                            if (!wasAborted)
                             {
-                                logErr("Couldn't enforce TOC backup");
+                                Status("Saving TOC...");
+                                logInfo("Backing up TOC...");
+                            }
+                            else
+                            {
+                                Status("Aborting — saving TOC...");
+                                logInfo("Abort requested — saving TOC to preserve media integrity...");
+                            }
 
-                                if (emergencyTocSaveCallback != null)
+                            var tocResult = agent.BackupTOC();
+                            if (!tocResult)
+                            {
+                                logErr($"Couldn't backup TOC. Error: {tocResult.ErrorMessage}");
+                                logInfo("Attempting to enforce TOC backup...");
+
+                                var enforceResult = agent.BackupTOC(enforce: true);
+                                if (!enforceResult)
                                 {
-                                    logInfo("Attempting to export TOC to file as emergency recovery...");
-                                    Status("Emergency TOC export...");
+                                    logErr("Couldn't enforce TOC backup");
 
-                                    bool emergencySaved = false;
-                                    string suggestedPath = BuildEmergencyTocExportPath(toc);
-                                    // give the user two attempts to save the TOC to a file; break if user cancels
-                                    for (int attempt = 1; attempt <= 2 && !emergencySaved; attempt++)
+                                    if (emergencyTocSaveCallback != null)
                                     {
-                                        string? chosenPath = emergencyTocSaveCallback(suggestedPath);
+                                        logInfo("Attempting to export TOC to file as emergency recovery...");
+                                        Status("Emergency TOC export...");
 
-                                        if (string.IsNullOrEmpty(chosenPath))
+                                        bool emergencySaved = false;
+                                        string suggestedPath = BuildEmergencyTocExportPath(toc);
+                                        // give the user two attempts to save the TOC to a file; break if user cancels
+                                        for (int attempt = 1; attempt <= 2 && !emergencySaved; attempt++)
                                         {
-                                            logErr("User declined emergency TOC export");
-                                            break;
+                                            string? chosenPath = emergencyTocSaveCallback(suggestedPath);
+
+                                            if (string.IsNullOrEmpty(chosenPath))
+                                            {
+                                                logErr("User declined emergency TOC export");
+                                                break;
+                                            }
+
+                                            var saveResult = agent.SaveTOCToFile(chosenPath);
+                                            if (saveResult)
+                                            {
+                                                logOk($"Emergency TOC exported to: {chosenPath}");
+                                                logInfoSub("This file can be used to recover access to the media content");
+                                                IsTOCFromFile = true;
+                                                TOCFilePath = chosenPath;
+                                                emergencySaved = true;
+                                            }
+                                            else
+                                            {
+                                                logErr($"Failed to export emergency TOC to file: {saveResult.ErrorMessage}");
+                                                if (attempt < 2)
+                                                    logInfoSub("You can try a different location...");
+                                            }
                                         }
 
-                                        var saveResult = agent.SaveTOCToFile(chosenPath);
-                                        if (saveResult)
+                                        if (!emergencySaved)
                                         {
-                                            logOk($"Emergency TOC exported to: {chosenPath}");
-                                            logInfoSub("This file can be used to recover access to the media content");
-                                            IsTOCFromFile = true;
-                                            TOCFilePath = chosenPath;
-                                            emergencySaved = true;
-                                        }
-                                        else
-                                        {
-                                            logErr($"Failed to export emergency TOC to file: {saveResult.ErrorMessage}");
-                                            if (attempt < 2)
-                                                logInfoSub("You can try a different location...");
+                                            throw new InvalidOperationException(
+                                                "TOC backup failed — media TOC is lost. " +
+                                                "The backed-up files are on the media but cannot be accessed without a TOC.");
                                         }
                                     }
-
-                                    if (!emergencySaved)
+                                    else
                                     {
-                                        throw new InvalidOperationException(
-                                            "TOC backup failed — media TOC is lost. " +
-                                            "The backed-up files are on the media but cannot be accessed without a TOC.");
+                                        throw new InvalidOperationException($"Couldn't enforce TOC backup: {enforceResult.ErrorMessage}");
                                     }
                                 }
                                 else
                                 {
-                                    throw new InvalidOperationException($"Couldn't enforce TOC backup: {enforceResult.ErrorMessage}");
+                                    logOk("Enforced TOC backup succeeded");
                                 }
                             }
                             else
                             {
-                                logOk("Enforced TOC backup succeeded");
+                                logOk("TOC backed up successfully");
                             }
-                        }
-                        else
-                        {
-                            logOk("TOC backed up successfully");
-                        }
 
-                        tocTimer.Stop();
-                        tocElapsedUs += tocTimer.ElapsedMicroseconds;
+                            tocTimer.Stop();
+                            tocElapsedUs += tocTimer.ElapsedMicroseconds;
 
-                        _toc = toc; // Update service TOC reference
+                            _toc = toc; // Update service TOC reference
+                        } // if (!skipTOCSave)
 
                         // Log results for this volume — headline level + uniform stats
                         WarningLevel headlineLevel;

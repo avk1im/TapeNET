@@ -26,6 +26,16 @@ namespace TapeLibNET
         public TapeStream? Stream { get; private set; } = null;
         public bool IsStreamInUse => Stream != null;
 
+        /// <summary>
+        /// True after at least one content file write stream has been disposed
+        ///  (i.e. actual content data was written to tape) during the current
+        ///  writing session -- or a content setmark has been written.
+        ///  Cleared when <see cref="BeginWriteContent"/> starts
+        ///  a new session. Used by callers to e.g. decide whether any content
+        ///  might've been overwritten.
+        /// </summary>
+        public bool ContentWritten { get; private set; } = false;
+
         #endregion // Properties
 
 
@@ -181,6 +191,8 @@ namespace TapeLibNET
 
             if (State == TapeState.WritingContent)
                 return true; // nothing to do
+
+            ContentWritten = false; // no content written yet in this session
 
             BeginReadWrite(TapeState.WritingContent);
 
@@ -383,6 +395,11 @@ namespace TapeLibNET
             if (!State.IsOneOf(TapeState.WritingTOC, TapeState.WritingContent))
                 LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
 
+            // Mark that content data has been written to tape — even if the filemark
+            //  write below fails, the file payload is already on the media.
+            if (State == TapeState.WritingContent)
+                ContentWritten = true;
+
             if (WentOK)
                 if (!tapemarkEncountered)
                     if (State == TapeState.WritingTOC)
@@ -460,8 +477,14 @@ namespace TapeLibNET
                 LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
 
             if (WentOK)
+            {
                 if (Navigator.WriteContentSetmark())
                     Navigator.OnContentWritten(); // we're surely at the end of the content!
+                
+                // A setmark is itself content data on the media. We set it in any case,
+                //  since even a failed WriteContentSetmark() might've written something
+                ContentWritten = true;
+            }
 
             if (WentOK)
                 CapacityForCurrentSet = -1; // reset

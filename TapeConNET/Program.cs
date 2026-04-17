@@ -1235,12 +1235,17 @@ void HandleBackup(List<string> values)
                 agent.BackupFilesToCurrentSet(newSet, values, subdirectoriesMode, ignoreFailures: true, proc);
 
             bool noFilesBackedup = toc.CurrentSetTOC.Count == 0; // no files backed up
+            bool skipTOCSave = false;
 
             if (result)
             {
+                // Success: trim sets after current if we replaced a middle set
                 if (appendAfterSet.HasValue)
                     toc.RemoveSetsAfterCurrent();
 
+                // Success but no files (e.g. incremental with no changes, no matching files):
+                // undo TOC modifications and return without saving TOC to tape
+                //  (unless the TOC on tape was invalidated by a prior write attempt)
                 if (noFilesBackedup)
                 {
                     Console.WriteLine("iii No files backed up");
@@ -1248,9 +1253,8 @@ void HandleBackup(List<string> values)
                         toc.CopyFrom(backupTOC); // restore original TOC
                     else
                         toc.RemoveLastEmptySet();
-                    stopwatch.Stop();
-                    legacyTOC = toc; // save the TOC for the next operation
-                    break; // needn't carry on to back up the TOC
+                    legacyTOC = toc;
+                    skipTOCSave = !agent.Navigator.TOCInvalidated;
                 }
             }
             else // !result -> there were some failures
@@ -1266,14 +1270,27 @@ void HandleBackup(List<string> values)
                     if (noFilesBackedup)
                         toc.RemoveLastEmptySet(); // no need to back up the last empty set; volume continuation is marked in the TOC
                 }
-                else // no continuation to the next volume -> check if we can remove the last empty set
+                else // no continuation to the next volume (hard failure)
                 {
                     if (noFilesBackedup)
                     {
-                        if (backupTOC != null) // restore original TOC (appendAfterSet or overwrite rollback)
+                        if (backupTOC != null)
                         {
-                            toc.CopyFrom(backupTOC);
-                            Console.WriteLine("!!! No files backed up -> TOC restored");
+                            if (!agent.Manager.ContentWritten)
+                            {
+                                // No content written to tape — safe to restore original TOC
+                                toc.CopyFrom(backupTOC);
+                                Console.WriteLine("!!! No files backed up -> TOC restored");
+                            }
+                            else
+                            {
+                                // Content was physically written (partial file) —
+                                //  cannot revert, old sets' data may be overwritten.
+                                //  Keep the (empty) new set; trim trailing sets if replacing.
+                                if (appendAfterSet.HasValue)
+                                    toc.RemoveSetsAfterCurrent();
+                                Console.WriteLine("!!! No files backed up — previous set data may be lost");
+                            }
                         }
                         else
                         {
@@ -1281,16 +1298,17 @@ void HandleBackup(List<string> values)
                             Console.WriteLine($"\n!!! No files backed up of {proc.ProcessedCount} file(s) processed");
                         }
 
-                        if (!agent.Navigator.TOCInvalidated)
-                        {
-                            stopwatch.Stop();
-                            legacyTOC = toc; // save the TOC for the next operation
-                            break; // TOC hasn't changed -> only proceed to back up if TOC is in set,
-                                   // since it might've been affected, e.g. by a partial content file write
-                        }
+                        // If TOC on tape is still valid, skip re-saving it
+                        skipTOCSave = !agent.Navigator.TOCInvalidated;
+                        if (skipTOCSave)
+                            legacyTOC = toc;
+                        // else: TOC on tape is stale -> must save below
                     }
                     else // some files were backed up
                     {
+                        // Trim any stale trailing sets that were supposed to be replaced
+                        if (appendAfterSet.HasValue)
+                            toc.RemoveSetsAfterCurrent();
                         Console.WriteLine($"\n!!! {proc.FailedCount} file(s) of {proc.ProcessedCount} failed to back up");
                     }
                 }
@@ -1299,36 +1317,49 @@ void HandleBackup(List<string> values)
             // If we wrote content and are not continuing to another volume,
             // clear any stale multi-volume continuation flag from a previous session
             if (!noFilesBackedup && !agent.CanResumeToNextVolume)
-                toc.ContinuedOnNextVolume = false;
-
-            if (!noFilesBackedup)
-                Console.Write($">>> Backing up TOC with {toc.CurrentSetTOC.Count} new file entr(y|ies)...");
-            else
-                Console.Write($">>> Backing up TOC...");
-
-            var tocResult = agent.BackupTOC();
-            if (!tocResult)
             {
-                OnNonFatalError("\n!!! Couldn't backup TOC. Error: " + tocResult.ErrorMessage);
-                if (!toc.IsEmpty)
+                if (toc.ContinuedOnNextVolume)
                 {
-                    Console.WriteLine(">>> Attempting to enforce TOC backup...");
-                    var enforceResult = agent.BackupTOC(enforce: true);
-                    if (!enforceResult)
-                        OnFatalError("!!! Couldn't enforce TOC backup. Error: " + enforceResult.ErrorMessage);
-                    else
-                        Console.WriteLine("vvv Enforced TOC backup succeeded");
+                    toc.ContinuedOnNextVolume = false;
+                    skipTOCSave = false; // must save to clear the flag on tape
                 }
             }
-            else
-                Console.WriteLine("OK");
+
+            if (!skipTOCSave)
+            {
+                if (!noFilesBackedup)
+                    Console.Write($">>> Backing up TOC with {toc.CurrentSetTOC.Count} new file entr(y|ies)...");
+                else
+                    Console.Write($">>> Backing up TOC...");
+
+                var tocResult = agent.BackupTOC();
+                if (!tocResult)
+                {
+                    OnNonFatalError("\n!!! Couldn't backup TOC. Error: " + tocResult.ErrorMessage);
+                    if (!toc.IsEmpty)
+                    {
+                        Console.WriteLine(">>> Attempting to enforce TOC backup...");
+                        var enforceResult = agent.BackupTOC(enforce: true);
+                        if (!enforceResult)
+                            OnFatalError("!!! Couldn't enforce TOC backup. Error: " + enforceResult.ErrorMessage);
+                        else
+                            Console.WriteLine("vvv Enforced TOC backup succeeded");
+                    }
+                }
+                else
+                    Console.WriteLine("OK");
+
+                legacyTOC = toc; // save the TOC for the next operation
+            } // if (!skipTOCSave)
 
             stopwatch.Stop();
 
-            legacyTOC = toc; // save the TOC for the next operation
-
-            Console.WriteLine($"vvv Backed up {proc.ProcessedCount} file(s) incl. TOC ~ {Helpers.BytesToString(agent.BytesBackedup)} in " + stopwatch.ElapsedTimeSpan +
-                $" --> throughput {Helpers.BytesToString((long)(agent.BytesBackedup / stopwatch.ElapsedSeconds))}/s");
+            // Log results for this volume
+            if (proc.ProcessedCount > 0)
+            {
+                Console.WriteLine($"vvv Backed up {proc.ProcessedCount} file(s) incl. TOC ~ {Helpers.BytesToString(agent.BytesBackedup)} in " + stopwatch.ElapsedTimeSpan +
+                    $" --> throughput {Helpers.BytesToString((long)(agent.BytesBackedup / stopwatch.ElapsedSeconds))}/s");
+            }
             Console.WriteLine($"iii Remaining media capacity: {Helpers.BytesToStringLong(drive.GetContentRemainingCapacity())}");
 
             // Check if we can proceed with the next volume
