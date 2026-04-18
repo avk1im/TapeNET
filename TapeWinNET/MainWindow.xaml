@@ -61,6 +61,7 @@
             <Separator/>
             <MenuItem Header="_Eject" Command="{Binding EjectCommand}"/>
             <Separator/>
+            <MenuItem Header="_Delete Backup Sets..." Command="{Binding DeleteBackupSetsCommand}"/>
             <MenuItem Header="_Format..." Command="{Binding FormatMediaCommand}"/>
         </ContextMenu>
 
@@ -205,10 +206,13 @@
                 <Separator/>
                 <MenuItem Header="_Eject" Command="{Binding EjectCommand}"/>
                 <Separator/>
+                <MenuItem Header="_Delete Backup Sets..." Command="{Binding DeleteBackupSetsCommand}"/>
                 <MenuItem Header="_Format..." Command="{Binding FormatMediaCommand}"/>
             </MenuItem>
             <MenuItem Header="_Backup">
                 <MenuItem Header="_New Backup..." Command="{Binding NewBackupCommand}"/>
+                <Separator/>
+                <MenuItem Header="_Delete Backup Sets..." Command="{Binding DeleteBackupSetsCommand}"/>
                 <Separator Visibility="{Binding IsBackupInProgress, Converter={StaticResource BoolToVis}}"/>
                 <MenuItem Header="Abort _Backup" Command="{Binding AbortBackupCommand}"
                           Visibility="{Binding IsBackupInProgress, Converter={StaticResource BoolToVis}}"/>

@@ -10,6 +10,26 @@ using TapeWinNET.Models;
 namespace TapeWinNET.Services;
 
 /// <summary>
+/// Summary statistics returned by a backup operation.
+/// Allows the caller to distinguish full success, partial failure, abort,
+///  and "no files backed up" without cross-boundary exceptions.
+/// </summary>
+public record BackupOperationResult(
+    int FilesTotal,
+    int FilesProcessed,
+    int FilesSucceeded,
+    int FilesFailed,
+    int FilesSkipped,
+    long BytesWritten)
+{
+    /// <summary>Whether the user aborted the operation.</summary>
+    public bool WasAborted { get; init; }
+
+    /// <summary>Whether the operation completed without any issues.</summary>
+    public bool IsFullSuccess => !WasAborted && FilesFailed == 0 && FilesSkipped == 0 && FilesProcessed > 0;
+}
+
+/// <summary>
 /// Partial class containing backup-related operations for TapeService.
 /// </summary>
 public partial class TapeService
@@ -40,7 +60,7 @@ public partial class TapeService
     /// To abort a backup in progress, set Agent.IsAbortRequested = true.
     /// The backup agent is available via the Agent property during execution.
     /// </remarks>
-    public Task ExecuteBackupAsync(
+    public Task<BackupOperationResult> ExecuteBackupAsync(
         List<string> fileList,
         bool listContainsPatterns,
         string description,
@@ -63,6 +83,19 @@ public partial class TapeService
         {
             lock (_lock)
             {
+                GuiBackupProgressHandler? progressHandler = null;
+                TapeFileBackupAgent? agent = null;
+
+                // Default result for early-exit paths
+                BackupOperationResult MakeResult(bool aborted = false) => new(
+                    progressHandler?.FilesTotal ?? 0,
+                    progressHandler?.FilesProcessed ?? 0,
+                    progressHandler?.FilesSucceeded ?? 0,
+                    progressHandler?.FilesFailed ?? 0,
+                    progressHandler?.FilesSkipped ?? 0,
+                    agent?.BytesBackedup ?? 0)
+                { WasAborted = aborted };
+
                 // Local log helpers for concise structured logging
 #pragma warning disable CS8321 // some log helpers not used (yet), but might be later
                 void log(string msg)           => logCallback(new LogEntry(WarningLevel.None, msg, false, DateTime.Now));
@@ -84,7 +117,7 @@ public partial class TapeService
                 if (fileList.Count == 0)
                 {
                     logInfo("No files to backup");
-                    return;
+                    return MakeResult();
                 }
 
                 try
@@ -112,7 +145,7 @@ public partial class TapeService
                     // Create backup agent with existing TOC if appending, store in _tapeAgent field
                     _agent?.Dispose();
                     _agent = new TapeFileBackupAgent(_drive, _toc);
-                    var agent = (TapeFileBackupAgent)_agent;
+                    agent = (TapeFileBackupAgent)_agent;
                     var toc = agent.TOC;
                     TapeTOC? backupTOC = null;
                     bool appendAfterSetUsed = false;
@@ -182,7 +215,7 @@ public partial class TapeService
                         logInfoSub($"Files to backup: {fileList.Count:N0}");
 
                     // Create progress handler (uses agent.IsAbortRequested for abort checking)
-                    var progressHandler = new GuiBackupProgressHandler(
+                    progressHandler = new GuiBackupProgressHandler(
                         agent,
                         logCallback,
                         progressCallback,
@@ -225,114 +258,70 @@ public partial class TapeService
 
                         // --- TOC cleanup based on result ---
 
-                        if (result)
+                        // 1. Handle "no files backed up" uniformly, regardless of outcome.
+                        //    The structural TOC repair is the same in every case:
+                        //     - If we have a rollback TOC and nothing was physically written,
+                        //       restore the original TOC (safe revert).
+                        //     - If content was physically written (partial file I/O) but no file
+                        //       completed, the old sets' data may be overwritten — keep the
+                        //       (empty) new set and trim stale trailing sets.
+                        //     - If there's no rollback TOC, just remove the empty trailing set.
+                        //    skipTOCSave is set when the tape's TOC is still valid AND we're not
+                        //    continuing to the next volume.
+                        if (noFilesBackedUp)
                         {
-                            // Success: trim sets after current if we replaced a middle set (mode 1)
-                            if (appendAfterSetUsed)
+                            if (backupTOC != null)
                             {
-                                toc.RemoveSetsAfterCurrent();
-                            }
-
-                            // Success but no files (e.g. incremental with no changes, no matching files):
-                            // undo TOC modifications and return without saving TOC to tape
-                            //  (unless the TOC on tape was invalidated by a prior write attempt)
-                            if (noFilesBackedUp)
-                            {
-                                logInfo("No files were backed up");
-                                if (backupTOC != null)
-                                    toc.CopyFrom(backupTOC); // restore original TOC
+                                if (!agent.Manager.ContentWritten)
+                                {
+                                    toc.CopyFrom(backupTOC); // safe revert
+                                    if (!result && !wasAborted && !agent.CanResumeToNextVolume)
+                                        logErr("No files backed up");
+                                    else
+                                        logInfo("No files were backed up");
+                                }
                                 else
-                                    toc.RemoveLastEmptySet();
-                                _toc = toc;
-                                skipTOCSave = !agent.Navigator.TOCInvalidated;
-                            }
-                        }
-                        else // Backup had issues
-                        {
-                            if (wasAborted)
-                            {
-                                // Abort: undo TOC modifications if no files were written.
-                                // However, if content was physically written to tape (e.g. a
-                                //  partial file write that failed with an I/O error before the
-                                //  abort was detected), reverting would leave the TOC referencing
-                                //  overwritten media positions — so we keep the current TOC state.
-                                if (noFilesBackedUp)
                                 {
-                                    if (backupTOC != null && !agent.Manager.ContentWritten)
-                                        toc.CopyFrom(backupTOC);
-                                    else if (backupTOC == null)
-                                        toc.RemoveLastEmptySet();
-                                    // else: content was written but no file completed —
-                                    //  keep the (empty) new set; trim trailing sets if mode 1
-                                    else if (appendAfterSetUsed)
+                                    // Content was physically written (partial file) —
+                                    //  cannot revert, old sets' data may be overwritten.
+                                    //  Keep the (empty) new set; trim trailing sets if mode 1.
+                                    if (appendAfterSetUsed)
                                         toc.RemoveSetsAfterCurrent();
-                                }
-                                else if (appendAfterSetUsed)
-                                {
-                                    // Files were written — trim any stale trailing sets
-                                    //  that were supposed to be replaced (mode 1)
-                                    toc.RemoveSetsAfterCurrent();
-                                }
-                            }
-                            else if (agent.CanResumeToNextVolume)
-                            {
-                                // Volume full: trim trailing sets (mode 1), remove empty set if no files;
-                                // TOC will be saved, then user is prompted to insert next volume
-                                logInfo($"Volume #{toc.Volume} is full - backup can continue to next volume");
-
-                                if (appendAfterSetUsed)
-                                {
-                                    toc.RemoveSetsAfterCurrent();
-                                }
-
-                                if (noFilesBackedUp)
-                                {
-                                    toc.RemoveLastEmptySet();
+                                    logErr("No files backed up — previous set data may be lost");
                                 }
                             }
                             else
                             {
-                                // Hard failure (no multi-volume resume possible)
-                                if (noFilesBackedUp)
-                                {
-                                    if (backupTOC != null)
-                                    {
-                                        if (!agent.Manager.ContentWritten)
-                                        {
-                                            // No content written to tape — safe to restore original TOC
-                                            toc.CopyFrom(backupTOC);
-                                            logErr("No files backed up");
-                                        }
-                                        else
-                                        {
-                                            // Content was physically written (partial file) —
-                                            //  cannot revert, old sets' data may be overwritten.
-                                            //  Keep the (empty) new set; trim trailing sets if mode 1.
-                                            if (appendAfterSetUsed)
-                                                toc.RemoveSetsAfterCurrent();
-                                            logErr("No files backed up — previous set data may be lost");
-                                        }
-                                    }
-                                    else
-                                    {
-                                        toc.RemoveLastEmptySet();
-                                        logErr("No files backed up");
-                                    }
-
-                                    // If TOC on tape is still valid, skip re-saving it
-                                    skipTOCSave = !agent.Navigator.TOCInvalidated;
-                                    if (skipTOCSave)
-                                        _toc = toc;
-                                    // else: TOC on tape is stale → must save below
-                                }
+                                toc.RemoveLastEmptySet();
+                                if (!result && !wasAborted && !agent.CanResumeToNextVolume)
+                                    logErr("No files backed up");
                                 else
-                                {
-                                    // Some files succeeded — trim stale trailing sets (mode 1)
-                                    if (appendAfterSetUsed)
-                                        toc.RemoveSetsAfterCurrent();
-                                    logFail($"Some files failed to back up");
-                                }
+                                    logInfo("No files were backed up");
                             }
+
+                            // If TOC on tape is still valid and we're not continuing to
+                            //  the next volume, we can skip re-saving it
+                            if (!agent.CanResumeToNextVolume && !agent.Navigator.TOCInvalidated)
+                            {
+                                skipTOCSave = true;
+                                _toc = toc;
+                            }
+                        } // if (noFilesBackedUp)
+
+                        // 2. Log volume-full status (applies regardless of file count)
+                        if (agent.CanResumeToNextVolume)
+                            logInfo($"Volume #{toc.Volume} is full - backup can continue to next volume");
+
+                        // 3. Handle outcome-specific cleanup when files were backed up:
+                        //    trim stale trailing sets (mode 1) and log failure summary.
+                        //    When noFilesBackedUp, all TOC repair was already done above.
+                        if (!noFilesBackedUp)
+                        {
+                            if (appendAfterSetUsed)
+                                toc.RemoveSetsAfterCurrent();
+
+                            if (!result && !wasAborted && !agent.CanResumeToNextVolume)
+                                logFail("Some files failed to back up");
                         }
 
                         // --- Save TOC to tape ---
@@ -548,16 +537,12 @@ public partial class TapeService
                         if (abortRate.Length > 0) abortParts.Add(abortRate);
                         logInfoSub(string.Join(", ", abortParts));
                         Status("Backup aborted");
-                        throw new TapeAbortRequestedException("User requested abort");
+                        return MakeResult(aborted: true);
                     }
 
                     Status("Backup complete");
                     logOk("Backup completed successfully");
-                }
-                catch (TapeAbortRequestedException)
-                {
-                    Status("Backup aborted");
-                    throw; // Re-throw to be handled by caller
+                    return MakeResult();
                 }
                 catch (Exception ex)
                 {

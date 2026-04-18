@@ -1,6 +1,7 @@
 ﻿using System.Runtime.InteropServices;
 using Windows.Win32.Foundation;
 using System.ComponentModel;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using System.Runtime.CompilerServices;
 
@@ -13,6 +14,112 @@ public interface IErrorManageable
     public string LastErrorMessage { get; }
     void ResetError();
 }
+
+
+/// <summary>
+/// IOException subclass for tape I/O errors that carries a Win32 error code and a
+/// diagnostic breadcrumb trail. Each layer that catches and rethrows can append
+/// context via <see cref="AddTrail"/> without losing the original cause.
+/// <para>
+/// The trail is a list of entries in the form <c>"ClassName.MethodName: message"</c>,
+/// ordered from the origination point outward. Use <see cref="TrailText"/> for a
+/// single-string representation suitable for logging.
+/// </para>
+/// </summary>
+public class TapeIOException : IOException
+{
+    private List<string>? _trail;
+
+    /// <summary>The Win32 error code that caused this exception (typed accessor for <see cref="Exception.HResult"/>).</summary>
+    public uint Error => (uint)HResult;
+
+    /// <summary>The Win32 error description (accessor for <see cref="Exception.Message"/>).</summary>
+    public string ErrorMessage => Message;
+
+    #region *** Constructors ***
+
+    /// <summary>Creates a TapeIOException from a Win32 error code and its description.</summary>
+    public TapeIOException(uint errorCode, string errorMessage, Exception? inner = null)
+        : base(errorMessage, inner)
+    {
+        HResult = (int)errorCode;
+    }
+
+    /// <summary>Creates a TapeIOException from a Win32 error code, looking up the description.</summary>
+    public TapeIOException(uint errorCode, Exception? inner = null)
+        : this(errorCode, Marshal.GetPInvokeErrorMessage((int)errorCode), inner)
+    {
+    }
+
+    /// <summary>Creates a TapeIOException by capturing the current error state of an <see cref="IErrorManageable"/>.</summary>
+    public TapeIOException(IErrorManageable source, Exception? inner = null)
+        : this(source.LastError, source.LastErrorMessage, inner)
+    {
+    }
+
+    /// <summary>Wraps an existing IOException (e.g. from the framework) as a TapeIOException, retaining it as inner.</summary>
+    public TapeIOException(IOException inner, string? message = null)
+        : this((uint)inner.HResult, message ?? inner.Message, inner)
+    {
+    }
+
+    #endregion
+
+    #region *** Breadcrumb Trail ***
+
+    /// <summary>The diagnostic breadcrumb trail, ordered from origin outward.</summary>
+    public IReadOnlyList<string> Trail => _trail ?? (IReadOnlyList<string>)[];
+
+    /// <summary>
+    /// Appends a breadcrumb entry with explicit class and method names.
+    /// Returns <c>this</c> for fluent use in throw expressions.
+    /// </summary>
+    public TapeIOException AddTrail(string className, string message, [CallerMemberName] string methodName = "")
+    {
+        _trail ??= [];
+        _trail.Add($"{className}.{methodName}: {message}");
+        return this;
+    }
+
+    /// <summary>
+    /// Appends a breadcrumb entry, deriving the class name from <paramref name="caller"/>'s runtime type.
+    /// Returns <c>this</c> for fluent use in throw expressions.
+    /// </summary>
+    public TapeIOException AddTrail(object caller, string message, [CallerMemberName] string methodName = "")
+        => AddTrail(caller.GetType().Name, message, methodName);
+
+    /// <summary>Single-string representation of the trail, one entry per line.</summary>
+    public string TrailText
+    {
+        get
+        {
+            if (_trail == null || _trail.Count == 0)
+                return string.Empty;
+
+            var sb = new StringBuilder();
+            for (int i = 0; i < _trail.Count; i++)
+            {
+                if (i > 0) sb.Append(" → ");
+                sb.Append(_trail[i]);
+            }
+            return sb.ToString();
+        }
+    }
+
+    /// <summary>
+    /// Returns a message combining the error description and trail (if any).
+    /// </summary>
+    public override string ToString()
+    {
+        string trail = TrailText;
+        return trail.Length > 0
+            ? $"{Message} [Trail: {trail}]"
+            : base.ToString()!;
+    }
+
+    #endregion
+}
+
 
 /// <summary>
 /// Base class providing common error handling and logging for tape-related classes.

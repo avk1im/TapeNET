@@ -1237,81 +1237,66 @@ void HandleBackup(List<string> values)
             bool noFilesBackedup = toc.CurrentSetTOC.Count == 0; // no files backed up
             bool skipTOCSave = false;
 
-            if (result)
+            // --- TOC cleanup based on result ---
+
+            // 1. Handle "no files backed up" uniformly, regardless of outcome.
+            //    The structural TOC repair is the same in every case:
+            //     - If we have a rollback TOC and nothing was physically written,
+            //       restore the original TOC (safe revert).
+            //     - If content was physically written (partial file I/O) but no file
+            //       completed, the old sets' data may be overwritten — keep the
+            //       (empty) new set and trim stale trailing sets.
+            //     - If there's no rollback TOC, just remove the empty trailing set.
+            //    skipTOCSave is set when the tape's TOC is still valid AND we're not
+            //    continuing to the next volume.
+            if (noFilesBackedup)
             {
-                // Success: trim sets after current if we replaced a middle set
+                if (backupTOC != null)
+                {
+                    if (!agent.Manager.ContentWritten)
+                    {
+                        toc.CopyFrom(backupTOC); // safe revert
+                        Console.WriteLine("iii No files backed up -> TOC restored");
+                    }
+                    else
+                    {
+                        // Content was physically written (partial file) —
+                        //  cannot revert, old sets' data may be overwritten.
+                        //  Keep the (empty) new set; trim trailing sets if replacing.
+                        if (appendAfterSet.HasValue)
+                            toc.RemoveSetsAfterCurrent();
+                        Console.WriteLine("!!! No files backed up — previous set data may be lost");
+                    }
+                }
+                else
+                {
+                    toc.RemoveLastEmptySet();
+                    Console.WriteLine("iii No files backed up");
+                }
+
+                // If TOC on tape is still valid and we're not continuing to
+                //  the next volume, we can skip re-saving it
+                if (!agent.CanResumeToNextVolume && !agent.Navigator.TOCInvalidated)
+                {
+                    skipTOCSave = true;
+                    legacyTOC = toc;
+                }
+            }
+
+            // 2. Log volume-full status (applies regardless of file count)
+            if (agent.CanResumeToNextVolume)
+                Console.WriteLine($"\niii Volume #{toc.Volume} is full -> Backup can continue to next volume after TOC has been backed up");
+
+            // 3. Handle outcome-specific cleanup when files were backed up:
+            //    trim stale trailing sets and log failure summary.
+            //    When noFilesBackedup, all TOC repair was already done above.
+            if (!noFilesBackedup)
+            {
                 if (appendAfterSet.HasValue)
                     toc.RemoveSetsAfterCurrent();
 
-                // Success but no files (e.g. incremental with no changes, no matching files):
-                // undo TOC modifications and return without saving TOC to tape
-                //  (unless the TOC on tape was invalidated by a prior write attempt)
-                if (noFilesBackedup)
-                {
-                    Console.WriteLine("iii No files backed up");
-                    if (backupTOC != null)
-                        toc.CopyFrom(backupTOC); // restore original TOC
-                    else
-                        toc.RemoveLastEmptySet();
-                    legacyTOC = toc;
-                    skipTOCSave = !agent.Navigator.TOCInvalidated;
-                }
-            }
-            else // !result -> there were some failures
-            {
-                // Check first if it was a volume overrun and we can continue
-                if (agent.CanResumeToNextVolume)
-                {
-                    Console.WriteLine($"\niii Volume #{toc.Volume} is full -> Backup can continue to next volume after TOC has been backed up");
-
-                    if (appendAfterSet.HasValue)
-                        toc.RemoveSetsAfterCurrent();
-
-                    if (noFilesBackedup)
-                        toc.RemoveLastEmptySet(); // no need to back up the last empty set; volume continuation is marked in the TOC
-                }
-                else // no continuation to the next volume (hard failure)
-                {
-                    if (noFilesBackedup)
-                    {
-                        if (backupTOC != null)
-                        {
-                            if (!agent.Manager.ContentWritten)
-                            {
-                                // No content written to tape — safe to restore original TOC
-                                toc.CopyFrom(backupTOC);
-                                Console.WriteLine("!!! No files backed up -> TOC restored");
-                            }
-                            else
-                            {
-                                // Content was physically written (partial file) —
-                                //  cannot revert, old sets' data may be overwritten.
-                                //  Keep the (empty) new set; trim trailing sets if replacing.
-                                if (appendAfterSet.HasValue)
-                                    toc.RemoveSetsAfterCurrent();
-                                Console.WriteLine("!!! No files backed up — previous set data may be lost");
-                            }
-                        }
-                        else
-                        {
-                            toc.RemoveLastEmptySet();
-                            Console.WriteLine($"\n!!! No files backed up of {proc.ProcessedCount} file(s) processed");
-                        }
-
-                        // If TOC on tape is still valid, skip re-saving it
-                        skipTOCSave = !agent.Navigator.TOCInvalidated;
-                        if (skipTOCSave)
-                            legacyTOC = toc;
-                        // else: TOC on tape is stale -> must save below
-                    }
-                    else // some files were backed up
-                    {
-                        // Trim any stale trailing sets that were supposed to be replaced
-                        if (appendAfterSet.HasValue)
-                            toc.RemoveSetsAfterCurrent();
-                        Console.WriteLine($"\n!!! {proc.FailedCount} file(s) of {proc.ProcessedCount} failed to back up");
-                    }
-                }
+                if (!result && !agent.CanResumeToNextVolume)
+                    Console.WriteLine($"\n!!! {proc.FailedCount} file(s) of {proc.ProcessedCount} failed to back up");
             }
 
             // If we wrote content and are not continuing to another volume,

@@ -78,6 +78,7 @@ public partial class MainViewModel : ViewModelBase
         RereadTOCCommand = new AsyncRelayCommand(RereadTOCAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         EjectCommand = new AsyncRelayCommand(EjectAsync, () => !IsBusy && _tapeService.IsMediaLoaded);
         FormatMediaCommand = new RelayCommand(ShowFormatMediaWindow, _ => !IsBusy && _tapeService.IsMediaLoaded);
+        DeleteBackupSetsCommand = new RelayCommand(ShowDeleteBackupSetsWindow, _ => !IsBusy && _tapeService.IsMediaLoaded && !_tapeService.IsTOCFromFile && (_tapeService.TOC?.Count ?? 0) > 0);
         ExportTOCCommand = new AsyncRelayCommand(ExportTOCAsync, () => !IsBusy && _tapeService.TOC != null);
         ImportTOCCommand = new AsyncRelayCommand(ImportTOCAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         NavigateToBackupSetCommand = new RelayCommand(NavigateToSelectedBackupSet, _ => SelectedBackupSet != null);
@@ -431,6 +432,7 @@ public partial class MainViewModel : ViewModelBase
     public ICommand RereadTOCCommand { get; }
     public ICommand EjectCommand { get; }
     public ICommand FormatMediaCommand { get; }
+    public ICommand DeleteBackupSetsCommand { get; }
     public ICommand ExportTOCCommand { get; }
     public ICommand ImportTOCCommand { get; }
     // NewBackupCommand and AbortBackupCommand are in MainViewModel.Backup.cs
@@ -1645,6 +1647,62 @@ public partial class MainViewModel : ViewModelBase
         {
             LogErr($"Format failed: {ex.Message}");
             MessageBox.Show($"Format failed.\n\n{ex.Message}", "Format Error",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            IsBusy = false;
+            BusyMessage = string.Empty;
+        }
+    }
+
+    // ─────────────────────────────────────────────────
+    //  Delete Backup Sets
+    // ─────────────────────────────────────────────────
+
+    private void ShowDeleteBackupSetsWindow(object? parameter)
+    {
+        var viewModel = new DeleteBackupSetsViewModel(
+            _tapeService,
+            OnStartDeleteBackupSets,
+            () => Application.Current.Windows.OfType<DeleteBackupSetsWindow>().FirstOrDefault()?.Close());
+
+        var window = new DeleteBackupSetsWindow(viewModel)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        window.ShowDialog();
+    }
+
+    private void OnStartDeleteBackupSets(DeleteBackupSetsViewModel deleteViewModel)
+    {
+        Application.Current.Windows.OfType<DeleteBackupSetsWindow>().FirstOrDefault()?.Close();
+        _ = ExecuteDeleteBackupSetsAsync(deleteViewModel.DeleteFromSetIndex);
+    }
+
+    private async Task ExecuteDeleteBackupSetsAsync(int deleteFromSetIndex)
+    {
+        IsBusy = true;
+        BusyMessage = "Deleting backup sets...";
+
+        try
+        {
+            var success = await _tapeService.DeleteBackupSetsAsync(deleteFromSetIndex);
+
+            if (!success)
+            {
+                MessageBox.Show($"Failed to delete backup sets.\n\n{_tapeService.LastError}",
+                    "Delete Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            UpdateTreeFromTOC(_tapeService.DriveNumber);
+            SelectMostRecentSet();
+        }
+        catch (Exception ex)
+        {
+            LogErr($"Delete backup sets failed: {ex.Message}");
+            MessageBox.Show($"Delete failed.\n\n{ex.Message}", "Delete Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally

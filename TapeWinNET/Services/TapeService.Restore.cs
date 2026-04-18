@@ -39,7 +39,10 @@ public record RestoreOperationResult(
     public int FilesMissing => FilesTotal - FilesProcessed;
 
     /// <summary>Whether the operation completed without any issues.</summary>
-    public bool IsFullSuccess => FilesFailed == 0 && FilesSkipped == 0 && FilesMissing == 0 && FilesProcessed > 0;
+    public bool IsFullSuccess => !WasAborted && FilesFailed == 0 && FilesSkipped == 0 && FilesMissing == 0 && FilesProcessed > 0;
+
+    /// <summary>Whether the user aborted the operation.</summary>
+    public bool WasAborted { get; init; }
 
     /// <summary>
     /// Per-set dictionary of successfully processed files, populated by
@@ -281,7 +284,8 @@ public partial class TapeService
                         string abortRate = FormatDataRate(bytesProcessed, abortSecs);
                         if (abortRate.Length > 0) abortParts.Add(abortRate);
                         logInfoSub(string.Join(", ", abortParts));
-                        throw new TapeAbortRequestedException("User requested abort");
+                        Status($"{modeName} aborted");
+                        return result with { WasAborted = true };
                     }
 
                     // Log final results — determine headline level, then emit uniform stats
@@ -332,11 +336,6 @@ public partial class TapeService
                     Status($"{modeName} complete");
 
                     return result;
-                }
-                catch (TapeAbortRequestedException)
-                {
-                    Status($"{modeName} aborted");
-                    throw; // Re-throw to be handled by caller
                 }
                 catch (Exception ex)
                 {

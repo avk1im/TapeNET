@@ -123,12 +123,13 @@ public partial class MainViewModel
         // Sticky state for "Skip All Errors" button in the error dialog
         bool skipAllErrors = false;
         int errorCount = 0;
+        BackupOperationResult? operationResult = null;
 
         try
         {
             await Task.Run(async () =>
             {
-                await _tapeService.ExecuteBackupAsync(
+                operationResult = await _tapeService.ExecuteBackupAsync(
                     fileList,
                     listContainsPatterns: false,  // files are already resolved
                     request.Description,
@@ -308,10 +309,18 @@ public partial class MainViewModel
                 );
             });
 
-            // Refresh tree after successful backup
+            // Refresh tree after backup — always, regardless of outcome,
+            //  to keep TOCView in sync with the (possibly modified) TOC
             await RefreshAsync();
 
-            if (errorCount > 0)
+            // Determine outcome from the result record
+            if (operationResult is { WasAborted: true })
+            {
+                LogErr("Backup aborted by user");
+                MessageBox.Show("Backup was aborted.", "Backup Aborted",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            else if (errorCount > 0 || operationResult is { IsFullSuccess: false })
             {
                 MessageBox.Show("Backup completed with some errors. See log for details.", "Backup Complete",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -322,14 +331,10 @@ public partial class MainViewModel
                     MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
-        catch (TapeAbortRequestedException)
-        {
-            LogErr("Backup aborted by user");
-            MessageBox.Show("Backup was aborted.", "Backup Aborted",
-                MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
         catch (Exception ex)
         {
+            // Refresh even on failure — TOC may have been modified before the error
+            await RefreshAsync();
             LogErr($"Backup failed: {ex.Message}");
             MessageBox.Show($"Backup failed.\n\n{ex.Message}", "Backup Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);

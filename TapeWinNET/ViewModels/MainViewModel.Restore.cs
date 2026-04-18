@@ -770,33 +770,38 @@ public partial class MainViewModel
                 _tocView.SetCheckedFilesBySet(processedBySet, isChecked: false);
             }
 
-            // Refresh tree after operation — rebuilds BackupSetList with updated checked state
+            // Refresh tree after operation — always, regardless of outcome,
+            //  to keep TOCView in sync with the (possibly modified) TOC
             await RefreshAsync();
 
-            // Determine outcome
-            //  the operation result (which includes files-not-found on tape)
-            bool hasErrors = errorCount > 0
-                || (operationResult is { } r && !r.IsFullSuccess);
-
-            if (hasErrors)
+            // Determine outcome from the result record
+            if (operationResult is { WasAborted: true })
             {
-                MessageBox.Show($"{modeName} completed with issues. See log for details.",
-                    $"{modeName} Complete", MessageBoxButton.OK, MessageBoxImage.Warning);
+                LogErr($"{modeName} aborted by user");
+                MessageBox.Show($"{modeName} was aborted.", $"{modeName} Aborted",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
             }
             else
             {
-                MessageBox.Show($"{modeName} completed successfully!",
-                    $"{modeName} Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+                bool hasErrors = errorCount > 0
+                    || (operationResult is { } r && !r.IsFullSuccess);
+
+                if (hasErrors)
+                {
+                    MessageBox.Show($"{modeName} completed with issues. See log for details.",
+                        $"{modeName} Complete", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+                else
+                {
+                    MessageBox.Show($"{modeName} completed successfully!",
+                        $"{modeName} Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
             }
-        }
-        catch (TapeAbortRequestedException)
-        {
-            LogErr($"{modeName} aborted by user");
-            MessageBox.Show($"{modeName} was aborted.", $"{modeName} Aborted",
-                MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         catch (Exception ex)
         {
+            // Refresh even on failure — TOC state may have changed
+            await RefreshAsync();
             LogErr($"{modeName} failed: {ex.Message}");
             MessageBox.Show($"{modeName} failed.\n\n{ex.Message}", $"{modeName} Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);
