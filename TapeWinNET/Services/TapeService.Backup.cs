@@ -25,6 +25,9 @@ public record BackupOperationResult(
     /// <summary>Whether the user aborted the operation.</summary>
     public bool WasAborted { get; init; }
 
+    /// <summary>Whether a catastrophic error occured.</summary>
+    public bool HasFailed { get; init; }
+
     /// <summary>Whether the operation completed without any issues.</summary>
     public bool IsFullSuccess => !WasAborted && FilesFailed == 0 && FilesSkipped == 0 && FilesProcessed > 0;
 }
@@ -47,12 +50,15 @@ public partial class TapeService
     /// <param name="appendMode">True to append after existing set, false to overwrite all.</param>
     /// <param name="appendAfterSetIndex">Set index to append after (-1 for overwrite all, or specific set index).</param>
     /// <param name="useFilemarks">Whether to use filemarks between files (blob mode if false).</param>
+    /// <param name="currentFileCallback">Callback to report current file being processed.</param>
     /// <param name="progressCallback">Callback for progress updates (filesProcessed, totalFiles, bytesProcessed).</param>
     /// <param name="logCallback">Callback for log messages.</param>
     /// <param name="fileErrorCallback">Callback when a file error occurs. Returns FileFailedAction.</param>
     /// <param name="volumeFullCallback">Callback when current volume is full. Returns true to continue on next volume, false to end backup.</param>
     /// <param name="insertMediaCallback">Callback after media ejection, prompting user to insert new media. Returns true when ready, false to end backup.</param>
-    /// <param name="currentFileCallback">Callback to report current file being processed.</param>
+    /// <param name="mediaLoadRetryCallback">Optional callback when loading the next-volume media fails.
+    /// Receives the error message and whether this is a retry attempt; returns true to try again, false to abort.
+    /// If null, a failed load throws immediately.</param>
     /// <param name="emergencyTocSaveCallback">Callback when all attempts to save TOC to tape fail.
     /// Receives a suggested file path for emergency TOC export; returns the chosen path, or null to skip.
     /// If null, no emergency export is attempted.</param>
@@ -71,13 +77,14 @@ public partial class TapeService
         bool appendMode,
         int appendAfterSetIndex,
         bool useFilemarks,
+        Action<string> currentFileCallback,
         Action<int, int, long> progressCallback,
         Action<LogEntry> logCallback,
         Func<string, string, FileFailedAction> fileErrorCallback,
         Func<int, int, int, int, long, bool> volumeFullCallback,
         Func<int, bool> insertMediaCallback,
-        Action<string> currentFileCallback,
-        Func<string, string?>? emergencyTocSaveCallback = null)
+        Func<string, bool, bool>? mediaLoadRetryCallback = null,
+        Func<string, bool, string?>? emergencyTocSaveCallback = null)
     {
         return Task.Run(() =>
         {
@@ -87,14 +94,14 @@ public partial class TapeService
                 TapeFileBackupAgent? agent = null;
 
                 // Default result for early-exit paths
-                BackupOperationResult MakeResult(bool aborted = false) => new(
+                BackupOperationResult MakeResult(bool aborted = false, bool failed = false) => new(
                     progressHandler?.FilesTotal ?? 0,
                     progressHandler?.FilesProcessed ?? 0,
                     progressHandler?.FilesSucceeded ?? 0,
                     progressHandler?.FilesFailed ?? 0,
                     progressHandler?.FilesSkipped ?? 0,
                     agent?.BytesBackedup ?? 0)
-                { WasAborted = aborted };
+                { WasAborted = aborted, HasFailed = failed };
 
                 // Local log helpers for concise structured logging
 #pragma warning disable CS8321 // some log helpers not used (yet), but might be later
@@ -370,10 +377,12 @@ public partial class TapeService
 
                                         bool emergencySaved = false;
                                         string suggestedPath = BuildEmergencyTocExportPath(toc);
-                                        // give the user two attempts to save the TOC to a file; break if user cancels
-                                        for (int attempt = 1; attempt <= 2 && !emergencySaved; attempt++)
+                                        
+                                        // Give the user two attempts to save the TOC to a file; break if user cancels
+                                        const int maxExportAttempts = 2;
+                                        for (int attempt = 1; attempt <= maxExportAttempts && !emergencySaved; attempt++)
                                         {
-                                            string? chosenPath = emergencyTocSaveCallback(suggestedPath);
+                                            string? chosenPath = emergencyTocSaveCallback(suggestedPath, attempt > 1);
 
                                             if (string.IsNullOrEmpty(chosenPath))
                                             {
@@ -393,7 +402,7 @@ public partial class TapeService
                                             else
                                             {
                                                 logErr($"Failed to export emergency TOC to file: {saveResult.ErrorMessage}");
-                                                if (attempt < 2)
+                                                if (attempt < maxExportAttempts)
                                                     logInfoSub("You can try a different location...");
                                             }
                                         }
@@ -510,14 +519,38 @@ public partial class TapeService
                         logInfo("Loading media...");
                         Status("Loading media...");
 
-                        if (!_drive.ReloadMedia())
+                        // Retry loop: give the user at least two attempts to seat the new media
+                        const int maxLoadAttempts = 2;
+                        bool mediaLoaded = false;
+                        for (int loadAttempt = 1; loadAttempt <= maxLoadAttempts && !mediaLoaded; loadAttempt++)
                         {
-                            throw new InvalidOperationException($"Couldn't load media: {_drive.LastErrorMessage}");
-                        }
+                            bool loadOk = _drive.ReloadMedia();
+                            string loadError = _drive.LastErrorMessage;
 
-                        if (!_drive.PrepareMedia())
-                        {
-                            throw new InvalidOperationException($"Couldn't prepare media: {_drive.LastErrorMessage}");
+                            if (loadOk && !_drive.PrepareMedia())
+                            {
+                                loadOk = false;
+                                loadError = _drive.LastErrorMessage;
+                            }
+
+                            if (loadOk)
+                            {
+                                mediaLoaded = true;
+                            }
+                            else
+                            {
+                                logErr($"Couldn't load media: {loadError}");
+
+                                bool retry = loadAttempt < maxLoadAttempts
+                                    && mediaLoadRetryCallback != null
+                                    && mediaLoadRetryCallback(loadError, loadAttempt > 1);
+
+                                if (!retry)
+                                    throw new InvalidOperationException($"Couldn't load media: {loadError}");
+
+                                logInfo("Retrying media load...");
+                                Status("Loading media...");
+                            }
                         }
 
                         logOk("Media loaded, continuing backup...");
@@ -549,7 +582,7 @@ public partial class TapeService
                     LastError = ex.Message;
                     Status("Backup failed");
                     logErr($"Backup failed: {ex.Message}");
-                    throw;
+                    return MakeResult(failed: true);
                 }
                 finally
                 {

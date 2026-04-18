@@ -44,6 +44,9 @@ public record RestoreOperationResult(
     /// <summary>Whether the user aborted the operation.</summary>
     public bool WasAborted { get; init; }
 
+    /// <summary>Whether a catastrophic error occurred.</summary>
+    public bool HasFailed { get; init; }
+
     /// <summary>
     /// Per-set dictionary of successfully processed files, populated by
     ///  <see cref="TapeService.GuiRestoreProgressHandler"/>. Used to uncheck
@@ -67,12 +70,15 @@ public partial class TapeService
     /// <param name="targetDirectory">Target directory for Restore mode (ignored for Validate/Verify).</param>
     /// <param name="recurseSubdirectories">Whether to recreate subdirectory structure (Restore only).</param>
     /// <param name="handleExisting">How to handle existing files (Restore only).</param>
+    /// <param name="currentFileCallback">Callback to report current file being processed.</param>
     /// <param name="progressCallback">Callback for progress updates (filesProcessed, totalFiles, bytesProcessed).</param>
     /// <param name="logCallback">Callback for log messages.</param>
     /// <param name="fileErrorCallback">Callback when a file error occurs. Returns FileFailedAction.</param>
     /// <param name="volumeChangeCallback">Callback when restore needs to continue on another volume. Receives the required volume number. Returns true to continue, false to abort.</param>
     /// <param name="insertMediaCallback">Callback after media ejection, prompting user to insert media for the specified volume. Returns true when ready, false to abort.</param>
-    /// <param name="currentFileCallback">Callback to report current file being processed.</param>
+    /// <param name="mediaLoadRetryCallback">Optional callback when loading the next-volume media fails.
+    /// Receives the error message and whether this is a retry attempt; returns true to try again, false to abort.
+    /// If null, a failed load throws immediately.</param>
     /// <remarks>
     /// To abort a restore in progress, set Agent.IsAbortRequested = true.
     /// The agent is available via the Agent property during execution.
@@ -84,17 +90,31 @@ public partial class TapeService
         string? targetDirectory,
         bool recurseSubdirectories,
         TapeHowToHandleExisting handleExisting,
+        Action<string> currentFileCallback,
         Action<int, int, long> progressCallback,
         Action<LogEntry> logCallback,
         Func<string, string, FileFailedAction> fileErrorCallback,
         Func<int, bool> volumeChangeCallback,
         Func<int, bool> insertMediaCallback,
-        Action<string> currentFileCallback)
+        Func<string, bool, bool>? mediaLoadRetryCallback = null)
     {
         return Task.Run(() =>
         {
             lock (_lock)
             {
+                GuiRestoreProgressHandler? progressHandler = null;
+                TapeFileRestoreBaseAgent? agent = null;
+
+                // Default result for early-exit paths
+                RestoreOperationResult MakeResult(bool aborted = false, bool failed = false) => new(
+                    progressHandler?.FilesTotal ?? 0,
+                    progressHandler?.FilesProcessed ?? 0,
+                    progressHandler?.FilesSucceeded ?? 0,
+                    progressHandler?.FilesFailed ?? 0,
+                    progressHandler?.FilesSkipped ?? 0,
+                    progressHandler?.BytesProcessed ?? 0)
+                { WasAborted = aborted, HasFailed = failed };
+
                 // Local log helpers for concise structured logging
 #pragma warning disable IDE0079 // Remove unnecessary suppression
 #pragma warning disable CS8321 // some log helpers might not be used (yet), but might be later
@@ -136,7 +156,7 @@ public partial class TapeService
 
                     // Create the appropriate agent based on mode
                     _agent?.Dispose();
-                    TapeFileRestoreBaseAgent agent = mode switch
+                    agent = mode switch
                     {
                         RestoreMode.Restore => new TapeFileRestoreAgentEx(
                             _drive, targetDirectory, recurseSubdirectories, handleExisting, _toc),
@@ -183,7 +203,7 @@ public partial class TapeService
                     toc.CurrentSetIndex = newestIdx; // restore after iterating
 
                     // Create progress handler
-                    var progressHandler = new GuiRestoreProgressHandler(
+                    progressHandler = new GuiRestoreProgressHandler(
                         agent,
                         totalFiles,
                         logCallback,
@@ -246,14 +266,38 @@ public partial class TapeService
                         logInfo("Loading media...");
                         Status("Loading media...");
 
-                        if (!_drive.ReloadMedia())
+                        // Retry loop: give the user at least two attempts to seat the new media
+                        const int maxLoadAttempts = 2;
+                        bool mediaLoaded = false;
+                        for (int loadAttempt = 1; loadAttempt <= maxLoadAttempts && !mediaLoaded; loadAttempt++)
                         {
-                            throw new InvalidOperationException($"Couldn't load media: {_drive.LastErrorMessage}");
-                        }
+                            bool loadOk = _drive.ReloadMedia();
+                            string loadError = _drive.LastErrorMessage;
 
-                        if (!_drive.PrepareMedia())
-                        {
-                            throw new InvalidOperationException($"Couldn't prepare media: {_drive.LastErrorMessage}");
+                            if (loadOk && !_drive.PrepareMedia())
+                            {
+                                loadOk = false;
+                                loadError = _drive.LastErrorMessage;
+                            }
+
+                            if (loadOk)
+                            {
+                                mediaLoaded = true;
+                            }
+                            else
+                            {
+                                logErr($"Couldn't load media: {loadError}");
+
+                                bool retry = loadAttempt < maxLoadAttempts
+                                    && mediaLoadRetryCallback != null
+                                    && mediaLoadRetryCallback(loadError, loadAttempt > 1);
+
+                                if (!retry)
+                                    throw new InvalidOperationException($"Couldn't load media: {loadError}");
+
+                                logInfo("Retrying media load...");
+                                Status("Loading media...");
+                            }
                         }
 
                         logOk($"Media loaded, continuing {modeName.ToLowerInvariant()}...");
@@ -342,7 +386,7 @@ public partial class TapeService
                     LastError = ex.Message;
                     Status($"{modeName} failed");
                     logErr($"{modeName} failed: {ex.Message}");
-                    throw;
+                    return MakeResult(failed: true);
                 }
                 finally
                 {

@@ -140,6 +140,14 @@ public partial class MainViewModel
                     request.AppendMode,
                     request.AppendAfterSetIndex,
                     request.UseFilemarks,
+                    // Current file callback
+                    filePath =>
+                    {
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            CurrentBackupFile = System.IO.Path.GetFileName(filePath);
+                        });
+                    },
                     // Progress update callback
                     (processed, total, bytes) =>
                     {
@@ -279,23 +287,58 @@ public partial class MainViewModel
                         });
                         return mediaReady;
                     },
-                    // Current file callback
-                    filePath =>
+                    // Media load retry callback — when ReloadMedia/PrepareMedia fails after inserting the next volume.
+                    //  First invocation: explain the failure and ask the user to re-seat the media.
+                    //  Second invocation: shorter follow-up prompt.
+                    (loadError, isRetry) =>
                     {
+                        bool retry = false;
                         Application.Current.Dispatcher.Invoke(() =>
                         {
-                            CurrentBackupFile = System.IO.Path.GetFileName(filePath);
+                            string info = !isRetry
+                                ? $"The drive could not load the media.\n\nError: {loadError}\n\n" +
+                                  "Make sure the media is properly inserted. Retry?"
+                                : $"Loading media failed again.\n\nError: {loadError}\n\n" +
+                                  "Try re-seating the media. Retry?";
+
+                            var answer = MessageBox.Show(
+                                info,
+                                "Media Load Failed",
+                                MessageBoxButton.YesNo,
+                                MessageBoxImage.Warning,
+                                MessageBoxResult.Yes);
+
+                            retry = answer == MessageBoxResult.Yes;
                         });
+                        return retry;
                     },
-                    // Emergency TOC export callback — when all tape TOC writes fail
-                    suggestedPath =>
+                    // Emergency TOC export callback — when all tape TOC writes fail.
+                    //  First invocation: warn the user and ask for confirmation before showing the save dialog.
+                    //  Second invocation (retry after a failed file-save): show a shorter prompt.
+                    (suggestedPath, isRetry) =>
                     {
                         string? chosenPath = null;
                         Application.Current.Dispatcher.Invoke(() =>
                         {
+                            string info = !isRetry
+                                ? "The TOC could not be saved to media. Without a TOC, the files on media cannot be accessed.\n\n" +
+                                  "This is your last chance to export the TOC to a file for file recovery.\n\n" +
+                                  "Do you want to choose a save location now?"
+                                : "Exporting TOC failed. Try a different location?";
+
+                            var answer = MessageBox.Show(
+                                info,
+                                "Emergency TOC Export",
+                                MessageBoxButton.YesNo,
+                                MessageBoxImage.Warning,
+                                MessageBoxResult.Yes);
+
+                            if (answer != MessageBoxResult.Yes)
+                                return; // user declined — chosenPath stays null
+
                             var dialog = new Microsoft.Win32.SaveFileDialog
                             {
-                                Title = "Emergency TOC Export",
+                                Title = "Emergency TOC Export — Choose Save Location",
                                 Filter = $"Tape TOC files (*{TapeFileAgent.TOCFileExtension})|*{TapeFileAgent.TOCFileExtension}|All files (*.*)|*.*",
                                 FileName = System.IO.Path.GetFileName(suggestedPath),
                                 InitialDirectory = System.IO.Path.GetDirectoryName(suggestedPath) ?? "",
@@ -309,12 +352,19 @@ public partial class MainViewModel
                 );
             });
 
-            // Refresh tree after backup — always, regardless of outcome,
-            //  to keep TOCView in sync with the (possibly modified) TOC
-            await RefreshAsync();
+            // Refresh tree after backup
+            //  to keep TOCView in sync with the (possibly modified) TOC.
+            //  Refresh might throw if TOC has been spoiled
+            try { await RefreshAsync(); } catch { /* ignore */ }
 
             // Determine outcome from the result record
-            if (operationResult is { WasAborted: true })
+            if (operationResult is { HasFailed: true })
+            {
+                LogErr("Backup failed");
+                MessageBox.Show("Backup failed. See log for details.", "Backup Failed",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            else if (operationResult is { WasAborted: true })
             {
                 LogErr("Backup aborted by user");
                 MessageBox.Show("Backup was aborted.", "Backup Aborted",
@@ -333,8 +383,11 @@ public partial class MainViewModel
         }
         catch (Exception ex)
         {
-            // Refresh even on failure — TOC may have been modified before the error
-            await RefreshAsync();
+            // Catch catstrophic failures not handled by TapeService.ExecuteBackupAsync.
+            
+            // Refresh even on failure — TOC may have been modified before the error.
+            //  Refresh might throw if TOC has been spoiled
+            try { await RefreshAsync(); } catch { /* ignore */ }
             LogErr($"Backup failed: {ex.Message}");
             MessageBox.Show($"Backup failed.\n\n{ex.Message}", "Backup Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);

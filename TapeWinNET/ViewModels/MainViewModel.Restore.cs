@@ -615,6 +615,14 @@ public partial class MainViewModel
                     targetDirectory,
                     recurseSubdirectories: recurseSubdirectories,
                     handleExisting,
+                    // Current file callback
+                    filePath =>
+                    {
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            CurrentRestoreFile = System.IO.Path.GetFileName(filePath);
+                        });
+                    },
                     // Progress update callback
                     (processed, total, bytes) =>
                     {
@@ -748,13 +756,30 @@ public partial class MainViewModel
                         });
                         return mediaReady;
                     },
-                    // Current file callback
-                    filePath =>
+                    // Media load retry callback — when ReloadMedia/PrepareMedia fails after inserting the next volume.
+                    //  First invocation: explain the failure and ask the user to re-seat the media.
+                    //  Second invocation: shorter follow-up prompt.
+                    (loadError, isRetry) =>
                     {
+                        bool retry = false;
                         Application.Current.Dispatcher.Invoke(() =>
                         {
-                            CurrentRestoreFile = System.IO.Path.GetFileName(filePath);
+                            string info = !isRetry
+                                ? $"The drive could not load the media.\n\nError: {loadError}\n\n" +
+                                  "Make sure the media is properly inserted. Retry?"
+                                : $"Loading media failed again.\n\nError: {loadError}\n\n" +
+                                  "Try re-seating the media. Retry?";
+
+                            var answer = MessageBox.Show(
+                                info,
+                                "Media Load Failed",
+                                MessageBoxButton.YesNo,
+                                MessageBoxImage.Warning,
+                                MessageBoxResult.Yes);
+
+                            retry = answer == MessageBoxResult.Yes;
                         });
+                        return retry;
                     }
                 );
             });
@@ -775,7 +800,13 @@ public partial class MainViewModel
             await RefreshAsync();
 
             // Determine outcome from the result record
-            if (operationResult is { WasAborted: true })
+            if (operationResult is { HasFailed: true })
+            {
+                LogErr($"{modeName} failed");
+                MessageBox.Show($"{modeName} failed. See log for details.", $"{modeName} Failed",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            else if (operationResult is { WasAborted: true })
             {
                 LogErr($"{modeName} aborted by user");
                 MessageBox.Show($"{modeName} was aborted.", $"{modeName} Aborted",

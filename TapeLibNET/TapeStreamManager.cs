@@ -91,7 +91,16 @@ namespace TapeLibNET
             if (IsStreamInUse)
             {
                 m_logger.LogWarning("Drive #{Drive}: Ending RW operation while stream in use -> enforcing dispose", DriveNumber);
-                Stream?.Dispose();
+                try
+                {
+                    // Careful: disposing of a stream in use can throw!
+                    Stream?.Dispose();
+                }
+                catch
+                {
+                    m_logger.LogWarning("Drive #{Drive}: Exception while enforced-disposing stream in use", DriveNumber);
+                }
+                
                 Stream = null;
             }
 
