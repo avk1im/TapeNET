@@ -4,6 +4,7 @@ using System.Text;
 using Windows.Win32.Foundation;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using TapeLibNET.Remote;
 
 namespace TapeLibNET;
 
@@ -54,6 +55,19 @@ public class TapeDrive : ErrorManageableBase, IDisposable
     {
         loggerFactory ??= NullLoggerFactory.Instance;
         return new TapeDrive(new TapeDriveWin32Backend(loggerFactory));
+    }
+
+    /// <summary>
+    /// Creates a TapeDrive with a remote backend connecting to a tape service on the network.
+    /// The remote service manages the actual hardware (or virtual) backend.
+    /// </summary>
+    /// <param name="host">Hostname or IP address of the tape service.</param>
+    /// <param name="port">gRPC port (default 50551).</param>
+    /// <param name="loggerFactory">Logger factory for logging.</param>
+    public static TapeDrive CreateRemote(string host, int port = 50551, ILoggerFactory? loggerFactory = null)
+    {
+        loggerFactory ??= NullLoggerFactory.Instance;
+        return new TapeDrive(new RemoteTapeDriveBackend(host, port, loggerFactory));
     }
 
     /// <summary>Probe if a tape drive with specified number is present.</summary>
@@ -291,6 +305,10 @@ public class TapeDrive : ErrorManageableBase, IDisposable
     #region *** Drive & Media Operations ***
 
     /// <summary>Opens (or reopens) the drive, reads capabilities, and sets optimal parameters.</summary>
+    /// <remarks>
+    /// If the backend is already open (e.g. opened externally via <c>OpenVirtual</c>),
+    /// skips the close/open cycle and only refreshes capabilities and parameters.
+    /// </remarks>
     public bool ReopenDrive(uint driveNumber = 0, bool unconditionally = true)
     {
         if (!unconditionally && IsDriveOpen)
@@ -298,13 +316,18 @@ public class TapeDrive : ErrorManageableBase, IDisposable
 
         m_logger.LogTrace("{Prefix}: Reopening", LogPrefix);
 
-        CloseDrive();
-
-        if (!m_backend.Open(driveNumber))
+        // If the backend was already opened externally (e.g. remote OpenVirtual),
+        // skip the close/open cycle — just refresh caps from the existing backend.
+        if (!m_backend.IsOpen)
         {
-            SyncErrorFrom(m_backend);
-            LogErrorAsDebug("Failed to open drive");
-            return false;
+            CloseDrive();
+
+            if (!m_backend.Open(driveNumber))
+            {
+                SyncErrorFrom(m_backend);
+                LogErrorAsDebug("Failed to open drive");
+                return false;
+            }
         }
 
         if (!RefreshDriveCaps())

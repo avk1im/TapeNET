@@ -442,15 +442,14 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 
 - `TapeWinNET`: Additional UI polish and workflow refinements
 - `TapeLibNET`: Polishing, validation, & hardening of the core functionality, while using and expanding `TapeLibNET.Tests`
-- `TapeLibNET`: Proper commenting of the code, esp. public API and complex logic areas
 - `TapeConNET`: Service updates to keep in sync with library changes. Consider switching to classes from the top-level program structure.
 
 - `TapeWinNET`: UI enhancement features
 1. [DONE] Log export / clear — Full log pane with batched ingestion (10K cap, smart pruning), severity filtering, auto-scroll lock, timestamp toggle, Save Log / Mirror Log to file (text + CSV), copy (Ctrl+C, multi-select), clear. `MainViewModel.Log.cs` partial class, top-level Log menu + context menu.
 2. [DONE] File filter/search in the backup set table — `FileFilterPane` with pattern mode (wildcards) and advanced mode (full FCL via `FclFilterWindow`). Dynamic stats in the GroupBox header, filter state persistence across tree navigation.
-3. Advanced file filtering for Backup — Integrate the `FileFilterPane` into the Backup workflow (New Backup Set dialog or pre-backup file selection) to allow FCL-based filtering of which files to include in a backup operation.
+3. [DONE] Advanced file filtering for Backup — Integrate the `FileFilterPane` into the Backup workflow (New Backup Set dialog or pre-backup file selection) to allow FCL-based filtering of which files to include in a backup operation.
 4. [DONE] Window state persistence — Remember window size, position, splitter proportions, and the last-opened drive number between sessions. JSON serializer based implementation in `%LocalAppData%\TapeWinNET\`.
 5. Operation-complete notification — A FlashWindowEx or system notification when a long backup/restore finishes while the window is in the background. Tape operations can run for hours; easy to miss completion.
-6. Delete most-recent backup set — Removing the newest set from the TOC (the library likely supports this via TapeTOC manipulation + TOC rewrite). Useful when the last backup was accidental or corrupt.
+6. [DONE] Delete most-recent backup set(s) — Removing the newest set(s) from the TOC (the library likely supports this via TapeTOC manipulation + TOC rewrite). Useful to make space on the media or when the last backup was accidental or corrupt.
 7. Capacity usage bar — A small visual bar in the Media properties or status bar showing used/remaining as a colored segment bar, broken down by set. Quick situational awareness without reading numbers.
 

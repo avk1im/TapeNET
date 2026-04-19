@@ -1,0 +1,289 @@
+// TapeDrive.proto — gRPC service definition for remote tape drive access.
+//
+// Shared between TapeLibNET (client stub) and TapeServiceNET (server base).
+// Mirrors the TapeDriveBackend abstract API 1:1.
+//
+// Build outputs:
+//   TapeLibNET  → GrpcServices="Client"  → TapeDriveService.TapeDriveServiceClient
+//   TapeServiceNET → GrpcServices="Server" → TapeDriveService.TapeDriveServiceBase
+
+syntax = "proto3";
+
+option csharp_namespace = "TapeLibNET.Remote";
+
+package tapenet;
+
+// ============================================================================
+//  Service
+// ============================================================================
+
+service TapeDriveService {
+
+  // --- Drive lifecycle ---
+  rpc OpenWin32(OpenWin32Request)               returns (OperationResponse);
+  rpc OpenVirtual(OpenVirtualRequest)           returns (OperationResponse);
+  rpc Close(EmptyRequest)                       returns (OperationResponse);
+  rpc SetDriveParameters(SetDriveParametersRequest) returns (OperationResponse);
+
+  // --- Media lifecycle ---
+  rpc LoadMedia(EmptyRequest)                   returns (OperationResponse);
+  rpc UnloadMedia(EmptyRequest)                 returns (OperationResponse);
+  rpc SetBlockSize(SetBlockSizeRequest)         returns (OperationResponse);
+  rpc FormatMedia(FormatMediaRequest)           returns (OperationResponse);
+
+  // --- Read / Write ---
+  rpc Read(ReadRequest)                         returns (ReadResponse);
+  rpc Write(WriteRequest)                       returns (WriteResponse);
+
+  // --- Positioning ---
+  rpc SetPosition(SetPositionRequest)           returns (OperationResponse);
+  rpc SetPositionToPartition(SetPositionToPartitionRequest) returns (OperationResponse);
+  rpc GetPosition(EmptyRequest)                 returns (GetPositionResponse);
+  rpc GetCurrentPartition(EmptyRequest)         returns (GetCurrentPartitionResponse);
+  rpc Rewind(EmptyRequest)                      returns (OperationResponse);
+  rpc SeekToEnd(SeekToEndRequest)               returns (OperationResponse);
+  rpc SpaceFilemarks(SpaceMarksRequest)         returns (OperationResponse);
+  rpc SpaceSetmarks(SpaceMarksRequest)          returns (OperationResponse);
+  rpc SpaceSequentialFilemarks(SpaceMarksRequest) returns (OperationResponse);
+
+  // --- Tapemarks ---
+  rpc WriteFilemarks(WriteMarksRequest)         returns (OperationResponse);
+  rpc WriteSetmarks(WriteMarksRequest)          returns (OperationResponse);
+
+  // --- Parameter queries ---
+  rpc FillDriveCapabilities(EmptyRequest)       returns (DriveCapabilitiesResponse);
+  rpc FillMediaParameters(EmptyRequest)         returns (MediaParametersResponse);
+}
+
+// ============================================================================
+//  Common
+// ============================================================================
+
+// Placeholder for RPCs that need no input parameters.
+message EmptyRequest {}
+
+// Error information piggybacked on every response.
+// error_code 0 = NO_ERROR (success). Non-zero = Win32 error code.
+message ErrorInfo {
+  uint32 error_code    = 1;
+  string error_message = 2;
+}
+
+// Cached snapshot of frequently accessed backend properties.
+// Included in every response so RemoteTapeDriveBackend can serve
+// property reads from cache without extra round-trips.
+message BackendState {
+  bool   is_open                     = 1;
+  bool   has_media                   = 2;
+  string device_name                 = 3;
+  uint32 drive_number                = 4;
+  uint32 block_size                  = 5;
+  uint32 min_block_size              = 6;
+  uint32 max_block_size              = 7;
+  uint32 default_block_size          = 8;
+  int64  capacity                    = 9;
+  int64  remaining                   = 10;
+  int64  position                    = 11;
+  bool   supports_initiator_partition = 12;
+  bool   has_initiator_partition     = 13;
+  bool   supports_setmarks           = 14;
+  bool   supports_seq_filemarks      = 15;
+}
+
+// ============================================================================
+//  Enums
+// ============================================================================
+
+enum ProtoMediaPartition {
+  MEDIA_PARTITION_CURRENT   = 0;
+  MEDIA_PARTITION_CONTENT   = 1;
+  MEDIA_PARTITION_INITIATOR = 2;
+}
+
+// ============================================================================
+//  Generic response (bool-returning backend methods)
+// ============================================================================
+
+// Used by all RPCs that return bool + error state and nothing else.
+message OperationResponse {
+  bool         success = 1;
+  ErrorInfo    error   = 2;
+  BackendState state   = 3;
+}
+
+// ============================================================================
+//  Open requests
+// ============================================================================
+
+message OpenWin32Request {
+  uint32 drive_number = 1;
+}
+
+message OpenVirtualRequest {
+  uint32 drive_number = 1;
+
+  // Which type of virtual backend to create.
+  oneof config {
+    VirtualMemoryConfig      memory_config     = 10;
+    VirtualMemoryMapConfig   memory_map_config = 11;
+    VirtualFileConfig        file_config       = 12;
+  }
+}
+
+// Memory-backed virtual tape (MemoryStream).
+message VirtualMemoryConfig {
+  VirtualCapabilities capabilities             = 1;  // omit for default (WithSetmarks)
+  int64               content_capacity         = 2;  // bytes; 0 = use default (500 MB)
+  int64               initiator_capacity       = 3;  // bytes; 0 = use default (16 MB)
+}
+
+// Memory-mapped virtual tape (LargeMemoryStream, supports >2 GB).
+message VirtualMemoryMapConfig {
+  VirtualCapabilities capabilities             = 1;
+  int64               content_capacity         = 2;  // 0 = default (4 GB)
+  int64               initiator_capacity       = 3;  // 0 = default (16 MB)
+}
+
+// File-backed virtual tape (FileStream, persistent).
+message VirtualFileConfig {
+  VirtualCapabilities capabilities             = 1;
+  string              content_file_path        = 2;
+  int64               content_capacity         = 3;
+  string              initiator_file_path      = 4;  // empty = no initiator file
+  int64               initiator_capacity       = 5;
+  // Maps to System.IO.FileMode: Open=3, Create=2, CreateNew=1, OpenOrCreate=4
+  int32               media_mode               = 6;
+}
+
+// Mirrors VirtualTapeDriveCapabilities. All fields optional —
+// omit (zero-valued message or null) to use the default (WithSetmarks).
+message VirtualCapabilities {
+  uint32 min_block_size              = 1;
+  uint32 max_block_size              = 2;
+  uint32 default_block_size          = 3;
+  bool   supports_setmarks           = 4;
+  bool   supports_seq_filemarks      = 5;
+  bool   supports_initiator_partition = 6;
+  bool   supports_compression        = 7;
+}
+
+// ============================================================================
+//  Drive parameter requests
+// ============================================================================
+
+message SetDriveParametersRequest {
+  bool   compression          = 1;
+  bool   ecc                  = 2;
+  bool   data_padding         = 3;
+  bool   report_setmarks      = 4;
+  uint32 eot_warning_zone_size = 5;
+}
+
+// ============================================================================
+//  Media requests
+// ============================================================================
+
+message SetBlockSizeRequest {
+  uint32 size = 1;
+}
+
+message FormatMediaRequest {
+  int64 initiator_partition_size = 1;  // -1 = no initiator partition
+}
+
+// ============================================================================
+//  Read / Write
+// ============================================================================
+
+message ReadRequest {
+  int32 count = 1;  // number of bytes to read (must be multiple of block size)
+}
+
+message ReadResponse {
+  bytes     data     = 1;  // actual bytes read (length = bytes_read)
+  bool      tapemark = 2;
+  bool      eof      = 3;
+  ErrorInfo error    = 4;
+  BackendState state = 5;
+}
+
+message WriteRequest {
+  bytes data = 1;  // bytes to write (length must be multiple of block size)
+}
+
+message WriteResponse {
+  int32     bytes_written = 1;
+  bool      tapemark      = 2;
+  bool      eof           = 3;
+  ErrorInfo error         = 4;
+  BackendState state      = 5;
+}
+
+// ============================================================================
+//  Positioning
+// ============================================================================
+
+message SetPositionRequest {
+  int64 block = 1;
+}
+
+message SetPositionToPartitionRequest {
+  ProtoMediaPartition partition = 1;
+  int64               block     = 2;
+}
+
+message GetPositionResponse {
+  int64        position = 1;
+  ErrorInfo    error    = 2;
+  BackendState state    = 3;
+}
+
+message GetCurrentPartitionResponse {
+  ProtoMediaPartition partition = 1;
+  ErrorInfo           error    = 2;
+  BackendState        state    = 3;
+}
+
+message SeekToEndRequest {
+  ProtoMediaPartition partition = 1;
+}
+
+message SpaceMarksRequest {
+  int32 count = 1;  // positive = forward, negative = backward
+}
+
+// ============================================================================
+//  Tapemarks
+// ============================================================================
+
+message WriteMarksRequest {
+  uint32 count = 1;
+}
+
+// ============================================================================
+//  Parameter query responses
+// ============================================================================
+
+message DriveCapabilitiesResponse {
+  uint32 minimum_block_size           = 1;
+  uint32 maximum_block_size           = 2;
+  uint32 default_block_size           = 3;
+  bool   supports_compression         = 4;
+  bool   supports_ecc                 = 5;
+  bool   supports_padding             = 6;
+  bool   supports_setmarks            = 7;
+  bool   supports_seq_filemarks       = 8;
+  bool   supports_initiator_partition = 9;
+  ErrorInfo    error                  = 10;
+  BackendState state                  = 11;
+}
+
+message MediaParametersResponse {
+  int64  capacity              = 1;
+  int64  remaining             = 2;
+  uint32 block_size            = 3;
+  bool   has_initiator_partition = 4;
+  bool   write_protected       = 5;
+  ErrorInfo    error           = 6;
+  BackendState state           = 7;
+}
