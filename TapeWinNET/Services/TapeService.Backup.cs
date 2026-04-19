@@ -110,6 +110,7 @@ public partial class TapeService
                 void logOkSub(string msg)      => logCallback(new LogEntry(WarningLevel.Completed, msg, true, DateTime.Now));
                 void logInfo(string msg)       => logCallback(new LogEntry(WarningLevel.Info, msg, false, DateTime.Now));
                 void logInfoSub(string msg)    => logCallback(new LogEntry(WarningLevel.Info, msg, true, DateTime.Now));
+                void logWarn(string msg)       => logCallback(new LogEntry(WarningLevel.Warning, msg, false, DateTime.Now));
                 void logFail(string msg)       => logCallback(new LogEntry(WarningLevel.Failed, msg, false, DateTime.Now));
                 void logFailSub(string msg)    => logCallback(new LogEntry(WarningLevel.Failed, msg, true, DateTime.Now));
                 void logErr(string msg)        => logCallback(new LogEntry(WarningLevel.Error, msg, false, DateTime.Now));
@@ -386,7 +387,7 @@ public partial class TapeService
 
                                             if (string.IsNullOrEmpty(chosenPath))
                                             {
-                                                logErr("User declined emergency TOC export");
+                                                logWarn("User declined emergency TOC export");
                                                 break;
                                             }
 

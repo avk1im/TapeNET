@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using System.Runtime.CompilerServices;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET;
@@ -180,18 +181,18 @@ public abstract class TapeDriveBackend : ErrorManageableBase, IDisposable
     #region *** Validation Helpers ***
 
     /// <summary>Validates that drive is ready for read/write operations.</summary>
-    public void CheckForRW(string methodName)
+    public void CheckForRW([CallerMemberName] string methodName = "")
     {
         ObjectDisposedException.ThrowIf(IsDisposed, this);
 
         if (!IsOpen)
-            throw new IOException($"Drive not open in {methodName}", unchecked((int)WIN32_ERROR.ERROR_INVALID_HANDLE));
+            throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_HANDLE, $"Drive not open in {methodName}");
         if (!HasMedia)
-            throw new IOException($"Media not loaded in {methodName}", unchecked((int)WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE));
+            throw new TapeIOException((uint)WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE, $"Media not loaded in {methodName}");
     }
 
     /// <summary>Validates buffer arguments and drive state for read/write.</summary>
-    public void CheckForRW(string methodName, byte[] buffer, int offset, int count)
+    public void CheckForRW(byte[] buffer, int offset, int count, [CallerMemberName] string methodName = "")
     {
         ArgumentNullException.ThrowIfNull(buffer, nameof(buffer) + $" in {methodName}");
         ArgumentOutOfRangeException.ThrowIfNegative(offset, nameof(offset) + $" in {methodName}");

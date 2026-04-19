@@ -59,6 +59,15 @@ namespace TapeLibNET
             return new(false, code, ex.Message);
         }
 
+        /// <summary>
+        /// Creates a failure result from a <see cref="TapeIOException"/>, preserving
+        /// the trail text in the error message for downstream display.
+        /// </summary>
+        public static TapeResult Fail(TapeIOException ex) =>
+            new(false, ex.Error, ex.TrailText.Length > 0
+                ? $"{ex.ErrorMessage} [Trail: {ex.TrailText}]"
+                : ex.ErrorMessage);
+
         /// <summary>Allows <c>if (result)</c> and <c>if (!result)</c> usage, preserving existing call-site patterns.</summary>
         public static implicit operator bool(TapeResult r) => r.Success;
     }
@@ -382,6 +391,138 @@ namespace TapeLibNET
         {
             Navigator.AssumeBlankMedia();
             return BackupTOC();
+        }
+
+        /// <summary>
+        /// Deletes all backup sets from <see cref="TapeTOC.CurrentSetIndex"/> through the last
+        /// set on the current volume. Physically overwrites the tape past the last retained set
+        /// to move the end-of-data marker, then updates the TOC on tape.
+        /// <para>
+        /// Preconditions:
+        /// <list type="bullet">
+        ///   <item><see cref="TapeTOC.CurrentSetIndex"/> must be set to the first set to delete.</item>
+        ///   <item>The current set must be on the current volume
+        ///     (<see cref="TapeTOC.IsCurrentSetOnVolume"/>).</item>
+        ///   <item>When the current set is the first set on the volume AND the drive uses an
+        ///     initiator partition, the operation fails — the caller should format the media
+        ///     instead.</item>
+        /// </list>
+        /// </para>
+        /// </summary>
+        /// <returns>A <see cref="TapeResult"/> indicating success or failure with error details.</returns>
+        public TapeResult DeleteSetsFromCurrentSetUp()
+        {
+            m_logger.LogTrace("Deleting sets from #{Set} up", TOC.CurrentSetIndex);
+
+            // --- Precondition checks (before any tape I/O) ---
+
+            if (!TOC.IsCurrentSetOnVolume)
+            {
+                var msg = $"Current set #{TOC.CurrentSetIndex} is not on volume #{TOC.Volume}";
+                m_logger.LogWarning(msg);
+                SetError(WIN32_ERROR.ERROR_INVALID_PARAMETER, msg);
+                return TapeResult.Fail(this);
+            }
+
+            bool deletingAll = TOC.CurrentSetIndex == TOC.FirstSetOnVolume;
+
+            if (deletingAll && Drive.HasInitiatorPartition)
+            {
+                // Cannot erase all content when TOC is in a separate partition —
+                //  the caller should format the media instead.
+                var msg = "Cannot delete all sets when TOC is in a partition — format the media instead";
+                m_logger.LogWarning(msg);
+                SetError(WIN32_ERROR.ERROR_NOT_SUPPORTED, msg);
+                return TapeResult.Fail(this);
+            }
+
+            try
+            {
+                if (deletingAll)
+                {
+                    // --- Delete ALL sets on volume (TOC in set only) ---
+                    //  Navigate to the very beginning of content, then write an initial TOC
+                    //  which overwrites everything from position 0.
+                    m_logger.LogTrace("Deleting all sets — navigating to beginning of content");
+
+                    Manager.EndReadWrite();
+                    Navigator.MoveToBeginOfContent();
+                    if (Navigator.WentBad)
+                    {
+                        SyncErrorFrom(Navigator);
+                        return TapeResult.Fail(this);
+                    }
+
+                    // Remove sets on this volume from the TOC.
+                    //  If there are sets from previous volumes, keep them.
+                    if (TOC.CurrentSetIndex > 1)
+                    {
+                        TOC.CurrentSetIndex = TOC.CurrentSetIndex - 1;
+                        TOC.RemoveSetsAfterCurrent();
+                    }
+                    else
+                    {
+                        TOC.RemoveAllSets();
+                    }
+
+                    // Write the TOC as if this were blank media
+                    return BackupInitialTOC();
+                }
+                else
+                {
+                    // --- Delete trailing sets (at least one set remains) ---
+                    //  Navigate to the first set to be deleted, step back one setmark,
+                    //  then rewrite the content setmark at that position. This overwrites
+                    //  the zombie setmarks and moves the end-of-data marker. Then update
+                    //  the TOC and write it to tape.
+
+                    m_logger.LogTrace("Navigating to set #{Set} for deletion", TOC.CurrentSetIndex);
+
+                    Manager.EndReadWrite();
+                    Navigator.TargetContentSet = CurrentSetAsNavigatorContentSet;
+                    Navigator.MoveToTargetContentSet();
+                    if (Navigator.WentBad)
+                    {
+                        SyncErrorFrom(Navigator);
+                        return TapeResult.Fail(this);
+                    }
+
+                    // Step back one setmark — position to just before the setmark that
+                    //  separates the last retained set from the first set to delete.
+                    Navigator.MoveToNextContentSetmark(-1);
+                    if (Navigator.WentBad)
+                    {
+                        SyncErrorFrom(Navigator);
+                        return TapeResult.Fail(this);
+                    }
+
+                    // Rewrite the content setmark at this position — this physically
+                    //  overwrites the zombie data and advances the end-of-data marker.
+                    Navigator.WriteContentSetmark();
+                    if (Navigator.WentBad)
+                    {
+                        SyncErrorFrom(Navigator);
+                        return TapeResult.Fail(this);
+                    }
+
+                    // The navigator now thinks we're past the end of content
+                    Navigator.OnContentWritten();
+
+                    // Remove the sets from the TOC: position to the set before the first
+                    //  one to delete, then remove everything after it.
+                    TOC.CurrentSetIndex = TOC.CurrentSetIndex - 1;
+                    TOC.RemoveSetsAfterCurrent();
+
+                    // Save the updated TOC to tape
+                    return BackupTOC();
+                }
+            }
+            catch (Exception ex)
+            {
+                m_logger.LogWarning("Exception {Exception} in {Method}", ex, nameof(DeleteSetsFromCurrentSetUp));
+                SetError(ex);
+                return TapeResult.Fail(this);
+            }
         }
 
 #endregion // *** TOC Backup ***

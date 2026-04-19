@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 
 
 namespace TapeLibNET
@@ -62,12 +63,12 @@ namespace TapeLibNET
         public bool TapemarkEncountered { get; protected set; } = false;
 
 
-        protected void CheckForRW(string methodName)
+        protected void CheckForRW([CallerMemberName] string methodName = "")
         {
             ObjectDisposedException.ThrowIf(IsDisposed, this);
             m_mgr.Drive.CheckForRW(methodName);
         }
-        protected void CheckForRW(string methodName, byte[] buffer, int offset, int count)
+        protected void CheckForRW(byte[] buffer, int offset, int count, [CallerMemberName] string methodName = "")
         {
             ObjectDisposedException.ThrowIf(IsDisposed, this);
             ValidateBufferArguments(buffer, offset, count);
@@ -219,7 +220,7 @@ namespace TapeLibNET
         // Override Read and ReadAsync methods
         public override int Read(byte[] buffer, int offset, int count)
         {
-            CheckForRW(nameof(Read), buffer, offset, count);
+            CheckForRW(buffer, offset, count);
             Debug.Assert(m_buffer != null);
 
             // do NOT yet check for EOFEncountered -- in case m_buffer still has some content!
@@ -252,7 +253,7 @@ namespace TapeLibNET
                         if (WentBad)
                         {
                             m_logger.LogDebug("ReadDirect error 0x{Error:X8} in {Method}", LastError, nameof(Read));
-                            throw new IOException($"Read failed: {LastErrorMessage} (0x{LastError:X8})", (int)LastError);
+                            throw new TapeIOException(m_mgr, this, "read failed");
                         }
                         if (readDirectly == 0)
                         {
@@ -331,7 +332,7 @@ namespace TapeLibNET
         // Override Seek method
         public override long Seek(long offset, SeekOrigin origin)
         {
-            CheckForRW(nameof(Seek));
+            CheckForRW();
 
             // TODO: implement
             return Position;
@@ -402,7 +403,7 @@ namespace TapeLibNET
         // Override Write and WriteAsync methods
         public override void Write(byte[] buffer, int offset, int count)
         {
-            CheckForRW(nameof(Write), buffer, offset, count);
+            CheckForRW(buffer, offset, count);
             Debug.Assert(m_buffer != null);
 
             while (count > 0)
@@ -417,7 +418,7 @@ namespace TapeLibNET
                     if (WentBad)
                     {
                         m_logger.LogDebug("Tape stream WriteDirect error 0x{Error:X8} in {Method}", LastError, nameof(Write));
-                        throw new IOException($"Write failed: {LastErrorMessage} (0x{LastError:X8})", (int)LastError);
+                        throw new TapeIOException(m_mgr, this, "write failed");
                     }
 
                     Debug.Assert(written <= count);
@@ -435,7 +436,7 @@ namespace TapeLibNET
                     m_accLength += buffered;
 
                     if (WentBad)
-                        throw new IOException($"Write failed: {LastErrorMessage} (0x{LastError:X8})", (int)LastError);
+                        throw new TapeIOException(m_mgr, this, "write failed");
                 }
             }
         }
@@ -450,7 +451,7 @@ namespace TapeLibNET
 
         public override void Flush()
         {
-            CheckForRW(nameof(Flush));
+            CheckForRW();
 
             if (m_buffer.IsEmpty)
                 return;
@@ -463,7 +464,7 @@ namespace TapeLibNET
             if (WentBad)
             {
                 m_logger.LogError("Tape stream flush error 0x{Error:X8} in {Method}", LastError, nameof(Flush));
-                throw new IOException($"Flush failed: {LastErrorMessage} (0x{LastError:X8})", (int)LastError);
+                throw new TapeIOException(m_mgr, this, "flush failed");
             }
 
             // Notice: Here in Flush() we do not update Writte, as it counts only bytes that have been ingested by Write()
@@ -473,7 +474,7 @@ namespace TapeLibNET
         // Override Seek method
         public override long Seek(long offset, SeekOrigin origin)
         {
-            CheckForRW(nameof(Seek));
+            CheckForRW();
 
             // TODO: implement
             return Position;

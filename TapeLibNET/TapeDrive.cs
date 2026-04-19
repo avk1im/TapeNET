@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Text;
 using Windows.Win32.Foundation;
 using Microsoft.Extensions.Logging;
@@ -197,7 +198,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
 
     public int WriteDirect(byte[] buffer, int offset, int count, out bool tapemark, out bool eof)
     {
-        m_backend.CheckForRW(nameof(WriteDirect), buffer, offset, count);
+        m_backend.CheckForRW(buffer, offset, count);
 
         int blocksToWrite = count / (int)BlockSize;
         int toWrite = blocksToWrite * (int)BlockSize;
@@ -227,7 +228,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
 
     public int ReadDirect(byte[] buffer, int offset, int count, out bool tapemark, out bool eof)
     {
-        m_backend.CheckForRW(nameof(ReadDirect), buffer, offset, count);
+        m_backend.CheckForRW(buffer, offset, count);
 
         int blocksToRead = count / (int)BlockSize;
         int toRead = blocksToRead * (int)BlockSize;
@@ -258,9 +259,9 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         return read;
     }
 
-    internal void CheckForRW(string methodName) => m_backend.CheckForRW(methodName);
-    internal void CheckForRW(string methodName, byte[] buffer, int offset, int count) =>
-        m_backend.CheckForRW(methodName, buffer, offset, count);
+    internal void CheckForRW([CallerMemberName] string methodName = "") => m_backend.CheckForRW(methodName);
+    internal void CheckForRW(byte[] buffer, int offset, int count, [CallerMemberName] string methodName = "") =>
+        m_backend.CheckForRW(buffer, offset, count, methodName);
 
     #endregion
 

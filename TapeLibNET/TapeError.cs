@@ -28,13 +28,16 @@ public interface IErrorManageable
 /// </summary>
 public class TapeIOException : IOException
 {
-    private List<string>? _trail;
+    private List<string>? m_trail;
 
     /// <summary>The Win32 error code that caused this exception (typed accessor for <see cref="Exception.HResult"/>).</summary>
     public uint Error => (uint)HResult;
 
+    /// <summary>The Win32 error code as <see cref="WIN32_ERROR"/> for internal switch/comparison use.</summary>
+    internal WIN32_ERROR ErrorWin32 => (WIN32_ERROR)HResult;
+
     /// <summary>The Win32 error description (accessor for <see cref="Exception.Message"/>).</summary>
-    public string ErrorMessage => Message;
+    public string ErrorMessage => base.Message;
 
     #region *** Constructors ***
 
@@ -57,18 +60,66 @@ public class TapeIOException : IOException
     {
     }
 
+    /// <summary>
+    /// Creates a TapeIOException from an <see cref="IErrorManageable"/> source, adding an initial
+    /// trail entry from the caller's context. Combines construction and first breadcrumb in one call.
+    /// </summary>
+    public TapeIOException(IErrorManageable source, object caller, string message,
+        [CallerMemberName] string methodName = "", Exception? inner = null)
+        : this(source.LastError, source.LastErrorMessage, inner)
+    {
+        AddTrail(caller, message, methodName);
+    }
+
+    /// <summary>
+    /// Creates a TapeIOException from an error code and message, adding an initial trail entry.
+    /// </summary>
+    public TapeIOException(uint errorCode, string errorMessage, object caller, string message,
+        [CallerMemberName] string methodName = "", Exception? inner = null)
+        : this(errorCode, errorMessage, inner)
+    {
+        AddTrail(caller, message, methodName);
+    }
+
+    /* // Handled below in a more general form that can extract from any Exception, not just IOException
     /// <summary>Wraps an existing IOException (e.g. from the framework) as a TapeIOException, retaining it as inner.</summary>
     public TapeIOException(IOException inner, string? message = null)
         : this((uint)inner.HResult, message ?? inner.Message, inner)
     {
     }
+    */
+
+    /// <summary>Wraps an existing Exception as a TapeIOException: attempts to extract the error code if possible.</summary>
+    public TapeIOException(Exception ex, string? message = null)
+        : this(ex is IOException ioex ? (uint)ioex.HResult :
+              ex is Win32Exception w32ex ? (uint)w32ex.NativeErrorCode :
+              (uint)WIN32_ERROR.ERROR_UNHANDLED_EXCEPTION,
+              message ?? ex.Message, ex)
+    {
+    }
+
+    #endregion
+
+    #region *** Error Classification ***
+
+    /// <summary>True when the error indicates end-of-media (tape full or no more data).</summary>
+    public bool IsEOM => ErrorWin32 is WIN32_ERROR.ERROR_END_OF_MEDIA or WIN32_ERROR.ERROR_NO_DATA_DETECTED;
+
+    /// <summary>True when the error indicates invalid or corrupted data.</summary>
+    public bool IsInvalidData => ErrorWin32 is WIN32_ERROR.ERROR_INVALID_DATA;
+
+    /// <summary>True when the error indicates a CRC / hash verification failure.</summary>
+    public bool IsCRC => ErrorWin32 is WIN32_ERROR.ERROR_CRC;
+
+    /// <summary>True when the error indicates an invalid handle or device state precondition.</summary>
+    public bool IsDeviceNotReady => ErrorWin32 is WIN32_ERROR.ERROR_INVALID_HANDLE or WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE;
 
     #endregion
 
     #region *** Breadcrumb Trail ***
 
     /// <summary>The diagnostic breadcrumb trail, ordered from origin outward.</summary>
-    public IReadOnlyList<string> Trail => _trail ?? (IReadOnlyList<string>)[];
+    public IReadOnlyList<string> Trail => m_trail ?? (IReadOnlyList<string>)[];
 
     /// <summary>
     /// Appends a breadcrumb entry with explicit class and method names.
@@ -76,8 +127,8 @@ public class TapeIOException : IOException
     /// </summary>
     public TapeIOException AddTrail(string className, string message, [CallerMemberName] string methodName = "")
     {
-        _trail ??= [];
-        _trail.Add($"{className}.{methodName}: {message}");
+        m_trail ??= [];
+        m_trail.Add($"{className}.{methodName}: {message}");
         return this;
     }
 
@@ -93,28 +144,88 @@ public class TapeIOException : IOException
     {
         get
         {
-            if (_trail == null || _trail.Count == 0)
+            if (m_trail == null || m_trail.Count == 0)
                 return string.Empty;
 
             var sb = new StringBuilder();
-            for (int i = 0; i < _trail.Count; i++)
+            for (int i = 0; i < m_trail.Count; i++)
             {
                 if (i > 0) sb.Append(" → ");
-                sb.Append(_trail[i]);
+                sb.Append(m_trail[i]);
             }
             return sb.ToString();
         }
     }
 
     /// <summary>
-    /// Returns a message combining the error description and trail (if any).
+    /// Compact trail summary for user-facing display: includes the origin and outermost
+    /// breadcrumb (if different), omitting class/method names.
+    /// Returns empty string if no trail entries exist.
+    /// </summary>
+    public string TrailSummary
+    {
+        get
+        {
+            if (m_trail == null || m_trail.Count == 0)
+                return string.Empty;
+
+            // Extract just the message portion after "ClassName.MethodName: "
+            static string ExtractMessage(string entry)
+            {
+                int colonPos = entry.IndexOf(": ", StringComparison.Ordinal);
+                return colonPos >= 0 ? entry[(colonPos + 2)..] : entry;
+            }
+
+            string first = ExtractMessage(m_trail[0]);
+            if (m_trail.Count == 1)
+                return first;
+
+            string last = ExtractMessage(m_trail[^1]);
+            return $"{first} → {last}";
+        }
+    }
+
+    #endregion
+
+    #region *** Formatting ***
+
+    /// <summary>
+    /// User-facing message: the error description plus a compact trail summary
+    /// (origin and outermost context, without class/method details).
+    /// </summary>
+    public override string Message
+    {
+        get
+        {
+            string summary = TrailSummary;
+            return summary.Length > 0
+                ? $"{base.Message} [{summary}]"
+                : base.Message;
+        }
+    }
+
+    /// <summary>
+    /// Diagnostic representation including error description, full trail, and stack trace.
+    /// Suitable for logging and debugging.
     /// </summary>
     public override string ToString()
     {
         string trail = TrailText;
         return trail.Length > 0
-            ? $"{Message} [Trail: {trail}]"
+            ? $"{base.Message} [Trail: {trail}]{Environment.NewLine}{StackTrace}"
             : base.ToString()!;
+    }
+
+    /// <summary>
+    /// Intermediate-detail representation for structured logging: error code, message, and full trail
+    /// without stack trace.
+    /// </summary>
+    public string ToLogString()
+    {
+        string trail = TrailText;
+        return trail.Length > 0
+            ? $"0x{Error:X8}: {base.Message} [Trail: {trail}]"
+            : $"0x{Error:X8}: {base.Message}";
     }
 
     #endregion
@@ -162,6 +273,9 @@ public abstract class ErrorManageableBase(ILogger logger) : IErrorManageable
 
     public virtual bool WentOK => m_errorOwn == WIN32_ERROR.NO_ERROR;
     public virtual bool WentBad => !WentOK;
+
+    /// <summary>True when the current error indicates end-of-media (tape full or no more data).</summary>
+    public bool IsEOM => m_errorOwn is WIN32_ERROR.ERROR_END_OF_MEDIA or WIN32_ERROR.ERROR_NO_DATA_DETECTED;
 
     internal void SetError(WIN32_ERROR error, string? message = null)
     {
@@ -223,6 +337,21 @@ public abstract class ErrorManageableBase(ILogger logger) : IErrorManageable
     protected void LogErrorAsError(string message, [CallerMemberName] string methodName = "") =>
         LogError(m_logger.LogError, message, methodName);
 
+    /// <summary>
+    /// Logs a <see cref="TapeIOException"/> at Warning level using its intermediate-detail
+    ///  <see cref="TapeIOException.ToLogString"/> representation (error code + message + trail, no stack trace).
+    ///  Falls back to standard exception logging for other exception types.
+    /// </summary>
+    protected void LogTapeException(Exception ex, string context, [CallerMemberName] string methodName = "")
+    {
+        if (ex is TapeIOException tioex)
+            m_logger.LogWarning("{Prefix}: {Context} in {Method}: {Detail}",
+                LogPrefix, context, methodName, tioex.ToLogString());
+        else
+            m_logger.LogWarning("{Prefix}: {Context} in {Method}: {Exception}",
+                LogPrefix, context, methodName, ex.Message);
+    }
+
     #endregion
 }
 
@@ -237,21 +366,17 @@ public abstract class ErrorManageableBase(ILogger logger) : IErrorManageable
 /// <see cref="ErrorManageableBase.SyncErrorFrom"/> calls in failure paths.
 /// </para>
 /// </summary>
-public class TapeDriveHolder<T> : ErrorManageableBase
+public class TapeDriveHolder<T>(TapeDrive drive)
+    : ErrorManageableBase(drive.LoggerFactory.CreateLogger<T>())
 {
-    #region *** Constructor ***
 
-    public TapeDriveHolder(TapeDrive drive)
-        : base(drive.LoggerFactory.CreateLogger<T>())
-    {
-        Drive = drive;
-    }
+    #region *** Constructor ***
 
     #endregion
 
     #region *** Properties ***
 
-    public TapeDrive Drive { get; }
+    public TapeDrive Drive { get; } = drive;
     public uint DriveNumber => Drive.DriveNumber;
     protected override string LogPrefix => $"Drive #{DriveNumber}";
 

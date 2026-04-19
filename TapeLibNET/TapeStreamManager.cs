@@ -48,7 +48,7 @@ namespace TapeLibNET
             if (navigator == null)
             {
                 LogErrorAsDebug("Failed to create navigator");
-                throw new IOException("Failed to create navigator", (int)WIN32_ERROR.ERROR_INVALID_STATE);
+                throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_STATE, "Failed to create navigator");
             }
 
             Navigator = navigator;

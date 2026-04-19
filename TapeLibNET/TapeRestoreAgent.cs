@@ -35,7 +35,7 @@ namespace TapeLibNET
         protected virtual bool RestoreFileCore(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
         {
             if (rstream.IsDisposed)
-                throw new IOException("May not dispose tape read stream while restoring", (int)WIN32_ERROR.ERROR_INVALID_HANDLE);
+                throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_HANDLE, "May not dispose tape read stream while restoring");
 
             return true;
         }
@@ -90,8 +90,8 @@ namespace TapeLibNET
                 var deserializer = new TapeDeserializer(rstream);
                 if (!tfi.DeserializeAndCheckHeaderFrom(deserializer))
                 {
-                    throw new IOException($"Header mismatch for file >{tfi.FileDescr.FullName}<",
-                        (int)WIN32_ERROR.ERROR_INVALID_DATA);
+                    throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                        $"Header mismatch for file >{tfi.FileDescr.FullName}<");
                 }
 
                 rstream.LengthLimit = rstream.Length + tfi.FileDescr.Length; // this will activate LengthLimitMode
@@ -100,7 +100,8 @@ namespace TapeLibNET
                 // Simulate file restore failure for testing error handling
                 if (SimulateFileFailures.ShouldFailNow())
                 {
-                    throw new IOException($"Simulated restore failure for file >{tfi.FileDescr.FullName}< (#{SimulateFileFailures.Counter})");
+                    throw new TapeIOException((uint)WIN32_ERROR.ERROR_UNHANDLED_EXCEPTION,
+                        $"Simulated restore failure for file >{tfi.FileDescr.FullName}< (#{SimulateFileFailures.Counter})");
                 }
 #endif
 
@@ -123,16 +124,16 @@ namespace TapeLibNET
                 // Now ready to do the actual restoring
                 if (!RestoreFileCore(fileInfo, rstream, hasher))
                 {
-                    throw new IOException($"Processing failed for file >{tfi.FileDescr.FullName}<",
-                        (int)WIN32_ERROR.ERROR_INVALID_DATA);
+                    throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                        $"Processing failed for file >{tfi.FileDescr.FullName}<");
                 }
 
                 // check CRC
                 if (hasher != null)
                 {
                     if (tfi.Hash == null)
-                        throw new IOException($"Hash missing in file info for file >{tfi.FileDescr.FullName}<",
-                            (int)WIN32_ERROR.ERROR_INVALID_DATA);
+                        throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                            $"Hash missing in file info for file >{tfi.FileDescr.FullName}<");
 
                     if (tfi.Hash.SequenceEqual(hasher.GetCurrentHash()))
                     {
@@ -140,8 +141,8 @@ namespace TapeLibNET
                     }
                     else
                     {
-                        throw new IOException($"CRC check failed for file >{tfi.FileDescr.FullName}<. Hasher: {TOC.CurrentSetTOC.HashAlgorithm}",
-                            (int)WIN32_ERROR.ERROR_CRC);
+                        throw new TapeIOException((uint)WIN32_ERROR.ERROR_CRC,
+                            $"CRC check failed for file >{tfi.FileDescr.FullName}<. Hasher: {TOC.CurrentSetTOC.HashAlgorithm}");
                     }
                 }
 

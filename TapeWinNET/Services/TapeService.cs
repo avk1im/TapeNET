@@ -668,11 +668,11 @@ public partial class TapeService : IDisposable
 
     /// <summary>
     /// Deletes backup sets starting from <paramref name="deleteFromSetIndex"/> through the last
-    /// set on the volume. Updates the TOC on tape accordingly.
+    /// set on the volume. Physically overwrites the tape past the last retained set to move the
+    /// end-of-data marker, then updates the TOC on tape.
     /// </summary>
-    /// <param name="deleteFromSetIndex">Standard (1-based) index of the first set to delete.
-    /// If this equals the first set on the volume, all sets are removed.</param>
-    /// <returns>True if the TOC was updated and saved successfully.</returns>
+    /// <param name="deleteFromSetIndex">Standard (1-based) index of the first set to delete.</param>
+    /// <returns>True if the sets were deleted and the TOC saved successfully.</returns>
     public async Task<bool> DeleteBackupSetsAsync(int deleteFromSetIndex)
     {
         if (_toc == null || _drive == null)
@@ -688,39 +688,28 @@ public partial class TapeService : IDisposable
                 try
                 {
                     var toc = _toc;
-                    int firstSet = toc.FirstSetOnVolume;
-                    int lastSet = toc.LastSetOnVolume;
                     deleteFromSetIndex = toc.SetIndexToStd(deleteFromSetIndex);
 
+                    int lastSet = toc.LastSetOnVolume;
                     int setsToDelete = lastSet - deleteFromSetIndex + 1;
                     LogInfo($"Deleting {setsToDelete} backup set(s) from #{deleteFromSetIndex} | {toc.SetIndexToAlt(deleteFromSetIndex)}...");
+                    Status("Deleting backup sets...");
 
-                    if (deleteFromSetIndex <= firstSet)
-                    {
-                        // Remove all sets
-                        toc.RemoveAllSets();
-                    }
-                    else
-                    {
-                        // Position to the set before the first one to delete, then remove the rest
-                        toc.CurrentSetIndex = deleteFromSetIndex - 1;
-                        toc.RemoveSetsAfterCurrent();
-                    }
-
-                    // Save TOC to tape
-                    Status("Saving TOC...");
-                    LogInfo("Saving TOC...");
+                    // Set the current set to the first one to delete —
+                    //  this is the precondition for DeleteSetsFromCurrentSetUp()
+                    toc.CurrentSetIndex = deleteFromSetIndex;
 
                     _agent = new TapeFileAgent(_drive, toc);
-                    var tocResult = _agent.BackupTOC();
-                    if (!tocResult)
+                    var result = _agent.DeleteSetsFromCurrentSetUp();
+                    if (!result)
                     {
-                        LastError = tocResult.ErrorMessage;
-                        LogErr($"Failed to save TOC: {tocResult.ErrorMessage}");
+                        LastError = result.ErrorMessage;
+                        LogErr($"Failed to delete backup sets: {result.ErrorMessage}");
                         return false;
                     }
 
                     LogOk($"Deleted {setsToDelete} backup set(s) — TOC saved");
+                    Status($"Deleted {setsToDelete} backup set(s)");
                     return true;
                 }
                 catch (Exception ex)

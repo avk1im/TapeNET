@@ -65,7 +65,7 @@ namespace TapeLibNET
             m_logger.LogTrace("Backing up file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(BackupFile));
 
             using var wstream = OpenWriteContentStream(tfi.FileDescr.Length) ??
-                throw new IOException($"Failed to open content write stream for >{tfi.FileDescr.FullName}<", (int)LastError);
+                throw new TapeIOException(this, this, $"failed to open content write stream for >{tfi.FileDescr.FullName}<");
             var hasher = CreateHasher(TOC.CurrentSetTOC.HashAlgorithm);
 
             TapeSerializer ts = new(wstream);
@@ -78,7 +78,8 @@ namespace TapeLibNET
             {
                 m_logger.LogWarning("SIMULATED failure for file #{Counter} >{File}<", 
                     SimulateFileFailures.Counter, tfi.FileDescr.FullName);
-                throw new IOException($"Simulated backup failure for testing (file #{SimulateFileFailures.Counter})");
+                throw new TapeIOException((uint)WIN32_ERROR.ERROR_UNHANDLED_EXCEPTION,
+                    $"Simulated backup failure for testing (file #{SimulateFileFailures.Counter})");
             }
 #endif
 
@@ -301,8 +302,7 @@ namespace TapeLibNET
                     m_logger.LogWarning("{Method}: File #{Number} >{File}< backup failed. Exception: {Ex}",
                         nameof(BackupFilesToCurrentSet), _stats.FilesProcessed + 1, fileName, ex);
 
-                    if (LastError == (uint)WIN32_ERROR.ERROR_END_OF_MEDIA || ex is IOException ioex && ioex.HResult == (int)WIN32_ERROR.ERROR_END_OF_MEDIA
-                        || LastError == (uint)WIN32_ERROR.ERROR_NO_DATA_DETECTED || ex is IOException ioex1 && ioex1.HResult == (int)WIN32_ERROR.ERROR_NO_DATA_DETECTED)
+                    if (IsEOM || ex is TapeIOException { IsEOM: true })
                     {
                         // Set up continuation on the next volume for multi-volume backup
                         m_logger.LogTrace("Setting up multi-volume backup from file #{Number} >{File}<", _stats.FilesProcessed + 1, bc.fileList[bc.fileIndex]);
@@ -480,7 +480,7 @@ namespace TapeLibNET
                     m_logger.LogWarning("{Method}: File #{Number} >{File}< backup failed. Exception: {Ex}",
                         nameof(BackupFilesToCurrentSet), bc.filesProcessed, fileName, ex);
                     
-                    if (LastError == (uint)WIN32_ERROR.ERROR_END_OF_MEDIA || ex is IOException ioex && ioex.HResult == (int)WIN32_ERROR.ERROR_END_OF_MEDIA)
+                    if (IsEOM || ex is TapeIOException { IsEOM: true })
                     {
                         // Set up continuation on the next volume for multi-volume backup
                         m_logger.LogTrace("Setting up multi-volume backup from file #{Number} >{File}<", bc.filesProcessed, fileList[bc.fileIndex]);

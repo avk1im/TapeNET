@@ -1,4 +1,5 @@
-﻿using System.Runtime.InteropServices;
+﻿using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Diagnostics;
 
@@ -10,7 +11,6 @@ using Windows.Win32.Storage.FileSystem;
 
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions; // for NullLoggerFactory
-using System.Runtime.CompilerServices;
 
 
 namespace TapeLibNET;
@@ -235,7 +235,7 @@ public class TapeDriveOLD(ILoggerFactory loggerFactory) : IDisposable, IErrorMan
     //  Returns number of bytes read
     public int WriteDirect(byte[] buffer, int offset, int count, out bool tapemark, out bool eof)
     {
-        CheckForRW(nameof(WriteDirect), buffer, offset, count);
+        CheckForRW(buffer, offset, count);
 
         // Can only write the size that's multiple of BlockSize!
         int blocksToWrite = count / (int)BlockSize;
@@ -289,7 +289,7 @@ public class TapeDriveOLD(ILoggerFactory loggerFactory) : IDisposable, IErrorMan
 
     public int ReadDirect(byte[] buffer, int offset, int count, out bool tapemark, out bool eof)
     {
-        CheckForRW(nameof(ReadDirect), buffer, offset, count);
+        CheckForRW(buffer, offset, count);
 
         // Can only read the size that's multiple of BlockSize!
         int blocksToRead = count / (int)BlockSize;
@@ -341,16 +341,16 @@ public class TapeDriveOLD(ILoggerFactory loggerFactory) : IDisposable, IErrorMan
         return (int)read;
     } // ReadDirect
 
-    internal void CheckForRW(string methodName)
+    internal void CheckForRW([CallerMemberName] string methodName = "")
     {
         ObjectDisposedException.ThrowIf(IsDisposed, this);
 
         if (!IsDriveOpen)
-            throw new IOException($"Drive not open in {methodName}", (int)WIN32_ERROR.ERROR_INVALID_HANDLE);
+            throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_HANDLE, $"Drive not open in {methodName}");
         if (!IsMediaLoaded)
-            throw new IOException($"Media not loaded in {methodName}", (int)WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
+            throw new TapeIOException((uint)WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE, $"Media not loaded in {methodName}");
     }
-    internal void CheckForRW(string methodName, byte[] buffer, int offset, int count)
+    internal void CheckForRW(byte[] buffer, int offset, int count, [CallerMemberName] string methodName = "")
     {
         ArgumentNullException.ThrowIfNull(buffer, nameof(buffer) + $" in {methodName}");
 
