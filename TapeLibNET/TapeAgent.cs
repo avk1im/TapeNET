@@ -15,7 +15,16 @@ public class TapeAbortRequestedException(string? message = null) :
 {
 }
 
-public enum FileFailedAction { Skip, Retry, Abort }
+/// <summary>Action chosen by <see cref="ITapeFileNotifiable.OnFileFailed"/> when a file operation fails.</summary>
+public enum FileFailedAction
+{
+    /// <summary>Skip this file and continue with the next.</summary>
+    Skip,
+    /// <summary>Retry the same file from the beginning.</summary>
+    Retry,
+    /// <summary>Abort the entire operation.</summary>
+    Abort
+}
 
 /// <summary>
 /// Result type for compound tape operations that cross the Agent → Service boundary.
@@ -103,9 +112,19 @@ public struct TapeFileStatistics
     };
 }
 
+/// <summary>
+/// Callback interface for file-level progress notifications during backup, restore, and verify operations.
+/// <para>Implementations control the UI (progress bars, logs) and can influence the operation:
+///  <see cref="PreProcessFile"/> can skip files, <see cref="OnFileFailed"/> can retry or abort.
+///  Any callback may throw <see cref="TapeAbortRequestedException"/> to abort immediately.</para>
+/// <para>Every callback receives a <see cref="TapeFileStatistics"/> snapshot reflecting the
+///  state <em>after</em> the event (e.g. counters are incremented before the call).</para>
+/// </summary>
 public interface ITapeFileNotifiable
 {
+    /// <summary>Called when a new batch (set) begins processing. <paramref name="setIndex"/> is 1-based.</summary>
     void BatchStart(int setIndex, in TapeFileStatistics stats);
+    /// <summary>Called when a batch (set) finishes processing.</summary>
     void BatchEnd(int setIndex, in TapeFileStatistics stats);
 
     // The following methods may throw TapeAbortRequestedException to abort the entire operation (not just the file)
@@ -124,7 +143,12 @@ public interface ITapeFileNotifiable
 }
 
 
-// The base class handles TOC backup and restore
+/// <summary>
+/// Base agent handling TOC backup/restore (dual-copy with CRC), TOC file I/O,
+///  set deletion, and the <see cref="ITapeFileNotifiable"/> notification wrappers.
+/// <para>Subclasses: <see cref="TapeFileBackupAgent"/> (backup), <see cref="TapeFileRestoreBaseAgent"/>
+///  (restore/verify). Owns a <see cref="TapeStreamManager"/> and a <see cref="TapeTOC"/>.</para>
+/// </summary>
 public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDriveHolder<TapeFileAgent>(drive), IDisposable
 {
     private const uint c_fixedTOCBlockSize = 16 * 1024; // 16K
@@ -132,11 +156,16 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     // Hashing for TOC is fixed since it needs to be known upfront for each tape
     private readonly TapeHashAlgorithm c_hashForTOC = TapeHashAlgorithm.Crc64;
 
+    /// <summary>Table of contents for this tape session.</summary>
     public TapeTOC TOC { get; init; } = legacyTOC ?? [];
+    /// <summary>Stream manager providing state-guarded read/write stream provisioning.</summary>
     public TapeStreamManager Manager { get; init; } = new(drive);
+    /// <summary>Shortcut to <see cref="Manager"/>.<see cref="TapeStreamManager.Navigator"/>.</summary>
     public TapeNavigator Navigator => Manager.Navigator;
 
+    /// <summary>Cumulative bytes written to tape (content + TOC) during this agent's lifetime.</summary>
     public long BytesBackedup { get; protected set; } = 0L;
+    /// <summary>Cumulative bytes read from tape (content + TOC) during this agent's lifetime.</summary>
     public long BytesRestored { get; protected set; } = 0L;
 
     /// <summary>
@@ -151,6 +180,11 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     // Checked periodically if the entire operation should be aborted
     //  Uses olatile field instead of auto-property — fixes the theoretical data race
     private volatile bool _isAbortRequested = false;
+    /// <summary>
+    /// Volatile abort flag checked periodically by file-processing loops.
+    /// <para>Set by <see cref="NotifyFileFailed"/> when the callback returns <see cref="FileFailedAction.Abort"/>,
+    ///  or directly by the caller (e.g. UI abort button). Checked via <see cref="ThrowIfAbortRequested"/>.</para>
+    /// </summary>
     public bool IsAbortRequested
     {
         get => _isAbortRequested;
@@ -181,6 +215,10 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
 #endif
 
 
+    /// <summary>
+    /// Translates <see cref="TapeTOC.CurrentSetIndex"/> to a <see cref="TapeNavigator.TargetContentSet"/> value,
+    ///  choosing the most efficient seek direction (from begin, end, or current position).
+    /// </summary>
     protected int CurrentSetAsNavigatorContentSet // used by both backup and restore agents
     {
         get
@@ -335,6 +373,13 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
         }
     }
 
+    /// <summary>
+    /// Writes two copies of the <see cref="TOC"/> to tape with CRC integrity hashing.
+    /// <para>Succeeds if at least one copy is written successfully. The dual-copy
+    ///  strategy ensures TOC recoverability even with partial media damage.</para>
+    /// </summary>
+    /// <param name="enforce">When <see langword="true"/>, resets navigator state before writing
+    ///  (use after operations that may leave the tape position uncertain).</param>
     public TapeResult BackupTOC(bool enforce = false)
     {
 #if DEBUG
@@ -623,6 +668,11 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
         }
     }
 
+    /// <summary>
+    /// Reads the <see cref="TOC"/> from tape, trying up to three strategies:
+    ///  1st copy → 2nd copy (sequential) → 2nd copy (direct seek).
+    /// <para>On success, replaces the current <see cref="TOC"/> content.</para>
+    /// </summary>
     public TapeResult RestoreTOC()
     {
 #if DEBUG

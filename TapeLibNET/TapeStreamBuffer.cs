@@ -24,6 +24,11 @@ internal sealed class ByteBufferCache(int capacity) : IDisposable
     }
 }
 
+/// <summary>
+/// FIFO byte buffer backed by <see cref="ArrayPool{T}"/>. Supports fill/spill
+/// operations against raw byte arrays or a virtual owner stream.
+/// Lazily shifts content to reclaim space, avoiding copies until necessary.
+/// </summary>
 public class TapeByteBuffer(int capacity) : IDisposable
 {
     private readonly byte[] m_buffer = ArrayPool<byte>.Shared.Rent(capacity);
@@ -61,11 +66,17 @@ public class TapeByteBuffer(int capacity) : IDisposable
     }
 
 
+    /// <summary>Maximum buffer capacity in bytes.</summary>
     public int Capacity => capacity;
+    /// <summary>Number of unread bytes currently in the buffer.</summary>
     public int ContentSize => m_writeFrom - m_readFrom;
+    /// <summary><c>true</c> when <see cref="ContentSize"/> is zero.</summary>
     public bool IsEmpty => ContentSize == 0;
+    /// <summary><c>true</c> when <see cref="ContentSize"/> is non-zero.</summary>
     public bool IsNonEmpty => !IsEmpty;
+    /// <summary><c>true</c> when <see cref="ContentSize"/> equals <see cref="Capacity"/>.</summary>
     public bool IsFull => ContentSize == Capacity;
+    /// <summary>Free space available for writing.</summary>
     public int Remaining => Capacity - ContentSize;
     public void Reset()
     {
@@ -133,12 +144,14 @@ public class TapeByteBuffer(int capacity) : IDisposable
 
 
     // Operations with byte[]
+    /// <summary>Copies up to <paramref name="count"/> bytes from the buffer into <paramref name="dst"/>.</summary>
     public int SpillTo(byte[] dst, int offset, int count)
     {
         return SpillCore(count, (src, srcOffset, n) =>
             { Buffer.BlockCopy(src, srcOffset, dst, offset, n); return n; });
     }
 
+    /// <summary>Copies up to <paramref name="count"/> bytes from <paramref name="src"/> into the buffer.</summary>
     public int FillFrom(byte[] src, int offset, int count)
     {
         return FillCore(count, (dst, dstOffset, n) =>
@@ -146,16 +159,19 @@ public class TapeByteBuffer(int capacity) : IDisposable
     }
 
 
-    // Virtual owner I/O — override in subclasses to route to the actual stream
+    // Virtual owner I/O — subclasses override to route to the actual stream
     protected virtual int ReadFromOwner(byte[] dst, int dstOffset, int count)
         => throw new NotSupportedException("No owner configured for reading");
     protected virtual int WriteToOwner(byte[] src, int srcOffset, int count)
         => throw new NotSupportedException("No owner configured for writing");
 
-    // Owner operations (use the virtual methods above)
+    /// <summary>Fills the buffer by reading up to <paramref name="count"/> bytes from the owner stream.</summary>
     public int FillFromOwner(int count) => FillCore(count, ReadFromOwner);
+    /// <summary>Writes up to <paramref name="count"/> bytes from the buffer to the owner stream.</summary>
     public int SpillToOwner(int count) => SpillCore(count, WriteToOwner);
+    /// <summary>Writes all buffered content to the owner stream.</summary>
     public int FlushToOwner() => SpillToOwner(ContentSize);
+    /// <summary>Zero-pads to <paramref name="count"/> bytes, then writes to the owner. Used for block alignment.</summary>
     public int SpillZeroPaddedToOwner(int count)
     {
         ZeroPadTo(count);
@@ -181,7 +197,11 @@ public class TapeByteBuffer(int capacity) : IDisposable
     }
 }
 
-// The buffer class that knows to use ReadDirect and WriteDirect methods of the TapeReadStream and TapeWriteStream
+/// <summary>
+/// <see cref="TapeByteBuffer"/> subclass that routes owner I/O to
+/// <see cref="TapeReadStream.ReadDirect"/> or <see cref="TapeWriteStream.WriteDirect"/>,
+/// bridging the buffer to the underlying <see cref="TapeDrive"/>.
+/// </summary>
 public class TapeStreamBuffer(TapeStream owner, int capacity) : TapeByteBuffer(capacity)
 {
     protected override int ReadFromOwner(byte[] dst, int dstOffset, int count)

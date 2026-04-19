@@ -688,7 +688,7 @@ public partial class TapeService : IDisposable
                 try
                 {
                     var toc = _toc;
-                    deleteFromSetIndex = toc.SetIndexToStd(deleteFromSetIndex);
+                    deleteFromSetIndex = toc.SetIndexToStd(deleteFromSetIndex); // to make sure
 
                     int lastSet = toc.LastSetOnVolume;
                     int setsToDelete = lastSet - deleteFromSetIndex + 1;

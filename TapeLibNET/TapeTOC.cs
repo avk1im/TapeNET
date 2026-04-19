@@ -16,6 +16,7 @@ namespace TapeLibNET
 {
     using TypeUID = ulong;
 
+    /// <summary>Hash algorithms supported for per-file integrity verification on tape.</summary>
     public enum TapeHashAlgorithm
     {
         None,
@@ -27,9 +28,11 @@ namespace TapeLibNET
         XxHash128,
     }
 
-    // TapeFileDescriptor members match the public properties of FileSystemInfo
-    //  We use TapeFileDescriptor instead of FileInfo to avoid accessing the actual file!
-    //  E.g. setting Attributes on a FileInfo instance causes it to attempt to set them also for the actual file
+    /// <summary>
+    /// Lightweight mirror of <see cref="FileSystemInfo"/> properties, avoiding access to the actual file.
+    /// <para>Used instead of <see cref="FileInfo"/> because setting properties on a <c>FileInfo</c>
+    ///  instance would attempt to modify the real file on disk.</para>
+    /// </summary>
     public struct TapeFileDescriptor
     {
         public string FullName;
@@ -124,7 +127,12 @@ namespace TapeLibNET
         }
     }
 
-    // The on-tape information about a file. Used as both TOC entry and on-tape file header
+    /// <summary>
+    /// On-tape file record — serves as both a TOC entry and an on-tape file header.
+    /// <para>Each instance carries a unique <see cref="UID"/>, the tape <see cref="Block"/> address,
+    ///  a <see cref="TapeFileDescriptor"/>, and an optional integrity <see cref="Hash"/>.
+    ///  Implements <see cref="ITapeSerializable"/> for full and header-only serialization.</para>
+    /// </summary>
     public class TapeFileInfo(TypeUID UID, long block, TapeFileDescriptor fileDescr) : ITapeSerializable
     {
         public TypeUID UID { get; } = UID;
@@ -211,8 +219,11 @@ namespace TapeLibNET
     } // struct TapeFileInfo
 
     
-    // Manages a list of TapeFileInfo
-    //  While the class is accessible externally, new instances only created via TapeTOC.AddNewSetTOC()
+    /// <summary>
+    /// Table of contents for a single backup set — an <see cref="IReadOnlyList{TapeFileInfo}"/>
+    ///  with per-set metadata (description, hash algorithm, block size, incremental flag, volume).
+    /// <para>New instances are created only via <see cref="TapeTOC.AddNewSetTOC"/>.</para>
+    /// </summary>
     public class TapeSetTOC : ITapeSerializable, IReadOnlyList<TapeFileInfo>
     {
         private readonly List<TapeFileInfo> m_tapeFileInfos;
@@ -479,7 +490,16 @@ namespace TapeLibNET
     } // class TapeSetTOC
 
 
-    // Manages a list of SetTOCs
+    /// <summary>
+    /// Master table of contents — ordered list of <see cref="TapeSetTOC"/> instances with
+    ///  UID generation, multi-volume tracking, and file selection across incremental chains.
+    /// <para><b>Dual set indexation:</b></para>
+    /// <code>
+    /// Standard: 1, 2, 3, …, N   (1 = oldest, N = newest)
+    /// Alternative: −(N−1), …, −1, 0  (0 = newest, −1 = second newest)
+    /// Internal: 0, 1, …, N−1    (0 = oldest, used only inside this class)
+    /// </code>
+    /// </summary>
     public class TapeTOC : ITapeSerializable, IEnumerable<TapeSetTOC>
     {
         private readonly List<TapeSetTOC> m_setTOCs;
@@ -504,10 +524,13 @@ namespace TapeLibNET
         public DateTime CreationTime { get; internal set; } = DateTime.Now;
         public DateTime LastSaveTime { get; internal set; } = DateTime.Now;
 
+        /// <summary>Current volume number (1-based).</summary>
         public int Volume { get; internal set; } = 1; // volume indexing starts from 1
+        /// <summary>Whether the last set continues on a subsequent volume.</summary>
         public bool ContinuedOnNextVolume { get; set; } = false;
 
         public int Count => m_setTOCs.Count;
+        /// <summary>Returns the <see cref="TapeSetTOC"/> at <see cref="CurrentSetIndex"/>; lazily creates a first set if none exist.</summary>
         public TapeSetTOC CurrentSetTOC
         {
             get
@@ -523,15 +546,8 @@ namespace TapeLibNET
         }
         public bool IsEmpty => Count == 0 || Count == 1 && CurrentSetTOC.Count == 0;
 
-        // Notice backup set index assignment:
-        //  positive number means counting from the oldest up: 1 is the oldest set, 2 the second oldest, etc.
-        //  0 or negative number means counting from the latest down: 0 is the latest, -1 is the second latest, -2 is the 3rd latest, etc.
-        //  0 means the latest (last backed up) set -- this is the default value
-        //  Illustration for 3 sets (Count = 3):
-        //  index:      1      2      3    <- main index (what we return via CurrentSetIndex)
-        //  oldest -> [set0] [set1] [set2] <- latest
-        //  alt index: -2     -1      0    <- alternative index (what we also understand)
-        //  internal:   0      1      2    <- this is what we use internally
+        // Set index conversion helpers (see class-level doc for indexation scheme).
+        //  Standard: 1..N,  Alternative: −(N−1)..0,  Internal: 0..N−1
         private int SetIndexToInternal(int setIndex)
         {
             if (Count == 0)
@@ -555,6 +571,10 @@ namespace TapeLibNET
         public int CapSetIndex(int setIndex) => Math.Max(MinSetIndex, Math.Min(MaxSetIndex, setIndex));
         public int MaxSetIndex => Count; // for the standard index form 1..MaxSetIndex
         public int MinSetIndex => -(Count - 1); // for the alternative index form -MinSetIndex..0
+        /// <summary>
+        /// Current backup set index (standard form: 1 = oldest, <see cref="MaxSetIndex"/> = newest).
+        /// <para>Accepts both standard (positive) and alternative (≤ 0) index forms on set.</para>
+        /// </summary>
         public int CurrentSetIndex
         {
             set // Notice: does NOT check if the set is on volume!
@@ -640,6 +660,10 @@ namespace TapeLibNET
             }
         }
 
+        /// <summary>
+        /// Appends a new (or reuses the last empty) <see cref="TapeSetTOC"/> and makes it current.
+        /// <para>The first set in a TOC is never marked incremental, regardless of the parameter.</para>
+        /// </summary>
         public void AddNewSetTOC(int capacity = 0, bool incremental = false)
         {
             // if the last set is empty, use it and set its capacity to 'size'
@@ -662,6 +686,7 @@ namespace TapeLibNET
             MakeLastSetCurrent();
         }
 
+        /// <summary>Clones the set at <paramref name="setIndex"/> (metadata only, no files) for multi-volume continuation.</summary>
         public void CloneSetTOC(int setIndex, bool contFromPrevVolume = false)
         {
             int setInternal = SetIndexToInternal(setIndex);
@@ -681,7 +706,7 @@ namespace TapeLibNET
         }
         public void CloneCurrentSetTOC(bool contFromPrevVolume = false) => CloneSetTOC(CurrentSetIndex, contFromPrevVolume);
 
-        // Deep copy the content of the given TOC to this TOC, replacing the whole content of this TOC
+        /// <summary>Deep-copies all content from <paramref name="toc"/>, replacing everything in this instance.</summary>
         public void CopyFrom(TapeTOC toc) // Replaces the whole content -> use with CAUTION!
         {
             m_setTOCs.Clear();
@@ -1211,53 +1236,6 @@ namespace TapeLibNET
             return totalSize;
         }
 
-#if OLD
-        // Considering incremental sets, select files from the current and previous set(s)
-        //  Reurn an array of lists of files from the latest set, 2nd latest, 3rd latest, etc.
-        public List<TapeFileInfo>[] SelectFilesInc()
-        {
-            int firstNonInc = LastNonIncSetInternal; // find the latest non-incremental set
-
-            if (firstNonInc == m_currSetInternal) // the current is either non-incremental or only one set
-                return [ CurrentSetTOC.SelectFiles() ];
-            else
-            {
-                Debug.Assert(firstNonInc < m_currSetInternal);
-
-                var filesSelected = new List<TapeFileInfo>[m_currSetInternal - firstNonInc + 1];
-
-                for (int i = m_currSetInternal; i >= firstNonInc; i--)
-                {
-                    // use LinkedList since we will be removing elements from the middle
-                    var filesToCheck = m_setTOCs[i].SelectFilesAsLinkedList();
-                    // now remove all files that are already selected in the newer sets
-                    for (int j = i + 1; j <= m_currSetInternal; j++) // iterate over newer sets
-                    {
-                        // iterate over filesToCheck backwards since we will be removing elements
-                        for (var nodeToCheck = filesToCheck.Last; nodeToCheck != null;)
-                        {
-                            var tfiToCheck = nodeToCheck.Value;
-                            var nodeNextToCheck = nodeToCheck.Previous; // save the next node before possibly removing
-                            // find if tfiCheck.FileDescr.FullName is in filesSelected[j]
-                            foreach (var tfi in filesSelected[j])
-                            {
-                                // find out if tfiCheck and tfi refer to the same file -- by comparing full file names
-                                if (tfiToCheck.SameFileName(tfi))
-                                {
-                                    filesToCheck.Remove(nodeToCheck);
-                                    break;
-                                }
-                            }
-                            nodeToCheck = nodeNextToCheck;
-                        }
-                    } // for j
-                    filesSelected[m_currSetInternal - i] = [.. filesToCheck]; // same as filesToCheck.ToList();
-                } // for i
-
-                return filesSelected;
-            }
-        }
-#endif
         #endregion // File selection methods
 
     } // class TapeTOC

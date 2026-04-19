@@ -7,6 +7,10 @@ using TapeLibNET;
 
 namespace TapeLibNET
 {
+    /// <summary>
+    /// Backup agent — writes file lists to tape content sets with per-file CRC hashing,
+    ///  incremental detection, and automatic multi-volume continuation on end-of-media.
+    /// </summary>
     public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileAgent(drive, legacyTOC)
     {
         // bytes backed up so far before we start writing a new set
@@ -111,18 +115,23 @@ namespace TapeLibNET
         } // BackupFile()
 
 
-        // Make file pattern-related methods public
-        //  so that the clients can determine in advance what files will be backed up
+        /// <summary>Returns <see langword="true"/> if <paramref name="pattern"/> contains <c>*</c> or <c>?</c> wildcards.</summary>
         public static bool HasWildcards(string pattern)
         {
             return pattern.Contains('*') || pattern.Contains('?');
         }
 
+        /// <summary>Returns <see langword="true"/> if <paramref name="pattern"/> denotes a directory (trailing backslash or existing directory).</summary>
         public static bool IsDirectory(string pattern)
         {
             return pattern.TrimEnd().EndsWith('\\') || Directory.Exists(pattern);
         }
 
+        /// <summary>
+        /// Expands file/directory patterns (with optional wildcards) into a deduplicated list of full file paths.
+        /// </summary>
+        /// <param name="fileAndDirectoryPatterns">Patterns: plain files, directories (trailing <c>\</c>), or wildcards.</param>
+        /// <param name="recursive">When <see langword="true"/>, recurse into subdirectories.</param>
         public static List<string> BuildFileNameList(List<string> fileAndDirectoryPatterns, bool recursive)
         {
             List<string> fileNames = [];
@@ -192,8 +201,14 @@ namespace TapeLibNET
             internal bool prevVolumeHasFiles = false; // true when the set on the previous volume had files written
         }
         private TapeBackupContext? MultiVolumeContext { get; set; } = null;
+        /// <summary>Whether a multi-volume continuation context is available (end-of-media was hit during backup).</summary>
         public bool CanResumeToNextVolume => MultiVolumeContext != null;
 
+        /// <summary>
+        /// Continues the backup onto a new volume after the caller has loaded fresh media.
+        /// <para>Renews the navigator, increments the volume number, clones the current set TOC,
+        ///  and resumes from the file that triggered end-of-media.</para>
+        /// </summary>
         public TapeResult ResumeBackupToNextVolume()
         {
             if (!CanResumeToNextVolume)
@@ -359,6 +374,9 @@ namespace TapeLibNET
             return bc.overallSuccess;
         }
 
+        /// <summary>
+        /// Expands file/directory patterns via <see cref="BuildFileNameList"/> and backs them up to the current set.
+        /// </summary>
         public TapeResult BackupFilesToCurrentSet(bool newSet, List<string> fileAndDirectoryPatterns, bool recurseSubdirs, bool ignoreFailures = true,
             ITapeFileNotifiable? fileNotify = null)
         {
@@ -367,6 +385,14 @@ namespace TapeLibNET
             return BackupFileListToCurrentSet(newSet, fileList, ignoreFailures, fileNotify);
         } // BackupFilesToCurrentSet()
 
+        /// <summary>
+        /// Backs up a pre-built file list to the current set. Resets statistics and starts
+        ///  batch notifications. Supports multi-volume continuation via <see cref="ResumeBackupToNextVolume"/>.
+        /// </summary>
+        /// <param name="newSet">Whether to create a new content set or append to the existing one.</param>
+        /// <param name="fileList">Fully resolved file paths to back up.</param>
+        /// <param name="ignoreFailures">When <see langword="true"/>, continues after per-file errors.</param>
+        /// <param name="fileNotify">Optional callback for progress, skip/retry/abort decisions.</param>
         public TapeResult BackupFileListToCurrentSet(bool newSet, List<string> fileList, bool ignoreFailures = true,
             ITapeFileNotifiable? fileNotify = null)
         {
@@ -388,139 +414,6 @@ namespace TapeLibNET
             return BackupFilesToCurrentSet(newSet)
                 ? TapeResult.OK : TapeResult.Fail(this);
         } // BackupFilesToCurrentSet()
-
-#if OLDCODE
-        public bool BackupFilesToCurrentSetOLD(List<string> fileAndDirectoryPatterns, bool recurseSubdirs, bool ignoreFailures = true,
-            ITapeFileNotifiable? fileNotify = null)
-        {
-            var fileList = CanResumeToNextVolume ? MultiVolumeContext!.Value.fileList : BuildFileNameList(fileAndDirectoryPatterns, recurseSubdirs);
-            
-            if (fileList.Count == 0)
-            {
-                m_logger.LogWarning("No files found to backup in {Method}", nameof(BackupFilesToCurrentSet));
-                return true; // no files found to back up -> treat as success
-            }
-
-            if (!CanResumeToNextVolume)
-                fileNotify?.BatchStartStatistics(m_toc.CurrentSetIndex, fileList.Count);
-
-            if (!BeginWriteContentForCurrentSet()) // start conent writing mode in tape manager so that tape positioning works correctly
-            {
-                fileNotify?.BatchEndStatistics(m_toc.CurrentSetIndex, 0, fileList.Count, 0);
-                m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSet));
-                return false;
-            }
-
-            if (!CanResumeToNextVolume)
-            {
-                m_logger.LogTrace("Starting backing up {Count} files to current set #{Set}", fileList.Count, m_toc.CurrentSetIndex);
-                if (m_toc.CurrentSetTOC.Incremental)
-                    m_logger.LogTrace("Performing incremental backup to incremental set #{Set}", m_toc.CurrentSetIndex);
-            }
-            else
-                m_logger.LogTrace("Continuing multi-volume backup from file #{Number} >{File}<",
-                    MultiVolumeContext!.Value.fileIndex + 1, fileList[MultiVolumeContext!.Value.fileIndex]);
-
-            TapeBackupContext bc = CanResumeToNextVolume ? MultiVolumeContext!.Value :
-                new(fileList, recurseSubdirs, ignoreFailures, fileNotify);
-            long bytesBackedupMarker = BytesBackedup;
-
-            // The main loop thru the file list
-            for ( ; bc.fileIndex < bc.fileList.Count; bc.fileIndex++) // use for int instead if foreach to know the index for multi-volume backup
-            {
-                var fileName = fileList[bc.fileIndex]; // use an additional variable since we might modify file name
-                bc.filesProcessed++; // filesProcessed is the global multi-volume index (1-based); fileIndex is the local index (0-based)
-
-                FileInfo fileInfo = new(fileName);
-                var fileDescr = new TapeFileDescriptor(fileName); // do NOT create from fileInfo since the file may not exist
-
-                try
-                {
-                    if (fileNotify != null)
-                    {
-                        if (!fileNotify.PreProcessFile(ref fileDescr))
-                        {
-                            m_logger.LogTrace("File #{Number} >{File}< skipped per pre-processor request", bc.filesProcessed, fileName);
-                            continue; // not a failure, yet post-processing not called
-                        }
-                        // the pre-processor may have modified the file name => re-create fileInfo
-                        fileName = fileDescr.FullName;
-                        fileInfo = fileDescr.CreateFileInfo();
-                    }
-
-                    if (!fileInfo.Exists)
-                        throw new FileNotFoundException($"File #{bc.filesProcessed} not found", fileName);
-
-                    fileDescr.FillFrom(fileInfo); // fill in the rest of the file descriptor from the file info, now that we knwo it exists
-
-                    m_logger.LogTrace("Backing up file #{Number} >{File}< of length {Length}",
-                        bc.filesProcessed, fileName, Helpers.BytesToString(fileInfo.Length));
-
-                    if (m_toc.CurrentSetTOC.Incremental && m_toc.IsFileUptodateInc(fileInfo))
-                    {
-                        fileNotify?.OnFileSkipped(fileDescr);
-                        m_logger.LogTrace("File #{Number} >{File}< found up-to-date in an incremental set -> skipping", bc.filesProcessed, fileName);
-                        continue; // not a failure, yet post-processing not called
-                    }
-
-                    if (!BackupFile(fileInfo))
-                        throw new IOException($"File #{bc.filesProcessed} backup failed. Error: 0x{LastError:X8} >{LastErrorMessage}<", (int)LastError);
-
-                    // success
-                    if (fileNotify != null)
-                    {
-                        if (fileNotify.PostProcessFile(ref fileDescr))
-                            fileDescr.ApplyToFileInfo(fileInfo);
-                    }
-
-                    m_logger.LogTrace("File #{Number} >{File}< backed up ok", bc.filesProcessed, fileName);
-                }
-                catch (Exception ex)
-                {
-                    m_logger.LogWarning("{Method}: File #{Number} >{File}< backup failed. Exception: {Ex}",
-                        nameof(BackupFilesToCurrentSet), bc.filesProcessed, fileName, ex);
-                    
-                    if (IsEOM || ex is TapeIOException { IsEOM: true })
-                    {
-                        // Set up continuation on the next volume for multi-volume backup
-                        m_logger.LogTrace("Setting up multi-volume backup from file #{Number} >{File}<", bc.filesProcessed, fileList[bc.fileIndex]);
-                        bc.bytesProcessed += BytesBackedup - bytesBackedupMarker; // update statistics
-                        
-                        // do not count the failed file in multi-volumen context -- as it will be re-tried on next volume
-                        bc.filesProcessed--;
-                        MultiVolumeContext = bc;
-                        
-                        // however for the current batch statistics do count and report the file as failed
-                        bc.filesProcessed++;
-                        bc.filesFailed++;
-                        fileNotify?.OnFileFailed(fileDescr, ex);
-                        
-                        // call statistics since we end this set on this volume
-                        fileNotify?.BatchEndStatistics(m_toc.CurrentSetIndex, bc.filesProcessed, bc.filesFailed, bc.bytesProcessed);
-
-                        m_toc.ContinuedOnNextVolume = true;
-                        Debug.Assert(CanResumeToNextVolume); // we're ready to continue with multi-volume backup
-                        return false;
-                    }
-
-                    bc.overallSuccess = false;
-                    bc.filesFailed++;
-
-                    fileNotify?.OnFileFailed(fileDescr, ex);
-
-                    if (!ignoreFailures)
-                        break;
-                } // catch
-
-            } // foreach fileName
-
-            bc.bytesProcessed += BytesBackedup - bytesBackedupMarker; // update statistics
-            fileNotify?.BatchEndStatistics(m_toc.CurrentSetIndex, bc.filesProcessed, bc.filesFailed, bc.bytesProcessed);
-            MultiVolumeContext = null; // clear multi-volume context -- if we got here we're done with [multi-volume] backup
-
-            return bc.overallSuccess;
-        } // BackupFilesToCurrentSetOLD()
-#endif
 
     } // class TapeFileBackupAgent
 

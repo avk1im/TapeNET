@@ -11,19 +11,27 @@ using TapeLibNET;
 
 namespace TapeLibNET
 {
-    // Implements the high-level tape stream provisioning
-    //  Handles read-write state management for a degree of fool proofness
-    //  Uses TapeNavigator to manage the tape position across content sets and TOC
+    /// <summary>
+    /// High-level tape stream provisioning with state-machine-guarded read/write transitions.
+    /// <para>Owns a <see cref="TapeNavigator"/> for positioning across content sets and TOC.
+    ///  Produces <see cref="TapeWriteStream"/> and <see cref="TapeReadStream"/> instances,
+    ///  managing file/set boundaries (filemarks, setmarks) automatically on stream disposal.</para>
+    /// </summary>
     public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     {
         #region *** Properties ***
+        /// <summary>Navigator used for tape positioning across content sets and TOC.</summary>
         public TapeNavigator Navigator { get; private set; }
 
+        /// <summary>Current state of the manager; guards valid read/write transitions.</summary>
         public TapeManagerState State { get; init; }
 
-        public long ContentCapacityLimit { get; set; } = -1L; // artifically enforce lower content capacity. < 0 means no limit
+        /// <summary>Artificially enforced content capacity limit in bytes. Negative means no limit.</summary>
+        public long ContentCapacityLimit { get; set; } = -1L;
 
+        /// <summary>Currently active <see cref="TapeStream"/>, or <see langword="null"/> when idle.</summary>
         public TapeStream? Stream { get; private set; } = null;
+        /// <summary>Whether a stream is currently checked out and in use.</summary>
         public bool IsStreamInUse => Stream != null;
 
         /// <summary>
@@ -58,6 +66,10 @@ namespace TapeLibNET
             State = new TapeManagerState(TapeState.MediaPrepared);
         }
 
+        /// <summary>
+        /// Replaces the current navigator with a fresh one for the loaded media
+        ///  (e.g. after a volume change). Preserves <see cref="TapeNavigator.TOCCapacity"/>.
+        /// </summary>
         public bool RenewNavigator() // call e.g. if drive media changed
         {
             var navigator = TapeNavigator.ProduceNavigator(Drive);
@@ -174,6 +186,7 @@ namespace TapeLibNET
         //  as well as implicitly by requesting corresponding TapeStream objects.
         //  Beginning and ending of sets is managed implicitly: all files written during
         //  a single content writing session are considered to belong to the same set.
+        /// <summary>Transitions to <see cref="TapeState.WritingTOC"/>, positioning tape at the TOC area.</summary>
         public bool BeginWriteTOC()
         {
             ResetError();
@@ -191,9 +204,14 @@ namespace TapeLibNET
 
             return WentOK;
         }
+        /// <summary>Transitions to <see cref="TapeState.ReadingTOC"/>, positioning tape at the TOC area.</summary>
         public bool BeginReadTOC() => State == TapeState.ReadingTOC ||
             BeginReadWrite(TapeState.ReadingTOC);
         
+        /// <summary>
+        /// Transitions to <see cref="TapeState.WritingContent"/>, positioning tape at the target content set.
+        /// </summary>
+        /// <param name="remainingCapacity">Remaining media capacity for EOM checks; negative to skip.</param>
         public bool BeginWriteContent(long remainingCapacity)
         {
             ResetError();
@@ -216,6 +234,10 @@ namespace TapeLibNET
 
             return WentOK;
         }
+        /// <summary>
+        /// Transitions to <see cref="TapeState.ReadingContent"/>, positioning tape at the target content set.
+        /// <para>If already reading, navigates to a different set without leaving the reading state.</para>
+        /// </summary>
         public bool BeginReadContent()
         {
             ResetError();
@@ -537,6 +559,7 @@ namespace TapeLibNET
             Stream = null;
         }
 
+        /// <summary>Produces a <see cref="TapeWriteStream"/> for writing TOC data. Transitions to <see cref="TapeState.WritingTOC"/> if needed.</summary>
         public TapeWriteStream? ProduceWriteTOCStream()
         {
             // TODO: consider implementing m_tapeStream reuse using stream.Reset()
@@ -580,6 +603,13 @@ namespace TapeLibNET
             return length <= remaining;
         }
 
+        /// <summary>
+        /// Produces a <see cref="TapeWriteStream"/> for writing content data.
+        /// <para>Returns <see langword="null"/> with <see cref="WIN32_ERROR.ERROR_END_OF_MEDIA"/> if
+        ///  <paramref name="length"/> exceeds remaining capacity.</para>
+        /// </summary>
+        /// <param name="length">Expected file size for capacity check; negative to skip.</param>
+        /// <param name="writtenSoFar">Bytes already written in the current set.</param>
         public TapeWriteStream? ProduceWriteContentStream(long length, long writtenSoFar)
         {
             if (IsStreamInUse)
@@ -612,6 +642,7 @@ namespace TapeLibNET
             return (TapeWriteStream)Stream;
         }
 
+        /// <summary>Produces a <see cref="TapeReadStream"/> for reading TOC data.</summary>
         public TapeReadStream? ProduceReadTOCStream(bool textFileMode = false, long lengthLimit = -1)
         {
             if (IsStreamInUse)
@@ -632,6 +663,7 @@ namespace TapeLibNET
             return (TapeReadStream)Stream;
         }
 
+        /// <summary>Produces a <see cref="TapeReadStream"/> for reading content data from the target set.</summary>
         public TapeReadStream? ProduceReadContentStream(bool textFileMode = false, long lengthLimit = -1)
         {
             if (IsStreamInUse)

@@ -3,20 +3,36 @@
 namespace TapeLibNET
 {
 
+    /// <summary>
+    /// Lifecycle states of a <see cref="TapeStreamManager"/>.
+    /// <code>
+    /// NotInitialized → Open → MediaLoaded → MediaPrepared ⇄ Reading/WritingTOC/Content
+    /// </code>
+    /// </summary>
     public enum TapeState
     {
+        /// <summary>Drive not yet opened.</summary>
         NotInitialized,
+        /// <summary>Drive handle acquired, no media loaded.</summary>
         Open,
+        /// <summary>Media detected in drive.</summary>
         MediaLoaded,
+        /// <summary>Media formatted and ready for I/O operations.</summary>
         MediaPrepared,
+        /// <summary>Reading from the TOC area.</summary>
         ReadingTOC,
+        /// <summary>Writing to the TOC area.</summary>
         WritingTOC,
+        /// <summary>Reading from a content set.</summary>
         ReadingContent,
+        /// <summary>Writing to a content set.</summary>
         WritingContent,
     }
 
-    // A simple state machine that tries to foolproof TapeManager usage a bit
-    //  by enforcing valid state transitions, e.g. properly finishing writing operations before reading
+    /// <summary>
+    /// Dictionary-based state machine enforcing valid <see cref="TapeState"/> transitions.
+    /// <para>Implicitly converts to <see cref="TapeState"/> for convenient comparison with state literals.</para>
+    /// </summary>
     public class TapeManagerState(TapeState initState = TapeState.NotInitialized)
     {
         private readonly Dictionary<TapeState, ReadOnlyCollection<TapeState>> m_validTransitions = new()
@@ -32,22 +48,26 @@ namespace TapeLibNET
             [TapeState.WritingContent] = new([TapeState.MediaPrepared]),
         };
 
+        /// <summary>Current state of the machine.</summary>
         public TapeState CurrentState { get; private set; } = initState;
 
+        /// <inheritdoc />
         public override string? ToString() => CurrentState.ToString();
 
         //public override bool Equals(object? obj) => (obj is TapeManagerState ts && CurrentState == ts.CurrentState) || (obj is TapeState state && CurrentState == state);
         //public override int GetHashCode() => (int)CurrentState;
         //public static bool operator == (TapeManagerState ts, TapeState state) => ts.CurrentState == state;
         //public static bool operator != (TapeManagerState ts, TapeState state) => ts.CurrentState != state;
-        // the below implicit conversion covers all the functionality needed to compare vs. TapeState literals
+        /// <summary>Implicit conversion to <see cref="TapeState"/> for direct comparison.</summary>
         public static implicit operator TapeState(TapeManagerState ts) => ts.CurrentState;
 
+        /// <summary>Returns <see langword="true"/> if <see cref="CurrentState"/> matches any of the given <paramref name="states"/>.</summary>
         public bool IsOneOf(params TapeState[] states)
         {
             return states.Contains(CurrentState);
         }
 
+        /// <summary>Checks whether transitioning to <paramref name="nextState"/> is allowed.</summary>
         public bool CanTransitionTo(TapeState nextState)
         {
             if (nextState == CurrentState)
@@ -57,6 +77,7 @@ namespace TapeLibNET
                    allowedTransitions.Contains(nextState);
         }
 
+        /// <summary>Transitions to <paramref name="nextState"/>; throws <see cref="InvalidOperationException"/> if invalid.</summary>
         public void TransitionTo(TapeState nextState)
         {
             if (!CanTransitionTo(nextState))
@@ -65,6 +86,7 @@ namespace TapeLibNET
             CurrentState = nextState;
         }
 
+        /// <summary>Attempts transition to <paramref name="nextState"/>; returns <see langword="false"/> if invalid.</summary>
         public bool TryTransitionTo(TapeState nextState)
         {
             if (!CanTransitionTo(nextState))

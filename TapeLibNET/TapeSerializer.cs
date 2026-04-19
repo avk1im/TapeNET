@@ -3,16 +3,23 @@ using System.Text;
 
 namespace TapeLibNET
 {
+    /// <summary>
+    /// Contract for types that can be written to / read from tape via <see cref="TapeSerializer"/> and <see cref="TapeDeserializer"/>.
+    /// </summary>
     public interface ITapeSerializable
     {
+        /// <summary>Writes this instance to the given <paramref name="serializer"/>.</summary>
         void SerializeTo(TapeSerializer serializer);
+        /// <summary>Reconstructs an instance from the given <paramref name="deserializer"/>, or returns <see langword="null"/> on failure.</summary>
         abstract static ITapeSerializable? ConstructFrom(TapeDeserializer deserializer);
     }
 
-    // A sane serializer without reflection, without JSON, neither bells nor wistles.
-    //  Can work with any strream, though we only use it with TapeStream.
-    //  It employs no buffering of its own since TapeStream implements buffering.
-    //  Therefore, it needn't implement IDisposable.
+    /// <summary>
+    /// Minimal binary serializer — no reflection, no JSON.
+    /// <para>Works with any <see cref="Stream"/>; employs no buffering of its own
+    ///  since <see cref="TapeStream"/> already buffers. Strings are UTF-8 with a 32-bit length prefix.</para>
+    /// </summary>
+    /// <param name="wstream">Target stream to write serialized data to.</param>
     public class TapeSerializer(Stream wstream)
     {
         internal static readonly byte[] Signature = [(byte)'T', (byte)'F'];
@@ -25,27 +32,6 @@ namespace TapeLibNET
             Unsafe.As<byte, TUnmanaged>(ref bytes[0]) = v;
             return bytes;
         }
-
-#if USE_JSON_SERIALIZER
-        private static readonly JsonSerializerOptions c_jsonOptions = new()
-        { // the options for smaller output
-            //IncludeFields = true, // don't include fields -- risk of recursion!
-            WriteIndented = false,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-            //IgnoreReadOnlyProperties = true
-        };
-        public void SerializeJson<TClass>(TClass value) where TClass : class
-            => Serialize(JsonSerializer.Serialize(value, c_jsonOptions));
-        public void SerializeJson<TEnum, TValue>(TEnum @enum)
-            where TEnum : IEnumerable<TValue>
-            where TValue : class
-        {
-            Serialize(@enum.Count);
-            foreach (var item in @enum)
-                SerializeJson(item);
-        }
-#endif
 
         public void Serialize(byte[] bytes) => wstream.Write(bytes, 0, bytes.Length);
         public void SerializeWithLength(byte[] bytes)
@@ -97,40 +83,13 @@ namespace TapeLibNET
     } // class TapeSerializer
 
 
+    /// <summary>
+    /// Counterpart to <see cref="TapeSerializer"/> — reads primitives, strings, and
+    ///  <see cref="ITapeSerializable"/> objects from a stream.
+    /// </summary>
+    /// <param name="rstream">Source stream to read serialized data from.</param>
     public class TapeDeserializer(Stream rstream)
     {
-#if USE_JSON_SERIALIZER
-        private static readonly JsonSerializerOptions c_jsonOptions = new()
-        { // the options for smaller output
-            //IncludeFields = true, // don't include fields -- risk of recursion!
-            WriteIndented = false,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-            //IgnoreReadOnlyProperties = true
-        };
-        public TClass? DeserializeJson<TClass>() where TClass : class
-        {
-            var jsonString = DeserializeString();
-            return JsonSerializer.Deserialize<TClass>(jsonString, c_jsonOptions);
-        }
-        public TList DeserializeJson<TList, TValue>()
-            where TList : List<TValue>, new()
-            where TValue : class
-        {
-            var list = new TList();
-            var count = DeserializeInt32();
-
-            for (int i = 0; i < count; i++)
-            {
-                var item = DeserializeJson<TValue>();
-                if (item != null)
-                    list.Add(item);
-            }
-
-            return list;
-        }
-#endif
-
         public byte[]? DeserializeBytes(int length)
         {
             var bytes = new byte[length];

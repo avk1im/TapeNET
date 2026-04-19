@@ -8,9 +8,18 @@ using System.IO.Hashing;
 namespace TapeLibNET
 {
 
+    /// <summary>
+    /// Abstract pass-through stream that intercepts <see cref="Read"/> and <see cref="Write"/>
+    ///  calls via <see cref="OnRead"/> / <see cref="OnWrite"/> hooks before delegating to the inner stream.
+    /// <para>Seeking is disabled because repositioning would break sequential filtering invariants.</para>
+    /// </summary>
+    /// <param name="inner">Inner stream to wrap.</param>
+    /// <param name="ownInner">If <see langword="true"/>, disposes <paramref name="inner"/> on <see cref="Dispose(bool)"/>.</param>
     public abstract class FilterStream(Stream inner, bool ownInner = false) : Stream
     {
+        /// <summary>Called after data is read from the inner stream. <paramref name="count"/> reflects actual bytes read.</summary>
         protected abstract void OnRead(byte[] buffer, int offset, int count);
+        /// <summary>Called before data is written to the inner stream.</summary>
         protected abstract void OnWrite(byte[] buffer, int offset, int count);
 
         protected override void Dispose(bool disposing)
@@ -51,6 +60,13 @@ namespace TapeLibNET
 
     } // class FliterStream
 
+    /// <summary>
+    /// <see cref="FilterStream"/> that feeds every read/written byte span into a
+    ///  <see cref="NonCryptographicHashAlgorithm"/> for incremental hash computation.
+    /// </summary>
+    /// <param name="inner">Inner stream to wrap.</param>
+    /// <param name="hasher">Hash algorithm instance that accumulates data via <see cref="NonCryptographicHashAlgorithm.Append"/>.</param>
+    /// <param name="ownInner">If <see langword="true"/>, disposes <paramref name="inner"/> on dispose.</param>
     public class HashingStream(Stream inner, NonCryptographicHashAlgorithm hasher,
         bool ownInner = false) : FilterStream(inner, ownInner)
     {
@@ -69,9 +85,14 @@ namespace TapeLibNET
     } // class HashingStream
 
 
+    /// <summary>Extension methods for <see cref="Stream"/>.</summary>
     public static class StreamHelpers
     {
-        // Surprisingly, class Stream doesn't offer CompareTo(Stream) method, so we have to implement it ourselves
+        /// <summary>
+        /// Compares two streams byte-by-byte from their current positions using SIMD-vectorized
+        ///  <see cref="MemoryExtensions.SequenceEqual{T}"/> and pooled buffers via <see cref="ByteBufferCache"/>.
+        /// </summary>
+        /// <returns><see langword="true"/> if both streams yield identical byte sequences until EOF.</returns>
         public static bool CompareTo(this Stream stream1, Stream stream2, int bufferSize = 81920) // same default buffer size as in Stream.CopyTo()
         {
             if (stream1 == stream2)

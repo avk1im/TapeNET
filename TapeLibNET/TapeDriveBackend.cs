@@ -6,6 +6,7 @@ namespace TapeLibNET;
 
 /// <summary>
 /// Drive capabilities and parameters (abstracted from TAPE_GET_DRIVE_PARAMETERS).
+/// Determines which <see cref="TapeNavigator"/> subclass is instantiated.
 /// </summary>
 public readonly record struct DriveCapabilities(
     uint MinimumBlockSize,
@@ -20,7 +21,8 @@ public readonly record struct DriveCapabilities(
 );
 
 /// <summary>
-/// Media parameters (abstracted from TAPE_GET_MEDIA_PARAMETERS).
+/// Current media parameters (abstracted from TAPE_GET_MEDIA_PARAMETERS).
+/// Refreshed after media load, format, partition switch, or block-size change.
 /// </summary>
 public readonly record struct MediaParameters(
     long Capacity,
@@ -31,7 +33,9 @@ public readonly record struct MediaParameters(
 );
 
 /// <summary>
-/// Logical partition on tape media.
+/// Logical tape partition identifier. Maps to the Win32 partition numbers.
+/// <see cref="Initiator"/> holds the TOC in the <c>WithPartitions</c> organization;
+/// <see cref="Content"/> holds backup-set data.
 /// </summary>
 public enum MediaPartition
 {
@@ -110,16 +114,22 @@ public abstract class TapeDriveBackend : ErrorManageableBase, IDisposable
     /// Opens the tape drive by number (backend generates device name).
     /// </summary>
     public abstract bool Open(uint driveNumber);
+    /// <summary>Closes the drive handle.</summary>
     public abstract void Close();
+    /// <summary>Configures drive parameters (compression, ECC, padding, setmark reporting, EOT warning).</summary>
     public abstract bool SetDriveParameters(bool compression, bool ecc, bool dataPadding, bool reportSetmarks, uint eotWarningZoneSize);
 
     #endregion
 
     #region *** Abstract Media Operations ***
 
+    /// <summary>Loads (tensions) the tape into the drive.</summary>
     public abstract bool LoadMedia();
+    /// <summary>Ejects the tape from the drive.</summary>
     public abstract bool UnloadMedia();
+    /// <summary>Sets the tape block size in bytes.</summary>
     public abstract bool SetBlockSize(uint size);
+    /// <summary>Formats media, optionally creating an initiator partition of the given size.</summary>
     public abstract bool FormatMedia(long initiatorPartitionSize = -1);
 
     #endregion
@@ -152,28 +162,41 @@ public abstract class TapeDriveBackend : ErrorManageableBase, IDisposable
 
     #region *** Abstract Positioning Operations ***
 
+    /// <summary>Moves tape to a logical block address.</summary>
     public abstract bool SetPosition(long block);
+    /// <summary>Moves tape to a block in a specific partition.</summary>
     public abstract bool SetPositionToPartition(MediaPartition partition, long block);
+    /// <summary>Returns the current logical block address.</summary>
     public abstract long GetPosition();
+    /// <summary>Returns the partition the tape head is currently in.</summary>
     public abstract MediaPartition GetCurrentPartition();
+    /// <summary>Rewinds the tape to block 0 in the current partition.</summary>
     public abstract bool Rewind();
+    /// <summary>Fast-forwards to the end-of-data mark in the specified partition.</summary>
     public abstract bool SeekToEnd(MediaPartition partition);
+    /// <summary>Spaces forward (positive) or backward (negative) by filemark count.</summary>
     public abstract bool SpaceFilemarks(int count);
+    /// <summary>Spaces forward or backward by setmark count.</summary>
     public abstract bool SpaceSetmarks(int count);
+    /// <summary>Spaces forward or backward by sequential filemark count.</summary>
     public abstract bool SpaceSequentialFilemarks(int count);
 
     #endregion
 
     #region *** Abstract Tapemark Operations ***
 
+    /// <summary>Writes <paramref name="count"/> filemarks at the current position.</summary>
     public abstract bool WriteFilemarks(uint count);
+    /// <summary>Writes <paramref name="count"/> setmarks at the current position.</summary>
     public abstract bool WriteSetmarks(uint count);
 
     #endregion
 
     #region *** Abstract Parameter Queries ***
 
+    /// <summary>Queries the drive and populates <paramref name="parameters"/>.</summary>
     public abstract void FillDriveCapabilities(out DriveCapabilities parameters);
+    /// <summary>Queries the loaded media and populates <paramref name="parameters"/>.</summary>
     public abstract void FillMediaParameters(out MediaParameters parameters);
 
     #endregion

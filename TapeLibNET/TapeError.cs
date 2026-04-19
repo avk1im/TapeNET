@@ -7,11 +7,19 @@ using System.Runtime.CompilerServices;
 
 namespace TapeLibNET;
 
-// In public methods and properties, expose error values as uint - for callers not using Windows.Win32.Foundation
+/// <summary>
+/// Common error-state contract for all tape-related classes.
+/// Exposes Win32 error codes as <c>uint</c> so callers need not reference <c>Windows.Win32.Foundation</c>.
+/// </summary>
 public interface IErrorManageable
 {
+    /// <summary>Last Win32 error code (0 = no error).</summary>
     public uint LastError { get; }
+
+    /// <summary>Human-readable description of <see cref="LastError"/>.</summary>
     public string LastErrorMessage { get; }
+
+    /// <summary>Clears the stored error state.</summary>
     void ResetError();
 }
 
@@ -265,13 +273,17 @@ public abstract class ErrorManageableBase(ILogger logger) : IErrorManageable
 
     #region *** Error Helpers ***
 
+    /// <summary>Typed accessor for the last error (internal use).</summary>
     internal WIN32_ERROR LastErrorWin32
     {
         get => m_errorOwn;
         set => SetError(value);
     }
 
+    /// <summary><c>true</c> when no error is recorded.</summary>
     public virtual bool WentOK => m_errorOwn == WIN32_ERROR.NO_ERROR;
+
+    /// <summary><c>true</c> when an error is recorded.</summary>
     public virtual bool WentBad => !WentOK;
 
     /// <summary>True when the current error indicates end-of-media (tape full or no more data).</summary>

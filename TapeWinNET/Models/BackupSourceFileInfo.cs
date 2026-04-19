@@ -7,7 +7,7 @@ using TypeUID = ulong;
 
 /// <summary>
 /// A <see cref="TapeFileInfo"/> subclass representing a file on the host's
-/// disk (not on tape). Used by the New Backup Set workflow to wrap resolved
+/// disk (not on tape). Used by the Backup workflow to wrap resolved
 /// disk files so they can flow through the existing <see cref="Utils.FilteredFileList"/>
 /// and <see cref="FileListItem"/> infrastructure unchanged.
 /// <para>

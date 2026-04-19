@@ -10,7 +10,12 @@ using Windows.Win32.System.SystemServices;
 namespace TapeLibNET;
 
 /// <summary>
-/// Win32 implementation of TapeDriveBackend using Windows Tape API.
+/// Win32 implementation of <see cref="TapeDriveBackend"/> using the Windows Tape Backup API.
+/// The only class in TapeLibNET that issues P/Invoke calls to the tape driver.
+/// <para>
+/// Handles hardware quirks discovered at runtime (e.g. DLT-V4 rejecting <c>bImmediate</c>,
+/// DAT-320 premature polling completion) by caching per-opcode blocking-mode overrides.
+/// </para>
 /// </summary>
 public class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeDriveBackend(loggerFactory)
 {

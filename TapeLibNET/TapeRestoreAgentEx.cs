@@ -5,10 +5,14 @@ using TapeLibNET;
 
 namespace TapeLibNET
 {
+    /// <summary>Policy for handling files that already exist at the restore target location.</summary>
     public enum TapeHowToHandleExisting
     {
+        /// <summary>Do not restore; leave existing file untouched.</summary>
         Skip,
+        /// <summary>Replace existing file with the tape version.</summary>
         Overwrite,
+        /// <summary>Rename the restored file with a <c>(N)</c> suffix to keep both versions.</summary>
         KeepBoth
     }
 
@@ -102,22 +106,21 @@ namespace TapeLibNET
     */
 
     /// <summary>
-    /// Extends <see cref="TapeFileRestoreAgent"/> to handle:
-    ///  - target directory,
-    ///  - recursion into subdirectories, and
-    ///  - existing files.
+    /// Extended restore agent that redirects files to a <see cref="TargetDirectory"/>,
+    ///  optionally preserving subdirectory structure (<see cref="RecurseSubdirectories"/>),
+    ///  and applies an <see cref="HandleExisting"/> policy for collisions.
+    /// <para>Overrides <see cref="PreProcessFileInternal"/> to rewrite paths, create directories,
+    ///  and handle existing files before the base restore logic runs.</para>
     /// </summary>
-    /// <param name="drive"></param>
-    /// <param name="targetDir"></param>
-    /// <param name="recurseSubdirs"></param>
-    /// <param name="handleExisting"></param>
-    /// <param name="legacyTOC"></param>
     public class TapeFileRestoreAgentEx(TapeDrive drive,
         string? targetDir, bool recurseSubdirs, TapeHowToHandleExisting handleExisting,
         TapeTOC? legacyTOC = null) : TapeFileRestoreAgent(drive, legacyTOC)
     {
+        /// <summary>Target directory for restored files; <see langword="null"/> to restore to original paths.</summary>
         public string? TargetDirectory { get; set; } = targetDir;
+        /// <summary>When <see langword="true"/>, preserves subdirectory structure under <see cref="TargetDirectory"/>.</summary>
         public bool RecurseSubdirectories { get; set; } = recurseSubdirs;
+        /// <summary>Policy for files that already exist at the target path.</summary>
         public TapeHowToHandleExisting HandleExisting { get; set; } = handleExisting;
 
         protected override bool PreProcessFileInternal(ref TapeFileDescriptor fileDescr)

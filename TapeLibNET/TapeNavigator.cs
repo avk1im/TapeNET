@@ -10,9 +10,23 @@ using TapeLibNET;
 
 namespace TapeLibNET
 {
-    // Handles the positioning of the tape
-    //  Supports the notion of "content" area with "content sets" and a "TOC" area
-    //  The base class for the derivates specific to TOC placement
+    /// <summary>
+    /// Handles tape positioning across a content area (zero or more content sets) and a TOC area.
+    /// <para>Subclasses implement the physical layout; use <see cref="ProduceNavigator"/> to create
+    ///  the appropriate one for the loaded media.</para>
+    /// <para><b>Set indexation:</b> positive values (0, 1, …) count from the oldest set forward;
+    ///  negative values (−1 = end-of-content / write position, −2 = newest set, −3 = second newest, …).
+    ///  Special sentinels: <see cref="UnknownSet"/>, <see cref="InTOCSet"/>.</para>
+    /// </summary>
+    /// <remarks>
+    /// Tape organizations and corresponding subclasses:
+    /// <list type="bullet">
+    /// <item><see cref="TapeNavigatorTOCInPartition"/> — WithPartitions</item>
+    /// <item><see cref="TapeNavigatorTOCInSetWithSmks"/> — WithSetmarks</item>
+    /// <item><see cref="TapeNavigatorTOCInSetWithFmks"/> — WithSeqFilemarks (no TOC mark)</item>
+    /// <item><see cref="TapeNavigatorTOCInSetWithFmksAndTOCMark"/> — WithSeqFilemarks + TOC mark</item>
+    /// </list>
+    /// </remarks>
     public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     {
         #region *** Private fields ***
@@ -35,23 +49,23 @@ namespace TapeLibNET
 
         public virtual bool TOCInvalidated { get; protected set; } = false;
 
-        // The content set next to read. Can be counted either from the beginning or the end of content.
-        //  0 means the first (oldest written) content set; 1 the second oldest, etc.
-        //  -1 means "the end of content" -- must be set e.g. for writing a new content set
-        //  -2 means the last (most recently written) content set; -3 second last, etc.
+        /// <summary>
+        /// Content set to navigate to on the next <see cref="MoveToTargetContentSet"/> call.
+        /// <para>0 = oldest set, 1 = second oldest, …; −1 = end-of-content (write position),
+        ///  −2 = newest set, −3 = second newest, …</para>
+        /// </summary>
         public int TargetContentSet { get; set; }
 
-        // The content set being accessed. Follows the same semantic as TargetContentSet:
-        //  0 means the first (oldest written) content set; 1 the second oldest, etc.
-        //  -1 means "the end of content" -- set e.g. for writing a new content set
-        //  -2 means the last (most recently written) content set; -3 second last, etc.
-        // In addition:
-        //  UnknownSet means the current content set is unknown / not set yet
-        //  InTOCSet means the current position is in the TOC area
-        // Notice we never rely on that we know the number of content sets on the tape!
-        //  -> we always count either from the beginning or the end of content.
+        /// <summary>
+        /// Content set the tape head is currently positioned at. Same indexation as
+        ///  <see cref="TargetContentSet"/>, plus sentinels <see cref="UnknownSet"/> and <see cref="InTOCSet"/>.
+        /// <para>The navigator never relies on knowing the total number of sets — it always
+        ///  counts from the beginning or the end of content.</para>
+        /// </summary>
         public int CurrentContentSet { get; protected set; } = UnknownSet;
+        /// <summary>Sentinel: current position is unknown or not yet established.</summary>
         public static int UnknownSet => int.MinValue;
+        /// <summary>Sentinel: tape head is positioned inside the TOC area.</summary>
         public static int InTOCSet => UnknownSet + 1;
         internal void ResetContentSet() => CurrentContentSet = UnknownSet;
 
@@ -117,7 +131,11 @@ namespace TapeLibNET
 
         #region *** Operation modes ***
 
-        public bool FmksMode // use filemarks -- valid only for Content, and only with SmksMode. TOC always uses filemarks
+        /// <summary>
+        /// When <see langword="true"/>, content files are separated by filemarks in addition to setmarks.
+        /// <para>Only effective when the drive supports setmarks; TOC always uses filemarks regardless.</para>
+        /// </summary>
+        public bool FmksMode // use filemarks — valid only for Content, and only with SmksMode. TOC always uses filemarks
         {
             get => m_fmksMode;
             internal set
@@ -146,9 +164,10 @@ namespace TapeLibNET
 
         #region *** TOC positioning ***
 
+        /// <summary>Positions the tape at the start of the TOC area. Subclasses implement the physical seek.</summary>
         public virtual bool MoveToBeginOfTOC()
         {
-            // Actuial implementation by the derived classes - we just finalize here
+            // Actual implementation by the derived classes — we just finalize here
 
             if (WentOK)
                 CurrentContentSet = InTOCSet; // if we're in TOC area, we aren't in any content set!
@@ -168,9 +187,10 @@ namespace TapeLibNET
 
         #region *** Content positioning ***
 
+        /// <summary>Positions the tape at the start of the content area (set 0).</summary>
         public virtual bool MoveToBeginOfContent()
         {
-            // Actual implementation by the derived classes - we just finalize here
+            // Actual implementation by the derived classes — we just finalize here
 
             if (WentOK)
                 CurrentContentSet = 0; // we're at the beginning of content
@@ -183,9 +203,10 @@ namespace TapeLibNET
             return WentOK;
         }
 
+        /// <summary>Positions the tape at the end of the content area (write position for new sets).</summary>
         public virtual bool MoveToEndOfContent()
         {
-            // Actual implementation by the derived classes - we just finalize here
+            // Actual implementation by the derived classes — we just finalize here
 
             if (WentOK)
                 CurrentContentSet = -1; // we're at the end of content
@@ -200,6 +221,12 @@ namespace TapeLibNET
             return WentOK;
         }
 
+        /// <summary>
+        /// Navigates to <see cref="TargetContentSet"/> using bidirectional setmark traversal.
+        /// <para>Positive targets seek forward from content start; negative targets seek backward
+        ///  from content end. Handles <see cref="WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA"/> gracefully
+        ///  when the oldest set has no preceding setmark.</para>
+        /// </summary>
         public virtual bool MoveToTargetContentSet()
         {
             m_logger.LogTrace("Drive #{Drive}: Moving to target content set {Set}", DriveNumber, TargetContentSet);
@@ -408,6 +435,15 @@ namespace TapeLibNET
     } // TapeNavigator
 
 
+    /// <summary>
+    /// Navigator for drives with an initiator partition (WithPartitions organization).
+    /// <para>TOC resides in the initiator partition; content in the content partition.
+    ///  Partition switches trigger media-parameter refresh (e.g. capacity).</para>
+    /// <code>
+    /// Partition 1 (Content): [set0][SM][set1][SM]…[setN][SM]
+    /// Partition 2 (Initiator): [toc1][FM][toc2][FM]
+    /// </code>
+    /// </summary>
     public class TapeNavigatorTOCInPartition : TapeNavigator
     {
         #region *** Constants ***
@@ -511,6 +547,11 @@ namespace TapeLibNET
     } // TapeNavigatorTOCInPartition
 
 
+    /// <summary>
+    /// Base class for single-partition layouts where the TOC follows the content on the same tape.
+    /// <para><see cref="TOCInvalidated"/> starts <see langword="true"/> and is cleared after each
+    ///  successful TOC write; any content write re-invalidates it.</para>
+    /// </summary>
     public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(drive)
     {
         #region *** Constants ***
@@ -564,6 +605,15 @@ namespace TapeLibNET
     }
 
 
+    /// <summary>
+    /// Navigator for drives supporting real setmarks (WithSetmarks organization).
+    /// <para>Content sets are delimited by setmarks; the TOC follows the last setmark.
+    ///  When <see cref="TapeNavigator.FmksMode"/> is active, individual files within a set
+    ///  are additionally separated by filemarks.</para>
+    /// <code>
+    /// [set0][SM][set1][SM]…[setN][SM][toc1][FM][toc2][FM]
+    /// </code>
+    /// </summary>
     public class TapeNavigatorTOCInSetWithSmks : TapeNavigatorTOCInSet
     {
         #region *** Constructors ***
@@ -675,6 +725,14 @@ namespace TapeLibNET
     } // TapeNavigatorTOCInSetWithSmks
 
 
+    /// <summary>
+    /// Navigator for drives with sequential filemarks only, without a TOC marker (WithSeqFilemarks).
+    /// <para>Content sets and TOC copies are all separated by filemarks. Locating the TOC
+    ///  requires seeking backward from end-of-data by a known filemark count.</para>
+    /// <code>
+    /// [set0][FM][set1][FM]…[setN][FM][toc1][FM][toc2][FM]
+    /// </code>
+    /// </summary>
     public class TapeNavigatorTOCInSetWithFmks : TapeNavigatorTOCInSet
     {
         #region *** Constructors ***
@@ -744,6 +802,17 @@ namespace TapeLibNET
     } // TapeNavigatorTOCInSetWithFmks
 
 
+    /// <summary>
+    /// Navigator for drives with sequential filemarks, using a dedicated TOC marker sequence
+    ///  (WithSeqFilemarks + TOCMark organization).
+    /// <para>A gap file followed by <c>FmksAsTOCMark</c> (3) consecutive filemarks marks the
+    ///  boundary between content and TOC. The marker enables reliable forward scanning via
+    ///  <see cref="TapeDrive.MovePastSeqFilemarks"/>.</para>
+    /// <code>
+    /// [set0][FM][set1][FM]…[setN][FM][gap][FM][FM][FM][toc1][FM][toc2][FM]
+    ///                                    └── TOC mark ──┘
+    /// </code>
+    /// </summary>
     public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
     {
         #region *** Constants ***

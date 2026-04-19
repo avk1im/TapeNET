@@ -6,6 +6,11 @@ using System.Runtime.CompilerServices;
 namespace TapeLibNET
 {
 
+    /// <summary>
+    /// Abstract base for buffered tape I/O streams. Wraps a <see cref="TapeStreamBuffer"/>
+    /// and tracks cumulative bytes via <see cref="Length"/>.
+    /// <para>Instances are created exclusively by <see cref="TapeStreamManager"/>.</para>
+    /// </summary>
     public abstract class TapeStream : Stream
     {
         protected readonly TapeStreamManager m_mgr;
@@ -55,11 +60,17 @@ namespace TapeLibNET
         }
 
 
+        /// <summary>Last drive operation succeeded.</summary>
         public bool WentOK => m_mgr.WentOK;
+        /// <summary>Last drive operation failed.</summary>
         public bool WentBad => m_mgr.WentBad;
+        /// <summary>Win32 error code of the last failed operation.</summary>
         public uint LastError => m_mgr.LastError;
+        /// <summary>Human-readable message for <see cref="LastError"/>.</summary>
         public string LastErrorMessage => m_mgr.LastErrorMessage;
+        /// <summary>Set when the tape signals end-of-data during a read.</summary>
         public bool EOFEncountered { get; protected set; } = false;
+        /// <summary>Set when a filemark or setmark is hit during a read or write.</summary>
         public bool TapemarkEncountered { get; protected set; } = false;
 
 
@@ -111,10 +122,25 @@ namespace TapeLibNET
     } // class TapeStream
 
 
+    /// <summary>
+    /// Read-only tape stream. Buffers data from the drive via <see cref="TapeStreamBuffer"/>
+    /// and supports two optional modes:
+    /// <list type="bullet">
+    ///   <item><see cref="LengthLimitMode"/> — caps reads at an exact byte count (used to
+    ///     read a file whose length is known from TOC).</item>
+    ///   <item><see cref="TextFileMode"/> — stops at the first null byte (legacy text files).</item>
+    /// </list>
+    /// </summary>
     public class TapeReadStream : TapeStream
     {
+        /// <summary>When <c>true</c>, reading stops at the first null byte.</summary>
         public bool TextFileMode { get; private set; }
+        /// <summary>When <c>true</c>, <see cref="Read"/> enforces <see cref="LengthLimit"/>.</summary>
         public bool LengthLimitMode { get; private set; }
+        /// <summary>
+        /// Absolute byte limit. Setting a non-negative value activates <see cref="LengthLimitMode"/>;
+        /// setting −1 deactivates it.
+        /// </summary>
         public long LengthLimit
         {
             get => m_lengthLimit;
@@ -136,6 +162,7 @@ namespace TapeLibNET
             }
         }
         private long m_lengthLimit = 0;
+        /// <summary>Bytes remaining before <see cref="LengthLimit"/> is reached, or −1 if unlimited.</summary>
         public long RemainingLength
         {
             get => LengthLimitMode ? LengthLimit - m_accLength : -1;
@@ -343,6 +370,11 @@ namespace TapeLibNET
     } // class TapeReadStream
 
 
+    /// <summary>
+    /// Write-only tape stream. Accumulates data in a <see cref="TapeStreamBuffer"/> of
+    /// <c>2 × BlockSize</c> and writes full blocks to the drive. <see cref="Flush"/>
+    /// zero-pads any partial trailing block to the next block boundary.
+    /// </summary>
     public class TapeWriteStream : TapeStream
     {
         protected override uint BufferSizeToAllocate => BlockSize * 2;

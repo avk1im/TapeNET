@@ -8,7 +8,10 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace TapeLibNET;
 
 /// <summary>
-/// Platform-agnostic tape drive controller that delegates to a TapeDriveBackend.
+/// Platform-agnostic tape drive controller.
+/// Delegates all hardware I/O to a <see cref="TapeDriveBackend"/> (Win32 or virtual)
+///  while providing error handling, media lifecycle, and direct read/write access.
+/// <para>Lifecycle: <see cref="ReopenDrive"/> → <see cref="ReloadMedia"/> → <see cref="PrepareMedia"/> → I/O → <see cref="Dispose"/>.</para>
 /// </summary>
 public class TapeDrive : ErrorManageableBase, IDisposable
 {
@@ -85,23 +88,38 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         set => m_backend.OperationTimeout = value;
     }
 
+    /// <summary>Zero-based drive number (\\.\ TAPE<i>N</i>).</summary>
     public uint DriveNumber => m_backend.DriveNumber;
+    /// <summary>NT device path (e.g. <c>\\.\TAPE0</c>).</summary>
     public string DriveDeviceName => m_backend.DeviceName;
 
+    /// <summary>Drive handle is open and capabilities have been read.</summary>
     public bool IsDriveOpen => m_backend.IsOpen && m_driveParams != null;
+    /// <summary>Drive is open and media (tape cartridge) is loaded.</summary>
     public bool IsMediaLoaded => IsDriveOpen && m_mediaParams != null;
 
+    /// <summary>Drive hardware supports a separate initiator (TOC) partition.</summary>
     public bool SupportsInitiatorPartition => m_driveParams?.SupportsInitiatorPartition ?? false;
+    /// <summary>Current media has an initiator partition created.</summary>
     public bool HasInitiatorPartition => m_mediaParams?.HasInitiatorPartition ?? false;
+    /// <summary>Number of partitions on the current media (1 or 2).</summary>
     public uint PartitionCount => HasInitiatorPartition ? 2U : 1U;
+    /// <summary>Drive supports setmarks (enables <c>WithSetmarks</c> tape organization).</summary>
     public bool SupportsSetmarks => m_driveParams?.SupportsSetmarks ?? false;
+    /// <summary>Drive can distinguish sequential filemark counts (enables <c>WithSeqFilemarks</c> organization).</summary>
     public bool SupportsSeqFilemarks => m_driveParams?.SupportsSeqFilemarks ?? false;
+    /// <summary>Minimum block size the drive accepts, in bytes.</summary>
     public uint MinimumBlockSize => m_driveParams?.MinimumBlockSize ?? 0U;
+    /// <summary>Maximum block size the drive accepts, in bytes.</summary>
     public uint MaximumBlockSize => m_driveParams?.MaximumBlockSize ?? 0U;
+    /// <summary>Drive's default block size, in bytes.</summary>
     public uint DefaultBlockSize => m_driveParams?.DefaultBlockSize ?? 0U;
 
+    /// <summary>Current block size for read/write operations, in bytes.</summary>
     public uint BlockSize => m_mediaParams?.BlockSize ?? 0U;
+    /// <summary>Current logical block address from the device.</summary>
     internal long BlockCounter => GetCurrentBlock();
+    /// <summary>Total capacity of the current partition, in bytes.</summary>
     public long Capacity => m_mediaParams?.Capacity ?? 0L;
 
     /// <summary>
@@ -110,6 +128,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
     /// </summary>
     public long ContentCapacity => m_cachedContentCapacity >= 0 ? m_cachedContentCapacity : Capacity;
 
+    /// <summary>Queries remaining capacity of the current partition (refreshes media params). Returns −1 on failure.</summary>
     public long GetRemainingCapacity()
     {
         if (!RefreshMediaParams())
@@ -135,8 +154,10 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         return m_cachedContentRemaining >= 0 ? m_cachedContentRemaining : 0;
     }
 
+    /// <summary>Running count of bytes transferred via <see cref="WriteDirect"/>/<see cref="ReadDirect"/>. Reset by the stream manager.</summary>
     public long ByteCounter { get; internal set; } = 0L;
 
+    /// <summary>Logger factory shared with the backend.</summary>
     public ILoggerFactory LoggerFactory => m_backend.LoggerFactory;
 
     public override string ToString()
@@ -196,6 +217,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
 
     #region *** Direct Read/Write ***
 
+    /// <summary>Writes raw blocks to tape. Returns bytes written; sets <paramref name="tapemark"/>/<paramref name="eof"/> on boundary conditions.</summary>
     public int WriteDirect(byte[] buffer, int offset, int count, out bool tapemark, out bool eof)
     {
         m_backend.CheckForRW(buffer, offset, count);
@@ -226,6 +248,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         return written;
     }
 
+    /// <summary>Reads raw blocks from tape. Returns bytes read; sets <paramref name="tapemark"/>/<paramref name="eof"/> on boundary conditions.</summary>
     public int ReadDirect(byte[] buffer, int offset, int count, out bool tapemark, out bool eof)
     {
         m_backend.CheckForRW(buffer, offset, count);
@@ -267,6 +290,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
 
     #region *** Drive & Media Operations ***
 
+    /// <summary>Opens (or reopens) the drive, reads capabilities, and sets optimal parameters.</summary>
     public bool ReopenDrive(uint driveNumber = 0, bool unconditionally = true)
     {
         if (!unconditionally && IsDriveOpen)
@@ -314,6 +338,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         return true;
     }
 
+    /// <summary>Closes the drive handle and clears cached parameters.</summary>
     public void CloseDrive()
     {
         m_logger.LogTrace("{Prefix}: Closing", LogPrefix);
@@ -326,6 +351,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         m_logger.LogTrace("{Prefix}: Closed", LogPrefix);
     }
 
+    /// <summary>Loads (tensions) the tape cartridge and reads media parameters. Positions to the content partition.</summary>
     public bool ReloadMedia(bool unconditionally = true)
     {
         if (!unconditionally && IsMediaLoaded)
@@ -352,6 +378,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         return IsMediaLoaded;
     }
 
+    /// <summary>Unloads (ejects) the tape cartridge and clears media parameters.</summary>
     public bool UnloadMedia()
     {
         if (!IsDriveOpen)
@@ -370,6 +397,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         return true;
     }
 
+    /// <summary>Sets optimal media parameters (compression, ECC). Call after <see cref="ReloadMedia"/>.</summary>
     public bool PrepareMedia()
     {
         if (!IsMediaLoaded)
@@ -387,6 +415,10 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         return WentOK;
     }
 
+    /// <summary>
+    /// Formats (erases) the tape. Pass <paramref name="initiatorPartitionSize"/> &gt; 0 to create
+    ///  an initiator partition for TOC storage. Reloads and prepares media afterward.
+    /// </summary>
     public bool FormatMedia(long initiatorPartitionSize = -1)
     {
         if (!IsMediaLoaded)
@@ -458,6 +490,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
 
     #region *** Partition Operations ***
 
+    /// <summary>Moves to the specified partition (and optional block). Refreshes media parameters for the new partition.</summary>
     public bool MoveToPartition(MediaPartition partition, long block = 0)
     {
         if (!IsMediaLoaded)
@@ -487,6 +520,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
 
     #region *** Tapemark Operations ***
 
+    /// <summary>Skips forward (positive) or backward (negative) by <paramref name="count"/> filemarks.</summary>
     public bool MoveToNextFilemark(int count = 1)
     {
         if (!IsMediaLoaded)
@@ -503,6 +537,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         return true;
     }
 
+    /// <summary>Writes <paramref name="count"/> filemark(s) at the current position.</summary>
     public bool WriteFilemark(uint count = 1)
     {
         if (!IsMediaLoaded)
@@ -519,6 +554,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         return true;
     }
 
+    /// <summary>Skips past <paramref name="count"/> sequential filemarks (used by <c>WithSeqFilemarks</c> organization).</summary>
     public bool MovePastSeqFilemarks(int count)
     {
         if (!IsMediaLoaded)
@@ -535,6 +571,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         return true;
     }
 
+    /// <summary>Skips forward (positive) or backward (negative) by <paramref name="count"/> setmarks.</summary>
     public bool MoveToNextSetmark(int count = 1)
     {
         if (!IsMediaLoaded)
@@ -557,6 +594,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         return true;
     }
 
+    /// <summary>Writes <paramref name="count"/> setmark(s) at the current position.</summary>
     public bool WriteSetmark(uint count = 1)
     {
         if (!IsMediaLoaded)
@@ -573,6 +611,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         return true;
     }
 
+    /// <summary>Writes a short dummy file (≥ <see cref="MinimumBlockSize"/> bytes) used as a gap before TOC marks.</summary>
     public bool WriteGapFile()
     {
         if (!IsMediaLoaded)
@@ -600,6 +639,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
 
     #region *** Tape Moving ***
 
+    /// <summary>Rewinds the tape to the beginning of the current partition.</summary>
     public bool Rewind()
     {
         if (!IsMediaLoaded)
@@ -616,6 +656,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         return true;
     }
 
+    /// <summary>Seeks to the end-of-data marker on the specified partition.</summary>
     public bool FastforwardToEnd(MediaPartition partition = MediaPartition.Content)
     {
         if (!IsMediaLoaded)
@@ -632,6 +673,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         return true;
     }
 
+    /// <summary>Positions the tape to the specified logical block address. No-op if already there.</summary>
     public bool MoveToBlock(long block)
     {
         if (!IsMediaLoaded)
@@ -657,6 +699,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         return true;
     }
 
+    /// <summary>Queries the current logical block address from the device. Returns −1 on failure.</summary>
     public long GetCurrentBlock()
     {
         if (!IsMediaLoaded)
@@ -668,6 +711,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         return WentOK ? position : -1;
     }
 
+    /// <summary>Queries the current partition from the device.</summary>
     public MediaPartition GetCurrentPartition()
     {
         if (!IsMediaLoaded)

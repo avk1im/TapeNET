@@ -8,6 +8,16 @@ using System.Net.Http.Headers;
 
 namespace TapeLibNET
 {
+    /// <summary>
+    /// Abstract restore agent — reads files from tape content sets, validates headers and CRC,
+    ///  and delegates actual file processing to <see cref="RestoreFileCore"/>.
+    /// <para>Concrete subclasses: <see cref="TapeFileRestoreAgent"/> (restore to disk),
+    ///  <see cref="TapeFileValidateAgent"/> (read + CRC only),
+    ///  <see cref="TapeFileVerifyAgent"/> (compare tape vs. disk).
+    ///  Extended by <see cref="TapeFileRestoreAgentEx"/> for target-directory and handle-existing logic.</para>
+    /// <para>Supports multi-volume restore via <see cref="CanResumeFromAnotherVolume"/> /
+    ///  <see cref="ResumeRestoreFromAnotherVolume"/>.</para>
+    /// </summary>
     public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileAgent(drive, legacyTOC)
     {
         // A flag that the last file has been skipped since it's not reported via the return value of RestoreNextFile()
@@ -31,7 +41,10 @@ namespace TapeLibNET
             return Manager.BeginReadContent();
         }
 
-        // for the decendant classes to override, to perform the actual file operation
+        /// <summary>
+        /// Performs the actual file processing (write to disk, validate, or verify).
+        ///  Override in subclasses; base implementation only checks stream validity.
+        /// </summary>
         protected virtual bool RestoreFileCore(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
         {
             if (rstream.IsDisposed)
@@ -479,9 +492,16 @@ namespace TapeLibNET
             internal bool overallSuccess = true;
         }
         private TapeRestoreContext? MultiVolumeContext { get; set; } = null;
+        /// <summary>Whether a multi-volume continuation context is pending (earlier volume needed).</summary>
         public bool CanResumeFromAnotherVolume => MultiVolumeContext != null;
-        public int VolumeToResumeFrom { get; private set; } = -1; // only valid if CanResumeFromAnotherVolume
+        /// <summary>Volume number to load next; valid only when <see cref="CanResumeFromAnotherVolume"/> is <see langword="true"/>.</summary>
+        public int VolumeToResumeFrom { get; private set; } = -1;
 
+        /// <summary>
+        /// Continues the restore from a different volume after the caller has loaded the requested media.
+        /// <para>Validates the new volume's TOC (volume number and set sizes) before proceeding.
+        ///  Preserves the original TOC for consistent file addressing across volumes.</para>
+        /// </summary>
         public TapeResult ResumeRestoreFromAnotherVolume()
         {
             if (!CanResumeFromAnotherVolume)
@@ -586,7 +606,11 @@ namespace TapeLibNET
         } // RestoreFilesFromCurrentSetDown(List<string>)
 
 
-        // The public version for a completely pre-assembled list of files
+        /// <summary>
+        /// Restores a pre-assembled selection of files from the current set downward (newest → oldest).
+        /// <para>The array is indexed newest-first; a <see langword="null"/> entry means all files
+        ///  from the corresponding set. Supports multi-volume continuation.</para>
+        /// </summary>
         public TapeResult RestoreFilesFromCurrentSetDown(List<TapeFileInfo>?[] filesSelected, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting restoring pre-selected files from current set #{Set} down", TOC.CurrentSetIndex);
@@ -597,7 +621,7 @@ namespace TapeLibNET
         } // RestoreFilesFromCurrentSetDown(List<string>)
 
 
-        // Considers multi-volume case
+        /// <summary>Restores filtered files from the current set, resolving multi-volume continuation chains.</summary>
         public TapeResult RestoreFilesFromCurrentSet(ITapeFileFilter? fileFilter, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting restoring files from current set #{Set}", TOC.CurrentSetIndex);
@@ -607,7 +631,7 @@ namespace TapeLibNET
                 ? TapeResult.OK : TapeResult.Fail(this);
         } // RestoreFilesFromCurrentSet(ITapeFileFilter?)
 
-        // Considers incremental backup sets, starting from the current set. Can resume from / continue onto another volume.
+        /// <summary>Restores filtered files from the current set and its incremental chain.</summary>
         public TapeResult RestoreFilesFromCurrentSetInc(ITapeFileFilter? fileFilter, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting incrementally restoring files from current set #{Set}", TOC.CurrentSetIndex);
@@ -617,6 +641,7 @@ namespace TapeLibNET
                 ? TapeResult.OK : TapeResult.Fail(this);
         } // RestoreFilesFromCurrentSetInc(ITapeFileFilter?)
 
+        /// <summary>Restores all files from the current set (no filter).</summary>
         public TapeResult RestoreAllFilesFromCurrentSet(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting restoring all files from current set #{Set}", TOC.CurrentSetIndex);
@@ -626,7 +651,7 @@ namespace TapeLibNET
                 ? TapeResult.OK : TapeResult.Fail(this);
         } // RestoreAllFilesFromCurrentSet()
 
-        // Considers incremental backup sets, starting from the current set
+        /// <summary>Restores all files from the current set and its incremental chain (no filter).</summary>
         public TapeResult RestoreAllFilesFromCurrentSetInc(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting incrementally restoring all files from current set #{Set}", TOC.CurrentSetIndex);
@@ -698,6 +723,10 @@ namespace TapeLibNET
     }
 
 
+    /// <summary>
+    /// Restore agent that writes tape data to disk files and applies original file attributes.
+    ///  Uses double-buffered reads via <see cref="BufferedTapeReadStream"/>.
+    /// </summary>
     public class TapeFileRestoreAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileRestoreBaseAgent(drive, legacyTOC)
     {
         protected override bool RestoreFileCore(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
@@ -728,6 +757,10 @@ namespace TapeLibNET
 
     } // class TapeFileRestoreAgent
 
+    /// <summary>
+    /// Validate agent that reads tape data and verifies CRC integrity without writing to disk.
+    ///  File data is discarded to <see cref="Stream.Null"/>.
+    /// </summary>
     public class TapeFileValidateAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileRestoreBaseAgent(drive, legacyTOC)
     {
         protected override bool RestoreFileCore(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
@@ -750,6 +783,10 @@ namespace TapeLibNET
 
     } // class TapeFileValidateAgent
 
+    /// <summary>
+    /// Verify agent that compares tape data byte-by-byte against existing disk files
+    ///  (via <see cref="StreamHelpers.CompareTo"/>) and validates CRC.
+    /// </summary>
     public class TapeFileVerifyAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileRestoreBaseAgent(drive, legacyTOC)
     {
         protected override bool RestoreFileCore(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
