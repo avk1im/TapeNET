@@ -361,3 +361,6 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Remote tape service test settings (contains host/port — user-specific)
+remote-test-settings.json

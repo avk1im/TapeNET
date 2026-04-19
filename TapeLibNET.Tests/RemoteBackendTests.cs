@@ -7,19 +7,28 @@ namespace TapeLibNET.Tests;
 /// Integration tests that exercise the full gRPC remote backend path:
 /// <c>TapeDrive → RemoteTapeDriveBackend → gRPC → TapeDriveGrpcService → VirtualTapeDriveBackend</c>.
 /// <para>
-/// All tests in this class share a single in-process gRPC server via
-/// <see cref="RemoteTapeServiceFixture"/> (collection fixture). Each test creates
-/// its own <see cref="RemoteVirtualTapeFixture"/> for full isolation — the server
-/// replaces its backend on each <c>OpenVirtual</c> call.
+/// All tests share a single gRPC server via an <see cref="ITapeServiceFixture"/>
+/// (collection fixture). Each test creates its own <see cref="RemoteVirtualTapeFixture"/>
+/// for full isolation — the server replaces its backend on each <c>OpenVirtual</c> call.
 /// </para>
 /// These tests mirror a curated subset of <see cref="VirtualDriveBasicTests"/>,
 /// <see cref="TapeBackupAgentTests"/>, and <see cref="TapeTOCRoundTripTests"/> to
 /// verify that every operation round-trips correctly through the gRPC layer.
+/// <para>
+/// Concrete subclasses bind to a specific xUnit collection:
+/// <see cref="LocalHostBackendTests"/> (in-process server) and
+/// <see cref="RemoteHostBackendTests"/> (external server, skip-when-unconfigured).
+/// </para>
 /// </summary>
-[Collection(RemoteTapeServiceCollection.Name)]
-public class RemoteBackendTests(RemoteTapeServiceFixture service)
+public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
 {
-    private readonly RemoteTapeServiceFixture _service = service;
+    private readonly ITapeServiceFixture _service = service;
+
+    /// <summary>
+    /// Called at the start of each test. The <see cref="RemoteHostBackendTests"/> subclass
+    /// overrides this to skip when no remote host is configured.
+    /// </summary>
+    protected virtual void EnsureServiceAvailable() { }
 
     #region *** Test Data ***
 
@@ -40,10 +49,11 @@ public class RemoteBackendTests(RemoteTapeServiceFixture service)
 
     #region *** Lifecycle Tests ***
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(AllProfiles))]
     public void Drive_ReportsCorrectCapabilities(DriveProfile profile)
     {
+        EnsureServiceAvailable();
         using var fixture = new RemoteVirtualTapeFixture(_service.Channel, profile);
         var drive = fixture.Drive;
         var expected = VirtualTapeFixture.ProfileToCapabilities(profile);
@@ -56,17 +66,19 @@ public class RemoteBackendTests(RemoteTapeServiceFixture service)
         Assert.Equal(expected.SupportsInitiatorPartition, drive.SupportsInitiatorPartition);
     }
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(AllProfiles))]
     public void Media_StartsAtPositionZero(DriveProfile profile)
     {
+        EnsureServiceAvailable();
         using var fixture = new RemoteVirtualTapeFixture(_service.Channel, profile);
         Assert.Equal(0, fixture.Drive.BlockCounter);
     }
 
-    [Fact]
+    [SkippableFact]
     public void Partitions_Drive_HasInitiatorPartition()
     {
+        EnsureServiceAvailable();
         using var fixture = new RemoteVirtualTapeFixture(_service.Channel, DriveProfile.Partitions);
         Assert.True(fixture.Drive.HasInitiatorPartition);
         Assert.Equal(2U, fixture.Drive.PartitionCount);
@@ -80,27 +92,30 @@ public class RemoteBackendTests(RemoteTapeServiceFixture service)
 
     #region *** Block Size Tests ***
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(AllProfiles))]
     public void BlockSize_DefaultMatchesCapabilities(DriveProfile profile)
     {
+        EnsureServiceAvailable();
         using var fixture = new RemoteVirtualTapeFixture(_service.Channel, profile);
         Assert.Equal(fixture.Capabilities.DefaultBlockSize, fixture.Drive.BlockSize);
     }
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(AllProfiles))]
     public void BlockSize_CanSetToMinimum(DriveProfile profile)
     {
+        EnsureServiceAvailable();
         using var fixture = new RemoteVirtualTapeFixture(_service.Channel, profile);
         Assert.True(fixture.Drive.SetBlockSize(fixture.Capabilities.MinBlockSize));
         Assert.Equal(fixture.Capabilities.MinBlockSize, fixture.Drive.BlockSize);
     }
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(AllProfiles))]
     public void BlockSize_ZeroResetsToDefault(DriveProfile profile)
     {
+        EnsureServiceAvailable();
         using var fixture = new RemoteVirtualTapeFixture(_service.Channel, profile);
         fixture.Drive.SetBlockSize(fixture.Capabilities.MinBlockSize);
         Assert.True(fixture.Drive.SetBlockSize(0));
@@ -115,10 +130,11 @@ public class RemoteBackendTests(RemoteTapeServiceFixture service)
 
     #region *** Positioning Tests ***
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(AllProfiles))]
     public void Rewind_ResetsToBlockZero(DriveProfile profile)
     {
+        EnsureServiceAvailable();
         using var fixture = new RemoteVirtualTapeFixture(_service.Channel, profile);
         var drive = fixture.Drive;
 
@@ -131,10 +147,11 @@ public class RemoteBackendTests(RemoteTapeServiceFixture service)
         Assert.Equal(0, drive.BlockCounter);
     }
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(AllProfiles))]
     public void MoveToBlock_SeeksCorrectly(DriveProfile profile)
     {
+        EnsureServiceAvailable();
         using var fixture = new RemoteVirtualTapeFixture(_service.Channel, profile);
         var drive = fixture.Drive;
 
@@ -158,10 +175,11 @@ public class RemoteBackendTests(RemoteTapeServiceFixture service)
 
     #region *** Read/Write Tests ***
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(AllProfiles))]
     public void WriteAndRead_SingleBlock_RoundTrips(DriveProfile profile)
     {
+        EnsureServiceAvailable();
         using var fixture = new RemoteVirtualTapeFixture(_service.Channel, profile);
         var drive = fixture.Drive;
         int blockSize = (int)drive.BlockSize;
@@ -181,10 +199,11 @@ public class RemoteBackendTests(RemoteTapeServiceFixture service)
         Assert.Equal(writeBuffer, readBuffer);
     }
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(AllProfiles))]
     public void WriteAndRead_MultipleBlocks_RoundTrips(DriveProfile profile)
     {
+        EnsureServiceAvailable();
         using var fixture = new RemoteVirtualTapeFixture(_service.Channel, profile);
         var drive = fixture.Drive;
         int blockSize = (int)drive.BlockSize;
@@ -214,10 +233,11 @@ public class RemoteBackendTests(RemoteTapeServiceFixture service)
 
     #region *** Filemark Tests ***
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(AllProfiles))]
     public void WriteFilemark_CanBeSpaced(DriveProfile profile)
     {
+        EnsureServiceAvailable();
         using var fixture = new RemoteVirtualTapeFixture(_service.Channel, profile);
         var drive = fixture.Drive;
         int blockSize = (int)drive.BlockSize;
@@ -246,9 +266,10 @@ public class RemoteBackendTests(RemoteTapeServiceFixture service)
         Assert.Equal(block2, readBuf);
     }
 
-    [Fact]
+    [SkippableFact]
     public void Setmarks_WriteAndSpace_Works()
     {
+        EnsureServiceAvailable();
         using var fixture = new RemoteVirtualTapeFixture(_service.Channel, DriveProfile.Setmarks);
         var drive = fixture.Drive;
         int blockSize = (int)drive.BlockSize;
@@ -283,10 +304,11 @@ public class RemoteBackendTests(RemoteTapeServiceFixture service)
 
     #region *** Backup/Restore Tests ***
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(AllProfiles))]
     public void SingleFile_BackupAndRestore_RoundTrips(DriveProfile profile)
     {
+        EnsureServiceAvailable();
         using var tree = new TempFileTree();
         tree.AddFile("remote_test.dat", 4096);
 
@@ -317,10 +339,11 @@ public class RemoteBackendTests(RemoteTapeServiceFixture service)
             File.ReadAllBytes(restoredFile));
     }
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(AllProfiles))]
     public void MultipleFiles_BackupAndValidate_Succeeds(DriveProfile profile)
     {
+        EnsureServiceAvailable();
         using var tree = new TempFileTree();
         tree.AddFile("file1.txt", 1024);
         tree.AddFile("file2.bin", 8192);
@@ -347,10 +370,11 @@ public class RemoteBackendTests(RemoteTapeServiceFixture service)
 
     #region *** TOC Tests ***
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(AllProfiles))]
     public void TOC_SaveAndReload_PreservesMetadata(DriveProfile profile)
     {
+        EnsureServiceAvailable();
         using var tree = new TempFileTree();
         tree.AddFile("toc_test.dat", 2048);
 
@@ -366,4 +390,27 @@ public class RemoteBackendTests(RemoteTapeServiceFixture service)
     }
 
     #endregion
+}
+
+/// <summary>
+/// Runs all <see cref="RemoteBackendTestsBase"/> tests against an in-process gRPC server
+/// hosted by <see cref="LocalHostTapeServiceFixture"/>.
+/// </summary>
+[Collection(LocalHostTapeServiceCollection.Name)]
+public class LocalHostBackendTests(LocalHostTapeServiceFixture service)
+    : RemoteBackendTestsBase(service);
+
+/// <summary>
+/// Runs all <see cref="RemoteBackendTestsBase"/> tests against an external gRPC server
+/// configured via <c>remote-test-settings.json</c> or <c>TAPE_REMOTE_*</c> environment
+/// variables. All tests skip automatically when no remote host is configured.
+/// </summary>
+[Collection(RemoteHostTapeServiceCollection.Name)]
+public class RemoteHostBackendTests(RemoteHostTapeServiceFixture service)
+    : RemoteBackendTestsBase(service)
+{
+    protected override void EnsureServiceAvailable()
+    {
+        Skip.If(!service.IsConfigured, service.SkipReason);
+    }
 }
