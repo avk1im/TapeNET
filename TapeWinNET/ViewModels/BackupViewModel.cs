@@ -431,7 +431,7 @@ public class BackupViewModel : ViewModelBase
             {
                 if (message != string.Empty)
                     message += "\r\n";
-                message += "Note: Writing to this media will invalidate a multi-volume backup";
+                message += "Note: Writing to this media may invalidate a multi-volume backup";
             }
 
             return message;

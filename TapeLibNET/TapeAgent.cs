@@ -421,9 +421,9 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
         {
             // Cannot erase all content when TOC is in a separate partition —
             //  the caller should format the media instead.
-            m_logger.LogWarning("Cannot delete all sets when TOC is in a partition — format the media instead");
+            m_logger.LogWarning("Cannot delete all sets when TOC is in partition — format the media instead");
             SetError(WIN32_ERROR.ERROR_NOT_SUPPORTED,
-                "Cannot delete all sets when TOC is in a partition — format the media instead");
+                "Cannot delete all sets when TOC is in partition — format the media instead");
             return TapeResult.Fail(this);
         }
 

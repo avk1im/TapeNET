@@ -726,12 +726,16 @@ namespace TapeLibNET
                 return; // current is the last set; nothing to do
 
             m_setTOCs.RemoveRange(m_currSetInternal + 1, Count - m_currSetInternal - 1);
+            ContinuedOnNextVolume = false; // multi-volume continuation no longer valid
+
             Debug.Assert(m_currSetInternal == Count - 1); // the current set is now the last set
         }
 
         public void RemoveAllSets() // CAUTION!
         {
             m_setTOCs.Clear();
+            ContinuedOnNextVolume = false; // multi-volume continuation no longer valid
+
             m_currSetInternal = 0;
         }
 

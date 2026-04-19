@@ -38,7 +38,7 @@ public class DeleteBackupSetsViewModel : ViewModelBase
 
         PopulateDeleteOptions();
 
-        DeleteCommand = new RelayCommand(_ => _onDelete(this), _ => SelectedOption != null);
+        DeleteCommand = new RelayCommand(_ => _onDelete(this), _ => SelectedOption != null && !IsDeleteBlocked);
         CancelCommand = new RelayCommand(_ => _onCancel());
     }
 
@@ -62,6 +62,7 @@ public class DeleteBackupSetsViewModel : ViewModelBase
             if (SetProperty(ref _selectedOption, value))
             {
                 OnPropertyChanged(nameof(SetsToDeleteCount));
+                OnPropertyChanged(nameof(IsDeleteBlocked));
                 OnPropertyChanged(nameof(WarningLevel));
                 OnPropertyChanged(nameof(WarningMessage));
                 OnPropertyChanged(nameof(DeleteSizeDisplay));
@@ -95,6 +96,21 @@ public class DeleteBackupSetsViewModel : ViewModelBase
     //  Warning logic
     // ═════════════════════════════════════════════════
 
+    /// <summary>
+    /// True when the selected option would delete all sets on a partitioned media,
+    /// which is not supported — the user should format instead.
+    /// </summary>
+    public bool IsDeleteBlocked
+    {
+        get
+        {
+            var toc = _tapeService.TOC;
+            if (toc == null || SelectedOption == null)
+                return false;
+            return SelectedOption.SetIndex == toc.FirstSetOnVolume && _tapeService.HasInitiatorPartition;
+        }
+    }
+
     /// <summary>Warning level for styling — always destructive.</summary>
     public WarningLevel WarningLevel
     {
@@ -103,6 +119,9 @@ public class DeleteBackupSetsViewModel : ViewModelBase
             var toc = _tapeService.TOC;
             if (toc == null || SelectedOption == null)
                 return WarningLevel.Warning;
+
+            if (IsDeleteBlocked)
+                return WarningLevel.Info; // just explain why "Delete" is disabled
 
             // Deleting all sets is more severe
             if (SelectedOption.SetIndex == toc.FirstSetOnVolume)
@@ -127,16 +146,22 @@ public class DeleteBackupSetsViewModel : ViewModelBase
             int lastStd = toc.LastSetOnVolume;
             int lastAlt = toc.SetIndexToAlt(lastStd);
 
-            string msg;
-            if (count == 1)
-                msg = $"1 backup set will be deleted: #{firstStd} | {firstAlt}";
-            else
-                msg = $"{count} backup set(s) will be deleted: from #{firstStd} | {firstAlt} to #{lastStd} | {lastAlt}";
+            string message = (count == 1)
+                ? $"1 backup set will be deleted: #{firstStd} | {firstAlt}"
+                : $"{count} backup set(s) will be deleted: from #{firstStd} | {firstAlt} to #{lastStd} | {lastAlt}";
 
+            if (toc.ContinuedOnNextVolume)
+                message += "\r\nNote: Deleting from this media may invalidate a multi-volume backup";
+            
             if (firstStd == toc.FirstSetOnVolume)
-                msg += "\nThis will remove ALL backup sets from the media!";
+            {
+                if (_tapeService.HasInitiatorPartition)
+                    message = "Cannot delete all backup sets on media. Format media instead.";
+                else
+                    message += "\r\nThis will remove ALL backup sets from the media!";
+            }
 
-            return msg;
+            return message;
         }
     }
 
