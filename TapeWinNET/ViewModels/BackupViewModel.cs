@@ -82,7 +82,7 @@ public class BackupViewModel : ViewModelBase
     private string _description = string.Empty;
     private bool _incrementalBackup;
     private bool _useFilemarks;
-    private int _selectedBlockSizeIndex = 4;   // Default 16 KB
+    private int _selectedBlockSizeIndex;        // Set dynamically from DefaultBlockSize
     private int _selectedHashIndex = 1;        // Default CRC32
     private bool _appendToSet = true;
     private AppendAfterOption? _selectedAppendOption;
@@ -118,6 +118,10 @@ public class BackupViewModel : ViewModelBase
 
         // Default description
         Description = $"Backup set created {DateTime.Now:g}";
+
+        // Build block size options dynamically from drive capabilities
+        (BlockSizeValues, BlockSizeOptions, _selectedBlockSizeIndex) =
+            BuildBlockSizeOptions();
 
         // Populate append options from current TOC
         PopulateAppendOptions();
@@ -352,11 +356,9 @@ public class BackupViewModel : ViewModelBase
         }
     }
 
-    // Block size / hash static options (shared with NewBackupSetViewModel)
-    public static string[] BlockSizeOptions { get; } =
-        ["1 KB", "2 KB", "4 KB", "8 KB", "16 KB", "32 KB", "64 KB"];
-    public static uint[] BlockSizeValues { get; } =
-        [1024, 2048, 4096, 8192, 16384, 32768, 65536];
+    // Block size / hash options (block sizes generated dynamically from drive capabilities)
+    public string[] BlockSizeOptions { get; }
+    public uint[] BlockSizeValues { get; }
 
     public static string[] HashOptions { get; } =
         ["None", "CRC32", "CRC64", "XxHash32", "XxHash64", "XxHash3", "XxHash128"];
@@ -857,6 +859,57 @@ public class BackupViewModel : ViewModelBase
         PreviewCheckedSize = checkedSize > 0 ? Helpers.BytesToStringLong(checkedSize) : "\u2014";
 
         OnPropertyChanged(nameof(CanStart));
+    }
+
+    // ═════════════════════════════════════════════════
+    //  Block size options (dynamic from drive capabilities)
+    // ═════════════════════════════════════════════════
+
+    /// <summary>
+    /// Generates block size options as powers of two from the drive's minimum
+    /// to maximum block size. Falls back to a sensible default range if the
+    /// drive reports zero. Returns the values, display strings, and the index
+    /// matching <see cref="TapeService.DefaultBlockSize"/>.
+    /// </summary>
+    private (uint[] values, string[] labels, int defaultIndex)
+        BuildBlockSizeOptions()
+    {
+        // Sensible fallbacks when drive parameters are unavailable
+        uint min = _tapeService.MinimumBlockSize;
+        uint max = _tapeService.MaximumBlockSize;
+        uint def = _tapeService.DefaultBlockSize;
+
+        if (min == 0) min = 1024;
+        if (max == 0) max = 65536;
+        if (def == 0) def = 16384;
+
+        // Clamp minimum to at least 1 KB (smaller sizes are impractical for backup)
+        if (min < 1024) min = 1024;
+
+        // Enumerate powers of two from min to max
+        var values = new List<uint>();
+        for (uint size = min; size <= max; size *= 2)
+        {
+            values.Add(size);
+
+            if (size > uint.MaxValue / 2)
+                break; // overflow guard
+        }
+
+        // Ensure at least the default is present
+        if (values.Count == 0)
+            values.Add(def);
+
+        var arr = values.ToArray();
+        var labels = arr
+            .Select(v => Helpers.BytesToString(v, precision: 0))
+            .ToArray();
+
+        // Find default index, fall back to first entry
+        int defaultIndex = Array.IndexOf(arr, def);
+        if (defaultIndex < 0) defaultIndex = 0;
+
+        return (arr, labels, defaultIndex);
     }
 
     // ═════════════════════════════════════════════════

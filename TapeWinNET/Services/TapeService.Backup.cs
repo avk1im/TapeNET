@@ -454,7 +454,7 @@ public partial class TapeService
                             headlineLevel = WarningLevel.Completed;
                             headlineMsg = $"Backed up {progressHandler.FilesTotal:N0} file(s) successfully";
                         }
-                        logCallback(new LogEntry(headlineLevel, headlineMsg, false, DateTime.Now));
+                        logCallback(new LogEntry(headlineLevel, headlineMsg, IsSub: false, DateTime.Now));
 
                         // Uniform stats sub-line
                         if (progressHandler.FilesProcessed > 0)
@@ -575,8 +575,17 @@ public partial class TapeService
                     }
 
                     Status("Backup complete");
-                    logOk("Backup completed successfully");
-                    return MakeResult();
+                    
+                    var backupResult = MakeResult();
+
+                    if (backupResult is { HasFailed: true })
+                        logFail("Backup completed with failures");
+                    else if (backupResult is { IsFullSuccess: true })
+                        logOk("Backup completed successfully");
+                    else
+                        logInfo("Backup completed");
+
+                    return backupResult;
                 }
                 catch (Exception ex)
                 {
