@@ -61,3 +61,8 @@
 #*.PDF   diff=astextplain
 #*.rtf   diff=astextplain
 #*.RTF   diff=astextplain
+
+###############################################################################
+# BuildNumber.txt — local build counter, never merge from remote
+###############################################################################
+**/BuildNumber.txt merge=ours
