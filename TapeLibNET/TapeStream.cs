@@ -43,10 +43,11 @@ namespace TapeLibNET
         internal virtual void Reset()
         {
             Debug.Assert(!IsDisposed, "Attempting to reset disposed TapeStream.");
-            
+
             m_buffer.Reset();
             m_accLength = 0;
             EOFEncountered = false;
+            WriteFailed = false;
         }
 
         protected virtual uint BufferSizeToAllocate
@@ -72,6 +73,12 @@ namespace TapeLibNET
         public bool EOFEncountered { get; protected set; } = false;
         /// <summary>Set when a filemark or setmark is hit during a read or write.</summary>
         public bool TapemarkEncountered { get; protected set; } = false;
+        /// <summary>
+        /// Set by the caller when a write operation fails. When <see langword="true"/>,
+        ///  <see cref="TapeStreamManager"/> skips writing the trailing filemark on stream disposal
+        ///  so that the tape can be repositioned without an orphan filemark in between.
+        /// </summary>
+        public bool WriteFailed { get; set; } = false;
 
 
         protected void CheckForRW([CallerMemberName] string methodName = "")

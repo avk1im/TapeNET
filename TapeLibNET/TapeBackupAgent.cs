@@ -70,48 +70,60 @@ namespace TapeLibNET
 
             using var wstream = OpenWriteContentStream(tfi.FileDescr.Length) ??
                 throw new TapeIOException(this, this, $"failed to open content write stream for >{tfi.FileDescr.FullName}<");
-            var hasher = CreateHasher(TOC.CurrentSetTOC.HashAlgorithm);
 
-            TapeSerializer ts = new(wstream);
-            tfi.SerializeHeaderTo(ts);
-            // needn't include header serialization in CRC hashing, since it's validated via DeserializeAndCheckHeaderFrom()
+            try
+            {
+                var hasher = CreateHasher(TOC.CurrentSetTOC.HashAlgorithm);
+
+                TapeSerializer ts = new(wstream);
+                tfi.SerializeHeaderTo(ts);
+                // needn't include header serialization in CRC hashing, since it's validated via DeserializeAndCheckHeaderFrom()
 
 #if DEBUG
-            // Simulate failures for testing error handling
-            if (SimulateFileFailures.ShouldFailNow())
-            {
-                m_logger.LogWarning("SIMULATED failure for file #{Counter} >{File}<", 
-                    SimulateFileFailures.Counter, tfi.FileDescr.FullName);
-                throw new TapeIOException((uint)WIN32_ERROR.ERROR_UNHANDLED_EXCEPTION,
-                    $"Simulated backup failure for testing (file #{SimulateFileFailures.Counter})");
-            }
+                // Simulate failures for testing error handling
+                if (SimulateFileFailures.ShouldFailNow())
+                {
+                    m_logger.LogWarning("SIMULATED failure for file #{Counter} >{File}<",
+                        SimulateFileFailures.Counter, tfi.FileDescr.FullName);
+                    throw new TapeIOException((uint)WIN32_ERROR.ERROR_UNHANDLED_EXCEPTION,
+                        $"Simulated backup failure for testing (file #{SimulateFileFailures.Counter})");
+                }
 #endif
 
-            // Double-buffer file data to overlap file reads with tape writes
-            var fileInfo = tfi.FileDescr.CreateFileInfo();
-            using (var buffered = new BufferedTapeWriteStream(wstream, Drive.BlockSize))
+                // Double-buffer file data to overlap file reads with tape writes
+                var fileInfo = tfi.FileDescr.CreateFileInfo();
+                using (var buffered = new BufferedTapeWriteStream(wstream, Drive.BlockSize))
+                {
+                    if (hasher == null)
+                    {
+                        using var srcFileStream = fileInfo.OpenRead();
+                        srcFileStream.CopyTo(buffered);
+                    }
+                    else
+                    {
+                        // Note we apply hasher to the file stream since we need to keep tape stream around
+                        var srcFileStream = fileInfo.OpenRead();
+                        using var hashingStream = new HashingStream(srcFileStream, hasher, ownInner: true);
+                        hashingStream.CopyTo(buffered);
+                    }
+                } // buffered flushed here, before wstream.Length is read below
+
+                // now the hasher has the hash ready
+                if (hasher != null)
+                    tfi.Hash = hasher.GetCurrentHash();
+
+                BytesBackedup += wstream.Length;
+
+                m_logger.LogTrace("File >{File}< backed up ok", tfi.FileDescr.FullName);
+            }
+            catch
             {
-                if (hasher == null)
-                {
-                    using var srcFileStream = fileInfo.OpenRead();
-                    srcFileStream.CopyTo(buffered);
-                }
-                else
-                {
-                    // Note we apply hasher to the file stream since we need to keep tape stream around
-                    var srcFileStream = fileInfo.OpenRead();
-                    using var hashingStream = new HashingStream(srcFileStream, hasher, ownInner: true);
-                    hashingStream.CopyTo(buffered);
-                }
-            } // buffered flushed here, before wstream.Length is read below
+                // Mark the write as failed so that TapeStreamManager skips writing the trailing filemark
+                //  — allows the tape to be repositioned to the start of this file for retry or next file
+                wstream.WriteFailed = true;
+                throw;
+            }
 
-            // now the hasher has the hash ready
-            if (hasher != null)
-                tfi.Hash = hasher.GetCurrentHash();
-
-            BytesBackedup += wstream.Length;
-
-            m_logger.LogTrace("File >{File}< backed up ok", tfi.FileDescr.FullName);
         } // BackupFile()
 
 
@@ -274,7 +286,9 @@ namespace TapeLibNET
 
                 FileInfo fileInfo = new (fileName);
                 // Create the real TapeFileInfo upfront — BackupFile() only handles tape I/O,
-                //  TOC.Append() happens here on success
+                //  TOC.Append() happens here on success.
+                // Note: tfi.Block captures Drive.BlockCounter at construction time — used to
+                //  rewind the tape on failure so the next file starts at the correct position.
                 TapeFileInfo tfi = new(TOC.GenerateUID(), Drive.BlockCounter, fileInfo);
 
                 try
@@ -320,7 +334,8 @@ namespace TapeLibNET
                     if (IsEOM || ex is TapeIOException { IsEOM: true })
                     {
                         // Set up continuation on the next volume for multi-volume backup
-                        m_logger.LogTrace("Setting up multi-volume backup from file #{Number} >{File}<", _stats.FilesProcessed + 1, bc.fileList[bc.fileIndex]);
+                        m_logger.LogTrace("Setting up multi-volume backup from file #{Number} >{File}<",
+                            _stats.FilesProcessed + 1, bc.fileList[bc.fileIndex]);
                         BytesBackedupMarker = BytesBackedup;
 
                         // Record whether the current set has files — needed by ResumeBackupToNextVolume
@@ -344,6 +359,15 @@ namespace TapeLibNET
                         Debug.Assert(CanResumeToNextVolume); // we're ready to continue with multi-volume backup
                         return false;
                     }
+
+                    // Rewind tape to the block where this file started, so the next file
+                    //  (retried or skipped) starts at the correct position without a dead block gap
+                    if (!Drive.MoveToBlock(tfi.Block))
+                        m_logger.LogWarning("Failed to rewind tape to block {Block} after failed file >{File}<",
+                            tfi.Block, fileName);
+                    else
+                        m_logger.LogTrace("Tape rewound to block {Block} after failed file >{File}<",
+                            tfi.Block, fileName);
 
                     var retryAction = NotifyFileFailed(bc.fileNotify, tfi, ex);
                     if (retryAction == FileFailedAction.Abort)

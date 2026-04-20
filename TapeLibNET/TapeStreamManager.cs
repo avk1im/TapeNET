@@ -419,7 +419,7 @@ namespace TapeLibNET
             return WentOK; // don't call WriteFilemark() -- we'll mark the end, not the beginning
         }
 
-        private bool EndWriteFile(bool tapemarkEncountered)
+        private bool EndWriteFile(bool tapemarkEncountered, bool writeFailed)
         {
             ResetError();
 
@@ -431,8 +431,10 @@ namespace TapeLibNET
             if (State == TapeState.WritingContent)
                 ContentWritten = true;
 
+            // Skip writing filemark if one was already encountered, OR if the write failed
+            //  (so that the tape can be repositioned without an orphan filemark in between)
             if (WentOK)
-                if (!tapemarkEncountered)
+                if (!tapemarkEncountered && !writeFailed)
                     if (State == TapeState.WritingTOC)
                         Navigator.WriteTOCFilemark();
                     else
@@ -548,7 +550,7 @@ namespace TapeLibNET
             Debug.Assert(stream == Stream);
 
             if (stream.GetType() == typeof(TapeWriteStream))
-                EndWriteFile(stream.TapemarkEncountered);
+                EndWriteFile(stream.TapemarkEncountered, stream.WriteFailed);
             else if (stream.GetType() == typeof(TapeReadStream))
                 EndReadFile(stream.TapemarkEncountered);
             else

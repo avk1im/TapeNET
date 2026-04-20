@@ -240,6 +240,162 @@ public class ErrorHandlingTests
     }
 
     /// <summary>
+    /// Simulates an interleaved failure pattern during backup (ok → fail → ok → fail → ok)
+    /// with filemarks enabled, then performs a full restore and verifies that the
+    /// succeeded files are restored correctly byte-for-byte.
+    /// This specifically exercises the filemark-based tape positioning recovery path
+    /// used when restoring files that follow a failed-file gap on tape.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Backup_InterleavedFailure_WithFilemarks_SurvivorFilesRestoredCorrectly(DriveProfile profile)
+    {
+        // 9 files: fail every 4th (files 4 and 8 fail) → 7 succeed
+        //  positions: ok ok ok FAIL ok ok ok FAIL ok
+        const int fileCount = 9;
+        const int failEveryN = 4;
+
+        using var tree = new TempFileTree();
+        tree.AddFiles("ifmk", count: fileCount, minSize: 512, maxSize: 8 * 1024);
+
+        string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_IFMk_{Guid.NewGuid():N}");
+
+        try
+        {
+            using var fixture = new VirtualTapeFixture(profile);
+
+            // Configure set manually so we can control FmksMode
+            fixture.TOC.AddNewSetTOC(0, incremental: false);
+            fixture.TOC.CurrentSetTOC.Description = "Interleaved Failure FmksMode=true";
+            fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
+            fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
+            fixture.TOC.CurrentSetTOC.FmksMode = true;
+
+            var backupNotify = new TestNotifiable { FailedAction = FileFailedAction.Skip };
+
+            using var backupAgent = fixture.CreateBackupAgent();
+            backupAgent.SimulateFileFailures.Enabled = true;
+            backupAgent.SimulateFileFailures.EveryNth = failEveryN;
+
+            bool backupOk = backupAgent.BackupFileListToCurrentSet(
+                newSet: true, tree.Files, ignoreFailures: true, backupNotify);
+
+            // Backup should complete (ignoreFailures=true)
+            backupNotify.AssertStatsInvariant();
+            var backupStats = backupNotify.BatchEnds[^1].Stats;
+            int succeededCount = backupStats.FilesSucceeded;
+            Assert.True(succeededCount > 0, "Expected at least one succeeded file");
+            Assert.Equal(fileCount / failEveryN, backupStats.FilesFailed);
+
+            // Save TOC
+            Assert.True(backupAgent.BackupTOC(), "Failed to save TOC after partial backup");
+
+            // Collect the set of succeeded source paths for verification
+            var succeededPaths = backupNotify.PostProcessed
+                .Select(p => p.FileInfo.FileDescr.FullName)
+                .ToList();
+
+            // Restore — all TOC-registered (succeeded) files should restore correctly
+            var restoreNotify = new TestNotifiable();
+            using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
+            bool restoreOk = restoreAgent.RestoreAllFilesFromCurrentSet(ignoreFailures: false, restoreNotify);
+
+            Assert.True(restoreOk, "Restore of survived files should succeed");
+            restoreNotify.AssertStatsInvariant();
+            var restoreStats = restoreNotify.BatchEnds[^1].Stats;
+            Assert.Equal(succeededCount, restoreStats.FilesSucceeded);
+            Assert.Equal(0, restoreStats.FilesFailed);
+
+            // Byte-for-byte content verification — the restore agent mirrors the original
+            //  absolute path structure under restoreDir (stripped of the drive root)
+            string restoreEquivalent1 = Path.Combine(
+                restoreDir, Path.GetRelativePath(Path.GetPathRoot(tree.RootPath)!, tree.RootPath));
+            FileComparer.AssertFilesMatch(tree.RootPath, succeededPaths, restoreEquivalent1);
+        }
+        finally
+        {
+            TryDeleteDirectory(restoreDir);
+        }
+    }
+
+    /// <summary>
+    /// Simulates an interleaved failure pattern during backup (ok → fail → ok → fail → ok)
+    /// with filemarks <em>disabled</em>
+    /// restore and verifies that the succeeded files are restored correctly byte-for-byte.
+    /// Exercises the non-filemark restore path where tape position is tracked solely via
+    /// TOC block offsets.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Backup_InterleavedFailure_WithoutFilemarks_SurvivorFilesRestoredCorrectly(DriveProfile profile)
+    {
+        // 9 files: fail every 4th (files 4 and 8 fail) → 7 succeed
+        //  positions: ok ok ok FAIL ok ok ok FAIL ok
+        const int fileCount = 9;
+        const int failEveryN = 4;
+
+        using var tree = new TempFileTree();
+        tree.AddFiles("inofmk", count: fileCount, minSize: 512, maxSize: 8 * 1024);
+
+        string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_INoFMk_{Guid.NewGuid():N}");
+
+        try
+        {
+            using var fixture = new VirtualTapeFixture(profile);
+
+            // Configure set manually — FmksMode disabled
+            fixture.TOC.AddNewSetTOC(0, incremental: false);
+            fixture.TOC.CurrentSetTOC.Description = "Interleaved Failure FmksMode=false";
+            fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
+            fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
+            fixture.TOC.CurrentSetTOC.FmksMode = false;
+
+            var backupNotify = new TestNotifiable { FailedAction = FileFailedAction.Skip };
+
+            using var backupAgent = fixture.CreateBackupAgent();
+            backupAgent.SimulateFileFailures.Enabled = true;
+            backupAgent.SimulateFileFailures.EveryNth = failEveryN;
+
+            bool backupOk = backupAgent.BackupFileListToCurrentSet(
+                newSet: true, tree.Files, ignoreFailures: true, backupNotify);
+
+            backupNotify.AssertStatsInvariant();
+            var backupStats = backupNotify.BatchEnds[^1].Stats;
+            int succeededCount = backupStats.FilesSucceeded;
+            Assert.True(succeededCount > 0, "Expected at least one succeeded file");
+            Assert.Equal(fileCount / failEveryN, backupStats.FilesFailed);
+
+            // Save TOC
+            Assert.True(backupAgent.BackupTOC(), "Failed to save TOC after partial backup");
+
+            // Collect succeeded source paths
+            var succeededPaths = backupNotify.PostProcessed
+                .Select(p => p.FileInfo.FileDescr.FullName)
+                .ToList();
+
+            // Restore
+            var restoreNotify = new TestNotifiable();
+            using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
+            bool restoreOk = restoreAgent.RestoreAllFilesFromCurrentSet(ignoreFailures: false, restoreNotify);
+
+            Assert.True(restoreOk, "Restore of survived files should succeed");
+            restoreNotify.AssertStatsInvariant();
+            var restoreStats = restoreNotify.BatchEnds[^1].Stats;
+            Assert.Equal(succeededCount, restoreStats.FilesSucceeded);
+            Assert.Equal(0, restoreStats.FilesFailed);
+
+            // Byte-for-byte content verification — mirror the original path structure under restoreDir
+            string restoreEquivalent2 = Path.Combine(
+                restoreDir, Path.GetRelativePath(Path.GetPathRoot(tree.RootPath)!, tree.RootPath));
+            FileComparer.AssertFilesMatch(tree.RootPath, succeededPaths, restoreEquivalent2);
+        }
+        finally
+        {
+            TryDeleteDirectory(restoreDir);
+        }
+    }
+
+    /// <summary>
     /// Backs up files with failures (Skip), then verifies the surviving files
     /// are correctly recorded in the TOC. After partial backup failures the tape
     /// layout may contain extra filemarks from partially written files, so we

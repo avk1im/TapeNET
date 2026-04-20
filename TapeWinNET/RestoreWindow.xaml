@@ -134,7 +134,7 @@
                                     IsEnabled="{Binding IsTargetDirectoryInputEnabled}"
                                     Width="28" Padding="0"/>
                         </Grid>
-                        <CheckBox Content="Include subfolders"
+                        <CheckBox Content="Original subfolders"
                                   IsChecked="{Binding RecurseSubdirectories}"
                                   IsEnabled="{Binding IsRecurseSubdirsEnabled}"
                                   Margin="20,4,0,0"/>
