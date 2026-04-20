@@ -166,7 +166,8 @@ public class PhysicalConformanceTests(PhysicalDriveFixtureWrapper fixtureWrapper
         //  exercises the backend directly; TapeDrive's cached MediaParams are
         //  not refreshed by backend-level SetBlockSize calls.
         uint originalBlockSize = drive.Backend.BlockSize;
-        uint testBlockSize = caps.MinimumBlockSize;
+        // Block sizes < 1 KB not practical, sometimes not supported either
+        uint testBlockSize = Math.Max(caps.MinimumBlockSize, 1024);
 
         if (testBlockSize != originalBlockSize && testBlockSize > 0)
         {
