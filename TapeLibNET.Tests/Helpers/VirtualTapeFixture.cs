@@ -6,11 +6,12 @@ using TapeLibNET.Virtual;
 namespace TapeLibNET.Tests.Helpers;
 
 /// <summary>
-/// The three real-world drive profiles we test against.
+/// The four real-world drive profiles we test against.
 /// <list type="bullet">
 ///   <item><see cref="Setmarks"/> — basic drive with setmarks (like AIT or DAT).</item>
 ///   <item><see cref="Partitions"/> — setmarks + initiator partition (like AIT with TOC partition).</item>
 ///   <item><see cref="SeqFilemarks"/> — sequential filemarks (like SDLT).</item>
+///   <item><see cref="FilemarksOnly"/> — filemarks only, no setmarks or sequential filemark counting (like LTO).</item>
 /// </list>
 /// </summary>
 public enum DriveProfile
@@ -21,6 +22,8 @@ public enum DriveProfile
     Partitions,
     /// <summary>Sequential-filemark drive (SDLT-style). TOC stored in content partition.</summary>
     SeqFilemarks,
+    /// <summary>Filemarks-only drive (LTO-style). No setmarks, no sequential filemark counting.</summary>
+    FilemarksOnly,
 }
 
 /// <summary>
@@ -112,6 +115,7 @@ public sealed class VirtualTapeFixture : IDisposable
         DriveProfile.Setmarks => VirtualTapeDriveCapabilities.WithSetmarks,
         DriveProfile.Partitions => VirtualTapeDriveCapabilities.WithPartitions,
         DriveProfile.SeqFilemarks => VirtualTapeDriveCapabilities.WithSeqFilemarks,
+        DriveProfile.FilemarksOnly => VirtualTapeDriveCapabilities.WithFilemarksOnly,
         _ => throw new ArgumentOutOfRangeException(nameof(profile)),
     };
 

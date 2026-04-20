@@ -20,6 +20,7 @@ public class DeleteSetsTests
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
         DriveProfile.SeqFilemarks,
+        DriveProfile.FilemarksOnly,
     ];
 
     /// <summary>Non-partition profiles only (TOC in set).</summary>
@@ -27,6 +28,7 @@ public class DeleteSetsTests
     [
         DriveProfile.Setmarks,
         DriveProfile.SeqFilemarks,
+        DriveProfile.FilemarksOnly,
     ];
 #pragma warning restore CA1825 // Avoid zero-length array allocations
 

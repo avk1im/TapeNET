@@ -38,6 +38,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
         DriveProfile.SeqFilemarks,
+        DriveProfile.FilemarksOnly,
     ];
 #pragma warning restore CA1825
 

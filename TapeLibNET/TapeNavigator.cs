@@ -726,7 +726,7 @@ namespace TapeLibNET
 
 
     /// <summary>
-    /// Navigator for drives with sequential filemarks only, without a TOC marker (WithSeqFilemarks).
+    /// Navigator for drives with filemarks only, without setmarks or a TOC marker (LTO-style).
     /// <para>Content sets and TOC copies are all separated by filemarks. Locating the TOC
     ///  requires seeking backward from end-of-data by a known filemark count.</para>
     /// <code>
@@ -773,13 +773,19 @@ namespace TapeLibNET
 
             // First move to the end of the data in the partition. Notice the following will produce an error if TOC hasn't been written yet
             Drive.FastforwardToEnd(partition: MediaPartition.Content); // CommonPartition
-            
+
             // Next move to before the filemark before first TOC file
             if (WentOK)
                 Drive.MoveToNextFilemark(-3); // this will bring us to right before the filemark before first TOC file
             // Finally advance 1 filemark forward to after the filemark -- the beginning of TOC data == of the to-be-written content data
             if (WentOK)
                 Drive.MoveToNextFilemark(1);
+            else
+            {
+                // No filemarks found — assume no content/TOC on media yet, rewind to beginning
+                ResetError();
+                Drive.Rewind();
+            }
         }
 
         public override bool MoveToEndOfContent()

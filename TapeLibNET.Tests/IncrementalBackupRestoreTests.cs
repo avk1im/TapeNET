@@ -29,6 +29,7 @@ public class IncrementalBackupRestoreTests
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
         DriveProfile.SeqFilemarks,
+        DriveProfile.FilemarksOnly,
     ];
 #pragma warning restore CA1825 // Avoid zero-length array allocations
 
@@ -613,7 +614,7 @@ public class IncrementalBackupRestoreTests
         // Save and reload TOC from tape — exercises serialization round-trip.
         // For SeqFilemarks, BackupFiles already saves the TOC after each wave and
         // a standalone SaveTOC creates a duplicate TOC mark, so just reload.
-        if (profile == DriveProfile.SeqFilemarks)
+        if (profile is DriveProfile.SeqFilemarks or DriveProfile.FilemarksOnly)
             fixture.LoadTOC();
         else
             fixture.SaveAndReloadTOC();

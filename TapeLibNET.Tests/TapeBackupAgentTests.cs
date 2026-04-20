@@ -30,6 +30,7 @@ public class TapeBackupAgentTests
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
         DriveProfile.SeqFilemarks,
+        DriveProfile.FilemarksOnly,
     ];
 #pragma warning restore CA1825 // Avoid zero-length array allocations
 
@@ -41,7 +42,7 @@ public class TapeBackupAgentTests
         get
         {
             TheoryData<DriveProfile, TapeHashAlgorithm> data = [];
-            foreach (var profile in new[] { DriveProfile.Setmarks, DriveProfile.Partitions, DriveProfile.SeqFilemarks })
+            foreach (var profile in new[] { DriveProfile.Setmarks, DriveProfile.Partitions, DriveProfile.SeqFilemarks, DriveProfile.FilemarksOnly })
                 foreach (var hash in new[] { TapeHashAlgorithm.None, TapeHashAlgorithm.Crc64, TapeHashAlgorithm.XxHash3 })
                     data.Add(profile, hash);
             return data;
@@ -58,7 +59,7 @@ public class TapeBackupAgentTests
         get
         {
             TheoryData<DriveProfile, bool> data = [];
-            foreach (var profile in new[] { DriveProfile.Setmarks, DriveProfile.Partitions, DriveProfile.SeqFilemarks })
+            foreach (var profile in new[] { DriveProfile.Setmarks, DriveProfile.Partitions, DriveProfile.SeqFilemarks, DriveProfile.FilemarksOnly })
             {
                 data.Add(profile, true);
                 data.Add(profile, false);
@@ -211,7 +212,7 @@ public class TapeBackupAgentTests
         Assert.Equal(tree.Files.Count, fixture.TOC[1].Count);
 
         // SeqFilemarks cannot use FmksMode=true — agent falls back to false
-        if (profile == DriveProfile.SeqFilemarks && fmksMode)
+        if (profile is DriveProfile.SeqFilemarks or DriveProfile.FilemarksOnly && fmksMode)
             Assert.False(fixture.TOC[1].FmksMode); // should have been overridden
         else
             Assert.Equal(fmksMode, fixture.TOC[1].FmksMode);

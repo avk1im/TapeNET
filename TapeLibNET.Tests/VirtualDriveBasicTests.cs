@@ -24,6 +24,7 @@ public class VirtualDriveBasicTests
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
         DriveProfile.SeqFilemarks,
+        DriveProfile.FilemarksOnly,
     ];
 
     /// <summary>
@@ -114,6 +115,7 @@ public class VirtualDriveBasicTests
     [Theory]
     [InlineData(DriveProfile.Setmarks)]
     [InlineData(DriveProfile.SeqFilemarks)]
+    [InlineData(DriveProfile.FilemarksOnly)]
     public void NonPartitions_Drive_HasNoInitiatorPartition(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);

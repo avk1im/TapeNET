@@ -35,6 +35,10 @@ public static class DriveProfileDetector
         if (caps.SupportsSeqFilemarks)
             profiles.Add(DriveProfile.SeqFilemarks);
 
+        // FilemarksOnly profile: no setmarks, no sequential filemarks (LTO-style)
+        if (!caps.SupportsSetmarks && !caps.SupportsSeqFilemarks)
+            profiles.Add(DriveProfile.FilemarksOnly);
+
         return profiles;
     }
 

@@ -34,6 +34,7 @@ public class TapeRestoreAgentTests
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
         DriveProfile.SeqFilemarks,
+        DriveProfile.FilemarksOnly,
     ];
 #pragma warning restore CA1825 // Avoid zero-length array allocations
 
@@ -45,7 +46,7 @@ public class TapeRestoreAgentTests
         get
         {
             TheoryData<DriveProfile, TapeHashAlgorithm> data = [];
-            foreach (var profile in new[] { DriveProfile.Setmarks, DriveProfile.Partitions, DriveProfile.SeqFilemarks })
+            foreach (var profile in new[] { DriveProfile.Setmarks, DriveProfile.Partitions, DriveProfile.SeqFilemarks, DriveProfile.FilemarksOnly })
                 foreach (var hash in new[] { TapeHashAlgorithm.None, TapeHashAlgorithm.Crc64, TapeHashAlgorithm.XxHash3 })
                     data.Add(profile, hash);
             return data;

@@ -30,6 +30,7 @@ public class TapeStreamManagerTests
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
         DriveProfile.SeqFilemarks,
+        DriveProfile.FilemarksOnly,
     ];
 #pragma warning restore CA1825 // Avoid zero-length array allocations
 
@@ -1570,7 +1571,7 @@ public class TapeStreamManagerTests
         var originalData = GenerateTestData(dataLength, 0x5A);
 
         mgr.Navigator.TargetContentSet = -1;
-        Assert.True(mgr.BeginWriteContent(100_000));
+        Assert.True(mgr.BeginWriteContent(dataLength + 100_000)); // enough headroom for data + TOC
         using (var ws = mgr.ProduceWriteContentStream(dataLength, 0))
         {
             Assert.NotNull(ws);

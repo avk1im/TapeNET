@@ -28,6 +28,7 @@ public class MultiVolumeBackupRestoreTests
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
         DriveProfile.SeqFilemarks,
+        DriveProfile.FilemarksOnly,
     ];
 #pragma warning restore CA1825 // Avoid zero-length array allocations
 
@@ -215,8 +216,10 @@ public class MultiVolumeBackupRestoreTests
         //  but the incremental + modifications span across volume 2
         tree.AddFiles("data", count: 8, minSize: 8 * 1024, maxSize: 16 * 1024);
 
-        // Larger capacity to fit the full backup on one volume
-        long capacity = 384L * 1024;
+        // Larger capacity to fit the full backup on one volume;
+        //  scale with block size so profiles with larger blocks (e.g. FilemarksOnly 64 KB) still fit
+        var caps = VirtualTapeFixture.ProfileToCapabilities(profile);
+        long capacity = 384L * 1024 * caps.DefaultBlockSize / 16_384;
         using var fixture = new MultiVolumeVirtualTapeFixture(profile, capacity);
 
         // Wave 0: Full backup (should fit on volume 1)
@@ -349,7 +352,7 @@ public class MultiVolumeBackupRestoreTests
 
         // Save and reload TOC
         // For SeqFilemarks, BackupFiles already saved TOC, so just reload
-        if (profile == DriveProfile.SeqFilemarks)
+        if (profile is DriveProfile.SeqFilemarks or DriveProfile.FilemarksOnly)
             fixture.LoadTOC();
         else
             fixture.SaveAndReloadTOC();

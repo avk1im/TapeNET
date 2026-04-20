@@ -30,6 +30,7 @@ public class TapeTOCRoundTripTests
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
         DriveProfile.SeqFilemarks,
+        DriveProfile.FilemarksOnly,
     ];
 #pragma warning restore CA1825 // Avoid zero-length array allocations
 
@@ -256,7 +257,7 @@ public class TapeTOCRoundTripTests
     /// </summary>
     private static TapeTOC SaveAndReloadTOCAllProfiles(VirtualTapeFixture fixture, DriveProfile profile)
     {
-        if (profile == DriveProfile.SeqFilemarks)
+        if (profile is DriveProfile.SeqFilemarks or DriveProfile.FilemarksOnly)
         {
             WriteContentAndSaveTOC(fixture);
             fixture.LoadTOC();
@@ -1403,7 +1404,7 @@ public class TapeTOCRoundTripTests
                 $@"C:\Data\v2_file{i}.dat", 5000 + i * 500));
 
         // Save and reload — SeqFilemarks needs combined content+TOC write in one session
-        if (profile == DriveProfile.SeqFilemarks)
+        if (profile is DriveProfile.SeqFilemarks or DriveProfile.FilemarksOnly)
         {
             WriteContentAndSaveTOC(fixture);
             fixture.LoadTOC();

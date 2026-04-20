@@ -44,6 +44,18 @@ public readonly record struct VirtualTapeDriveCapabilities
         SupportsSeqFilemarks = true,
     };
 
+    /// <summary>Simulates a filemarks-only drive (like LTO) — no setmarks, no sequential filemark counting.</summary>
+    public static VirtualTapeDriveCapabilities WithFilemarksOnly => new()
+    {
+        MinBlockSize = 1,
+        MaxBlockSize = 1024 * 1024,
+        DefaultBlockSize = 64 * 1024,
+        SupportsSetmarks = false,
+        SupportsSeqFilemarks = false,
+        SupportsInitiatorPartition = false,
+        SupportsCompression = true,
+    };
+
     /// <summary>Simulates a drive with initiator partition (like AIT).</summary>
     public static VirtualTapeDriveCapabilities WithPartitions => WithSetmarks with
     {

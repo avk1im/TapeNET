@@ -28,6 +28,7 @@ public class TapeNavigatorTests
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
         DriveProfile.SeqFilemarks,
+        DriveProfile.FilemarksOnly,
     ];
 #pragma warning restore CA1825 // Avoid zero-length array allocations
 
@@ -45,6 +46,7 @@ public class TapeNavigatorTests
     public static TheoryData<DriveProfile> FilemarkProfiles =>
     [
         DriveProfile.SeqFilemarks,
+        DriveProfile.FilemarksOnly,
     ];
 #pragma warning restore CA1825 // Avoid zero-length array allocations
 
@@ -57,6 +59,7 @@ public class TapeNavigatorTests
     [
         DriveProfile.Setmarks,
         DriveProfile.SeqFilemarks,
+        DriveProfile.FilemarksOnly,
     ];
 #pragma warning restore CA1825 // Avoid zero-length array allocations
 
