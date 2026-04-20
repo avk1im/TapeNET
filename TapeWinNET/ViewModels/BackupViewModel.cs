@@ -311,6 +311,12 @@ public class BackupViewModel : ViewModelBase
         set => SetProperty(ref _useFilemarks, value);
     }
 
+    /// <summary>
+    /// Whether the connected drive supports setmarks (filemarks mode).
+    /// When <c>false</c>, the "Use filemarks" option is hidden.
+    /// </summary>
+    public bool DriveSupportsSetmarks => _tapeService.SupportsSetmarks;
+
     public int SelectedBlockSizeIndex
     {
         get => _selectedBlockSizeIndex;

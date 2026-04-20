@@ -278,7 +278,9 @@
                             <CheckBox Content="Use filemarks"
                                       IsChecked="{Binding UseFilemarks}"
                                       Margin="0,0,0,8"
-                                      ToolTip="Use filemarks between files (uncheck for blob mode)"/>
+                                      ToolTip="Use filemarks between files (uncheck for blob mode)"
+                                      Visibility="{Binding DriveSupportsSetmarks,
+                                                   Converter={StaticResource BoolToVis}}"/>
 
                             <!-- Block size -->
                             <TextBlock Text="Block size:" Margin="0,0,0,4"/>
