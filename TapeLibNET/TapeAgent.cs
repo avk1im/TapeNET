@@ -584,6 +584,8 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     {
         try
         {
+            ThrowIfAbortRequested($"preparing to load TOC");
+
             using var rstream = OpenReadTOCStream();
             if (rstream == null)
             {
@@ -602,7 +604,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                 throw new IOException("Simulated TOC restore failure");
 #endif
 
-            ThrowIfAbortRequested($"after openning TOC in {nameof(RestoreTOCCore)}");
+            ThrowIfAbortRequested($"load TOC core");
 
             var hasher = CreateHasher(c_hashForTOC);
 
@@ -702,17 +704,26 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
             else
                 m_logger.LogError("TOC restore from 2nd copy failed");
 
-            if (!result)
+            if (!result && !IsAbortRequested)
             {
                 // Last try: BeginReadTOC() again, then immediately move to the filemark for the 2nd copy
                 m_logger.LogTrace("Attempting to skip to 2nd TOC copy directly");
-                result = BeginReadTOC() && Navigator.MoveToNextTOCFilemark() && RestoreTOCCore();
+                result = BeginReadTOC() && !IsAbortRequested
+                    && Navigator.MoveToNextTOCFilemark() && !IsAbortRequested
+                    && RestoreTOCCore();
 
                 if (result)
                     m_logger.LogTrace("TOC restored directly from 2nd copy");
                 else
                     m_logger.LogError("TOC restore directly from 2nd copy failed");
             }
+        }
+
+        if (IsAbortRequested && WentOK)
+        {
+            m_logger.LogWarning("TOC restore aborted by user request");
+            // Set error to indicate user aborted
+            SetError(WIN32_ERROR.ERROR_CANCELLED, "TOC loading aborted by user");
         }
 
         return result ? TapeResult.OK : TapeResult.Fail(this);

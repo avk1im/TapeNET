@@ -639,6 +639,36 @@
                         </StackPanel>
                     </Border>
                 </Grid>
+
+                <!-- TOC Load Overlay — shown while reading TOC, cancellable for blank/new media -->
+                <Grid Grid.RowSpan="3"
+                      Background="#80000000"
+                      Visibility="{Binding IsTOCLoadInProgress, Converter={StaticResource BoolToVis}}">
+                    <Border Background="White"
+                            CornerRadius="8"
+                            Padding="24"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            MinWidth="350">
+                        <StackPanel>
+                            <TextBlock Text="{Binding BusyMessage}"
+                                       FontSize="14"
+                                       FontWeight="SemiBold"
+                                       HorizontalAlignment="Center"
+                                       Margin="0,0,0,12"/>
+
+                            <ProgressBar IsIndeterminate="True"
+                                         Height="24"
+                                         Margin="0,0,0,16"/>
+
+                            <Button Content="Cancel"
+                                    Command="{Binding AbortTOCLoadCommand}"
+                                    IsEnabled="{Binding IsTOCCancelEnabled}"
+                                    HorizontalAlignment="Center"
+                                    Width="100"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
             </Grid>
         </Grid>
         

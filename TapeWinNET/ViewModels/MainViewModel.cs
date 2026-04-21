@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Threading;
 
 using Windows.Win32.System.SystemServices; // for Helpers
 
@@ -48,6 +49,11 @@ public partial class MainViewModel : ViewModelBase
     private string _tableHeader = "Content";
     private bool _isBusy;
     private bool _isBackupInProgress;
+    private bool _isTOCLoadInProgress;
+    // Set to true when the user explicitly cancels a TOC load, so ReadTOCWithUIAsync
+    //  can suppress the failure dialog that would otherwise appear.
+    private bool _isTOCLoadCancelled;
+    private bool _isTOCAbortPending;
     private bool _showFullPathname = false;
     private bool _showIncrementalSets = true;
     private FileListItem? _selectedFile;
@@ -86,6 +92,8 @@ public partial class MainViewModel : ViewModelBase
         RenameMediaCommand = new AsyncRelayCommand(RenameMediaAsync, () => CanRenameMedia);
         ExitCommand = new RelayCommand(Exit);
         AboutCommand = new RelayCommand(ShowAbout);
+
+        AbortTOCLoadCommand = new RelayCommand(_ => AbortTOCLoad());
 
         // Initialize log commands (from MainViewModel.Log.cs)
         InitializeLogCommands();
@@ -200,9 +208,42 @@ public partial class MainViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// True when busy with non-backup/restore operations (shows full-window overlay).
+    /// True while the TOC is being read from media (shows cancellable overlay).
     /// </summary>
-    public bool IsGeneralBusy => IsBusy && !IsBackupInProgress && !IsRestoreInProgress;
+    public bool IsTOCLoadInProgress
+    {
+        get => _isTOCLoadInProgress;
+        set
+        {
+            if (SetProperty(ref _isTOCLoadInProgress, value))
+            {
+                OnPropertyChanged(nameof(IsGeneralBusy));
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
+    /// <summary>
+    /// True after the user presses Cancel on the TOC overlay, until the TOC
+    ///  read actually stops. Disables the Cancel button as visual feedback.
+    /// </summary>
+    public bool IsTOCAbortPending
+    {
+        get => _isTOCAbortPending;
+        private set
+        {
+            if (SetProperty(ref _isTOCAbortPending, value))
+                OnPropertyChanged(nameof(IsTOCCancelEnabled));
+        }
+    }
+
+    /// <summary>False once Cancel has been pressed; disables the button to prevent double-clicks.</summary>
+    public bool IsTOCCancelEnabled => !_isTOCAbortPending;
+
+    /// <summary>
+    /// True when busy with non-backup/restore/TOC-load operations (shows full-window overlay).
+    /// </summary>
+    public bool IsGeneralBusy => IsBusy && !IsBackupInProgress && !IsRestoreInProgress && !IsTOCLoadInProgress;
 
     /// <summary>
     /// True when any tape operation (backup or restore/validate/verify) is in progress.
@@ -435,6 +476,7 @@ public partial class MainViewModel : ViewModelBase
     public ICommand DeleteBackupSetsCommand { get; }
     public ICommand ExportTOCCommand { get; }
     public ICommand ImportTOCCommand { get; }
+    public ICommand AbortTOCLoadCommand { get; private set; } = null!;
     // NewBackupCommand and AbortBackupCommand are in MainViewModel.Backup.cs
     // RestoreCommand, ValidateCommand, VerifyCommand, AbortRestoreCommand are in MainViewModel.Restore.cs
     public ICommand NavigateToBackupSetCommand { get; }
@@ -518,90 +560,177 @@ public partial class MainViewModel : ViewModelBase
 
     #region Private Methods - Drive/Media Operations
 
-    private async Task<bool> LoadMediaInternalAsync()
-    {
-        bool isBusy = IsBusy;
-        string busyMessage = BusyMessage;
+    // ─────────────────────────────────────────────────
+    //  ABC primitives — single-spot drive/media/TOC operations.
+    //  Composed by the higher-level command methods below.
+    //
+    //   A — Open drive (physical / virtual; future: remote)
+    //   B — Load media (unified, not abortable)
+    //   C — Read TOC  (unified, abortable via dedicated overlay)
+    //
+    //  Each operation has two layers:
+    //   *CoreAsync   – sets busy state, calls the service, swallows exceptions,
+    //                  restores prior state. Returns success only.
+    //   *WithUIAsync – wraps Core with the standard MessageBox failure dialog.
+    //                  Callers needing custom recovery use Core directly.
+    // ─────────────────────────────────────────────────
 
+    /// <summary>
+    /// Wraps an async service call with general busy state management.
+    /// Captures and restores prior IsBusy/BusyMessage so the helpers nest safely
+    ///  inside an outer busy scope (e.g. FormatVirtualDriveAsync).
+    /// </summary>
+    private async Task<bool> RunBusyAsync(string busyMessage, Func<Task<bool>> action)
+    {
+        bool prevBusy = IsBusy;
+        string prevMsg = BusyMessage;
+        IsBusy = true;
+        BusyMessage = busyMessage;
         try
         {
-            IsBusy = true;
-            BusyMessage = "Loading media...";
-            var success = await _tapeService.LoadMediaAsync();
-            if (!success)
-            {
-                MessageBox.Show($"Failed to load media.\n\n{_tapeService.LastError}",
-                    "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return false;
-            }
-
-            BusyMessage = "Reading TOC...";
-            success = await _tapeService.RestoreTOCAsync();
-            if (!success)
-            {
-                var result = MessageBox.Show(
-                    $"Failed to read TOC from media.\n\n{_tapeService.LastError}\n\n" +
-                    "If you have a saved TOC file (.tapetoc), you can load it to access the media content.\n\n" +
-                    "Would you like to load a TOC from file?",
-                    "TOC Read Failed", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-
-                if (result == MessageBoxResult.Yes)
-                {
-                    success = await ImportTOCFromFileAsync();
-                    if (!success)
-                        return false;
-                }
-                else
-                {
-                    return false;
-                }
-            }
+            try { return await action(); }
+            catch { return false; }
         }
         finally
         {
-            IsBusy = isBusy;
-            BusyMessage = busyMessage;
+            IsBusy = prevBusy;
+            BusyMessage = prevMsg;
         }
-
-        return true;
     }
+
+    // A — Open drive
+
+    private Task<bool> OpenPhysicalDriveCoreAsync(int driveNumber) =>
+        RunBusyAsync($"Opening drive {driveNumber}...",
+            () => _tapeService.OpenDriveAsync(driveNumber));
+
+    private Task<bool> OpenVirtualDriveCoreAsync(VirtualDriveOpenRequest request, FileMode mediaMode)
+    {
+        var msg = request.Media.InMemory ? "Creating in-memory virtual drive..."
+            : mediaMode == FileMode.Create ? "Creating virtual drive..."
+            : "Opening virtual drive...";
+        return RunBusyAsync(msg,
+            () => _tapeService.OpenVirtualDriveAsync(request.Capabilities, request.Media, mediaMode));
+    }
+
+    // B — Load media
+
+    private Task<bool> LoadMediaCoreAsync(string busyMessage = "Loading media...") =>
+        RunBusyAsync(busyMessage, () => _tapeService.LoadMediaAsync());
+
+    // C — Read TOC (abortable; uses dedicated overlay via IsTOCLoadInProgress)
+
+    private async Task<bool> ReadTOCCoreAsync(string busyMessage = "Reading TOC...")
+    {
+        bool prevBusy = IsBusy;
+        string prevMsg = BusyMessage;
+        _isTOCLoadCancelled = false;
+        IsTOCAbortPending = false;
+        IsBusy = true;
+        BusyMessage = busyMessage;
+        IsTOCLoadInProgress = true;
+        try
+        {
+            try { return await _tapeService.RestoreTOCAsync(); }
+            catch { return false; }
+        }
+        finally
+        {
+            IsTOCLoadInProgress = false;
+            IsTOCAbortPending = false;
+            IsBusy = prevBusy;
+            BusyMessage = prevMsg;
+        }
+    }
+
+    // ── UI wrappers — standard MessageBox failure dialogs ──
+
+    private async Task<bool> OpenPhysicalDriveWithUIAsync(int driveNumber)
+    {
+        var success = await OpenPhysicalDriveCoreAsync(driveNumber);
+        if (!success)
+        {
+            MessageBox.Show($"Failed to open drive {driveNumber}.\n\n{_tapeService.LastError}",
+                "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        return success;
+    }
+
+    private async Task<bool> LoadMediaWithUIAsync(
+        string busyMessage = "Loading media...",
+        string failureSubject = "media")
+    {
+        var success = await LoadMediaCoreAsync(busyMessage);
+        if (!success)
+        {
+            MessageBox.Show($"Failed to load {failureSubject}.\n\n{_tapeService.LastError}",
+                "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        return success;
+    }
+
+    /// <summary>
+    /// Reads the TOC; on failure offers to load a saved .tapetoc file (unless
+    ///  <paramref name="offerFileImportOnFailure"/> is false, e.g. for a freshly
+    ///  created virtual drive where no prior TOC could exist). Silent on user-cancel.
+    /// </summary>
+    private async Task<bool> ReadTOCWithUIAsync(
+        string busyMessage = "Reading TOC...",
+        bool offerFileImportOnFailure = true)
+    {
+        var success = await ReadTOCCoreAsync(busyMessage);
+        if (success)
+            return true;
+
+        // User-cancelled: silent exit — no error dialog.
+        if (_isTOCLoadCancelled)
+            return false;
+
+        if (!offerFileImportOnFailure)
+            return false;
+
+        var result = MessageBox.Show(
+            $"Failed to read TOC from media.\n\n{_tapeService.LastError}\n\n" +
+            "If you have a saved TOC file (.tapetoc), you can load it to access the media content.\n\n" +
+            "Would you like to load a TOC from file?",
+            "TOC Read Failed", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+
+        return result == MessageBoxResult.Yes && await ImportTOCFromFileAsync();
+    }
+
+    private void AbortTOCLoad()
+    {
+        BusyMessage = "Aborting TOC load...";
+        _isTOCLoadCancelled = true;
+        IsTOCAbortPending = true;
+        _tapeService.AbortTOCLoad();
+    }
+
+    // ─────────────────────────────────────────────────
+    //  High-level command methods — compose ABC helpers
+    // ─────────────────────────────────────────────────
 
     private async Task OpenDriveAsync(object? parameter)
     {
         int driveNumber = parameter as int? ?? 0;
 
-        IsBusy = true;
-        BusyMessage = $"Opening drive {driveNumber}...";
-
-        try
+        if (!await OpenPhysicalDriveWithUIAsync(driveNumber))
         {
-            var success = await _tapeService.OpenDriveAsync(driveNumber);
-            if (!success)
-            {
-                MessageBox.Show($"Failed to open drive {driveNumber}.\n\n{_tapeService.LastError}",
-                    "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                UpdateTreeForDriveOnly(driveNumber);
-                return;
-            }
+            UpdateTreeForDriveOnly(driveNumber);
+            return;
+        }
 
-            success = await LoadMediaInternalAsync();
-            if (!success)
-            {
-                UpdateTreeForDriveOnly(driveNumber);
-                NotifyIoSpeedChanged();
-                return;
-            }
-
-            UpdateTreeFromTOC(driveNumber);
-            // Select the most recent backup set
-            SelectMostRecentSet();
+        if (!await LoadMediaWithUIAsync() || !await ReadTOCWithUIAsync())
+        {
+            UpdateTreeForDriveOnly(driveNumber);
             NotifyIoSpeedChanged();
+            return;
         }
-        finally
-        {
-            IsBusy = false;
-            BusyMessage = string.Empty;
-        }
+
+        UpdateTreeFromTOC(driveNumber);
+        // Select the most recent backup set
+        SelectMostRecentSet();
+        NotifyIoSpeedChanged();
     }
 
     private async Task OpenDriveByNameAsync()
@@ -657,33 +786,20 @@ public partial class MainViewModel : ViewModelBase
         if (!_tapeService.IsDriveOpen)
             return;
 
-        IsBusy = true;
-        BusyMessage = "Refreshing...";
+        var driveNumber = _tapeService.DriveNumber;
 
-        try
+        if (_tapeService.TOC == null)
         {
-            var driveNumber = _tapeService.DriveNumber;
-
-            if (_tapeService.TOC == null)
+            if (!await LoadMediaWithUIAsync() || !await ReadTOCWithUIAsync())
             {
-                var success = await LoadMediaInternalAsync();
-
-                if (!success)
-                {
-                    UpdateTreeForDriveOnly(driveNumber);
-                    return;
-                }
+                UpdateTreeForDriveOnly(driveNumber);
+                return;
             }
+        }
 
-            UpdateTreeFromTOC(driveNumber);
-            // Select the most recent backup set
-            SelectMostRecentSet();
-        }
-        finally
-        {
-            IsBusy = false;
-            BusyMessage = string.Empty;
-        }
+        UpdateTreeFromTOC(driveNumber);
+        // Select the most recent backup set
+        SelectMostRecentSet();
     }
 
     private async Task EjectAsync()
@@ -1394,136 +1510,73 @@ public partial class MainViewModel : ViewModelBase
 
     private async Task OpenVirtualDriveAsync(VirtualDriveOpenRequest request)
     {
-        IsBusy = true;
-        BusyMessage = request.Media.InMemory ? "Creating in-memory virtual drive..."
-            : request.IsCreateNew ? "Creating virtual drive..." : "Opening virtual drive...";
-
-        try
+        // A — Open virtual drive. Custom failure UI: "open existing" re-shows the
+        //  dialog so the user can switch to "create new"; "create new" just errors.
+        var mediaMode = request.IsCreateNew ? FileMode.Create : FileMode.Open;
+        if (!await OpenVirtualDriveCoreAsync(request, mediaMode))
         {
-            // Pass FileMode based on user's mode selection
-            var success = await _tapeService.OpenVirtualDriveAsync(
-                request.Capabilities,
-                request.Media,
-                mediaMode: request.IsCreateNew ? FileMode.Create : FileMode.Open);
-
-            if (!success)
+            if (!request.IsCreateNew)
             {
-                IsBusy = false;
-                BusyMessage = string.Empty;
-
-                if (!request.IsCreateNew)
-                {
-                    // "Open existing" failed - show error and re-open dialog
-                    MessageBox.Show(
-                        $"Failed to open existing virtual media.\n\n{_tapeService.LastError}\n\n" +
-                        "Please check the file path or select 'Create new virtual media'.",
-                        "Open Failed",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Warning);
-
-                    // Re-show dialog with pre-populated path, suggesting "Create new"
-                    ShowOpenVirtualDriveWindowInternal(
-                        prePopulatedPath: request.Media.ContentPath,
-                        preSelectCreateNew: null); // Let user decide
-                }
-                else
-                {
-                    // "Create new" failed - just show error
-                    MessageBox.Show(
-                        $"Failed to create virtual drive.\n\n{_tapeService.LastError}",
-                        "Error",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Error);
-                    UpdateTreeForDriveOnly(0);
-                }
-                return;
-            }
-
-            BusyMessage = "Loading virtual media...";
-            success = await _tapeService.LoadMediaAsync();
-            if (!success)
-            {
-                IsBusy = false;
-                BusyMessage = string.Empty;
-
                 MessageBox.Show(
-                    $"Failed to load virtual media.\n\n{_tapeService.LastError}",
-                    "Warning",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
+                    $"Failed to open existing virtual media.\n\n{_tapeService.LastError}\n\n" +
+                    "Please check the file path or select 'Create new virtual media'.",
+                    "Open Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+
+                // Re-show dialog with pre-populated path, suggesting "Create new"
+                ShowOpenVirtualDriveWindowInternal(
+                    prePopulatedPath: request.Media.ContentPath,
+                    preSelectCreateNew: null); // Let user decide
+            }
+            else
+            {
+                MessageBox.Show(
+                    $"Failed to create virtual drive.\n\n{_tapeService.LastError}",
+                    "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 UpdateTreeForDriveOnly(0);
-                return;
             }
-
-            // Apply IO speed selected in the dialog (if any) - before any TOC operations
-            //  so that the TOC operations already reflect the selected speed
-            if (request.IoSpeed != null)
-            {
-                SelectedIoSpeed = request.IoSpeed;
-            }
-            // Sync IO speed UI state for the newly opened virtual drive
-            NotifyIoSpeedChanged();
-            
-            // For "Create new", create and save the initial TOC
-            if (request.IsCreateNew)
-            {
-                BusyMessage = "Creating initial TOC...";
-                success = await _tapeService.CreateInitialTOCAsync(request.MediaName);
-                if (!success)
-                {
-                    // Warning only - drive is still usable
-                    LogWarn("Could not create initial TOC");
-                }
-            }
-
-            BusyMessage = "Reading TOC...";
-            success = await _tapeService.RestoreTOCAsync();
-            if (!success)
-            {
-                if (!request.IsCreateNew)
-                {
-                    // Offer file-based TOC load for existing virtual media
-                    var result = MessageBox.Show(
-                        $"Failed to read TOC from virtual media.\n\n{_tapeService.LastError}\n\n" +
-                        "If you have a saved TOC file (.tapetoc), you can load it to access the media content.\n\n" +
-                        "Would you like to load a TOC from file?",
-                        "TOC Read Failed", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-
-                    if (result == MessageBoxResult.Yes)
-                    {
-                        success = await ImportTOCFromFileAsync();
-                        if (success)
-                        {
-                            UpdateTreeFromTOC(0);
-                            SelectMostRecentSet();
-                            NotifyIoSpeedChanged();
-                            return;
-                        }
-                    }
-                }
-                UpdateTreeForDriveOnly(0);
-                return;
-            }
-
-            UpdateTreeFromTOC(0);
-
-            // Select the most recent backup set
-            SelectMostRecentSet();
-
-            // Log success with mode info
-            var modeText = request.Media.InMemory ? "Created in-memory"
-                : request.IsCreateNew ? "Created new" : "Opened existing";
-            LogInfo($"{modeText} virtual media: {request.Media.ContentPath}");
-
-            // Don't add in-memory drives to MRU (they can't be reopened)
-            if (!request.Media.InMemory)
-                AddToVirtualDriveMru(request.Media.ContentPath);
+            return;
         }
-        finally
+
+        // B — Load virtual media
+        if (!await LoadMediaWithUIAsync("Loading virtual media...", "virtual media"))
         {
-            IsBusy = false;
-            BusyMessage = string.Empty;
+            UpdateTreeForDriveOnly(0);
+            return;
         }
+
+        // Apply IO speed selected in the dialog (if any) before any TOC operations
+        //  so that the TOC operations already reflect the selected speed.
+        if (request.IoSpeed != null)
+            SelectedIoSpeed = request.IoSpeed;
+        NotifyIoSpeedChanged();
+
+        // For "Create new", create and save the initial TOC (warning only on failure)
+        if (request.IsCreateNew)
+        {
+            var tocCreated = await RunBusyAsync("Creating initial TOC...",
+                () => _tapeService.CreateInitialTOCAsync(request.MediaName));
+            if (!tocCreated)
+                LogWarn("Could not create initial TOC");
+        }
+
+        // C — Read TOC. For freshly created media there's no prior TOC to import,
+        //  so suppress the file-import recovery prompt in that case.
+        if (!await ReadTOCWithUIAsync(offerFileImportOnFailure: !request.IsCreateNew))
+        {
+            UpdateTreeForDriveOnly(0);
+            return;
+        }
+
+        UpdateTreeFromTOC(0);
+        SelectMostRecentSet();
+
+        var modeText = request.Media.InMemory ? "Created in-memory"
+            : request.IsCreateNew ? "Created new" : "Opened existing";
+        LogInfo($"{modeText} virtual media: {request.Media.ContentPath}");
+
+        // Don't add in-memory drives to MRU (they can't be reopened)
+        if (!request.Media.InMemory)
+            AddToVirtualDriveMru(request.Media.ContentPath);
     }
 
     private void AddToVirtualDriveMru(string contentPath)
@@ -1764,13 +1817,8 @@ public partial class MainViewModel : ViewModelBase
                 return;
             }
 
-            BusyMessage = "Loading media...";
-            if (!await _tapeService.LoadMediaAsync())
-            {
-                MessageBox.Show($"Failed to load virtual media.\n\n{_tapeService.LastError}",
-                    "Format Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            if (!await LoadMediaWithUIAsync("Loading media...", "virtual media"))
                 return;
-            }
 
             BusyMessage = "Formatting media...";
             long initiatorPartitionSize = formatViewModel.CreateInitiatorPartition

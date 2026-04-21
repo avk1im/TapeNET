@@ -273,6 +273,23 @@ public partial class TapeService : IDisposable
     }
 
     /// <summary>
+    /// Signals the in-progress TOC load (started by <see cref="RestoreTOCAsync"/>) to abort.
+    /// Safe to call from any thread; reads <c>_agent</c> without the lock because
+    /// <see cref="TapeFileAgent.IsAbortRequested"/> is a volatile flag designed for
+    /// exactly this cross-thread signalling pattern.
+    /// </summary>
+    public void AbortTOCLoad()
+    {
+        // Intentionally lock-free: the lock is held by the RestoreTOCAsync worker for its
+        //  entire duration, so acquiring it here would block until the operation finishes —
+        //  the opposite of what we want. The volatile IsAbortRequested flag is safe to set
+        //  from outside the lock.
+        var agent = _agent; // snapshot to avoid TOCTOU null-ref
+        if (agent != null)
+            agent.IsAbortRequested = true;
+    }
+
+    /// <summary>
     /// Creates and saves an initial empty TOC for newly created/formatted media.
     /// Should be called after LoadMediaAsync() for new virtual media.
     /// </summary>
