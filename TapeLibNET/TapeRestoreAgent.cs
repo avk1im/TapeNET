@@ -316,17 +316,32 @@ namespace TapeLibNET
                     int index = (lastIndex >= 0)? TOC.CurrentSetTOC.IndexOf(tfi, lastIndex) : TOC.CurrentSetTOC.IndexOf(tfi);
 
                     // Do move if the previous file has been skipped, failed, or is not the next one
-                    if (LastFileSkipped || lastFileFailed || index < 0 || lastIndex < 0 || index != lastIndex + 1) 
+                    bool doMove = LastFileSkipped || lastFileFailed || index < 0 || lastIndex < 0 || index != lastIndex + 1;
+
+                    if (!doMove) // validate we're at the right block
                     {
-                        if (!Drive.MoveToBlock(tfi.Block))
+                        long currentBlock = Drive.BlockCounter;
+                        if (currentBlock != tfi.Block)
+                        {
+                            m_logger.LogWarning("Unexpected block {Block} (expected {ExpectedBlock}) for file >{File}< in {Method}",
+                                currentBlock, tfi.Block, tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
+                            doMove = true;
+                        }
+                    }
+
+                    if (doMove)
+                    {
+                        if (Drive.MoveToBlock(tfi.Block))
+                        {
+                            m_logger.LogTrace("Moved to block {Block} for file >{File}<", tfi.Block, tfi.FileDescr.FullName);
+                        }
+                        else
                         {
                             m_logger.LogWarning("Failed to move to block {Block} for file >{File}< in {Method}",
                                 tfi.Block, tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
                             goto FAILURE;
                         }
                     }
-                    if (index >= 0)
-                        lastIndex = index;
 
                     if (!RestoreNextFile(tfi, ref fileFailedAction, fileNotify))
                     {
@@ -335,6 +350,9 @@ namespace TapeLibNET
                     }
 
                     // success
+                    if (index >= 0)
+                        lastIndex = index;
+
                     lastFileFailed = false;
                     m_logger.LogTrace("File >{File}< restored ok", tfi.FileDescr.FullName);
                     continue;
