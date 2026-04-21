@@ -57,6 +57,13 @@ public class AppSettings
 
     #endregion
 
+    #region View Options
+
+    /// <summary>Whether the media usage bar is shown below the Media Properties list.</summary>
+    public bool ShowUsageBar { get; set; } = true;
+
+    #endregion
+
     #region Stream-level API
 
     public void Save(Stream stream)

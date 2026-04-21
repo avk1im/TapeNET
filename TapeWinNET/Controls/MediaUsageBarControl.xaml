@@ -1,0 +1,17 @@
+<UserControl x:Class="TapeWinNET.Controls.MediaUsageBarControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             d:DesignHeight="24" d:DesignWidth="600">
+
+    <!-- Outer border frames the bar and provides a 1-px hairline around it -->
+    <Border BorderBrush="#FFAAAAAA" BorderThickness="1" Margin="2,2,2,2">
+        <!-- SegmentsGrid columns and children are built entirely in code-behind -->
+        <Grid x:Name="SegmentsGrid"
+              Height="18"
+              ClipToBounds="True"/>
+    </Border>
+
+</UserControl>

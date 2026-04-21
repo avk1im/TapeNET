@@ -120,8 +120,9 @@ public partial class MainViewModel
         BackupProgressText = "Starting...";
         CurrentBackupFile = string.Empty;
 
-        // Sticky state for "Skip All Errors" button in the error dialog
-        bool skipAllErrors = false;
+        // Sticky state for "Skip All Errors" button in the error dialog;
+        // also set immediately when the user pre-checked SkipAllErrors in the backup window
+        bool skipAllErrors = request.SkipAllErrors;
         int errorCount = 0;
         BackupOperationResult? operationResult = null;
 
@@ -140,6 +141,7 @@ public partial class MainViewModel
                     request.AppendMode,
                     request.AppendAfterSetIndex,
                     request.UseFilemarks,
+                    request.SkipAllErrors,
                     // Current file callback
                     filePath =>
                     {

@@ -398,6 +398,9 @@ namespace TapeWinNET
 
             if (settings.LogFilterPaneWidth.HasValue && settings.LogFilterPaneWidth.Value >= LogFilterColumn.MinWidth)
                 LogFilterColumn.Width = new GridLength(settings.LogFilterPaneWidth.Value);
+
+            // Restore view options
+            _viewModel.ShowUsageBar = settings.ShowUsageBar;
         }
 
         private void SaveSettings()
@@ -435,6 +438,9 @@ namespace TapeWinNET
             settings.ShowLogError = _viewModel.ShowLogError;
             settings.ShowLogDetails = _viewModel.ShowLogDetails;
             settings.LogFilterPaneWidth = LogFilterColumn.ActualWidth;
+
+            // Save view options
+            settings.ShowUsageBar = _viewModel.ShowUsageBar;
 
             // Let the ViewModel save its own state (last drive info)
             _viewModel.SaveSettings();

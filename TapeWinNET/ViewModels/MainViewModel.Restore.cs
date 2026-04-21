@@ -599,8 +599,9 @@ public partial class MainViewModel
         RestoreProgressText = "Starting...";
         CurrentRestoreFile = string.Empty;
 
-        // Sticky state for "Skip All Errors" button in the error dialog
-        bool skipAllErrors = false;
+        // Sticky state for "Skip All Errors" button in the error dialog;
+        // also set immediately when the user pre-checked SkipAllErrors in the restore window
+        bool skipAllErrors = request.SkipAllErrors;
         int errorCount = 0;
         RestoreOperationResult? operationResult = null;
 
@@ -615,6 +616,7 @@ public partial class MainViewModel
                     targetDirectory,
                     recurseSubdirectories: recurseSubdirectories,
                     handleExisting,
+                    request.SkipAllErrors,
                     // Current file callback
                     filePath =>
                     {

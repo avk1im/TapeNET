@@ -605,6 +605,9 @@ namespace TapeLibNET
         {
             get
             {
+                if (Count == 0)
+                    return 0;
+
                 // shortcut for Volume #1
                 if (Volume == 1)
                     return 0;
@@ -623,6 +626,9 @@ namespace TapeLibNET
         {
             get
             {
+                if (Count == 0)
+                    return 0;
+
                 // shortcut if the last set is on current Volume
                 if (this[Count - 1].Volume == Volume)
                     return Count - 1;

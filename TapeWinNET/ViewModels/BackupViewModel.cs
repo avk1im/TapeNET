@@ -36,7 +36,8 @@ public record BackupRequest(
     bool AppendMode,
     int AppendAfterSetIndex,
     bool UseFilemarks,
-    bool IncludeSubdirectories);
+    bool IncludeSubdirectories,
+    bool SkipAllErrors);
 
 /// <summary>
 /// ViewModel for the BackupWindow (Option B: Source-Drill-Down).
@@ -82,7 +83,8 @@ public class BackupViewModel : ViewModelBase
     private string _description = string.Empty;
     private bool _incrementalBackup;
     private bool _useFilemarks;
-    private int _selectedBlockSizeIndex;        // Set dynamically from DefaultBlockSize
+    private bool _skipAllErrors;
+    private int _selectedBlockSizeIndex;
     private int _selectedHashIndex = 1;        // Default CRC32
     private bool _appendToSet = true;
     private AppendAfterOption? _selectedAppendOption;
@@ -309,6 +311,16 @@ public class BackupViewModel : ViewModelBase
     {
         get => _useFilemarks;
         set => SetProperty(ref _useFilemarks, value);
+    }
+
+    /// <summary>
+    /// When checked, all file errors during backup are silently skipped without
+    /// showing an error dialog (non-assisted / unattended backup mode).
+    /// </summary>
+    public bool SkipAllErrors
+    {
+        get => _skipAllErrors;
+        set => SetProperty(ref _skipAllErrors, value);
     }
 
     /// <summary>
@@ -968,7 +980,8 @@ public class BackupViewModel : ViewModelBase
             AppendMode: _appendToSet,
             AppendAfterSetIndex: _selectedAppendOption?.SetIndex ?? -1,
             UseFilemarks: _useFilemarks,
-            IncludeSubdirectories: _sourceView.IncludeSubdirectories);
+            IncludeSubdirectories: _sourceView.IncludeSubdirectories,
+            SkipAllErrors: _skipAllErrors);
 
         _onStartBackup(request);
     }

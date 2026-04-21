@@ -291,7 +291,13 @@
                             <!-- Hash algorithm -->
                             <TextBlock Text="Hash algorithm:" Margin="0,0,0,4"/>
                             <ComboBox ItemsSource="{Binding HashOptions}"
-                                      SelectedIndex="{Binding SelectedHashIndex}"/>
+                                      SelectedIndex="{Binding SelectedHashIndex}"
+                                      Margin="0,0,0,8"/>
+
+                            <CheckBox Content="Skip all errors"
+                                      IsChecked="{Binding SkipAllErrors}"
+                                      ToolTip="Silently skip all file errors without prompting (unattended backup mode)"
+                                      Margin="0,4,0,0"/>
                         </StackPanel>
                     </GroupBox>
 

@@ -23,7 +23,8 @@ public record RestoreRequest(
     string? TargetDirectory,
     bool RecurseSubdirectories,
     TapeHowToHandleExisting HandleExisting,
-    bool UncheckProcessedFiles);
+    bool UncheckProcessedFiles,
+    bool SkipAllErrors);
 
 /// <summary>
 /// Represents an option in the "Handle existing files" combo box.
@@ -56,6 +57,7 @@ public class RestoreViewModel : ViewModelBase
     private bool _restoreToOriginal = true;
     private bool _recurseSubdirectories;
     private bool _uncheckProcessedFiles = true;
+    private bool _skipAllErrors;
     private string _targetDirectory = string.Empty;
     private HandleExistingOption _selectedHandleExisting = HandleExistingOption.All[0]; // Keep Both
     private string _itemsGroupHeader = string.Empty;
@@ -296,6 +298,16 @@ public class RestoreViewModel : ViewModelBase
         set => SetProperty(ref _uncheckProcessedFiles, value);
     }
 
+    /// <summary>
+    /// When checked, all file errors during the operation are silently skipped without
+    /// showing an error dialog (non-assisted / unattended mode).
+    /// </summary>
+    public bool SkipAllErrors
+    {
+        get => _skipAllErrors;
+        set => SetProperty(ref _skipAllErrors, value);
+    }
+
     /// <summary>Warning level for the options panel.</summary>
     public WarningLevel WarningLevel => _mode == RestoreMode.Restore ? _selectedHandleExisting.Value switch
     {
@@ -445,7 +457,8 @@ public class RestoreViewModel : ViewModelBase
             TargetDirectory: targetDir,
             RecurseSubdirectories: targetDir != null && _recurseSubdirectories,
             HandleExisting: _selectedHandleExisting.Value,
-            UncheckProcessedFiles: _uncheckProcessedFiles);
+            UncheckProcessedFiles: _uncheckProcessedFiles,
+            SkipAllErrors: _skipAllErrors);
 
         _onStart(request);
     }

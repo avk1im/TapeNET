@@ -70,10 +70,11 @@ public partial class TapeService
     /// <param name="targetDirectory">Target directory for Restore mode (ignored for Validate/Verify).</param>
     /// <param name="recurseSubdirectories">Whether to recreate subdirectory structure (Restore only).</param>
     /// <param name="handleExisting">How to handle existing files (Restore only).</param>
+    /// <param name="skipAllErrors">When <c>true</c>, all file errors are silently skipped without invoking <paramref name="fileErrorCallback"/>.</param>
     /// <param name="currentFileCallback">Callback to report current file being processed.</param>
     /// <param name="progressCallback">Callback for progress updates (filesProcessed, totalFiles, bytesProcessed).</param>
     /// <param name="logCallback">Callback for log messages.</param>
-    /// <param name="fileErrorCallback">Callback when a file error occurs. Returns FileFailedAction.</param>
+    /// <param name="fileErrorCallback">Callback when a file error occurs. Returns FileFailedAction. Ignored when <paramref name="skipAllErrors"/> is <c>true</c>.</param>
     /// <param name="volumeChangeCallback">Callback when restore needs to continue on another volume. Receives the required volume number. Returns true to continue, false to abort.</param>
     /// <param name="insertMediaCallback">Callback after media ejection, prompting user to insert media for the specified volume. Returns true when ready, false to abort.</param>
     /// <param name="mediaLoadRetryCallback">Optional callback when loading the next-volume media fails.
@@ -90,10 +91,11 @@ public partial class TapeService
         string? targetDirectory,
         bool recurseSubdirectories,
         TapeHowToHandleExisting handleExisting,
+        bool skipAllErrors,
         Action<string> currentFileCallback,
         Action<int, int, long> progressCallback,
         Action<LogEntry> logCallback,
-        Func<string, string, FileFailedAction> fileErrorCallback,
+        Func<string, string, FileFailedAction>? fileErrorCallback,
         Func<int, bool> volumeChangeCallback,
         Func<int, bool> insertMediaCallback,
         Func<string, bool, bool>? mediaLoadRetryCallback = null)
@@ -202,14 +204,16 @@ public partial class TapeService
                         logInfoSub($"Target folder: {targetDirectory}");
                     toc.CurrentSetIndex = newestIdx; // restore after iterating
 
-                    // Create progress handler
+                    // Create progress handler.
+                    // Pass null fileErrorCallback when skipAllErrors is set — OnFileFailed will
+                    //  then always return Skip without showing a dialog.
                     progressHandler = new GuiRestoreProgressHandler(
                         agent,
                         totalFiles,
                         logCallback,
                         progressCallback,
                         currentFileCallback,
-                        fileErrorCallback,
+                        skipAllErrors ? null : fileErrorCallback,
                         modeName);
 
                     Status($"{modeName} files...");
@@ -438,7 +442,7 @@ public partial class TapeService
         Action<LogEntry> logCallback,
         Action<int, int, long> progressCallback,
         Action<string> currentFileCallback,
-        Func<string, string, FileFailedAction> fileErrorCallback,
+        Func<string, string, FileFailedAction>? fileErrorCallback,
         string modeName) : ITapeFileNotifiable
     {
         // Convenience accessors — always reflect the latest library snapshot
@@ -570,6 +574,11 @@ public partial class TapeService
             {
                 return FileFailedAction.Skip;
             }
+
+            // Show error dialog via callback - the callback handles sticky choices (e.g. Skip All).
+            // When fileErrorCallback is null (skipAllErrors mode), always skip silently.
+            if (fileErrorCallback is null)
+                return FileFailedAction.Skip;
 
             var action = fileErrorCallback(fileInfo.FileDescr.FullName, result.ErrorMessage);
 

@@ -134,7 +134,7 @@
                                     IsEnabled="{Binding IsTargetDirectoryInputEnabled}"
                                     Width="28" Padding="0"/>
                         </Grid>
-                        <CheckBox Content="Original subfolders"
+                        <CheckBox Content="Restore with subfolders"
                                   IsChecked="{Binding RecurseSubdirectories}"
                                   IsEnabled="{Binding IsRecurseSubdirsEnabled}"
                                   Margin="20,4,0,0"/>
@@ -160,7 +160,8 @@
                                    IsEnabled="{Binding IsHandleExistingEnabled}"/>
                         <ComboBox ItemsSource="{Binding HandleExistingOptions}"
                                   SelectedItem="{Binding SelectedHandleExisting}"
-                                  IsEnabled="{Binding IsHandleExistingEnabled}"/>
+                                  IsEnabled="{Binding IsHandleExistingEnabled}"
+                                  Margin="0,0,0,8"/>
 
                         <!-- Handle-existing warning -->
                         <Border Style="{StaticResource WarningPanelStyle}">
@@ -171,7 +172,12 @@
                                            VerticalAlignment="Center" TextWrapping="Wrap"/>
                             </StackPanel>
                         </Border>
-                    </StackPanel>
+                        
+                        <CheckBox Content="Skip all errors"
+                                IsChecked="{Binding SkipAllErrors}"
+                                ToolTip="Silently skip all file errors without prompting (unattended mode)"
+                                Margin="0,4,0,0"/>
+                        </StackPanel>
                 </GroupBox>
 
                 <!-- Preview -->

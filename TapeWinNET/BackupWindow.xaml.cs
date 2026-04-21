@@ -160,5 +160,4 @@ public partial class BackupWindow : Window
                 UpdateFilterPaneCounts(setView);
         }
     }
-
-    }
+}

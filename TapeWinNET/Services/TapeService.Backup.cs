@@ -50,10 +50,11 @@ public partial class TapeService
     /// <param name="appendMode">True to append after existing set, false to overwrite all.</param>
     /// <param name="appendAfterSetIndex">Set index to append after (-1 for overwrite all, or specific set index).</param>
     /// <param name="useFilemarks">Whether to use filemarks between files (blob mode if false).</param>
+    /// <param name="skipAllErrors">When <c>true</c>, all file errors are silently skipped without invoking <paramref name="fileErrorCallback"/>.</param>
     /// <param name="currentFileCallback">Callback to report current file being processed.</param>
     /// <param name="progressCallback">Callback for progress updates (filesProcessed, totalFiles, bytesProcessed).</param>
     /// <param name="logCallback">Callback for log messages.</param>
-    /// <param name="fileErrorCallback">Callback when a file error occurs. Returns FileFailedAction.</param>
+    /// <param name="fileErrorCallback">Callback when a file error occurs. Returns FileFailedAction. Ignored when <paramref name="skipAllErrors"/> is <c>true</c>.</param>
     /// <param name="volumeFullCallback">Callback when current volume is full. Returns true to continue on next volume, false to end backup.</param>
     /// <param name="insertMediaCallback">Callback after media ejection, prompting user to insert new media. Returns true when ready, false to end backup.</param>
     /// <param name="mediaLoadRetryCallback">Optional callback when loading the next-volume media fails.
@@ -77,10 +78,11 @@ public partial class TapeService
         bool appendMode,
         int appendAfterSetIndex,
         bool useFilemarks,
+        bool skipAllErrors,
         Action<string> currentFileCallback,
         Action<int, int, long> progressCallback,
         Action<LogEntry> logCallback,
-        Func<string, string, FileFailedAction> fileErrorCallback,
+        Func<string, string, FileFailedAction>? fileErrorCallback,
         Func<int, int, int, int, long, bool> volumeFullCallback,
         Func<int, bool> insertMediaCallback,
         Func<string, bool, bool>? mediaLoadRetryCallback = null,
@@ -222,13 +224,15 @@ public partial class TapeService
                     else
                         logInfoSub($"Files to backup: {fileList.Count:N0}");
 
-                    // Create progress handler (uses agent.IsAbortRequested for abort checking)
+                    // Create progress handler (uses agent.IsAbortRequested for abort checking).
+                    // Pass null fileErrorCallback when skipAllErrors is set — OnFileFailed will
+                    //  then always return Skip without showing a dialog.
                     progressHandler = new GuiBackupProgressHandler(
                         agent,
                         logCallback,
                         progressCallback,
                         currentFileCallback,
-                        fileErrorCallback);
+                        skipAllErrors ? null : fileErrorCallback);
 
                     // --- Backup loop (handles multi-volume) ---
                     // After each iteration:
@@ -635,7 +639,7 @@ public partial class TapeService
         Action<LogEntry> logCallback,
         Action<int, int, long> progressCallback,
         Action<string> currentFileCallback,
-        Func<string, string, FileFailedAction> fileErrorCallback) : ITapeFileNotifiable
+        Func<string, string, FileFailedAction>? fileErrorCallback) : ITapeFileNotifiable
     {
         // Convenience accessors — always reflect the latest library snapshot
         public int FilesProcessed { get; private set; }
@@ -741,7 +745,11 @@ public partial class TapeService
                 return FileFailedAction.Skip;
             }
 
-            // Show error dialog via callback - the callback handles sticky choices (e.g. Skip All)
+            // Show error dialog via callback - the callback handles sticky choices (e.g. Skip All).
+            // When fileErrorCallback is null (skipAllErrors mode), always skip silently.
+            if (fileErrorCallback is null)
+                return FileFailedAction.Skip;
+
             var action = fileErrorCallback(fileInfo.FileDescr.FullName, result.ErrorMessage);
 
             if (action == FileFailedAction.Abort)

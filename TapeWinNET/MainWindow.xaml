@@ -234,6 +234,9 @@
                 <MenuItem Header="Show _Incremental Sets" 
                           IsCheckable="True" 
                           IsChecked="{Binding ShowIncrementalSets}"/>
+                <MenuItem Header="Show _Usage Bar" 
+                          IsCheckable="True" 
+                          IsChecked="{Binding ShowUsageBar}"/>
             </MenuItem>
             <MenuItem Header="_Log">
                 <MenuItem Header="_Auto-scroll" 
@@ -294,7 +297,15 @@
                 
                 <!-- Properties Subpane -->
                 <GroupBox Grid.Row="0" Header="{Binding PropertiesHeader}">
-                    <ListView ItemsSource="{Binding PropertyList}"
+                    <DockPanel LastChildFill="True">
+                        <!-- Media usage bar — docked to bottom, visible only for media view when enabled -->
+                        <controls:MediaUsageBarControl
+                            DockPanel.Dock="Bottom"
+                            Segments="{Binding MediaUsageSegments}"
+                            TotalCapacity="{Binding MediaTotalCapacity}"
+                            Visibility="{Binding IsUsageBarVisible, Converter={StaticResource BoolToVis}}"/>
+
+                        <ListView ItemsSource="{Binding PropertyList}"
                               VirtualizingPanel.IsVirtualizing="True"
                               VirtualizingPanel.VirtualizationMode="Recycling">
                         <ListView.ContextMenu>
@@ -319,8 +330,9 @@
                                                 DisplayMemberBinding="{Binding Value}" />
                             </GridView>
                         </ListView.View>
-                    </ListView>
-                </GroupBox>
+                            </ListView>
+                        </DockPanel>
+                    </GroupBox>
                 
                 <!-- Vertical Splitter (only visible when table is shown) -->
                 <GridSplitter Grid.Row="1" Height="4" 

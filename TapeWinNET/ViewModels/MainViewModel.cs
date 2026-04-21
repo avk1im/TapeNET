@@ -10,6 +10,7 @@ using TapeLibNET;
 using TapeLibNET.Virtual;
 using TapeWinNET.Converters;
 
+using TapeWinNET.Controls;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
 using TapeWinNET.Utils;
@@ -61,6 +62,11 @@ public partial class MainViewModel : ViewModelBase
     private TapeTreeItemViewModel? _selectedTreeItem;
     private ContentPaneType _contentType = ContentPaneType.DriveInfo;
 
+    // Media usage bar
+    private bool _showUsageBar;
+    private IReadOnlyList<UsageSegment> _mediaUsageSegments = [];
+    private long _mediaTotalCapacity;
+
     // TOC view model — owns BackupSetViews with per-set FilteredFileList,
     //  checked state, filter state, and FileListItem dictionaries.
     private TOCView? _tocView;
@@ -109,6 +115,9 @@ public partial class MainViewModel : ViewModelBase
 
         // Initialize MRU virtual drive menu items
         RefreshRecentVirtualDriveMenu();
+
+        // Restore view options from settings
+        _showUsageBar = _settings.ShowUsageBar;
     }
 
     private void InitializeDriveMenu()
@@ -289,7 +298,10 @@ public partial class MainViewModel : ViewModelBase
         set
         {
             if (SetProperty(ref _selectedBackupSet, value))
+            {
                 NotifyCommandTextChanged();
+                UpdateUsageBarHighlight(value);
+            }
         }
         // Navigation now triggered by double-click or Enter, not selection change
     }
@@ -307,6 +319,7 @@ public partial class MainViewModel : ViewModelBase
                 OnPropertyChanged(nameof(IsTableVisible));
                 OnPropertyChanged(nameof(IsFileTableVisible));
                 OnPropertyChanged(nameof(IsBackupSetTableVisible));
+                OnPropertyChanged(nameof(IsUsageBarVisible));
             }
         }
     }
@@ -319,6 +332,145 @@ public partial class MainViewModel : ViewModelBase
 
     /// <summary>Whether the backup sets table is visible (Media selected)</summary>
     public bool IsBackupSetTableVisible => ContentType == ContentPaneType.MediaInfo;
+
+    #region Media Usage Bar
+
+    /// <summary>
+    /// Whether the media usage bar is shown. Toggled via the View menu;
+    ///  persisted in <see cref="AppSettings"/>.
+    /// </summary>
+    public bool ShowUsageBar
+    {
+        get => _showUsageBar;
+        set
+        {
+            if (SetProperty(ref _showUsageBar, value))
+                OnPropertyChanged(nameof(IsUsageBarVisible));
+        }
+    }
+
+    /// <summary>
+    /// True when the usage bar should be displayed: only meaningful (and shown)
+    ///  when a media node is selected and the bar is enabled in View options.
+    /// </summary>
+    public bool IsUsageBarVisible => ShowUsageBar && ContentType == ContentPaneType.MediaInfo;
+
+    /// <summary>
+    /// Ordered list of usage segments for the <c>MediaUsageBarControl</c>.
+    ///  Rebuilt by <see cref="BuildMediaUsageSegments"/> whenever media info is loaded.
+    /// </summary>
+    public IReadOnlyList<UsageSegment> MediaUsageSegments
+    {
+        get => _mediaUsageSegments;
+        private set => SetProperty(ref _mediaUsageSegments, value);
+    }
+
+    /// <summary>Total media capacity in bytes; denominator for the usage bar proportions.</summary>
+    public long MediaTotalCapacity
+    {
+        get => _mediaTotalCapacity;
+        private set => SetProperty(ref _mediaTotalCapacity, value);
+    }
+
+    /// <summary>
+    /// Builds the <see cref="MediaUsageSegments"/> list from <paramref name="toc"/>.
+    /// Only sets on the current volume are included. TOC placement follows the
+    /// physical convention: partition-based TOC is the leftmost segment; set-based
+    /// TOC is the rightmost data segment (immediately before free space).
+    /// </summary>
+    private void BuildMediaUsageSegments()
+    {
+        var toc = _tapeService.TOC;
+        long capacity = _tapeService.Capacity;
+        if (toc is null || toc.Count == 0 || capacity <= 0)
+        {
+            MediaUsageSegments = [];
+            MediaTotalCapacity = 0;
+            return;
+        }
+
+        long tocSize = TapeNavigator.DefaultTOCCapacity;
+        uint blockSize = _tapeService.DefaultBlockSize;
+        bool tocInPartition = _tapeService.HasInitiatorPartition;
+
+        var segments = new List<UsageSegment>();
+
+        // TOC-in-partition: leftmost segment
+        if (tocInPartition)
+            segments.Add(new UsageSegment(
+                label:    "TOC",
+                size:     tocSize,
+                color:    default, // Kind-based color applied by the control
+                tooltip:  $"TOC partition: {Helpers.BytesToString(tocSize)}",
+                kind:     UsageSegmentKind.TOC));
+
+        // Backup-set segments — only sets on the current volume, oldest first
+        int firstSet = toc.FirstSetOnVolume;
+        int lastSet  = toc.LastSetOnVolume;
+        for (int setIndex = firstSet; setIndex <= lastSet; setIndex++)
+        {
+            var setTOC    = toc[setIndex];
+            long setSize  = setTOC.ComputeTotalFileSizeOnTape(blockSize);
+            int  altIndex = toc.SetIndexToAlt(setIndex);
+            // Color assigned round-robin by 0-based standard index so that colors are
+            //  stable across volumes (set 1 always gets palette[0], etc.).
+            var color = MediaUsageBarControl.GetSetColor(setIndex - 1);
+
+            segments.Add(new UsageSegment(
+                label:    $"{setIndex}|{altIndex}",
+                size:     Math.Max(setSize, 1), // always at least 1 byte so tiny sets are visible
+                color:    color,
+                tooltip:  $"Set {setIndex}|{altIndex}: {setTOC.Description ?? "(unnamed)"}\n"
+                        + $"{Helpers.BytesToString(setSize)}, {setTOC.Count} file(s)",
+                kind:     UsageSegmentKind.BackupSet,
+                setIndex: setIndex));
+        }
+
+        // TOC-in-set: rightmost data segment
+        if (!tocInPartition)
+            segments.Add(new UsageSegment(
+                label:    "TOC",
+                size:     tocSize,
+                color:    default,
+                tooltip:  $"TOC (in set): {Helpers.BytesToString(tocSize)}",
+                kind:     UsageSegmentKind.TOC));
+
+        // Free space
+        long usedBySegments = segments.Sum(s => s.Size);
+        long freeSize = Math.Max(capacity - usedBySegments, 0);
+        segments.Add(new UsageSegment(
+            label:    string.Empty,
+            size:     Math.Max(freeSize, 1), // always at least 1 byte so bar fills completely
+            color:    default,
+            tooltip:  $"Free: {Helpers.BytesToString(freeSize)}",
+            kind:     UsageSegmentKind.Free));
+
+        MediaTotalCapacity  = capacity;
+        MediaUsageSegments  = segments;
+
+        // Restore highlight for whatever set was selected before the bar was rebuilt
+        UpdateUsageBarHighlight(_selectedBackupSet);
+    }
+
+    /// <summary>
+    /// Updates the <see cref="UsageSegment.IsHighlighted"/> flag on each segment
+    ///  to match the currently selected backup set.
+    /// </summary>
+    private void UpdateUsageBarHighlight(BackupSetListItem? selected)
+    {
+        foreach (var seg in _mediaUsageSegments)
+            seg.IsHighlighted = seg.Kind == UsageSegmentKind.BackupSet
+                             && seg.SetIndex == selected?.SetIndex;
+    }
+
+    /// <summary>Clears the usage bar when navigating away from the media view.</summary>
+    private void ClearMediaUsageSegments()
+    {
+        MediaUsageSegments = [];
+        MediaTotalCapacity = 0;
+    }
+
+    #endregion // Media Usage Bar
 
     /// <summary>Menu items for the Open Drive submenu.</summary>
     public ObservableCollection<DriveMenuItem> DriveMenuItems { get; } = [];
@@ -1229,6 +1381,7 @@ public partial class MainViewModel : ViewModelBase
         ContentType = ContentPaneType.DriveInfo;
         PropertiesHeader = "Drive Properties";
         TableHeader = ""; // Not visible for drive
+        ClearMediaUsageSegments();
 
         PropertyList.Add(new PropertyItem("Device Name", _tapeService.DeviceName));
         PropertyList.Add(new PropertyItem("Drive Open", _tapeService.IsDriveOpen ? "Yes" : "No"));
@@ -1320,6 +1473,9 @@ public partial class MainViewModel : ViewModelBase
         StatusMessage = _tapeService.IsTOCFromFile
             ? $"\u26a0 TOC: {System.IO.Path.GetFileName(_tapeService.TOCFilePath)} | Media: {mediaName} - {toc.Count} backup set(s)"
             : $"Media: {mediaName} - {toc.Count} backup set(s)";
+
+        // Build the media usage bar from the current-volume sets
+        BuildMediaUsageSegments();
     }
 
     private void LoadBackupSetInfo(int setIndex)
@@ -1334,6 +1490,7 @@ public partial class MainViewModel : ViewModelBase
         FileList = [];
         ContentType = ContentPaneType.BackupSetInfo;
         TableHeader = "Files"; // Reset early to avoid showing stale backup-set header
+        ClearMediaUsageSegments();
 
         try
         {
