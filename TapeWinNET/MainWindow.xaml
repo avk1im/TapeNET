@@ -393,16 +393,28 @@
                                                 </DataTemplate>
                                             </GridViewColumn.CellTemplate>
                                         </GridViewColumn>
-                                        <GridViewColumn Header="Name" Width="200"
-                                                        DisplayMemberBinding="{Binding FileName}" />
+                                        <GridViewColumn Header="Name" Width="200">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding FileName}" ToolTip="{Binding FullPath}"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
                                         <GridViewColumn Header="Size" Width="80"
                                                         DisplayMemberBinding="{Binding SizeFormatted}" />
                                         <GridViewColumn Header="Modified" Width="130"
                                                         DisplayMemberBinding="{Binding LastModified}" />
                                         <GridViewColumn Header="Block" Width="70"
                                                         DisplayMemberBinding="{Binding Block}" />
-                                        <GridViewColumn Header="Path" Width="250"
-                                                        DisplayMemberBinding="{Binding FullPath}" />
+                                        <GridViewColumn Header="Path" Width="250">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding FullPath}" ToolTip="{Binding FullPath}"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
                                     </GridView>
                                 </ListView.View>
                                 <ListView.ContextMenu>
@@ -490,7 +502,7 @@
                                     <GridViewColumn Header="Description" Width="180">
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
-                                                <TextBlock Text="{Binding Description}"
+                                                <TextBlock Text="{Binding Description}" ToolTip="{Binding Description}"
                                                            Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>

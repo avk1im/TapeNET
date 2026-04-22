@@ -69,7 +69,7 @@ public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bo
     /// <summary>
     /// Display format: "1 | -2" for set 1 of 3
     /// </summary>
-    public string IndexDisplay => $"{SetIndex} | {AltIndex}";
+    public string IndexDisplay => $"#{SetIndex} | {AltIndex}";
 
     public string Description => _setTOC.Description ?? "(unnamed)";
 

@@ -382,7 +382,7 @@ public partial class MainViewModel : ViewModelBase
     {
         var toc = _tapeService.TOC;
         long capacity = _tapeService.Capacity;
-        if (toc is null || toc.Count == 0 || capacity <= 0)
+        if (toc is null || capacity <= 0)
         {
             MediaUsageSegments = [];
             MediaTotalCapacity = 0;
@@ -404,26 +404,31 @@ public partial class MainViewModel : ViewModelBase
                 tooltip:  $"TOC partition: {Helpers.BytesToString(tocSize)}",
                 kind:     UsageSegmentKind.TOC));
 
-        // Backup-set segments — only sets on the current volume, oldest first
-        int firstSet = toc.FirstSetOnVolume;
-        int lastSet  = toc.LastSetOnVolume;
-        for (int setIndex = firstSet; setIndex <= lastSet; setIndex++)
+        // Backup-set segments — only sets on the current volume, oldest first.
+        // Guard against empty media: FirstSetOnVolume / LastSetOnVolume must not be
+        //  called when Count == 0 as they can throw an out-of-range exception.
+        if (toc.Count > 0)
         {
-            var setTOC    = toc[setIndex];
-            long setSize  = setTOC.ComputeTotalFileSizeOnTape(blockSize);
-            int  altIndex = toc.SetIndexToAlt(setIndex);
-            // Color assigned round-robin by 0-based standard index so that colors are
-            //  stable across volumes (set 1 always gets palette[0], etc.).
-            var color = MediaUsageBarControl.GetSetColor(setIndex - 1);
+            int firstSet = toc.FirstSetOnVolume;
+            int lastSet  = toc.LastSetOnVolume;
+            for (int setIndex = firstSet; setIndex <= lastSet; setIndex++)
+            {
+                var setTOC    = toc[setIndex];
+                long setSize  = setTOC.ComputeTotalFileSizeOnTape(blockSize);
+                int  altIndex = toc.SetIndexToAlt(setIndex);
+                // Color assigned round-robin by 0-based standard index so that colors are
+                //  stable across volumes (set 1 always gets palette[0], etc.).
+                var color = MediaUsageBarControl.GetSetColor(setIndex - 1);
 
-            segments.Add(new UsageSegment(
-                label:    $"{setIndex}|{altIndex}",
-                size:     Math.Max(setSize, 1), // always at least 1 byte so tiny sets are visible
-                color:    color,
-                tooltip:  $"Set {setIndex}|{altIndex}: {setTOC.Description ?? "(unnamed)"}\n"
-                        + $"{Helpers.BytesToString(setSize)}, {setTOC.Count} file(s)",
-                kind:     UsageSegmentKind.BackupSet,
-                setIndex: setIndex));
+                segments.Add(new UsageSegment(
+                    label:    $"#{setIndex}|{altIndex}",
+                    size:     Math.Max(setSize, 1), // always at least 1 byte so tiny sets are visible
+                    color:    color,
+                    tooltip:  $"Set #{setIndex}|{altIndex}: {setTOC.Description ?? "(unnamed)"}\n"
+                            + $"{Helpers.BytesToString(setSize)}, {setTOC.Count} file(s)",
+                    kind:     UsageSegmentKind.BackupSet,
+                    setIndex: setIndex));
+            }
         }
 
         // TOC-in-set: rightmost data segment
@@ -436,13 +441,13 @@ public partial class MainViewModel : ViewModelBase
                 kind:     UsageSegmentKind.TOC));
 
         // Free space
-        long usedBySegments = segments.Sum(s => s.Size);
-        long freeSize = Math.Max(capacity - usedBySegments, 0);
+        var remaining = _tapeService.Remaining;
+
         segments.Add(new UsageSegment(
             label:    string.Empty,
-            size:     Math.Max(freeSize, 1), // always at least 1 byte so bar fills completely
+            size:     Math.Max(remaining, 1), // always at least 1 byte so bar fills completely
             color:    default,
-            tooltip:  $"Free: {Helpers.BytesToString(freeSize)}",
+            tooltip:  $"Free: {Helpers.BytesToString(remaining)}",
             kind:     UsageSegmentKind.Free));
 
         MediaTotalCapacity  = capacity;
@@ -1411,7 +1416,7 @@ public partial class MainViewModel : ViewModelBase
                 PropertyList.Add(new PropertyItem("Capacity", 
                     Helpers.BytesToStringLong(_tapeService.Capacity)));
                 PropertyList.Add(new PropertyItem("Remaining (est.)", 
-                    Helpers.BytesToStringLong(_tapeService.GetRemainingCapacity())));
+                    Helpers.BytesToStringLong(_tapeService.GetRemainingCapacityFromDrive())));
             }
         }
 
@@ -1443,10 +1448,8 @@ public partial class MainViewModel : ViewModelBase
         PropertyList.Add(new PropertyItem("Capacity", 
             Helpers.BytesToStringLong(_tapeService.Capacity)));
 
-        var used = toc.ComputeTotalFileSizeOnTape(_tapeService.DefaultBlockSize);
-        if (!_tapeService.HasInitiatorPartition)
-            used += TapeNavigator.DefaultTOCCapacity; // if TOC is in set, it consumes content space
-        var remaining = _tapeService.Capacity - used; //_tapeService.GetRemainingCapacity();
+        var used = _tapeService.Used;
+        var remaining = _tapeService.Remaining;
 
         PropertyList.Add(new PropertyItem("Used", Helpers.BytesToStringLong(used)));
         PropertyList.Add(new PropertyItem("Remaining", Helpers.BytesToStringLong(remaining)));

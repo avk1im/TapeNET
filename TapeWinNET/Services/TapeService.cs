@@ -101,8 +101,20 @@ public partial class TapeService : IDisposable
     public uint PartitionCount => _drive?.PartitionCount ?? 0;
     public bool HasInitiatorPartition => _drive?.HasInitiatorPartition ?? false;
     public long Capacity => _drive?.ContentCapacity ?? 0;
-
-    public long GetRemainingCapacity()
+    public long Used
+    {
+        get
+        {
+            if (TOC is null)
+                return 0;
+            var used = _toc?.ComputeTotalFileSizeOnTape(DefaultBlockSize) ?? 0;
+            if (HasInitiatorPartition)
+                used += TapeNavigator.DefaultTOCCapacity; // if TOC is in set, it consumes space
+            return used;
+        }
+    }
+    public long Remaining => Capacity - Used;
+    public long GetRemainingCapacityFromDrive()
     {
         lock (_lock)
         {
