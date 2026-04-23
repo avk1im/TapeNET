@@ -126,6 +126,26 @@ public partial class MediaUsageBarControl : UserControl
             typeof(MediaUsageBarControl),
             new PropertyMetadata(0L, OnSegmentsOrCapacityChanged));
 
+    public static readonly DependencyProperty FreeIsInteractiveProperty =
+        DependencyProperty.Register(
+            nameof(FreeIsInteractive),
+            typeof(bool),
+            typeof(MediaUsageBarControl),
+            new PropertyMetadata(false, OnSegmentsOrCapacityChanged));
+
+    /// <summary>
+    /// When <see langword="true"/> the free-space segment behaves like a content
+    ///  segment: it receives a hand cursor, dispatches <see cref="SegmentClickCommand"/>,
+    ///  and lightens on hover. Default: <see langword="false"/>.
+    /// Set to <see langword="true"/> in BackupWindow where clicking Free shifts
+    ///  the pending set one step to the right.
+    /// </summary>
+    public bool FreeIsInteractive
+    {
+        get => (bool)GetValue(FreeIsInteractiveProperty);
+        set => SetValue(FreeIsInteractiveProperty, value);
+    }
+
     #endregion // Dependency Properties
 
     /// <summary>
@@ -273,12 +293,18 @@ public partial class MediaUsageBarControl : UserControl
             Child = BuildSegmentChild(seg, fill, isCompressed),
         };
 
-        // Hover: slightly dim the fill to give tactile feedback
-        border.MouseEnter += (_, _) => OnSegmentHover(border, seg, entering: true);
-        border.MouseLeave += (_, _) => OnSegmentHover(border, seg, entering: false);
+        // Determine whether this segment participates in hover and click interactions.
+        //  Content segments (BackupSet, PendingBackupSet) are always interactive;
+        //  Free is interactive only when the host opts in via FreeIsInteractive.
+        bool isInteractive = IsContent(seg.Kind)
+            || (seg.Kind == UsageSegmentKind.Free && FreeIsInteractive);
 
-        // Backup-set segments are clickable: pointer cursor + command on click
-        if (seg.Kind == UsageSegmentKind.BackupSet)
+        // Hover: slightly lighten the fill to give tactile feedback
+        border.MouseEnter += (_, _) => OnSegmentHover(border, isInteractive, entering: true);
+        border.MouseLeave += (_, _) => OnSegmentHover(border, isInteractive, entering: false);
+
+        // Interactive segments get a hand cursor and dispatch the click command
+        if (isInteractive)
         {
             border.Cursor = Cursors.Hand;
             border.MouseLeftButtonDown += (_, _) =>
@@ -356,10 +382,13 @@ public partial class MediaUsageBarControl : UserControl
 
     // ──────────────────────────────────────────────────── Hover & highlight helpers ────────
 
-    private static void OnSegmentHover(Border border, UsageSegment seg, bool entering)
+    /// <param name="isInteractive">
+    /// Captured at bar-build time: whether this segment participates in hover feedback.
+    ///  Non-interactive segments (e.g. TOC, non-interactive Free) are skipped.
+    /// </param>
+    private static void OnSegmentHover(Border border, bool isInteractive, bool entering)
     {
-        // Free-space hover has no meaningful effect — skip
-        if (seg.Kind == UsageSegmentKind.Free)
+        if (!isInteractive)
             return;
 
         Color fill = (Color)border.Tag!;
@@ -371,9 +400,13 @@ public partial class MediaUsageBarControl : UserControl
         }
         else
         {
-            // Restore original fill (highlight border, if any, is re-applied below)
+            // Restore original fill; re-apply highlight border if this segment is selected
             border.Background = new SolidColorBrush(fill);
-            ApplyHighlight(border, seg);
+            // Retrieve the segment from the border's tooltip Tag to re-apply highlight.
+            //  The segment reference is not directly available here, but highlight state
+            //  is managed via PropertyChanged subscription in RebuildBar, so simply
+            //  restoring the fill is sufficient — the highlight border (if any) was
+            //  never removed during hover; only the background changed.
         }
     }
 
@@ -388,7 +421,7 @@ public partial class MediaUsageBarControl : UserControl
     /// </summary>
     private static void ApplyHighlight(Border border, UsageSegment seg)
     {
-        if (seg.IsHighlighted && seg.Kind == UsageSegmentKind.BackupSet)
+        if (seg.IsHighlighted && IsContent(seg.Kind))
         {
             border.BorderBrush     = new SolidColorBrush(HighlightBorderColor);
             border.BorderThickness = new Thickness(2);
@@ -431,4 +464,11 @@ public partial class MediaUsageBarControl : UserControl
         byte Blend(byte c) => (byte)(c + (255 - c) * factor);
         return Color.FromRgb(Blend(color.R), Blend(color.G), Blend(color.B));
     }
+
+    /// <summary>
+    /// True for segments that represent backup-set content (existing or pending).
+    ///  Used to gate click affordance and highlight rendering.
+    /// </summary>
+    private static bool IsContent(UsageSegmentKind kind) =>
+        kind is UsageSegmentKind.BackupSet or UsageSegmentKind.PendingBackupSet;
 }

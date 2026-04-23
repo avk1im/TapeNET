@@ -128,6 +128,12 @@ public class BackupViewModel : ViewModelBase
         // Populate append options from current TOC
         PopulateAppendOptions();
 
+        // Construct the media usage bar presenter and do an initial build so the
+        //  bar shows the existing-sets layout even before any source is added.
+        UsageBar = new BackupMediaUsageBarPresenter(_tapeService, this);
+        UsageBar.Rebuild();
+        UsageBar.UpdateHighlight(_selectedAppendOption?.SetIndex);
+
         // Commands — source management
         AddFilesCommand = new RelayCommand(AddFiles, () => !IsScanning);
         AddFolderCommand = new RelayCommand(AddFolder, () => !IsScanning);
@@ -150,6 +156,19 @@ public class BackupViewModel : ViewModelBase
 
     /// <summary>The session-level source view (file resolution + checked state).</summary>
     public BackupSourceView SourceView => _sourceView;
+
+    /// <summary>Total checked size (bytes) across all sources — raw value used by the usage bar.</summary>
+    public long CheckedFileSizeBytes => _sourceView.GetTotalCheckedSize();
+
+    /// <summary>Total checked file count across all sources — raw value used by the usage bar.</summary>
+    public int CheckedFileCount => _sourceView.GetTotalCheckedCount();
+
+    /// <summary>
+    /// Owns the segment list, capacity, and click command bound to the
+    ///  <c>MediaUsageBarControl</c> in BackupWindow. Adds a pending
+    ///  new-set segment that reflects the user's current selection.
+    /// </summary>
+    public BackupMediaUsageBarPresenter UsageBar { get; }
 
     // ═════════════════════════════════════════════════
     //  Collections
@@ -282,7 +301,11 @@ public class BackupViewModel : ViewModelBase
     public string Description
     {
         get => _description;
-        set => SetProperty(ref _description, value);
+        set
+        {
+            if (SetProperty(ref _description, value))
+                UsageBar?.Rebuild();
+        }
     }
 
     public bool IncludeSubdirectories
@@ -304,7 +327,11 @@ public class BackupViewModel : ViewModelBase
     public bool IncrementalBackup
     {
         get => _incrementalBackup;
-        set => SetProperty(ref _incrementalBackup, value);
+        set
+        {
+            if (SetProperty(ref _incrementalBackup, value))
+                UsageBar?.Rebuild();
+        }
     }
 
     public bool UseFilemarks
@@ -351,6 +378,9 @@ public class BackupViewModel : ViewModelBase
                 OnPropertyChanged(nameof(OverwriteMedia));
                 OnPropertyChanged(nameof(WarningMessage));
                 OnPropertyChanged(nameof(WarningLevel));
+                UsageBar?.Rebuild();
+                UsageBar?.UpdateHighlight(
+                    _appendToSet ? _selectedAppendOption?.SetIndex : null);
             }
         }
     }
@@ -370,6 +400,9 @@ public class BackupViewModel : ViewModelBase
             {
                 OnPropertyChanged(nameof(WarningMessage));
                 OnPropertyChanged(nameof(WarningLevel));
+                UsageBar?.Rebuild();
+                UsageBar?.UpdateHighlight(
+                    OverwriteMedia ? null : value?.SetIndex);
             }
         }
     }
@@ -877,6 +910,9 @@ public class BackupViewModel : ViewModelBase
         PreviewCheckedSize = checkedSize > 0 ? Helpers.BytesToStringLong(checkedSize) : "\u2014";
 
         OnPropertyChanged(nameof(CanStart));
+
+        // Refresh the usage bar's pending segment to match the new totals.
+        UsageBar?.Rebuild();
     }
 
     // ═════════════════════════════════════════════════

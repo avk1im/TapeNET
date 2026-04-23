@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
         xmlns:converters="clr-namespace:TapeWinNET.Converters"
+        xmlns:controls="clr-namespace:TapeWinNET.Controls"
         d:DataContext="{d:DesignInstance Type=vm:DeleteBackupSetsViewModel}"
         mc:Ignorable="d"
         Title="Delete Backup Sets"
@@ -20,9 +21,10 @@
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- Delete from set -->
@@ -44,7 +46,7 @@
         </Border>
 
         <!-- Statistics -->
-        <GroupBox Grid.Row="2" Header="Statistics" VerticalAlignment="Top">
+        <GroupBox Grid.Row="2" Header="Preview" VerticalAlignment="Top">
             <Grid Margin="8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -71,8 +73,19 @@
             </Grid>
         </GroupBox>
 
+        <!-- Media usage bar — shows existing sets with the deletion range
+             highlighted in red. Click a preserved set to make it the first
+             to delete; click the red zone or free space to shrink the range. -->
+        <controls:MediaUsageBarControl
+            Grid.Row="3"
+            Margin="0,0,0,12"
+            FreeIsInteractive="True"
+            Segments="{Binding UsageBar.Segments}"
+            TotalCapacity="{Binding UsageBar.TotalCapacity}"
+            SegmentClickCommand="{Binding UsageBar.SegmentClickCommand}"/>
+
         <!-- Buttons -->
-        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,0">
             <Button Content="Cancel" Command="{Binding CancelCommand}"
                     Width="80" Margin="0,0,8,0" IsCancel="True"/>
             <Button Content="Delete" Command="{Binding DeleteCommand}"

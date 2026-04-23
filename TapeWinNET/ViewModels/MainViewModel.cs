@@ -64,8 +64,6 @@ public partial class MainViewModel : ViewModelBase
 
     // Media usage bar
     private bool _showUsageBar;
-    private IReadOnlyList<UsageSegment> _mediaUsageSegments = [];
-    private long _mediaTotalCapacity;
 
     // TOC view model — owns BackupSetViews with per-set FilteredFileList,
     //  checked state, filter state, and FileListItem dictionaries.
@@ -94,7 +92,7 @@ public partial class MainViewModel : ViewModelBase
         ExportTOCCommand = new AsyncRelayCommand(ExportTOCAsync, () => !IsBusy && _tapeService.TOC != null);
         ImportTOCCommand = new AsyncRelayCommand(ImportTOCAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         NavigateToBackupSetCommand = new RelayCommand(NavigateToSelectedBackupSet, _ => SelectedBackupSet != null);
-        SelectSegmentCommand        = new RelayCommand(SelectSegmentFromBar);
+        UsageBar = new MediaUsageBarPresenter(_tapeService, SelectBackupSetByIndex);
         RenameSelectedCommand = new AsyncRelayCommand(RenameSelectedAsync, () => CanRenameSelected);
         RenameMediaCommand = new AsyncRelayCommand(RenameMediaAsync, () => CanRenameMedia);
         ExitCommand = new RelayCommand(Exit);
@@ -301,7 +299,7 @@ public partial class MainViewModel : ViewModelBase
             if (SetProperty(ref _selectedBackupSet, value))
             {
                 NotifyCommandTextChanged();
-                UpdateUsageBarHighlight(value);
+                UsageBar.UpdateHighlight(value?.SetIndex);
             }
         }
         // Navigation now triggered by double-click or Enter, not selection change
@@ -357,124 +355,10 @@ public partial class MainViewModel : ViewModelBase
     public bool IsUsageBarVisible => ShowUsageBar && ContentType == ContentPaneType.MediaInfo;
 
     /// <summary>
-    /// Ordered list of usage segments for the <c>MediaUsageBarControl</c>.
-    ///  Rebuilt by <see cref="BuildMediaUsageSegments"/> whenever media info is loaded.
+    /// Owns the segment list, capacity, and click command bound to the
+    ///  <c>MediaUsageBarControl</c> in MainWindow.
     /// </summary>
-    public IReadOnlyList<UsageSegment> MediaUsageSegments
-    {
-        get => _mediaUsageSegments;
-        private set => SetProperty(ref _mediaUsageSegments, value);
-    }
-
-    /// <summary>Total media capacity in bytes; denominator for the usage bar proportions.</summary>
-    public long MediaTotalCapacity
-    {
-        get => _mediaTotalCapacity;
-        private set => SetProperty(ref _mediaTotalCapacity, value);
-    }
-
-    /// <summary>
-    /// Builds the <see cref="MediaUsageSegments"/> list from <paramref name="toc"/>.
-    /// Only sets on the current volume are included. TOC placement follows the
-    /// physical convention: partition-based TOC is the leftmost segment; set-based
-    /// TOC is the rightmost data segment (immediately before free space).
-    /// </summary>
-    private void BuildMediaUsageSegments()
-    {
-        var toc = _tapeService.TOC;
-        long capacity = _tapeService.Capacity;
-        if (toc is null || capacity <= 0)
-        {
-            MediaUsageSegments = [];
-            MediaTotalCapacity = 0;
-            return;
-        }
-
-        long tocSize = TapeNavigator.DefaultTOCCapacity;
-        uint blockSize = _tapeService.DefaultBlockSize;
-        bool tocInPartition = _tapeService.HasInitiatorPartition;
-
-        var segments = new List<UsageSegment>();
-
-        // TOC-in-partition: leftmost segment
-        if (tocInPartition)
-            segments.Add(new UsageSegment(
-                label:    "TOC",
-                size:     tocSize,
-                color:    default, // Kind-based color applied by the control
-                tooltip:  $"TOC partition: {Helpers.BytesToString(tocSize)}",
-                kind:     UsageSegmentKind.TOC));
-
-        // Backup-set segments — only sets on the current volume, oldest first.
-        // Guard against empty media: FirstSetOnVolume / LastSetOnVolume must not be
-        //  called when Count == 0 as they can throw an out-of-range exception.
-        if (toc.Count > 0)
-        {
-            int firstSet = toc.FirstSetOnVolume;
-            int lastSet  = toc.LastSetOnVolume;
-            for (int setIndex = firstSet; setIndex <= lastSet; setIndex++)
-            {
-                var setTOC    = toc[setIndex];
-                long setSize  = setTOC.ComputeTotalFileSizeOnTape(blockSize);
-                int  altIndex = toc.SetIndexToAlt(setIndex);
-                // Color assigned round-robin by 0-based standard index so that colors are
-                //  stable across volumes (set 1 always gets palette[0], etc.).
-                var color = MediaUsageBarControl.GetSetColor(setIndex - 1);
-
-                segments.Add(new UsageSegment(
-                    label:    $"#{setIndex}|{altIndex}",
-                    size:     Math.Max(setSize, 1), // always at least 1 byte so tiny sets are visible
-                    color:    color,
-                    tooltip:  $"Set #{setIndex}|{altIndex}: {setTOC.Description ?? "(unnamed)"}\n"
-                            + $"{Helpers.BytesToString(setSize)}, {setTOC.Count} file(s)",
-                    kind:     UsageSegmentKind.BackupSet,
-                    setIndex: setIndex));
-            }
-        }
-
-        // TOC-in-set: rightmost data segment
-        if (!tocInPartition)
-            segments.Add(new UsageSegment(
-                label:    "TOC",
-                size:     tocSize,
-                color:    default,
-                tooltip:  $"TOC (in set): {Helpers.BytesToString(tocSize)}",
-                kind:     UsageSegmentKind.TOC));
-
-        // Free space
-        var remaining = _tapeService.Remaining;
-
-        segments.Add(new UsageSegment(
-            label:    "Free",
-            size:     Math.Max(remaining, 1), // always at least 1 byte so bar fills completely
-            color:    default,
-            tooltip:  $"Free: {Helpers.BytesToString(remaining)}",
-            kind:     UsageSegmentKind.Free));
-
-        MediaTotalCapacity  = capacity;
-        MediaUsageSegments  = segments;
-
-        // Restore highlight for whatever set was selected before the bar was rebuilt
-        UpdateUsageBarHighlight(_selectedBackupSet);
-    }
-
-    /// <summary>
-    /// Updates the <see cref="UsageSegment.IsHighlighted"/> flag on each segment
-    ///  to match the currently selected backup set.
-    /// </summary>
-    private void UpdateUsageBarHighlight(BackupSetListItem? selected)
-    {
-        foreach (var seg in _mediaUsageSegments)
-            seg.IsHighlighted = seg.Kind == UsageSegmentKind.BackupSet
-                             && seg.SetIndex == selected?.SetIndex;
-    }
-
-    /// <summary>Clears the usage bar when navigating away from the media view.</summary>
-    private void ClearMediaUsageSegments()
-    {
-        MediaUsageSegments = [];
-        MediaTotalCapacity = 0;
-    }
+    public MediaUsageBarPresenter UsageBar { get; }
 
     #endregion // Media Usage Bar
 
@@ -639,11 +523,6 @@ public partial class MainViewModel : ViewModelBase
     // RestoreCommand, ValidateCommand, VerifyCommand, AbortRestoreCommand are in MainViewModel.Restore.cs
     public ICommand NavigateToBackupSetCommand { get; }
 
-    /// <summary>
-    /// Executed by <c>MediaUsageBarControl</c> when the user clicks a backup-set segment.
-    ///  Selects the matching <see cref="BackupSetListItem"/> in <see cref="BackupSetList"/>.
-    /// </summary>
-    public ICommand SelectSegmentCommand { get; }
     public ICommand RenameSelectedCommand { get; }
     public ICommand RenameMediaCommand { get; }
     public ICommand ExitCommand { get; }
@@ -1393,7 +1272,7 @@ public partial class MainViewModel : ViewModelBase
         ContentType = ContentPaneType.DriveInfo;
         PropertiesHeader = "Drive Properties";
         TableHeader = ""; // Not visible for drive
-        ClearMediaUsageSegments();
+        UsageBar.Clear();
 
         PropertyList.Add(new PropertyItem("Device Name", _tapeService.DeviceName));
         PropertyList.Add(new PropertyItem("Drive Open", _tapeService.IsDriveOpen ? "Yes" : "No"));
@@ -1485,7 +1364,7 @@ public partial class MainViewModel : ViewModelBase
             : $"Media: {mediaName} - {toc.Count} backup set(s)";
 
         // Build the media usage bar from the current-volume sets
-        BuildMediaUsageSegments();
+        UsageBar.Rebuild();
     }
 
     private void LoadBackupSetInfo(int setIndex)
@@ -1500,7 +1379,7 @@ public partial class MainViewModel : ViewModelBase
         FileList = [];
         ContentType = ContentPaneType.BackupSetInfo;
         TableHeader = "Files"; // Reset early to avoid showing stale backup-set header
-        ClearMediaUsageSegments();
+        UsageBar.Clear();
 
         try
         {
@@ -1561,19 +1440,16 @@ public partial class MainViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Selects the <see cref="BackupSetListItem"/> whose set index matches the clicked
-    ///  <see cref="UsageSegment"/>. Called by <see cref="SelectSegmentCommand"/>.
+    /// Selects the <see cref="BackupSetListItem"/> with the given set index in
+    ///  <see cref="BackupSetList"/>. Wired to <see cref="UsageBar"/>'s click callback.
     /// </summary>
-    private void SelectSegmentFromBar(object? parameter)
+    private void SelectBackupSetByIndex(int setIndex)
     {
-        if (parameter is not UsageSegment seg || seg.SetIndex is not int setIndex)
-            return;
-
         var item = BackupSetList.FirstOrDefault(b => b.SetIndex == setIndex);
         if (item != null)
             SelectedBackupSet = item;
     }
-    
+
     private void OnBackupSetSelectedInTable(BackupSetListItem backupSetItem)
     {
         // Find the corresponding tree node and select it

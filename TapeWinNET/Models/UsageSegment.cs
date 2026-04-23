@@ -10,6 +10,13 @@ public enum UsageSegmentKind
     TOC,
     /// <summary>A backup set's data region.</summary>
     BackupSet,
+    /// <summary>
+    /// A pending / preview backup-set region used by BackupWindow (and reusable
+    ///  by DeleteBackupSetsWindow for deletion previews). Behaves like a
+    ///  <see cref="BackupSet"/> for clicks, hover, and highlight, but its color
+    ///  and label are supplied by the host (typically warning-level brushes).
+    /// </summary>
+    PendingBackupSet,
     /// <summary>Unused / free space at the end of the media.</summary>
     Free,
 }

@@ -38,6 +38,11 @@ public class DeleteBackupSetsViewModel : ViewModelBase
 
         PopulateDeleteOptions();
 
+        // Construct the usage bar after options are populated so the initial
+        //  Rebuild sees the correct SelectedOption.
+        UsageBar = new DeleteBackupSetsMediaUsageBarPresenter(_tapeService, this);
+        UsageBar.Rebuild();
+
         DeleteCommand = new RelayCommand(_ => _onDelete(this), _ => SelectedOption != null && !IsDeleteBlocked);
         CancelCommand = new RelayCommand(_ => _onCancel());
     }
@@ -67,6 +72,7 @@ public class DeleteBackupSetsViewModel : ViewModelBase
                 OnPropertyChanged(nameof(WarningMessage));
                 OnPropertyChanged(nameof(DeleteSizeDisplay));
                 OnPropertyChanged(nameof(RemainingAfterDeleteDisplay));
+                UsageBar?.Rebuild();
             }
         }
     }
@@ -75,6 +81,12 @@ public class DeleteBackupSetsViewModel : ViewModelBase
     /// Standard set index of the first set to delete. Used by the service layer.
     /// </summary>
     public int DeleteFromSetIndex => SelectedOption?.SetIndex ?? -1;
+
+    /// <summary>
+    /// Owns the segment list, capacity, and click command for the
+    ///  <c>MediaUsageBarControl</c> in DeleteBackupSetsWindow.
+    /// </summary>
+    public DeleteBackupSetsMediaUsageBarPresenter UsageBar { get; }
 
     // ═════════════════════════════════════════════════
     //  Computed: set counts
@@ -175,13 +187,35 @@ public class DeleteBackupSetsViewModel : ViewModelBase
     /// <summary>Current remaining capacity, formatted.</summary>
     public string MediaRemainingDisplay => Helpers.BytesToStringLong(_mediaRemaining);
 
-    /// <summary>Estimated size of sets to delete, formatted.</summary>
+    /// <summary>Estimated on-tape size of sets to delete, in bytes (raw — used by the usage bar).</summary>
+    public long DeleteSizeBytes => ComputeDeleteSize();
+
+    /// <summary>Total file count across all sets to delete (raw — used by the usage bar).</summary>
+    public int DeleteFileCount
+    {
+        get
+        {
+            var toc = _tapeService.TOC;
+            if (toc == null || SelectedOption == null)
+                return 0;
+            int total = 0;
+            for (int i = SelectedOption.SetIndex; i <= toc.LastSetOnVolume; i++)
+                total += toc[i].Count;
+            return total;
+        }
+    }
+
+    /// <summary>Estimated size and file count of sets to delete, formatted.</summary>
     public string DeleteSizeDisplay
     {
         get
         {
             long size = ComputeDeleteSize();
-            return size > 0 ? $"~{Helpers.BytesToStringLong(size)}" : "\u2014";
+            if (size <= 0)
+                return "\u2014";
+            int files = DeleteFileCount;
+            string filesPart = files > 0 ? $", {files:N0} file(s)" : string.Empty;
+            return $"~{Helpers.BytesToStringLong(size)}{filesPart}";
         }
     }
 

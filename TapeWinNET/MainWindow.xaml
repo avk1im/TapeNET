@@ -301,9 +301,9 @@
                         <!-- Media usage bar — docked to bottom, visible only for media view when enabled -->
                         <controls:MediaUsageBarControl
                             DockPanel.Dock="Bottom"
-                            Segments="{Binding MediaUsageSegments}"
-                            TotalCapacity="{Binding MediaTotalCapacity}"
-                            SegmentClickCommand="{Binding SelectSegmentCommand}"
+                            Segments="{Binding UsageBar.Segments}"
+                            TotalCapacity="{Binding UsageBar.TotalCapacity}"
+                            SegmentClickCommand="{Binding UsageBar.SegmentClickCommand}"
                             Visibility="{Binding IsUsageBarVisible, Converter={StaticResource BoolToVis}}"/>
 
                         <ListView ItemsSource="{Binding PropertyList}"

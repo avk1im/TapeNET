@@ -55,6 +55,8 @@
                     <RowDefinition Height="Auto"/>
                     <!-- Files pane (collapsible) -->
                     <RowDefinition Height="220" MinHeight="0"/>
+                    <!-- Media usage bar -->
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
                 <!-- Source toolbar: Add Files, Add Folder, Pattern input, Remove Unchecked -->
@@ -245,6 +247,17 @@
                                                  x:Name="FileFilterPaneControl"/>
                     </Grid>
                 </GroupBox>
+
+                <!-- Media usage bar — shows existing sets plus a pending segment
+                     for the backup being composed. Click an existing segment to
+                     mark it as the first set to be replaced; click the pending
+                     or free segment to shift the new set one step to the right. -->
+                <controls:MediaUsageBarControl Grid.Row="4"
+                                               Margin="0,4,0,0"
+                                               FreeIsInteractive="True"
+                                               Segments="{Binding UsageBar.Segments}"
+                                               TotalCapacity="{Binding UsageBar.TotalCapacity}"
+                                               SegmentClickCommand="{Binding UsageBar.SegmentClickCommand}"/>
             </Grid>
 
             <!-- Vertical splitter between left and right panels -->
