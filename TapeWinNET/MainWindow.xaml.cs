@@ -42,6 +42,16 @@ namespace TapeWinNET
             // Wire filter pane to ViewModel via direct mode
             FileFilterPaneControl.FilterStateChanged = _viewModel.OnFilterStateChanged;
 
+            // Bar-click → scroll the backup sets ListView so the selected item is visible
+            _viewModel.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(MainViewModel.SelectedBackupSet)
+                    && _viewModel.SelectedBackupSet is { } item)
+                {
+                    BackupSetsListView.ScrollIntoView(item);
+                }
+            };
+
             // Focus the filter sub-pane when the "Filter Log" command is invoked
             _viewModel.RequestFocusLogFilter += () =>
             {

@@ -8,10 +8,11 @@
 
     <!-- Outer border frames the bar and provides a 1-px hairline around it -->
     <Border BorderBrush="#FFAAAAAA" BorderThickness="1" Margin="2,2,2,2">
-        <!-- SegmentsGrid columns and children are built entirely in code-behind -->
+        <!-- SegmentsGrid columns and children are built entirely in code-behind.
+             ClipToBounds is intentionally absent so that the highlight border of a
+             selected segment can protrude 1 px beyond the bar height. -->
         <Grid x:Name="SegmentsGrid"
-              Height="18"
-              ClipToBounds="True"/>
+              Height="18"/>
     </Border>
 
 </UserControl>

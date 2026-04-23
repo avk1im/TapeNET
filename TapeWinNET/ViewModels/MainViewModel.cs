@@ -94,6 +94,7 @@ public partial class MainViewModel : ViewModelBase
         ExportTOCCommand = new AsyncRelayCommand(ExportTOCAsync, () => !IsBusy && _tapeService.TOC != null);
         ImportTOCCommand = new AsyncRelayCommand(ImportTOCAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         NavigateToBackupSetCommand = new RelayCommand(NavigateToSelectedBackupSet, _ => SelectedBackupSet != null);
+        SelectSegmentCommand        = new RelayCommand(SelectSegmentFromBar);
         RenameSelectedCommand = new AsyncRelayCommand(RenameSelectedAsync, () => CanRenameSelected);
         RenameMediaCommand = new AsyncRelayCommand(RenameMediaAsync, () => CanRenameMedia);
         ExitCommand = new RelayCommand(Exit);
@@ -444,7 +445,7 @@ public partial class MainViewModel : ViewModelBase
         var remaining = _tapeService.Remaining;
 
         segments.Add(new UsageSegment(
-            label:    string.Empty,
+            label:    "Free",
             size:     Math.Max(remaining, 1), // always at least 1 byte so bar fills completely
             color:    default,
             tooltip:  $"Free: {Helpers.BytesToString(remaining)}",
@@ -637,6 +638,12 @@ public partial class MainViewModel : ViewModelBase
     // NewBackupCommand and AbortBackupCommand are in MainViewModel.Backup.cs
     // RestoreCommand, ValidateCommand, VerifyCommand, AbortRestoreCommand are in MainViewModel.Restore.cs
     public ICommand NavigateToBackupSetCommand { get; }
+
+    /// <summary>
+    /// Executed by <c>MediaUsageBarControl</c> when the user clicks a backup-set segment.
+    ///  Selects the matching <see cref="BackupSetListItem"/> in <see cref="BackupSetList"/>.
+    /// </summary>
+    public ICommand SelectSegmentCommand { get; }
     public ICommand RenameSelectedCommand { get; }
     public ICommand RenameMediaCommand { get; }
     public ICommand ExitCommand { get; }
@@ -1551,6 +1558,20 @@ public partial class MainViewModel : ViewModelBase
         {
             OnBackupSetSelectedInTable(SelectedBackupSet);
         }
+    }
+
+    /// <summary>
+    /// Selects the <see cref="BackupSetListItem"/> whose set index matches the clicked
+    ///  <see cref="UsageSegment"/>. Called by <see cref="SelectSegmentCommand"/>.
+    /// </summary>
+    private void SelectSegmentFromBar(object? parameter)
+    {
+        if (parameter is not UsageSegment seg || seg.SetIndex is not int setIndex)
+            return;
+
+        var item = BackupSetList.FirstOrDefault(b => b.SetIndex == setIndex);
+        if (item != null)
+            SelectedBackupSet = item;
     }
     
     private void OnBackupSetSelectedInTable(BackupSetListItem backupSetItem)

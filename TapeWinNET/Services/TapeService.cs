@@ -108,7 +108,7 @@ public partial class TapeService : IDisposable
             if (TOC is null)
                 return 0;
             var used = _toc?.ComputeTotalFileSizeOnTape(DefaultBlockSize) ?? 0;
-            if (HasInitiatorPartition)
+            if (!HasInitiatorPartition)
                 used += TapeNavigator.DefaultTOCCapacity; // if TOC is in set, it consumes space
             return used;
         }

@@ -87,7 +87,9 @@ public class FileListItem(FilteredFileList? owner, TapeFileInfo fileInfo, bool s
             if (_owner is not null)
             {
                 _owner.SetChecked(_fileInfo, value);
-                // SetChecked fires CheckedChanged → NotifyIsCheckedChanged
+                // Notify the binding so the CheckBox visual updates immediately
+                //  (e.g. when the row is clicked outside the checkbox cell).
+                NotifyIsCheckedChanged();
             }
             else if (_isCheckedForRestore != value)
             {

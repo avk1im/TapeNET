@@ -303,6 +303,7 @@
                             DockPanel.Dock="Bottom"
                             Segments="{Binding MediaUsageSegments}"
                             TotalCapacity="{Binding MediaTotalCapacity}"
+                            SegmentClickCommand="{Binding SelectSegmentCommand}"
                             Visibility="{Binding IsUsageBarVisible, Converter={StaticResource BoolToVis}}"/>
 
                         <ListView ItemsSource="{Binding PropertyList}"
@@ -447,7 +448,8 @@
                         </Grid>
 
                         <!-- Backup Sets Table (visible when Media is selected) -->
-                        <ListView ItemsSource="{Binding BackupSetList}"
+                        <ListView x:Name="BackupSetsListView"
+                                  ItemsSource="{Binding BackupSetList}"
                                   SelectedItem="{Binding SelectedBackupSet}"
                                   GridViewColumnHeader.Click="GridViewColumnHeader_Click"
                                   CheckBox.Checked="BackupSetCheckBox_Changed"

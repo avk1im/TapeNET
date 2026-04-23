@@ -1,7 +1,9 @@
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Shapes;
 
 using TapeWinNET.Models;
 
@@ -32,33 +34,24 @@ namespace TapeWinNET.Controls;
 public partial class MediaUsageBarControl : UserControl
 {
     // ───────────────────────────────────────── Segment color palette ────────────────────
-    // 12 muted, harmonious hues at roughly equal perceived lightness.
-    // Backup-set segments are assigned colors round-robin by set index (oldest first).
-    private static readonly Color[] SetColors =
-    [
-        Color.FromRgb(0x5B, 0x8D, 0xB8),  // steel blue
-        Color.FromRgb(0x6B, 0xA8, 0x7E),  // sage green
-        Color.FromRgb(0xBB, 0x87, 0x65),  // terra cotta
-        Color.FromRgb(0x89, 0x76, 0xBB),  // muted violet
-        Color.FromRgb(0xBB, 0xAD, 0x65),  // muted gold
-        Color.FromRgb(0x65, 0xA8, 0xAA),  // muted teal
-        Color.FromRgb(0xBB, 0x76, 0x89),  // muted rose
-        Color.FromRgb(0x89, 0x97, 0x65),  // muted olive
-        Color.FromRgb(0x65, 0x89, 0xBB),  // cornflower
-        Color.FromRgb(0xAA, 0x97, 0x65),  // muted amber
-        Color.FromRgb(0x65, 0xAA, 0x97),  // seafoam
-        Color.FromRgb(0xAA, 0x76, 0x97),  // muted mauve
-    ];
+    // Two alternating blues — dark (Windows accent class) and pale — matching the
+    //  Windows Explorer disk-usage aesthetic. Adjacent sets read as immediately distinct
+    //  while the overall bar stays monochromatic and consistent with the app's style.
+    private static readonly Color SetColorDark  = Color.FromRgb(0x2E, 0x74, 0xB5); // #2E74B5 — Windows accent blue
+    private static readonly Color SetColorLight = Color.FromRgb(0x9D, 0xC3, 0xE6); // #9DC3E6 — pale blue
 
-    /// <summary>Returns a palette color for a given 0-based set index (wraps around).</summary>
+    /// <summary>
+    /// Returns the palette color for a given 0-based set index.
+    /// Odd indices get the dark shade (white label), even get the pale shade (dark label).
+    /// </summary>
     public static Color GetSetColor(int zeroBasedIndex)
-        => SetColors[zeroBasedIndex % SetColors.Length];
+        => (zeroBasedIndex % 2 == 0) ? SetColorDark : SetColorLight;
 
     // Fixed colors for special segment kinds
     private static readonly Color TocColor   = Color.FromRgb(0x70, 0x70, 0x70);  // dark gray
     private static readonly Color FreeColor  = Color.FromRgb(0xEA, 0xEA, 0xEA);  // very light gray
     private static readonly Color TocFgColor = Colors.White;
-    private static readonly Color FreeFgColor = Color.FromRgb(0xAA, 0xAA, 0xAA);
+    private static readonly Color FreeFgColor = Color.FromRgb(0x70, 0x70, 0x70); // fdark grey
 
     // Semi-transparent dark used as segment separator line on left edge
     private static readonly Color SepColor = Color.FromArgb(0x50, 0x00, 0x00, 0x00);
@@ -68,6 +61,13 @@ public partial class MediaUsageBarControl : UserControl
 
     // Minimum rendered width (px) for a label to be visible in a segment
     private const double LabelMinWidth = 20.0;
+
+    // Free-space visual stretch: when the free segment exceeds this fraction of total
+    //  capacity, non-free segments are scaled up so free is visually compressed to
+    //  FreeStretchedVisualRatio of the bar width. The right edge of the free segment
+    //  is then drawn as a zigzag to signal the compression.
+    private const double FreeStretchThreshold    = 0.50;
+    private const double FreeStretchedVisualRatio = 0.4;
 
     // ───────────────────────────────────────────────────── Dependency Properties ────────
 
@@ -105,6 +105,23 @@ public partial class MediaUsageBarControl : UserControl
     private static void OnSegmentsOrCapacityChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         => ((MediaUsageBarControl)d).RebuildBar();
 
+    public static readonly DependencyProperty SegmentClickCommandProperty =
+        DependencyProperty.Register(
+            nameof(SegmentClickCommand),
+            typeof(ICommand),
+            typeof(MediaUsageBarControl),
+            new PropertyMetadata(null));
+
+    /// <summary>
+    /// Command executed when the user clicks a backup-set segment.
+    ///  The <see cref="UsageSegment"/> instance is passed as the command parameter.
+    /// </summary>
+    public ICommand? SegmentClickCommand
+    {
+        get => (ICommand?)GetValue(SegmentClickCommandProperty);
+        set => SetValue(SegmentClickCommandProperty, value);
+    }
+
     // ───────────────────────────────────────────────────────────────── Constructor ────────
 
     public MediaUsageBarControl()
@@ -137,19 +154,39 @@ public partial class MediaUsageBarControl : UserControl
             return;
         }
 
+        // Stretch factor: if free space dominates (> FreeStretchThreshold), scale up
+        //  non-free column widths so the free segment shrinks to FreeStretchedVisualRatio
+        //  of the bar. Free segment width is left at its real proportion (1× factor).
+        var freeSeg = segments.FirstOrDefault(s => s.Kind == UsageSegmentKind.Free);
+        double freeRatio = freeSeg != null ? (double)freeSeg.Size / total : 0.0;
+        bool isStretched = freeRatio > FreeStretchThreshold;
+        double stretchFactor = 1.0;
+        if (isStretched && freeSeg != null)
+        {
+            long nonFreeTotal = total - freeSeg.Size;
+            if (nonFreeTotal > 0)
+                // Solve: freeSize / (freeSize + nonFreeTotal * stretchFactor) = FreeStretchedVisualRatio
+                stretchFactor = freeSeg.Size * (1.0 - FreeStretchedVisualRatio)
+                                / (nonFreeTotal * FreeStretchedVisualRatio);
+        }
+
         for (int i = 0; i < segments.Count; i++)
         {
             var seg = segments[i];
 
-            // Column width proportional to segment's byte size; minimum 1* to
-            //  ensure even zero-byte segments occupy at least a hairline column.
+            // Non-free segments are scaled by stretchFactor (= 1.0 when not stretched).
+            double starSize = seg.Kind == UsageSegmentKind.Free
+                ? Math.Max(seg.Size, 1)
+                : Math.Max(seg.Size, 1) * stretchFactor;
+
             SegmentsGrid.ColumnDefinitions.Add(new ColumnDefinition
             {
-                Width = new GridLength(Math.Max(seg.Size, 1), GridUnitType.Star),
+                Width = new GridLength(starSize, GridUnitType.Star),
                 MinWidth = 0,
             });
 
-            var border = CreateSegmentBorder(seg, isFirst: i == 0);
+            bool isCompressed = isStretched && seg.Kind == UsageSegmentKind.Free;
+            var border = CreateSegmentBorder(seg, isFirst: i == 0, isCompressed: isCompressed);
             Grid.SetColumn(border, i);
             SegmentsGrid.Children.Add(border);
 
@@ -166,7 +203,12 @@ public partial class MediaUsageBarControl : UserControl
     /// <summary>
     /// Creates the <see cref="Border"/> element (with inner label) for one segment.
     /// </summary>
-    private static Border CreateSegmentBorder(UsageSegment seg, bool isFirst)
+    /// <param name="isCompressed">
+    /// When <see langword="true"/> the segment is a visually-compressed free region:
+    ///  the label gets a <c> &gt;&gt;</c> suffix and a zigzag line is overlaid on the
+    ///  right edge to signal that the segment is not drawn to its true scale.
+    /// </param>
+    private Border CreateSegmentBorder(UsageSegment seg, bool isFirst, bool isCompressed = false)
     {
         Color fill = seg.Kind switch
         {
@@ -183,28 +225,90 @@ public partial class MediaUsageBarControl : UserControl
             // Left separator line on all non-first segments
             BorderBrush = isFirst ? null : new SolidColorBrush(SepColor),
             BorderThickness = isFirst ? new Thickness(0) : new Thickness(1, 0, 0, 0),
-            // Label inside the segment (clipped if too narrow)
-            Child = new TextBlock
-            {
-                Text = seg.Label,
-                FontSize = 10,
-                Foreground = new SolidColorBrush(GetLabelForeground(seg.Kind, fill)),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                Margin = new Thickness(2, 0, 2, 0),
-                IsHitTestVisible = false, // let mouse events fall through to the border
-            }
+            // Label inside the segment (clipped if too narrow).
+            //  Compressed free segments also get a zigzag right-edge overlay.
+            Child = BuildSegmentChild(seg, fill, isCompressed),
         };
 
         // Hover: slightly dim the fill to give tactile feedback
         border.MouseEnter += (_, _) => OnSegmentHover(border, seg, entering: true);
         border.MouseLeave += (_, _) => OnSegmentHover(border, seg, entering: false);
 
+        // Backup-set segments are clickable: pointer cursor + command on click
+        if (seg.Kind == UsageSegmentKind.BackupSet)
+        {
+            border.Cursor = Cursors.Hand;
+            border.MouseLeftButtonDown += (_, _) =>
+            {
+                if (SegmentClickCommand?.CanExecute(seg) == true)
+                    SegmentClickCommand.Execute(seg);
+            };
+        }
+
         // Apply initial highlight state (e.g. if bar is rebuilt while a set is selected)
         ApplyHighlight(border, seg);
 
         return border;
+    }
+
+    /// <summary>
+    /// Builds the child element for a segment border — a plain <see cref="TextBlock"/>
+    ///  in the normal case, or a <see cref="Grid"/> with label + zigzag overlay when
+    ///  <paramref name="isCompressed"/> is <see langword="true"/>.
+    /// </summary>
+    private static UIElement BuildSegmentChild(UsageSegment seg, Color fill, bool isCompressed)
+    {
+        var label = new TextBlock
+        {
+            // Compressed free segments get a " >>" suffix to reinforce the zigzag cue
+            Text = isCompressed ? seg.Label + " >>" : seg.Label,
+            FontSize = 10,
+            Foreground = new SolidColorBrush(GetLabelForeground(seg.Kind, fill)),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(2, 0, 2, 0),
+            IsHitTestVisible = false,
+        };
+
+        if (!isCompressed)
+            return label;
+
+        // Overlay the label with a zigzag Canvas on the right edge
+        var grid = new Grid { IsHitTestVisible = false };
+        grid.Children.Add(label);
+        grid.Children.Add(CreateJaggedEdge());
+        return grid;
+    }
+
+    /// <summary>
+    /// Returns a narrow <see cref="Canvas"/> containing a zigzag <see cref="Polyline"/>
+    ///  aligned to the right edge of its parent, signalling that the segment is
+    ///  visually compressed. Bar height is assumed to be 18 px.
+    /// </summary>
+    private static Canvas CreateJaggedEdge()
+    {
+        // 6 triangular teeth over 18 px height, peak amplitude 4 px
+        var poly = new Polyline
+        {
+            Points =
+            [
+                new(0, 0), new(4, 3), new(0, 6), new(4, 9),
+                new(0, 12), new(4, 15), new(0, 18),
+            ],
+            Stroke = new SolidColorBrush(Color.FromRgb(0x80, 0x80, 0x80)),
+            StrokeThickness = 1.5,
+            IsHitTestVisible = false,
+        };
+        return new Canvas
+        {
+            Width = 8,
+            Height = 18,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false,
+            Children = { poly },
+        };
     }
 
     // ──────────────────────────────────────────────────── Hover & highlight helpers ────────
@@ -233,23 +337,32 @@ public partial class MediaUsageBarControl : UserControl
     /// <summary>
     /// Applies or removes the selection-highlight border on a segment border.
     /// Called whenever <see cref="UsageSegment.IsHighlighted"/> changes.
+    /// <para>
+    /// On highlight the border is given a 1 px negative margin so it protrudes
+    ///  just outside its column bounds (above, below, and into adjacent segments),
+    ///  and its ZIndex is raised so it paints on top of its neighbours.
+    /// </para>
     /// </summary>
     private static void ApplyHighlight(Border border, UsageSegment seg)
     {
         if (seg.IsHighlighted && seg.Kind == UsageSegmentKind.BackupSet)
         {
             border.BorderBrush     = new SolidColorBrush(HighlightBorderColor);
-            border.BorderThickness = new Thickness(0, 2, 0, 2);
+            border.BorderThickness = new Thickness(2);
+            // Negative margin expands the element's layout rect by 1 px on every side,
+            //  making the 2 px border protrude 1 px beyond the segment's own column.
+            border.Margin          = new Thickness(-1);
+            Panel.SetZIndex(border, 1); // render on top of adjacent segments
         }
         else
         {
             // Restore default: separator on left edge for non-first segments,
-            //  nothing for first. We can tell first by checking original thickness tag;
-            //  simplest: just check if the original tag has a SepColor brush sibling —
-            //  but that info is gone. Use the column index instead.
+            //  nothing for first. Use the column index to recover that state.
             int col = Grid.GetColumn(border);
             border.BorderBrush     = col == 0 ? null : new SolidColorBrush(SepColor);
             border.BorderThickness = col == 0 ? new Thickness(0) : new Thickness(1, 0, 0, 0);
+            border.Margin          = new Thickness(0);
+            Panel.SetZIndex(border, 0);
         }
     }
 
