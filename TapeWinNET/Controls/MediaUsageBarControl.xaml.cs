@@ -14,7 +14,7 @@ namespace TapeWinNET.Controls;
 /// <para>
 /// The host supplies raw byte sizes via <see cref="Segments"/> and
 ///  <see cref="TotalCapacity"/>; all proportional math is done internally.
-///  Segment colors are provided by the caller (see <see cref="UsageSegment"/>).
+///  Segment colors are fixed as constants for now.
 /// </para>
 /// <para>
 /// <b>TOC placement convention:</b> partition-based TOC → leftmost segment;
@@ -26,14 +26,16 @@ namespace TapeWinNET.Controls;
 ///  via <see cref="INotifyPropertyChanged"/>.
 /// </para>
 /// <para>
-/// <b>Future:</b> a "compress free space" mode (indicated by a torn-band visual)
-///  can be added via an optional <c>CompressFreeSpace</c> DP without changing the
-///  public <see cref="Segments"/> API.
+/// The "compress free space" mode (indicated by a torn-band visual for free segment)
+///  can be controlled via optional DPs <see cref="FreeSegmentRatioThreshold"/> and
+///  <see cref="FreeSegmentTargetRatio"/>. Set <see cref="FreeSegmentRatioThreshold"/>
+///  to <c>1.0</c> to disable the feature entirely.
 /// </para>
 /// </summary>
 public partial class MediaUsageBarControl : UserControl
 {
-    // ───────────────────────────────────────── Segment color palette ────────────────────
+    #region Segment color palette
+    
     // Two alternating blues — dark (Windows accent class) and pale — matching the
     //  Windows Explorer disk-usage aesthetic. Adjacent sets read as immediately distinct
     //  while the overall bar stays monochromatic and consistent with the app's style.
@@ -51,7 +53,7 @@ public partial class MediaUsageBarControl : UserControl
     private static readonly Color TocColor   = Color.FromRgb(0x70, 0x70, 0x70);  // dark gray
     private static readonly Color FreeColor  = Color.FromRgb(0xEA, 0xEA, 0xEA);  // very light gray
     private static readonly Color TocFgColor = Colors.White;
-    private static readonly Color FreeFgColor = Color.FromRgb(0x70, 0x70, 0x70); // fdark grey
+    private static readonly Color FreeFgColor = Color.FromRgb(0x70, 0x70, 0x70); // dark grey
 
     // Semi-transparent dark used as segment separator line on left edge
     private static readonly Color SepColor = Color.FromArgb(0x50, 0x00, 0x00, 0x00);
@@ -60,16 +62,55 @@ public partial class MediaUsageBarControl : UserControl
     private static readonly Color HighlightBorderColor = Color.FromRgb(0xFF, 0xA5, 0x00); // amber
 
     // Minimum rendered width (px) for a label to be visible in a segment
-    private const double LabelMinWidth = 20.0;
+    // private const double LabelMinWidth = 20.0; // Unused so far - we let Framework handle label clipping
 
-    // Free-space visual stretch: when the free segment exceeds this fraction of total
-    //  capacity, non-free segments are scaled up so free is visually compressed to
-    //  FreeStretchedVisualRatio of the bar width. The right edge of the free segment
+    #endregion // Segment color palette
+
+    #region Dependency Properties
+
+    // Free-space visual stretch: when the free segment exceeds FreeSegmentRatioThreshold
+    //  of total capacity, non-free segments are scaled up so free is visually compressed
+    //  to FreeSegmentTargetRatio of the bar width. The right edge of the free segment
     //  is then drawn as a zigzag to signal the compression.
-    private const double FreeStretchThreshold    = 0.50;
-    private const double FreeStretchedVisualRatio = 0.4;
+    // Dependency properties can be overriden in XAML like this:
+    //      <controls:MediaUsageBarControl
+    //          FreeSegmentRatioThreshold="0.60"
+    //          FreeSegmentTargetRatio="0.35"
+    //      .../>
 
-    // ───────────────────────────────────────────────────── Dependency Properties ────────
+    public static readonly DependencyProperty FreeSegmentRatioThresholdProperty =
+        DependencyProperty.Register(
+            nameof(FreeSegmentRatioThreshold),
+            typeof(double),
+            typeof(MediaUsageBarControl),
+            new PropertyMetadata(0.50, OnSegmentsOrCapacityChanged));
+
+    /// <summary>
+    /// Free-space fraction of total capacity above which the free segment is visually
+    ///  compressed. Default: 0.50 (compress when free space exceeds 50 %).
+    /// </summary>
+    public double FreeSegmentRatioThreshold
+    {
+        get => (double)GetValue(FreeSegmentRatioThresholdProperty);
+        set => SetValue(FreeSegmentRatioThresholdProperty, value);
+    }
+
+    public static readonly DependencyProperty FreeSegmentTargetRatioProperty =
+        DependencyProperty.Register(
+            nameof(FreeSegmentTargetRatio),
+            typeof(double),
+            typeof(MediaUsageBarControl),
+            new PropertyMetadata(0.40, OnSegmentsOrCapacityChanged));
+
+    /// <summary>
+    /// Target visual width of the compressed free segment as a fraction of the total
+    ///  bar width. Default: 0.40 (free segment is drawn at 40 % of bar width).
+    /// </summary>
+    public double FreeSegmentTargetRatio
+    {
+        get => (double)GetValue(FreeSegmentTargetRatioProperty);
+        set => SetValue(FreeSegmentTargetRatioProperty, value);
+    }
 
     public static readonly DependencyProperty SegmentsProperty =
         DependencyProperty.Register(
@@ -84,6 +125,8 @@ public partial class MediaUsageBarControl : UserControl
             typeof(long),
             typeof(MediaUsageBarControl),
             new PropertyMetadata(0L, OnSegmentsOrCapacityChanged));
+
+    #endregion // Dependency Properties
 
     /// <summary>
     /// The ordered list of segments to render. Sizes are raw bytes;
@@ -159,15 +202,15 @@ public partial class MediaUsageBarControl : UserControl
         //  of the bar. Free segment width is left at its real proportion (1× factor).
         var freeSeg = segments.FirstOrDefault(s => s.Kind == UsageSegmentKind.Free);
         double freeRatio = freeSeg != null ? (double)freeSeg.Size / total : 0.0;
-        bool isStretched = freeRatio > FreeStretchThreshold;
+        bool isStretched = freeRatio > FreeSegmentRatioThreshold;
         double stretchFactor = 1.0;
         if (isStretched && freeSeg != null)
         {
             long nonFreeTotal = total - freeSeg.Size;
             if (nonFreeTotal > 0)
                 // Solve: freeSize / (freeSize + nonFreeTotal * stretchFactor) = FreeStretchedVisualRatio
-                stretchFactor = freeSeg.Size * (1.0 - FreeStretchedVisualRatio)
-                                / (nonFreeTotal * FreeStretchedVisualRatio);
+                stretchFactor = freeSeg.Size * (1.0 - FreeSegmentTargetRatio)
+                                / (nonFreeTotal * FreeSegmentTargetRatio);
         }
 
         for (int i = 0; i < segments.Count; i++)
@@ -296,7 +339,7 @@ public partial class MediaUsageBarControl : UserControl
                 new(0, 0), new(4, 3), new(0, 6), new(4, 9),
                 new(0, 12), new(4, 15), new(0, 18),
             ],
-            Stroke = new SolidColorBrush(Color.FromRgb(0x80, 0x80, 0x80)),
+            Stroke = new SolidColorBrush(FreeFgColor),
             StrokeThickness = 1.5,
             IsHitTestVisible = false,
         };
