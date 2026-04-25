@@ -4,6 +4,7 @@ using TapeConNET.Infrastructure;
 using TapeConNET.Services;
 using TapeConNET.Ux;
 using TapeConNET.Filtering;
+using TapeLibNET.Services;
 
 namespace TapeConNET.Cli;
 
@@ -77,7 +78,7 @@ internal static class ListCommand
             //  files) and combine them with --filter / --filter-file.
             var resolved = FilterResolver.ResolveForSelection(patterns, filterFcl, filterFile);
 
-            var options = new ListOptions(
+            var options = new ListRequest(
                 StartSetIndex:       startIdx,
                 EndSetIndex:         endIdx,
                 FilePatterns:        null,
@@ -86,7 +87,7 @@ internal static class ListCommand
                 Filter:              resolved.Filter);
 
             var result = await service.ListContentsAsync(options);
-            return result.HasFailed
+            return !result.Success
                 ? (int)TapeConExitCode.OperationFailed
                 : (int)TapeConExitCode.Ok;
         });

@@ -8,6 +8,7 @@ using Windows.Win32.System.SystemServices; // for Helpers
 
 using TapeLibNET;
 using TapeLibNET.Virtual;
+using TapeLibNET.Services;
 using TapeWinNET.Converters;
 
 using TapeWinNET.Controls;

@@ -4,20 +4,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 using TapeLibNET;
 using TapeLibNET.Virtual;
+using TapeLibNET.Services;
 
 namespace TapeConNET.Services;
-
-/// <summary>
-/// Result of probing a virtual drive for existing media. Mirrors the WPF
-/// version verbatim so callers can be reused unchanged.
-/// </summary>
-public record VirtualDriveProbeResult(
-    bool Success,
-    VirtualMediaDescriptor? Media,
-    string? MediaName,
-    int? BackupSetCount,
-    VirtualTapeDriveCapabilities? DetectedCapabilities,
-    string? ErrorMessage);
 
 public partial class TapeService
 {

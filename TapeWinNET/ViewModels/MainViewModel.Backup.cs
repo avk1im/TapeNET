@@ -8,6 +8,7 @@ using TapeWinNET.Models;
 
 using TapeLibNET;
 using TapeLibNET.Virtual;
+using TapeLibNET.Services;
 using TapeWinNET.Services;
 
 namespace TapeWinNET.ViewModels;
@@ -93,14 +94,14 @@ public partial class MainViewModel
         window.ShowDialog();
     }
 
-    private void OnStartBackup(BackupRequest request)
+    private void OnStartBackup(BackupFormData request)
     {
         // Close the BackupWindow before starting the operation
         Application.Current.Windows.OfType<BackupWindow>().FirstOrDefault()?.Close();
         _ = ExecuteBackupAsync(request);
     }
 
-    private async Task ExecuteBackupAsync(BackupRequest request)
+    private async Task ExecuteBackupAsync(BackupFormData request)
     {
         // Convert checked TapeFileInfo list to string paths for TapeService
         var fileList = request.CheckedFiles
@@ -124,24 +125,25 @@ public partial class MainViewModel
         // also set immediately when the user pre-checked SkipAllErrors in the backup window
         bool skipAllErrors = request.SkipAllErrors;
         int errorCount = 0;
-        BackupOperationResult? operationResult = null;
+        BackupResult? operationResult = null;
 
         try
         {
             await Task.Run(async () =>
             {
                 operationResult = await _tapeService.ExecuteBackupAsync(
-                    fileList,
-                    listContainsPatterns: false,  // files are already resolved
-                    request.Description,
-                    request.IncludeSubdirectories,
-                    request.Incremental,
-                    request.BlockSize,
-                    request.HashAlgorithm,
-                    request.AppendMode,
-                    request.AppendAfterSetIndex,
-                    request.UseFilemarks,
-                    request.SkipAllErrors,
+                    new BackupRequest(
+                        FileList: fileList,
+                        ListContainsPatterns: false,  // files are already resolved
+                        Description: request.Description,
+                        IncludeSubdirectories: request.IncludeSubdirectories,
+                        Incremental: request.Incremental,
+                        BlockSize: request.BlockSize,
+                        HashAlgorithm: request.HashAlgorithm,
+                        AppendMode: request.AppendMode,
+                        AppendAfterSetIndex: request.AppendAfterSetIndex,
+                        UseFilemarks: request.UseFilemarks,
+                        SkipAllErrors: request.SkipAllErrors),
                     // Current file callback
                     filePath =>
                     {

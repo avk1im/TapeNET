@@ -15,7 +15,7 @@ namespace TapeWinNET.ViewModels;
 
 /// <summary>
 /// Request data gathered by the BackupWindow for executing a backup operation.
-/// Mirrors <see cref="RestoreRequest"/> for the Restore workflow.
+/// Mirrors <see cref="RestoreFormData"/> for the Restore workflow.
 /// </summary>
 /// <param name="Description">User description for the new backup set.</param>
 /// <param name="CheckedFiles">Flat list of checked files for backup, collected
@@ -27,7 +27,7 @@ namespace TapeWinNET.ViewModels;
 /// <param name="AppendAfterSetIndex">Set index to append after (-1 for overwrite).</param>
 /// <param name="UseFilemarks">Whether to use filemarks between files.</param>
 /// <param name="IncludeSubdirectories">Whether sources were scanned with subdirectory recursion.</param>
-public record BackupRequest(
+public record BackupFormData(
     string Description,
     List<TapeFileInfo> CheckedFiles,
     bool Incremental,
@@ -51,7 +51,7 @@ public record BackupRequest(
 public class BackupViewModel : ViewModelBase
 {
     private readonly TapeService _tapeService;
-    private readonly Action<BackupRequest> _onStartBackup;
+    private readonly Action<BackupFormData> _onStartBackup;
     private readonly Action _onCancel;
 
     // ─────────────────────────────────────────────────
@@ -111,7 +111,7 @@ public class BackupViewModel : ViewModelBase
 
     public BackupViewModel(
         TapeService tapeService,
-        Action<BackupRequest> onStartBackup,
+        Action<BackupFormData> onStartBackup,
         Action onCancel)
     {
         _tapeService = tapeService;
@@ -1007,7 +1007,7 @@ public class BackupViewModel : ViewModelBase
             return;
         }
 
-        var request = new BackupRequest(
+        var request = new BackupFormData(
             Description: _description,
             CheckedFiles: checkedFiles,
             Incremental: _incrementalBackup,

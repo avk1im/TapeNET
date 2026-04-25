@@ -6,52 +6,9 @@ using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
 
 using TapeConNET.Ux;
 using TapeLibNET;
+using TapeLibNET.Services;
 
 namespace TapeConNET.Services;
-
-/// <summary>The three flavors of restore-like operations.</summary>
-public enum RestoreMode
-{
-    /// <summary>Writes files to a target directory.</summary>
-    Restore,
-    /// <summary>Reads tape data and checks CRC integrity without writing files.</summary>
-    Validate,
-    /// <summary>Compares tape data byte-by-byte against existing files on disk.</summary>
-    Verify
-}
-
-/// <summary>Summary statistics returned by a restore/validate/verify operation.</summary>
-public record RestoreOperationResult(
-    int FilesTotal,
-    int FilesProcessed,
-    int FilesSucceeded,
-    int FilesFailed,
-    int FilesSkipped,
-    long BytesProcessed)
-{
-    public int FilesMissing => FilesTotal - FilesProcessed;
-    public bool IsFullSuccess => !WasAborted && FilesFailed == 0 && FilesSkipped == 0 && FilesMissing == 0 && FilesProcessed > 0;
-    public bool WasAborted { get; init; }
-    public bool HasFailed { get; init; }
-
-    /// <summary>
-    /// Per-set dictionary of successfully processed files. Populated by the
-    /// progress handler; kept to mirror the WPF result shape so callers may
-    /// reuse these lists for post-operation bookkeeping.
-    /// </summary>
-    public Dictionary<int, List<TapeFileInfo>> ProcessedFiles { get; init; } = [];
-}
-
-/// <summary>Options bag for <see cref="TapeService.ExecuteRestoreAsync"/>.</summary>
-public sealed record RestoreOptions(
-    RestoreMode Mode,
-    Dictionary<int, IReadOnlyList<TapeFileInfo>?> CheckedFilesBySet,
-    bool Incremental,
-    string? TargetDirectory,
-    bool RecurseSubdirectories,
-    TapeHowToHandleExisting HandleExisting,
-    bool SkipAllErrors,
-    ITapeFileFilter? Filter = null);
 
 public partial class TapeService
 {
@@ -61,7 +18,7 @@ public partial class TapeService
     /// <see cref="IConsoleUx"/>; under <c>NonInteractive</c> the safe defaults
     /// (abort / skip-all) are used.
     /// </summary>
-    public Task<RestoreOperationResult> ExecuteRestoreAsync(RestoreOptions options)
+    public Task<RestoreResult> ExecuteRestoreAsync(RestoreRequest options)
     {
         return Task.Run(() =>
         {
@@ -71,14 +28,21 @@ public partial class TapeService
                 TapeFileRestoreBaseAgent? agent = null;
                 IProgressScope? progress = null;
 
-                RestoreOperationResult MakeResult(bool aborted = false, bool failed = false) => new(
-                    progressHandler?.FilesTotal ?? 0,
-                    progressHandler?.FilesProcessed ?? 0,
-                    progressHandler?.FilesSucceeded ?? 0,
-                    progressHandler?.FilesFailed ?? 0,
-                    progressHandler?.FilesSkipped ?? 0,
-                    progressHandler?.BytesProcessed ?? 0)
-                { WasAborted = aborted, HasFailed = failed };
+                RestoreResult MakeResult(bool aborted = false, bool failed = false) => new()
+                {
+                    FilesTotal     = progressHandler?.FilesTotal ?? 0,
+                    FilesProcessed = progressHandler?.FilesProcessed ?? 0,
+                    FilesSucceeded = progressHandler?.FilesSucceeded ?? 0,
+                    FilesFailed    = progressHandler?.FilesFailed ?? 0,
+                    FilesSkipped   = progressHandler?.FilesSkipped ?? 0,
+                    BytesProcessed = progressHandler?.BytesProcessed ?? 0,
+                    WasAborted     = aborted,
+                    HasFailed      = failed,
+                    Success        = !failed,
+                    Outcome        = aborted ? ServiceReportLevel.Failed
+                                   : failed  ? ServiceReportLevel.Error
+                                   :           ServiceReportLevel.Completed,
+                };
 
                 if (_drive is null || !_drive.IsMediaLoaded)
                 {
@@ -309,171 +273,32 @@ public partial class TapeService
 
     #region Helper Class — Restore progress handler
 
+    /// <summary>
+    /// <see cref="ServiceRestoreProgressHandler"/> subclass that additionally
+    /// drives a bounded <see cref="IProgressScope"/> for the console progress bar.
+    /// All core logic (logging, abort, file-failed prompts) lives in the shared base.
+    /// </summary>
     private sealed class GuiRestoreProgressHandler(
         IConsoleUx ux,
         TapeFileAgent agent,
         IProgressScope progress,
         int totalFilesToProcess,
         bool skipAllErrors,
-        string modeName) : ITapeFileNotifiable
+        string modeName)
+        : ServiceRestoreProgressHandler(new ConsoleUxServiceHost(ux), agent, totalFilesToProcess, skipAllErrors, modeName)
     {
-        public int FilesProcessed { get; private set; }
-        public int FilesTotal { get; private set; }
-        public int FilesFailed { get; private set; }
-        public int FilesSucceeded { get; private set; }
-        public int FilesSkipped { get; private set; }
-        public long BytesProcessed { get; private set; }
-        public Dictionary<int, List<TapeFileInfo>> ProcessedFiles { get; } = [];
-
-        private TapeFileStatistics _batchStartSnapshot;
-        private bool _abortLogged;
-
-        private void Log(WarningLevel level, string msg, bool sub = false)
-            => ux.Log(new LogEntry(level, msg, sub));
-
-        private void Sync(in TapeFileStatistics stats)
+        protected override void ReportProgress(in TapeFileStatistics stats, string? currentFile = null)
         {
-            FilesTotal     = stats.FilesTotal;
-            FilesProcessed = stats.FilesProcessed;
-            FilesSucceeded = stats.FilesSucceeded;
-            FilesFailed    = stats.FilesFailed;
-            FilesSkipped   = stats.FilesSkipped;
-            BytesProcessed = stats.BytesProcessed;
-        }
-
-        private void ReportProgress(in TapeFileStatistics stats, string? status = null)
-        {
-            int total = totalFilesToProcess > 0 ? totalFilesToProcess : stats.FilesTotal;
+            int total = TotalFilesToProcess > 0 ? TotalFilesToProcess : stats.FilesTotal;
             if (total > 0)
             {
                 double pct = 100.0 * stats.FilesProcessed / total;
-                progress.Report(pct, status);
+                progress.Report(pct, currentFile);
             }
-            else if (status is not null)
+            else if (currentFile is not null)
             {
-                progress.Report(0, status);
+                progress.Report(0, currentFile);
             }
-        }
-
-        public RestoreOperationResult GenerateResult() =>
-            new(FilesTotal, FilesProcessed, FilesSucceeded, FilesFailed, FilesSkipped, BytesProcessed)
-            {
-                ProcessedFiles = ProcessedFiles
-            };
-
-        private void ThrowIfAbortRequested()
-        {
-            if (agent.IsAbortRequested)
-            {
-                if (!_abortLogged)
-                {
-                    _abortLogged = true;
-                    Log(WarningLevel.Warning, $"{modeName} abort requested");
-                }
-                throw new TapeAbortRequestedException("User requested abort");
-            }
-        }
-
-        private void AddToProcessed(in TapeFileInfo fileInfo)
-        {
-            int setIndex = agent.TOC.CurrentSetIndex;
-            if (!ProcessedFiles.TryGetValue(setIndex, out var list))
-            {
-                list = [];
-                ProcessedFiles[setIndex] = list;
-            }
-            list.Add(fileInfo);
-        }
-
-        public void BatchStart(int setIndex, in TapeFileStatistics stats)
-        {
-            _batchStartSnapshot = stats;
-            Sync(stats);
-            var toc = agent.TOC;
-            Log(WarningLevel.Info, $"Set #{setIndex} | {toc.SetIndexToAlt(setIndex)}: starting {modeName.ToLowerInvariant()}...");
-            ReportProgress(stats);
-        }
-
-        public void BatchEnd(int setIndex, in TapeFileStatistics stats)
-        {
-            Sync(stats);
-            var toc = agent.TOC;
-            var batch = stats.Delta(in _batchStartSnapshot);
-
-            var level = batch.FilesFailed > 0 ? WarningLevel.Failed
-                      : batch.FilesSkipped > 0 ? WarningLevel.Warning
-                      : WarningLevel.Completed;
-            var parts = new List<string>(3) { $"{batch.FilesSucceeded:N0} succeeded" };
-            if (batch.FilesFailed > 0) parts.Add($"{batch.FilesFailed:N0} failed");
-            if (batch.FilesSkipped > 0) parts.Add($"{batch.FilesSkipped:N0} skipped");
-
-            Log(level, $"Set #{setIndex} | {toc.SetIndexToAlt(setIndex)} complete: {string.Join(", ", parts)}");
-            ReportProgress(stats);
-        }
-
-        public bool PreProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats)
-        {
-            Sync(stats);
-            ThrowIfAbortRequested();
-            ReportProgress(stats, fileInfo.FileDescr.FullName);
-            return true;
-        }
-
-        public bool PostProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats)
-        {
-            Sync(stats);
-            ThrowIfAbortRequested();
-            Log(WarningLevel.Completed, $"'{Path.GetFileName(fileInfo.FileDescr.FullName)}' {Helpers.BytesToString(fileInfo.FileDescr.Length)}", sub: true);
-            ReportProgress(stats);
-            AddToProcessed(fileInfo);
-            return true;
-        }
-
-        public FileFailedAction OnFileFailed(TapeFileInfo fileInfo, TapeResult result, in TapeFileStatistics stats)
-        {
-            Sync(stats);
-            ThrowIfAbortRequested();
-
-            Log(WarningLevel.Failed, $"Failed: '{fileInfo.FileDescr.FullName}'");
-            Log(WarningLevel.Failed, $"Error: {result.ErrorMessage}", sub: true);
-            ReportProgress(stats);
-
-            // ERROR_END_OF_MEDIA = 1100, ERROR_NO_DATA_DETECTED = 1104 (winerror.h)
-            if (result.ErrorCode == 1100u || result.ErrorCode == 1104u)
-                return FileFailedAction.Skip;
-
-            if (skipAllErrors || ux.NonInteractive)
-                return FileFailedAction.Skip;
-
-            var choice = ux.Select(
-                "File failed — choose action",
-                ["Skip", "Retry", "Skip all", "Abort"],
-                defaultChoice: "Skip");
-
-            switch (choice)
-            {
-                case "Retry":
-                    return FileFailedAction.Retry;
-                case "Skip all":
-                    skipAllErrors = true;
-                    return FileFailedAction.Skip;
-                case "Abort":
-                    if (!_abortLogged)
-                    {
-                        _abortLogged = true;
-                        Log(WarningLevel.Warning, $"{modeName} abort requested");
-                    }
-                    throw new TapeAbortRequestedException("User requested abort");
-                default:
-                    return FileFailedAction.Skip;
-            }
-        }
-
-        public void OnFileSkipped(TapeFileInfo fileInfo, in TapeFileStatistics stats)
-        {
-            Sync(stats);
-            ThrowIfAbortRequested();
-            Log(WarningLevel.None, $"Skipped: {Path.GetFileName(fileInfo.FileDescr.FullName)}", sub: true);
         }
     }
 

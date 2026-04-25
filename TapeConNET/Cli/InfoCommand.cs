@@ -2,6 +2,7 @@ using System.CommandLine;
 
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
+using TapeLibNET.Services;
 
 namespace TapeConNET.Cli;
 
@@ -23,14 +24,14 @@ internal static class InfoCommand
             ux.WriteBanner();
 
             using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.Full, ct);
-            var result = await service.ListContentsAsync(new Services.ListOptions(
+            var result = await service.ListContentsAsync(new ListRequest(
                 StartSetIndex: null,
                 EndSetIndex:   null,
                 FilePatterns:  null,
                 IncrementalOverride: false, // info: don't expand incrementals — only summary
                 ShowFullPath:  true));
 
-            return result.HasFailed
+            return !result.Success
                 ? (int)TapeConExitCode.OperationFailed
                 : (int)TapeConExitCode.Ok;
         });

@@ -4,27 +4,9 @@ using Windows.Win32.System.SystemServices; // Helpers
 
 using TapeConNET.Ux;
 using TapeLibNET;
+using TapeLibNET.Services;
 
 namespace TapeConNET.Services;
-
-/// <summary>Listing options for <see cref="TapeService.ListContentsAsync"/>.</summary>
-/// <remarks>
-/// Set indexes follow the dual convention used throughout TapeNET:
-/// positive = oldest-up (1 = oldest), zero/negative = latest-down (0 = latest).
-/// </remarks>
-public sealed record ListOptions(
-    int? StartSetIndex = null,
-    int? EndSetIndex = null,
-    IReadOnlyList<string>? FilePatterns = null,
-    bool? IncrementalOverride = null,
-    bool ShowFullPath = true,
-    ITapeFileFilter? Filter = null);
-
-public sealed record ListResult(
-    int SetsListed,
-    int TotalFiles,
-    long TotalBytes,
-    bool HasFailed = false);
 
 public partial class TapeService
 {
@@ -33,7 +15,7 @@ public partial class TapeService
     /// filtered by FCL/wildcard patterns). Mirrors the legacy
     /// <c>HandleList</c> output format, adapted to <see cref="IConsoleUx"/>.
     /// </summary>
-    public Task<ListResult> ListContentsAsync(ListOptions options)
+    public Task<ListResult> ListContentsAsync(ListRequest options)
     {
         return Task.Run(() =>
         {
@@ -42,13 +24,13 @@ public partial class TapeService
                 if (_drive is null || !_drive.IsMediaLoaded)
                 {
                     LastError = "Media not loaded";
-                    return new ListResult(0, 0, 0, HasFailed: true);
+                    return ListResult.Failed(LastError);
                 }
                 if (_toc is null)
                 {
                     LastError = "TOC not loaded — run after restore-TOC or import-TOC";
                     LogErr(LastError);
-                    return new ListResult(0, 0, 0, HasFailed: true);
+                    return ListResult.Failed(LastError);
                 }
 
                 try
@@ -148,13 +130,13 @@ public partial class TapeService
                     }
 
                     LogOk($"Total: {totalFiles:N0} file(s) {Helpers.BytesToStringLong(totalSize)} across {setsListed} set(s)");
-                    return new ListResult(setsListed, totalFiles, totalSize);
+                    return ListResult.Ok(setsListed, totalFiles, totalSize);
                 }
                 catch (Exception ex)
                 {
                     LastError = ex.Message;
                     LogErr($"Error listing backup sets: {ex.Message}");
-                    return new ListResult(0, 0, 0, HasFailed: true);
+                    return ListResult.Failed(ex.Message, ex);
                 }
             }
         }, _ct);

@@ -5,20 +5,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 using TapeLibNET;
 using TapeLibNET.Virtual;
+using TapeLibNET.Services;
 
 namespace TapeWinNET.Services;
-
-/// <summary>
-/// Result of probing a virtual drive for existing media.
-/// </summary>
-public record VirtualDriveProbeResult(
-    bool Success,
-    VirtualMediaDescriptor? Media,
-    string? MediaName,
-    int? BackupSetCount,
-    VirtualTapeDriveCapabilities? DetectedCapabilities,
-    string? ErrorMessage
-);
 
 public partial class TapeService
 {

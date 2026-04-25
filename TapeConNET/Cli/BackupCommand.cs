@@ -6,6 +6,7 @@ using TapeConNET.Infrastructure;
 using TapeConNET.Services;
 using TapeConNET.Ux;
 using TapeConNET.Filtering;
+using TapeLibNET.Services;
 
 namespace TapeConNET.Cli;
 
@@ -128,7 +129,7 @@ internal static class BackupCommand
             uint effectiveBlockSize = blockSize ?? service.DefaultBlockSize;
             if (effectiveBlockSize == 0) effectiveBlockSize = 64 * 1024;
 
-            var options = new BackupOptions(
+            var options = new BackupRequest(
                 FileList:               [.. resolved.Sources],
                 ListContainsPatterns:   true,
                 Description:            description,

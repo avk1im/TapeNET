@@ -7,6 +7,7 @@ using Windows.Win32.System.SystemServices; // Helpers.BytesToStringLong
 using TapeConNET.Ux;
 using TapeLibNET;
 using TapeLibNET.Virtual;
+using TapeLibNET.Services;
 
 namespace TapeConNET.Services;
 

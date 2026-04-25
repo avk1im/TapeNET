@@ -5,6 +5,7 @@ using Windows.Win32.System.SystemServices; // for Helpers
 
 using TapeLibNET;
 using TapeLibNET.Virtual;
+using TapeLibNET.Services;
 using TapeWinNET.Converters;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
@@ -574,7 +575,7 @@ public partial class MainViewModel
 
     #region Private Methods - Restore Operations
 
-    private async Task ExecuteRestoreAsync(RestoreRequest request)
+    private async Task ExecuteRestoreAsync(RestoreFormData request)
     {
         var mode = request.Mode;
         var checkedFilesBySet = request.CheckedFilesBySet;
@@ -603,20 +604,21 @@ public partial class MainViewModel
         // also set immediately when the user pre-checked SkipAllErrors in the restore window
         bool skipAllErrors = request.SkipAllErrors;
         int errorCount = 0;
-        RestoreOperationResult? operationResult = null;
+        RestoreResult? operationResult = null;
 
         try
         {
             await Task.Run(async () =>
             {
                 operationResult = await _tapeService.ExecuteRestoreAsync(
-                    mode,
-                    checkedFilesBySet,
-                    incremental,
-                    targetDirectory,
-                    recurseSubdirectories: recurseSubdirectories,
-                    handleExisting,
-                    request.SkipAllErrors,
+                    new RestoreRequest(
+                        Mode: mode,
+                        CheckedFilesBySet: checkedFilesBySet,
+                        Incremental: incremental,
+                        TargetDirectory: targetDirectory,
+                        RecurseSubdirectories: recurseSubdirectories,
+                        HandleExisting: handleExisting,
+                        SkipAllErrors: request.SkipAllErrors),
                     // Current file callback
                     filePath =>
                     {

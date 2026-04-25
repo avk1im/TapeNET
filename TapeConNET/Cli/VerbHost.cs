@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 
 using TapeLibNET;
 using TapeLibNET.Virtual;
+using TapeLibNET.Services;
 
 using TapeConNET.Infrastructure;
 using TapeConNET.Logging;
@@ -163,7 +164,7 @@ internal static class VerbHost
     }
 
     /// <summary>
-    /// Maps a <see cref="BackupOperationResult"/> / <see cref="RestoreOperationResult"/>
+    /// Maps a <see cref="BackupResult"/> / <see cref="RestoreResult"/>
     /// outcome to a <see cref="TapeConExitCode"/>. Used by backup/restore/validate/verify.
     /// </summary>
     public static TapeConExitCode ToExitCode(bool wasAborted, bool failed)

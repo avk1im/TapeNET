@@ -6,6 +6,7 @@ using TapeConNET.Infrastructure;
 using TapeConNET.Services;
 using TapeConNET.Ux;
 using TapeConNET.Filtering;
+using TapeLibNET.Services;
 
 namespace TapeConNET.Cli;
 
@@ -115,7 +116,7 @@ internal static class RestoreCommand
                 [setIndex] = null,
             };
 
-            var options = new RestoreOptions(
+            var options = new RestoreRequest(
                 Mode:                 mode,
                 CheckedFilesBySet:    checkedFiles,
                 Incremental:          incremental ?? true,

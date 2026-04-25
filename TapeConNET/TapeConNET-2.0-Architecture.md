@@ -247,7 +247,7 @@ TapeConNET/Excluded Files/             # archived 1.x sources (excluded from com
 | **4** | Verb commands: full verb tree from §4, typed binding, validation, examples | ✅ |
 | **5** | FCL auto-detect for backup/restore/validate/verify/list; finalize virtual-drive subcommands and shortcuts | ✅ |
 | **6** | `TapeConNET.Tests`: parser tests, service tests against `VirtualTapeFixture`, end-to-end `TapeConRunner`, opt-in `[SkippableFact]` real-drive suite | 🟡 |
-| **7** | Cross-validation with TapeWinNET; produce `docs/TapeService-Parity.md`; reconcile both apps | ⬜ | <-- Consider merging TapeService as a service layer of TapeLibNET
+| **7** | Cross-validation with TapeWinNET; produce `docs/TapeService-Parity.md`; reconcile both apps | 🟡 | <-- Consider merging TapeService as a service layer of TapeLibNET
 | **8** | Docs: render embedded `concepts.md`, `migration-from-1.0.md`, `faq.md` via `tapecon docs`; auto-generate `docs/cli-reference.md`; retire `tapecon.pdf` | ⬜ |
 
 ### Phase 1 exit criteria

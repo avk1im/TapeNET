@@ -9,22 +9,11 @@ using Microsoft.Extensions.Logging.Abstractions; // for NullLoggerFactory
 
 using TapeLibNET;
 using TapeLibNET.Virtual;
+using TapeLibNET.Services;
 using TapeWinNET.Converters;
 using TapeWinNET.Models;
 
 namespace TapeWinNET.Services;
-
-/// <summary>
-/// Information to create or open a virtual media (file-backed or in-memory).
-/// </summary>
-public record VirtualMediaDescriptor(
-    string ContentPath,
-    long ContentCapacity,
-    string? InitiatorPath,
-    long InitiatorPartitionCapacity,
-    bool InMemory = false
-);
-
 
 /// <summary>
 /// Service that wraps TapeLibNET operations with async support for UI threading.

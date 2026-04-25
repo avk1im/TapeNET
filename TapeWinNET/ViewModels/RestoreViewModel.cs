@@ -4,6 +4,7 @@ using System.Windows.Input;
 using Windows.Win32.System.SystemServices; // for Helpers
 
 using TapeLibNET;
+using TapeLibNET.Services;
 using TapeWinNET.Converters;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
@@ -16,7 +17,7 @@ namespace TapeWinNET.ViewModels;
 /// <param name="CheckedFilesBySet">Per-set file selection.
 ///  Keys are 1-based set indexes. A <c>null</c> value means all files in that set;
 ///  a non-null list means only those specific files.</param>
-public record RestoreRequest(
+public record RestoreFormData(
     RestoreMode Mode,
     Dictionary<int, IReadOnlyList<TapeFileInfo>?> CheckedFilesBySet,
     bool Incremental,
@@ -48,7 +49,7 @@ public record HandleExistingOption(TapeHowToHandleExisting Value, string Display
 /// </summary>
 public class RestoreViewModel : ViewModelBase
 {
-    private readonly Action<RestoreRequest> _onStart;
+    private readonly Action<RestoreFormData> _onStart;
     private readonly Action _onCancel;
 
     private RestoreMode _mode;
@@ -70,7 +71,7 @@ public class RestoreViewModel : ViewModelBase
     public RestoreViewModel(
         RestoreMode mode,
         List<BackupSetListItem> preSelectedSets,
-        Action<RestoreRequest> onStart,
+        Action<RestoreFormData> onStart,
         Action onCancel)
     {
         _onStart = onStart;
@@ -450,7 +451,7 @@ public class RestoreViewModel : ViewModelBase
         string? targetDir = (_mode == RestoreMode.Restore && !_restoreToOriginal && !string.IsNullOrWhiteSpace(_targetDirectory))
             ? _targetDirectory : null;
 
-        var request = new RestoreRequest(
+        var request = new RestoreFormData(
             Mode: _mode,
             CheckedFilesBySet: checkedFilesBySet,
             Incremental: _incremental,
