@@ -14,6 +14,10 @@ public sealed class FclTapeFileFilter(FclEvaluator evaluator) : ITapeFileFilter
         : this(FclPipeline.CreateWildcardEvaluator(filePatterns))
     { }
 
+    public FclTapeFileFilter(IReadOnlyList<string> filePatterns)
+        : this(FclPipeline.CreateWildcardEvaluator(filePatterns))
+    { }
+
     /// <inheritdoc />
     public bool Matches(in TapeFileDescriptor fileDescr)
     {

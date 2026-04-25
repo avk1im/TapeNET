@@ -21,6 +21,7 @@
 			<_Parameter1>windows5.1.2600</_Parameter1>
 		</AssemblyAttribute>
 		<InternalsVisibleTo Include="TapeLibNET.Tests" />
+		<InternalsVisibleTo Include="TapeConNET.Tests" />
 	</ItemGroup>
 
 	<ItemGroup>

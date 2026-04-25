@@ -16,7 +16,10 @@
             Remove this element if your application requires this virtualization for backwards
             compatibility.
         -->
-		  <requestedExecutionLevel  level="requireAdministrator" uiAccess="false" />
+		  <!-- TapeConNET 2.0: run as invoker so non-tape verbs (-help, docs, virtual-drive ops)
+			   work without UAC. Physical Win32 tape access still requires elevation; the
+			   service surfaces a clear error and the user can re-run elevated. -->
+		  <requestedExecutionLevel  level="asInvoker" uiAccess="false" />
 	  </requestedPrivileges>
     </security>
   </trustInfo>

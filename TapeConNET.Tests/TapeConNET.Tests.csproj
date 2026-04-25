@@ -1,0 +1,40 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>TapeConNET.Tests</RootNamespace>
+    <RunSettingsFilePath>$(MSBuildThisFileDirectory)..\TapeNET.runsettings</RunSettingsFilePath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+    <PackageReference Include="xunit" Version="2.*" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.*">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Xunit.SkippableFact" Version="1.5.61" />
+  </ItemGroup>
+
+  <!-- Reuse shared helpers from TapeLibNET.Tests via <Link> rather than
+        duplicating them or pulling a project reference (which would drag in
+        grpc/aspnetcore dependencies of the full physical-test rig). -->
+  <ItemGroup>
+    <Compile Include="..\TapeLibNET.Tests\Helpers\TempFileTree.cs">
+      <Link>Shared\TempFileTree.cs</Link>
+    </Compile>
+    <Compile Include="..\TapeLibNET.Tests\Helpers\FileComparer.cs">
+      <Link>Shared\FileComparer.cs</Link>
+    </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TapeLibNET\TapeLibNET.csproj" />
+    <ProjectReference Include="..\TapeConNET\TapeConNET.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -9,11 +9,19 @@
     <!--The following sets the name of the output application, e.g. "tapecon" for "tapecon.exe"-->
     <AssemblyName>tapecon</AssemblyName>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RootNamespace>TapeConNET</RootNamespace>
     <AssemblyVersion>1.2.0.$(BuildNumber)</AssemblyVersion>
     <FileVersion>1.2.0.$(BuildNumber)</FileVersion>
   </PropertyGroup>
 
   <Import Project="..\Versioning.targets" />
+
+  <!-- TapeConNET 2.0: override the shared 1.2.x version baseline from Versioning.targets -->
+  <PropertyGroup>
+    <Version>2.0.0.$(BuildNumber)</Version>
+    <AssemblyVersion>2.0.0.$(BuildNumber)</AssemblyVersion>
+    <FileVersion>2.0.0.$(BuildNumber)</FileVersion>
+  </PropertyGroup>
 
   <ItemGroup>
     <Compile Remove="Excluded Files\**" />
@@ -22,15 +30,15 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Remove="TapeCon.Help.txt" />
     <None Remove="~%24apecon.docx" />
     <None Remove="~%24mmand Line Interface.docx" />
     <None Remove="~WRL0003.tmp" />
     <None Remove="BuildNumber.txt" />
   </ItemGroup>
 
+  <!-- TapeConNET 2.0: embed the 'tapecon docs' markdown topics -->
   <ItemGroup>
-    <EmbeddedResource Include="TapeCon.Help.txt" />
+    <EmbeddedResource Include="Resources\Docs\*.md" />
   </ItemGroup>
 
   <ItemGroup>
@@ -43,6 +51,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="8.0.0" />
+    <PackageReference Include="Spectre.Console" Version="0.55.2" />
+    <PackageReference Include="System.CommandLine" Version="2.0.7" />
     <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.106">
       <!-- <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets> -->
       <PrivateAssets>all</PrivateAssets>
@@ -54,62 +64,8 @@
     <ProjectReference Include="..\TapeLibNET\TapeLibNET.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <None Update="tapecon.docx">
-      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-    </None>
-    <None Update="ConvertDocxToPdf.ps1">
-      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
+  <!-- TapeConNET 2.0: legacy DOCX→PDF docs pipeline retired (Phase 8 replaces it
+       with auto-generated CLI reference + 'tapecon docs' embedded markdown).
+       Original .docx / .pdf / ConvertDocxToPdf.ps1 archived under Excluded Files\. -->
 
-  <!-- New version with Inputs and Outputs -->
-  <Target Name="ConvertDocxToPdf" Inputs="$(MSBuildProjectDirectory)\tapecon.docx" Outputs="$(MSBuildProjectDirectory)\tapecon.pdf" AfterTargets="Build">
-    <PropertyGroup>
-      <PowerShellPath>$(SystemRoot)\System32\WindowsPowerShell\v1.0\powershell.exe</PowerShellPath>
-      <DocxFile>$(MSBuildProjectDirectory)\tapecon.docx</DocxFile>
-      <PdfFile>$(MSBuildProjectDirectory)\tapecon.pdf</PdfFile>
-      <ScriptFile>$(MSBuildProjectDirectory)\ConvertDocxToPdf.ps1</ScriptFile>
-    </PropertyGroup>
-
-    <Exec Command="&quot;$(PowerShellPath)&quot; -ExecutionPolicy Bypass -File &quot;$(ScriptFile)&quot; &quot;$(DocxFile)&quot;" />
-  </Target>
-
-  <Target Name="CopyPdfToOutput" Inputs="$(MSBuildProjectDirectory)\tapecon.pdf" Outputs="$(OutputPath)tapecon.pdf" AfterTargets="ConvertDocxToPdf">
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\tapecon.pdf" DestinationFolder="$(OutputPath)" />
-  </Target>
-
-  <!-- Version with manual comparisons commented out -->
-  <!--
-  <PropertyGroup>
-    <IsRebuild>false</IsRebuild>
-  </PropertyGroup>
-
-  <Target Name="SetIsRebuild" BeforeTargets="BeforeRebuild">
-    <PropertyGroup>
-      <IsRebuild>true</IsRebuild>
-    </PropertyGroup>
-  </Target>
-
-  <Target Name="ConvertDocxToPdf" AfterTargets="Build">
-    <PropertyGroup>
-      <PowerShellPath>$(SystemRoot)\System32\WindowsPowerShell\v1.0\powershell.exe</PowerShellPath>
-      <DocxFile>$(MSBuildProjectDirectory)\tapecon.docx</DocxFile>
-      <PdfFile>$(MSBuildProjectDirectory)\tapecon.pdf</PdfFile>
-      <ScriptFile>$(MSBuildProjectDirectory)\ConvertDocxToPdf.ps1</ScriptFile>
-      <DocxFileTime>$([System.IO.File]::GetLastWriteTime('$(DocxFile)').Ticks)</DocxFileTime>
-      <PdfFileTime>$([System.IO.File]::GetLastWriteTime('$(PdfFile)').Ticks)</PdfFileTime>
-    </PropertyGroup>
-
-    <Exec Command="&quot;$(PowerShellPath)&quot; -ExecutionPolicy Bypass -File &quot;$(ScriptFile)&quot; &quot;$(DocxFile)&quot;" Condition="!Exists('$(PdfFile)') OR ('$(DocxFileTime)' > '$(PdfFileTime)') OR '$(IsRebuild)' == 'true'" />
-  </Target>
-
-  <Target Name="CopyPdfToOutput" AfterTargets="ConvertDocxToPdf">
-    <PropertyGroup>
-      <OutputPdfFile>$(OutputPath)tapecon.pdf</OutputPdfFile>
-      <OutputPdfFileTime>$([System.IO.File]::GetLastWriteTime('$(OutputPdfFile)').Ticks)</OutputPdfFileTime>
-    </PropertyGroup>
-    <Copy SourceFiles="$(PdfFile)" DestinationFolder="$(OutputPath)" Condition="!Exists('$(OutputPdfFile)') OR ('$(PdfFileTime)' > '$(OutputPdfFileTime)') OR '$(IsRebuild)' == 'true'" />
-  </Target>
-  -->
 </Project>
