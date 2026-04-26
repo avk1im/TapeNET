@@ -26,14 +26,24 @@ namespace TapeLibNET.Services;
 ///  XAML-binding façades or console-specific partials without duplicating any state.
 /// </para>
 /// </summary>
-public partial class TapeServiceBase : IDisposable
+/// <remarks>
+/// Initialises the service with a logger factory and a host callback interface.
+/// </remarks>
+/// <param name="loggerFactory">
+///  Used to create loggers for the underlying <see cref="TapeDrive"/> and agents.
+/// </param>
+/// <param name="host">
+///  Host adapter for logging, prompts, and coarse state notifications.
+///  Must not re-enter the service synchronously from the UI thread.
+/// </param>
+public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceHost host) : IDisposable
 {
 
     #region Core fields
     // ── Core fields ───────────────────────────────────────────────────────────
 
-    protected readonly ILoggerFactory _loggerFactory;
-    protected readonly ITapeServiceHost _host;
+    protected readonly ILoggerFactory _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
+    protected readonly ITapeServiceHost _host = host ?? throw new ArgumentNullException(nameof(host));
     protected readonly SemaphoreSlim _operationLock = new(1, 1);
 
     protected TapeDrive? _drive;
@@ -50,25 +60,7 @@ public partial class TapeServiceBase : IDisposable
     private bool _disposed;
 
     #endregion
-
     #region Construction / destruction
-    // ── Construction / destruction ────────────────────────────────────────────
-
-    /// <summary>
-    /// Initialises the service with a logger factory and a host callback interface.
-    /// </summary>
-    /// <param name="loggerFactory">
-    ///  Used to create loggers for the underlying <see cref="TapeDrive"/> and agents.
-    /// </param>
-    /// <param name="host">
-    ///  Host adapter for logging, prompts, and coarse state notifications.
-    ///  Must not re-enter the service synchronously from the UI thread.
-    /// </param>
-    public TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceHost host)
-    {
-        _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
-        _host = host ?? throw new ArgumentNullException(nameof(host));
-    }
 
     #endregion
 
@@ -414,11 +406,18 @@ public partial class TapeServiceBase : IDisposable
                 if (vmd.InitiatorPath is not null)
                     LogInfoSub($"Initiator capacity: {Helpers.BytesToStringLong(vmd.InitiatorPartitionCapacity)}");
 
-                var backend = VirtualTapeDriveBackend.CreateMemoryBacked(
-                    _loggerFactory,
-                    capabilities,
-                    vmd.ContentCapacity,
-                    vmd.InitiatorPartitionCapacity);
+                // For content capacity < 2 GB, use CreateMemoryBackend, otherwise CreateMemoryMapBackend
+                var backend = vmd.ContentCapacity < 2L * 1024 * 1024 * 1024
+                    ? VirtualTapeDriveBackend.CreateMemoryBacked(
+                        _loggerFactory,
+                        capabilities,
+                        vmd.ContentCapacity,
+                        vmd.InitiatorPartitionCapacity)
+                    : VirtualTapeDriveBackend.CreateMemoryMapBacked(
+                        _loggerFactory,
+                        capabilities,
+                        vmd.ContentCapacity,
+                        vmd.InitiatorPartitionCapacity);
 
                 _agent?.Dispose();
                 _agent = null;
@@ -655,6 +654,9 @@ public partial class TapeServiceBase : IDisposable
         }
     }
 
+    #endregion // Protected virtual hooks
+
+    #region TOC operations
     // -- TOC operations -------------------------------------------------------
 
     /// <summary>
@@ -980,7 +982,160 @@ public partial class TapeServiceBase : IDisposable
         });
     }
 
-    #endregion
+    /// <summary>
+    /// Renames the media by updating the TOC description and writing it back to tape.
+    /// </summary>
+    public async Task<bool> RenameMediaAsync(string newName)
+    {
+        if (_toc is null || _drive is null)
+        {
+            LastError = "No media loaded";
+            return false;
+        }
+
+        return await Task.Run(async () =>
+        {
+            await _operationLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                LogInfo($"Renaming media to: {newName}");
+                _toc.Description = newName;
+
+                _agent = new TapeFileAgent(_drive, _toc);
+                var tocResult = _agent.BackupTOC();
+                if (!tocResult)
+                {
+                    LastError = tocResult.ErrorMessage;
+                    LogErr($"Failed to write TOC to media: {tocResult.ErrorMessage}");
+                    return false;
+                }
+
+                LogOk($"Media renamed to: {newName}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                LogErr($"Exception renaming media: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                _agent?.Dispose();
+                _agent = null;
+                _operationLock.Release();
+            }
+        });
+    }
+
+    /// <summary>
+    /// Renames a backup set by updating the set TOC description and writing the TOC back to tape.
+    /// </summary>
+    public async Task<bool> RenameBackupSetAsync(int setIndex, string newName)
+    {
+        if (_toc is null || _drive is null)
+        {
+            LastError = "No media loaded";
+            return false;
+        }
+
+        return await Task.Run(async () =>
+        {
+            await _operationLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                var setTOC = _toc[setIndex];
+                LogInfo($"Renaming backup set #{setIndex} to: {newName}");
+                setTOC.Description = newName;
+
+                _agent = new TapeFileAgent(_drive, _toc);
+                var tocResult = _agent.BackupTOC();
+                if (!tocResult)
+                {
+                    LastError = tocResult.ErrorMessage;
+                    LogErr($"Failed to write TOC to media: {tocResult.ErrorMessage}");
+                    return false;
+                }
+
+                LogOk($"Backup set #{setIndex} renamed to: {newName}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                LogErr($"Exception renaming backup set: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                _agent?.Dispose();
+                _agent = null;
+                _operationLock.Release();
+            }
+        });
+    }
+
+    /// <summary>
+    /// Deletes backup sets starting from <paramref name="deleteFromSetIndex"/> through the last
+    ///  set on the volume. Physically overwrites the tape past the last retained set to move the
+    ///  end-of-data marker, then updates the TOC on tape.
+    /// </summary>
+    /// <param name="deleteFromSetIndex">Standard (1-based) index of the first set to delete.</param>
+    public async Task<bool> DeleteBackupSetsAsync(int deleteFromSetIndex)
+    {
+        if (_toc is null || _drive is null)
+        {
+            LastError = "No media loaded";
+            return false;
+        }
+
+        return await Task.Run(async () =>
+        {
+            await _operationLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                var toc = _toc;
+                deleteFromSetIndex = toc.SetIndexToStd(deleteFromSetIndex);
+
+                int lastSet = toc.LastSetOnVolume;
+                int setsToDelete = lastSet - deleteFromSetIndex + 1;
+                LogInfo($"Deleting {setsToDelete} backup set(s) from #{deleteFromSetIndex} | {toc.SetIndexToAlt(deleteFromSetIndex)}...");
+                OnStatusUpdate("Deleting backup sets...");
+
+                // Set the current set to the first one to delete —
+                //  this is the precondition for DeleteSetsFromCurrentSetUp()
+                toc.CurrentSetIndex = deleteFromSetIndex;
+
+                _agent = new TapeFileAgent(_drive, toc);
+                var result = _agent.DeleteSetsFromCurrentSetUp();
+                if (!result)
+                {
+                    LastError = result.ErrorMessage;
+                    LogErr($"Failed to delete backup sets: {result.ErrorMessage}");
+                    return false;
+                }
+
+                LogOk($"Deleted {setsToDelete} backup set(s) — TOC saved");
+                OnStatusUpdate($"Deleted {setsToDelete} backup set(s)");
+                _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                LogErr($"Exception deleting backup sets: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                _agent?.Dispose();
+                _agent = null;
+                _operationLock.Release();
+            }
+        });
+    }
+
+    #endregion // TOC operations
 
     #region Internal timing / formatting helpers
     // ── Internal timing / formatting helpers ──────────────────────────────────
@@ -1005,7 +1160,7 @@ public partial class TapeServiceBase : IDisposable
         long bytesPerSecond = (long)(bytes / totalSeconds);
         return $"{Helpers.BytesToString(bytesPerSecond)}/s";
     }
+    #endregion
 }
 
-    #endregion
 

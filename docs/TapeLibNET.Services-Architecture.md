@@ -207,7 +207,7 @@ Each phase ends with a green build in both apps and (from Phase B onward) green 
 5. Stand up `TestTapeServiceHost` + first round-trip test against the existing app-side
    `TapeService` via the host (sanity baseline).
 
-### Phase C — Extract `TapeServiceBase` incrementally [🟡 IN PROGRESS >> 2.]
+### Phase C — Extract `TapeServiceBase` incrementally [🟡 IN PROGRESS >> 3.]
 
 After each step: green build + green tests in both apps + the test project.
 

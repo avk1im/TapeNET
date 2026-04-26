@@ -28,7 +28,16 @@ namespace TapeWinNET.Services;
 ///  steps 4/5 migrate them to the base.
 /// </para>
 /// </summary>
-public partial class TapeService : TapeServiceBase
+/// <remarks>
+/// Creates the service and wires it to the supplied ViewModel for log output
+///  and state notifications.
+/// </remarks>
+/// <param name="dispatcher">UI dispatcher used by the <see cref="WpfServiceHost"/>.</param>
+/// <param name="viewModel">
+///  ViewModel whose <c>AddLog</c> sink receives all service log entries.
+/// </param>
+public partial class TapeService(Dispatcher dispatcher, MainViewModel viewModel)
+    : TapeServiceBase(BuildLoggerFactory(), new WpfServiceHost(dispatcher, viewModel))
 {
     // ── WPF-specific fields ───────────────────────────────────────────────────
 
@@ -44,21 +53,6 @@ public partial class TapeService : TapeServiceBase
     ///  Phase C steps 4 and 5.
     /// </summary>
     private readonly object _lock = new();
-
-    // ── Construction ──────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Creates the service and wires it to the supplied ViewModel for log output
-    ///  and state notifications.
-    /// </summary>
-    /// <param name="dispatcher">UI dispatcher used by the <see cref="WpfServiceHost"/>.</param>
-    /// <param name="viewModel">
-    ///  ViewModel whose <c>AddLog</c> sink receives all service log entries.
-    /// </param>
-    public TapeService(Dispatcher dispatcher, MainViewModel viewModel)
-        : base(BuildLoggerFactory(), new WpfServiceHost(dispatcher, viewModel))
-    {
-    }
 
     private static ILoggerFactory BuildLoggerFactory()
     {
@@ -81,159 +75,6 @@ public partial class TapeService : TapeServiceBase
 
     /// <summary>Adds the 'Adding New Backup Sets disabled' sub-warning after a file-TOC import.</summary>
     protected override void OnImportTOCFromFileExtra() => LogWarnSub("Adding New Backup Sets disabled");
-
-    /// <summary>
-    /// Renames the media by updating the TOC description and writing it back to tape.
-    /// </summary>
-    public async Task<bool> RenameMediaAsync(string newName)
-    {
-        if (_toc is null || _drive is null)
-        {
-            LastError = "No media loaded";
-            return false;
-        }
-
-        return await Task.Run(async () =>
-        {
-            await _operationLock.WaitAsync().ConfigureAwait(false);
-            try
-            {
-                LogInfo($"Renaming media to: {newName}");
-                _toc.Description = newName;
-
-                _agent = new TapeFileAgent(_drive, _toc);
-                var tocResult = _agent.BackupTOC();
-                if (!tocResult)
-                {
-                    LastError = tocResult.ErrorMessage;
-                    LogErr($"Failed to write TOC to media: {tocResult.ErrorMessage}");
-                    return false;
-                }
-
-                LogOk($"Media renamed to: {newName}");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-                LogErr($"Exception renaming media: {ex.Message}");
-                return false;
-            }
-            finally
-            {
-                _agent?.Dispose();
-                _agent = null;
-                _operationLock.Release();
-            }
-        });
-    }
-
-    /// <summary>
-    /// Renames a backup set by updating the set TOC description and writing the TOC back to tape.
-    /// </summary>
-    public async Task<bool> RenameBackupSetAsync(int setIndex, string newName)
-    {
-        if (_toc is null || _drive is null)
-        {
-            LastError = "No media loaded";
-            return false;
-        }
-
-        return await Task.Run(async () =>
-        {
-            await _operationLock.WaitAsync().ConfigureAwait(false);
-            try
-            {
-                var setTOC = _toc[setIndex];
-                LogInfo($"Renaming backup set #{setIndex} to: {newName}");
-                setTOC.Description = newName;
-
-                _agent = new TapeFileAgent(_drive, _toc);
-                var tocResult = _agent.BackupTOC();
-                if (!tocResult)
-                {
-                    LastError = tocResult.ErrorMessage;
-                    LogErr($"Failed to write TOC to media: {tocResult.ErrorMessage}");
-                    return false;
-                }
-
-                LogOk($"Backup set #{setIndex} renamed to: {newName}");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-                LogErr($"Exception renaming backup set: {ex.Message}");
-                return false;
-            }
-            finally
-            {
-                _agent?.Dispose();
-                _agent = null;
-                _operationLock.Release();
-            }
-        });
-    }
-
-    /// <summary>
-    /// Deletes backup sets starting from <paramref name="deleteFromSetIndex"/> through the last
-    /// set on the volume. Physically overwrites the tape past the last retained set to move the
-    /// end-of-data marker, then updates the TOC on tape.
-    /// </summary>
-    /// <param name="deleteFromSetIndex">Standard (1-based) index of the first set to delete.</param>
-    public async Task<bool> DeleteBackupSetsAsync(int deleteFromSetIndex)
-    {
-        if (_toc is null || _drive is null)
-        {
-            LastError = "No media loaded";
-            return false;
-        }
-
-        return await Task.Run(async () =>
-        {
-            await _operationLock.WaitAsync().ConfigureAwait(false);
-            try
-            {
-                var toc = _toc;
-                deleteFromSetIndex = toc.SetIndexToStd(deleteFromSetIndex);
-
-                int lastSet = toc.LastSetOnVolume;
-                int setsToDelete = lastSet - deleteFromSetIndex + 1;
-                LogInfo($"Deleting {setsToDelete} backup set(s) from #{deleteFromSetIndex} | {toc.SetIndexToAlt(deleteFromSetIndex)}...");
-                Status("Deleting backup sets...");
-
-                // Set the current set to the first one to delete —
-                //  this is the precondition for DeleteSetsFromCurrentSetUp()
-                toc.CurrentSetIndex = deleteFromSetIndex;
-
-                _agent = new TapeFileAgent(_drive, toc);
-                var result = _agent.DeleteSetsFromCurrentSetUp();
-                if (!result)
-                {
-                    LastError = result.ErrorMessage;
-                    LogErr($"Failed to delete backup sets: {result.ErrorMessage}");
-                    return false;
-                }
-
-                LogOk($"Deleted {setsToDelete} backup set(s) — TOC saved");
-                Status($"Deleted {setsToDelete} backup set(s)");
-                _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-                LogErr($"Exception deleting backup sets: {ex.Message}");
-                return false;
-            }
-            finally
-            {
-                _agent?.Dispose();
-                _agent = null;
-                _operationLock.Release();
-            }
-        });
-    }
 
     // ── Status helper ─────────────────────────────────────────────────────────
 
