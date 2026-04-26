@@ -75,8 +75,7 @@ public partial class MainViewModel : ViewModelBase
 
     public MainViewModel()
     {
-        _tapeService = new TapeService();
-        _tapeService.LogMessageReceived += OnLogMessageReceived;
+        _tapeService = new TapeService(Application.Current.Dispatcher, this);
         _tapeService.StatusChanged += OnStatusChanged;
 
         // Initialize commands
@@ -1523,6 +1522,37 @@ public partial class MainViewModel : ViewModelBase
             // Mirror to BusyMessage so the progress overlay panel stays current
             if (IsBusy)
                 BusyMessage = status;
+        });
+    }
+
+    /// <summary>
+    /// Fires batched <c>PropertyChanged</c> notifications for the property cluster
+    ///  affected by <paramref name="change"/>. Called by <c>WpfServiceHost</c> on
+    ///  the background worker thread; marshals to the UI thread internally.
+    /// </summary>
+    internal void OnServiceStateChanged(ServiceStateChange change)
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            if (change.HasFlag(ServiceStateChange.DriveOpened) ||
+                change.HasFlag(ServiceStateChange.DriveClosed))
+            {
+                OnPropertyChanged(nameof(IsIoSpeedVisible));
+                OnPropertyChanged(nameof(IsIoSpeedEnabled));
+                CommandManager.InvalidateRequerySuggested();
+            }
+
+            if (change.HasFlag(ServiceStateChange.MediaLoaded) ||
+                change.HasFlag(ServiceStateChange.MediaEjected))
+            {
+                CommandManager.InvalidateRequerySuggested();
+            }
+
+            if (change.HasFlag(ServiceStateChange.TocChanged))
+            {
+                UsageBar.Rebuild();
+                CommandManager.InvalidateRequerySuggested();
+            }
         });
     }
 

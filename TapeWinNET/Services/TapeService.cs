@@ -1,4 +1,5 @@
-using System.IO;
+﻿using System.IO;
+using System.Windows.Threading;
 
 using Windows.Win32.System.SystemServices; // for Helpers
 
@@ -12,626 +13,117 @@ using TapeLibNET.Virtual;
 using TapeLibNET.Services;
 using TapeWinNET.Converters;
 using TapeWinNET.Models;
+using TapeWinNET.ViewModels;
 
 namespace TapeWinNET.Services;
 
 /// <summary>
-/// Service that wraps TapeLibNET operations with async support for UI threading.
-/// Since TapeLibNET is single-threaded, all operations are executed on a dedicated worker thread.
+/// WPF-specific service extending <see cref="TapeServiceBase"/> with TOC operations,
+///  media management, and XAML-compatible events.
+/// <para>
+/// Drive-lifecycle operations (<c>OpenDriveAsync</c>, <c>LoadMediaAsync</c>,
+///  <c>EjectMediaAsync</c>, <c>OpenVirtualDriveAsync</c>, â€¦) are inherited from
+///  <see cref="TapeServiceBase"/>. Backup and restore partials remain in
+///  <c>TapeService.Backup.cs</c> / <c>TapeService.Restore.cs</c> until Phase C
+///  steps 4/5 migrate them to the base.
+/// </para>
 /// </summary>
-public partial class TapeService : IDisposable
+public partial class TapeService : TapeServiceBase
 {
-    private readonly ILoggerFactory _loggerFactory;
-    private TapeDrive? _drive;
-    private TapeFileAgent? _agent;
-    private TapeTOC? _toc;
-    private VirtualMediaDescriptor? _vmdLast = null;
-        // for convenience feature: to preset values for next virtual media
-    private readonly object _lock = new();
-    private bool _disposed;
+    // â”€â”€ WPF-specific fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-    public event EventHandler<LogEntry>? LogMessageReceived;
+    /// <summary>
+    /// Forwards status-bar text changes to the ViewModel.
+    /// Kept for the WPF partials that still call <c>Status(...)</c>.
+    /// </summary>
     public event EventHandler<string>? StatusChanged;
 
+    /// <summary>
+    /// Phase-C compatibility: Backup/Restore partials still use <c>lock(_lock)</c>
+    ///  until they are migrated to <see cref="TapeServiceBase._operationLock"/> in
+    ///  Phase C steps 4 and 5.
+    /// </summary>
+    private readonly object _lock = new();
 
-    public TapeService()
+    // â”€â”€ Construction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    /// <summary>
+    /// Creates the service and wires it to the supplied ViewModel for log output
+    ///  and state notifications.
+    /// </summary>
+    /// <param name="dispatcher">UI dispatcher used by the <see cref="WpfServiceHost"/>.</param>
+    /// <param name="viewModel">
+    ///  ViewModel whose <c>AddLog</c> sink receives all service log entries.
+    /// </param>
+    public TapeService(Dispatcher dispatcher, MainViewModel viewModel)
+        : base(BuildLoggerFactory(), new WpfServiceHost(dispatcher, viewModel))
+    {
+    }
+
+    private static ILoggerFactory BuildLoggerFactory()
     {
 #if DEBUG
-        _loggerFactory = LoggerFactory.Create(builder =>
-        {
-            builder.AddDebug().SetMinimumLevel(LogLevel.Trace);
-        });
+        return LoggerFactory.Create(builder =>
+            builder.AddDebug().SetMinimumLevel(LogLevel.Trace));
 #else
-        _loggerFactory = Debugger.IsAttached ?
-            LoggerFactory.Create(builder =>
-            {
-                builder
-                    .AddDebug()
-                    .SetMinimumLevel(LogLevel.Information);
-            }) :
-            NullLoggerFactory.Instance;
+        return Debugger.IsAttached
+            ? LoggerFactory.Create(builder =>
+                builder.AddDebug().SetMinimumLevel(LogLevel.Information))
+            : NullLoggerFactory.Instance;
 #endif
     }
 
-    #region Properties
 
-    public bool IsDriveOpen => _drive?.IsDriveOpen ?? false;
-    public bool IsMediaLoaded => _drive?.IsMediaLoaded ?? false;
-    public int DriveNumber { get; private set; }
-    public string DeviceName => _drive?.DriveDeviceName ?? "Unknown";
-    public string? LastError { get; private set; }
-    public TapeTOC? TOC => _toc;
+    // -- Base hook overrides -------------------------------------------------
 
-    /// <summary>
-    /// Indicates whether the current TOC was loaded from a file rather than from tape.
-    /// When true, the media content may be accessible but the on-tape TOC is missing or corrupt.
-    /// </summary>
-    public bool IsTOCFromFile { get; private set; }
+    /// <summary>Forwards status text to the <see cref="StatusChanged"/> event for WPF binding.</summary>
+    protected override void OnStatusUpdate(string status) => Status(status);
 
-    /// <summary>
-    /// Full path of the TOC file when <see cref="IsTOCFromFile"/> is true, null otherwise.
-    /// </summary>
-    public string? TOCFilePath { get; private set; }
-
-    /// <summary>
-    /// Returns the current tape agent if an operation is in progress, null otherwise.
-    /// Use to check/set IsAbortRequested during backup or restore operations.
-    /// </summary>
-    public TapeFileAgent? Agent => _agent;
-    public bool IsAbortRequested => _agent?.IsAbortRequested ?? false;
-
-    // Drive information properties
-    public bool SupportsInitiatorPartition => _drive?.SupportsInitiatorPartition ?? false;
-    public bool SupportsSetmarks => _drive?.SupportsSetmarks ?? false;
-    public bool SupportsSeqFilemarks => _drive?.SupportsSeqFilemarks ?? false;
-    public uint MinimumBlockSize => _drive?.MinimumBlockSize ?? 0;
-    public uint DefaultBlockSize => _drive?.DefaultBlockSize ?? 0;
-    public uint MaximumBlockSize => _drive?.MaximumBlockSize ?? 0;
-    public uint PartitionCount => _drive?.PartitionCount ?? 0;
-    public bool HasInitiatorPartition => _drive?.HasInitiatorPartition ?? false;
-    public long Capacity => _drive?.ContentCapacity ?? 0;
-    public long Used
-    {
-        get
-        {
-            if (TOC is null)
-                return 0;
-            var used = _toc?.ComputeTotalFileSizeOnTape(DefaultBlockSize) ?? 0;
-            if (!HasInitiatorPartition)
-                used += TapeNavigator.DefaultTOCCapacity; // if TOC is in set, it consumes space
-            return used;
-        }
-    }
-    public long Remaining => Capacity - Used;
-    public long GetRemainingCapacityFromDrive()
-    {
-        lock (_lock)
-        {
-            return _drive?.GetContentRemainingCapacity() ?? 0;
-        }
-    }
-
-    /// <summary>
-    /// Whether the current drive is a virtual tape drive.
-    /// </summary>
-    public bool IsVirtualDrive => _drive?.Backend is VirtualTapeDriveBackend;
-
-    /// <summary>
-    /// Whether the current virtual drive is backed by memory streams (not files).
-    /// </summary>
-    public bool IsInMemoryDrive => _vmdLast?.InMemory ?? false;
-
-    public VirtualMediaDescriptor? LastVMD => _vmdLast;
-
-    /// <summary>
-    /// Gets the current IO speed simulation rate for the virtual drive, or 0 if not virtual.
-    /// </summary>
-    public long VirtualIoRateBytesPerSecond =>
-        _drive?.Backend is VirtualTapeDriveBackend vb ? vb.IoRateBytesPerSecond : 0;
-
-    #endregion
-
-    #region Public Methods
-
-    public Task<bool> OpenDriveAsync(int driveNumber)
-    {
-        return Task.Run(() =>
-        {
-            lock (_lock)
-            {
-                try
-                {
-                    LogInfo($"Opening drive {driveNumber}...");
-                    Status($"Opening drive {driveNumber}...");
-
-                    // Dispose existing drive if any
-                    _agent?.Dispose();
-                    _agent = null;
-                    _toc = null;
-                    _drive?.Dispose();
-
-                    _drive = TapeDrive.CreateWin32(_loggerFactory);
-
-                    if (!_drive.ReopenDrive((uint)driveNumber))
-                    {
-                        LastError = _drive.LastErrorMessage;
-                        LogErr($"Couldn't open drive. Error: {LastError}");
-                        return false;
-                    }
-
-                    DriveNumber = driveNumber;
-                    LogOk($"Drive {driveNumber} opened successfully");
-                    LogInfoSub($"Device name: {_drive.DriveDeviceName}");
-                    Status($"Drive {driveNumber} opened");
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    LastError = ex.Message;
-                    LogErr($"Exception opening drive: {ex.Message}");
-                    return false;
-                }
-            }
-        });
-    }
-
-    public Task<bool> LoadMediaAsync()
-    {
-        return Task.Run(() =>
-        {
-            lock (_lock)
-            {
-                if (_drive == null)
-                {
-                    LastError = "Drive not open";
-                    return false;
-                }
-
-                try
-                {
-                    LogInfo("Loading media...");
-                    Status("Loading media...");
-
-                    if (!_drive.ReloadMedia())
-                    {
-                        LastError = _drive.LastErrorMessage;
-                        LogErr($"Couldn't load media. Error: {LastError}");
-                        return false;
-                    }
-
-                    LogOk("Media loaded successfully");
-                    LogMediaInfo();
-                    Status("Media loaded");
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    LastError = ex.Message;
-                    LogErr($"Exception loading media: {ex.Message}");
-                    return false;
-                }
-            }
-        });
-    }
-
-    public Task<bool> RestoreTOCAsync()
-    {
-        return Task.Run(() =>
-        {
-            lock (_lock)
-            {
-                if (_drive == null || !_drive.IsMediaLoaded)
-                {
-                    LastError = "Media not loaded";
-                    return false;
-                }
-
-                try
-                {
-                    LogInfo("Preparing media...");
-                    if (!_drive.PrepareMedia())
-                    {
-                        LastError = _drive.LastErrorMessage;
-                        LogErr($"Couldn't prepare media. Error: {LastError}");
-                        return false;
-                    }
-
-                    LogInfo("Restoring TOC...");
-                    Status("Reading TOC...");
-
-                    _agent?.Dispose();
-                    _agent = new TapeFileAgent(_drive, null);
-
-                    var tocResult = _agent.RestoreTOC();
-                    if (!tocResult)
-                    {
-                        LastError = tocResult.ErrorMessage;
-                        LogErr($"Couldn't restore TOC. Error: {tocResult.ErrorMessage}");
-                        return false;
-                    }
-
-                    _toc = _agent.TOC;
-                    IsTOCFromFile = false;
-                    TOCFilePath = null;
-                    LogOk($"TOC restored with {_toc.Count} backup set(s)");
-                    LogTOCInfo();
-                    Status($"TOC loaded: {_toc.Count} backup set(s)");
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    LastError = ex.Message;
-                    LogErr($"Exception restoring TOC: {ex.Message}");
-                    return false;
-                }
-                finally
-                {
-                    _agent?.Dispose();
-                    _agent = null;
-                }
-            }
-        });
-    }
-
-    /// <summary>
-    /// Signals the in-progress TOC load (started by <see cref="RestoreTOCAsync"/>) to abort.
-    /// Safe to call from any thread; reads <c>_agent</c> without the lock because
-    /// <see cref="TapeFileAgent.IsAbortRequested"/> is a volatile flag designed for
-    /// exactly this cross-thread signalling pattern.
-    /// </summary>
-    public void AbortTOCLoad()
-    {
-        // Intentionally lock-free: the lock is held by the RestoreTOCAsync worker for its
-        //  entire duration, so acquiring it here would block until the operation finishes —
-        //  the opposite of what we want. The volatile IsAbortRequested flag is safe to set
-        //  from outside the lock.
-        var agent = _agent; // snapshot to avoid TOCTOU null-ref
-        if (agent != null)
-            agent.IsAbortRequested = true;
-    }
-
-    /// <summary>
-    /// Creates and saves an initial empty TOC for newly created/formatted media.
-    /// Should be called after LoadMediaAsync() for new virtual media.
-    /// </summary>
-    /// <param name="mediaName">Description for the new media. If null, a default name is generated.</param>
-    /// <returns>True if the initial TOC was created and saved successfully.</returns>
-    public Task<bool> CreateInitialTOCAsync(string? mediaName = null)
-    {
-        return Task.Run(() =>
-        {
-            lock (_lock)
-            {
-                if (_drive == null || !_drive.IsMediaLoaded)
-                {
-                    LastError = "Media not loaded";
-                    return false;
-                }
-
-                try
-                {
-                    LogInfo("Creating initial TOC...");
-                    Status("Creating initial TOC...");
-
-                    var description = mediaName ?? $"Media created {DateTime.Now:yyyy-MM-dd HH:mm}";
-
-                    _agent?.Dispose();
-                    _agent = new TapeFileAgent(_drive, new TapeTOC(description));
-
-                    var initResult = _agent.BackupInitialTOC();
-                    if (!initResult)
-                    {
-                        LastError = initResult.ErrorMessage;
-                        LogErr($"Couldn't save initial TOC. Error: {LastError}");
-                        return false;
-                    }
-
-                    _toc = _agent.TOC;
-                    IsTOCFromFile = false;
-                    TOCFilePath = null;
-                    LogOk($"Initial TOC created: {description}");
-                    Status("Initial TOC created");
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    LastError = ex.Message;
-                    LogErr($"Exception creating initial TOC: {ex.Message}");
-                    return false;
-                }
-                finally
-                {
-                    _agent?.Dispose();
-                    _agent = null;
-                }
-            }
-        });
-    }
-
-    /// <summary>
-    /// Formats the media, creating partitions as specified, and writes an initial empty TOC.
-    /// Reloads media after format to refresh parameters.
-    /// </summary>
-    /// <param name="initiatorPartitionSize">
-    /// Size of the initiator partition for TOC placement.
-    /// Use <see cref="TapeNavigator.DefaultTOCCapacity"/> to create an initiator partition,
-    /// or -1 for single-partition (TOC in set) mode.
-    /// </param>
-    /// <param name="mediaName">Description for the new media. If null, a default name is generated.</param>
-    public Task<bool> FormatMediaAsync(long initiatorPartitionSize, string? mediaName)
-    {
-        return Task.Run(() =>
-        {
-            lock (_lock)
-            {
-                if (_drive == null || !_drive.IsMediaLoaded)
-                {
-                    LastError = "Media not loaded";
-                    return false;
-                }
-
-                try
-                {
-                    _agent?.Dispose();
-                    _agent = null;
-                    _toc = null;
-                    IsTOCFromFile = false;
-                    TOCFilePath = null;
-
-                    LogInfo("Formatting media...");
-                    Status("Formatting media...");
-
-                    if (!_drive.FormatMedia(initiatorPartitionSize))
-                    {
-                        LastError = _drive.LastErrorMessage;
-                        LogErr($"Couldn't format media. Error: {LastError}");
-                        return false;
-                    }
-
-                    var tocPlacement = _drive.HasInitiatorPartition ? "partition" : "set";
-                    LogOk($"Media formatted with TOC in {tocPlacement}");
-
-                    LogInfo("Creating initial TOC...");
-                    Status("Creating initial TOC...");
-
-                    var description = mediaName ?? $"Media created {DateTime.Now:yyyy-MM-dd HH:mm}";
-                    _agent = new TapeFileAgent(_drive, new TapeTOC(description));
-
-                    var initResult = _agent.BackupInitialTOC();
-                    if (!initResult)
-                    {
-                        LastError = initResult.ErrorMessage;
-                        LogErr($"Couldn't save initial TOC. Error: {LastError}");
-                        return false;
-                    }
-
-                    _toc = _agent.TOC;
-
-                    if (!_drive.ReloadMedia())
-                    {
-                        LastError = _drive.LastErrorMessage;
-                        LogWarn($"Couldn't reload media after format. Error: {LastError}");
-                    }
-
-                    LogOk($"Media formatted: {description}");
-                    LogMediaInfo();
-                    Status("Media formatted");
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    LastError = ex.Message;
-                    LogErr($"Exception formatting media: {ex.Message}");
-                    return false;
-                }
-                finally
-                {
-                    _agent?.Dispose();
-                    _agent = null;
-                }
-            }
-        });
-    }
-
-    public Task<bool> EjectMediaAsync()
-    {
-        return Task.Run(() =>
-        {
-            lock (_lock)
-            {
-                if (_drive == null)
-                {
-                    LastError = "Drive not open";
-                    return false;
-                }
-
-                try
-                {
-                    LogInfo("Ejecting media...");
-                    Status("Ejecting media...");
-
-                    _agent?.Dispose();
-                    _agent = null;
-                    _toc = null;
-                    IsTOCFromFile = false;
-                    TOCFilePath = null;
-
-                    if (!_drive.UnloadMedia())
-                    {
-                        LastError = _drive.LastErrorMessage;
-                        LogErr($"Couldn't eject media. Error: {LastError}");
-                        return false;
-                    }
-
-                    LogOk("Media ejected");
-                    Status("Media ejected");
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    LastError = ex.Message;
-                    LogErr($"Exception ejecting media: {ex.Message}");
-                    return false;
-                }
-            }
-        });
-    }
-
-    /// <summary>
-    /// Imports a TOC from a file and applies it as the current TOC.
-    /// Use when the on-tape TOC is missing or corrupt and a TOC file is available.
-    /// Only requires the drive to be open (media need not be loaded).
-    /// </summary>
-    /// <param name="filePath">Full path to the .tapetoc file.</param>
-    /// <returns>True if the TOC was imported and validated successfully.</returns>
-    public Task<bool> ImportTOCFromFileAsync(string filePath)
-    {
-        return Task.Run(() =>
-        {
-            lock (_lock)
-            {
-                if (_drive == null || !_drive.IsDriveOpen)
-                {
-                    LastError = "Drive not open";
-                    return false;
-                }
-
-                try
-                {
-                    LogInfo($"Importing TOC from file: {filePath}");
-                    Status("Importing TOC from file...");
-
-                    _agent?.Dispose();
-                    _agent = new TapeFileAgent(_drive, null);
-
-                    var loadResult = _agent.LoadTOCFromFile(filePath);
-                    if (!loadResult)
-                    {
-                        LastError = loadResult.ErrorMessage;
-                        LogErr($"Couldn't import TOC from file. Error: {loadResult.ErrorMessage}");
-                        return false;
-                    }
-
-                    _toc = _agent.TOC;
-                    IsTOCFromFile = true;
-                    TOCFilePath = filePath;
-                    LogOk($"TOC imported from file with {_toc.Count} backup set(s)");
-                    LogTOCInfo();
-                    LogWarn("TOC imported from a file — on-tape TOC may be missing or corrupt");
-                    LogWarnSub("Adding New Backup Sets disabled");
-                    Status($"TOC from file: {_toc.Count} backup set(s)");
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    LastError = ex.Message;
-                    LogErr($"Exception importing TOC from file: {ex.Message}");
-                    return false;
-                }
-                finally
-                {
-                    _agent?.Dispose();
-                    _agent = null;
-                }
-            }
-        });
-    }
-
-    /// <summary>
-    /// Exports the current TOC to a file. Can be used as a safety copy for any media.
-    /// </summary>
-    /// <param name="filePath">Full path to the .tapetoc file to create.</param>
-    /// <returns>True if the TOC was exported successfully.</returns>
-    public Task<bool> ExportTOCToFileAsync(string filePath)
-    {
-        return Task.Run(() =>
-        {
-            lock (_lock)
-            {
-                if (_toc == null)
-                {
-                    LastError = "No TOC loaded";
-                    return false;
-                }
-
-                try
-                {
-                    LogInfo($"Exporting TOC to file: {filePath}");
-                    Status("Exporting TOC to file...");
-
-                    _agent?.Dispose();
-                    _agent = new TapeFileAgent(_drive!, _toc);
-
-                    var saveResult = _agent.SaveTOCToFile(filePath);
-                    if (!saveResult)
-                    {
-                        LastError = saveResult.ErrorMessage;
-                        LogErr($"Couldn't export TOC to file. Error: {saveResult.ErrorMessage}");
-                        return false;
-                    }
-
-                    LogOk($"TOC exported to file: {filePath}");
-                    Status("TOC exported to file");
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    LastError = ex.Message;
-                    LogErr($"Exception exporting TOC to file: {ex.Message}");
-                    return false;
-                }
-                finally
-                {
-                    _agent?.Dispose();
-                    _agent = null;
-                }
-            }
-        });
-    }
+    /// <summary>Adds the 'Adding New Backup Sets disabled' sub-warning after a file-TOC import.</summary>
+    protected override void OnImportTOCFromFileExtra() => LogWarnSub("Adding New Backup Sets disabled");
 
     /// <summary>
     /// Renames the media by updating the TOC description and writing it back to tape.
     /// </summary>
     public async Task<bool> RenameMediaAsync(string newName)
     {
-        if (_toc == null || _drive == null)
+        if (_toc is null || _drive is null)
         {
             LastError = "No media loaded";
             return false;
         }
 
-        return await Task.Run(() =>
+        return await Task.Run(async () =>
         {
-            lock (_lock)
+            await _operationLock.WaitAsync().ConfigureAwait(false);
+            try
             {
-                try
-                {
-                    LogInfo($"Renaming media to: {newName}");
-                    _toc.Description = newName;
+                LogInfo($"Renaming media to: {newName}");
+                _toc.Description = newName;
 
-                    _agent = new TapeFileAgent(_drive, _toc);
-                    var tocResult = _agent.BackupTOC();
-                    if (!tocResult)
-                    {
-                        LastError = tocResult.ErrorMessage;
-                        LogErr($"Failed to write TOC to media: {tocResult.ErrorMessage}");
-                        return false;
-                    }
-
-                    LogOk($"Media renamed to: {newName}");
-                    return true;
-                }
-                catch (Exception ex)
+                _agent = new TapeFileAgent(_drive, _toc);
+                var tocResult = _agent.BackupTOC();
+                if (!tocResult)
                 {
-                    LastError = ex.Message;
-                    LogErr($"Exception renaming media: {ex.Message}");
+                    LastError = tocResult.ErrorMessage;
+                    LogErr($"Failed to write TOC to media: {tocResult.ErrorMessage}");
                     return false;
                 }
-                finally
-                {
-                    _agent?.Dispose();
-                    _agent = null;
-                }
+
+                LogOk($"Media renamed to: {newName}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                LogErr($"Exception renaming media: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                _agent?.Dispose();
+                _agent = null;
+                _operationLock.Release();
             }
         });
     }
@@ -641,45 +133,44 @@ public partial class TapeService : IDisposable
     /// </summary>
     public async Task<bool> RenameBackupSetAsync(int setIndex, string newName)
     {
-        if (_toc == null || _drive == null)
+        if (_toc is null || _drive is null)
         {
             LastError = "No media loaded";
             return false;
         }
 
-        return await Task.Run(() =>
+        return await Task.Run(async () =>
         {
-            lock (_lock)
+            await _operationLock.WaitAsync().ConfigureAwait(false);
+            try
             {
-                try
-                {
-                    var setTOC = _toc[setIndex];
-                    LogInfo($"Renaming backup set #{setIndex} to: {newName}");
-                    setTOC.Description = newName;
+                var setTOC = _toc[setIndex];
+                LogInfo($"Renaming backup set #{setIndex} to: {newName}");
+                setTOC.Description = newName;
 
-                    _agent = new TapeFileAgent(_drive, _toc);
-                    var tocResult = _agent.BackupTOC();
-                    if (!tocResult)
-                    {
-                        LastError = tocResult.ErrorMessage;
-                        LogErr($"Failed to write TOC to media: {tocResult.ErrorMessage}");
-                        return false;
-                    }
-
-                    LogOk($"Backup set #{setIndex} renamed to: {newName}");
-                    return true;
-                }
-                catch (Exception ex)
+                _agent = new TapeFileAgent(_drive, _toc);
+                var tocResult = _agent.BackupTOC();
+                if (!tocResult)
                 {
-                    LastError = ex.Message;
-                    LogErr($"Exception renaming backup set: {ex.Message}");
+                    LastError = tocResult.ErrorMessage;
+                    LogErr($"Failed to write TOC to media: {tocResult.ErrorMessage}");
                     return false;
                 }
-                finally
-                {
-                    _agent?.Dispose();
-                    _agent = null;
-                }
+
+                LogOk($"Backup set #{setIndex} renamed to: {newName}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                LogErr($"Exception renaming backup set: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                _agent?.Dispose();
+                _agent = null;
+                _operationLock.Release();
             }
         });
     }
@@ -690,359 +181,69 @@ public partial class TapeService : IDisposable
     /// end-of-data marker, then updates the TOC on tape.
     /// </summary>
     /// <param name="deleteFromSetIndex">Standard (1-based) index of the first set to delete.</param>
-    /// <returns>True if the sets were deleted and the TOC saved successfully.</returns>
     public async Task<bool> DeleteBackupSetsAsync(int deleteFromSetIndex)
     {
-        if (_toc == null || _drive == null)
+        if (_toc is null || _drive is null)
         {
             LastError = "No media loaded";
             return false;
         }
 
-        return await Task.Run(() =>
+        return await Task.Run(async () =>
         {
-            lock (_lock)
+            await _operationLock.WaitAsync().ConfigureAwait(false);
+            try
             {
-                try
+                var toc = _toc;
+                deleteFromSetIndex = toc.SetIndexToStd(deleteFromSetIndex);
+
+                int lastSet = toc.LastSetOnVolume;
+                int setsToDelete = lastSet - deleteFromSetIndex + 1;
+                LogInfo($"Deleting {setsToDelete} backup set(s) from #{deleteFromSetIndex} | {toc.SetIndexToAlt(deleteFromSetIndex)}...");
+                Status("Deleting backup sets...");
+
+                // Set the current set to the first one to delete â€”
+                //  this is the precondition for DeleteSetsFromCurrentSetUp()
+                toc.CurrentSetIndex = deleteFromSetIndex;
+
+                _agent = new TapeFileAgent(_drive, toc);
+                var result = _agent.DeleteSetsFromCurrentSetUp();
+                if (!result)
                 {
-                    var toc = _toc;
-                    deleteFromSetIndex = toc.SetIndexToStd(deleteFromSetIndex); // to make sure
-
-                    int lastSet = toc.LastSetOnVolume;
-                    int setsToDelete = lastSet - deleteFromSetIndex + 1;
-                    LogInfo($"Deleting {setsToDelete} backup set(s) from #{deleteFromSetIndex} | {toc.SetIndexToAlt(deleteFromSetIndex)}...");
-                    Status("Deleting backup sets...");
-
-                    // Set the current set to the first one to delete —
-                    //  this is the precondition for DeleteSetsFromCurrentSetUp()
-                    toc.CurrentSetIndex = deleteFromSetIndex;
-
-                    _agent = new TapeFileAgent(_drive, toc);
-                    var result = _agent.DeleteSetsFromCurrentSetUp();
-                    if (!result)
-                    {
-                        LastError = result.ErrorMessage;
-                        LogErr($"Failed to delete backup sets: {result.ErrorMessage}");
-                        return false;
-                    }
-
-                    LogOk($"Deleted {setsToDelete} backup set(s) — TOC saved");
-                    Status($"Deleted {setsToDelete} backup set(s)");
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    LastError = ex.Message;
-                    LogErr($"Exception deleting backup sets: {ex.Message}");
+                    LastError = result.ErrorMessage;
+                    LogErr($"Failed to delete backup sets: {result.ErrorMessage}");
                     return false;
                 }
-                finally
-                {
-                    _agent?.Dispose();
-                    _agent = null;
-                }
-            }
-        });
-    }
 
-    // ExecuteBackupAsync is in TapeService.Backup.cs
-
-    /// <summary>
-    /// Inserts new virtual media into the virtual drive by replacing the backing file streams.
-    /// Does NOT acquire _lock — designed to be called from within insertMediaCallback
-    /// where the worker thread already holds the lock and is blocked on Dispatcher.Invoke.
-    /// </summary>
-    public bool InsertVirtualMedia(
-        VirtualMediaDescriptor vmd,
-        FileMode mediaMode = FileMode.Create)
-    {
-        if (_drive?.Backend is not VirtualTapeDriveBackend vb)
-        {
-            LastError = "Not a virtual drive";
-            return false;
-        }
-
-        try
-        {
-            LogInfo($"Inserting virtual media...");
-            LogInfoSub($"Content file: >{vmd.ContentPath}<");
-            if (vmd.InitiatorPath != null)
-                LogInfoSub($"Initiator file: >{vmd.InitiatorPath}<");
-            LogInfoSub($"Media mode: {mediaMode}");
-
-            vb.InsertMedia(vmd.ContentPath, vmd.ContentCapacity, vmd.InitiatorPath, vmd.InitiatorPartitionCapacity, mediaMode);
-
-            _vmdLast = vmd;
-
-            LogOk("Virtual media inserted");
-            return true;
-        }
-        catch (Exception ex)
-        {
-            LastError = ex.Message;
-            LogErr($"Exception inserting virtual media: {ex.Message}");
-            return false;
-        }
-    }
-
-    public Task<bool> OpenVirtualDriveAsync(
-        VirtualTapeDriveCapabilities capabilities,
-        VirtualMediaDescriptor vmd,
-        FileMode mediaMode = FileMode.OpenOrCreate)
-    {
-        // Dispatch to in-memory or file-backed creation
-        if (vmd.InMemory)
-            return OpenVirtualDriveInMemoryAsync(capabilities, vmd);
-
-        return Task.Run(() =>
-        {
-            lock (_lock)
-            {
-                try
-                {
-                    LogInfo($"Opening virtual drive...");
-                    LogInfoSub($"Content file: >{vmd.ContentPath}<");
-                    if (vmd.InitiatorPath != null)
-                        LogInfoSub($"Initiator file: >{vmd.InitiatorPath}<");
-                    LogInfoSub($"Media mode: {mediaMode}");
-                    Status("Opening virtual drive...");
-
-                    var backend = VirtualTapeDriveBackend.CreateFileBacked(
-                        _loggerFactory,
-                        vmd.ContentPath,
-                        vmd.ContentCapacity,
-                        vmd.InitiatorPath,
-                        vmd.InitiatorPartitionCapacity,
-                        capabilities,
-                        mediaMode);
-
-                    // If we got here, the backend has been created ->
-                    //  Dispose existing drive if any
-                    _agent?.Dispose();
-                    _agent = null;
-                    _toc = null;
-                    _drive?.Dispose();
-
-                    _drive = new TapeDrive(_loggerFactory, backend);
-
-                    if (!_drive.ReopenDrive(0))
-                    {
-                        LastError = _drive.LastErrorMessage;
-                        LogErr($"Failed to open virtual drive: {LastError}");
-                        return false;
-                    }
-
-                    _vmdLast = vmd;
-
-                    DriveNumber = 0;
-                    LogOk($"Virtual drive opened on file >{vmd.ContentPath}<");
-                    Status("Virtual drive opened");
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    LastError = ex.Message;
-                    LogErr($"Exception opening virtual drive: {ex.Message}");
-                    return false;
-                }
-            }
-        });
-    }
-
-    /// <summary>
-    /// Creates a memory-backed virtual tape drive.
-    /// All data is held in memory and lost when the drive is closed.
-    /// </summary>
-    private Task<bool> OpenVirtualDriveInMemoryAsync(
-        VirtualTapeDriveCapabilities capabilities,
-        VirtualMediaDescriptor vmd)
-    {
-        return Task.Run(() =>
-        {
-            lock (_lock)
-            {
-                try
-                {
-                    LogInfo("Opening in-memory virtual drive...");
-                    LogInfoSub($"Content capacity: {Helpers.BytesToStringLong(vmd.ContentCapacity)}");
-                    if (vmd.InitiatorPath != null)
-                        LogInfoSub($"Initiator capacity: {Helpers.BytesToStringLong(vmd.InitiatorPartitionCapacity)}");
-                    Status("Opening in-memory virtual drive...");
-
-                    var backend = VirtualTapeDriveBackend.CreateMemoryBacked(
-                        _loggerFactory,
-                        capabilities,
-                        vmd.ContentCapacity,
-                        vmd.InitiatorPartitionCapacity);
-
-                    // Dispose existing drive if any
-                    _agent?.Dispose();
-                    _agent = null;
-                    _toc = null;
-                    _drive?.Dispose();
-
-                    _drive = new TapeDrive(_loggerFactory, backend);
-
-                    if (!_drive.ReopenDrive(0))
-                    {
-                        LastError = _drive.LastErrorMessage;
-                        LogErr($"Failed to open in-memory virtual drive: {LastError}");
-                        return false;
-                    }
-
-                    _vmdLast = vmd;
-
-                    DriveNumber = 0;
-                    LogOk("In-memory virtual drive opened");
-                    Status("In-memory virtual drive opened");
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    LastError = ex.Message;
-                    LogErr($"Exception opening in-memory virtual drive: {ex.Message}");
-                    return false;
-                }
-            }
-        });
-    }
-
-    /// <summary>
-    /// Sets the simulated IO, locate, and search speeds for the virtual tape drive.
-    /// Thread-safe: acquires the lock to prevent modification during a running operation.
-    /// </summary>
-    /// <param name="bytesPerSecond">Streaming IO rate in bytes/second, or 0 for unlimited.</param>
-    /// <param name="locateBytesPerSecond">Blind-seek (locate) rate in bytes/second, or 0 for unlimited.</param>
-    /// <param name="searchBytesPerSecond">Mark-scanning (search) rate in bytes/second, or 0 for unlimited.</param>
-    /// <param name="seekOverheadMs">Seek overhead time in milliseconds, added to locate/search operations.</param>
-    /// <returns>True if the rates were set, false if not a virtual drive.</returns>
-    public bool SetVirtualIoRate(long bytesPerSecond, long locateBytesPerSecond = 0, long searchBytesPerSecond = 0, int seekOverheadMs = 0)
-    {
-        lock (_lock)
-        {
-            if (_drive?.Backend is not VirtualTapeDriveBackend vb)
-                return false;
-
-            vb.IoRateBytesPerSecond = bytesPerSecond;
-            vb.LocateRateBytesPerSecond = locateBytesPerSecond;
-            vb.SearchRateBytesPerSecond = searchBytesPerSecond;
-            vb.SeekOverheadMs = seekOverheadMs;
-
-            if (bytesPerSecond == 0)
-            {
-                LogInfo($"IO speed simulation: unlimited");
-            }
-            else
-            {
-                LogInfo($"IO speed simulation: {Helpers.BytesToString(bytesPerSecond)}/s" +
-                    $", locate: {Helpers.BytesToString(locateBytesPerSecond)}/s" +
-                    $", search: {Helpers.BytesToString(searchBytesPerSecond)}/s" +
-                    $", seek overhead: {seekOverheadMs} ms");
-            }
-
-            return true;
-        }
-    }
-
-    /// <summary>
-    /// Invalidates the cached TOC and disposes any active agent.
-    /// Use before re-reading the TOC to ensure fresh data from tape.
-    /// Returns false if an operation is currently in progress (lock held).
-    /// </summary>
-    public bool Reset()
-    {
-        if (!Monitor.TryEnter(_lock))
-            return false;
-
-        try
-        {
-            _agent?.Dispose();
-                _agent = null;
-                _toc = null;
-                IsTOCFromFile = false;
-                TOCFilePath = null;
+                LogOk($"Deleted {setsToDelete} backup set(s) â€” TOC saved");
+                Status($"Deleted {setsToDelete} backup set(s)");
+                _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
                 return true;
-        }
-        finally
-        {
-            Monitor.Exit(_lock);
-        }
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                LogErr($"Exception deleting backup sets: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                _agent?.Dispose();
+                _agent = null;
+                _operationLock.Release();
+            }
+        });
     }
 
-    public void Dispose()
-    {
-        if (_disposed)
-            return;
+    // â”€â”€ Status helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-        _disposed = true;
-        _agent?.Dispose();
-        _drive?.Dispose();
-        _loggerFactory.Dispose();
+    private void Status(string status) => StatusChanged?.Invoke(this, status);
 
-        GC.SuppressFinalize(this);
-    }
-
-    #endregion
-
-    #region Private Methods — Logging
-
-    private void Emit(WarningLevel level, string message, bool sub = false)
-        => LogMessageReceived?.Invoke(this, new LogEntry(level, message, sub, DateTime.Now));
-
-    private void Log(string msg)          => Emit(WarningLevel.None, msg);
-    private void LogOk(string msg)        => Emit(WarningLevel.Completed, msg);
-    private void LogOkSub(string msg)     => Emit(WarningLevel.Completed, msg, sub: true);
-    private void LogInfo(string msg)      => Emit(WarningLevel.Info, msg);
-    private void LogInfoSub(string msg)   => Emit(WarningLevel.Info, msg, sub: true);
-    private void LogWarn(string msg)      => Emit(WarningLevel.Warning, msg);
-    private void LogWarnSub(string msg)   => Emit(WarningLevel.Warning, msg, sub: true);
-    private void LogFail(string msg)      => Emit(WarningLevel.Failed, msg);
-    private void LogFailSub(string msg)   => Emit(WarningLevel.Failed, msg, sub: true);
-    private void LogErr(string msg)       => Emit(WarningLevel.Error, msg);
-    private void LogErrSub(string msg)    => Emit(WarningLevel.Error, msg, sub: true);
-
-    private void Status(string status)
-    {
-        StatusChanged?.Invoke(this, status);
-    }
-
-    private void LogMediaInfo()
-    {
-        if (_drive == null)
-            return;
-
-        LogInfoSub($"Partition count: {_drive.PartitionCount}");
-        LogInfoSub($"Capacity: {Helpers.BytesToStringLong(_drive.ContentCapacity)}");
-        LogInfoSub($"Remaining: {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
-    }
-
-    private void LogTOCInfo()
-    {
-        if (_toc == null)
-            return;
-
-        LogInfoSub($"Media name: {_toc.Description}");
-        LogInfoSub($"Created: {_toc.CreationTime}");
-        LogInfoSub($"Last saved: {_toc.LastSaveTime}");
-        LogInfoSub($"Volume: #{_toc.Volume}");
-
-        // List sets in alternative order: from latest (0) down to oldest (_toc.MinSetIndex)
-        for (int alt = 0; alt >= _toc.MinSetIndex; alt--)
-        {
-            int setIndex = _toc.SetIndexToAlt(alt); // this also converts from alt to regular index
-            var setTOC = _toc[setIndex];
-            LogInfoSub($"Set #{setIndex} | {alt}: {setTOC.Description} - {setTOC.Count} files" +
-                (setTOC.Incremental ? " [Incremental]" : ""));
-        }
-    }
-
-    #endregion
-
-    #region Private Helpers
+    // â”€â”€ Private helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// <summary>
     /// Joins list items with a separator, stopping early once <paramref name="maxLength"/> is reached.
-    /// Appends "… (+N more)" when truncated.
+    /// Appends "â€¦ (+N more)" when truncated.
     /// </summary>
     private static string JoinTruncated(List<string> items, string separator, int maxLength)
     {
@@ -1058,7 +259,7 @@ public partial class TapeService : IDisposable
             {
                 if (sb.Length + separator.Length + item.Length > maxLength)
                 {
-                    sb.Append($"… (+{items.Count - count:N0} more)");
+                    sb.Append($"â€¦ (+{items.Count - count:N0} more)");
                     return sb.ToString();
                 }
                 sb.Append(separator);
@@ -1070,7 +271,8 @@ public partial class TapeService : IDisposable
         return sb.ToString();
     }
 
-    #endregion
-
-    // GuiBackupProgressHandler helper class is in TapeService.Backup.cs
+    // ExecuteBackupAsync is in TapeService.Backup.cs
+    // ExecuteRestoreAsync is in TapeService.Restore.cs
+    // ProbeVirtualDriveAsync is in TapeService.Probe.cs
+    // GuiBackupProgressHandler is in TapeService.Backup.cs
 }

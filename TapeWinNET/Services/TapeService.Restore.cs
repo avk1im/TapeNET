@@ -350,33 +350,6 @@ public partial class TapeService
         });
     }
 
-    #region Timing Helpers
-
-    /// <summary>
-    /// Formats an elapsed duration as a human-readable string.
-    /// </summary>
-    private static string FormatElapsed(double totalSeconds)
-    {
-        if (totalSeconds < 1.0) return "< 1s";
-        var ts = TimeSpan.FromSeconds(totalSeconds);
-        if (ts.TotalMinutes < 1) return $"{ts.Seconds}s";
-        if (ts.TotalHours < 1) return $"{ts.Minutes}m {ts.Seconds:D2}s";
-        return $"{(int)ts.TotalHours}h {ts.Minutes:D2}m {ts.Seconds:D2}s";
-    }
-
-    /// <summary>
-    /// Formats a data rate as "X.XX MB/s" (or appropriate unit).
-    /// Returns empty string if duration is too short or no bytes.
-    /// </summary>
-    private static string FormatDataRate(long bytes, double totalSeconds)
-    {
-        if (totalSeconds < 0.001 || bytes <= 0) return string.Empty;
-        long bytesPerSecond = (long)(bytes / totalSeconds);
-        return $"{Helpers.BytesToString(bytesPerSecond)}/s";
-    }
-
-    #endregion
-
     #region Helper Classes - Restore
 
     /// <summary>

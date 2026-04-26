@@ -37,14 +37,20 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, Action<LogEntry> logCa
     private readonly Dispatcher _dispatcher = dispatcher;
     private readonly Action<LogEntry> _logSink = logCallback;
 
+    // Stored in full-mode construction so OnServiceStateChanged can reach the ViewModel.
+    private readonly MainViewModel? _viewModel;
+
     // ── Constructors ──────────────────────────────────────────────────────────
 
     /// <summary>
     /// Full mode: log entries are enqueued into <paramref name="viewModel"/>'s
-    ///  thread-safe log buffer.
+    ///  thread-safe log buffer and state changes are forwarded to it.
     /// </summary>
     public WpfServiceHost(Dispatcher dispatcher, MainViewModel viewModel)
-        : this(dispatcher, viewModel.AddLog) { }
+        : this(dispatcher, viewModel.AddLog)
+    {
+        _viewModel = viewModel;
+    }
 
     // ── ITapeServiceHost — Logging ────────────────────────────────────────────
 
@@ -137,8 +143,9 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, Action<LogEntry> logCa
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Phase B: no-op. Phase C will fire batched <c>PropertyChanged</c> notifications
-    ///  for the property cluster identified by <paramref name="change"/>.
+    /// Forwards to <see cref="MainViewModel.OnServiceStateChanged"/> (full mode);
+    ///  no-op in callback mode (progress handlers that only need logging).
     /// </remarks>
-    public void OnServiceStateChanged(ServiceStateChange change) { }
+    public void OnServiceStateChanged(ServiceStateChange change)
+        => _viewModel?.OnServiceStateChanged(change);
 }
