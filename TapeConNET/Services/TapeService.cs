@@ -58,6 +58,10 @@ public partial class TapeService : TapeServiceBase
     /// <summary>Supplies the CLI cancellation token to TOC operations in the base class.</summary>
     protected override CancellationToken OperationCancellationToken => _ct;
 
+    /// <summary>Creates an FCL/wildcard filter from raw pattern strings.</summary>
+    protected override ITapeFileFilter? CreatePatternFilter(IReadOnlyList<string> patterns)
+        => new FclTapeFileFilter([.. patterns]);
+
     // ── No-op shim (kept to minimise WPF-port diff) ──────────────────────
 
     /// <summary>No-op: CLI uses logs for status. Kept to minimise WPF source diff.</summary>

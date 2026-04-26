@@ -654,6 +654,16 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         }
     }
 
+    /// <summary>
+    /// Creates a file filter from a list of raw patterns (e.g. wildcards or FCL
+    ///  expressions) when <see cref="ListRequest.Filter"/> is not supplied.
+    /// Base returns <see langword="null"/> (no filtering); app subclasses that have
+    ///  access to an FCL adapter override this to return the appropriate filter.
+    /// Used by <see cref="ListContentsAsync"/> and, when implemented, by backup/restore
+    ///  operations.
+    /// </summary>
+    protected virtual ITapeFileFilter? CreatePatternFilter(IReadOnlyList<string> patterns) => null;
+
     #endregion // Protected virtual hooks
 
     #region TOC operations
