@@ -22,7 +22,7 @@ namespace TapeWinNET.Services;
 ///  media management, and XAML-compatible events.
 /// <para>
 /// Drive-lifecycle operations (<c>OpenDriveAsync</c>, <c>LoadMediaAsync</c>,
-///  <c>EjectMediaAsync</c>, <c>OpenVirtualDriveAsync</c>, â€¦) are inherited from
+///  <c>EjectMediaAsync</c>, <c>OpenVirtualDriveAsync</c>, …) are inherited from
 ///  <see cref="TapeServiceBase"/>. Backup and restore partials remain in
 ///  <c>TapeService.Backup.cs</c> / <c>TapeService.Restore.cs</c> until Phase C
 ///  steps 4/5 migrate them to the base.
@@ -30,7 +30,7 @@ namespace TapeWinNET.Services;
 /// </summary>
 public partial class TapeService : TapeServiceBase
 {
-    // â”€â”€ WPF-specific fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── WPF-specific fields ───────────────────────────────────────────────────
 
     /// <summary>
     /// Forwards status-bar text changes to the ViewModel.
@@ -45,7 +45,7 @@ public partial class TapeService : TapeServiceBase
     /// </summary>
     private readonly object _lock = new();
 
-    // â”€â”€ Construction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Construction ──────────────────────────────────────────────────────────
 
     /// <summary>
     /// Creates the service and wires it to the supplied ViewModel for log output
@@ -202,7 +202,7 @@ public partial class TapeService : TapeServiceBase
                 LogInfo($"Deleting {setsToDelete} backup set(s) from #{deleteFromSetIndex} | {toc.SetIndexToAlt(deleteFromSetIndex)}...");
                 Status("Deleting backup sets...");
 
-                // Set the current set to the first one to delete â€”
+                // Set the current set to the first one to delete —
                 //  this is the precondition for DeleteSetsFromCurrentSetUp()
                 toc.CurrentSetIndex = deleteFromSetIndex;
 
@@ -215,7 +215,7 @@ public partial class TapeService : TapeServiceBase
                     return false;
                 }
 
-                LogOk($"Deleted {setsToDelete} backup set(s) â€” TOC saved");
+                LogOk($"Deleted {setsToDelete} backup set(s) — TOC saved");
                 Status($"Deleted {setsToDelete} backup set(s)");
                 _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
                 return true;
@@ -235,15 +235,15 @@ public partial class TapeService : TapeServiceBase
         });
     }
 
-    // â”€â”€ Status helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Status helper ─────────────────────────────────────────────────────────
 
     private void Status(string status) => StatusChanged?.Invoke(this, status);
 
-    // â”€â”€ Private helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Private helpers ───────────────────────────────────────────────────────
 
     /// <summary>
     /// Joins list items with a separator, stopping early once <paramref name="maxLength"/> is reached.
-    /// Appends "â€¦ (+N more)" when truncated.
+    /// Appends "… (+N more)" when truncated.
     /// </summary>
     private static string JoinTruncated(List<string> items, string separator, int maxLength)
     {
@@ -259,7 +259,7 @@ public partial class TapeService : TapeServiceBase
             {
                 if (sb.Length + separator.Length + item.Length > maxLength)
                 {
-                    sb.Append($"â€¦ (+{items.Count - count:N0} more)");
+                    sb.Append($"… (+{items.Count - count:N0} more)");
                     return sb.ToString();
                 }
                 sb.Append(separator);

@@ -8,7 +8,7 @@ using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Services;
 
-// â”€â”€ TapeServiceBase â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── TapeServiceBase ───────────────────────────────────────────────────────────
 
 /// <summary>
 /// Shared engine that owns the <see cref="TapeDrive"/>, <see cref="TapeFileAgent"/>,
@@ -23,12 +23,14 @@ namespace TapeLibNET.Services;
 /// <para>
 /// Subclasses (the per-app <c>TapeService</c>) may override the protected virtual
 ///  hooks (<see cref="LogMediaInfo"/>, <see cref="LogTOCInfo"/>) and add
-///  XAML-binding faÃ§ades or console-specific partials without duplicating any state.
+///  XAML-binding façades or console-specific partials without duplicating any state.
 /// </para>
 /// </summary>
 public partial class TapeServiceBase : IDisposable
 {
-    // â”€â”€ Core fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    #region Core fields
+    // ── Core fields ───────────────────────────────────────────────────────────
 
     protected readonly ILoggerFactory _loggerFactory;
     protected readonly ITapeServiceHost _host;
@@ -47,7 +49,10 @@ public partial class TapeServiceBase : IDisposable
 
     private bool _disposed;
 
-    // â”€â”€ Construction / destruction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    #endregion
+
+    #region Construction / destruction
+    // ── Construction / destruction ────────────────────────────────────────────
 
     /// <summary>
     /// Initialises the service with a logger factory and a host callback interface.
@@ -65,7 +70,10 @@ public partial class TapeServiceBase : IDisposable
         _host = host ?? throw new ArgumentNullException(nameof(host));
     }
 
-    // â”€â”€ Read-only state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    #endregion
+
+    #region Read-only state
+    // ── Read-only state ───────────────────────────────────────────────────────
 
     /// <summary>True while a <see cref="TapeDrive"/> is open (physical or virtual).</summary>
     public bool IsDriveOpen => _drive?.IsDriveOpen ?? false;
@@ -99,7 +107,10 @@ public partial class TapeServiceBase : IDisposable
     /// <summary>True when the running agent has been asked to abort.</summary>
     public bool IsAbortRequested => _agent?.IsAbortRequested ?? false;
 
-    // â”€â”€ Drive capability properties â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    #endregion
+
+    #region Drive capability properties
+    // ── Drive capability properties ───────────────────────────────────────────
 
     /// <summary>Whether the drive supports an initiator (TOC) partition.</summary>
     public bool SupportsInitiatorPartition => _drive?.SupportsInitiatorPartition ?? false;
@@ -141,7 +152,7 @@ public partial class TapeServiceBase : IDisposable
         }
     }
 
-    /// <summary>Estimated remaining capacity in bytes (Capacity âˆ’ Used).</summary>
+    /// <summary>Estimated remaining capacity in bytes (Capacity − Used).</summary>
     public long Remaining => Capacity - Used;
 
     /// <summary>
@@ -149,7 +160,7 @@ public partial class TapeServiceBase : IDisposable
     /// </summary>
     public long GetRemainingCapacityFromDrive()
     {
-        // Brief lock â€” just reading a hardware register, never blocks long.
+        // Brief lock — just reading a hardware register, never blocks long.
         _operationLock.Wait();
         try   { return _drive?.GetContentRemainingCapacity() ?? 0; }
         finally { _operationLock.Release(); }
@@ -171,7 +182,10 @@ public partial class TapeServiceBase : IDisposable
     public long VirtualIoRateBytesPerSecond =>
         _drive?.Backend is VirtualTapeDriveBackend vb ? vb.IoRateBytesPerSecond : 0;
 
-    // â”€â”€ Drive lifecycle: open physical â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    #endregion
+
+    #region Drive lifecycle: open physical
+    // ── Drive lifecycle: open physical ────────────────────────────────────────
 
     /// <summary>
     /// Opens a physical tape drive by number. Disposes any previously open drive.
@@ -219,7 +233,10 @@ public partial class TapeServiceBase : IDisposable
         });
     }
 
-    // â”€â”€ Drive lifecycle: load media â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    #endregion
+
+    #region Drive lifecycle: load media
+    // ── Drive lifecycle: load media ───────────────────────────────────────────
 
     /// <summary>
     /// Loads (or reloads) media into the open drive.
@@ -261,7 +278,10 @@ public partial class TapeServiceBase : IDisposable
         });
     }
 
-    // â”€â”€ Drive lifecycle: eject media â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    #endregion
+
+    #region Drive lifecycle: eject media
+    // ── Drive lifecycle: eject media ──────────────────────────────────────────
 
     /// <summary>
     /// Ejects (unloads) the media from the open drive.
@@ -308,7 +328,10 @@ public partial class TapeServiceBase : IDisposable
         });
     }
 
-    // â”€â”€ Drive lifecycle: open virtual (file-backed or in-memory) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    #endregion
+
+    #region Drive lifecycle: open virtual
+    // ── Drive lifecycle: open virtual (file-backed or in-memory) ─────────────
 
     /// <summary>
     /// Creates and opens a virtual tape drive.
@@ -467,7 +490,10 @@ public partial class TapeServiceBase : IDisposable
         }
     }
 
-    // â”€â”€ Misc: IO speed simulation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    #endregion
+
+    #region Misc: IO speed simulation
+    // ── Misc: IO speed simulation ─────────────────────────────────────────────
 
     /// <summary>
     /// Sets the simulated IO, locate, and search speeds for the virtual drive.
@@ -507,7 +533,10 @@ public partial class TapeServiceBase : IDisposable
         }
     }
 
-    // â”€â”€ Reset / Close â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    #endregion
+
+    #region Reset / Close
+    // ── Reset / Close ─────────────────────────────────────────────────────────
 
     /// <summary>
     /// Invalidates the cached TOC and disposes any active agent without closing
@@ -571,7 +600,10 @@ public partial class TapeServiceBase : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    // â”€â”€ Logging shims â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    #endregion
+
+    #region Logging shims
+    // ── Logging shims ─────────────────────────────────────────────────────────
 
     protected void LogOk(string msg)       => _host.Report(ServiceReportLevel.Completed, msg);
     protected void LogOkSub(string msg)    => _host.Report(ServiceReportLevel.Completed, msg, isSubEntry: true);
@@ -584,7 +616,10 @@ public partial class TapeServiceBase : IDisposable
     protected void LogErr(string msg)      => _host.Report(ServiceReportLevel.Error, msg);
     protected void LogErrSub(string msg)   => _host.Report(ServiceReportLevel.Error, msg, isSubEntry: true);
 
-    // â”€â”€ Protected virtual hooks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    #endregion
+
+    #region Protected virtual hooks
+    // ── Protected virtual hooks ───────────────────────────────────────────────
 
     /// <summary>
     /// Logs drive/media capacity info after a successful media load.
@@ -945,7 +980,10 @@ public partial class TapeServiceBase : IDisposable
         });
     }
 
-    // â”€â”€ Internal timing / formatting helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    #endregion
+
+    #region Internal timing / formatting helpers
+    // ── Internal timing / formatting helpers ──────────────────────────────────
 
     /// <summary>Formats an elapsed duration as a human-readable string.</summary>
     protected static string FormatElapsed(double totalSeconds)
@@ -968,3 +1006,6 @@ public partial class TapeServiceBase : IDisposable
         return $"{Helpers.BytesToString(bytesPerSecond)}/s";
     }
 }
+
+    #endregion
+

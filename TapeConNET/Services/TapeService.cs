@@ -53,12 +53,12 @@ public partial class TapeService : TapeServiceBase
     }
 
 
-    // -- Base hook overrides -------------------------------------------------
+    // ── Base hook overrides ─────────────────────────────────────────────────────
 
     /// <summary>Supplies the CLI cancellation token to TOC operations in the base class.</summary>
     protected override CancellationToken OperationCancellationToken => _ct;
 
-    // -- No-op shim (kept to minimise WPF-port diff) -------------------------
+    // ── No-op shim (kept to minimise WPF-port diff) ──────────────────────
 
     /// <summary>No-op: CLI uses logs for status. Kept to minimise WPF source diff.</summary>
     [Conditional("DEBUG_STATUS")]
