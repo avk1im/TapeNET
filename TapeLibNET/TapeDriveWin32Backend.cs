@@ -327,6 +327,12 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
 
         m_logger.LogTrace("{Prefix}: Formatting media", LogPrefix);
 
+        // LTO-5+: Win32 CreateTapePartition is unreliable for partitioning on these drives
+        //  (TAPE_FIXED_PARTITIONS count=1 is rejected; TAPE_INITIATOR_PARTITIONS may silently
+        //  create wrong partition sizes). Delegate entirely to SCSI FORMAT MEDIUM instead.
+        if (m_useLtoPartitionSchema)
+            return FormatMediaLto(initiatorPartitionSize);
+
         if (initiatorPartitionSize > 0L && SupportsInitiatorPartition)
         {
             SetError(PInvoke.CreateTapePartition(m_driveHandle,

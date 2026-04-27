@@ -3,6 +3,8 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Windows.Win32;
 using Windows.Win32.Foundation;
+using Windows.Win32.Storage.FileSystem;
+using Windows.Win32.System.SystemServices;
 using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace TapeLibNET;
@@ -19,6 +21,7 @@ namespace TapeLibNET;
 /// <list type="bullet">
 /// <item><see cref="ProbeForLtoInformation"/> — called once in <c>Open()</c>, sets dispatch flags.</item>
 /// <item><see cref="SetPositionToPartitionLto"/> — SCSI LOCATE(10) replacement for partition switch.</item>
+/// <item><see cref="FormatMediaLto"/> — SCSI FORMAT MEDIUM replacement for tape formatting.</item>
 /// </list>
 /// </para>
 /// </summary>
@@ -121,6 +124,103 @@ public partial class TapeDriveWin32Backend
         ResetError();
         m_logger.LogTrace("{Prefix}: LTO LOCATE(10): moved to partition {Partition} block {Block}",
             LogPrefix, partition, block);
+        return true;
+    }
+
+    /// <summary>
+    /// LTO-5+ replacement for <see cref="FormatMedia"/>: issues a SCSI
+    /// <c>FORMAT MEDIUM</c> command (opcode 0x04, SSC-4 §6.3) to reformat the tape
+    /// as a single partition or a dual-partition LTFS layout.
+    /// Called from <see cref="FormatMedia"/> when <c>m_useLtoPartitionSchema</c> is true.
+    /// <para>
+    /// FORMAT MEDIUM 6-byte CDB layout:
+    /// <code>
+    /// Byte 0 : 0x04  — OPERATION CODE
+    /// Byte 1 : IMMED (bit 0) | VERIFY (bit 1)
+    ///           0x01 = return immediately; caller must poll via GetTapeStatus
+    /// Byte 2 : FORMAT field
+    ///           0x00 = single partition (vendor default; no parameter data)
+    ///           0x01 = explicit partition sizes (Partition Size List follows)
+    ///           0x02 = dual partition with drive-default sizes (no parameter data)
+    /// Bytes 3–4 : TRANSFER LENGTH — 0 for FORMAT 0x00/0x02; byte count for FORMAT 0x01
+    /// Byte 5 : CONTROL = 0x00
+    /// </code>
+    /// </para>
+    /// <para>
+    /// For FORMAT 0x01 the parameter data is a Partition Size List (SSC-4 §6.3.3):
+    /// <code>
+    /// Bytes 0–1 : PARTITION SIZE LIST LENGTH (number of descriptor bytes that follow)
+    /// Bytes 2+  : 2 bytes per partition = PARTITION SIZE in megabytes
+    ///              0x0000 = "use remainder of tape"
+    /// </code>
+    /// Partition 0 (SCSI) = initiator/index partition (small).
+    /// Partition 1 (SCSI) = data partition (remainder).
+    /// </para>
+    /// </summary>
+    /// <param name="initiatorPartitionSize">
+    /// Desired size of the initiator partition in bytes.
+    /// Zero or negative formats as a single partition.
+    /// </param>
+    private bool FormatMediaLto(long initiatorPartitionSize)
+    {
+        // LTO-5+ minimum partition size: one "warp" ≈ 38 GB (16 wraps × ~2.4 GB on LTO-5).
+        //  Drives reject FORMAT 0x01 with CHECK CONDITION (INVALID FIELD IN PARAMETER LIST)
+        //  if the requested size is below this threshold or is not aligned to a warp boundary.
+        //  LTO-8/9 warps are larger; the drive knows its own geometry.
+        //
+        // STRATEGY: use FORMAT=0x02 (drive-default dual-partition sizes) for the partitioned
+        //  case. The drive picks a sensible initiator-partition size for its generation,
+        //  typically 5–10 GB on LTO-5/6 and proportionally larger on LTO-8/9. This is exactly
+        //  what IBM LTFS Format and HPE StoreOpen do. It avoids warp-alignment guesswork and
+        //  is the recommended approach for LTFS workflows.
+        //
+        // ALTERNATIVE: use FORMAT=0x01 with an explicit Partition Size List if you need to
+        //  control the initiator-partition size precisely (e.g. to match an existing LTFS
+        //  volume). The commented-out block below shows the full construction. Sizes are
+        //  in megabytes (SSC-4). Round up to the nearest GB and clamp to the minimum:
+        //    const long c_ltoMinPartitionBytes = 40L * 1024 * 1024 * 1024; // 40 GB safe minimum
+        //    long   clamped = Math.Max(initiatorPartitionSize, c_ltoMinPartitionBytes);
+        //    uint   sizeMb  = (uint)((clamped + (1024L * 1024 - 1)) / (1024L * 1024)); // → MB
+        //    sizeMb = ((sizeMb + 1023u) / 1024u) * 1024u;                              // round up to GB
+        //    Span<byte> cdb01 = stackalloc byte[6];
+        //    cdb01[0] = 0x04; cdb01[1] = 0x01; cdb01[2] = 0x01;
+        //    cdb01[3] = 0x00; cdb01[4] = 0x06;  // TRANSFER LENGTH = 6
+        //    Span<byte> psl = stackalloc byte[6];
+        //    psl[0] = 0x00; psl[1] = 0x04;       // PARTITION SIZE LIST LENGTH = 4
+        //    psl[2] = (byte)(sizeMb >> 8); psl[3] = (byte)sizeMb;  // partition 0 size (MB)
+        //    psl[4] = 0x00; psl[5] = 0x00;       // partition 1 = remainder
+        //    if (!SendScsiCommand(cdb01, psl, dataIn: false)) return false;
+
+        bool partitioned = initiatorPartitionSize > 0L;
+
+        Span<byte> cdb = stackalloc byte[6];
+        cdb[0] = 0x04; // FORMAT MEDIUM
+        cdb[1] = 0x01; // IMMED — return as soon as accepted; poll for physical completion below
+        cdb[2] = partitioned ? (byte)0x02 : (byte)0x00; // FORMAT: dual-default vs. single
+        // bytes 3–5 = 0x00 (TRANSFER LENGTH = 0, CONTROL = 0)
+
+        m_logger.LogTrace("{Prefix}: FORMAT MEDIUM (SCSI) — {Mode}",
+            LogPrefix, partitioned ? "dual partition, drive-default sizes" : "single partition");
+
+        if (!SendScsiCommand(cdb, [], dataIn: false))
+        {
+            LogErrorAsDebug("FORMAT MEDIUM (SCSI) command rejected");
+            return false;
+        }
+
+        // Poll until the drive reports completion; FORMAT MEDIUM can take many minutes
+        if (!PollForCompletion())
+        {
+            LogErrorAsDebug("FORMAT MEDIUM (SCSI) polling failed or timed out");
+            return false;
+        }
+
+        // Re-load to commit the new partition layout and refresh media parameters.
+        // Same unload+load rationale as the Win32 path in FormatMedia.
+        Op(() => InvokePrepareTape(PREPARE_TAPE_OPERATION.TAPE_LOAD)).WithRetry().WithPoll().Run();
+        RefreshMediaParams();
+
+        m_logger.LogTrace("{Prefix}: FORMAT MEDIUM (SCSI) completed", LogPrefix);
         return true;
     }
 
