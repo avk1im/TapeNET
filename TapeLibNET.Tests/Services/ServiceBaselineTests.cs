@@ -2,9 +2,7 @@ using System.IO;
 
 using TapeLibNET;
 using TapeLibNET.Services;
-using TapeLibNET.Tests.Helpers; // TempFileTree, FileComparer
-
-using TapeLibNET.Tests.Helpers; // TempVirtualMedia
+using TapeLibNET.Tests.Helpers; // TempFileTree, FileComparer, TempVirtualMedia
 
 namespace TapeLibNET.Tests.Services;
 

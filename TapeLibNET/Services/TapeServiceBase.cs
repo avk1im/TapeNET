@@ -788,7 +788,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 LogInfo("Creating initial TOC...");
                 OnStatusUpdate("Creating initial TOC...");
 
-                var description = mediaName ?? $"Media created {DateTime.Now:yyyy-MM-dd HH:mm}";
+                var description = mediaName ?? DefaultNewMediaName;
                 _agent?.Dispose();
                 _agent = new TapeFileAgent(_drive, new TapeTOC(description));
 
@@ -864,7 +864,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 LogInfo("Creating initial TOC...");
                 OnStatusUpdate("Creating initial TOC...");
 
-                var description = mediaName ?? $"Media created {DateTime.Now:yyyy-MM-dd HH:mm}";
+                var description = mediaName ?? DefaultNewMediaName;
                 _agent = new TapeFileAgent(_drive, new TapeTOC(description));
 
                 var initResult = _agent.BackupInitialTOC();
@@ -1214,6 +1214,12 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
     #region Internal timing / formatting helpers
     // ── Internal timing / formatting helpers ──────────────────────────────────
+
+    /// <summary>
+    /// Default name for newly created media, based on the current date/time.
+    /// Used across all apps and dialogs that need to pre-populate a media name.
+    /// </summary>
+    public static string DefaultNewMediaName => $"Media created {DateTime.Now:yyyy-MM-dd HH:mm}";
 
     /// <summary>Formats an elapsed duration as a human-readable string.</summary>
     protected static string FormatElapsed(double totalSeconds)

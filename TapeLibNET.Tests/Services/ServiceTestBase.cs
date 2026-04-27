@@ -5,9 +5,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TapeLibNET;
 using TapeLibNET.Services;
 using TapeLibNET.Virtual;
-using TapeLibNET.Tests.Helpers; // TempFileTree, FileComparer, TestTapeServiceHost
-
-using TapeLibNET.Tests.Helpers; // TempVirtualMedia, MultiVolumeTapeServiceHost
+using TapeLibNET.Tests.Helpers; // TempFileTree, FileComparer, TestTapeServiceHost,
+                                //  TempVirtualMedia, MultiVolumeTapeServiceHost
 
 namespace TapeLibNET.Tests.Services;
 

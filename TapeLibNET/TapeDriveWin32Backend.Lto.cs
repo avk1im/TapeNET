@@ -332,7 +332,7 @@ public partial class TapeDriveWin32Backend
         cdb[8] = partition;
         cdb[9] = 0; // reserved
 
-        return SendScsiCommand(cdb, Span<byte>.Empty, dataIn: false);
+        return SendScsiCommand(cdb, [] /*Span<byte>.Empty*/, dataIn: false);
     }
 
     /// <summary>
@@ -444,7 +444,7 @@ public partial class TapeDriveWin32Backend
     /// SCSI LOCATE(10): 0 = content (data), 1 = initiator (index/TOC).
     /// </para>
     /// </summary>
-    private byte MapPartitionToScsi(MediaPartition partition) => partition switch
+    private static byte MapPartitionToScsi(MediaPartition partition) => partition switch
     {
         MediaPartition.Content   => 0,
         MediaPartition.Initiator => 1,

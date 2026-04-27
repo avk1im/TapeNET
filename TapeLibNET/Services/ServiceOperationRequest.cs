@@ -39,7 +39,8 @@ public sealed record BackupRequest(
     bool UseFilemarks,
     bool SkipAllErrors,
     string? EmergencyTocFolder = null,
-    ITapeFileFilter? Filter = null) : ServiceOperationRequest;
+    ITapeFileFilter? Filter = null,
+    string? MediaName = null) : ServiceOperationRequest;
 
 // ── Restore ──────────────────────────────────────────────────────────────────
 

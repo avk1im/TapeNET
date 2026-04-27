@@ -24,7 +24,7 @@ public readonly record struct VirtualTapeDriveCapabilities
     /// <summary>Simulates a basic tape drive (like QIC).</summary>
     public static VirtualTapeDriveCapabilities Basic => new()
     {
-        MinBlockSize = 512,
+        MinBlockSize = 2,
         MaxBlockSize = 64 * 1024,
         DefaultBlockSize = 16 * 1024,
         SupportsSetmarks = false,
@@ -39,7 +39,7 @@ public readonly record struct VirtualTapeDriveCapabilities
         SupportsSetmarks = true,
     };
 
-    /// <summary>Simulates a drive with sequential filemarks (like SDLT).</summary>
+    /// <summary>Simulates a drive with sequential filemarks (like SDLT / DLT-V4).</summary>
     public static VirtualTapeDriveCapabilities WithSeqFilemarks => Basic with
     {
         SupportsSeqFilemarks = true,

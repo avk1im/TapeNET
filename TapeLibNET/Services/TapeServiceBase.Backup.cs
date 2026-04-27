@@ -136,9 +136,13 @@ public partial class TapeServiceBase
             }
             // else: Mode 2 — straight append (no TOC modification needed here)
 
-            // Set up media description if empty
-            if (string.IsNullOrEmpty(toc.Description))
-                toc.Description = $"Media created {DateTime.Now}";
+            // Set up media description:
+            //  - Overwrite mode: use the caller-supplied name (if any), otherwise the default.
+            //  - Append mode: keep the existing description; only fill in if still empty.
+            if (!append || string.IsNullOrEmpty(toc.Description))
+                toc.Description = !string.IsNullOrWhiteSpace(request.MediaName)
+                    ? request.MediaName
+                    : DefaultNewMediaName;
 
             // Determine if a new set was added or an existing empty slot is reused
             bool newSet;

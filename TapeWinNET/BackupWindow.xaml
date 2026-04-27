@@ -17,6 +17,7 @@
 
     <Window.Resources>
         <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVis"/>
+        <converters:InverseBoolToVisibilityCollapsedConverter x:Key="InverseBoolToVis"/>
     </Window.Resources>
 
     <Window.InputBindings>
@@ -317,19 +318,23 @@
                     <!-- Append / Overwrite -->
                     <GroupBox Header="Media" Margin="0,0,0,8">
                         <StackPanel Margin="8">
-                            <RadioButton Content="Append after set:"
-                                         IsChecked="{Binding AppendToSet}"
-                                         Margin="0,0,0,4"/>
-                            <ComboBox ItemsSource="{Binding AppendOptions}"
-                                      SelectedItem="{Binding SelectedAppendOption}"
-                                      DisplayMemberPath="DisplayText"
-                                      IsEnabled="{Binding AppendToSet}"
-                                      Margin="20,0,0,4"/>
-                            <RadioButton Content="Overwrite entire media"
-                                         IsChecked="{Binding OverwriteMedia}"
-                                         Margin="0,4,0,0"/>
+                            <!-- Radio buttons: only shown when a TOC is present -->
+                            <StackPanel Visibility="{Binding IsNoToc,
+                                                    Converter={StaticResource InverseBoolToVis}}">
+                                <RadioButton Content="Append after set:"
+                                             IsChecked="{Binding AppendToSet}"
+                                             Margin="0,0,0,4"/>
+                                <ComboBox ItemsSource="{Binding AppendOptions}"
+                                          SelectedItem="{Binding SelectedAppendOption}"
+                                          DisplayMemberPath="DisplayText"
+                                          IsEnabled="{Binding AppendToSet}"
+                                          Margin="20,0,0,4"/>
+                                <RadioButton Content="Overwrite entire media"
+                                             IsChecked="{Binding OverwriteMedia}"
+                                             Margin="0,4,0,0"/>
+                            </StackPanel>
 
-                            <!-- Warning panel -->
+                            <!-- Warning panel: always shown -->
                             <Border Style="{StaticResource WarningPanelStyle}">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
@@ -338,6 +343,16 @@
                                                VerticalAlignment="Center" TextWrapping="Wrap"/>
                                 </StackPanel>
                             </Border>
+
+                            <!-- Media description: shown whenever entire media is overwritten
+                                 (covers both no-TOC and normal overwrite mode) -->
+                            <StackPanel Visibility="{Binding OverwriteMedia,
+                                                    Converter={StaticResource BoolToVis}}"
+                                        Margin="0,6,0,0">
+                                <TextBlock Text="Media description:" Margin="0,0,0,4"/>
+                                <TextBox Text="{Binding MediaName, UpdateSourceTrigger=PropertyChanged}"
+                                         AcceptsReturn="False"/>
+                            </StackPanel>
                         </StackPanel>
                     </GroupBox>
 

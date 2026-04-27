@@ -7,6 +7,7 @@ using Microsoft.Win32;
 using Windows.Win32.System.SystemServices; // for Helpers
 
 using TapeLibNET;
+using TapeLibNET.Services;
 using TapeWinNET.Converters;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
@@ -27,6 +28,8 @@ namespace TapeWinNET.ViewModels;
 /// <param name="AppendAfterSetIndex">Set index to append after (-1 for overwrite).</param>
 /// <param name="UseFilemarks">Whether to use filemarks between files.</param>
 /// <param name="IncludeSubdirectories">Whether sources were scanned with subdirectory recursion.</param>
+/// <param name="MediaName">New media description when writing to media with no existing TOC;
+///  <see langword="null"/> when the media already has a TOC.</param>
 public record BackupFormData(
     string Description,
     List<TapeFileInfo> CheckedFiles,
@@ -37,7 +40,8 @@ public record BackupFormData(
     int AppendAfterSetIndex,
     bool UseFilemarks,
     bool IncludeSubdirectories,
-    bool SkipAllErrors);
+    bool SkipAllErrors,
+    string? MediaName = null);
 
 /// <summary>
 /// ViewModel for the BackupWindow (Option B: Source-Drill-Down).
@@ -81,6 +85,7 @@ public class BackupViewModel : ViewModelBase
     // ─────────────────────────────────────────────────
 
     private string _description = string.Empty;
+    private string _mediaName = string.Empty;
     private bool _incrementalBackup;
     private bool _useFilemarks;
     private bool _skipAllErrors;
@@ -120,6 +125,12 @@ public class BackupViewModel : ViewModelBase
 
         // Default description
         Description = $"Backup set created {DateTime.Now:g}";
+
+        // Pre-populate the media name for the overwrite case. When there is no
+        //  TOC the only valid mode is overwrite, so also force that selection.
+        _mediaName = TapeServiceBase.DefaultNewMediaName;
+        if (tapeService.TOC is null)
+            _appendToSet = false;
 
         // Build block size options dynamically from drive capabilities
         (BlockSizeValues, BlockSizeOptions, _selectedBlockSizeIndex) =
@@ -391,6 +402,23 @@ public class BackupViewModel : ViewModelBase
         set => AppendToSet = !value;
     }
 
+    /// <summary>
+    /// True when the loaded media has no TOC (new or foreign media).
+    /// In this state the only valid backup mode is overwrite, and the user is
+    ///  shown a <see cref="MediaName"/> field instead of the warning panel.
+    /// </summary>
+    public bool IsNoToc => _tapeService.TOC is null;
+
+    /// <summary>
+    /// Description to write to the new media when <see cref="IsNoToc"/> is true.
+    /// Pre-populated from <see cref="TapeServiceBase.DefaultNewMediaName"/>.
+    /// </summary>
+    public string MediaName
+    {
+        get => _mediaName;
+        set => SetProperty(ref _mediaName, value);
+    }
+
     public AppendAfterOption? SelectedAppendOption
     {
         get => _selectedAppendOption;
@@ -463,7 +491,9 @@ public class BackupViewModel : ViewModelBase
             var toc = _tapeService.TOC;
 
             if (OverwriteMedia)
-                message = "WARNING: This will ERASE ALL DATA on the media!";
+                message = _tapeService.TOC is null
+                    ? "WARNING: Entire media will be overwritten."
+                    : "WARNING: This will ERASE ALL DATA on the media!";
             else if (SelectedAppendOption is { IsOverwrite: false })
             {
                 if (toc != null && SelectedAppendOption.SetIndex < toc.Count)
@@ -1017,7 +1047,8 @@ public class BackupViewModel : ViewModelBase
             AppendAfterSetIndex: _selectedAppendOption?.SetIndex ?? -1,
             UseFilemarks: _useFilemarks,
             IncludeSubdirectories: _sourceView.IncludeSubdirectories,
-            SkipAllErrors: _skipAllErrors);
+            SkipAllErrors: _skipAllErrors,
+            MediaName: OverwriteMedia ? _mediaName : null);
 
         _onStartBackup(request);
     }
