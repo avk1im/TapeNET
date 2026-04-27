@@ -1,6 +1,6 @@
 # ServiceRoundTripTests — Enhancement Plan
 
-Status: **I-1 ✅ · I-2 ✅ · I-3 ✅ · E-1 ✅ · E-2 ✅ · A-1 ✅ · A-2 ✅ · A-3 ✅ · A-4 ✅ · A-5 ✅ — A-6 pending**
+Status: **I-1 ✅ · I-2 ✅ · I-3 ✅ · E-1 ✅ · E-2 ✅ · A-1 ✅ · A-2 ✅ · A-3 ✅ · A-4 ✅ · A-5 ✅ · A-6 ✅ — All items complete ✅**
 Owner: avk1im
 Last updated: 2025
 
@@ -318,15 +318,21 @@ Reuses the same 3-wave setup from A-1 as a shared helper.
 
 ---
 
-## File Organization (target state)
+## File Organization (final state) ✅
 
-Once A-1 through A-6 are implemented, consider splitting into focused files to
-mirror the `TapeLibNET.Tests` structure:
+The monolithic `ServiceRoundTripTests.cs` has been split into focused files
+mirroring the `TapeLibNET.Tests` structure:
 
 ```
 TapeConNET.Tests/Services/
-    ServiceRoundTripTests.cs         ← I-1, E-1, E-2: lifecycle + single-volume baseline
-    ServiceIncrementalTests.cs       ← A-1, A-2: incremental chains
-    ServiceSelectiveRestoreTests.cs  ← A-3, A-4: selective restore
-    ServiceMultiVolumeTests.cs       ← A-5, A-6: multi-volume (uses I-3 helper)
+    ServiceTestBase.cs               ← abstract base: constants, factory helpers, AddRichContent, FindRestoredRoot
+    ServiceBaselineTests.cs          ← I-1, E-1, E-2: lifecycle + single-volume baseline (4 tests)
+    ServiceIncrementalTests.cs       ← A-1, A-2: incremental chains (2 tests + private ThreeWaveChain helpers)
+    ServiceSelectiveRestoreTests.cs  ← A-3, A-4: selective restore (2 tests)
+    ServiceMultiVolumeTests.cs       ← A-5, A-6: multi-volume (2 tests + volume constants + AddMultiVolumeContent)
+
+TapeConNET.Tests/Helpers/
+    MultiVolumeTapeServiceHost.cs    ← I-3: volume-swap host used by ServiceMultiVolumeTests
 ```
+
+All 4 test classes inherit `ServiceTestBase`. Full suite: **58 passed, 1 skipped** (physical drive smoke test).

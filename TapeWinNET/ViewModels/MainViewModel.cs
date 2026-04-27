@@ -778,7 +778,7 @@ public partial class MainViewModel : ViewModelBase
 
     private async Task OpenDriveByNameAsync()
     {
-        var dialog = new RenameDialog(
+        var dialog = new AskDialog(
             "Open Drive",
             "Enter the tape device name:",
             @"\\.\TAPE0")
@@ -789,7 +789,7 @@ public partial class MainViewModel : ViewModelBase
         if (dialog.ShowDialog() != true)
             return;
 
-        var name = dialog.NewName;
+        var name = dialog.Answer;
 
         // Try to extract drive number from device name like \\.\TAPE0
         if (name.StartsWith(@"\\.\TAPE", StringComparison.OrdinalIgnoreCase) &&
@@ -1131,31 +1131,17 @@ public partial class MainViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Shows a rename dialog for the current media and writes the updated TOC back to tape.
+    /// Prompts for a new media name (via the service host) and writes the updated TOC back to tape.
     /// </summary>
     private async Task RenameMediaAsync()
     {
-        var toc = _tapeService.TOC;
-        if (toc == null)
-            return;
-
-        var dialog = new RenameDialog(
-            "Rename Media",
-            "Enter a new description for the media:",
-            toc.Description ?? string.Empty)
-        {
-            Owner = Application.Current.MainWindow
-        };
-
-        if (dialog.ShowDialog() != true || dialog.NewName == toc.Description)
-            return;
-
         IsBusy = true;
         BusyMessage = "Renaming media...";
         try
         {
-            if (await _tapeService.RenameMediaAsync(dialog.NewName))
+            if (await _tapeService.RenameMediaAsync())
             {
+                var newName = _tapeService.TOC?.Description ?? string.Empty;
                 // Iterate thru TreeItems to find the tape node and update its display name
                 foreach (var driveNode in TreeItems)
                 {
@@ -1163,16 +1149,16 @@ public partial class MainViewModel : ViewModelBase
                     {
                         if (tapeNode.ItemType == TreeItemType.Tape)
                         {
-                            tapeNode.DisplayName = dialog.NewName;
+                            tapeNode.DisplayName = newName;
                             break;
                         }
                     }
                 }
-                WindowTitle = $"TapeWin - {dialog.NewName}";
+                WindowTitle = $"TapeWin - {newName}";
                 if (_selectedTreeItem?.ItemType == TreeItemType.Tape)
                     LoadMediaInfo(); // refresh properties pane if media node is selected
             }
-            else
+            else if (_tapeService.LastError is not null)
             {
                 MessageBox.Show($"Failed to rename media.\n\n{_tapeService.LastError}",
                     "Rename Failed", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -1186,42 +1172,26 @@ public partial class MainViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Shows a rename dialog for the specified backup set and writes the updated TOC back to tape.
+    /// Prompts for a new backup-set description (via the service host) and writes the updated TOC back to tape.
     /// </summary>
     private async Task RenameBackupSetAsync(int setIndex)
     {
-        var toc = _tapeService.TOC;
-        if (toc == null)
-            return;
-
-        var setTOC = toc[setIndex];
-
-        var dialog = new RenameDialog(
-            "Rename Backup Set",
-            $"Enter a new description for backup set #{setIndex} | {toc.SetIndexToAlt(setIndex)}:",
-            setTOC.Description ?? string.Empty)
-        {
-            Owner = Application.Current.MainWindow
-        };
-
-        if (dialog.ShowDialog() != true || setTOC.Description == dialog.NewName)
-            return;
-
         IsBusy = true;
         BusyMessage = "Renaming backup set...";
         try
         {
-            if (await _tapeService.RenameBackupSetAsync(setIndex, dialog.NewName))
+            if (await _tapeService.RenameBackupSetAsync(setIndex))
             {
+                var newName = _tapeService.TOC?[setIndex].Description ?? string.Empty;
                 // Update tree node if it is currently selected: "Set #N | -M: description"
                 if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet &&
                     _selectedTreeItem.SetIndex == setIndex)
                 {
                     var colonIdx = _selectedTreeItem.DisplayName.IndexOf(':');
                     _selectedTreeItem.DisplayName = colonIdx >= 0
-                        ? $"{_selectedTreeItem.DisplayName[..colonIdx]}: {dialog.NewName}"
-                        : dialog.NewName;
-                    LoadBackupSetInfo(setIndex); // refreh properties pane
+                        ? $"{_selectedTreeItem.DisplayName[..colonIdx]}: {newName}"
+                        : newName;
+                    LoadBackupSetInfo(setIndex); // refresh properties pane
                 }
                 else
                 {
@@ -1239,8 +1209,8 @@ public partial class MainViewModel : ViewModelBase
                                     {
                                         var colonIdx = setNode.DisplayName.IndexOf(':');
                                         setNode.DisplayName = colonIdx >= 0
-                                            ? $"{setNode.DisplayName[..colonIdx]}: {dialog.NewName}"
-                                            : dialog.NewName;
+                                            ? $"{setNode.DisplayName[..colonIdx]}: {newName}"
+                                            : newName;
                                         break;
                                     }
                                 }
@@ -1251,7 +1221,7 @@ public partial class MainViewModel : ViewModelBase
                         LoadMediaInfo(); // refresh backup set table pane if media node is selected
                 }
             }
-            else
+            else if (_tapeService.LastError is not null)
             {
                 MessageBox.Show($"Failed to rename backup set.\n\n{_tapeService.LastError}",
                     "Rename Failed", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -1275,6 +1245,8 @@ public partial class MainViewModel : ViewModelBase
         UsageBar.Clear();
 
         PropertyList.Add(new PropertyItem("Device Name", _tapeService.DeviceName));
+        PropertyList.Add(new PropertyItem("Device Vendor", _tapeService.DeviceVendor));
+        PropertyList.Add(new PropertyItem("Device Product", _tapeService.DeviceProduct));
         PropertyList.Add(new PropertyItem("Drive Open", _tapeService.IsDriveOpen ? "Yes" : "No"));
 
         if (_tapeService.IsDriveOpen)

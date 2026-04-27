@@ -27,6 +27,7 @@ public partial class TapeServiceBase
     /// </remarks>
     public Task<RestoreResult> ExecuteRestoreAsync(RestoreRequest request)
     {
+        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return Task.Run(async () =>
         {
             await _operationLock.WaitAsync().ConfigureAwait(false);
@@ -37,6 +38,7 @@ public partial class TapeServiceBase
             finally
             {
                 _operationLock.Release();
+                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
             }
         }, OperationCancellationToken);
     }
@@ -319,7 +321,6 @@ public partial class TapeServiceBase
                 LogWarnSub($"{result.FilesMissing:N0} file(s) not found on tape");
 
             OnStatusUpdate($"{modeName} complete");
-            _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
 
             return result;
         }

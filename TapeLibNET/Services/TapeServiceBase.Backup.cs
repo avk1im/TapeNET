@@ -27,6 +27,7 @@ public partial class TapeServiceBase
     /// </remarks>
     public Task<BackupResult> ExecuteBackupAsync(BackupRequest request)
     {
+        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return Task.Run(async () =>
         {
             await _operationLock.WaitAsync().ConfigureAwait(false);
@@ -37,6 +38,7 @@ public partial class TapeServiceBase
             finally
             {
                 _operationLock.Release();
+                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
             }
         }, OperationCancellationToken);
     }
@@ -516,8 +518,6 @@ public partial class TapeServiceBase
                 LogOk("Backup completed successfully");
             else
                 LogInfo("Backup completed");
-
-            _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
 
             return backupResult;
         }

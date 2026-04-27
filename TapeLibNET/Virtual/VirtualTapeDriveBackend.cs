@@ -1,5 +1,6 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using System.Diagnostics;
+using System.Reflection;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Virtual;
@@ -317,18 +318,21 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
         }
     }
     public override uint DriveNumber => m_driveNumber;
+    public override string Vendor => Assembly.GetExecutingAssembly().GetName().Name ?? "TapeLibNET";
+    public override string Product => Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? string.Empty;
 
-    /// <summary>
-    /// Controls how LoadMedia() handles existing vs new media state:
-    /// <list type="bullet">
-    ///   <item><see cref="FileMode.Open"/> — Require existing state; fail if not found.</item>
-    ///   <item><see cref="FileMode.Create"/> — Always create new media; truncate any existing state.</item>
-    ///   <item><see cref="FileMode.CreateNew"/> — Create new media; fail if valid state already exists.</item>
-    ///   <item><see cref="FileMode.OpenOrCreate"/> — Load existing state if available; otherwise create new.</item>
-    /// </list>
-    /// Default is <see cref="FileMode.OpenOrCreate"/>.
-    /// </summary>
-    public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
+
+/// <summary>
+/// Controls how LoadMedia() handles existing vs new media state:
+/// <list type="bullet">
+///   <item><see cref="FileMode.Open"/> — Require existing state; fail if not found.</item>
+///   <item><see cref="FileMode.Create"/> — Always create new media; truncate any existing state.</item>
+///   <item><see cref="FileMode.CreateNew"/> — Create new media; fail if valid state already exists.</item>
+///   <item><see cref="FileMode.OpenOrCreate"/> — Load existing state if available; otherwise create new.</item>
+/// </list>
+/// Default is <see cref="FileMode.OpenOrCreate"/>.
+/// </summary>
+public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
 
     #endregion
 

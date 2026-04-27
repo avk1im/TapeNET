@@ -5,9 +5,9 @@ using TapeLibNET.Services;
 using TapeLibNET.Virtual;
 using TapeLibNET.Tests.Helpers; // TempFileTree, FileComparer
 
-using TapeConNET.Tests.Helpers; // TempVirtualMedia
+using TapeLibNET.Tests.Helpers; // TempVirtualMedia
 
-namespace TapeConNET.Tests.Services;
+namespace TapeLibNET.Tests.Services;
 
 /// <summary>
 /// Multi-volume backup and restore tests: automatic volume swapping, TOC

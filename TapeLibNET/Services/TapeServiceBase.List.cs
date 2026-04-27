@@ -17,6 +17,7 @@ public partial class TapeServiceBase
     /// </summary>
     public Task<ListResult> ListContentsAsync(ListRequest options)
     {
+        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return Task.Run(async () =>
         {
             await _operationLock.WaitAsync().ConfigureAwait(false);
@@ -140,6 +141,7 @@ public partial class TapeServiceBase
             finally
             {
                 _operationLock.Release();
+                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
             }
         }, OperationCancellationToken);
     }

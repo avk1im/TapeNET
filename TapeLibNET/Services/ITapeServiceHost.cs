@@ -1,5 +1,3 @@
-using System.Linq;
-
 namespace TapeLibNET.Services;
 
 // ── ServiceStateChange ────────────────────────────────────────────────────────
@@ -67,43 +65,37 @@ public interface ITapeServiceHost
 
     /// <summary>
     /// Asks the user to pick one item from <paramref name="choices"/> by index.
+    /// <paramref name="topic"/> is used as the window/dialog title or printed as a prefix.
     /// Returns <paramref name="defaultIndex"/> under non-interactive / quiet hosts,
     ///  or <c>-1</c> if the user cancelled (interactive only).
     /// </summary>
-    int Select(string question, IReadOnlyList<string> choices, int defaultIndex = 0);
+    int Select(string topic, string question, IReadOnlyList<string> choices, int defaultIndex = 0);
 
     /// <summary>
-    /// Asks for a free-form string. Returns <paramref name="defaultValue"/> under
-    ///  non-interactive / quiet hosts, or <see langword="null"/> if the user cancelled.
+    /// Asks for a free-form string. <paramref name="topic"/> is used as the window/dialog
+    ///  title or printed as a prefix; <paramref name="question"/> is the text-field label.
+    /// Returns <paramref name="defaultValue"/> under non-interactive / quiet hosts,
+    ///  or <see langword="null"/> if the user cancelled.
     /// </summary>
-    string? Ask(string question, string? defaultValue = null);
+    string? Ask(string topic, string question, string? defaultValue = null);
 
-    // ── Typed prompt convenience (default implementation) ─────────────────────
+    // ── Structured rename prompts ─────────────────────────────────────────────
 
     /// <summary>
-    /// Asks the user to pick one value from a typed choices list. Forwards to
-    ///  <see cref="Select"/> and maps the returned index back to a <typeparamref name="TEnum"/> value.
+    /// Asks the user for a new media (tape) name.
+    /// Returns the entered name, or <see langword="null"/> if the user cancelled.
     /// </summary>
-    TEnum SelectAction<TEnum>(
-        string question,
-        IReadOnlyList<(TEnum value, string label)> choices,
-        TEnum defaultValue) where TEnum : struct, Enum
-    {
-        if (choices.Count == 0)
-            return defaultValue;
+    /// <param name="currentName">Current media description, pre-populated in the input field.</param>
+    string? OnAskMediaName(string currentName);
 
-        var labels = choices.Select(c => c.label).ToArray();
-        int defaultIndex = 0;
-        for (int i = 0; i < choices.Count; i++)
-        {
-            if (choices[i].value.Equals(defaultValue)) { defaultIndex = i; break; }
-        }
-
-        int selected = Select(question, labels, defaultIndex);
-        return selected >= 0 && selected < choices.Count
-            ? choices[selected].value
-            : defaultValue;
-    }
+    /// <summary>
+    /// Asks the user for a new backup-set description.
+    /// Returns the entered description, or <see langword="null"/> if the user cancelled.
+    /// </summary>
+    /// <param name="setIndex">Standard (1-based) set index, used in the dialog title.</param>
+    /// <param name="altIndex">Alternate (0, -1, …) set index, used in the dialog title.</param>
+    /// <param name="currentDescription">Current set description, pre-populated in the input field.</param>
+    string? OnAskBackupSetName(int setIndex, int altIndex, string currentDescription);
 
     // ── Structured operation prompts ─────────────────────────────────────────
 

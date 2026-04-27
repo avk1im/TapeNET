@@ -79,6 +79,12 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// <summary>OS device name reported by the open drive, or "Unknown".</summary>
     public string DeviceName => _drive?.DriveDeviceName ?? "Unknown";
 
+    /// <summary>Drive vendor name, can be empty</summary>
+    public string DeviceVendor => _drive?.DriveVendor ?? string.Empty;
+
+    /// <summary>Drive product name, can be empty</summary>
+    public string DeviceProduct => _drive?.DriveProduct ?? string.Empty;
+
     /// <summary>Human-readable message from the last failed operation; null on success.</summary>
     public string? LastError { get; protected set; }
 
@@ -703,6 +709,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// <summary>Restores the TOC from tape into <see cref="TOC"/>.</summary>
     public Task<bool> RestoreTOCAsync()
     {
+        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return Task.Run(async () =>
         {
             await _operationLock.WaitAsync().ConfigureAwait(false);
@@ -759,16 +766,18 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _agent?.Dispose();
                 _agent = null;
                 _operationLock.Release();
+                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
             }
         }, OperationCancellationToken);
     }
 
     /// <summary>
-    /// Creates and saves an initial empty TOC for newly created/formatted media.
+    /// Creates and saves an initial empty TOC
     /// Should be called after <see cref="LoadMediaAsync"/> for new virtual media.
     /// </summary>
     public Task<bool> CreateInitialTOCAsync(string? mediaName = null)
     {
+        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return Task.Run(async () =>
         {
             await _operationLock.WaitAsync().ConfigureAwait(false);
@@ -810,12 +819,13 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _agent?.Dispose();
                 _agent = null;
                 _operationLock.Release();
+                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
             }
         });
     }
 
     /// <summary>
-    /// Formats the media (optionally creating an initiator partition) and writes an initial empty TOC.
+    /// Formats the media
     /// Reloads media after format to refresh parameters.
     /// </summary>
     /// <param name="initiatorPartitionSize">
@@ -824,6 +834,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// </param>
     public Task<bool> FormatMediaAsync(long initiatorPartitionSize, string? mediaName)
     {
+        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return Task.Run(async () =>
         {
             await _operationLock.WaitAsync().ConfigureAwait(false);
@@ -889,17 +900,19 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _agent?.Dispose();
                 _agent = null;
                 _operationLock.Release();
+                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
             }
         });
     }
 
     /// <summary>
-    /// Imports a TOC from a file and applies it as the current TOC.
+    /// Imports a TOC from a file
     /// Use when the on-tape TOC is missing or corrupt and a TOC file is available.
     /// Only requires the drive to be open (media need not be loaded).
     /// </summary>
     public Task<bool> ImportTOCFromFileAsync(string filePath)
     {
+        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return Task.Run(async () =>
         {
             await _operationLock.WaitAsync().ConfigureAwait(false);
@@ -943,15 +956,17 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _agent?.Dispose();
                 _agent = null;
                 _operationLock.Release();
+                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
             }
         });
     }
 
     /// <summary>
-    /// Exports the current TOC to a file as a safety copy.
+    /// Exports the current TOC
     /// </summary>
     public Task<bool> ExportTOCToFileAsync(string filePath)
     {
+        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return Task.Run(async () =>
         {
             await _operationLock.WaitAsync().ConfigureAwait(false);
@@ -988,12 +1003,13 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _agent?.Dispose();
                 _agent = null;
                 _operationLock.Release();
+                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
             }
         });
     }
 
     /// <summary>
-    /// Renames the media by updating the TOC description and writing it back to tape.
+    /// Renames the media
     /// </summary>
     public async Task<bool> RenameMediaAsync(string newName)
     {
@@ -1003,6 +1019,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             return false;
         }
 
+        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return await Task.Run(async () =>
         {
             await _operationLock.WaitAsync().ConfigureAwait(false);
@@ -1034,8 +1051,29 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _agent?.Dispose();
                 _agent = null;
                 _operationLock.Release();
+                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
             }
         });
+    }
+
+    /// <summary>
+    /// Asks the host for a new media name
+    ///  then renames the media if the user confirmed.
+    /// Returns <see langword="false"/> when the user cancelled or the rename failed.
+    /// </summary>
+    public async Task<bool> RenameMediaAsync()
+    {
+        if (_toc is null)
+        {
+            LastError = "No media loaded";
+            return false;
+        }
+
+        var newName = _host.OnAskMediaName(_toc.Description ?? string.Empty);
+        if (newName is null || newName == _toc.Description)
+            return false;
+
+        return await RenameMediaAsync(newName);
     }
 
     /// <summary>
@@ -1049,6 +1087,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             return false;
         }
 
+        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return await Task.Run(async () =>
         {
             await _operationLock.WaitAsync().ConfigureAwait(false);
@@ -1081,12 +1120,36 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _agent?.Dispose();
                 _agent = null;
                 _operationLock.Release();
+                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
             }
         });
     }
 
     /// <summary>
-    /// Deletes backup sets starting from <paramref name="deleteFromSetIndex"/> through the last
+    /// Asks the host for a new backup-set description
+    ///  <see cref="ITapeServiceHost.OnAskBackupSetName"/>, then renames the set if confirmed.
+    /// Returns <see langword="false"/> when the user cancelled or the rename failed.
+    /// </summary>
+    /// <param name="setIndex">Standard (1-based) index of the set to rename.</param>
+    public async Task<bool> RenameBackupSetAsync(int setIndex)
+    {
+        if (_toc is null)
+        {
+            LastError = "No media loaded";
+            return false;
+        }
+
+        var setTOC = _toc[setIndex];
+        int altIndex = _toc.SetIndexToAlt(setIndex);
+        var newName = _host.OnAskBackupSetName(setIndex, altIndex, setTOC.Description ?? string.Empty);
+        if (newName is null || newName == setTOC.Description)
+            return false;
+
+        return await RenameBackupSetAsync(setIndex, newName);
+    }
+
+    /// <summary>
+    /// Deletes backup sets starting from
     ///  set on the volume. Physically overwrites the tape past the last retained set to move the
     ///  end-of-data marker, then updates the TOC on tape.
     /// </summary>
@@ -1099,6 +1162,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             return false;
         }
 
+        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return await Task.Run(async () =>
         {
             await _operationLock.WaitAsync().ConfigureAwait(false);
@@ -1141,6 +1205,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _agent?.Dispose();
                 _agent = null;
                 _operationLock.Release();
+                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
             }
         });
     }

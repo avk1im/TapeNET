@@ -4,9 +4,9 @@ using TapeLibNET;
 using TapeLibNET.Services;
 using TapeLibNET.Tests.Helpers; // TempFileTree, FileComparer
 
-using TapeConNET.Tests.Helpers; // TempVirtualMedia
+using TapeLibNET.Tests.Helpers; // TempVirtualMedia
 
-namespace TapeConNET.Tests.Services;
+namespace TapeLibNET.Tests.Services;
 
 /// <summary>
 /// Selective-restore tests: restoring a hand-picked subset of

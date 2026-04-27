@@ -1,6 +1,4 @@
-﻿using System.Diagnostics;
-
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 
 using Windows.Win32.System.SystemServices; // Helpers.BytesToStringLong
 
@@ -46,10 +44,4 @@ public partial class TapeService(IConsoleUx ux, ILoggerFactory loggerFactory, Ca
     /// <summary>Creates an FCL/wildcard filter from raw pattern strings.</summary>
     protected override ITapeFileFilter? CreatePatternFilter(IReadOnlyList<string> patterns)
         => new FclTapeFileFilter([.. patterns]);
-
-    // ── No-op shim (kept to minimise WPF-port diff) ──────────────────────
-
-    /// <summary>No-op: CLI uses logs for status. Kept to minimise WPF source diff.</summary>
-    [Conditional("DEBUG_STATUS")]
-    private static void Status(string status) { _ = status; }
 }

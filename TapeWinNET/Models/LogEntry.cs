@@ -1,23 +1,7 @@
-namespace TapeWinNET.Models;
+// WarningLevel is an alias for ServiceReportLevel — same enum, single definition in TapeLibNET.
+global using WarningLevel = TapeLibNET.Services.ServiceReportLevel;
 
-/// <summary>
-/// Centralized warning/severity levels used across all dialogs and log pane.
-/// </summary>
-public enum WarningLevel
-{
-    /// <summary>No warning — panel hidden.</summary>
-    None,
-    /// <summary>Blue — informational hint.</summary>
-    Info,
-    /// <summary>Green — success / all good.</summary>
-    Completed,
-    /// <summary>Yellow/orange — caution.</summary>
-    Warning,
-    /// <summary>Orange-red — operation failed (file error, partial failure).</summary>
-    Failed,
-    /// <summary>Red — danger / destructive action.</summary>
-    Error
-}
+namespace TapeWinNET.Models;
 
 /// <summary>
 /// A structured log entry for the log pane.

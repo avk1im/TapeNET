@@ -30,8 +30,8 @@
     <Compile Include="..\TapeLibNET.Tests\Helpers\FileComparer.cs">
       <Link>Shared\FileComparer.cs</Link>
     </Compile>
-    <Compile Include="..\TapeLibNET.Tests\Helpers\TestTapeServiceHost.cs">
-      <Link>Shared\TestTapeServiceHost.cs</Link>
+    <Compile Include="..\TapeLibNET.Tests\Helpers\TempVirtualMedia.cs">
+      <Link>Shared\TempVirtualMedia.cs</Link>
     </Compile>
   </ItemGroup>
 

@@ -6,7 +6,7 @@ using TapeLibNET.Virtual;
 
 using TapeLibNET.Tests.Helpers; // TestTapeServiceHost
 
-namespace TapeConNET.Tests.Helpers;
+namespace TapeLibNET.Tests.Helpers;
 
 /// <summary>
 /// An <see cref="ITapeServiceHost"/> for multi-volume service-layer tests.

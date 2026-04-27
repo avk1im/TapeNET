@@ -80,6 +80,8 @@ public static class RootCommandFactory
         root.Subcommands.Add(RestoreCommand.CreateValidate(ux));
         root.Subcommands.Add(RestoreCommand.CreateVerify(ux));
         root.Subcommands.Add(ListCommand.Create(ux));
+        root.Subcommands.Add(RenameCommand.CreateRenameMedia(ux));
+        root.Subcommands.Add(RenameCommand.CreateRenameSet(ux));
 
         return root;
     }

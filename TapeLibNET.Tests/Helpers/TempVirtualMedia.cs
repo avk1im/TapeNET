@@ -1,4 +1,4 @@
-namespace TapeConNET.Tests.Helpers;
+namespace TapeLibNET.Tests.Helpers;
 
 /// <summary>
 /// Owns a temporary on-disk virtual-tape file (and optional initiator file)

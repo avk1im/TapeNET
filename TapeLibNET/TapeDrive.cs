@@ -106,6 +106,10 @@ public class TapeDrive : ErrorManageableBase, IDisposable
     public uint DriveNumber => m_backend.DriveNumber;
     /// <summary>NT device path (e.g. <c>\\.\TAPE0</c>).</summary>
     public string DriveDeviceName => m_backend.DeviceName;
+    /// <summary>Drive vendor name, can be empty</summary>
+    public string DriveVendor => m_backend.Vendor;
+    /// <summary>Drive product name, can be empty</summary>
+    public string DriveProduct => m_backend.Product;
 
     /// <summary>Drive handle is open and capabilities have been read.</summary>
     public bool IsDriveOpen => m_backend.IsOpen && m_driveParams != null;

@@ -7,10 +7,9 @@ using TapeLibNET.Services;
 using TapeLibNET.Virtual;
 using TapeLibNET.Tests.Helpers; // TempFileTree, FileComparer, TestTapeServiceHost
 
-using TapeConNET.Services;
-using TapeConNET.Tests.Helpers; // TempVirtualMedia, MultiVolumeTapeServiceHost
+using TapeLibNET.Tests.Helpers; // TempVirtualMedia, MultiVolumeTapeServiceHost
 
-namespace TapeConNET.Tests.Services;
+namespace TapeLibNET.Tests.Services;
 
 /// <summary>
 /// Shared infrastructure for service-layer round-trip tests.

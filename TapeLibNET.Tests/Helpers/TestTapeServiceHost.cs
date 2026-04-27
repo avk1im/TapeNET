@@ -118,7 +118,7 @@ public class TestTapeServiceHost : ITapeServiceHost
     /// Returns the next queued index, or <paramref name="defaultIndex"/> when
     ///  the queue is empty.
     /// </remarks>
-    public int Select(string question, IReadOnlyList<string> choices, int defaultIndex = 0)
+    public int Select(string topic, string question, IReadOnlyList<string> choices, int defaultIndex = 0)
         => SelectAnswers.Count > 0 ? SelectAnswers.Dequeue() : defaultIndex;
 
     /// <inheritdoc/>
@@ -126,7 +126,7 @@ public class TestTapeServiceHost : ITapeServiceHost
     /// Returns the next queued string, or <paramref name="defaultValue"/> when
     ///  the queue is empty.
     /// </remarks>
-    public string? Ask(string question, string? defaultValue = null)
+    public string? Ask(string topic, string question, string? defaultValue = null)
         => AskAnswers.Count > 0 ? AskAnswers.Dequeue() : defaultValue;
 
     // ── ITapeServiceHost — State notification ─────────────────────────────────
@@ -193,6 +193,22 @@ public class TestTapeServiceHost : ITapeServiceHost
     ///  the queue is empty (safe default: decline emergency export).
     /// </remarks>
     public string? OnEmergencyTocExportConfirm(string suggestedPath, bool isRetry)
+        => AskAnswers.Count > 0 ? AskAnswers.Dequeue() : null;
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Dequeues from <see cref="AskAnswers"/>; returns <see langword="null"/> when
+    ///  the queue is empty (safe default: cancel rename).
+    /// </remarks>
+    public string? OnAskMediaName(string currentName)
+        => AskAnswers.Count > 0 ? AskAnswers.Dequeue() : null;
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Dequeues from <see cref="AskAnswers"/>; returns <see langword="null"/> when
+    ///  the queue is empty (safe default: cancel rename).
+    /// </remarks>
+    public string? OnAskBackupSetName(int setIndex, int altIndex, string currentDescription)
         => AskAnswers.Count > 0 ? AskAnswers.Dequeue() : null;
 
     // ── Reset ─────────────────────────────────────────────────────────────────

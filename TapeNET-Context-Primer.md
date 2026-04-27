@@ -13,7 +13,7 @@ The **TapeNET** solution (`D:\Documents.DEV\Projects\TapeNET`) targets **.NET 8 
 | `TapeWinNET` | WPF app | GUI tape backup manager — MVVM, tree-based navigation, log pane, FCL-based file filtering |
 | `FclAiNET.Test` | Console app | Interactive NL → FCL REPL for testing AI translation |
 
-**Test projects:** `FclNET.Tests` (xUnit, 469+ tests covering lexer, parser, validator, evaluator, formatter, pipeline). `TapeLibNET.Tests` (xUnit, 1,029+ tests covering virtual drives, navigation, streams, TOC serialization, backup/restore agents, incremental chains, multi-volume, error handling).
+**Test projects:** `FclNET.Tests` (xUnit, 469+ tests covering lexer, parser, validator, evaluator, formatter, pipeline). `TapeLibNET.Tests` (xUnit, 1,170+ tests covering virtual drives, navigation, streams, TOC serialization, backup/restore agents, incremental chains, multi-volume, error handling, and service-layer round-trips). `TapeConNET.Tests` (xUnit, 190+ tests covering CLI parsing, lifecycle, FCL filtering, backup/restore round-trips, and smoke tests).
 
 **Dependencies:** The apps depend on the libraries. `FclNET` has no dependencies on other solution projects. `FclAiNET` depends on `FclNET`. `TapeWinNET` depends on `FclNET` for file filtering in the MainWindow via the `FclTapeFileFilter` adapter (the restore pipeline uses a dictionary-based selection path — see below). `TapeConNET` depends on `FclNET` for its `ITapeFileFilter`-based restore path. `TapeLibNET` remains independent of the FCL projects.
 
@@ -202,7 +202,7 @@ Callers never track their own counters — they just read the snapshot. `StatsUn
 
 ## TapeLibNET.Tests — Library Test Suite
 
-xUnit test project with **1,029+ tests** across 16 test classes, all running against memory-backed virtual tape drives (no hardware required). Parallel execution is disabled globally due to shared virtual drive state.
+xUnit test project with **1,170+ tests** across test classes covering the library core and service-layer round-trips, all running against memory-backed virtual tape drives (no hardware required). Parallel execution is disabled globally due to shared virtual drive state.
 
 ### Drive profiles
 
@@ -228,6 +228,10 @@ Tests are parameterized via `[Theory]` + `[MemberData]` across three `DriveProfi
 | `StatisticsTests` | `TapeFileStatistics` / `ITapeFileNotifiable` callback correctness |
 | `ErrorHandlingTests` | Skip/Retry/Abort failure policies via `OnFileFailed` |
 | `PartitionsVsSetmarksComparisonTests` | Cross-profile behavioral equivalence |
+| `ServiceBaselineTests` | `TapeServiceBase` single-volume round-trips, append sets, mid-run abort, CRC validate |
+| `ServiceIncrementalTests` | Three-wave incremental chain, per-set restore selection |
+| `ServiceMultiVolumeTests` | Volume-spanning backup and restore via `MultiVolumeTapeServiceHost` |
+| `ServiceSelectiveRestoreTests` | Hand-picked `TapeFileInfo` subset restore across multiple sets |
 
 ### Key test helpers (`Helpers/`)
 
@@ -236,6 +240,9 @@ Tests are parameterized via `[Theory]` + `[MemberData]` across three `DriveProfi
 | `VirtualTapeFixture` | Factory for memory-backed virtual drives with pre-configured `DriveProfile`; creates agents, TOC, and convenience `BackupFiles` method |
 | `MultiVolumeVirtualTapeFixture` | Extends `VirtualTapeFixture` for capacity-limited multi-volume scenarios |
 | `TempFileTree` | Deterministic temp directory + file generation with configurable sizes and timestamps; auto-cleanup via `IDisposable` |
+| `TempVirtualMedia` | Owns temp on-disk virtual-tape files (content + optional initiator) for service-layer round-trip tests; auto-cleanup via `IDisposable` |
+| `TestTapeServiceHost` | `ITapeServiceHost` recorder — records every `Report` call, queues canned answers for `Confirm`/`Select`/`Ask`, exposes assertion helpers (`HasErrors`, `StateChanges`, etc.) |
+| `MultiVolumeTapeServiceHost` | Extends `TestTapeServiceHost`; drives automatic volume-swap callbacks using pre-created `TempVirtualMedia` instances |
 | `TestNotifiable` | `ITapeFileNotifiable` recorder — captures all callbacks with assertion helpers (`AssertAllSucceeded`, `AssertFileCount`, etc.) |
 | `FileComparer` | Byte-for-byte comparison of original vs. restored files |
 | `XunitLoggerFactory` | `ILoggerFactory` bridge routing library log output to xUnit's `ITestOutputHelper` |
@@ -249,6 +256,65 @@ Tests are parameterized via `[Theory]` + `[MemberData]` across three `DriveProfi
 - **`OnFileEventProcessor`** (abstract class implementing `ITapeFileNotifiable`) is the base for `OnFileBackupProcessor`, `OnFileRestoreProcessor`, `OnFileValidateProcessor`, `OnFileVerifyProcessor`. Each syncs stats from the library via `Sync(in TapeFileStatistics)`.
 - **`UniversalRestore`** is a shared handler for restore/validate/verify operations with multi-volume support.
 - User interaction: `GetConsoleKey()`, `MessageYesNoCancel()`, quiet mode support.
+
+---
+
+## TapeLibNET.Services — Shared Service Layer
+
+Full reference: `docs/TapeLibNET.Services-Architecture.md`.
+
+`TapeLibNET.Services` is the shared backup/restore engine sitting on top of TapeLibNET's
+agent layer. It consolidates what were parallel `TapeService` implementations in TapeWinNET
+and TapeConNET into a single engine (~3,500 lines in four partial files), eliminating ~1,000
+lines of duplicated state-machine code and enabling automated round-trip testing.
+
+### Structure
+
+```
+TapeLibNET/Services/
+  ITapeServiceHost.cs                 — callback interface
+  ServiceReportLevel.cs               — None | Info | Completed | Warning | Failed | Error
+  ServiceOperationRequest.cs          — BackupRequest / RestoreRequest / ListRequest
+  ServiceOperationResult.cs           — BackupResult / RestoreResult / ListResult
+  ServiceOperationProgressHandler.cs  — ITapeFileNotifiable bridge to the host
+  TapeServiceBase.cs + *.Backup/Restore/List.cs — shared engine (partial)
+  VirtualDriveProber.cs               — static probe helper (no agent, no host)
+  VirtualMediaDescriptor.cs / VirtualDriveProbeResult.cs / RestoreMode.cs
+```
+
+### Key types
+
+| Type | Role |
+|------|------|
+| `TapeServiceBase` | Shared engine. Owns `_drive`, `_agent`, `_toc`, `SemaphoreSlim _operationLock(1,1)`, `_logger`, `_host`. Full lifecycle (`OpenDriveAsync` … `FormatMediaAsync`) and operations (`ExecuteBackupAsync`, `ExecuteRestoreAsync`, `ListContentsAsync`, `RenameMediaAsync`, `RenameBackupSetAsync`, `DeleteBackupSetsAsync`). Plain read-only state getters, no `INotifyPropertyChanged`. |
+| `ITapeServiceHost` | Callback interface: `Report(level, msg, isSub)`, `Confirm`, `Select(topic, …)`, `Ask(topic, …)`, `OnServiceStateChanged`, plus structured operation prompts (`OnVolumeContinueConfirm`, `OnInsertMediaConfirm`, `OnMediaLoadRetryConfirm`, `OnFileErrorSelect`, `OnVolumeFullConfirm`, `OnInsertNewMediaConfirm`, `OnEmergencyTocExportConfirm`, `OnAskMediaName`, `OnAskBackupSetName`). |
+| `ServiceStateChange` | Coarse flags: `DriveOpened`, `DriveClosed`, `MediaLoaded`, `MediaEjected`, `TocChanged`, `OperationStarted`, `OperationEnded`. Fired by every public `Task<…>` method (`Started` before the lock; `Ended` in `finally` after release). |
+| `ServiceOperationProgressHandler` | Bridges `ITapeFileNotifiable` agent callbacks → `host.Report(...)`. Subclasses: `ServiceBackupProgressHandler`, `ServiceRestoreProgressHandler`, `ServiceTOCLoadProgressHandler`. |
+| `VirtualDriveProber` | `static Task<VirtualDriveProbeResult> ProbeAsync(path, hint, ct)` — pure I/O, no agent, no host. Used by both apps to inspect a virtual media file before opening a drive. |
+
+### App-side adapters
+
+| Class | Location | Lines | Role |
+|-------|----------|-------|------|
+| `ConsoleUxServiceHost` | `TapeConNET/Ux/` | 143 | Routes all callbacks through `IConsoleUx`; `OnServiceStateChanged` is a no-op. |
+| `WpfServiceHost` | `TapeWinNET/Services/` | 464 | Marshals every method to the UI thread via `Dispatcher.Invoke`; `Report` feeds `MainViewModel.AddLog`; holds a `ServiceRef` property to call `InsertVirtualMedia` from prompt callbacks without a circular dependency. |
+| `TapeConNET.TapeService` | `TapeConNET/Services/` | 47 | Thin subclass: wires `ConsoleUxServiceHost`, exposes `OperationCancellationToken` and `CreatePatternFilter` overrides. |
+| `TapeWinNET.TapeService` | `TapeWinNET/Services/` | 129 | Thin subclass: adds `INotifyPropertyChanged` and the bindable property façade for XAML bindings. |
+
+### Design rules (summary)
+
+- **Threading:** one `SemaphoreSlim(1,1)` per instance; host callbacks run on the worker thread holding the semaphore — WPF host marshals internally. Hard rule: never re-enter the service from the UI thread (deadlock).
+- **Cancellation:** `CancellationToken` in every request record → sets agent abort flag → existing `TapeAbortRequestedException` is the internal mechanism.
+- **Error reporting:** `ServiceOperationResult` (`Success`, `Outcome`, `Message`, `Error`). No throws for user-recoverable conditions; throws only for programmer errors or unexpected exceptions.
+- **Logging:** single channel — `ITapeServiceHost.Report(ServiceReportLevel, string, isSubEntry)`. WPF maps `ServiceReportLevel` to its `WarningLevel` alias via `global using`.
+- **`WarningLevel` in WPF:** `global using WarningLevel = TapeLibNET.Services.ServiceReportLevel` in `TapeWinNET/Models/WarningLevel.cs` — XAML bindings and `DataTrigger` values unchanged.
+
+### Service-layer tests
+
+Round-trip tests live in **`TapeLibNET.Tests/Services/`**:
+`ServiceBaselineTests`, `ServiceIncrementalTests`, `ServiceMultiVolumeTests`, `ServiceSelectiveRestoreTests` — all extend `ServiceTestBase`.
+Helpers: `TestTapeServiceHost`, `MultiVolumeTapeServiceHost`, `TempVirtualMedia` in `TapeLibNET.Tests/Helpers/`.
+`TapeConNET.Tests` links `TempFileTree`, `FileComparer`, and `TempVirtualMedia` back via `<Compile><Link>` to avoid pulling in TapeLibNET.Tests' gRPC/AspNetCore dependencies.
 
 ---
 
@@ -348,16 +414,11 @@ TapeTOC → TOCView.GetOrCreate(setIndex) → BackupSetView
 
 ### TapeService (service layer)
 
-`TapeService` is a partial class split across:
-- `TapeService.cs` — drive management, media loading, TOC, events (`LogMessageReceived`, `StatusChanged`)
-- `TapeService.Backup.cs` — `ExecuteBackupAsync(...)` with `GuiBackupProgressHandler`
-- `TapeService.Restore.cs` — `ExecuteRestoreAsync(mode, checkedFilesBySet, incremental, ...)` with `GuiRestoreProgressHandler`, `RestoreMode` enum. Accepts `Dictionary<int, IReadOnlyList<TapeFileInfo>?>` directly, calls `TapeTOC.SelectFilesFromSets` + `agent.RestoreFilesFromCurrentSetDown` without intermediate `ITapeFileFilter` conversion
-
-Both GUI progress handlers implement `ITapeFileNotifiable` and follow the same pattern:
-1. No own counting — all stats come from the library snapshot via `Sync(in TapeFileStatistics)`
-2. Convenience properties (`FilesProcessed`, `FilesTotal`, etc.) mirror the snapshot for service-level reads
-3. A `Log(WarningLevel, msg, sub)` helper emits `LogEntry` structs
-4. `ThrowIfAbortRequested()` checks the agent's abort flag
+`TapeWinNET.TapeService` is a thin subclass of `TapeServiceBase` (129 lines). It adds
+`INotifyPropertyChanged` and the bindable property façade for XAML bindings. All backup,
+restore, list, and lifecycle logic lives in `TapeServiceBase` in `TapeLibNET.Services`.
+`WpfServiceHost` (464 lines) bridges the host callbacks to the UI thread and `MainViewModel`.
+See **TapeLibNET.Services — Shared Service Layer** above for the full architecture.
 
 ### Structured logging — LogEntry + WarningLevel
 
@@ -423,6 +484,7 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 - ✅ Full backup workflow (single & multi-volume, incremental, append/overwrite, filemarks/blob mode)
 - ✅ Full restore/validate/verify workflow (single & multi-volume, incremental chain traversal, file patterns)
 - ✅ Unified `TapeFileStatistics` across library → CLI → GUI (no duplicate counting)
+- ✅ `TapeLibNET.Services` shared service layer: `TapeServiceBase` + `ITapeServiceHost` + adapters (`ConsoleUxServiceHost`, `WpfServiceHost`) + `ServiceOperationProgressHandler`. Both apps reduced to thin subclasses. `rename-media` / `rename-set` CLI commands. 140 round-trip tests in `TapeLibNET.Tests/Services/`. See `docs/TapeLibNET.Services-Architecture.md`.
 - ✅ Structured `LogEntry`-based logging with `WarningLevel` icons, colors, sub-entry indentation. Full log pane: batched ingestion, smart pruning (10K cap), severity filtering, auto-scroll lock, timestamp toggle, save/mirror to file (text + CSV), copy, clear. `MainViewModel.Log.cs` partial class. Types in `Models/LogEntry.cs`.
 - ✅ Virtual drive support with IO speed simulation
 - ✅ New Backup Set dialog, Restore dialog, Open Virtual Drive dialog
@@ -442,7 +504,7 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 
 - `TapeWinNET`: Additional UI polish and workflow refinements
 - `TapeLibNET`: Polishing, validation, & hardening of the core functionality, while using and expanding `TapeLibNET.Tests`
-- `TapeConNET`: Service updates to keep in sync with library changes. Consider switching to classes from the top-level program structure.
+- `TapeConNET`: Consider switching to classes from the top-level program structure.
 
 - `TapeWinNET`: UI enhancement features
 1. [DONE] Log export / clear — Full log pane with batched ingestion (10K cap, smart pruning), severity filtering, auto-scroll lock, timestamp toggle, Save Log / Mirror Log to file (text + CSV), copy (Ctrl+C, multi-select), clear. `MainViewModel.Log.cs` partial class, top-level Log menu + context menu.

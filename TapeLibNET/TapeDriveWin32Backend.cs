@@ -52,12 +52,13 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     private bool m_setPositionNeedsBlocking;
 
     // LTO generation detection (probed once in Open via SCSI INQUIRY).
-    // -1 = not yet probed; 0 = not LTO or generation < 5; >= 5 = LTO generation.
+    //  -1 = not yet probed / probe failed; 0 = not LTO; >= 1 = LTO generation.
     private int m_ltoGeneration = -1;
+    private string m_ltoVendor = string.Empty;
+    private string m_ltoProduct = string.Empty;
 
-    // LTO-5+ operation dispatch flags — set during Open, cleared in Close.
-    // When true, the corresponding operation is routed to its SCSI IOCTL
-    //  implementation instead of the Win32 Tape API path.
+    // LTO partition numbering flag — set during Open, cleared in Close.
+    //  When true, account for LTO QUIRK in partition numbering!
     private bool m_useLtoPartitionSchema; // SetPositionToPartition → LOCATE(10)
 
     #endregion
@@ -124,6 +125,8 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     public override bool HasMedia => IsOpen && m_mediaParams != null;
     public override string DeviceName => $"\\\\.\\TAPE{m_driveNumber}";
     public override uint DriveNumber => m_driveNumber;
+    public override string Vendor => m_ltoVendor;
+    public override string Product => m_ltoProduct;
 
     #endregion
 
@@ -179,8 +182,8 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
             return false;
         }
 
-        // Probe for LTO generation and configure SCSI dispatch flags accordingly
-        ProbeForLtoGeneration();
+        // Probe & fill LTO information and configure LTO dispatch flags accordingly!
+        ProbeForLtoInformation();
     
         m_logger.LogTrace("{Prefix}: Opened", LogPrefix);
         return true;

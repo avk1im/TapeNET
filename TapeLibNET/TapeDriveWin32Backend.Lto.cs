@@ -1,8 +1,9 @@
+using Microsoft.Extensions.Logging;
 using System.Runtime.InteropServices;
 using System.Text;
-using Microsoft.Extensions.Logging;
 using Windows.Win32;
 using Windows.Win32.Foundation;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace TapeLibNET;
 
@@ -16,7 +17,7 @@ namespace TapeLibNET;
 /// <para>
 /// Entry points called from the main partial class:
 /// <list type="bullet">
-/// <item><see cref="ProbeForLtoGeneration"/> — called once in <c>Open()</c>, sets dispatch flags.</item>
+/// <item><see cref="ProbeForLtoInformation"/> — called once in <c>Open()</c>, sets dispatch flags.</item>
 /// <item><see cref="SetPositionToPartitionLto"/> — SCSI LOCATE(10) replacement for partition switch.</item>
 /// </list>
 /// </para>
@@ -70,26 +71,28 @@ public partial class TapeDriveWin32Backend
         "IBM", "HP", "QUANTUM", "TANDBERG", "SEAGATE", "CERTANCE", "SONY", "FUJITSU"
     ];
 
+    // LTO generation that starts exhibiting LTO QUIRK in partition numbering
+    const int c_ltoGenForPartitionSchema = 5; // LTO-5+ exhibit LTO QUIRK in partition numbering
+
     /// <summary>
     /// Issues a SCSI INQUIRY to the open drive handle and sets <see cref="m_ltoGeneration"/>
     /// and the <c>m_useLto*</c> dispatch flags. Safe to call with no media loaded.
     /// Called once at the end of <see cref="Open"/>.
     /// </summary>
-    private void ProbeForLtoGeneration()
+    private void ProbeForLtoInformation()
     {
-        if (!LtoDetect(out int generation))
+        if (!LtoDetect(out m_ltoVendor, out m_ltoProduct))
         {
-            m_ltoGeneration = 0;
-            m_logger.LogTrace("{Prefix}: Not an LTO-5+ drive (generation={Gen})", LogPrefix, generation);
+            m_logger.LogTrace("{Prefix}: Failed to detect LTO/SCSI", LogPrefix);
             return;
         }
 
-        m_ltoGeneration = generation;
-        m_useLtoPartitionSchema = true;
+        m_ltoGeneration = ParseLtoGeneration(m_ltoVendor, m_ltoProduct);
+        m_useLtoPartitionSchema = m_ltoGeneration >= c_ltoGenForPartitionSchema;
 
         m_logger.LogInformation(
-            "{Prefix}: LTO generation {Gen} detected — SCSI dispatch enabled: partition switch",
-            LogPrefix, generation);
+            "{Prefix}: LTO generation {Gen} detected —> LTO partition switch {Status}",
+            LogPrefix, m_ltoGeneration, m_useLtoPartitionSchema ? "enabled" : "disabled");
     }
 
     #endregion
@@ -209,14 +212,11 @@ public partial class TapeDriveWin32Backend
     #region *** SCSI Helpers ***
 
     /// <summary>
-    /// Issues a SCSI INQUIRY and returns whether this is an LTO drive with generation >= 5.
-    /// Sets <paramref name="generation"/> to the detected generation number, or 0 if not
-    /// recognised as LTO-5+.
+    /// Issues a SCSI INQUIRY and fills out the vendor and product strings.
+    /// Returns true if the command succeeded. 
     /// </summary>
-    private bool LtoDetect(out int generation)
+    private bool LtoDetect(out string vendor, out string product)
     {
-        generation = 0;
-
         const byte inquiryAllocLen = 96;
         Span<byte> cdb  = stackalloc byte[6];
         cdb[0] = 0x12; // INQUIRY
@@ -225,39 +225,66 @@ public partial class TapeDriveWin32Backend
         Span<byte> data = stackalloc byte[inquiryAllocLen];
 
         if (!SendScsiCommand(cdb, data, dataIn: true))
+        {
+            vendor = product = string.Empty;
             return false;
+        }
 
-        string vendor  = Encoding.ASCII.GetString(data.Slice(8,  8)).Trim().ToUpperInvariant();
-        string product = Encoding.ASCII.GetString(data.Slice(16, 16)).Trim().ToUpperInvariant();
+        vendor  = Encoding.ASCII.GetString(data.Slice(8,  8)).Trim();
+        product = Encoding.ASCII.GetString(data.Slice(16, 16)).Trim();
 
-        m_logger.LogTrace("{Prefix}: INQUIRY vendor='{Vendor}' product='{Product}'",
+        m_logger.LogTrace("{Prefix}: LTO/SCSI INQUIRY vendor='{Vendor}' product='{Product}'",
             LogPrefix, vendor, product);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Parses the SCSI INQUIRY vendor and product strings to determine the LTO generation.
+    /// </summary>
+    /// <param name="vendor">The vendor string from the SCSI INQUIRY response.</param>
+    /// <param name="product">The product string from the SCSI INQUIRY response.</param>
+    /// <returns>The LTO generation number, -1 if no LTO/SCSI information is available,
+    /// or 0 if not recognized as LTO.</returns>
+    private static int ParseLtoGeneration(string vendor, string product)
+    {
+        vendor = vendor.Trim().ToUpperInvariant();
+        product = product.Trim().ToUpperInvariant();
+
+        if (string.IsNullOrEmpty(vendor) && string.IsNullOrEmpty(product))
+            return -1; // no LTO / SCSI information at all
 
         // Gate on known LTO vendors to avoid false positives on other SCSI devices
         if (!c_ltoVendors.Any(v => vendor.Contains(v)))
-            return false;
+            return 0;
 
         // Extract generation from well-known product name patterns:
         //  "ULT3580-HH5", "ULTRIUM 5-SCSI", "LTO-5 HH", "LTO5-HH", "ULTRIUM-5", …
         // Try each generation from highest to lowest to avoid "5" matching "15"
-        foreach (int gen in new[] { 9, 8, 7, 6, 5 })
+        foreach (int gen in new[] { 9, 8, 7, 6, 5, 3, 2 })
         {
             // Match "LTO-N", "LTON", "ULTRIUM N", "ULTRIUMNN", "HHN", "-HHN", trailing digit
             if (product.Contains($"LTO-{gen}") ||
-                product.Contains($"LTO{gen}")  ||
+                product.Contains($"LTO{gen}") ||
                 product.Contains($"ULTRIUM {gen}") ||
                 product.Contains($"ULTRIUM-{gen}") ||
-                product.EndsWith($"-HH{gen}")  ||
-                product.EndsWith($"HH{gen}")   ||
-                product.EndsWith($"-{gen}")    ||
+                product.EndsWith($"-HH{gen}") ||
+                product.EndsWith($"HH{gen}") ||
+                product.EndsWith($"-{gen}") ||
                 product.EndsWith($"{gen}"))
             {
-                generation = gen;
-                return true;
+                return gen;
             }
         }
 
-        return false;
+        if (product.Contains($"LTO") ||
+            product.Contains($"ULTRIUM") ||
+            product.EndsWith($"HH"))
+        {
+            return 1;
+        }
+        
+        return 0;
     }
 
     /// <summary>

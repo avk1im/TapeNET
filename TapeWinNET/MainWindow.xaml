@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
         xmlns:models="clr-namespace:TapeWinNET.Models"
+        xmlns:services="clr-namespace:TapeLibNET.Services;assembly=tapelib"
         xmlns:converters="clr-namespace:TapeWinNET.Converters"
         xmlns:controls="clr-namespace:TapeWinNET.Controls"
         d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
@@ -775,35 +776,35 @@
                                             <!-- Level-based coloring (only for non-sub entries) -->
                                             <MultiDataTrigger>
                                                 <MultiDataTrigger.Conditions>
-                                                    <Condition Binding="{Binding Level}" Value="{x:Static models:WarningLevel.Error}"/>
+                                                    <Condition Binding="{Binding Level}" Value="{x:Static services:ServiceReportLevel.Error}"/>
                                                     <Condition Binding="{Binding IsSub}" Value="False"/>
                                                 </MultiDataTrigger.Conditions>
                                                 <Setter Property="Foreground" Value="{StaticResource WarningFg.Error}" />
                                             </MultiDataTrigger>
                                             <MultiDataTrigger>
                                                 <MultiDataTrigger.Conditions>
-                                                    <Condition Binding="{Binding Level}" Value="{x:Static models:WarningLevel.Failed}"/>
+                                                    <Condition Binding="{Binding Level}" Value="{x:Static services:ServiceReportLevel.Failed}"/>
                                                     <Condition Binding="{Binding IsSub}" Value="False"/>
                                                 </MultiDataTrigger.Conditions>
                                                 <Setter Property="Foreground" Value="{StaticResource WarningFg.Failed}" />
                                             </MultiDataTrigger>
                                             <MultiDataTrigger>
                                                 <MultiDataTrigger.Conditions>
-                                                    <Condition Binding="{Binding Level}" Value="{x:Static models:WarningLevel.Warning}"/>
+                                                    <Condition Binding="{Binding Level}" Value="{x:Static services:ServiceReportLevel.Warning}"/>
                                                     <Condition Binding="{Binding IsSub}" Value="False"/>
                                                 </MultiDataTrigger.Conditions>
                                                 <Setter Property="Foreground" Value="{StaticResource WarningFg.Warning}" />
                                             </MultiDataTrigger>
                                             <MultiDataTrigger>
                                                 <MultiDataTrigger.Conditions>
-                                                    <Condition Binding="{Binding Level}" Value="{x:Static models:WarningLevel.Info}"/>
+                                                    <Condition Binding="{Binding Level}" Value="{x:Static services:ServiceReportLevel.Info}"/>
                                                     <Condition Binding="{Binding IsSub}" Value="False"/>
                                                 </MultiDataTrigger.Conditions>
                                                 <Setter Property="Foreground" Value="{StaticResource WarningFg.Info}" />
                                             </MultiDataTrigger>
                                             <MultiDataTrigger>
                                                 <MultiDataTrigger.Conditions>
-                                                    <Condition Binding="{Binding Level}" Value="{x:Static models:WarningLevel.Completed}"/>
+                                                    <Condition Binding="{Binding Level}" Value="{x:Static services:ServiceReportLevel.Completed}"/>
                                                     <Condition Binding="{Binding IsSub}" Value="False"/>
                                                 </MultiDataTrigger.Conditions>
                                                 <Setter Property="Foreground" Value="{StaticResource WarningFg.Completed}" />

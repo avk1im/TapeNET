@@ -9,11 +9,6 @@ namespace TapeConNET.Ux;
 ///  <see cref="ITapeServiceHost.Select"/> to the string-based <see cref="IConsoleUx.Select"/>,
 ///  and maps <see cref="ServiceReportLevel"/> to the <c>WarningLevel</c> alias.
 /// </summary>
-/// <remarks>
-/// Phase B adapter — no logic is moved here yet. The service still lives in the apps.
-/// This class is consumed today by the app-side progress handlers that derive from
-///  <see cref="TapeLibNET.Services.ServiceOperationProgressHandler"/>.
-/// </remarks>
 public sealed class ConsoleUxServiceHost(IConsoleUx ux) : ITapeServiceHost
 {
     // ── ITapeServiceHost — Logging ────────────────────────────────────────────
@@ -36,13 +31,14 @@ public sealed class ConsoleUxServiceHost(IConsoleUx ux) : ITapeServiceHost
     ///  returns a value not found in <paramref name="choices"/> (should not happen
     ///  in practice; callers should treat <c>-1</c> as the default).
     /// </remarks>
-    public int Select(string question, IReadOnlyList<string> choices, int defaultIndex = 0)
+    public int Select(string topic, string question, IReadOnlyList<string> choices, int defaultIndex = 0)
     {
         if (choices.Count == 0) return defaultIndex;
         string? defaultChoice = defaultIndex >= 0 && defaultIndex < choices.Count
             ? choices[defaultIndex] : null;
 
-        string result = ux.Select(question, choices, defaultChoice);
+        string prompt = string.IsNullOrEmpty(topic) ? question : $"[{topic}] {question}";
+        string result = ux.Select(prompt, choices, defaultChoice);
 
         for (int i = 0; i < choices.Count; i++)
             if (choices[i] == result) return i;
@@ -56,9 +52,10 @@ public sealed class ConsoleUxServiceHost(IConsoleUx ux) : ITapeServiceHost
     /// returns <see langword="null"/> only if the result is empty and
     /// <paramref name="defaultValue"/> was <see langword="null"/>.
     /// </remarks>
-    public string? Ask(string question, string? defaultValue = null)
+    public string? Ask(string topic, string question, string? defaultValue = null)
     {
-        string result = ux.Ask(question, defaultValue);
+        string prompt = string.IsNullOrEmpty(topic) ? question : $"[{topic}] {question}";
+        string result = ux.Ask(prompt, defaultValue);
         // Treat an empty result as cancellation when no default was provided
         return string.IsNullOrEmpty(result) && defaultValue is null ? null : result;
     }
@@ -81,7 +78,8 @@ public sealed class ConsoleUxServiceHost(IConsoleUx ux) : ITapeServiceHost
 
     /// <inheritdoc/>
     public bool OnMediaLoadRetryConfirm(string errorMessage, bool isRetry)
-        => ux.Confirm("Retry loading media?", defaultAnswer: true);
+        => ux.Confirm($"Load media error: {errorMessage}. Retry loading media{(isRetry ? " once more" : "")}?",
+            defaultAnswer: true);
 
     /// <inheritdoc/>
     /// <remarks>
@@ -92,6 +90,7 @@ public sealed class ConsoleUxServiceHost(IConsoleUx ux) : ITapeServiceHost
     {
         // indices: 0=Skip, 1=Retry, 2=Skip all, 3=Abort  (mirrors legacy OnFileFailed logic)
         int idx = Select(
+            "File Error",
             $"File failed: '{filePath}'\nError: {errorMessage}\nChoose action",
             ["Skip", "Retry", "Skip all", $"Abort {operationName}"],
             defaultIndex: 0);
@@ -129,4 +128,16 @@ public sealed class ConsoleUxServiceHost(IConsoleUx ux) : ITapeServiceHost
         string result = ux.Ask(question, defaultValue: suggestedPath);
         return string.IsNullOrWhiteSpace(result) ? null : result;
     }
+
+    // ── ITapeServiceHost — Structured rename prompts ──────────────────────────
+
+    /// <inheritdoc/>
+    public string? OnAskMediaName(string currentName)
+        => Ask("Rename Media", "Enter a new description for the media:", currentName);
+
+    /// <inheritdoc/>
+    public string? OnAskBackupSetName(int setIndex, int altIndex, string currentDescription)
+        => Ask("Rename Backup Set",
+               $"Enter a new description for backup set #{setIndex} | {altIndex}:",
+               currentDescription);
 }

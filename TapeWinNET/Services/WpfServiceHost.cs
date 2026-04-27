@@ -16,19 +16,9 @@ using TapeWinNET;  // MediaChangeDialog, FileErrorDialog, OpenVirtualDriveWindow
 namespace TapeWinNET.Services;
 
 /// <summary>
-/// <see cref="ITapeServiceHost"/> adapter for WPF. Routes log entries to a caller-supplied
-///  log sink and marshals all UI interactions to the UI thread via the supplied
-///  <see cref="Dispatcher"/>.
-/// <para>
-/// Two construction modes:
-/// <list type="bullet">
-///  <item><b>Full mode</b> – pass a <see cref="MainViewModel"/>; <see cref="Report"/>
-///        enqueues into its thread-safe log buffer.</item>
-///  <item><b>Callback mode</b> – pass an <see cref="Action{LogEntry}"/> delegate; used
-///        by Phase-B progress handlers that live inside TapeService partials and only
-///        have access to the log callback. Migrated away in Phase C.</item>
-/// </list>
-/// </para>
+/// <see cref="ITapeServiceHost"/> adapter for WPF. Routes log entries to the
+///  <see cref="MainViewModel"/> log buffer and marshals all UI interactions to the
+///  UI thread via the supplied <see cref="Dispatcher"/>.
 /// <para>
 /// Threading contract: <see cref="Report"/> is safe to call from any thread.
 ///  Prompt methods block the caller (always a background worker thread) via
@@ -36,42 +26,62 @@ namespace TapeWinNET.Services;
 ///  holds the service lock.
 /// </para>
 /// </summary>
-/// <remarks>
-/// Callback mode: log entries are forwarded to <paramref name="logCallback"/>.
-/// Used by Phase-B progress handler subclasses inside TapeService partials.
-/// </remarks>
-public sealed class WpfServiceHost(Dispatcher dispatcher, Action<LogEntry> logCallback) : ITapeServiceHost
+/// <param name="dispatcher">UI dispatcher for marshalling prompt and progress calls.</param>
+/// <param name="viewModel">
+///  ViewModel whose <see cref="MainViewModel.AddLog"/> sink receives all log entries
+///  and whose <see cref="MainViewModel.OnServiceStateChanged"/> receives state hints.
+/// </param>
+public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewModel) : ITapeServiceHost
 {
     private readonly Dispatcher _dispatcher = dispatcher;
-    private readonly Action<LogEntry> _logSink = logCallback;
-
-    // Stored in full-mode construction so OnServiceStateChanged can reach the ViewModel.
-    private readonly MainViewModel? _viewModel;
-
-    // ── Constructors ──────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Full mode: log entries are enqueued into <paramref name="viewModel"/>'s
-    ///  thread-safe log buffer and state changes are forwarded to it.
-    /// </summary>
-    public WpfServiceHost(Dispatcher dispatcher, MainViewModel viewModel)
-        : this(dispatcher, viewModel.AddLog)
-    {
-        _viewModel = viewModel;
-    }
+    private readonly MainViewModel _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
 
     // ── ITapeServiceHost — Logging ────────────────────────────────────────────
 
     /// <inheritdoc/>
     /// <remarks>Thread-safe — no dispatcher marshalling needed here.</remarks>
     public void Report(ServiceReportLevel level, string message, bool isSubEntry = false)
+        => _viewModel.AddLog(new LogEntry(level, message, isSubEntry, DateTime.Now));
+
+    // ── ITapeServiceHost — State notification ─────────────────────────────────
+
+    /// <inheritdoc/>
+    public void OnServiceStateChanged(ServiceStateChange change)
+        => _viewModel.OnServiceStateChanged(change);
+
+    // ── Progress update helpers ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Updates the restore progress indicators on the bound <see cref="MainViewModel"/>.
+    /// Safe to call from any thread — marshals to the UI dispatcher internally.
+    /// </summary>
+    public void UpdateRestoreProgress(int processed, int total, long bytes, string? currentFile)
     {
-        // Map ServiceReportLevel → WarningLevel (enums share identical ordinal layout)
-        var warnLevel = (WarningLevel)(int)level;
-        _logSink(new LogEntry(warnLevel, message, isSubEntry, DateTime.Now));
+        _dispatcher.Invoke(() =>
+        {
+            if (currentFile is not null)
+                _viewModel.CurrentRestoreFile = System.IO.Path.GetFileName(currentFile);
+            _viewModel.RestoreProgressPercent = total > 0 ? (int)(100.0 * processed / total) : 0;
+            _viewModel.RestoreProgressText    = $"{processed:N0} / {total:N0} files ({Helpers.BytesToString(bytes)})";
+        });
     }
 
-    // ── ITapeServiceHost — Prompts ────────────────────────────────────────────
+    /// <summary>
+    /// Updates the backup progress indicators on the bound <see cref="MainViewModel"/>.
+    /// Safe to call from any thread — marshals to the UI dispatcher internally.
+    /// </summary>
+    public void UpdateBackupProgress(int processed, int total, long bytes, string? currentFile)
+    {
+        _dispatcher.Invoke(() =>
+        {
+            if (currentFile is not null)
+                _viewModel.CurrentBackupFile = System.IO.Path.GetFileName(currentFile);
+            _viewModel.BackupProgressPercent = total > 0 ? (int)(100.0 * processed / total) : 0;
+            _viewModel.BackupProgressText    = $"{processed:N0} / {total:N0} files ({Helpers.BytesToString(bytes)})";
+        });
+    }
+
+    // ── ITapeServiceHost — Prompts ───────────────────────────────────────────────
 
     /// <inheritdoc/>
     public bool Confirm(string question, bool defaultAnswer = false)
@@ -92,13 +102,10 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, Action<LogEntry> logCa
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Shows a <see cref="MessageBox"/> for two-choice prompts. Multi-choice prompts
-    ///  fall back to the default — WPF progress handlers that need the full
-    ///  <see cref="FileErrorDialog"/> should override <c>OnFileFailed</c> directly
-    ///  (as done by <c>GuiBackupProgressHandler</c> / <c>GuiRestoreProgressHandler</c>).
-    ///  Phase C will replace this with a proper selection dialog.
+    /// Shows a <see cref="MessageBox"/> for two-choice prompts. For three or more
+    ///  choices opens a minimal <see cref="SelectDialog"/> with a <c>ListBox</c>.
     /// </remarks>
-    public int Select(string question, IReadOnlyList<string> choices, int defaultIndex = 0)
+    public int Select(string topic, string question, IReadOnlyList<string> choices, int defaultIndex = 0)
     {
         if (choices.Count == 0) return defaultIndex;
 
@@ -109,7 +116,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, Action<LogEntry> logCa
             {
                 var answer = MessageBox.Show(
                     $"{question}\n\n[Yes] {choices[0]}   [No] {choices[1]}",
-                    "Select",
+                    topic,
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question,
                     MessageBoxResult.Yes);
@@ -117,54 +124,37 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, Action<LogEntry> logCa
             }
             else
             {
-                // Multi-choice fallback — progress handlers override OnFileFailed for FileErrorDialog
-                MessageBox.Show(
-                    $"{question}\n\n(Using default: {choices[defaultIndex]})",
-                    "Select", MessageBoxButton.OK, MessageBoxImage.Information);
-                result = defaultIndex;
+                var dialog = new SelectDialog(topic, question, choices, defaultIndex)
+                {
+                    Owner = Application.Current.MainWindow
+                };
+                result = dialog.ShowDialog() == true ? dialog.SelectedIndex : defaultIndex;
             }
         });
         return result;
     }
 
     /// <inheritdoc/>
-    public string? Ask(string question, string? defaultValue = null)
+    public string? Ask(string topic, string question, string? defaultValue = null)
     {
-        // Phase B: no WPF InputBox — falls through to default.
-        // Phase C will replace with a proper text-input dialog.
         string? result = defaultValue;
         _dispatcher.Invoke(() =>
         {
-            var answer = MessageBox.Show(
-                $"{question}\n\n(Default: {defaultValue ?? "(none)"})\n\nClick OK to accept, Cancel to abort.",
-                "Input Required",
-                MessageBoxButton.OKCancel,
-                MessageBoxImage.Question,
-                MessageBoxResult.OK);
-            if (answer != MessageBoxResult.OK)
-                result = null;
+            var dialog = new AskDialog(topic, question, defaultValue)
+            {
+                Owner = Application.Current.MainWindow
+            };
+            result = dialog.ShowDialog() == true ? dialog.Answer : null;
         });
         return result;
     }
 
-    // ── ITapeServiceHost — State notification ─────────────────────────────────
-
-    /// <inheritdoc/>
-    /// <remarks>
-    /// Forwards to <see cref="MainViewModel.OnServiceStateChanged"/> (full mode);
-    ///  no-op in callback mode (progress handlers that only need logging).
-    /// </remarks>
-    public void OnServiceStateChanged(ServiceStateChange change)
-        => _viewModel?.OnServiceStateChanged(change);
-
     // ── ITapeServiceHost — Structured operation prompts ───────────────────────
 
     /// <summary>
-    /// Injected by <see cref="TapeService"/> after construction so that
-    ///  <see cref="OnInsertMediaConfirm"/> can call <c>InsertVirtualMedia</c>
-    ///  and query drive-capability properties without a circular type dependency.
-    /// Set to <see langword="null"/> in callback-mode construction (progress
-    ///  handlers) where media-change prompts are not needed.
+    /// Injected by <see cref="TapeService"/> after construction so that prompt methods
+    ///  can call <c>InsertVirtualMedia</c> and query drive-capability properties
+    ///  without a circular type dependency.
     /// </summary>
     public TapeServiceBase? ServiceRef { get; set; }
 
@@ -318,53 +308,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, Action<LogEntry> logCa
 
     // ── Restore progress ──────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Updates the restore progress indicators on the bound <see cref="MainViewModel"/>.
-    /// Safe to call from any thread — marshals to the UI dispatcher internally.
-    /// No-op in callback-mode construction (no ViewModel reference).
-    /// </summary>
-    /// <param name="processed">Files processed so far.</param>
-    /// <param name="total">Total files expected.</param>
-    /// <param name="bytes">Bytes processed so far.</param>
-    /// <param name="currentFile">Current file name, or <see langword="null"/> to leave unchanged.</param>
-    public void UpdateRestoreProgress(int processed, int total, long bytes, string? currentFile)
-    {
-        var vm = _viewModel;
-        if (vm is null) return;
 
-        _dispatcher.Invoke(() =>
-        {
-            if (currentFile is not null)
-                vm.CurrentRestoreFile = System.IO.Path.GetFileName(currentFile);
-            vm.RestoreProgressPercent = total > 0 ? (int)(100.0 * processed / total) : 0;
-            vm.RestoreProgressText    = $"{processed:N0} / {total:N0} files ({Helpers.BytesToString(bytes)})";
-        });
-    }
-
-    // ── Backup progress ───────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Updates the backup progress indicators on the bound <see cref="MainViewModel"/>.
-    /// Safe to call from any thread — marshals to the UI dispatcher internally.
-    /// No-op in callback-mode construction (no ViewModel reference).
-    /// </summary>
-    /// <param name="processed">Files processed so far.</param>
-    /// <param name="total">Total files expected.</param>
-    /// <param name="bytes">Bytes processed so far.</param>
-    /// <param name="currentFile">Current file name, or <see langword="null"/> to leave unchanged.</param>
-    public void UpdateBackupProgress(int processed, int total, long bytes, string? currentFile)
-    {
-        var vm = _viewModel;
-        if (vm is null) return;
-
-        _dispatcher.Invoke(() =>
-        {
-            if (currentFile is not null)
-                vm.CurrentBackupFile = System.IO.Path.GetFileName(currentFile);
-            vm.BackupProgressPercent = total > 0 ? (int)(100.0 * processed / total) : 0;
-            vm.BackupProgressText    = $"{processed:N0} / {total:N0} files ({Helpers.BytesToString(bytes)})";
-        });
-    }
 
     // ── ITapeServiceHost — Backup prompts ─────────────────────────────────────
 
@@ -428,8 +372,10 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, Action<LogEntry> logCa
                     };
                 }
 
-                // IoSpeed: read from ViewModel when available, otherwise Unlimited
-                IoSpeedOption? ioSpeed = _viewModel?.SelectedIoSpeed;
+
+
+                // IoSpeed: read from ViewModel
+                IoSpeedOption? ioSpeed = _viewModel.SelectedIoSpeed;
 
                 var vm = new OpenVirtualDriveViewModel(
                     request =>
@@ -503,4 +449,16 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, Action<LogEntry> logCa
         });
         return chosenPath;
     }
+
+    // ── ITapeServiceHost — Structured rename prompts ──────────────────────────
+
+    /// <inheritdoc/>
+    public string? OnAskMediaName(string currentName)
+        => Ask("Rename Media", "Enter a new description for the media:", currentName);
+
+    /// <inheritdoc/>
+    public string? OnAskBackupSetName(int setIndex, int altIndex, string currentDescription)
+        => Ask("Rename Backup Set",
+               $"Enter a new description for backup set #{setIndex} | {altIndex}:",
+               currentDescription);
 }

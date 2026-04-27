@@ -89,6 +89,8 @@ public abstract class TapeDriveBackend : ErrorManageableBase, IDisposable
     public abstract bool HasMedia { get; }
     public abstract string DeviceName { get; }
     public abstract uint DriveNumber { get; }
+    public abstract string Vendor { get; }
+    public abstract string Product { get; }
 
     #endregion
 

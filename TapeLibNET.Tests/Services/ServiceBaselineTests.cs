@@ -4,9 +4,9 @@ using TapeLibNET;
 using TapeLibNET.Services;
 using TapeLibNET.Tests.Helpers; // TempFileTree, FileComparer
 
-using TapeConNET.Tests.Helpers; // TempVirtualMedia
+using TapeLibNET.Tests.Helpers; // TempVirtualMedia
 
-namespace TapeConNET.Tests.Services;
+namespace TapeLibNET.Tests.Services;
 
 /// <summary>
 /// Single-volume baseline tests: round-trip bytes, append sets, mid-run abort,

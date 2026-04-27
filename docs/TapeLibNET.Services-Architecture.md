@@ -1,43 +1,60 @@
-# TapeLibNET.Services — Architecture & Migration Plan
+# TapeLibNET.Services — Architecture Reference
 
-Status: **Design agreed, not yet implemented.**
+Status: **Implemented and in production.**
 Owner: avk1im
 Last updated: 2025
 
 ---
 
-## 1. Goal
+## 1. Overview
 
-Consolidate the parallel `TapeService` implementations in **TapeWinNET** and **TapeConNET**
-into a single shared engine inside **TapeLibNET**, eliminating ~1,000 lines of duplicated
-state-machine code, ending bug-parity drift, and unlocking automated round-trip testing of
-the backup/restore state machines.
+`TapeLibNET.Services` is the shared backup/restore engine that sits on top of TapeLibNET's
+agent layer. It consolidates what were parallel `TapeService` implementations in
+**TapeWinNET** and **TapeConNET** into a single engine, eliminating ~1,000 lines of
+duplicated state-machine code and enabling automated round-trip testing.
 
-The shared engine lives in a new namespace **`TapeLibNET.Services`** sitting on top of the
-existing agent layer. The two apps reduce to:
+Each app contributes:
 
-- a thin **host adapter** (~30–60 lines) translating UI conventions to a neutral interface,
-- a thin **service subclass** (CLI: ~30 lines; WPF: ~150 lines for the XAML binding façade).
+- a thin **host adapter** translating UI conventions to a neutral callback interface, and
+- a thin **service subclass** that adds app-specific overrides and formatting hooks.
 
-## 2. Namespace and placement
+The engine lives in **`TapeLibNET.Services`** (`TapeLibNET/Services/`). The rest of
+TapeLibNET (agents, drives, TOC, streams) does not depend on `Services`.
 
-- **New namespace:** `TapeLibNET.Services` (folder `TapeLibNET/Services/`).
-- **No other namespace moves.** Agents, drives, TOC, streams remain in the root namespace.
-  Rationale: agents are a coordination convenience over drive/TOC/navigator/streams, not
-  an isolating layer (the caller still manages drive lifecycle and co-manages the TOC).
-  The service is the first true isolating layer and earns its own namespace.
-- `Services` depends on the rest of TapeLibNET; the rest does **not** depend on `Services`.
+---
+
+## 2. Namespace and file layout
+
+```
+TapeLibNET/Services/
+  ITapeServiceHost.cs                 — callback interface (203 lines)
+  ServiceReportLevel.cs               — logging severity enum (23 lines)
+  ServiceOperationRequest.cs          — request record hierarchy (76 lines)
+  ServiceOperationResult.cs           — result record hierarchy (152 lines)
+  ServiceOperationProgressHandler.cs  — ITapeFileNotifiable bridge (313 lines)
+  TapeServiceBase.cs                  — shared engine core (1235 lines)
+  TapeServiceBase.Backup.cs           — ExecuteBackupAsync partial (582 lines)
+  TapeServiceBase.Restore.cs          — ExecuteRestoreAsync partial (363 lines)
+  TapeServiceBase.List.cs             — ListContentsAsync partial (249 lines)
+  VirtualDriveProber.cs               — static probe helper (160 lines)
+  VirtualDriveProbeResult.cs          — probe result record (15 lines)
+  VirtualMediaDescriptor.cs           — virtual media descriptor record (11 lines)
+  RestoreMode.cs                      — restore/validate/verify enum (43 lines)
+```
+
+---
 
 ## 3. Public surface
 
 ### 3.1 Enums
 
 - **`ServiceReportLevel`** — `None`, `Info`, `Completed`, `Warning`, `Failed`, `Error`.
-  Replaces the apps' `WarningLevel`. Name uses "Report" (not "Warning") because `Info` and
-  `Completed` are not warnings.
+  WPF aliases this as `WarningLevel` via `global using` in `TapeWinNET/Models/WarningLevel.cs`
+  so existing XAML bindings and `DataTrigger` values continue to work unchanged.
+
 - **`ServiceStateChange`** — coarse hint flags: `DriveOpened`, `DriveClosed`,
   `MediaLoaded`, `MediaEjected`, `TocChanged`, `OperationStarted`, `OperationEnded`.
-  Used only to wake the WPF property façade.
+  Fired by `TapeServiceBase` to wake the WPF property façade.
 
 ### 3.2 Records — request / result hierarchy
 
@@ -47,192 +64,199 @@ Pure data, no behavior.
 ServiceOperationRequest (abstract)
     CancellationToken Cancellation
     string? OperationLabel
-├── BackupRequest        // was BackupOptions
-├── RestoreRequest       // was RestoreOptions   (carries RestoreMode)
-└── ListRequest          // was ListOptions
+├── BackupRequest
+├── RestoreRequest       (carries RestoreMode: Restore | Validate | Verify)
+└── ListRequest
 
-ServiceOperationResult  (abstract)
-  bool Success, ServiceReportLevel Outcome, string? Message,
-  Exception? Error, TimeSpan Duration, long BytesProcessed, int FilesProcessed
+ServiceOperationResult (abstract)
+    bool Success, ServiceReportLevel Outcome, string? Message,
+    Exception? Error, TimeSpan Duration, long BytesProcessed, int FilesProcessed
 
-  └── FileOperationResult  (abstract — for file-by-file operations)
-        int FilesTotal, FilesSucceeded, FilesFailed, FilesSkipped
-        bool WasAborted, HasFailed
-        virtual bool IsFullSuccess
+    └── FileOperationResult (abstract)
+          int FilesTotal, FilesSucceeded, FilesFailed, FilesSkipped
+          bool WasAborted, HasFailed
+          virtual bool IsFullSuccess
 
-        ├── BackupResult    (sealed — no extra fields; clean extensibility point)
-        └── RestoreResult   (sealed — adds FilesMissing, overrides IsFullSuccess, ProcessedFiles dict)
+          ├── BackupResult   (sealed)
+          └── RestoreResult  (sealed — adds FilesMissing, overrides IsFullSuccess,
+                               ProcessedFiles dictionary)
 
-  └── ListResult  (sealed — adds SetsListed, TotalFiles, TotalBytes)
-        static ListResult.Failed(...)  — factory for error paths
-        static ListResult.Ok(...)      — factory for success path
+    └── ListResult (sealed — adds SetsListed, TotalFiles, TotalBytes;
+                    static Ok/Failed factories)
 
-VirtualMediaDescriptor
-VirtualDriveProbeResult
+VirtualMediaDescriptor   — (contentPath, contentCapacity, initiatorPath?, initiatorCapacity)
+VirtualDriveProbeResult  — result of VirtualDriveProber.ProbeAsync
 ```
 
 ### 3.3 `ITapeServiceHost` — the callback interface
 
-Pure abstraction; no WPF/Spectre/console types. Analogous to `ITapeFileNotifiable`
-but at the operation level.
+Pure abstraction; no WPF/Spectre/console types.
 
 ```csharp
 public interface ITapeServiceHost
 {
-    // logging — single channel, severity-tagged
+    // Logging — single channel, severity-tagged
     void Report(ServiceReportLevel level, string message, bool isSubEntry = false);
 
-    // prompts — return safe defaults under non-interactive hosts
+    // Prompts — return safe defaults under non-interactive hosts
     bool    Confirm(string question, bool defaultAnswer = false);
-    int     Select (string question, IReadOnlyList<string> choices, int defaultIndex = 0); // -1 = cancelled
-    string? Ask    (string question, string? defaultValue = null);                          // null = cancelled
+    int     Select (string topic, string question, IReadOnlyList<string> choices, int defaultIndex = 0);
+    string? Ask    (string topic, string question, string? defaultValue = null);
 
-    // typed convenience over Select (default interface implementation)
-    TEnum SelectAction<TEnum>(string question,
-                              IReadOnlyList<(TEnum value, string label)> choices,
-                              TEnum defaultValue) where TEnum : struct, Enum;
-
-    // coarse state notification — WPF translates to PropertyChanged batches
+    // Coarse state notification
     void OnServiceStateChanged(ServiceStateChange change);
+
+    // Structured operation prompts
+    bool              OnVolumeContinueConfirm(int volumeNeeded, RestoreMode mode);
+    bool              OnInsertMediaConfirm(int volumeNeeded, RestoreMode mode);
+    bool              OnMediaLoadRetryConfirm(string errorMessage, bool isRetry);
+    FileFailedAction  OnFileErrorSelect(string filePath, string errorMessage, string operationName);
+    bool              OnVolumeFullConfirm(int currentVolume, int nextVolume,
+                          int filesProcessed, int totalFiles, long bytesBackedup);
+    bool              OnInsertNewMediaConfirm(int nextVolume);
+    string?           OnEmergencyTocExportConfirm(string suggestedPath, bool isRetry);
+    string?           OnAskMediaName(string currentName);
+    string?           OnAskBackupSetName(int setIndex, int altIndex, string currentDescription);
 }
 ```
 
 Design notes:
 
-- **Typed returns** (`bool`, `int`, `string?`) — never stringly-typed semantics.
-- **Default interface implementation** of `SelectAction<TEnum>` forwards to `Select(...)`,
-  so adapters only implement the three primitive prompts.
-- **No `BeginProgress`.** Progress flows through the existing `ITapeFileNotifiable`
-  channel (see §3.5).
+- **Typed returns** (`bool`, `int`, `string?`) — no stringly-typed semantics.
+- **`topic`** on `Ask`/`Select` becomes the window/dialog title in WPF and a `[topic]`
+  prefix in the console; it is ignored by non-interactive hosts.
+- **No `BeginProgress`.** Progress flows through the existing `ITapeFileNotifiable` channel
+  (see §3.5).
 - A host may throw `OperationCanceledException` from any prompt to signal cancellation;
   the service translates this onto the standard cancellation path.
 
 ### 3.4 `TapeServiceBase` — the shared engine
 
-Non-abstract; partial-friendly so the file-per-operation layout used today can be kept.
+Non-abstract; split across four partial files (core + Backup + Restore + List).
 
 Owns:
 
-- `_drive`, `_agent`, `_toc`, `SemaphoreSlim _operationLock`, `ILogger _logger`, `ITapeServiceHost _host`.
-- **Lifecycle:** `OpenDriveAsync`, `LoadMediaAsync`, `RestoreTOCAsync`, `FormatMediaAsync`,
-  `EjectMediaAsync`, `ImportTOCFromFileAsync`, `ExportTOCToFileAsync`,
-  `OpenVirtualDriveAsync`, `CloseAsync`.
+- `_drive`, `_agent`, `_toc`, `SemaphoreSlim _operationLock(1,1)`, `ILogger _logger`,
+  `ITapeServiceHost _host`.
+- **Lifecycle:** `OpenDriveAsync`, `LoadMediaAsync`, `EjectMediaAsync`,
+  `OpenVirtualDriveAsync`, `InsertVirtualMedia`, `CloseAsync`,
+  `RestoreTOCAsync`, `ImportTOCFromFileAsync`, `ExportTOCToFileAsync`, `FormatMediaAsync`.
 - **Operations:** `ExecuteBackupAsync(BackupRequest)`,
-  `ExecuteRestoreAsync(RestoreRequest)`, `ListContentsAsync(ListRequest)`.
-- **Read-only state:** `IsDriveOpen`, `IsMediaLoaded`, `Capacity`, `CurrentTapeLabel`, …
-  — plain getters, **no** `INotifyPropertyChanged`.
-- **Protected virtual hooks** for app-specific formatting
-  (`GetDriveInformation`, `LogMediaInfo`, …).
+  `ExecuteRestoreAsync(RestoreRequest)`, `ListContentsAsync(ListRequest)`,
+  `RenameMediaAsync(string?)`, `RenameBackupSetAsync(int, string?)`,
+  `DeleteBackupSetsAsync(IReadOnlyList<int>)`.
+- **Read-only state:** `IsDriveOpen`, `IsMediaLoaded`, `IsVirtualDrive`, `TOC`, `Agent`,
+  `Capacity`, `CurrentTapeLabel`, `LastError`, `MinimumBlockSize`, … — plain getters,
+  no `INotifyPropertyChanged`.
+- **Protected virtual hooks** for app-specific formatting and cancellation:
+  `OperationCancellationToken`, `CreatePatternFilter`, `GetDriveInformation`,
+  `LogMediaInfo`, `FormatLabel`.
+- Every public `Task<…>` method fires `OperationStarted` before acquiring the semaphore
+  and `OperationEnded` in the `finally` block after releasing it.
 
 ### 3.5 `VirtualDriveProber` — static helper
 
-`static Task<VirtualDriveProbeResult> ProbeAsync(string path, string? hint, CancellationToken ct)`
+```csharp
+static Task<VirtualDriveProbeResult> ProbeAsync(string path, string? hint, CancellationToken ct)
+```
 
-No host, no lock, no agent. Pure I/O + parsing. Lives in `Services` because it is part of
-the service-layer surface, but it is decoupled from `TapeServiceBase` because it has no
-agent and uses a different cancellation mechanism (`CancellationToken` directly).
+No host, no lock, no agent. Pure I/O + parsing. Decoupled from `TapeServiceBase`; used
+by both apps to inspect a virtual media file before opening a drive.
 
 ### 3.6 `ServiceOperationProgressHandler` — `ITapeFileNotifiable` bridge
 
-Single class that bridges agent-level callbacks to the host:
+Bridges agent-level `ITapeFileNotifiable` callbacks to the host:
 
 - Constructor: `(ITapeServiceHost host, ServiceReportLevel defaultSubLevel, /* op context */)`.
-- Forwards file/batch callbacks → `host.Report(...)` with the right `isSubEntry` flag.
-- Translates host-side abort (cancellation surfacing) into `TapeAbortRequestedException`
-  thrown back into the agent — preserving the existing internal contract.
-- Subclasses `ServiceBackupProgressHandler`, `ServiceRestoreProgressHandler`, `ServiceTOCLoadProgressHandler`
-  add operation-specific fields (if needed for `ServiceTOCLoadProgressHandler`, or use base class as-is).
+- Forwards file/batch callbacks → `host.Report(...)` with the correct `isSubEntry` flag.
+- Translates host-side abort (cancellation surfacing) into the existing
+  `TapeAbortRequestedException` thrown back into the agent.
+- Concrete subclasses: `ServiceBackupProgressHandler`, `ServiceRestoreProgressHandler`,
+  `ServiceTOCLoadProgressHandler`.
+
+---
 
 ## 4. Key design decisions
 
 | Concern | Decision |
-|---|---|
-| **Threading** | One `SemaphoreSlim(1,1)` per service instance. `WaitAsync` at operation entry, `Release` in `finally`. Host callbacks run on the worker thread that holds the semaphore; the WPF host marshals to the UI thread internally and returns. **Hard rule:** the host's callback must not synchronously re-enter the service from the UI thread (would deadlock). This mirrors today's working WPF behavior. |
-| **Cancellation** | `CancellationToken` accepted at every long operation via the request record. Service registers a callback that sets the agent's abort flag; the existing `TapeAbortRequestedException` + agent flag remain the *internal* mechanism. `VirtualDriveProber` is the only place that takes `CT` directly (no agent). No third mechanism is introduced — only a third *entry point* funnelling into the existing two. |
-| **Error reporting** | Via `ServiceOperationResult` (`Success`, `Outcome`, `Message`, `Error`). Service methods **do not throw** for user-recoverable conditions; they log via host and return a result. They **do throw** for programmer errors (null args, invalid state) and rethrow genuinely unexpected exceptions after logging. |
-| **Logging** | Single channel: `ITapeServiceHost.Report(ServiceReportLevel, string, isSubEntry)`. Apps map `ServiceReportLevel` to their UI on their side (WPF `WarningLevel`, Spectre colour, etc.). |
-| **Progress** | Reuse `ITapeFileNotifiable`. Service-level handler is the bridge. No new progress abstraction. |
+|---------|----------|
+| **Threading** | One `SemaphoreSlim(1,1)` per service instance. `WaitAsync` at operation entry; `Release` in `finally`. Host callbacks run on the worker thread that holds the semaphore; WPF host marshals to the UI thread internally and returns synchronously. **Hard rule:** the host's callback must not re-enter the service from the UI thread (would deadlock). |
+| **Cancellation** | `CancellationToken` accepted at every long operation via the request record. The service registers a callback that sets the agent's abort flag; the existing `TapeAbortRequestedException` + agent flag remain the *internal* mechanism. `VirtualDriveProber` is the only place that takes a `CancellationToken` directly (no agent). |
+| **Error reporting** | Via `ServiceOperationResult` (`Success`, `Outcome`, `Message`, `Error`). Service methods do not throw for user-recoverable conditions; they log via the host and return a result. They do throw for programmer errors (null args, invalid state) and rethrow genuinely unexpected exceptions after logging. |
+| **Logging** | Single channel: `ITapeServiceHost.Report(ServiceReportLevel, string, isSubEntry)`. Apps map `ServiceReportLevel` to their UI on their side (WPF `WarningLevel` alias, Spectre colour, etc.). |
+| **Progress** | Reuses `ITapeFileNotifiable`. `ServiceOperationProgressHandler` is the bridge. No new progress abstraction. |
 | **State signalling** | Coarse `OnServiceStateChanged(ServiceStateChange)` on the host. WPF subclass switches on the value and fires `PropertyChanged` (UI-thread, batched) for the affected property cluster. CLI host implements it as a no-op. |
+| **`OperationStarted`/`OperationEnded`** | Fired by every public `Task<…>` method: `Started` before the lock is acquired (so WPF can disable the UI immediately), `Ended` in `finally` after the lock is released. |
 
-## 5. App-side adapters (target sizes)
+---
 
-- **`TapeConNET.ConsoleUxServiceHost(IConsoleUx)`** — direct pass-through. ~30 lines.
-- **`TapeWinNET.WpfServiceHost(Dispatcher, MainViewModel)`** — marshals each method to
-  the UI thread; `Report` raises the existing `LogMessageReceived`;
-  `OnServiceStateChanged` calls `OnPropertyChanged` for the affected names. ~60 lines.
-- **`TapeConNET.TapeService : TapeServiceBase`** — ctor wires the console adapter. ~30 lines.
-- **`TapeWinNET.TapeService : TapeServiceBase, INotifyPropertyChanged`** — holds the
-  bindable property façade only; almost all the body is `OnPropertyChanged` plumbing for
-  XAML. ~150 lines.
+## 5. App-side adapters (actual sizes)
 
-## 6. Testing strategy
+| Class | Location | Lines | Role |
+|-------|----------|-------|------|
+| `ConsoleUxServiceHost` | `TapeConNET/Ux/` | 143 | Routes all callbacks through `IConsoleUx`; `OnServiceStateChanged` is a no-op. |
+| `WpfServiceHost` | `TapeWinNET/Services/` | 464 | Marshals every method to the UI thread via `Dispatcher.Invoke`; `Report` feeds `MainViewModel.AddLog`; `OnServiceStateChanged` calls `MainViewModel.OnServiceStateChanged`. |
+| `TapeConNET.TapeService` | `TapeConNET/Services/` | 47 | Wires `ConsoleUxServiceHost`; exposes `OperationCancellationToken` and `CreatePatternFilter` overrides. |
+| `TapeWinNET.TapeService` | `TapeWinNET/Services/` | 129 | Adds `INotifyPropertyChanged`; holds the bindable property façade; nearly all body is `PropertyChanged` plumbing for XAML bindings. |
 
-- **New project:** `TapeLibNET.Services.Tests` (xUnit).
-- **`TestTapeServiceHost`** — records every `Report`, queues canned answers for
-  `Confirm`/`Select`/`Ask`, exposes a `CancellationTokenSource`.
-- **Round-trip tests** drive `TapeServiceBase` against the existing virtual tape drive:
-  format → backup → eject → reload → list → restore → diff. Coverage targets:
-  - single-volume happy path,
-  - multi-volume span (force a small capacity),
-  - mid-backup abort + emergency TOC,
-  - TOC-save retry,
-  - restore resume across volumes,
-  - overwrite prompt branches (yes / no / all).
-- Tests are added **during Phase C**, alongside each chunk of state machine being moved.
+`WpfServiceHost` holds a `ServiceRef` property (set by `TapeWinNET.TapeService` after
+construction) so prompt methods can call `InsertVirtualMedia` and query drive-capability
+properties without a circular type dependency.
 
-## 7. Phased implementation plan
+---
 
-Each phase ends with a green build in both apps and (from Phase B onward) green tests.
+## 6. Testing
 
-`✅` = done · `🟡` = in progress · `⬜` = pending
+Service-layer round-trip tests live in **`TapeLibNET.Tests`** (xUnit, alongside
+`TestTapeServiceHost` and the other library-level test infrastructure):
 
-### Phase A — Records and enum (low risk) [✅ DONE]
+```
+TapeLibNET.Tests/
+  Services/
+    ServiceTestBase.cs              — abstract base: factory helpers, rich content builder
+    ServiceBaselineTests.cs         — single-volume happy path, append sets, abort, validate
+    ServiceIncrementalTests.cs      — three-wave incremental chain, set-selection restore
+    ServiceMultiVolumeTests.cs      — volume-spanning backup and restore
+    ServiceSelectiveRestoreTests.cs — hand-picked TapeFileInfo subset restore
+  Helpers/
+    TestTapeServiceHost.cs          — records every Report; queues canned prompt answers
+    MultiVolumeTapeServiceHost.cs   — extends TestTapeServiceHost; drives volume-swap callbacks
+    TempVirtualMedia.cs             — owns temp on-disk virtual-tape files (IDisposable)
+    TempFileTree.cs                 — creates a disposable directory tree for testing
+    FileComparer.cs                 — byte-exact file comparison assertions
+    … (physical and remote fixtures for hardware integration tests)
+```
 
-1. Create `TapeLibNET/Services/` folder + namespace.
-2. Lift `WarningLevel` → `ServiceReportLevel` into `Services`. Keep WPF's `WarningLevel`
-   as a thin alias/mapper so existing XAML keeps working.
-3. Move/merge the record types: introduce `ServiceOperationRequest`/`ServiceOperationResult`
-   bases, derive `BackupRequest`/`BackupResult` and `RestoreRequest`/`RestoreResult`,
-   port `ListRequest`/`ListResult`, `VirtualMediaDescriptor`, `VirtualDriveProbeResult`.
-4. Update both apps with `using TapeLibNET.Services;`. Delete duplicate record files.
-5. Smoke-test backup + restore + list in WPF.
+`TapeConNET.Tests` links `TempFileTree`, `FileComparer`, and `TempVirtualMedia` from
+`TapeLibNET.Tests` via `<Compile><Link>` (no project reference, to avoid pulling in the
+gRPC/AspNetCore dependencies of the full physical-test rig). It retains CLI-layer tests:
+`CliParsingTests`, `FclFilterTests`, `LifecycleTests`, `BackupRestoreRoundTripTests`,
+`ListValidateVerifyTests`, `PhysicalSmokeTests`.
 
-### Phase B — Host interface + adapters (no logic moved yet) [✅ DONE]
+---
 
-1. Define `ITapeServiceHost`, `ServiceStateChange`.
-2. Implement `ConsoleUxServiceHost` (TapeConNET); route current `_ux` calls through it.
-3. Implement `WpfServiceHost` (TapeWinNET); route current log/dialog calls through it.
-4. Implement `ServiceOperationProgressHandler` in `TapeLibNET.Services`; both apps switch their
-   `GuiBackupProgressHandler` and `GuiRestoreProgressHandler` to derive from it (or replace).
-5. Stand up `TestTapeServiceHost` + first round-trip test against the existing app-side
-   `TapeService` via the host (sanity baseline).
+## 7. Change log
 
-### Phase C — Extract `TapeServiceBase` incrementally [✅ DONE]
+| Phase | What was done |
+|-------|---------------|
+| **A** | Created `TapeLibNET/Services/` namespace. Lifted `WarningLevel` → `ServiceReportLevel`. Moved/merged all request and result records (`BackupRequest/Result`, `RestoreRequest/Result`, `ListRequest/Result`, `VirtualMediaDescriptor`, `VirtualDriveProbeResult`). Updated both apps; deleted duplicate record files. |
+| **B** | Defined `ITapeServiceHost` and `ServiceStateChange`. Implemented `ConsoleUxServiceHost` and `WpfServiceHost`. Implemented `ServiceOperationProgressHandler`. Stood up `TestTapeServiceHost` with first round-trip test. |
+| **C** | Extracted `TapeServiceBase` incrementally (drive lifecycle → TOC ops → list → restore → backup → `VirtualDriveProber`). Moved all state-machine logic out of both `TapeService` subclasses into the shared engine. Both subclasses reduced to thin wrappers. |
+| **D-1** | Removed `WpfServiceHost` callback-mode scaffolding constructor. |
+| **D-2** | Removed `SelectAction<TEnum>` from `ITapeServiceHost` (zero call sites). |
+| **D-3** | Unified `WarningLevel` → `ServiceReportLevel` in WPF via `global using` alias; removed the separate enum body and the explicit ordinal cast. |
+| **D-4** | Added `topic` parameter to `Ask`/`Select`. Renamed `RenameDialog` → `AskDialog`. Added `SelectDialog`. Added `OnAskMediaName`/`OnAskBackupSetName` structured prompts. Wired `RenameMediaAsync`/`RenameBackupSetAsync` through the host. Implemented `rename-media`/`rename-set` CLI commands. |
+| **D-5** | Audited and completed `OperationStarted`/`OperationEnded` signals across all 10 public operation methods in `TapeServiceBase`. |
+| **D-6** | Moved service-layer round-trip tests from `TapeConNET.Tests.Services` → `TapeLibNET.Tests.Services`; moved `MultiVolumeTapeServiceHost` and `TempVirtualMedia` to `TapeLibNET.Tests.Helpers`; rewired `TapeConNET.Tests.csproj` links. |
+| **D-7** | Removed `Status()` no-op shim from `TapeConNET.TapeService`. Rewrote this document as an as-built reference. |
 
-After each step: green build + green tests in both apps + the test project.
+---
 
-1. Drive lifecycle: `OpenDriveAsync`, `LoadMediaAsync`, `EjectMediaAsync`,
-   `OpenVirtualDriveAsync`, `CloseAsync`. Introduce `SemaphoreSlim`.
-   Wire `OnServiceStateChanged`.
-2. `RestoreTOCAsync`, `ImportTOCFromFileAsync`, `ExportTOCToFileAsync`,
-   `FormatMediaAsync`.
-3. `ListContentsAsync` + list test.
-4. `ExecuteRestoreAsync` (state machine) + multi-volume + overwrite-prompt tests.
-5. `ExecuteBackupAsync` (state machine) + multi-volume + emergency-TOC +
-   TOC-save-retry tests.
-6. Move `ProbeVirtualDriveProberAsync` into a static helper class `VirtualDriveProber` under
-   `TapeLibNET.Services`; both apps call the helper.
+## 8. Open / deferred
 
-### Phase D — Cleanup
-
-1. Delete the now-empty app-side service partials.
-2. Optionally collapse the `WarningLevel` alias if `ServiceReportLevel` is canonical.
-3. Add coverage for any state-machine branch the round-trip suite missed.
-
-## 8. Deferred / open
-
-- Whether to also unify the formatting helpers (`Get*Information`, `Log*Info`).
-  Leave as `protected virtual` hooks; lift only the ones that converge in practice.
+- Whether to unify the formatting helpers (`GetDriveInformation`, `LogMediaInfo`, etc.).
+  Currently `protected virtual` hooks; lift only the ones that converge in practice.
 - Whether to eventually migrate the internal abort mechanism fully to `CancellationToken`
-  (separate, later refactor; out of scope here).
+  (separate, later refactor; out of scope).
+
 

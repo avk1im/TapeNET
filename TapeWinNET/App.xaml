@@ -4,6 +4,7 @@
              xmlns:local="clr-namespace:TapeWinNET"
              xmlns:converters="clr-namespace:TapeWinNET.Converters"
              xmlns:models="clr-namespace:TapeWinNET.Models"
+             xmlns:services="clr-namespace:TapeLibNET.Services;assembly=tapelib"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
         <ResourceDictionary>
@@ -58,27 +59,27 @@
                 <Setter Property="Background" Value="Transparent"/>
                 <Setter Property="BorderBrush" Value="Transparent"/>
                 <Style.Triggers>
-                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static models:WarningLevel.Error}">
+                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static services:ServiceReportLevel.Error}">
                         <Setter Property="Background" Value="{StaticResource WarningBg.Error}"/>
                         <Setter Property="BorderBrush" Value="{StaticResource WarningBr.Error}"/>
                         <Setter Property="Visibility" Value="Visible"/>
                     </DataTrigger>
-                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static models:WarningLevel.Warning}">
+                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static services:ServiceReportLevel.Warning}">
                         <Setter Property="Background" Value="{StaticResource WarningBg.Warning}"/>
                         <Setter Property="BorderBrush" Value="{StaticResource WarningBr.Warning}"/>
                         <Setter Property="Visibility" Value="Visible"/>
                     </DataTrigger>
-                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static models:WarningLevel.Failed}">
+                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static services:ServiceReportLevel.Failed}">
                         <Setter Property="Background" Value="{StaticResource WarningBg.Failed}"/>
                         <Setter Property="BorderBrush" Value="{StaticResource WarningBr.Failed}"/>
                         <Setter Property="Visibility" Value="Visible"/>
                     </DataTrigger>
-                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static models:WarningLevel.Info}">
+                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static services:ServiceReportLevel.Info}">
                         <Setter Property="Background" Value="{StaticResource WarningBg.Info}"/>
                         <Setter Property="BorderBrush" Value="{StaticResource WarningBr.Info}"/>
                         <Setter Property="Visibility" Value="Visible"/>
                     </DataTrigger>
-                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static models:WarningLevel.Completed}">
+                    <DataTrigger Binding="{Binding WarningLevel}" Value="{x:Static services:ServiceReportLevel.Completed}">
                         <Setter Property="Background" Value="{StaticResource WarningBg.Completed}"/>
                         <Setter Property="BorderBrush" Value="{StaticResource WarningBr.Completed}"/>
                         <Setter Property="Visibility" Value="Visible"/>
