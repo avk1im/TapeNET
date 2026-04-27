@@ -23,7 +23,9 @@ public enum FileFailedAction
     /// <summary>Retry the same file from the beginning.</summary>
     Retry,
     /// <summary>Abort the entire operation.</summary>
-    Abort
+    Abort,
+    /// <summary>Skip this file and all future failures without prompting.</summary>
+    SkipAll
 }
 
 /// <summary>

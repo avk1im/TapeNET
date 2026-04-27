@@ -1,3 +1,4 @@
+using TapeLibNET;
 using TapeLibNET.Services;
 
 namespace TapeConNET.Ux;
@@ -67,4 +68,65 @@ public sealed class ConsoleUxServiceHost(IConsoleUx ux) : ITapeServiceHost
     /// <inheritdoc/>
     /// <remarks>No-op for the console host — CLI state is implicit in the output stream.</remarks>
     public void OnServiceStateChanged(ServiceStateChange change) { }
+
+    // ── ITapeServiceHost — Structured operation prompts ───────────────────────
+
+    /// <inheritdoc/>
+    public bool OnVolumeContinueConfirm(int volumeNeeded, RestoreMode mode)
+        => ux.Confirm($"Continue {mode.ToVerb().ToLowerInvariant()} on Volume #{volumeNeeded}?", defaultAnswer: false);
+
+    /// <inheritdoc/>
+    public bool OnInsertMediaConfirm(int volumeNeeded, RestoreMode mode)
+        => ux.Confirm($"Insert media for volume #{volumeNeeded} and continue?", defaultAnswer: true);
+
+    /// <inheritdoc/>
+    public bool OnMediaLoadRetryConfirm(string errorMessage, bool isRetry)
+        => ux.Confirm("Retry loading media?", defaultAnswer: true);
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Translates to a four-choice <see cref="IConsoleUx.Select"/> prompt matching the
+    ///  legacy console behaviour (Skip / Retry / Skip all / Abort).
+    /// </remarks>
+    public FileFailedAction OnFileErrorSelect(string filePath, string errorMessage, string operationName)
+    {
+        // indices: 0=Skip, 1=Retry, 2=Skip all, 3=Abort  (mirrors legacy OnFileFailed logic)
+        int idx = Select(
+            $"File failed: '{filePath}'\nError: {errorMessage}\nChoose action",
+            ["Skip", "Retry", "Skip all", $"Abort {operationName}"],
+            defaultIndex: 0);
+
+        return idx switch
+        {
+            1 => FileFailedAction.Retry,
+            2 => FileFailedAction.SkipAll,
+            3 => FileFailedAction.Abort,
+            _ => FileFailedAction.Skip,
+        };
+    }
+
+    /// <inheritdoc/>
+    public bool OnVolumeFullConfirm(int currentVolume, int nextVolume,
+        int filesProcessed, int totalFiles, long bytesBackedup)
+        => ux.Confirm(
+            $"Volume #{currentVolume} is full. Continue backup on a new volume #{nextVolume}?",
+            defaultAnswer: false);
+
+    /// <inheritdoc/>
+    public bool OnInsertNewMediaConfirm(int nextVolume)
+        => ux.Confirm($"Insert blank media for volume #{nextVolume} and continue?", defaultAnswer: true);
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Uses <see cref="IConsoleUx.Ask"/> to prompt for a file path, matching the
+    ///  CLI behaviour in the pre-migration <c>TryEmergencyTocExport</c> helper.
+    /// </remarks>
+    public string? OnEmergencyTocExportConfirm(string suggestedPath, bool isRetry)
+    {
+        string question = isRetry
+            ? "Emergency TOC export failed — try a different path"
+            : "Emergency TOC export path";
+        string result = ux.Ask(question, defaultValue: suggestedPath);
+        return string.IsNullOrWhiteSpace(result) ? null : result;
+    }
 }

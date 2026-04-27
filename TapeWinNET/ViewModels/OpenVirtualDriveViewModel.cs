@@ -929,8 +929,8 @@ public class OpenVirtualDriveViewModel : ViewModelBase
                     ? BuildInitiatorFilePath(ContentFilePath)
                     : null;
 
-                // Use TapeService to probe the virtual drive
-                var result = await TapeService.ProbeVirtualDriveAsync(
+                // Probe the virtual drive via the shared library helper
+                var result = await VirtualDriveProber.ProbeAsync(
                     ContentFilePath,
                     initiatorPath,
                     token);

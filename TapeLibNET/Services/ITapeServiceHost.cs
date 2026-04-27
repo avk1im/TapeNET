@@ -105,6 +105,101 @@ public interface ITapeServiceHost
             : defaultValue;
     }
 
+    // ── Structured operation prompts ─────────────────────────────────────────
+
+    /// <summary>
+    /// Invoked during a multi-volume restore/validate/verify when the current volume is
+    ///  exhausted and the operation can continue on a different volume.
+    /// The host shows the appropriate media-change confirmation dialog and returns
+    ///  <see langword="true"/> to continue, <see langword="false"/> to end the operation.
+    /// </summary>
+    /// <param name="volumeNeeded">The volume number required to continue.</param>
+    /// <param name="mode">The restore operation mode — used to form the dialog title and button label.</param>
+    bool OnVolumeContinueConfirm(int volumeNeeded, RestoreMode mode);
+
+    /// <summary>
+    /// Invoked after the current volume has been ejected; the host prompts the user
+    ///  to insert the media for <paramref name="volumeNeeded"/>.
+    /// Returns <see langword="true"/> when the user confirms the media is ready,
+    ///  <see langword="false"/> to abort.
+    /// <para>
+    /// For virtual drives the WPF host additionally opens a file-picker so the user
+    ///  can select the media file; it then calls
+    ///  <see cref="TapeServiceBase.InsertVirtualMedia"/> via the injected delegate.
+    /// </para>
+    /// </summary>
+    /// <param name="volumeNeeded">The volume number to insert.</param>
+    /// <param name="mode">The restore operation mode — used to form the dialog button label.</param>
+    bool OnInsertMediaConfirm(int volumeNeeded, RestoreMode mode);
+
+    /// <summary>
+    /// Invoked when a <c>ReloadMedia / PrepareMedia</c> attempt fails after the
+    ///  user inserted a new volume. The host may offer to retry and returns
+    ///  <see langword="true"/> to try again, <see langword="false"/> to abort.
+    /// </summary>
+    /// <param name="errorMessage">OS error description from the drive.</param>
+    /// <param name="isRetry">
+    ///  <see langword="true"/> on the second (and later) failure — the host may
+    ///   show a shorter "try re-seating the media" message.
+    /// </param>
+    bool OnMediaLoadRetryConfirm(string errorMessage, bool isRetry);
+
+    /// <summary>
+    /// Invoked when a file-level error occurs during backup or restore.
+    /// The host shows the appropriate error dialog and returns the chosen action.
+    /// <para>
+    /// Returning <see cref="FileFailedAction.SkipAll"/> causes the progress handler
+    ///  to suppress all further file-error prompts for the current operation.
+    /// </para>
+    /// </summary>
+    /// <param name="filePath">Full path of the file that failed.</param>
+    /// <param name="errorMessage">Human-readable error description.</param>
+    /// <param name="operationName">Human-readable operation name ("Restore", "Backup", etc.).</param>
+    FileFailedAction OnFileErrorSelect(string filePath, string errorMessage, string operationName);
+
+    /// <summary>
+    /// Invoked during a multi-volume backup when the current volume is full and
+    ///  the backup can spill onto the next volume. The host shows a confirmation
+    ///  dialog with volume and progress statistics; returns <see langword="true"/>
+    ///  to continue on a new volume, <see langword="false"/> to end the backup.
+    /// </summary>
+    /// <param name="currentVolume">Volume number that just filled up.</param>
+    /// <param name="nextVolume">Volume number that will receive the continuation.</param>
+    /// <param name="filesProcessed">Files backed up so far (for the progress display).</param>
+    /// <param name="totalFiles">Total files in this backup run.</param>
+    /// <param name="bytesBackedup">Bytes written so far (for the progress display).</param>
+    bool OnVolumeFullConfirm(int currentVolume, int nextVolume,
+        int filesProcessed, int totalFiles, long bytesBackedup);
+
+    /// <summary>
+    /// Invoked after a backup volume has been ejected; the host prompts the user
+    ///  to insert <em>new</em> (blank) media for <paramref name="nextVolume"/>.
+    /// Returns <see langword="true"/> when the media is ready, <see langword="false"/>
+    ///  to abort.
+    /// <para>
+    /// For virtual drives the WPF host opens a file-creation dialog and calls
+    ///  <see cref="TapeServiceBase.InsertVirtualMedia"/> with
+    ///  <see cref="System.IO.FileMode.Create"/> via the injected delegate.
+    /// </para>
+    /// </summary>
+    /// <param name="nextVolume">Volume number for the new media.</param>
+    bool OnInsertNewMediaConfirm(int nextVolume);
+
+    /// <summary>
+    /// Invoked when both the primary and the enforced TOC-save to tape have failed.
+    /// The host may offer the user a chance to export the in-memory TOC to a file as
+    ///  a last-resort recovery mechanism; returns the chosen export path, or
+    ///  <see langword="null"/> if the user declined.
+    /// </summary>
+    /// <param name="suggestedPath">
+    ///  Fully-qualified path the host should pre-fill in the save dialog.
+    /// </param>
+    /// <param name="isRetry">
+    ///  <see langword="true"/> on the second attempt (a previous export path failed);
+    ///   the host may show a shorter "try a different location" message.
+    /// </param>
+    string? OnEmergencyTocExportConfirm(string suggestedPath, bool isRetry);
+
     // ── State notification ────────────────────────────────────────────────────
 
     /// <summary>

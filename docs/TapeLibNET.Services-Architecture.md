@@ -207,7 +207,7 @@ Each phase ends with a green build in both apps and (from Phase B onward) green 
 5. Stand up `TestTapeServiceHost` + first round-trip test against the existing app-side
    `TapeService` via the host (sanity baseline).
 
-### Phase C — Extract `TapeServiceBase` incrementally [🟡 IN PROGRESS >> 4.]
+### Phase C — Extract `TapeServiceBase` incrementally [✅ DONE]
 
 After each step: green build + green tests in both apps + the test project.
 
@@ -220,7 +220,8 @@ After each step: green build + green tests in both apps + the test project.
 4. `ExecuteRestoreAsync` (state machine) + multi-volume + overwrite-prompt tests.
 5. `ExecuteBackupAsync` (state machine) + multi-volume + emergency-TOC +
    TOC-save-retry tests.
-6. Move `VirtualDriveProber.ProbeAsync` into `Services`; both apps call the helper.
+6. Move `ProbeVirtualDriveProberAsync` into a static helper class `VirtualDriveProber` under
+   `TapeLibNET.Services`; both apps call the helper.
 
 ### Phase D — Cleanup
 

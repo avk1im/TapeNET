@@ -1,161 +1,23 @@
 using System.IO;
 
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
-
 using TapeLibNET;
 using TapeLibNET.Services;
-using TapeLibNET.Virtual;
-using TapeLibNET.Tests.Helpers; // TempFileTree, FileComparer, TestTapeServiceHost
+using TapeLibNET.Tests.Helpers; // TempFileTree, FileComparer
 
-using TapeConNET.Services;
 using TapeConNET.Tests.Helpers; // TempVirtualMedia
-using TapeConNET.Ux;
 
 namespace TapeConNET.Tests.Services;
 
 /// <summary>
-/// Sanity-baseline round-trip tests for <see cref="TapeService"/> driven
-///  directly (not via the CLI) against a file-backed virtual drive.
-/// <para>
-/// This is Phase B, step 5: verifying that the service-layer plumbing —
-///  progress handlers, <see cref="ITapeServiceHost"/> callbacks, lifecycle
-///  methods — works end-to-end before any logic is extracted into
-///  <c>TapeServiceBase</c> (Phase C).
-/// </para>
-/// <para>
-/// <see cref="TestTapeServiceHost"/> is not yet wired into <see cref="TapeService"/>
-///  (which still takes an <see cref="IConsoleUx"/>); instead, the
-///  <see cref="SilentConsoleUx"/> captures all log output, which is the
-///  same data that will flow through <see cref="TestTapeServiceHost.Report"/>
-///  once Phase C centralises the log channel into <c>TapeServiceBase</c>.
-/// </para>
+/// Single-volume baseline tests: round-trip bytes, append sets, mid-run abort,
+///  and CRC validation.  Covers plan items I-1, E-1, and E-2.
 /// </summary>
-public class ServiceRoundTripTests
+public class ServiceBaselineTests : ServiceTestBase
 {
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    /// <summary>Default content capacity: 64 MiB — enough for the test file trees.</summary>
-    private const long ContentCapacity = 64L * 1024 * 1024;
-
-    /// <summary>Default initiator partition capacity: 4 MiB.</summary>
-    private const long InitiatorCapacity = 4L * 1024 * 1024;
-
-    private const string MediaName = "ServiceRoundTripMedia";
-
-    /// <summary>
-    /// Default block size used when the virtual drive reports 0 (memory-backed
-    ///  drives have no hardware preference). Matches the value used by
-    ///  <c>BackupCommand</c> as its own fallback.
-    /// </summary>
-    private const uint FallbackBlockSize = 64 * 1024;
-
-    // ── Factory helpers ───────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Creates a <see cref="TapeService"/> wired to a <see cref="SilentConsoleUx"/>
-    ///  that captures every log entry for post-hoc assertions.
-    /// </summary>
-    private static (TapeService service, SilentConsoleUx ux) CreateService(
-        CancellationToken ct = default)
-    {
-        var ux = new SilentConsoleUx();
-        var service = new TapeService(ux, NullLoggerFactory.Instance, ct);
-        return (service, ux);
-    }
-
-    /// <summary>
-    /// Opens a file-backed virtual drive, formats it, and leaves the service
-    ///  in the post-format state (media loaded, TOC available).
-    /// </summary>
-    private static async Task<(TapeService service, SilentConsoleUx ux)> OpenAndFormatAsync(
-        TempVirtualMedia media,
-        CancellationToken ct = default)
-    {
-        var (service, ux) = CreateService(ct);
-
-        var caps = media.HasInitiator
-            ? VirtualTapeDriveCapabilities.WithPartitions
-            : VirtualTapeDriveCapabilities.WithSetmarks;
-
-        var vmd = new VirtualMediaDescriptor(
-            media.ContentPath,
-            media.ContentCapacity,
-            media.InitiatorPath,
-            media.HasInitiator ? media.InitiatorCapacity : 0);
-
-        Assert.True(await service.OpenVirtualDriveAsync(caps, vmd, FileMode.Create),
-            $"OpenVirtualDriveAsync failed: {service.LastError}");
-        Assert.True(await service.LoadMediaAsync(),
-            $"LoadMediaAsync (post-create) failed: {service.LastError}");
-
-        long initSize = media.HasInitiator ? TapeNavigator.DefaultTOCCapacity : -1L;
-        Assert.True(await service.FormatMediaAsync(initSize, MediaName),
-            $"FormatMediaAsync failed: {service.LastError}");
-
-        return (service, ux);
-    }
-
-    /// <summary>
-    /// Re-opens the same virtual media files for reading (e.g. post-backup).
-    ///  Loads media and restores the TOC.
-    /// </summary>
-    private static async Task<(TapeService service, SilentConsoleUx ux)> ReopenAsync(
-        TempVirtualMedia media,
-        CancellationToken ct = default)
-    {
-        var (service, ux) = CreateService(ct);
-
-        var caps = media.HasInitiator
-            ? VirtualTapeDriveCapabilities.WithPartitions
-            : VirtualTapeDriveCapabilities.WithSetmarks;
-
-        var vmd = new VirtualMediaDescriptor(
-            media.ContentPath,
-            media.ContentCapacity,
-            media.InitiatorPath,
-            media.HasInitiator ? media.InitiatorCapacity : 0);
-
-        Assert.True(await service.OpenVirtualDriveAsync(caps, vmd, FileMode.Open),
-            $"OpenVirtualDriveAsync (reopen) failed: {service.LastError}");
-        Assert.True(await service.LoadMediaAsync(),
-            $"LoadMediaAsync (reopen) failed: {service.LastError}");
-        Assert.True(await service.RestoreTOCAsync(),
-            $"RestoreTOCAsync failed: {service.LastError}");
-
-        return (service, ux);
-    }
-
-    /// <summary>
-    /// Builds a minimal <see cref="BackupRequest"/> for a file-pattern backup.
-    /// </summary>
-    private BackupRequest MakeBackupRequest(
-        TapeService service,
-        string sourceRoot,
-        string description,
-        bool subdirs = true,
-        bool append = false)
-    {
-        uint blockSize = service.DefaultBlockSize > 0 ? service.DefaultBlockSize : FallbackBlockSize;
-        return new BackupRequest(
-            FileList:              [sourceRoot],
-            ListContainsPatterns:  true,
-            Description:           description,
-            IncludeSubdirectories: subdirs,
-            Incremental:           false,
-            BlockSize:             blockSize,
-            HashAlgorithm:         TapeHashAlgorithm.Crc32,
-            AppendMode:            append,
-            AppendAfterSetIndex:   0,
-            UseFilemarks:          false,
-            SkipAllErrors:         false);
-    }
-
-    // ── Tests ─────────────────────────────────────────────────────────────────
-
     /// <summary>
     /// Single-volume backup → restore round-trip; verifies every byte is
-    ///  recovered intact. Parameterised over both drive profiles
+    ///  recovered intact and that the exact file count is round-tripped.
+    ///  Parameterised over both drive profiles
     ///  (single-partition and with initiator partition).
     /// </summary>
     [Theory]
@@ -165,11 +27,10 @@ public class ServiceRoundTripTests
     {
         using var media = new TempVirtualMedia(withInitiator, ContentCapacity, InitiatorCapacity);
         using var src   = new TempFileTree();
-        src.AddFiles("docs",         count: 8, minSize: 1_024,  maxSize: 16 * 1_024);
-        src.AddFile ("nested/deep/file.bin",   65_537);
+        AddRichContent(src);
 
         // ── Backup ────────────────────────────────────────────────────────────
-        var (backupSvc, backupUx) = await OpenAndFormatAsync(media);
+        var (backupSvc, backupHost) = await OpenAndFormatAsync(media);
         using (backupSvc)
         {
             var req    = MakeBackupRequest(backupSvc, src.RootPath, "RoundTrip-Set-1");
@@ -179,17 +40,17 @@ public class ServiceRoundTripTests
             Assert.False(result.HasFailed,    "Backup reported failure");
             Assert.True (result.Success,      "Backup did not succeed");
             Assert.Equal(0, result.FilesFailed);
-            Assert.True (result.FilesSucceeded > 0, "No files were backed up");
-            Assert.False(backupUx.Entries.Any(e =>
-                e.Level is WarningLevel.Error or WarningLevel.Failed),
-                "Backup log contains unexpected errors");
+            Assert.Equal(RichContentFileCount, result.FilesSucceeded);
+            Assert.False(backupHost.HasErrors, "Backup host received unexpected error reports");
+            Assert.True (backupHost.StateChanges.Contains(ServiceStateChange.OperationEnded),
+                "Backup did not emit OperationEnded state change");
         }
 
         // ── Restore ───────────────────────────────────────────────────────────
         var restoreRoot = Path.Combine(media.Root, "restore");
         Directory.CreateDirectory(restoreRoot);
 
-        var (restoreSvc, restoreUx) = await ReopenAsync(media);
+        var (restoreSvc, restoreHost) = await ReopenAsync(media);
         using (restoreSvc)
         {
             Assert.NotNull(restoreSvc.TOC);
@@ -212,9 +73,10 @@ public class ServiceRoundTripTests
             Assert.False(result.HasFailed,    "Restore reported failure");
             Assert.True (result.Success,      "Restore did not succeed");
             Assert.Equal(0, result.FilesFailed);
-            Assert.False(restoreUx.Entries.Any(e =>
-                e.Level is WarningLevel.Error or WarningLevel.Failed),
-                "Restore log contains unexpected errors");
+            Assert.Equal(RichContentFileCount, result.FilesSucceeded);
+            Assert.False(restoreHost.HasErrors, "Restore host received unexpected error reports");
+            Assert.True (restoreHost.StateChanges.Contains(ServiceStateChange.OperationEnded),
+                "Restore did not emit OperationEnded state change");
         }
 
         // ── Byte-level comparison ─────────────────────────────────────────────
@@ -238,23 +100,25 @@ public class ServiceRoundTripTests
         src2.AddFiles("set2", count: 4, minSize: 512, maxSize: 4_096);
 
         // ── Backup set 1 (new) ────────────────────────────────────────────────
-        var (svc1, _) = await OpenAndFormatAsync(media);
+        var (svc1, host1) = await OpenAndFormatAsync(media);
         using (svc1)
         {
             var result = await svc1.ExecuteBackupAsync(
                 MakeBackupRequest(svc1, src1.RootPath, "Set-1"));
             Assert.True(result.Success, "Backup of Set-1 failed");
             Assert.Equal(0, result.FilesFailed);
+            Assert.False(host1.HasErrors, "Set-1 backup host received unexpected errors");
         }
 
         // ── Backup set 2 (append) ─────────────────────────────────────────────
-        var (svc2, _) = await ReopenAsync(media);
+        var (svc2, host2) = await ReopenAsync(media);
         using (svc2)
         {
             var result = await svc2.ExecuteBackupAsync(
                 MakeBackupRequest(svc2, src2.RootPath, "Set-2", append: true));
             Assert.True(result.Success, "Backup of Set-2 failed");
             Assert.Equal(0, result.FilesFailed);
+            Assert.False(host2.HasErrors, "Set-2 backup host received unexpected errors");
         }
 
         // ── TOC should list two sets ───────────────────────────────────────────
@@ -277,7 +141,7 @@ public class ServiceRoundTripTests
         var restore1Root = Path.Combine(media.Root, "restore1");
         Directory.CreateDirectory(restore1Root);
 
-        var (svcR1, _) = await ReopenAsync(media);
+        var (svcR1, hostR1) = await ReopenAsync(media);
         using (svcR1)
         {
             int stdIndex1 = svcR1.TOC!.FirstSetOnVolume; // = 1 (oldest)
@@ -302,10 +166,10 @@ public class ServiceRoundTripTests
         var restore2Root = Path.Combine(media.Root, "restore2");
         Directory.CreateDirectory(restore2Root);
 
-        var (svcR2, _) = await ReopenAsync(media);
+        var (svcR2, hostR2) = await ReopenAsync(media);
         using (svcR2)
         {
-            int stdIndex2 = svcR2.TOC!.LastSetOnVolume; // = 2 (latest)
+            int stdIndex2 = svcR2.TOC!.LastSetOnVolume;
             var req = new RestoreRequest(
                 Mode:                  RestoreMode.Restore,
                 CheckedFilesBySet:     new Dictionary<int, IReadOnlyList<TapeFileInfo>?> { [stdIndex2] = null },
@@ -318,6 +182,7 @@ public class ServiceRoundTripTests
             var result = await svcR2.ExecuteRestoreAsync(req);
             Assert.True(result.Success, "Restore of Set-2 failed");
             Assert.Equal(0, result.FilesFailed);
+            Assert.False(hostR2.HasErrors, "Set-2 restore host received unexpected errors");
         }
 
         FileComparer.AssertFilesMatch(
@@ -325,24 +190,30 @@ public class ServiceRoundTripTests
     }
 
     /// <summary>
-    /// Verify that aborting a backup mid-run (via the agent's
-    ///  <see cref="TapeFileAgent.IsAbortRequested"/> flag, which is the same
-    ///  mechanism the <see cref="CancellationToken"/> bridge maps to) returns
-    ///  <see cref="BackupResult.WasAborted"/> = <see langword="true"/> and
-    ///  does not throw.
+    /// Verifies that aborting a backup mid-run leaves all already-committed entries
+    ///  intact: after reopening the tape <see cref="RestoreMode.Validate"/> must
+    ///  succeed for every file that was recorded before the abort.
     /// </summary>
+    /// <remarks>
+    /// Abort is signalled via <see cref="TapeFileAgent.IsAbortRequested"/> because
+    ///  <see cref="TapeServiceBase.OperationCancellationToken"/> returns
+    ///  <see cref="CancellationToken.None"/> on the base class; the CT→agent bridge
+    ///  is only wired in the <c>TapeService</c> subclass.
+    /// </remarks>
     [Fact]
-    public async Task Backup_Abort_ReportsWasAborted()
+    public async Task Backup_Abort_SetEntriesAreIntact()
     {
         using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
         using var src   = new TempFileTree();
-        // Add enough files that we can signal abort before the last one
+        // Enough files that abort fires well before the last one
         src.AddFiles("abort", count: 200, minSize: 64 * 1_024, maxSize: 256 * 1_024);
 
         // Format with a separate service so setup is clean
         var (setupSvc, _) = await OpenAndFormatAsync(media);
         setupSvc.Dispose();
 
+        // ── Backup (with mid-run abort) ───────────────────────────────────────
+        int filesSucceeded;
         var (svc, _) = await ReopenAsync(media);
         using (svc)
         {
@@ -354,20 +225,26 @@ public class ServiceRoundTripTests
                 IncludeSubdirectories: true,
                 Incremental:           false,
                 BlockSize:             blockSize,
-                HashAlgorithm:         TapeHashAlgorithm.None,
+                HashAlgorithm:         TapeHashAlgorithm.Crc32,
                 AppendMode:            false,
                 AppendAfterSetIndex:   0,
                 UseFilemarks:          false,
                 SkipAllErrors:         true);
 
-            // Start the backup (it runs on a background thread inside TapeService)
+            // Start the backup, then signal abort via the agent flag once the backup loop starts.
             var backupTask = svc.ExecuteBackupAsync(req);
 
-            // Poll until the agent is assigned (i.e. the backup loop has started),
-            //  then signal abort via the same flag the CancellationToken bridge uses.
+            // Wait for the agent to initialise (backup loop starts async)
             var deadline = DateTime.UtcNow.AddSeconds(10);
             while (svc.Agent is null && DateTime.UtcNow < deadline)
-                await Task.Delay(1);
+                await Task.Delay(5);
+
+            // Wait until at least one file has been committed, then abort.
+            //  Polling Agent.Statistics (ref readonly TapeFileStatistics) avoids
+            //  fixed delays that are either too short or unnecessarily slow.
+            deadline = DateTime.UtcNow.AddSeconds(15);
+            while ((svc.Agent?.Statistics.FilesSucceeded ?? 0) == 0 && DateTime.UtcNow < deadline)
+                await Task.Delay(5);
 
             if (svc.Agent is not null)
                 svc.Agent.IsAbortRequested = true;
@@ -375,6 +252,42 @@ public class ServiceRoundTripTests
             var result = await backupTask;
 
             Assert.True(result.WasAborted, "Expected WasAborted = true after abort signal");
+            // Some files must have been committed or the test is vacuous
+            Assert.True(result.FilesSucceeded > 0,
+                "No files were committed before abort — increase file count or size");
+            filesSucceeded = result.FilesSucceeded;
+        }
+
+        // ── Validate: all committed entries must CRC-check clean ─────────────
+        var (valSvc, valHost) = await ReopenAsync(media);
+        using (valSvc)
+        {
+            var toc = valSvc.TOC!;
+            int setIdx = toc.SetIndexToStd(toc.CapSetIndex(0));
+            int committedCount = toc[setIdx].Count;
+
+            // The TOC-recorded count must match what the BackupResult reported
+            Assert.Equal(filesSucceeded, committedCount);
+
+            var req = new RestoreRequest(
+                Mode:                  RestoreMode.Validate,
+                CheckedFilesBySet:     new Dictionary<int, IReadOnlyList<TapeFileInfo>?> { [setIdx] = null },
+                Incremental:           false,
+                TargetDirectory:       null,
+                RecurseSubdirectories: true,
+                HandleExisting:        TapeHowToHandleExisting.Skip,
+                // Allow the one file that may have been partially written at the abort
+                //  boundary to fail without stopping the entire validation run
+                SkipAllErrors:         true);
+
+            var result = await valSvc.ExecuteRestoreAsync(req);
+
+            // At most 1 file (the one being written at the abort boundary) may have
+            //  incomplete data on tape; every other committed entry must verify clean.
+            //  result.FilesFailed is the authoritative counter; host reports are UI noise.
+            Assert.True(result.FilesFailed <= 1,
+                $"More than 1 file failed validation after abort (got {result.FilesFailed})");
+            Assert.Equal(committedCount - result.FilesFailed, result.FilesSucceeded);
         }
     }
 
@@ -387,7 +300,7 @@ public class ServiceRoundTripTests
     {
         using var media = new TempVirtualMedia(withInitiator: true, ContentCapacity, InitiatorCapacity);
         using var src   = new TempFileTree();
-        src.AddFiles("validate", count: 6, minSize: 1_024, maxSize: 8 * 1_024);
+        AddRichContent(src);
 
         // Backup
         var (svcB, _) = await OpenAndFormatAsync(media);
@@ -399,7 +312,7 @@ public class ServiceRoundTripTests
         }
 
         // Validate
-        var (svcV, validateUx) = await ReopenAsync(media);
+        var (svcV, validateHost) = await ReopenAsync(media);
         using (svcV)
         {
             int setIndex = svcV.TOC!.SetIndexToStd(svcV.TOC.CapSetIndex(0));
@@ -416,26 +329,7 @@ public class ServiceRoundTripTests
 
             Assert.True(result.Success, "Validate reported failure");
             Assert.Equal(0, result.FilesFailed);
-            Assert.False(validateUx.Entries.Any(e =>
-                e.Level is WarningLevel.Error or WarningLevel.Failed),
-                "Validate log contains unexpected errors");
+            Assert.False(validateHost.HasErrors, "Validate host received unexpected error reports");
         }
-    }
-
-    // ── Private helpers ───────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Walks <paramref name="restoreRoot"/> and locates the directory whose
-    ///  last segment matches the leaf of <paramref name="srcRoot"/>. Tape
-    ///  restores prepend the volume identifier to the path, so the absolute
-    ///  layout differs across machines.
-    ///  Mirrors <c>TapeConNET.Tests.BackupRestoreRoundTripTests.FindRestoredRoot</c>.
-    /// </summary>
-    private static string FindRestoredRoot(string restoreRoot, string srcRoot)
-    {
-        var leaf = Path.GetFileName(srcRoot.TrimEnd('\\', '/'));
-        var match = Directory.EnumerateDirectories(restoreRoot, leaf, SearchOption.AllDirectories)
-            .FirstOrDefault();
-        return match ?? restoreRoot;
     }
 }

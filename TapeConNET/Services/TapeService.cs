@@ -26,31 +26,16 @@ namespace TapeConNET.Services;
 ///  running agent's abort flag so Ctrl+C cooperatively cancels long operations.
 /// </para>
 /// </summary>
-public partial class TapeService : TapeServiceBase
+public partial class TapeService(IConsoleUx ux, ILoggerFactory loggerFactory, CancellationToken cancellationToken = default)
+    : TapeServiceBase(loggerFactory, new ConsoleUxServiceHost(ux))
 {
     // ── Console-specific fields ───────────────────────────────────────────────
 
     /// <summary>Console UX provider — kept for partials that still use it directly.</summary>
-    private protected readonly IConsoleUx _ux;
+    private protected readonly IConsoleUx _ux = ux ?? throw new ArgumentNullException(nameof(ux));
 
     /// <summary>Cancellation token supplied by the host (typically wired to Ctrl+C).</summary>
-    private protected readonly CancellationToken _ct;
-
-    /// <summary>
-    /// Phase-C compatibility: Backup/Restore/List partials still use <c>lock(_lock)</c>
-    ///  until they are migrated to <see cref="TapeServiceBase._operationLock"/> in
-    ///  Phase C steps 4 and 5.
-    /// </summary>
-    private readonly object _lock = new();
-
-    // ── Construction ──────────────────────────────────────────────────────────
-
-    public TapeService(IConsoleUx ux, ILoggerFactory loggerFactory, CancellationToken cancellationToken = default)
-        : base(loggerFactory, new ConsoleUxServiceHost(ux))
-    {
-        _ux = ux ?? throw new ArgumentNullException(nameof(ux));
-        _ct = cancellationToken;
-    }
+    private protected readonly CancellationToken _ct = cancellationToken;
 
 
     // ── Base hook overrides ─────────────────────────────────────────────────────

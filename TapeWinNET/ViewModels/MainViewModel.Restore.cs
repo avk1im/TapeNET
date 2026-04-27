@@ -1,10 +1,7 @@
 using System.Windows;
 using System.Windows.Input;
 
-using Windows.Win32.System.SystemServices; // for Helpers
-
 using TapeLibNET;
-using TapeLibNET.Virtual;
 using TapeLibNET.Services;
 using TapeWinNET.Converters;
 using TapeWinNET.Models;
@@ -600,193 +597,19 @@ public partial class MainViewModel
         RestoreProgressText = "Starting...";
         CurrentRestoreFile = string.Empty;
 
-        // Sticky state for "Skip All Errors" button in the error dialog;
-        // also set immediately when the user pre-checked SkipAllErrors in the restore window
-        bool skipAllErrors = request.SkipAllErrors;
-        int errorCount = 0;
         RestoreResult? operationResult = null;
 
         try
         {
-            await Task.Run(async () =>
-            {
-                operationResult = await _tapeService.ExecuteRestoreAsync(
-                    new RestoreRequest(
-                        Mode: mode,
-                        CheckedFilesBySet: checkedFilesBySet,
-                        Incremental: incremental,
-                        TargetDirectory: targetDirectory,
-                        RecurseSubdirectories: recurseSubdirectories,
-                        HandleExisting: handleExisting,
-                        SkipAllErrors: request.SkipAllErrors),
-                    // Current file callback
-                    filePath =>
-                    {
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            CurrentRestoreFile = System.IO.Path.GetFileName(filePath);
-                        });
-                    },
-                    // Progress update callback
-                    (processed, total, bytes) =>
-                    {
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            RestoreProgressPercent = total > 0 ? (int)(100.0 * processed / total) : 0;
-                            RestoreProgressText = $"{processed:N0} / {total:N0} files ({Helpers.BytesToString(bytes)})";
-                        });
-                    },
-                    // Log message callback
-                    entry => AddLog(entry),
-                    // File error callback
-                    (filePath, error) =>
-                    {
-                        errorCount++;
-
-                        if (skipAllErrors)
-                            return FileFailedAction.Skip;
-
-                        FileFailedAction result = FileFailedAction.Skip;
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            var dialog = new FileErrorDialog(filePath, error, modeName)
-                            {
-                                Owner = Application.Current.MainWindow
-                            };
-                            if (dialog.ShowDialog() == true)
-                            {
-                                result = dialog.Result;
-                                if (dialog.SkipAllErrors)
-                                    skipAllErrors = true;
-                            }
-                        });
-                        return result;
-                    },
-                    // Volume change callback — ask user if they want to continue on another volume
-                    (volumeNeeded) =>
-                    {
-                        bool continueRestore = false;
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            var dialog = new MediaChangeDialog(
-                                $"{modeName}: Volume Change Required",
-                                $"{modeName} requires Volume #{volumeNeeded} to continue.",
-                                $"Click Continue to eject the current media and insert Volume #{volumeNeeded}.",
-                                $"Continue {modeName}")
-                            {
-                                Owner = Application.Current.MainWindow
-                            };
-                            if (dialog.ShowDialog() == true)
-                            {
-                                continueRestore = dialog.ContinueBackup;
-                            }
-                        });
-                        return continueRestore;
-                    },
-                    // Insert media callback — prompt user to insert the required volume
-                    (volumeNeeded) =>
-                    {
-                        bool mediaReady = false;
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            if (_tapeService.IsVirtualDrive)
-                            {
-                                // Virtual drive: show OpenVirtualDriveWindow to pick existing media file
-                                var currentCaps = new VirtualTapeDriveCapabilities
-                                {
-                                    MinBlockSize = _tapeService.MinimumBlockSize,
-                                    MaxBlockSize = _tapeService.MaximumBlockSize,
-                                    DefaultBlockSize = _tapeService.DefaultBlockSize,
-                                    SupportsSetmarks = _tapeService.SupportsSetmarks,
-                                    SupportsSeqFilemarks = _tapeService.SupportsSeqFilemarks,
-                                    SupportsInitiatorPartition = _tapeService.SupportsInitiatorPartition,
-                                    SupportsCompression = false,
-                                };
-
-                                var lastVmd = _tapeService.LastVMD;
-                                VirtualMediaDescriptor? prePopulate = null;
-                                if (lastVmd != null)
-                                {
-                                    prePopulate = lastVmd with
-                                    {
-                                        ContentPath = OpenVirtualDriveViewModel.BuildVolumeFilePath(
-                                            lastVmd.ContentPath, volumeNeeded)
-                                    };
-                                }
-
-                                var vm = new OpenVirtualDriveViewModel(
-                                    request =>
-                                    {
-                                        Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
-
-                                        // Insert virtual media in Open mode (existing media for restore)
-                                        mediaReady = _tapeService.InsertVirtualMedia(
-                                            request.Media,
-                                            System.IO.FileMode.Open);
-                                    },
-                                    () =>
-                                    {
-                                        Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
-                                        mediaReady = false;
-                                    },
-                                    prePopulate: prePopulate,
-                                    mediaMode: System.IO.FileMode.Open,
-                                    currentCapabilities: currentCaps);
-
-                                var window = new OpenVirtualDriveWindow(vm)
-                                {
-                                    Owner = Application.Current.MainWindow
-                                };
-                                window.ShowDialog();
-                            }
-                            else
-                            {
-                                // Physical drive: show simple media change dialog
-                                var dialog = new MediaChangeDialog(
-                                    "Insert Media",
-                                    $"The current volume has been ejected.",
-                                    $"Please insert the media containing Volume #{volumeNeeded}.\n\n" +
-                                    $"Click Continue when the media is in the drive.",
-                                    $"Continue {modeName}",
-                                    showWarning: true)
-                                {
-                                    Owner = Application.Current.MainWindow
-                                };
-                                if (dialog.ShowDialog() == true)
-                                {
-                                    mediaReady = dialog.ContinueBackup;
-                                }
-                            }
-                        });
-                        return mediaReady;
-                    },
-                    // Media load retry callback — when ReloadMedia/PrepareMedia fails after inserting the next volume.
-                    //  First invocation: explain the failure and ask the user to re-seat the media.
-                    //  Second invocation: shorter follow-up prompt.
-                    (loadError, isRetry) =>
-                    {
-                        bool retry = false;
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            string info = !isRetry
-                                ? $"The drive could not load the media.\n\nError: {loadError}\n\n" +
-                                  "Make sure the media is properly inserted. Retry?"
-                                : $"Loading media failed again.\n\nError: {loadError}\n\n" +
-                                  "Try re-seating the media. Retry?";
-
-                            var answer = MessageBox.Show(
-                                info,
-                                "Media Load Failed",
-                                MessageBoxButton.YesNo,
-                                MessageBoxImage.Warning,
-                                MessageBoxResult.Yes);
-
-                            retry = answer == MessageBoxResult.Yes;
-                        });
-                        return retry;
-                    }
-                );
-            });
+            operationResult = await _tapeService.ExecuteRestoreAsync(
+                new RestoreRequest(
+                    Mode: mode,
+                    CheckedFilesBySet: checkedFilesBySet,
+                    Incremental: incremental,
+                    TargetDirectory: targetDirectory,
+                    RecurseSubdirectories: recurseSubdirectories,
+                    HandleExisting: handleExisting,
+                    SkipAllErrors: request.SkipAllErrors));
 
             // Uncheck successfully processed files before refreshing the UI —
             //  RefreshAsync rebuilds BackupSetList from _tocView which already
@@ -818,8 +641,7 @@ public partial class MainViewModel
             }
             else
             {
-                bool hasErrors = errorCount > 0
-                    || (operationResult is { } r && !r.IsFullSuccess);
+                bool hasErrors = operationResult is { } r && !r.IsFullSuccess;
 
                 if (hasErrors)
                 {

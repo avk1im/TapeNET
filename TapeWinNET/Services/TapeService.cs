@@ -22,10 +22,9 @@ namespace TapeWinNET.Services;
 ///  media management, and XAML-compatible events.
 /// <para>
 /// Drive-lifecycle operations (<c>OpenDriveAsync</c>, <c>LoadMediaAsync</c>,
-///  <c>EjectMediaAsync</c>, <c>OpenVirtualDriveAsync</c>, …) are inherited from
-///  <see cref="TapeServiceBase"/>. Backup and restore partials remain in
-///  <c>TapeService.Backup.cs</c> / <c>TapeService.Restore.cs</c> until Phase C
-///  steps 4/5 migrate them to the base.
+///  <c>EjectMediaAsync</c>, <c>OpenVirtualDriveAsync</c>, …) and backup/restore
+///  state machines are inherited from <see cref="TapeServiceBase"/>. Backup and
+///  restore partials hold only their WPF-specific progress handler overrides.
 /// </para>
 /// </summary>
 /// <remarks>
@@ -36,8 +35,7 @@ namespace TapeWinNET.Services;
 /// <param name="viewModel">
 ///  ViewModel whose <c>AddLog</c> sink receives all service log entries.
 /// </param>
-public partial class TapeService(Dispatcher dispatcher, MainViewModel viewModel)
-    : TapeServiceBase(BuildLoggerFactory(), new WpfServiceHost(dispatcher, viewModel))
+public partial class TapeService : TapeServiceBase
 {
     // ── WPF-specific fields ───────────────────────────────────────────────────
 
@@ -47,12 +45,24 @@ public partial class TapeService(Dispatcher dispatcher, MainViewModel viewModel)
     /// </summary>
     public event EventHandler<string>? StatusChanged;
 
+    // ── Construction ──────────────────────────────────────────────────────────
+
     /// <summary>
-    /// Phase-C compatibility: Backup/Restore partials still use <c>lock(_lock)</c>
-    ///  until they are migrated to <see cref="TapeServiceBase._operationLock"/> in
-    ///  Phase C steps 4 and 5.
+    /// Creates the WPF tape service, wiring it to the supplied ViewModel for log output
+    ///  and state notifications.
     /// </summary>
-    private readonly object _lock = new();
+    /// <param name="dispatcher">UI dispatcher used by the <see cref="WpfServiceHost"/>.</param>
+    /// <param name="viewModel">
+    ///  ViewModel whose <c>AddLog</c> sink receives all service log entries.
+    /// </param>
+    public TapeService(Dispatcher dispatcher, MainViewModel viewModel)
+        : base(BuildLoggerFactory(), new WpfServiceHost(dispatcher, viewModel))
+    {
+        // Inject back-reference so WpfServiceHost prompt methods can call
+        //  InsertVirtualMedia and query drive capabilities without a circular
+        //  type dependency. Safe: base ctor has completed before this runs.
+        ((WpfServiceHost)_host).ServiceRef = this;
+    }
 
     private static ILoggerFactory BuildLoggerFactory()
     {
@@ -114,6 +124,6 @@ public partial class TapeService(Dispatcher dispatcher, MainViewModel viewModel)
 
     // ExecuteBackupAsync is in TapeService.Backup.cs
     // ExecuteRestoreAsync is in TapeService.Restore.cs
-    // ProbeVirtualDriveAsync is in TapeService.Probe.cs
     // GuiBackupProgressHandler is in TapeService.Backup.cs
+    // Virtual drive probing: VirtualDriveProber.ProbeAsync (TapeLibNET.Services)
 }

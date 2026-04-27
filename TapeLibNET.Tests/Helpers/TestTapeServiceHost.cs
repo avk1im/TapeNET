@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 
+using TapeLibNET;
 using TapeLibNET.Services;
 
 namespace TapeLibNET.Tests.Helpers;
@@ -19,7 +20,7 @@ namespace TapeLibNET.Tests.Helpers;
 ///  layer — a recording stub that lets round-trip tests assert on log output
 ///  without any UI dependency.
 /// </remarks>
-public sealed class TestTapeServiceHost : ITapeServiceHost
+public class TestTapeServiceHost : ITapeServiceHost
 {
     // ── Recorded data ─────────────────────────────────────────────────────────
 
@@ -54,6 +55,13 @@ public sealed class TestTapeServiceHost : ITapeServiceHost
     /// When empty, <paramref name="defaultValue"/> is returned.
     /// </summary>
     public Queue<string?> AskAnswers { get; } = new();
+
+    /// <summary>
+    /// Queued <see cref="FileFailedAction"/> answers consumed one-by-one by
+    ///  <see cref="OnFileErrorSelect"/>. When empty, <see cref="FileFailedAction.Skip"/>
+    ///  is returned (safe default — never blocks an unattended test).
+    /// </summary>
+    public Queue<FileFailedAction> FileErrorAnswers { get; } = new();
 
     // ── Convenience assertions ────────────────────────────────────────────────
 
@@ -127,6 +135,66 @@ public sealed class TestTapeServiceHost : ITapeServiceHost
     public void OnServiceStateChanged(ServiceStateChange change)
         => StateChanges.Enqueue(change);
 
+    // ── ITapeServiceHost — Structured operation prompts ───────────────────────
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Dequeues from <see cref="ConfirmAnswers"/>; returns <see langword="false"/>
+    ///  when the queue is empty (safe default: do not continue multi-volume).
+    /// </remarks>
+    public virtual bool OnVolumeContinueConfirm(int volumeNeeded, RestoreMode mode)
+        => ConfirmAnswers.Count > 0 && ConfirmAnswers.Dequeue();
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Dequeues from <see cref="ConfirmAnswers"/>; returns <see langword="false"/>
+    ///  when the queue is empty (safe default: do not insert media).
+    /// </remarks>
+    public virtual bool OnInsertMediaConfirm(int volumeNeeded, RestoreMode mode)
+        => ConfirmAnswers.Count > 0 && ConfirmAnswers.Dequeue();
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Dequeues from <see cref="ConfirmAnswers"/>; returns <see langword="false"/>
+    ///  when the queue is empty (safe default: do not retry — abort cleanly).
+    /// </remarks>
+    public bool OnMediaLoadRetryConfirm(string errorMessage, bool isRetry)
+        => ConfirmAnswers.Count > 0 && ConfirmAnswers.Dequeue();
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Dequeues from <see cref="FileErrorAnswers"/>; returns
+    ///  <see cref="FileFailedAction.Skip"/> when the queue is empty
+    ///  (safe default — never hangs an unattended test run).
+    /// </remarks>
+    public FileFailedAction OnFileErrorSelect(string filePath, string errorMessage, string operationName)
+        => FileErrorAnswers.Count > 0 ? FileErrorAnswers.Dequeue() : FileFailedAction.Skip;
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Dequeues from <see cref="ConfirmAnswers"/>; returns <see langword="false"/>
+    ///  when the queue is empty (safe default: do not continue multi-volume backup).
+    /// </remarks>
+    public virtual bool OnVolumeFullConfirm(int currentVolume, int nextVolume,
+        int filesProcessed, int totalFiles, long bytesBackedup)
+        => ConfirmAnswers.Count > 0 && ConfirmAnswers.Dequeue();
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Dequeues from <see cref="ConfirmAnswers"/>; returns <see langword="false"/>
+    ///  when the queue is empty (safe default: do not insert new media).
+    /// </remarks>
+    public virtual bool OnInsertNewMediaConfirm(int nextVolume)
+        => ConfirmAnswers.Count > 0 && ConfirmAnswers.Dequeue();
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Dequeues from <see cref="AskAnswers"/>; returns <see langword="null"/> when
+    ///  the queue is empty (safe default: decline emergency export).
+    /// </remarks>
+    public string? OnEmergencyTocExportConfirm(string suggestedPath, bool isRetry)
+        => AskAnswers.Count > 0 ? AskAnswers.Dequeue() : null;
+
     // ── Reset ─────────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -140,6 +208,7 @@ public sealed class TestTapeServiceHost : ITapeServiceHost
         ConfirmAnswers.Clear();
         SelectAnswers.Clear();
         AskAnswers.Clear();
+        FileErrorAnswers.Clear();
     }
 
     // ── Inner types ───────────────────────────────────────────────────────────

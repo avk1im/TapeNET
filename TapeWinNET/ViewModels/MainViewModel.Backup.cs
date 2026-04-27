@@ -1,13 +1,10 @@
 using System.Windows;
 using System.Windows.Input;
 
-using Windows.Win32.System.SystemServices; // for Helpers
-
 using TapeWinNET.Converters;
 using TapeWinNET.Models;
 
 using TapeLibNET;
-using TapeLibNET.Virtual;
 using TapeLibNET.Services;
 using TapeWinNET.Services;
 
@@ -121,244 +118,26 @@ public partial class MainViewModel
         BackupProgressText = "Starting...";
         CurrentBackupFile = string.Empty;
 
-        // Sticky state for "Skip All Errors" button in the error dialog;
-        // also set immediately when the user pre-checked SkipAllErrors in the backup window
-        bool skipAllErrors = request.SkipAllErrors;
-        int errorCount = 0;
         BackupResult? operationResult = null;
 
         try
         {
-            await Task.Run(async () =>
-            {
-                operationResult = await _tapeService.ExecuteBackupAsync(
-                    new BackupRequest(
-                        FileList: fileList,
-                        ListContainsPatterns: false,  // files are already resolved
-                        Description: request.Description,
-                        IncludeSubdirectories: request.IncludeSubdirectories,
-                        Incremental: request.Incremental,
-                        BlockSize: request.BlockSize,
-                        HashAlgorithm: request.HashAlgorithm,
-                        AppendMode: request.AppendMode,
-                        AppendAfterSetIndex: request.AppendAfterSetIndex,
-                        UseFilemarks: request.UseFilemarks,
-                        SkipAllErrors: request.SkipAllErrors),
-                    // Current file callback
-                    filePath =>
-                    {
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            CurrentBackupFile = System.IO.Path.GetFileName(filePath);
-                        });
-                    },
-                    // Progress update callback
-                    (processed, total, bytes) =>
-                    {
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            BackupProgressPercent = total > 0 ? (int)(100.0 * processed / total) : 0;
-                            BackupProgressText = $"{processed:N0} / {total:N0} files ({Helpers.BytesToString(bytes)})";
-                        });
-                    },
-                    // Log message callback
-                    entry => AddLog(entry),
-                    // File error callback - returns FileFailedAction
-                    (filePath, error) =>
-                    {
-                        errorCount++;
+            operationResult = await _tapeService.ExecuteBackupAsync(
+                new BackupRequest(
+                    FileList: fileList,
+                    ListContainsPatterns: false,  // files are already resolved
+                    Description: request.Description,
+                    IncludeSubdirectories: request.IncludeSubdirectories,
+                    Incremental: request.Incremental,
+                    BlockSize: request.BlockSize,
+                    HashAlgorithm: request.HashAlgorithm,
+                    AppendMode: request.AppendMode,
+                    AppendAfterSetIndex: request.AppendAfterSetIndex,
+                    UseFilemarks: request.UseFilemarks,
+                    SkipAllErrors: request.SkipAllErrors));
 
-                        if (skipAllErrors)
-                            return FileFailedAction.Skip;
-
-                        FileFailedAction result = FileFailedAction.Skip;
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            var dialog = new FileErrorDialog(filePath, error, "Backup")
-                            {
-                                Owner = Application.Current.MainWindow
-                            };
-                            if (dialog.ShowDialog() == true)
-                            {
-                                result = dialog.Result;
-                                if (dialog.SkipAllErrors)
-                                    skipAllErrors = true;
-                            }
-                        });
-                        return result;
-                    },
-                    // Volume full callback - ask user if they want to continue on next volume
-                    (currentVolume, nextVolume, filesBackedUp, totalFiles, bytesBackedUp) =>
-                    {
-                        bool continueBackup = false;
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            var dialog = new MediaChangeDialog(
-                                "Volume Full",
-                                $"Volume #{currentVolume} is full.\n" +
-                                $"Backed up {filesBackedUp:N0} of {totalFiles:N0} files " +
-                                $"({Helpers.BytesToString(bytesBackedUp)}) so far.",
-                                $"Click Continue to eject this volume and continue the backup on a new media volume.",
-                                "Continue to Next Volume")
-                            {
-                                Owner = Application.Current.MainWindow
-                            };
-                            if (dialog.ShowDialog() == true)
-                            {
-                                continueBackup = dialog.ContinueBackup;
-                            }
-                        });
-                        return continueBackup;
-                    },
-                    // Insert media callback - prompt user to insert new media after ejection
-                    (nextVolume) =>
-                    {
-                        bool mediaReady = false;
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            if (_tapeService.IsVirtualDrive)
-                            {
-                                // Virtual drive: show OpenVirtualDriveWindow in newMediaOnly mode
-                                // to let user configure the new volume's file and capacity
-                                var currentCaps = new VirtualTapeDriveCapabilities
-                                {
-                                    MinBlockSize = _tapeService.MinimumBlockSize,
-                                    MaxBlockSize = _tapeService.MaximumBlockSize,
-                                    DefaultBlockSize = _tapeService.DefaultBlockSize,
-                                    SupportsSetmarks = _tapeService.SupportsSetmarks,
-                                    SupportsSeqFilemarks = _tapeService.SupportsSeqFilemarks,
-                                    SupportsInitiatorPartition = _tapeService.SupportsInitiatorPartition,
-                                    SupportsCompression = false,
-                                };
-
-                                // Pre-populate with previous media's values, volume-decorated path
-                                var lastVmd = _tapeService.LastVMD;
-                                VirtualMediaDescriptor? prePopulate = null;
-                                if (lastVmd != null)
-                                {
-                                    prePopulate = lastVmd with
-                                    {
-                                        ContentPath = OpenVirtualDriveViewModel.BuildVolumeFilePath(
-                                            lastVmd.ContentPath, nextVolume)
-                                    };
-                                }
-
-                                var vm = new OpenVirtualDriveViewModel(
-                                    request =>
-                                    {
-                                        // Close dialog
-                                        Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
-
-                                        // Insert the new virtual media (no lock — worker is blocked here)
-                                        mediaReady = _tapeService.InsertVirtualMedia(
-                                            request.Media,
-                                            System.IO.FileMode.Create);
-                                    },
-                                    () =>
-                                    {
-                                        Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
-                                        mediaReady = false;
-                                    },
-                                    prePopulate: prePopulate,
-                                    mediaMode: System.IO.FileMode.Create,
-                                    currentCapabilities: currentCaps,
-                                    currentIoSpeed: _selectedIoSpeed);
-
-                                var window = new OpenVirtualDriveWindow(vm)
-                                {
-                                    Owner = Application.Current.MainWindow
-                                };
-                                window.ShowDialog();
-                            }
-                            else
-                            {
-                                // Physical drive: show simple media change dialog
-                                var dialog = new MediaChangeDialog(
-                                    "Insert New Media",
-                                    $"The current volume has been ejected.",
-                                    $"Please insert a formatted media for Volume #{nextVolume}.\n\n" +
-                                    $"Click Continue when the new media is in the drive.",
-                                    "Continue Backup",
-                                    showWarning: true)
-                                {
-                                    Owner = Application.Current.MainWindow
-                                };
-                                if (dialog.ShowDialog() == true)
-                                {
-                                    mediaReady = dialog.ContinueBackup;
-                                }
-                            }
-                        });
-                        return mediaReady;
-                    },
-                    // Media load retry callback — when ReloadMedia/PrepareMedia fails after inserting the next volume.
-                    //  First invocation: explain the failure and ask the user to re-seat the media.
-                    //  Second invocation: shorter follow-up prompt.
-                    (loadError, isRetry) =>
-                    {
-                        bool retry = false;
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            string info = !isRetry
-                                ? $"The drive could not load the media.\n\nError: {loadError}\n\n" +
-                                  "Make sure the media is properly inserted. Retry?"
-                                : $"Loading media failed again.\n\nError: {loadError}\n\n" +
-                                  "Try re-seating the media. Retry?";
-
-                            var answer = MessageBox.Show(
-                                info,
-                                "Media Load Failed",
-                                MessageBoxButton.YesNo,
-                                MessageBoxImage.Warning,
-                                MessageBoxResult.Yes);
-
-                            retry = answer == MessageBoxResult.Yes;
-                        });
-                        return retry;
-                    },
-                    // Emergency TOC export callback — when all tape TOC writes fail.
-                    //  First invocation: warn the user and ask for confirmation before showing the save dialog.
-                    //  Second invocation (retry after a failed file-save): show a shorter prompt.
-                    (suggestedPath, isRetry) =>
-                    {
-                        string? chosenPath = null;
-                        Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            string info = !isRetry
-                                ? "The TOC could not be saved to media. Without a TOC, the files on media cannot be accessed.\n\n" +
-                                  "This is your last chance to export the TOC to a file for file recovery.\n\n" +
-                                  "Do you want to choose a save location now?"
-                                : "Exporting TOC failed. Try a different location?";
-
-                            var answer = MessageBox.Show(
-                                info,
-                                "Emergency TOC Export",
-                                MessageBoxButton.YesNo,
-                                MessageBoxImage.Warning,
-                                MessageBoxResult.Yes);
-
-                            if (answer != MessageBoxResult.Yes)
-                                return; // user declined — chosenPath stays null
-
-                            var dialog = new Microsoft.Win32.SaveFileDialog
-                            {
-                                Title = "Emergency TOC Export — Choose Save Location",
-                                Filter = $"Tape TOC files (*{TapeFileAgent.TOCFileExtension})|*{TapeFileAgent.TOCFileExtension}|All files (*.*)|*.*",
-                                FileName = System.IO.Path.GetFileName(suggestedPath),
-                                InitialDirectory = System.IO.Path.GetDirectoryName(suggestedPath) ?? "",
-                                OverwritePrompt = true,
-                            };
-                            if (dialog.ShowDialog() == true)
-                                chosenPath = dialog.FileName;
-                        });
-                        return chosenPath;
-                    }
-                );
-            });
-
-            // Refresh tree after backup
-            //  to keep TOCView in sync with the (possibly modified) TOC.
-            //  Refresh might throw if TOC has been spoiled
+            // Refresh tree after backup to keep TOCView in sync with the (possibly modified) TOC.
+            // Refresh might throw if TOC has been spoiled.
             try { await RefreshAsync(); } catch { /* ignore */ }
 
             // Determine outcome from the result record
@@ -374,7 +153,7 @@ public partial class MainViewModel
                 MessageBox.Show("Backup was aborted.", "Backup Aborted",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
             }
-            else if (errorCount > 0 || operationResult is { IsFullSuccess: false })
+            else if (operationResult is { IsFullSuccess: false })
             {
                 MessageBox.Show("Backup completed with some errors. See log for details.", "Backup Complete",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -387,10 +166,10 @@ public partial class MainViewModel
         }
         catch (Exception ex)
         {
-            // Catch catstrophic failures not handled by TapeService.ExecuteBackupAsync.
-            
+            // Catch catastrophic failures not handled by TapeService.ExecuteBackupAsync.
+
             // Refresh even on failure — TOC may have been modified before the error.
-            //  Refresh might throw if TOC has been spoiled
+            // Refresh might throw if TOC has been spoiled.
             try { await RefreshAsync(); } catch { /* ignore */ }
             LogErr($"Backup failed: {ex.Message}");
             MessageBox.Show($"Backup failed.\n\n{ex.Message}", "Backup Error",
@@ -405,7 +184,6 @@ public partial class MainViewModel
             CurrentBackupFile = string.Empty;
         }
     }
-
     private void AbortBackup(object? parameter)
     {
         var agent = _tapeService.Agent;

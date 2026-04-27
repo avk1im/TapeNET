@@ -4,19 +4,35 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 using TapeLibNET;
 using TapeLibNET.Virtual;
-using TapeLibNET.Services;
 
-namespace TapeConNET.Services;
+namespace TapeLibNET.Services;
 
-public partial class TapeService
+// ── VirtualDriveProber ────────────────────────────────────────────────────────
+
+/// <summary>
+/// Stateless helper that probes a virtual drive to determine whether valid existing
+///  media is present. Opens the backend, reads TOC info, then disposes everything.
+/// <para>
+/// Unlike <see cref="TapeServiceBase"/> operations, this helper has no agent ownership,
+///  no semaphore, and no <see cref="ITapeServiceHost"/>; cancellation is accepted
+///  directly via <see cref="CancellationToken"/>.
+/// </para>
+/// </summary>
+public static class VirtualDriveProber
 {
     /// <summary>
-    /// Probes a virtual drive to determine whether valid existing media exists.
-    /// Stateless: opens the backend, reads info, then disposes everything.
-    /// Uses <see cref="FileMode.Open"/> so the call fails on a missing/empty
-    /// metadata file (which is exactly what the caller wants for a probe).
+    /// Probes a virtual drive to determine whether valid existing media is present.
+    /// Uses <see cref="FileMode.Open"/> so the call fails on a missing or empty
+    ///  metadata file (which is exactly what the caller wants for a probe).
     /// </summary>
-    public static async Task<VirtualDriveProbeResult> ProbeVirtualDriveAsync(
+    /// <param name="contentPath">Path to the content partition file.</param>
+    /// <param name="initiatorPath">Optional path to the initiator partition file.</param>
+    /// <param name="cancellationToken">Cancellation token to abort the probe.</param>
+    /// <returns>
+    /// A <see cref="VirtualDriveProbeResult"/> with media information on success,
+    ///  or a failure result with an <see cref="VirtualDriveProbeResult.ErrorMessage"/>.
+    /// </returns>
+    public static async Task<VirtualDriveProbeResult> ProbeAsync(
         string contentPath,
         string? initiatorPath,
         CancellationToken cancellationToken = default)
@@ -38,6 +54,7 @@ public partial class TapeService
 
                 cancellationToken.ThrowIfCancellationRequested();
 
+                // Use null logger factory to avoid polluting logs during probe
                 var loggerFactory = NullLoggerFactory.Instance;
 
                 var caps = initiatorPath != null
@@ -50,10 +67,10 @@ public partial class TapeService
                     backend = VirtualTapeDriveBackend.CreateFileBacked(
                         loggerFactory,
                         contentPath,
-                        contentCapacity: 0,
+                        contentCapacity: 0, // irrelevant for Open mode — capacity is read from existing state
                         initiatorFilePath: initiatorPath,
                         capabilities: caps,
-                        mediaMode: FileMode.Open);
+                        mediaMode: FileMode.Open); // fails if metadata is absent or invalid
                 }
                 catch (Exception ex)
                 {
@@ -99,11 +116,11 @@ public partial class TapeService
                 var toc = agent.TOC;
                 var detectedCaps = new VirtualTapeDriveCapabilities
                 {
-                    MinBlockSize = drive.MinimumBlockSize,
-                    MaxBlockSize = drive.MaximumBlockSize,
-                    DefaultBlockSize = drive.DefaultBlockSize,
-                    SupportsSetmarks = drive.SupportsSetmarks,
-                    SupportsSeqFilemarks = drive.SupportsSeqFilemarks,
+                    MinBlockSize        = drive.MinimumBlockSize,
+                    MaxBlockSize        = drive.MaximumBlockSize,
+                    DefaultBlockSize    = drive.DefaultBlockSize,
+                    SupportsSetmarks    = drive.SupportsSetmarks,
+                    SupportsSeqFilemarks       = drive.SupportsSeqFilemarks,
                     SupportsInitiatorPartition = drive.SupportsInitiatorPartition,
                 };
 
@@ -124,7 +141,7 @@ public partial class TapeService
             }
             catch (OperationCanceledException)
             {
-                throw;
+                throw; // rethrow — caller decides how to handle cancellation
             }
             catch (Exception ex)
             {
@@ -134,6 +151,7 @@ public partial class TapeService
             }
             finally
             {
+                // Clean up — ensure everything is disposed regardless of outcome
                 agent?.Dispose();
                 drive?.Dispose();
             }

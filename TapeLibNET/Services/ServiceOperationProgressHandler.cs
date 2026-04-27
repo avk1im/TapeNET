@@ -162,17 +162,18 @@ public abstract class ServiceOperationProgressHandler(
         if (_skipAllErrors)
             return FileFailedAction.Skip;
 
-        // Raw Select so we can detect "Skip all" by index.
-        //  indices: 0=Skip, 1=Retry, 2=Skip all, 3=Abort
-        int idx = _host.Select("File failed — choose action",
-            ["Skip", "Retry", "Skip all", "Abort"], defaultIndex: 0);
+        // Route to the host's structured file-error prompt.
+        //  The host shows the appropriate dialog (WPF FileErrorDialog, CLI menu, etc.)
+        //  and returns the chosen action, including the SkipAll sentinel.
+        var action = _host.OnFileErrorSelect(
+            fileInfo.FileDescr.FullName, result.ErrorMessage, _operationName);
 
-        if (idx == 2) // "Skip all"
+        if (action == FileFailedAction.SkipAll)
         {
             _skipAllErrors = true;
             return FileFailedAction.Skip;
         }
-        if (idx == 3) // "Abort"
+        if (action == FileFailedAction.Abort)
         {
             if (!_abortLogged)
             {
@@ -181,8 +182,7 @@ public abstract class ServiceOperationProgressHandler(
             }
             throw new TapeAbortRequestedException("User requested abort");
         }
-        if (idx == 1) return FileFailedAction.Retry;
-        return FileFailedAction.Skip; // 0 or default
+        return action; // Skip or Retry
     }
 
     /// <inheritdoc/>
@@ -223,6 +223,21 @@ public class ServiceBackupProgressHandler(
         ReportProgress(stats, fileInfo.FileDescr.FullName);
         return true;
     }
+
+    /// <summary>
+    /// Called by the base state machine when the backup operation finishes
+    ///  (successfully, aborted, or failed). Override to finalise progress display
+    ///  (e.g. call <c>IProgressScope.Complete()</c> in the CLI handler).
+    /// No-op in this base implementation.
+    /// </summary>
+    public virtual void CompleteProgress() { }
+
+    /// <summary>
+    /// Called by the base state machine in the <c>finally</c> block to release
+    ///  any resources held by the progress display (e.g. <c>IProgressScope.Dispose()</c>
+    ///  in the CLI handler). No-op in this base implementation.
+    /// </summary>
+    public virtual void DisposeProgress() { }
 }
 
 // ── Restore / Validate / Verify ───────────────────────────────────────────────
@@ -237,8 +252,8 @@ public class ServiceRestoreProgressHandler(
     TapeFileAgent agent,
     int totalFilesToProcess,
     bool skipAllErrors,
-    string modeName)
-    : ServiceOperationProgressHandler(host, agent, skipAllErrors, modeName)
+    RestoreMode mode)
+    : ServiceOperationProgressHandler(host, agent, skipAllErrors, mode.ToVerb())
 {
     /// <summary>
     /// Total number of files to process across all batches/volumes, as supplied by the caller.
