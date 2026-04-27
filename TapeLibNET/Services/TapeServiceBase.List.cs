@@ -12,8 +12,10 @@ public partial class TapeServiceBase
 
     /// <summary>
     /// Lists the contents of the loaded media (a range of sets, optionally
-    ///  filtered by FCL/wildcard patterns). Mirrors the legacy
-    ///  <c>HandleList</c> output format.
+    ///  filtered by FCL/wildcard patterns). The amount of output is governed by
+    ///  <see cref="ListRequest.Depth"/>; see <see cref="ListDepth"/> for the
+    ///  available levels. Mirrors the legacy <c>HandleList</c> output format at
+    ///  full depth.
     /// </summary>
     public Task<ListResult> ListContentsAsync(ListRequest options)
     {
@@ -23,6 +25,47 @@ public partial class TapeServiceBase
             await _operationLock.WaitAsync().ConfigureAwait(false);
             try
             {
+                var depth = options.Depth;
+
+                // ── Drive section ────────────────────────────────────────────
+                if (depth.HasFlag(ListDepth.Drive))
+                {
+                    if (_drive is null)
+                    {
+                        LastError = "Drive not open";
+                        return ListResult.Failed(LastError);
+                    }
+                    LogInfo("Drive information:");
+                    LogDriveInfo();
+                }
+
+                // ── Media section ────────────────────────────────────────────
+                if (depth.HasFlag(ListDepth.Media))
+                {
+                    if (_drive is null || !_drive.IsMediaLoaded)
+                    {
+                        // If the caller asked for media info and it is not there, fail.
+                        LastError = "Media not loaded";
+                        return ListResult.Failed(LastError);
+                    }
+                }
+
+                // ── TOC-dependent sections ───────────────────────────────────
+                if (!depth.HasFlag(ListDepth.SetTable) && !depth.HasFlag(ListDepth.FileDetails))
+                {
+                    // Drive-only or drive+media: done.
+                    if (depth.HasFlag(ListDepth.Media))
+                    {
+                        LogInfo("Media information:");
+                        if (_toc is not null)
+                            LogMediaInfoFull(_toc);
+                        else
+                            LogMediaInfo(); // TOC not available, fall back to drive-level capacity info
+                    }
+                    return ListResult.Ok(0, 0, 0);
+                }
+
+                // SetTable or FileDetails both require a loaded TOC.
                 if (_drive is null || !_drive.IsMediaLoaded)
                 {
                     LastError = "Media not loaded";
@@ -37,8 +80,20 @@ public partial class TapeServiceBase
 
                 var toc = _toc;
 
-                LogInfo("Media information:");
-                LogMediaInfoFull(toc);
+                if (depth.HasFlag(ListDepth.Media))
+                {
+                    LogInfo("Media information:");
+                    LogMediaInfoFull(toc);
+                }
+
+                // ── Compact backup-sets table (SetTable only, no FileDetails) ─
+                if (depth.HasFlag(ListDepth.SetTable) && !depth.HasFlag(ListDepth.FileDetails))
+                {
+                    LogBackupSetsTable(toc);
+                    return ListResult.Ok(toc.Count, 0, 0);
+                }
+
+                // ── Full file listing ────────────────────────────────────────
 
                 // Determine set range
                 int startIndex = options.StartSetIndex ?? toc.MaxSetIndex;
@@ -176,6 +231,67 @@ public partial class TapeServiceBase
 
     #region Protected virtual hooks — list output
     // ── Protected virtual hooks — list output ─────────────────────────────────
+
+    /// <summary>
+    /// Logs drive hardware properties (device identity, capabilities, block sizes).
+    ///  Called by <see cref="ListContentsAsync"/> when
+    ///  <see cref="ListDepth.Drive"/> is set.
+    /// Base implementation mirrors the information shown by
+    ///  <c>MainViewModel.LoadDriveInfo</c> in TapeWinNET.
+    /// </summary>
+    protected virtual void LogDriveInfo()
+    {
+        if (_drive is null) return;
+
+        LogInfoSub($"Device name: {_drive.DriveDeviceName}");
+        if (!string.IsNullOrEmpty(_drive.DriveVendor))
+            LogInfoSub($"Vendor: {_drive.DriveVendor}");
+        if (!string.IsNullOrEmpty(_drive.DriveProduct))
+            LogInfoSub($"Product: {_drive.DriveProduct}");
+        LogInfoSub($"Drive open: Yes");
+        LogInfoSub($"Supports multiple partitions: {(_drive.SupportsInitiatorPartition ? "Yes" : "No")}");
+        LogInfoSub($"Supports setmarks: {(_drive.SupportsSetmarks ? "Yes" : "No")}");
+        LogInfoSub($"Supports sequential filemarks: {(_drive.SupportsSeqFilemarks ? "Yes" : "No")}");
+        LogInfoSub($"Block size (min): {Helpers.BytesToString(_drive.MinimumBlockSize)}");
+        LogInfoSub($"Block size (default): {Helpers.BytesToString(_drive.DefaultBlockSize)}");
+        LogInfoSub($"Block size (max): {Helpers.BytesToString(_drive.MaximumBlockSize)}");
+        LogInfoSub($"Media loaded: {(_drive.IsMediaLoaded ? "Yes" : "No")}");
+
+        if (_drive.IsMediaLoaded)
+        {
+            LogInfoSub($"Partition count: {_drive.PartitionCount}");
+            LogInfoSub($"Capacity: {Helpers.BytesToStringLong(_drive.ContentCapacity)}");
+            LogInfoSub($"Remaining (est.): {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
+        }
+    }
+
+    /// <summary>
+    /// Logs a compact table of all backup sets in <paramref name="toc"/>.
+    ///  Called by <see cref="ListContentsAsync"/> when
+    ///  <see cref="ListDepth.SetTable"/> is set without <see cref="ListDepth.FileDetails"/>.
+    /// Each row contains the set's dual index, description, file count, total size,
+    ///  creation time, and flags (incremental, volume).
+    /// </summary>
+    protected virtual void LogBackupSetsTable(TapeTOC toc)
+    {
+        if (_drive is null) return;
+
+        LogInfo($"Backup sets ({toc.Count} total):");
+        for (int alt = 0; alt >= toc.MinSetIndex; alt--)
+        {
+            int setIndex = toc.SetIndexToStd(alt); // convert alt (0/-1/-2...) → std (1..N)
+            toc.CurrentSetIndex = setIndex;
+            var setTOC = toc.CurrentSetTOC;
+            var size = Helpers.BytesToStringLong(setTOC.ComputeTotalFileSizeOnTape(_drive.DefaultBlockSize));
+            var flags = new System.Text.StringBuilder();
+            if (setTOC.Incremental) flags.Append(" [Inc]");
+            if (toc.IsCurrentSetContFromPrevVolume || toc.IsCurrentSetContFromPrevVolumeInc)
+                flags.Append(" [<Vol]");
+            if (toc.IsCurrentSetContOnNextVolume)
+                flags.Append(" [Vol>]");
+            LogInfoSub($"#{setIndex,3} | {alt,3}  {setTOC.CreationTime,20:G}  {setTOC.Count,6:N0} files  {size,14}  Vol #{setTOC.Volume}  {setTOC.Description}{flags}");
+        }
+    }
 
     /// <summary>
     /// Logs full drive/media information during <see cref="ListContentsAsync"/>.

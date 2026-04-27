@@ -88,6 +88,8 @@ message BackendState {
   bool   has_initiator_partition     = 13;
   bool   supports_setmarks           = 14;
   bool   supports_seq_filemarks      = 15;
+  string vendor                      = 16;
+  string product                     = 17;
 }
 
 // ============================================================================

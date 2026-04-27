@@ -59,6 +59,51 @@ public sealed record RestoreRequest(
 // ── List ─────────────────────────────────────────────────────────────────────
 
 /// <summary>
+/// Controls how much detail <see cref="ListRequest"/> outputs.
+/// The values are combinable flags, ordered from least to most verbose.
+/// </summary>
+/// <remarks>
+/// Convenience combinations:
+/// <list type="bullet">
+///  <item><see cref="DriveAndMedia"/> — drive + media info only (no sets).</item>
+///  <item><see cref="SetsOverview"/>  — drive + media + backup-sets table.</item>
+///  <item><see cref="Full"/>          — everything incl. per-file listing.</item>
+/// </list>
+/// </remarks>
+[Flags]
+public enum ListDepth
+{
+    /// <summary>Drive properties only (no tape required).</summary>
+    Drive      = 0x01,
+
+    /// <summary>Tape media properties (requires media loaded).</summary>
+    Media      = 0x02,
+
+    /// <summary>
+    /// A compact table listing each backup set with its major attributes.
+    ///  Requires the TOC to be available.
+    /// </summary>
+    SetTable   = 0x04,
+
+    /// <summary>
+    /// Per-file details for the selected set range (the original full listing).
+    ///  Implies <see cref="SetTable"/> for incremental-chain context.
+    /// </summary>
+    FileDetails = 0x08,
+
+    // ── Convenience combinations ─────────────────────────────────────────
+
+    /// <summary>Drive + media info only.</summary>
+    DriveAndMedia = Drive | Media,
+
+    /// <summary>Drive + media info + compact backup-sets table.</summary>
+    SetsOverview  = Drive | Media | SetTable,
+
+    /// <summary>Complete output: drive + media + sets + per-file listing.</summary>
+    Full          = Drive | Media | SetTable | FileDetails,
+}
+
+/// <summary>
 /// Options for a list / contents-display operation.
 /// </summary>
 /// <remarks>
@@ -71,6 +116,7 @@ public sealed record ListRequest(
     IReadOnlyList<string>? FilePatterns = null,
     bool? IncrementalOverride = null,
     bool ShowFullPath = true,
-    ITapeFileFilter? Filter = null) : ServiceOperationRequest;
+    ITapeFileFilter? Filter = null,
+    ListDepth Depth = ListDepth.Full) : ServiceOperationRequest;
 
 

@@ -51,6 +51,8 @@ public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrp
             HasInitiatorPartition = b.HasInitiatorPartition,
             SupportsSetmarks = b.SupportsSetmarks,
             SupportsSeqFilemarks = b.SupportsSeqFilemarks,
+            Vendor = b.Vendor,
+            Product = b.Product,
         };
     }
 

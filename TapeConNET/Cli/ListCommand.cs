@@ -38,10 +38,15 @@ internal static class ListCommand
         {
             Description = "Show file names only (no full paths).",
         };
+        var setsOnlyOption = new Option<bool>("--sets-only")
+        {
+            Description = "Show a compact backup-sets table only (no per-file listing).",
+        };
 
         cmd.Arguments.Add(argsArg);
         cmd.Options.Add(noIncOption);
         cmd.Options.Add(nameOnlyOption);
+        cmd.Options.Add(setsOnlyOption);
 
         cmd.SetAction(async (parseResult, ct) =>
         {
@@ -50,6 +55,7 @@ internal static class ListCommand
             var raw        = parseResult.GetValue(argsArg) ?? [];
             var noInc      = parseResult.GetValue(noIncOption);
             var nameOnly   = parseResult.GetValue(nameOnlyOption);
+            var setsOnly   = parseResult.GetValue(setsOnlyOption);
             var filterFcl  = parseResult.GetValue(FilterOptions.Filter);
             var filterFile = parseResult.GetValue(FilterOptions.FilterFile);
 
@@ -84,7 +90,8 @@ internal static class ListCommand
                 FilePatterns:        null,
                 IncrementalOverride: noInc ? false : null,
                 ShowFullPath:        !nameOnly,
-                Filter:              resolved.Filter);
+                Filter:              resolved.Filter,
+                Depth:               setsOnly ? ListDepth.SetsOverview : ListDepth.Full);
 
             var result = await service.ListContentsAsync(options);
             return !result.Success

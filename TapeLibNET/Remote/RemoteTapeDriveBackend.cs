@@ -108,6 +108,8 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     public override bool IsOpen => _state.IsOpen;
     public override bool HasMedia => _state.HasMedia;
     public override string DeviceName => _state.DeviceName ?? string.Empty;
+    public override string Vendor  => _state.Vendor ?? string.Empty;
+    public override string Product => _state.Product ?? string.Empty;
     public override uint DriveNumber => _state.DriveNumber;
 
     #endregion
