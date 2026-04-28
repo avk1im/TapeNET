@@ -21,7 +21,31 @@ namespace TapeLibNET
         private bool BeginWriteContentForCurrentSet(bool newSet)
         {
             // If we were reading or writing, end it first - before setting the new set's parameters
-            Manager.EndReadWrite();
+            if (!Manager.EndReadWrite())
+            {
+                m_logger.LogWarning("Failed to end read/write in {Method}",
+                    nameof(BeginWriteContentForCurrentSet));
+                SyncErrorFrom(Manager);
+                return false;
+            }
+
+            // Optimization: set the target content set BEFORE transition to Content reading
+            //  so that Navigator can optimize moving to the target content set once we call BeginWriteContent()
+            Navigator.TargetContentSet = newSet ? ((TOC.CurrentSetIndexOnVolume > 0) ? -1 : 0) : CurrentSetAsNavigatorContentSet;
+
+            var remainingCapacity = Drive.ContentCapacity - TOC.ComputeTotalFileSizeOnTape();
+            if (!Drive.HasInitiatorPartition)
+                remainingCapacity -= Navigator.TOCCapacity; // if TOC is in a content set, reserve space for it
+
+            BytesBackedupMarker = BytesBackedup; // important in case of multi-volume backup continuation
+
+            if (!Manager.BeginWriteContent(remainingCapacity))
+            {
+                m_logger.LogWarning("Failed to transition to writing content in {Method}",
+                    nameof(BeginWriteContentForCurrentSet));
+                SyncErrorFrom(Manager);
+                return false;
+            }
 
             // Try to set filemark mode -- Navigator has the final say.
             Navigator.FmksMode = TOC.CurrentSetTOC.FmksMode;
@@ -36,15 +60,7 @@ namespace TapeLibNET
                     TOC.CurrentSetTOC.BlockSize, nameof(BeginWriteContentForCurrentSet), Drive.BlockSize);
             TOC.CurrentSetTOC.BlockSize = Drive.BlockSize; // in any case, ensure the set has what the manager has
 
-            Navigator.TargetContentSet = newSet ? ((TOC.CurrentSetIndexOnVolume > 0) ? -1 : 0) : CurrentSetAsNavigatorContentSet;
-
-            var remainingCapacity = Drive.ContentCapacity - TOC.ComputeTotalFileSizeOnTape();
-            if (!Drive.HasInitiatorPartition)
-                remainingCapacity -= Navigator.TOCCapacity; // if TOC is in a content set, reserve space for it
-
-            BytesBackedupMarker = BytesBackedup; // important in case of multi-volume backup continuation
-
-            return Manager.BeginWriteContent(remainingCapacity);
+            return true;
         }
         private TapeWriteStream? OpenWriteContentStream(long length)
         {

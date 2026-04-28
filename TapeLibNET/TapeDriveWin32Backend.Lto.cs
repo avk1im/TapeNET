@@ -22,6 +22,7 @@ namespace TapeLibNET;
 /// <item><see cref="ProbeForLtoInformation"/> — called once in <c>Open()</c>, sets dispatch flags.</item>
 /// <item><see cref="SetPositionToPartitionLto"/> — SCSI LOCATE(10) replacement for partition switch.</item>
 /// <item><see cref="FormatMediaLto"/> — SCSI FORMAT MEDIUM replacement for tape formatting.</item>
+/// <item><see cref="FormatMediaLtoModeSelect"/> — SCSI MODE SELECT (10) / Medium Partition Page alternative for tape formatting.</item>
 /// </list>
 /// </para>
 /// </summary>
@@ -191,6 +192,18 @@ public partial class TapeDriveWin32Backend
         //    psl[4] = 0x00; psl[5] = 0x00;       // partition 1 = remainder
         //    if (!SendScsiCommand(cdb01, psl, dataIn: false)) return false;
 
+        // FORMAT MEDIUM requires the tape to be at Initiator (if present) & BOT
+        if (HasInitiatorPartition && !SetPositionToPartition(MediaPartition.Initiator, 0L))
+        {
+            LogErrorAsDebug("FORMAT MEDIUM: failed to position to initiator partition");
+            return false;
+        }
+        if (!Rewind())
+        {
+            LogErrorAsDebug("FORMAT MEDIUM: failed to rewind before FORMAT MEDIUM");
+            return false;
+        }
+
         bool partitioned = initiatorPartitionSize > 0L;
 
         Span<byte> cdb = stackalloc byte[6];
@@ -202,13 +215,21 @@ public partial class TapeDriveWin32Backend
         m_logger.LogTrace("{Prefix}: FORMAT MEDIUM (SCSI) — {Mode}",
             LogPrefix, partitioned ? "dual partition, drive-default sizes" : "single partition");
 
+        // The default 30 s SPTI timeout covers the time for the drive to *accept* the command.
+        //  With IMMED=1 this is a matter of seconds — 30 s is correct and safe.
+        //  If IMMED=0 were used instead, the DeviceIoControl call would block until physical
+        //  completion (up to 30+ minutes on LTO-8/9), and the timeout would need to match.
         if (!SendScsiCommand(cdb, [], dataIn: false))
         {
             LogErrorAsDebug("FORMAT MEDIUM (SCSI) command rejected");
             return false;
         }
 
-        // Poll until the drive reports completion; FORMAT MEDIUM can take many minutes
+        // PollForCompletion is required even though SendScsiCommand has its own timeout.
+        //  With IMMED=1 the drive accepted the command but the physical reformat is still
+        //  running in the background. PollForCompletion (via GetTapeStatus) waits for the
+        //  drive to signal completion before we attempt the reload below.
+        //  FORMAT MEDIUM can take many minutes on a full LTO tape.
         if (!PollForCompletion())
         {
             LogErrorAsDebug("FORMAT MEDIUM (SCSI) polling failed or timed out");
@@ -221,6 +242,161 @@ public partial class TapeDriveWin32Backend
         RefreshMediaParams();
 
         m_logger.LogTrace("{Prefix}: FORMAT MEDIUM (SCSI) completed", LogPrefix);
+        return true;
+    }
+
+    /// <summary>
+    /// LTO-5+ alternative to <see cref="FormatMediaLto"/>: configures tape partitioning via
+    /// SCSI <c>MODE SELECT (10)</c> (opcode 0x55) with the <b>Medium Partition Page</b>
+    /// (page code 0x11, SSC-4 §7.3.10).
+    /// <para>
+    /// This is the approach used by IBM LTFS Format and HPE StoreOpen. Many LTO drives that
+    /// reject or ignore FORMAT MEDIUM respond correctly to MODE SELECT + Medium Partition Page.
+    /// The two approaches are functionally equivalent from the host's perspective.
+    /// </para>
+    /// <para>
+    /// MODE SELECT (10) 10-byte CDB layout (SPC-4 §6.13):
+    /// <code>
+    /// Byte 0 : 0x55  — OPERATION CODE
+    /// Byte 1 : PF (bit 4) = 1 — Page Format; SP (bit 0) = 0 — do not save to NVRAM
+    /// Bytes 2–6 : reserved
+    /// Bytes 7–8 : PARAMETER LIST LENGTH (big-endian) — total byte count of parameter data
+    /// Byte 9 : CONTROL = 0x00
+    /// </code>
+    /// </para>
+    /// <para>
+    /// Parameter data = Mode Parameter Header (8 bytes) + Medium Partition Page:
+    /// <code>
+    /// Mode Parameter Header (8 bytes — mandatory for MODE SELECT 10):
+    ///   Bytes 0–1 : MODE DATA LENGTH = 0x0000 (must be zero for MODE SELECT)
+    ///   Byte  2   : MEDIUM TYPE     = 0x00
+    ///   Byte  3   : DEVICE-SPECIFIC = 0x00
+    ///   Byte  4   : 0x00 (LONGLBA bit = 0)
+    ///   Byte  5   : reserved
+    ///   Bytes 6–7 : BLOCK DESCRIPTOR LENGTH = 0x0000 (no block descriptor)
+    ///
+    /// Medium Partition Page (page code 0x11, SSC-4 §7.3.10):
+    ///   Byte  0 : PAGE CODE = 0x11  (PS bit = 0 for MODE SELECT)
+    ///   Byte  1 : PAGE LENGTH = total bytes following this byte
+    ///               = 6 + (ADDITIONAL PARTITIONS DEFINED) × 2
+    ///   Byte  2 : MAXIMUM ADDITIONAL PARTITIONS — ignored in MODE SELECT
+    ///   Byte  3 : ADDITIONAL PARTITIONS DEFINED
+    ///               0 = one partition total (single-partition tape)
+    ///               1 = two partitions total (dual-partition LTFS layout)
+    ///   Byte  4 : FDP | SDP | IDP | PSUM | reserved
+    ///               FDP (bit 7) = 1: Fixed Data Partitions — drive uses its
+    ///                 factory-default partition layout; all other fields ignored.
+    ///                 Use for single-partition format.
+    ///               SDP (bit 6) = 1: Select Data Partitions — drive picks sizes
+    ///                 appropriate for its generation (same as FORMAT=0x02).
+    ///                 Use for dual-partition LTFS format.
+    ///               IDP (bit 5) = 1: Initiator-Defined Partitions — host supplies
+    ///                 explicit sizes in the PARTITION SIZE descriptors below.
+    ///               PSUM (bits 4–3): units for PARTITION SIZE descriptors
+    ///                 0x00 = not specified / drive default (correct when SDP=1)
+    ///                 0x01 = megabytes
+    ///                 0x02 = gigabytes
+    ///   Byte  5 : MEDIUM FORMAT RECOGNITION = 0x00
+    ///   Bytes 6–7 : reserved
+    ///   Bytes 8+  : PARTITION SIZE descriptors (2 bytes each, big-endian)
+    ///               One entry per additional partition (i.e. partition 1 onward).
+    ///               0xFFFF = "drive default size" (correct when SDP=1).
+    ///               Partition 0 (SCSI) = data partition (takes remainder).
+    ///               Partition 1 (SCSI) = initiator/index partition (small).
+    /// </code>
+    /// </para>
+    /// </summary>
+    /// <param name="initiatorPartitionSize">
+    /// Desired size of the initiator partition in bytes.
+    /// Zero or negative formats as a single partition.
+    /// </param>
+    internal bool FormatMediaLtoModeSelect(long initiatorPartitionSize)
+    {
+        bool partitioned = initiatorPartitionSize > 0L;
+
+        // Medium Partition Page size:
+        //  Fixed header fields: 8 bytes (byte 0 = PAGE CODE, byte 1 = PAGE LENGTH, bytes 2–7)
+        //  + 2 bytes per additional partition (0 for single, 1 × 2 = 2 for dual)
+        int partitionDescriptors = partitioned ? 1 : 0;  // one descriptor per *additional* partition
+        int mppPayloadLength     = 6 + partitionDescriptors * 2; // bytes following PAGE LENGTH byte
+        int mppTotalLength       = 2 + mppPayloadLength;         // including PAGE CODE + PAGE LENGTH bytes
+        int headerLength         = 8;
+        int totalLength          = headerLength + mppTotalLength;
+
+        Span<byte> param = stackalloc byte[totalLength]; // zero-initialised by stackalloc
+
+        // --- Mode Parameter Header (bytes 0–7) ---
+        // Bytes 0–1 : MODE DATA LENGTH = 0 (mandatory for MODE SELECT)
+        // Bytes 2–5 : MEDIUM TYPE, DEVICE-SPECIFIC, LONGLBA, reserved = 0
+        // Bytes 6–7 : BLOCK DESCRIPTOR LENGTH = 0 (no block descriptor)
+        // All zero — nothing to set.
+
+        // --- Medium Partition Page (starting at byte 8) ---
+        int p = headerLength;
+        param[p++] = 0x11;                       // PAGE CODE (PS=0 for MODE SELECT)
+        param[p++] = (byte)mppPayloadLength;     // PAGE LENGTH = bytes following this byte
+        param[p++] = 0x00;                       // MAXIMUM ADDITIONAL PARTITIONS — ignored
+        param[p++] = (byte)partitionDescriptors; // ADDITIONAL PARTITIONS DEFINED
+
+        if (partitioned)
+        {
+            // SDP=1: drive selects sizes appropriate for its generation (e.g. ~5 GB on LTO-5).
+            //  This is the same strategy as FORMAT=0x02 in FormatMediaLto — let the drive
+            //  decide the initiator partition size rather than risk warp-alignment errors.
+            //  To use explicit sizes instead, set IDP=1 (0x20), set PSUM=0x02 (GB units) in
+            //  bits 4–3, and supply the actual size in the PARTITION SIZE descriptor below.
+            param[p++] = 0x40; // SDP=1: Select Data Partitions
+            param[p++] = 0x00; // MEDIUM FORMAT RECOGNITION
+            param[p++] = 0x00; // reserved
+            param[p++] = 0x00; // reserved
+            // PARTITION SIZE descriptor for partition 1 (initiator/index):
+            //  0xFFFF = "drive default" — consistent with SDP=1.
+            param[p++] = 0xFF;
+            param[p++] = 0xFF;
+        }
+        else
+        {
+            // FDP=1: Fixed Data Partitions — drive uses its factory-default single-partition
+            //  layout. All remaining fields and descriptors are ignored by the drive.
+            param[p++] = 0x80; // FDP=1: Fixed Data Partitions
+            param[p  ] = 0x00; // MEDIUM FORMAT RECOGNITION (remaining bytes already zero)
+        }
+
+        // MODE SELECT (10) CDB
+        Span<byte> cdb = stackalloc byte[10];
+        cdb[0] = 0x55; // MODE SELECT (10)
+        cdb[1] = 0x10; // PF=1 (Page Format); SP=0 (do not save to NVRAM)
+        // bytes 2–6 = 0 (reserved)
+        cdb[7] = (byte)(totalLength >> 8); // PARAMETER LIST LENGTH (big-endian)
+        cdb[8] = (byte) totalLength;
+        // byte 9 = 0 (CONTROL)
+
+        m_logger.LogTrace("{Prefix}: MODE SELECT / Medium Partition Page — {Mode}",
+            LogPrefix, partitioned ? "dual partition, drive-default sizes (SDP)" : "single partition (FDP)");
+
+        // MODE SELECT is a blocking command — the drive applies the new configuration
+        //  synchronously and returns only after it has committed the page.
+        //  No polling needed; the DeviceIoControl returns when the drive is done.
+        //  The default 30 s timeout is sufficient for a metadata update.
+        if (!SendScsiCommand(cdb, param, dataIn: false))
+        {
+            LogErrorAsDebug("MODE SELECT / Medium Partition Page command rejected");
+            return false;
+        }
+
+        // Rewind: required after a partition layout change to force the drive to
+        //  re-read the new partition table and position at BOT of partition 0.
+        if (!Rewind())
+        {
+            LogErrorAsDebug("MODE SELECT: failed to rewind after partition reconfiguration");
+            return false;
+        }
+
+        // Re-load to commit the new layout and refresh media parameters.
+        Op(() => InvokePrepareTape(PREPARE_TAPE_OPERATION.TAPE_LOAD)).WithRetry().WithPoll().Run();
+        RefreshMediaParams();
+
+        m_logger.LogTrace("{Prefix}: MODE SELECT / Medium Partition Page completed", LogPrefix);
         return true;
     }
 

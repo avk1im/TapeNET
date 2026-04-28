@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices.Marshalling;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32.SafeHandles;
 using Windows.Win32;
@@ -327,64 +328,102 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
 
         m_logger.LogTrace("{Prefix}: Formatting media", LogPrefix);
 
-        // LTO-5+: Win32 CreateTapePartition is unreliable for partitioning on these drives
-        //  (TAPE_FIXED_PARTITIONS count=1 is rejected; TAPE_INITIATOR_PARTITIONS may silently
-        //  create wrong partition sizes). Delegate entirely to SCSI FORMAT MEDIUM instead.
         if (m_useLtoPartitionSchema)
-            return FormatMediaLto(initiatorPartitionSize);
-
-        if (initiatorPartitionSize > 0L && SupportsInitiatorPartition)
         {
-            SetError(PInvoke.CreateTapePartition(m_driveHandle,
-                CREATE_TAPE_PARTITION_METHOD.TAPE_INITIATOR_PARTITIONS,
-                2 /*one initiator partition + one content partition*/, (uint)initiatorPartitionSize / (1024 * 1024) /*MB*/));
-            //SetError(PInvoke.CreateTapePartition(m_driveHandle, CREATE_TAPE_PARTITION_METHOD.TAPE_SELECT_PARTITIONS,
-            //    2 /*one initiator partition + one content partition*/, 0 /*ignored*/));
+            // LTO FORMAT MEDIUM requires the tape to be at Initiator (if present) & BOT
+            if (HasInitiatorPartition && !SetPositionToPartition(MediaPartition.Initiator, 0L))
+            {
+                LogErrorAsWarning("FORMAT LTO MEDIUM: failed to position to initiator partition");
+                // Do NOT give up yet -- LTO format MAY still succeed
+                // return false;
+            }
+            if (!Rewind())
+            {
+                LogErrorAsDebug("FORMAT LTO MEDIUM: failed to rewind before formatting");
+                // If rewind failed, then format won't work with LTO-5+
+                return false;
+            }
+
+            if (!PollForCompletion()) // ensure rewind completed
+                LogErrorAsWarning("FORMAT LTO MEDIUM: polling failed after rewind");
         }
-        else
+
+        if (m_useLtoPartitionSchema)
         {
-            // Create single partition based on drive capabilities, with fallback chain.
-            // QUIRK LTO-5+: CreatesFixedPartitions=true indicates LTFS two-partition support,
-            //  NOT a single-partition format. TAPE_FIXED_PARTITIONS fails with ERROR_INVALID_FUNCTION
-            //  when count=1 is implied. Fall through to SELECT or INITIATOR in that case.
-            bool partitioned = false;
+            uint formatError = (uint)WIN32_ERROR.NO_ERROR;
 
-            if (CreatesFixedPartitions)
+            if (initiatorPartitionSize > 0L && SupportsInitiatorPartition)
             {
-                SetError(PInvoke.CreateTapePartition(m_driveHandle, CREATE_TAPE_PARTITION_METHOD.TAPE_FIXED_PARTITIONS,
-                    0 /*ignored*/, 0 /*ignored*/));
-                partitioned = WentOK;
+                // LTO-5+ creates much larger initoiator partition than we request -- it will silently increase the actual size
+                formatError = PInvoke.CreateTapePartition(m_driveHandle,
+                    CREATE_TAPE_PARTITION_METHOD.TAPE_INITIATOR_PARTITIONS,
+                    2 /*one initiator partition + one content partition*/, (uint)initiatorPartitionSize / (1024 * 1024) /*MB*/);
+            }
+            else
+            {
+                // LTO-5+ supports only TAPE_SELECT_PARTITIONS
+                //  Do NOT atteempt TAPE_FIXED_PARTITIONS: not only will it fail, but retrying with TAPE_SELECT_PARTITIONS might fail, too!
+                formatError = PInvoke.CreateTapePartition(m_driveHandle, CREATE_TAPE_PARTITION_METHOD.TAPE_SELECT_PARTITIONS,
+                    1 /*one common partition*/, 0 /*ignored*/);
+            }
+            m_logger.LogTrace("FORMAT LTO MEDIUM: CreateTapePartition returned 0x{Error:X8} for LTO format", formatError);
+
+            // We now need to wait for completion
+            if (!PollForCompletion())
+            {
+                LogErrorAsWarning("FORMAT LTO MEDIUM: polling failed after format");
+                SetError(formatError); // preserve original format error for caller
             }
 
-            if (!partitioned && CreatesSelectPartitions)
+            if (WentOK)
+                if (!Rewind())
+                    LogErrorAsWarning("FORMAT LTO MEDIUM: rewind failed after format");
+        }
+        else // non-LTO-5+
+        {
+            if (initiatorPartitionSize > 0L && SupportsInitiatorPartition)
             {
+                SetError(PInvoke.CreateTapePartition(m_driveHandle,
+                    CREATE_TAPE_PARTITION_METHOD.TAPE_INITIATOR_PARTITIONS,
+                    2 /*one initiator partition + one content partition*/, (uint)initiatorPartitionSize / (1024 * 1024) /*MB*/));
+            }
+            else
+            {
+                // Create single partition based on drive capabilities, with fallback chain.
+                bool partitioned = false;
+
                 if (CreatesFixedPartitions)
-                    m_logger.LogInformation("{Prefix}: TAPE_FIXED_PARTITIONS rejected for single partition — falling back to TAPE_SELECT_PARTITIONS", LogPrefix);
-                SetError(PInvoke.CreateTapePartition(m_driveHandle, CREATE_TAPE_PARTITION_METHOD.TAPE_SELECT_PARTITIONS,
-                    1 /*one common partition*/, 0 /*ignored*/));
-                partitioned = WentOK;
-            }
+                {
+                    SetError(PInvoke.CreateTapePartition(m_driveHandle, CREATE_TAPE_PARTITION_METHOD.TAPE_FIXED_PARTITIONS,
+                        0 /*ignored*/, 0 /*ignored*/));
+                    partitioned = WentOK;
+                    if (WentBad)
+                        m_logger.LogInformation("{Prefix}: TAPE_FIXED_PARTITIONS rejected for single partition — falling back to TAPE_SELECT_PARTITIONS", LogPrefix);
+                }
 
-            if (!partitioned && CreatesInitiatorPartitions)
-            {
-                m_logger.LogInformation("{Prefix}: TAPE_SELECT_PARTITIONS rejected for single partition — falling back to TAPE_INITIATOR_PARTITIONS", LogPrefix);
-                SetError(PInvoke.CreateTapePartition(m_driveHandle, CREATE_TAPE_PARTITION_METHOD.TAPE_INITIATOR_PARTITIONS,
-                    1 /*one common partition*/, 0 /*ignored for single partition*/));
-                partitioned = WentOK;
-            }
+                if (!partitioned && CreatesSelectPartitions)
+                {
+                    SetError(PInvoke.CreateTapePartition(m_driveHandle, CREATE_TAPE_PARTITION_METHOD.TAPE_SELECT_PARTITIONS,
+                        1 /*one common partition*/, 0 /*ignored*/));
+                    partitioned = WentOK;
+                    if (WentBad)
+                        m_logger.LogInformation("{Prefix}: TAPE_SELECT_PARTITIONS rejected for single partition — falling back to TAPE_INITIATOR_PARTITIONS", LogPrefix);
+                }
 
-            if (!partitioned && !CreatesFixedPartitions && !CreatesSelectPartitions && !CreatesInitiatorPartitions)
-                SetError(WIN32_ERROR.NO_ERROR); // the drive doesn't support / need partitioning / formatting
+                if (!partitioned && CreatesInitiatorPartitions)
+                {
+                    SetError(PInvoke.CreateTapePartition(m_driveHandle, CREATE_TAPE_PARTITION_METHOD.TAPE_INITIATOR_PARTITIONS,
+                        1 /*one common partition*/, 0 /*ignored for single partition*/));
+                    partitioned = WentOK;
+                }
+
+                if (!partitioned && !CreatesFixedPartitions && !CreatesSelectPartitions && !CreatesInitiatorPartitions)
+                    SetError(WIN32_ERROR.NO_ERROR); // the drive doesn't support / need partitioning / formatting
+            }
         }
 
         if (WentOK)
         {
-            // Unload and re-load to fully commit the new partition layout and refresh parameters.
-            // QUIRK LTO-5+: After CreateTapePartition on a previously LTFS-partitioned tape,
-            //  a simple TAPE_LOAD is insufficient — GetTapeParameters still reports the old
-            //  (small) partition capacity. A full unload+load cycle forces the drive to
-            //  re-read the new partition table and report correct media capacity.
-            //Op(() => InvokePrepareTapeBlocking(PREPARE_TAPE_OPERATION.TAPE_UNLOAD)).WithRetry().Run();
             Op(() => InvokePrepareTape(PREPARE_TAPE_OPERATION.TAPE_LOAD)).WithRetry().WithPoll().Run();
             RefreshMediaParams();
             m_logger.LogTrace("{Prefix}: Formatted media", LogPrefix);
@@ -1164,7 +1203,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         {
             // In Win32 partition 2 = initiator, partition 1 = content
             //  QUIRK LTO-5+: it's vice versa!
-            return m_useLtoPartitionSchema
+            return false //m_useLtoPartitionSchema
                 ? (partition == MediaPartition.Initiator) ? 1U : 2U
                 : (partition == MediaPartition.Initiator) ? 2U : 1U;
         }
@@ -1187,7 +1226,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         {
             // In Win32 partition 2 = initiator, partition 1 = content
             //  QUIRK LTO-5+: it's vice versa!
-            return m_useLtoPartitionSchema
+            return false //m_useLtoPartitionSchema
                 ? (win32Partition == 2U) ? MediaPartition.Content : MediaPartition.Initiator
                 : (win32Partition == 2U) ? MediaPartition.Initiator : MediaPartition.Content;
         }

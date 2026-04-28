@@ -30,15 +30,35 @@ namespace TapeLibNET
         private bool BeginReadContentForCurrentSet()
         {
             // If we were reading or writing, end it first - before setting the new set's parameters
-            Manager.EndReadWrite();
+            if (!Manager.EndReadWrite())
+            {
+                m_logger.LogWarning("Failed to end read/write in {Method}",
+                    nameof(BeginReadContentForCurrentSet));
+                SyncErrorFrom(Manager);
+                return false;
+            }
+
+            // Optimization: set the target content set BEFORE transition to Content reading
+            //  so that Navigator can optimize moving to the target content set once we call BeginReadContent()
+            Navigator.TargetContentSet = CurrentSetAsNavigatorContentSet;
+
+            // Transition to Content mode before setting the set parameters
+            if (!Manager.BeginReadContent())
+            {
+                m_logger.LogWarning("Failed to transition to reading content in {Method}",
+                    nameof(BeginReadContentForCurrentSet));
+                SyncErrorFrom(Manager);
+                return false;
+            }
 
             // set the filemarks and block size from the set to the manager
             Navigator.FmksMode = TOC.CurrentSetTOC.FmksMode;
             Drive.SetBlockSize(TOC.CurrentSetTOC.BlockSize);
 
-            Navigator.TargetContentSet = CurrentSetAsNavigatorContentSet;
+            // Success
+            ResetError();
 
-            return Manager.BeginReadContent();
+            return true;
         }
 
         /// <summary>

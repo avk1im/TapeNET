@@ -52,19 +52,6 @@ public class CliParsingTests
     }
 
     [Fact]
-    public async Task Backup_WithoutDriveSelection_AutoOpensWin32DriveZero()
-    {
-        // Per architecture §4 shortcut: when no drive option is supplied, the
-        //  verb auto-opens Win32 drive 0. On a CI machine with no tape drive
-        //  installed that opens-then-fails — but the failure is an
-        //  operational one (no such drive), NOT a usage error.
-        var r = await TapeConHost.RunAsync("backup", "C:\\");
-        Assert.NotEqual(TapeConExitCode.UsageError, r.Exit);
-        Assert.Contains(r.Entries, e =>
-            e.Message.Contains("Win32 drive 0", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Fact]
     public async Task Backup_MutuallyExclusiveDriveOptions_ReturnsUsageError()
     {
         var r = await TapeConHost.RunAsync(

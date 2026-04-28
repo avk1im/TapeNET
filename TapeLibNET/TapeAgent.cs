@@ -313,11 +313,25 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     private bool BeginWriteTOC()
     {
         // If we were reading or writing, end it first - before setting the parameters for TOC writing
-        Manager.EndReadWrite();
+        if (!Manager.EndReadWrite())
+        {
+            m_logger.LogWarning("Failed to end read/write in {Method}",
+                nameof(BeginWriteTOC));
+            SyncErrorFrom(Manager);
+            return false;
+        }
+
+        if (!Manager.BeginWriteTOC())
+        {
+            m_logger.LogWarning("Failed to begin write TOC in {Method}",
+                nameof(BeginWriteTOC));
+            SyncErrorFrom(Manager);
+            return false;
+        }
 
         Drive.SetBlockSize(c_fixedTOCBlockSize);
 
-        return Manager.BeginWriteTOC();
+        return true;
     }
     private TapeWriteStream? OpenWriteTOCStream()
     {
@@ -570,12 +584,25 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     private bool BeginReadTOC()
     {
         // If we were reading or writing, end it first - before setting the parameters for TOC reading
-        Manager.EndReadWrite();
+        if (!Manager.EndReadWrite())
+        {
+            m_logger.LogWarning("Failed to end read/write in {Method}",
+                nameof(BeginReadTOC));
+            SyncErrorFrom(Manager);
+            return false;
+        }
 
-        // set the filemarks and block size from the set to the manager
+        if (!Manager.BeginReadTOC())
+        {
+            m_logger.LogWarning("Failed to begin read TOC in {Method}",
+                nameof(BeginReadTOC));
+            SyncErrorFrom(Manager);
+            return false;
+        }
+
         Drive.SetBlockSize(c_fixedTOCBlockSize);
 
-        return Manager.BeginReadTOC();
+        return true;
     }
     private TapeReadStream? OpenReadTOCStream()
     {
