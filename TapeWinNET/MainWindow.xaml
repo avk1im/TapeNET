@@ -619,6 +619,7 @@
 
                             <Button Content="Abort Backup" 
                                     Command="{Binding AbortBackupCommand}"
+                                    IsEnabled="{Binding IsAbortBackupEnabled}"
                                     HorizontalAlignment="Center"
                                     Width="100"/>
                         </StackPanel>

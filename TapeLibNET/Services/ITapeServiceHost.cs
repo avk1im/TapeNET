@@ -19,6 +19,10 @@ public enum ServiceStateChange
     TocChanged       = 1 << 4,
     OperationStarted = 1 << 5,
     OperationEnded   = 1 << 6,
+    /// <summary>TOC save phase has begun — abort should be suppressed.</summary>
+    TOCSaveStarted   = 1 << 7,
+    /// <summary>TOC save phase has ended — abort may be re-enabled.</summary>
+    TOCSaveEnded     = 1 << 8,
 }
 
 // ── ITapeServiceHost ──────────────────────────────────────────────────────────

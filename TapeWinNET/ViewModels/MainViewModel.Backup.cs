@@ -22,6 +22,9 @@ public partial class MainViewModel
     private string _backupProgressText = string.Empty;
     private string _currentBackupFile = string.Empty;
 
+    // True while the TOC save sub-phase is not in progress; bound to the Abort Backup button's IsEnabled
+    private bool _isAbortBackupEnabled = true;
+
     #endregion
 
     #region Backup Properties
@@ -42,6 +45,17 @@ public partial class MainViewModel
     {
         get => _currentBackupFile;
         set => SetProperty(ref _currentBackupFile, value);
+    }
+
+    /// <summary>
+    /// False during the TOC save sub-phase of a backup, disabling the Abort button.
+    /// Reset to <see langword="true"/> when the TOC save completes or when no backup
+    ///  operation is in progress.
+    /// </summary>
+    public bool IsAbortBackupEnabled
+    {
+        get => _isAbortBackupEnabled;
+        set => SetProperty(ref _isAbortBackupEnabled, value);
     }
 
     #endregion
@@ -179,6 +193,7 @@ public partial class MainViewModel
         finally
         {
             IsBackupInProgress = false;
+            IsAbortBackupEnabled = true;  // always re-enable for next backup session
             IsBusy = false;
             BusyMessage = string.Empty;
             BackupProgressText = string.Empty;

@@ -301,85 +301,95 @@ public partial class TapeServiceBase
 
                 if (!skipTOCSave)
                 {
-                    tocTimer.Restart();
-
-                    if (!wasAborted)
+                    // Notify host that TOC save is starting so the UI can disable abort
+                    _host.OnServiceStateChanged(ServiceStateChange.TOCSaveStarted);
+                    try
                     {
-                        OnStatusUpdate("Saving TOC...");
-                        LogInfo("Backing up TOC...");
-                    }
-                    else
-                    {
-                        OnStatusUpdate("Aborting — saving TOC...");
-                        LogInfo("Abort requested — saving TOC to preserve media integrity...");
-                    }
+                        tocTimer.Restart();
 
-                    var tocResult = agent.BackupTOC();
-                    if (!tocResult)
-                    {
-                        LogErr($"Couldn't backup TOC. Error: {tocResult.ErrorMessage}");
-                        LogInfo("Attempting to enforce TOC backup...");
-
-                        var enforceResult = agent.BackupTOC(enforce: true);
-                        if (!enforceResult)
+                        if (!wasAborted)
                         {
-                            LogErr("Couldn't enforce TOC backup");
-                            LogInfo("Attempting to export TOC to file as emergency recovery...");
-                            OnStatusUpdate("Emergency TOC export...");
+                            OnStatusUpdate("Saving TOC...");
+                            LogInfo("Backing up TOC...");
+                        }
+                        else
+                        {
+                            OnStatusUpdate("Aborting — saving TOC...");
+                            LogInfo("Abort requested — saving TOC to preserve media integrity...");
+                        }
 
-                            bool emergencySaved = false;
-                            string suggestedPath = BuildEmergencyTocExportPath(toc, request.EmergencyTocFolder);
+                        var tocResult = agent.BackupTOC();
+                        if (!tocResult)
+                        {
+                            LogErr($"Couldn't backup TOC. Error: {tocResult.ErrorMessage}");
+                            LogInfo("Attempting to enforce TOC backup...");
 
-                            // Give the user two attempts to save the TOC to a file; break if user cancels
-                            const int maxExportAttempts = 2;
-                            for (int attempt = 1; attempt <= maxExportAttempts && !emergencySaved; attempt++)
+                            var enforceResult = agent.BackupTOC(enforce: true);
+                            if (!enforceResult)
                             {
-                                string? chosenPath = _host.OnEmergencyTocExportConfirm(suggestedPath, attempt > 1);
+                                LogErr("Couldn't enforce TOC backup");
+                                LogInfo("Attempting to export TOC to file as emergency recovery...");
+                                OnStatusUpdate("Emergency TOC export...");
 
-                                if (string.IsNullOrEmpty(chosenPath))
+                                bool emergencySaved = false;
+                                string suggestedPath = BuildEmergencyTocExportPath(toc, request.EmergencyTocFolder);
+
+                                // Give the user two attempts to save the TOC to a file; break if user cancels
+                                const int maxExportAttempts = 2;
+                                for (int attempt = 1; attempt <= maxExportAttempts && !emergencySaved; attempt++)
                                 {
-                                    LogWarn("User declined emergency TOC export");
-                                    break;
+                                    string? chosenPath = _host.OnEmergencyTocExportConfirm(suggestedPath, attempt > 1);
+
+                                    if (string.IsNullOrEmpty(chosenPath))
+                                    {
+                                        LogWarn("User declined emergency TOC export");
+                                        break;
+                                    }
+
+                                    var saveResult = agent.SaveTOCToFile(chosenPath);
+                                    if (saveResult)
+                                    {
+                                        LogOk($"Emergency TOC exported to: {chosenPath}");
+                                        LogInfoSub("This file can be used to recover access to the media content");
+                                        IsTOCFromFile = true;
+                                        TOCFilePath = chosenPath;
+                                        emergencySaved = true;
+                                    }
+                                    else
+                                    {
+                                        LogErr($"Failed to export emergency TOC to file: {saveResult.ErrorMessage}");
+                                        if (attempt < maxExportAttempts)
+                                            LogInfoSub("You can try a different location...");
+                                    }
                                 }
 
-                                var saveResult = agent.SaveTOCToFile(chosenPath);
-                                if (saveResult)
+                                if (!emergencySaved)
                                 {
-                                    LogOk($"Emergency TOC exported to: {chosenPath}");
-                                    LogInfoSub("This file can be used to recover access to the media content");
-                                    IsTOCFromFile = true;
-                                    TOCFilePath = chosenPath;
-                                    emergencySaved = true;
-                                }
-                                else
-                                {
-                                    LogErr($"Failed to export emergency TOC to file: {saveResult.ErrorMessage}");
-                                    if (attempt < maxExportAttempts)
-                                        LogInfoSub("You can try a different location...");
+                                    throw new InvalidOperationException(
+                                        "TOC backup failed — media TOC is lost. " +
+                                        "The backed-up files are on the media but cannot be accessed without a TOC.");
                                 }
                             }
-
-                            if (!emergencySaved)
+                            else
                             {
-                                throw new InvalidOperationException(
-                                    "TOC backup failed — media TOC is lost. " +
-                                    "The backed-up files are on the media but cannot be accessed without a TOC.");
+                                LogOk("Enforced TOC backup succeeded");
                             }
                         }
                         else
                         {
-                            LogOk("Enforced TOC backup succeeded");
+                            LogOk("TOC backed up successfully");
                         }
-                    }
-                    else
+
+                        _toc = toc; // update service TOC reference
+                    } // try (TOC save)
+                    finally
                     {
-                        LogOk("TOC backed up successfully");
+                        tocTimer.Stop();
+                        tocElapsedUs += tocTimer.ElapsedMicroseconds;
+
+                        // Re-enable abort now that TOC save is complete (or threw)
+                        _host.OnServiceStateChanged(ServiceStateChange.TOCSaveEnded);
                     }
-
-                    tocTimer.Stop();
-                    tocElapsedUs += tocTimer.ElapsedMicroseconds;
-
-                    _toc = toc; // update service TOC reference
                 } // if (!skipTOCSave)
 
                 // Log results for this volume — headline level + uniform stats

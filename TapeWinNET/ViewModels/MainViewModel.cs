@@ -1525,6 +1525,12 @@ public partial class MainViewModel : ViewModelBase
                 UsageBar.Rebuild();
                 CommandManager.InvalidateRequerySuggested();
             }
+
+            if (change.HasFlag(ServiceStateChange.TOCSaveStarted))
+                IsAbortBackupEnabled = false;
+
+            if (change.HasFlag(ServiceStateChange.TOCSaveEnded))
+                IsAbortBackupEnabled = true;
         });
     }
 
@@ -1743,18 +1749,16 @@ public partial class MainViewModel : ViewModelBase
 
             var success = await _tapeService.FormatMediaAsync(initiatorPartitionSize, formatViewModel.MediaName);
 
-            if (!success)
-            {
-                MessageBox.Show($"Failed to format media.\n\n{_tapeService.LastError}",
-                    "Format Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
-            }
-
+            // Update even if format failed, since the media might have been affected
             UpdateTreeFromTOC(_tapeService.DriveNumber);
             SelectMostRecentSet();
 
-            MessageBox.Show("Media formatted successfully!", "Format Complete",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+            if (success)
+                MessageBox.Show("Media formatted successfully!", "Format Complete",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+            else
+                MessageBox.Show($"Failed to format media.\n\n{_tapeService.LastError}",
+                    "Format Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         catch (Exception ex)
         {
