@@ -42,25 +42,10 @@ public static class RootCommandFactory
             return (int)Infrastructure.TapeConExitCode.Ok;
         });
 
-        // ─── 'docs' placeholder verb ──────────────────────────────────────────
-        //  Phase 8 will render embedded markdown topics. Phase 1 just confirms
-        //   that the verb tree composes and that --help works.
-        var docs = new Command("docs", "Show conceptual documentation topics (concepts, migration, faq).");
-        var topicArg = new Argument<string?>("topic")
-        {
-            Description = "Topic to display: concepts | migration | faq.",
-            Arity = ArgumentArity.ZeroOrOne,
-        };
-        docs.Arguments.Add(topicArg);
-        docs.SetAction(parseResult =>
-        {
-            var topic = parseResult.GetValue(topicArg) ?? "concepts";
-            ux.Log(WarningLevel.Info,
-                $"'tapecon docs {topic}' is not yet implemented (Phase 8). " +
-                "See docs/TapeConNET-2.0-Architecture.md for the project plan.");
-            return (int)Infrastructure.TapeConExitCode.Ok;
-        });
-        root.Subcommands.Add(docs);
+        // ─── 'docs' verb (Phase 8) ────────────────────────────────────────────
+        //  Renders embedded markdown topics (concepts, migration, faq) so a
+        //   single-file deployment still ships the documentation.
+        root.Subcommands.Add(DocsCommand.Create(ux));
 
         // ─── 'demo' verb (Phase 2 smoke test) ─────────────────────────────────
         //  Exercises every WarningLevel, the bounded progress scope, and an

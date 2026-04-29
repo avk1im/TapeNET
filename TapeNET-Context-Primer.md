@@ -9,11 +9,11 @@ The **TapeNET** solution (`D:\Documents.DEV\Projects\TapeNET`) targets **.NET 8 
 | `TapeLibNET` | Class library | Core tape I/O library — drives, agents, TOC, streams, serialization |
 | `FclNET` | Class library | FCL (File Conditions Language) — DSL for file filtering by name, path, size, date, attributes |
 | `FclAiNET` | Class library | AI-assisted natural language → FCL translation using `Microsoft.Extensions.AI` |
-| `TapeConNET` | Console app | CLI tape backup utility (`tapecon`) — flag-based command-line interface |
+| `TapeConNET` | Console app | CLI tape backup utility (`tapecon`) — verb-based command-line interface (System.CommandLine + Spectre.Console) |
 | `TapeWinNET` | WPF app | GUI tape backup manager — MVVM, tree-based navigation, log pane, FCL-based file filtering |
 | `FclAiNET.Test` | Console app | Interactive NL → FCL REPL for testing AI translation |
 
-**Test projects:** `FclNET.Tests` (xUnit, 469+ tests covering lexer, parser, validator, evaluator, formatter, pipeline). `TapeLibNET.Tests` (xUnit, 1,170+ tests covering virtual drives, navigation, streams, TOC serialization, backup/restore agents, incremental chains, multi-volume, error handling, and service-layer round-trips). `TapeConNET.Tests` (xUnit, 190+ tests covering CLI parsing, lifecycle, FCL filtering, backup/restore round-trips, and smoke tests).
+**Test projects:** `FclNET.Tests` (xUnit, 469+ tests covering lexer, parser, validator, evaluator, formatter, pipeline). `TapeLibNET.Tests` (xUnit, 1,170+ tests covering virtual drives, navigation, streams, TOC serialization, backup/restore agents, incremental chains, multi-volume, error handling, and service-layer round-trips). `TapeConNET.Tests` (xUnit, 56+ tests covering CLI parsing, lifecycle, FCL filtering, backup/restore round-trips, large/incremental stress scenarios, and the embedded-docs verb).
 
 **Dependencies:** The apps depend on the libraries. `FclNET` has no dependencies on other solution projects. `FclAiNET` depends on `FclNET`. `TapeWinNET` depends on `FclNET` for file filtering in the MainWindow via the `FclTapeFileFilter` adapter (the restore pipeline uses a dictionary-based selection path — see below). `TapeConNET` depends on `FclNET` for its `ITapeFileFilter`-based restore path. `TapeLibNET` remains independent of the FCL projects.
 
@@ -251,11 +251,19 @@ Tests are parameterized via `[Theory]` + `[MemberData]` across three `DriveProfi
 
 ## TapeConNET — CLI Architecture
 
-- **Single-file top-level program** (`Program.cs`) — no classes for the main flow.
-- **Flag-based parsing**: `ParseCommandLine(args)` splits args into flag+values groups. A `Dictionary<string, FlagHandler>` maps flags (e.g., `-backup`, `-restore`, `-drive`) to handler functions.
-- **`OnFileEventProcessor`** (abstract class implementing `ITapeFileNotifiable`) is the base for `OnFileBackupProcessor`, `OnFileRestoreProcessor`, `OnFileValidateProcessor`, `OnFileVerifyProcessor`. Each syncs stats from the library via `Sync(in TapeFileStatistics)`.
-- **`UniversalRestore`** is a shared handler for restore/validate/verify operations with multi-volume support.
-- User interaction: `GetConsoleKey()`, `MessageYesNoCancel()`, quiet mode support.
+Full reference: `docs/TapeConNET-2.0-Architecture.md` (as-built overview) and `docs/cli-reference.md` (every verb, option, and exit code). End-user docs ship embedded in the executable under `TapeConNET/Resources/Docs/` and are rendered by `tapecon docs <topic>`.
+
+- **Verb-based CLI** built on `System.CommandLine` 2.0.7 (parse → validate → invoke, async, cancellation, auto-help) and `Spectre.Console` 0.55 for color, tables, prompts, and progress bars.
+- **Verb tree** (composed in `Cli/RootCommandFactory.cs`):
+  `info | format | eject | toc {export|import} | backup | restore | validate | verify | list | rename-media | rename-set | docs | demo`.
+- **Shared options:** `Cli/GlobalOptions.cs` carries `--quiet` / `--no-color` plus the drive-selection set (`--drive`, `--virtual`, `--initiator`, `--in-memory`, `--capacity`, `--init-capacity`, `--log-level`); `Cli/FilterOptions.cs` carries `--filter` / `--filter-file`. Bare positional arguments are auto-classified by `Filtering/FilterResolver.cs` (FCL file → inline FCL → existing path → DOS wildcard).
+- **Service layer:** `TapeConNET.TapeService` (in `Services/`) is a thin wrapper over `TapeLibNET.Services.TapeServiceBase`. All real I/O, multi-volume orchestration, TOC handling, and filter dispatch live in the shared engine.
+- **UX bridge:** `Ux/IConsoleUx.cs` (with `SpectreConsoleUx` / `SilentConsoleUx`) abstracts console I/O; `Ux/ConsoleUxServiceHost.cs` is the `ITapeServiceHost` adapter that translates engine callbacks (file events, multi-volume confirms, error prompts) into `IConsoleUx` calls. Logging flows through `Logging/LoggerFactoryBuilder` + `ConsoleUxLoggerProvider`.
+- **Cancellation:** `Infrastructure/CancellationHooks.cs` intercepts `Ctrl+C`. The first press requests cooperative engine cancellation; the second performs a hard abort. Verbs preserve a writable TOC where possible.
+- **Exit codes:** `Infrastructure/TapeConExitCode.cs` + `TapeConException` categorize non-zero exits; `Cli/VerbHost.cs` translates exceptions into the right code.
+- **Embedded docs:** `Resources/Docs/{concepts,migration-from-1.0,faq}.md` are embedded resources; `Cli/DocsCommand.cs` renders them via `IConsoleUx` (`--list`, default = `concepts`, unknown topic = `UsageError`).
+- **Tests:** `TapeConNET.Tests` runs the CLI in-process via `Helpers/TapeConHost.cs` against `TempVirtualMedia` (round-trip, append, set-index, FCL filters, large nested trees, three-wave incremental chains, selective restore, validate/verify on chains, docs verb). Multi-volume scenarios that need mid-run media swaps live in `TapeLibNET.Tests` because `ConsoleUxServiceHost` cannot inject a fresh virtual media path mid-run.
+- **Legacy 1.x sources** are archived under `TapeConNET/Excluded Files/` (excluded from compile) for reference only; the old DOCX → PDF docs pipeline is retired.
 
 ---
 

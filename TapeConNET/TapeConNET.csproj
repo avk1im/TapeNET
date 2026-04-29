@@ -10,8 +10,6 @@
     <AssemblyName>tapecon</AssemblyName>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RootNamespace>TapeConNET</RootNamespace>
-    <AssemblyVersion>1.2.0.$(BuildNumber)</AssemblyVersion>
-    <FileVersion>1.2.0.$(BuildNumber)</FileVersion>
   </PropertyGroup>
 
   <Import Project="..\Versioning.targets" />
@@ -64,8 +62,9 @@
     <ProjectReference Include="..\TapeLibNET\TapeLibNET.csproj" />
   </ItemGroup>
 
-  <!-- TapeConNET 2.0: legacy DOCX→PDF docs pipeline retired (Phase 8 replaces it
-       with auto-generated CLI reference + 'tapecon docs' embedded markdown).
-       Original .docx / .pdf / ConvertDocxToPdf.ps1 archived under Excluded Files\. -->
+  <!-- TapeConNET 2.0: legacy DOCX → PDF docs pipeline retired in favor of the
+       auto-generated `docs/cli-reference.md` and the 'tapecon docs' embedded
+       markdown topics. The 1.x .docx / .pdf / ConvertDocxToPdf.ps1 inputs are
+       archived under Excluded Files\ for reference. -->
 
 </Project>
