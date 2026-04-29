@@ -405,6 +405,18 @@ public class LocalHostBackendTests(LocalHostTapeServiceFixture service)
 /// Runs all <see cref="RemoteBackendTestsBase"/> tests against an external gRPC server
 /// configured via <c>remote-test-settings.json</c> or <c>TAPE_REMOTE_*</c> environment
 /// variables. All tests skip automatically when no remote host is configured.
+/// <para>
+/// Resource-intensive: requires external gRPC server configuration.
+/// Excluded from routine runs via <c>FullyQualifiedName!~RemoteHostBackendTests</c> in
+/// <c>TapeNET.runsettings</c> — trait-based filtering does not work here because test
+/// methods are inherited from <see cref="RemoteBackendTestsBase"/>, and xUnit applies
+/// traits from the declaring (base) class, not the concrete subclass.
+/// </para>
+/// <para>
+/// <b>To run these tests explicitly:</b><br/>
+/// CLI: <c>dotnet test --filter "FullyQualifiedName~RemoteHostBackendTests"</c><br/>
+/// Visual Studio Test Explorer: disable or override <c>TapeNET.runsettings</c>.
+/// </para>
 /// </summary>
 [Collection(RemoteHostTapeServiceCollection.Name)]
 public class RemoteHostBackendTests(RemoteHostTapeServiceFixture service)

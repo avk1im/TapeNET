@@ -307,6 +307,15 @@ namespace TapeLibNET
                 //  rewind the tape on failure so the next file starts at the correct position.
                 TapeFileInfo tfi = new(TOC.GenerateUID(), Drive.BlockCounter, fileInfo);
 
+                // Track whether the file made it onto the tape AND into the TOC. Only then are
+                //  we allowed to call NotifyPostProcessFile — and we MUST do so AFTER the
+                //  per-file catch block so that a TapeAbortRequestedException raised by the
+                //  notification cannot trigger the failure-cleanup path below (which rewinds
+                //  the tape and would silently corrupt the just-written file: header and/or
+                //  body would get clobbered by the next tape write, while the TOC entry would
+                //  still claim the file is present).
+                bool fileBackedUp = false;
+
                 try
                 {
                     // first check for abort request
@@ -334,11 +343,24 @@ namespace TapeLibNET
 
                     BackupFile(tfi);
 
-                    // success — append to TOC and notify
+                    // success — append to TOC; post-process notification is deferred until
+                    //  AFTER the catch block so that an abort raised during notification
+                    //  cannot run the per-file rewind/cleanup logic.
                     TOC.CurrentSetTOC.Append(tfi);
-                    NotifyPostProcessFile(bc.fileNotify, tfi);
-
-                    m_logger.LogTrace("File #{Number} >{File}< backed up ok", _stats.FilesProcessed, fileName);
+                    fileBackedUp = true;
+                }
+                catch (TapeAbortRequestedException)
+                {
+                    // Abort raised before BackupFile completed (i.e. from ThrowIfAbortRequested
+                    //  at the top of the try, or rethrown by NotifyPreProcessFile). Nothing was
+                    //  written for this file, no TOC entry was appended, so no tape rewind and
+                    //  no NotifyFileFailed call (which would skew stats and itself rethrow).
+                    //  We do NOT propagate the exception out of this method — the public API
+                    //  is contractually bool/TapeResult based.
+                    m_logger.LogTrace("{Method}: Abort requested before file #{Number} >{File}< was written",
+                        nameof(BackupFilesToCurrentSet), _stats.FilesProcessed + 1, fileName);
+                    bc.overallSuccess = false;
+                    break;
                 }
                 catch (Exception ex)
                 {
@@ -349,6 +371,17 @@ namespace TapeLibNET
 
                     if (IsEOM || ex is TapeIOException { IsEOM: true })
                     {
+                        // Rewind the tape over the partially-written file so that its remnants
+                        //  do not consume space the volume's TOC may still need to fit on this
+                        //  volume (e.g. when there is no Initiator partition). No TOC entry was
+                        //  appended for this file, so the rewind is safe.
+                        if (!Drive.MoveToBlock(tfi.Block))
+                            m_logger.LogWarning("Failed to rewind tape to block {Block} after EOM on file >{File}<",
+                                tfi.Block, fileName);
+                        else
+                            m_logger.LogTrace("Tape rewound to block {Block} after EOM on file >{File}<",
+                                tfi.Block, fileName);
+
                         // Set up continuation on the next volume for multi-volume backup
                         m_logger.LogTrace("Setting up multi-volume backup from file #{Number} >{File}<",
                             _stats.FilesProcessed + 1, bc.fileList[bc.fileIndex]);
@@ -377,7 +410,9 @@ namespace TapeLibNET
                     }
 
                     // Rewind tape to the block where this file started, so the next file
-                    //  (retried or skipped) starts at the correct position without a dead block gap
+                    //  (retried or skipped) starts at the correct position without a dead block gap.
+                    //  Safe because no TOC entry was appended for this file (BackupFile threw
+                    //  before TOC.Append, so fileBackedUp stayed false).
                     if (!Drive.MoveToBlock(tfi.Block))
                         m_logger.LogWarning("Failed to rewind tape to block {Block} after failed file >{File}<",
                             tfi.Block, fileName);
@@ -404,7 +439,28 @@ namespace TapeLibNET
                         break;
                 } // catch
 
-            } // foreach fileName
+                // Post-process notification is deferred to here so it runs OUTSIDE the per-file
+                //  catch block. If the notification throws TapeAbortRequestedException, we just
+                //  break the loop — we do NOT rewind the tape or call NotifyFileFailed, since
+                //  the file is already fully written and committed to the TOC.
+                if (fileBackedUp)
+                {
+                    try
+                    {
+                        NotifyPostProcessFile(bc.fileNotify, tfi);
+                    }
+                    catch (TapeAbortRequestedException)
+                    {
+                        m_logger.LogTrace("{Method}: Abort requested while post-processing file #{Number} >{File}<",
+                            nameof(BackupFilesToCurrentSet), _stats.FilesProcessed, fileName);
+                        bc.overallSuccess = false;
+                        break;
+                    }
+
+                    m_logger.LogTrace("File #{Number} >{File}< backed up ok", _stats.FilesProcessed, fileName);
+                }
+
+            } // foreach bc.fileIndex
 
             BytesBackedupMarker = BytesBackedup;
             NotifyBatchEnd(bc.fileNotify);
