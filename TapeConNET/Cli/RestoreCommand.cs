@@ -65,6 +65,10 @@ internal static class RestoreCommand
         {
             Description = "Skip per-file errors automatically without prompting.",
         };
+        var noMultivolumeOption = new Option<bool>("--no-multivolume")
+        {
+            Description = "Stop the operation when the current volume is exhausted instead of continuing to another volume.",
+        };
 
         cmd.Arguments.Add(setArg);
         cmd.Arguments.Add(filterArgs);
@@ -73,6 +77,7 @@ internal static class RestoreCommand
         if (withTarget) cmd.Options.Add(existingOption);
         cmd.Options.Add(incrementalOption);
         cmd.Options.Add(skipErrorsOption);
+        cmd.Options.Add(noMultivolumeOption);
 
         cmd.SetAction(async (parseResult, ct) =>
         {
@@ -85,6 +90,7 @@ internal static class RestoreCommand
             var existing    = withTarget ? parseResult.GetValue(existingOption) : TapeHowToHandleExisting.Skip;
             var incremental = parseResult.GetValue(incrementalOption);
             var skipErrors  = parseResult.GetValue(skipErrorsOption);
+            var noMultivolume = parseResult.GetValue(noMultivolumeOption);
             var filterFcl   = parseResult.GetValue(FilterOptions.Filter);
             var filterFile  = parseResult.GetValue(FilterOptions.FilterFile);
 
@@ -124,7 +130,10 @@ internal static class RestoreCommand
                 RecurseSubdirectories: subdirs,
                 HandleExisting:       existing,
                 SkipAllErrors:        skipErrors,
-                Filter:               resolved.Filter);
+                Filter:               resolved.Filter)
+            {
+                NoMultivolume = noMultivolume,
+            };
 
             var result = await service.ExecuteRestoreAsync(options);
             return (int)VerbHost.ToExitCode(result.WasAborted, result.HasFailed || result.FilesFailed > 0);

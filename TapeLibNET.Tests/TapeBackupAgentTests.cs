@@ -49,25 +49,6 @@ public class TapeBackupAgentTests
         }
     }
 
-    /// <summary>
-    /// Cross-product of drive profile × filemark mode.
-    /// SeqFilemarks does not support FmksMode=true, but the agent gracefully
-    ///  falls back — we test that the agent handles the fallback correctly.
-    /// </summary>
-    public static TheoryData<DriveProfile, bool> ProfilesAndFmksModes
-    {
-        get
-        {
-            TheoryData<DriveProfile, bool> data = [];
-            foreach (var profile in new[] { DriveProfile.Setmarks, DriveProfile.Partitions, DriveProfile.SeqFilemarks, DriveProfile.FilemarksOnly })
-            {
-                data.Add(profile, true);
-                data.Add(profile, false);
-            }
-            return data;
-        }
-    }
-
     #endregion
 
 
@@ -84,7 +65,6 @@ public class TapeBackupAgentTests
         string description = "Test Set",
         bool newSet = true,
         TapeHashAlgorithm hash = TapeHashAlgorithm.Crc64,
-        bool fmksMode = false,
         uint blockSize = 0,
         ITapeFileNotifiable? notifiable = null)
     {
@@ -92,7 +72,6 @@ public class TapeBackupAgentTests
         toc.CurrentSetTOC.Description = description;
         toc.CurrentSetTOC.HashAlgorithm = hash;
         toc.CurrentSetTOC.BlockSize = blockSize == 0 ? agent.Manager.Navigator.Drive.DefaultBlockSize : blockSize;
-        toc.CurrentSetTOC.FmksMode = fmksMode;
 
         return agent.BackupFileListToCurrentSet(
             newSet: newSet,
@@ -188,34 +167,6 @@ public class TapeBackupAgentTests
             else
                 Assert.NotNull(fixture.TOC[1][i].Hash);
         }
-    }
-
-    [Theory]
-    [MemberData(nameof(ProfilesAndFmksModes))]
-    public void MultiFile_BackupWithFmksMode_TOCRecordsAllFiles(DriveProfile profile, bool fmksMode)
-    {
-        using var tree = new TempFileTree();
-        tree.AddFiles("fmks", count: 6, minSize: 256, maxSize: 8 * 1024);
-
-        using var fixture = new VirtualTapeFixture(profile);
-        var notifiable = new TestNotifiable();
-        using var agent = fixture.CreateBackupAgent();
-
-        bool backupOk = BackupFileList(agent, fixture.TOC, tree.Files,
-            description: $"Fmks={fmksMode}", fmksMode: fmksMode, notifiable: notifiable);
-        Assert.True(backupOk, "Backup failed");
-        Assert.True(agent.BackupTOC(), "TOC save failed");
-
-        notifiable.AssertAllSucceeded(tree.Files.Count);
-
-        Assert.Equal(1, fixture.TOC.Count);
-        Assert.Equal(tree.Files.Count, fixture.TOC[1].Count);
-
-        // SeqFilemarks cannot use FmksMode=true — agent falls back to false
-        if (profile is DriveProfile.SeqFilemarks or DriveProfile.FilemarksOnly && fmksMode)
-            Assert.False(fixture.TOC[1].FmksMode); // should have been overridden
-        else
-            Assert.Equal(fmksMode, fixture.TOC[1].FmksMode);
     }
 
     #endregion

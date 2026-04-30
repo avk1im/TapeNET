@@ -23,7 +23,8 @@ namespace TapeLibNET
     public class TapeSerializer(Stream wstream)
     {
         internal static readonly byte[] Signature = [(byte)'T', (byte)'F'];
-        public const ushort Version = 0x0100;
+        /// <summary>Current on-tape format version. Bumped from 0x0100 for TapeAddress (Block+Offset).</summary>
+        public const ushort Version = 0x0101;
 
         // The following works for any type, yet makes no sense for reference types (handles the reference only)
         private static byte[] GetBytesUnmanaged<TUnmanaged>(TUnmanaged v) where TUnmanaged: unmanaged
@@ -51,6 +52,7 @@ namespace TapeLibNET
         public void Serialize(string str) => SerializeWithLength(Encoding.UTF8.GetBytes(str));
 
         public void Serialize(FileAttributes attr) => Serialize((uint)attr);
+        public void Serialize(TapeAddress addr) { Serialize(addr.Block); Serialize(addr.Offset); }
         public void Serialize(DateTime dt) => Serialize(dt.Ticks);
         public void Serialize(TapeFileDescriptor fileDescr)
         {
@@ -131,6 +133,7 @@ namespace TapeLibNET
 
         public FileAttributes DeserializeFileAttributes() => (FileAttributes)DeserializeUInt32();
         public DateTime DeserializeDateTime() => new(DeserializeInt64());
+        public TapeAddress DeserializeTapeAddress() => new(DeserializeInt64(), DeserializeUInt32());
         public TapeFileDescriptor DeserializeFileDescriptor()
         {
             var fileDescr = new TapeFileDescriptor(DeserializeString())

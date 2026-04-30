@@ -19,6 +19,14 @@ public abstract record ServiceOperationRequest
 
     /// <summary>Optional human-readable label shown in progress output.</summary>
     public string? OperationLabel { get; init; }
+
+    /// <summary>
+    /// When <c>true</c>, the operation is confined to the current volume only:
+    ///  multi-volume continuation is not attempted. If the tape is full or a
+    ///  volume change is required, the operation ends with the files processed
+    ///  so far and a log message is emitted.
+    /// </summary>
+    public bool NoMultivolume { get; init; } = false;
 }
 
 // ── Backup ───────────────────────────────────────────────────────────────────
@@ -36,7 +44,6 @@ public sealed record BackupRequest(
     TapeHashAlgorithm HashAlgorithm,
     bool AppendMode,
     int AppendAfterSetIndex,
-    bool UseFilemarks,
     bool SkipAllErrors,
     string? EmergencyTocFolder = null,
     ITapeFileFilter? Filter = null,

@@ -64,13 +64,13 @@ internal static class BackupCommand
                           "Set index follows the dual convention (positive=oldest-up, 0/negative=latest-down). " +
                           "Implies --append.",
         };
-        var filemarksOption = new Option<bool>("--filemarks", "-f")
-        {
-            Description = "Use filemarks between files (slower seek, more compatible). Default: blob mode.",
-        };
         var skipErrorsOption = new Option<bool>("--skip-errors")
         {
             Description = "Skip per-file errors automatically without prompting.",
+        };
+        var noMultivolumeOption = new Option<bool>("--no-multivolume")
+        {
+            Description = "Stop the backup when the tape is full instead of continuing to a new volume.",
         };
         var emergencyTocOption = new Option<string?>("--emergency-toc")
         {
@@ -85,8 +85,8 @@ internal static class BackupCommand
         cmd.Options.Add(hashOption);
         cmd.Options.Add(appendOption);
         cmd.Options.Add(appendAfterOption);
-        cmd.Options.Add(filemarksOption);
         cmd.Options.Add(skipErrorsOption);
+        cmd.Options.Add(noMultivolumeOption);
         cmd.Options.Add(emergencyTocOption);
 
         cmd.SetAction(async (parseResult, ct) =>
@@ -101,8 +101,8 @@ internal static class BackupCommand
             var hash        = parseResult.GetValue(hashOption);
             var append      = parseResult.GetValue(appendOption);
             var appendAfter = parseResult.GetValue(appendAfterOption);
-            var filemarks   = parseResult.GetValue(filemarksOption);
             var skipErrors  = parseResult.GetValue(skipErrorsOption);
+            var noMultivolume = parseResult.GetValue(noMultivolumeOption);
             var emergency   = parseResult.GetValue(emergencyTocOption);
             var filterFcl   = parseResult.GetValue(FilterOptions.Filter);
             var filterFile  = parseResult.GetValue(FilterOptions.FilterFile);
@@ -139,10 +139,12 @@ internal static class BackupCommand
                 HashAlgorithm:          hash,
                 AppendMode:             append,
                 AppendAfterSetIndex:    appendAfter ?? 0,
-                UseFilemarks:           filemarks,
                 SkipAllErrors:          skipErrors,
                 EmergencyTocFolder:     emergency,
-                Filter:                 resolved.Filter);
+                Filter:                 resolved.Filter)
+            {
+                NoMultivolume = noMultivolume,
+            };
 
             var result = await service.ExecuteBackupAsync(options);
             return (int)VerbHost.ToExitCode(result.WasAborted, result.HasFailed || result.FilesFailed > 0);

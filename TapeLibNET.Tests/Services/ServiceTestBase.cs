@@ -147,7 +147,6 @@ public abstract class ServiceTestBase
             HashAlgorithm:         TapeHashAlgorithm.Crc32,
             AppendMode:            append,
             AppendAfterSetIndex:   0,
-            UseFilemarks:          false,
             SkipAllErrors:         false);
     }
 

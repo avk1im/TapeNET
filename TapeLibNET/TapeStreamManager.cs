@@ -393,8 +393,6 @@ namespace TapeLibNET
                 if (!tapemarkEncountered)
                     if (State == TapeState.ReadingTOC)
                         Navigator.MoveToNextTOCFilemark();
-                    else
-                        Navigator.MoveToNextContentFilemark();
 
             if (WentOK)
                 m_logger.LogTrace("Drive #{Drive}: Ended reading file", DriveNumber);
@@ -437,8 +435,6 @@ namespace TapeLibNET
                 if (!tapemarkEncountered && !writeFailed)
                     if (State == TapeState.WritingTOC)
                         Navigator.WriteTOCFilemark();
-                    else
-                        Navigator.WriteContentFilemark();
 
             if (WentOK)
                 m_logger.LogTrace("Drive #{Drive}: Ended writing file", DriveNumber);

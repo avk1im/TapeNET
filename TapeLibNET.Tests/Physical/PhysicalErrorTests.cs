@@ -57,7 +57,6 @@ public class PhysicalErrorTests(PhysicalDriveFixtureWrapper wrapper, ITestOutput
         Fixture.TOC.CurrentSetTOC.Description = "IO Write Error Test";
         Fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
         Fixture.TOC.CurrentSetTOC.BlockSize = Fixture.Drive.DefaultBlockSize;
-        Fixture.TOC.CurrentSetTOC.FmksMode = true;
 
         using var agent = Fixture.CreateBackupAgent();
 
@@ -206,7 +205,6 @@ public class PhysicalErrorTests(PhysicalDriveFixtureWrapper wrapper, ITestOutput
         Fixture.TOC.CurrentSetTOC.Description = "Timeout Test";
         Fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
         Fixture.TOC.CurrentSetTOC.BlockSize = Fixture.Drive.DefaultBlockSize;
-        Fixture.TOC.CurrentSetTOC.FmksMode = true;
 
         var win32Backend = (TapeDriveWin32Backend)Fixture.Drive.Backend;
 
@@ -268,7 +266,6 @@ public class PhysicalErrorTests(PhysicalDriveFixtureWrapper wrapper, ITestOutput
         Fixture.TOC.AddNewSetTOC(0, incremental: false);
         Fixture.TOC.CurrentSetTOC.Description = "Error Inducing Set";
         Fixture.TOC.CurrentSetTOC.BlockSize = Fixture.Drive.DefaultBlockSize;
-        Fixture.TOC.CurrentSetTOC.FmksMode = true;
 
         using (var agent = Fixture.CreateBackupAgent())
         {

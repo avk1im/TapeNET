@@ -147,9 +147,11 @@ public partial class MainViewModel
                     HashAlgorithm: request.HashAlgorithm,
                     AppendMode: request.AppendMode,
                     AppendAfterSetIndex: request.AppendAfterSetIndex,
-                    UseFilemarks: request.UseFilemarks,
                     SkipAllErrors: request.SkipAllErrors,
-                    MediaName: request.MediaName));
+                    MediaName: request.MediaName)
+                {
+                    NoMultivolume = request.NoMultivolume,
+                });
 
             // Refresh tree after backup to keep TOCView in sync with the (possibly modified) TOC.
             // Refresh might throw if TOC has been spoiled.

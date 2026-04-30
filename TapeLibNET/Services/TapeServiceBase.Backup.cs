@@ -168,7 +168,6 @@ public partial class TapeServiceBase
             toc.CurrentSetTOC.Description  = request.Description;
             toc.CurrentSetTOC.HashAlgorithm = request.HashAlgorithm;
             toc.CurrentSetTOC.BlockSize     = request.BlockSize;
-            toc.CurrentSetTOC.FmksMode      = request.UseFilemarks;
 
             LogInfo($"Backup set: >{request.Description}<");
             LogInfoSub($"Block size: {Helpers.BytesToString(request.BlockSize)}");
@@ -439,6 +438,13 @@ public partial class TapeServiceBase
                 // Check if we need to continue with multi-volume
                 if (!agent.CanResumeToNextVolume)
                     break; // Done
+
+                // If the caller opted out of multi-volume, end here after the current volume
+                if (request.NoMultivolume)
+                {
+                    LogInfo("Multi-volume continuation skipped (no-multivolume mode)");
+                    break;
+                }
 
                 // Step 1: Ask user if they want to continue on a new volume
                 if (!_host.OnVolumeFullConfirm(toc.Volume, toc.Volume + 1,

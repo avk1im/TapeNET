@@ -289,12 +289,6 @@
                             <CheckBox Content="Incremental backup"
                                       IsChecked="{Binding IncrementalBackup}"
                                       Margin="0,0,0,4"/>
-                            <CheckBox Content="Use filemarks"
-                                      IsChecked="{Binding UseFilemarks}"
-                                      Margin="0,0,0,8"
-                                      ToolTip="Use filemarks between files (uncheck for blob mode)"
-                                      Visibility="{Binding DriveSupportsSetmarks,
-                                                   Converter={StaticResource BoolToVis}}"/>
 
                             <!-- Block size -->
                             <TextBlock Text="Block size:" Margin="0,0,0,4"/>
@@ -311,6 +305,10 @@
                             <CheckBox Content="Skip all errors"
                                       IsChecked="{Binding SkipAllErrors}"
                                       ToolTip="Silently skip all file errors without prompting (unattended backup mode)"
+                                      Margin="0,4,0,4"/>
+                            <CheckBox Content="No multivolume"
+                                      IsChecked="{Binding NoMultivolume}"
+                                      ToolTip="Stop the backup when the tape is full instead of continuing to a new volume"
                                       Margin="0,4,0,0"/>
                         </StackPanel>
                     </GroupBox>

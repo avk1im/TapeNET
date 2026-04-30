@@ -152,23 +152,15 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
 
     #region *** (2) Single-Set Round-Trip ***
 
-    /// <summary>With filemarks — exercises FmksMode code path.</summary>
-    [SkippableFact]
-    public void SingleSet_WithFilemarks_RoundTrips() => SingleSet_Core(fmksMode: true);
-
-    /// <summary>Without filemarks — exercises non-FmksMode code path.</summary>
-    [SkippableFact]
-    public void SingleSet_NoFilemarks_RoundTrips() => SingleSet_Core(fmksMode: false);
-
     /// <summary>
     /// Backup a mixed set of files → TOC round-trip → Restore all → Byte-for-byte comparison.
     /// </summary>
-    private void SingleSet_Core(bool fmksMode)
+    [SkippableFact]
+    public void SingleSet_RoundTrips()
     {
         var fixture = Init();
-        string modeLabel = fmksMode ? "FmksMode" : "NoFmksMode";
 
-        _output.WriteLine($"Testing [{modeLabel}]: {fixture.DriveDescription}");
+        _output.WriteLine($"Testing: {fixture.DriveDescription}");
 
         // Rich, mixed file set: various sizes from 0-byte to 256 KB plus edge cases
         using var tree = new TempFileTree();
@@ -181,8 +173,8 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
 
         // Backup
         var backupNotifiable = new TestNotifiable();
-        fixture.BackupFiles(tree.Files, description: $"Single Set {modeLabel}",
-            useFilemarks: fmksMode, hashAlgorithm: TapeHashAlgorithm.Crc64,
+        fixture.BackupFiles(tree.Files, description: "Single Set",
+            hashAlgorithm: TapeHashAlgorithm.Crc64,
             notifiable: backupNotifiable);
         backupNotifiable.AssertAllSucceeded(tree.Files.Count);
         _output.WriteLine("Backup completed");
@@ -209,7 +201,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
             // Byte-for-byte comparison
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
                 RestoreEquivalentRoot(restoreDir, tree.RootPath));
-            _output.WriteLine($"=== SINGLE-SET [{modeLabel}] PASSED ===");
+            _output.WriteLine($"=== SINGLE-SET PASSED ===");
         }
         finally
         {
@@ -221,24 +213,15 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
 
     #region *** (3) Multi-Set: First Set ***
 
-    /// <summary>With filemarks.</summary>
-    [SkippableFact]
-    public void MultiSet_FirstSet_WithFilemarks() => MultiSet_FirstSet_Core(fmksMode: true);
-
-    /// <summary>Without filemarks.</summary>
-    [SkippableFact]
-    public void MultiSet_FirstSet_NoFilemarks() => MultiSet_FirstSet_Core(fmksMode: false);
-
     /// <summary>
     /// Backup set A → Backup set B → Navigate to set A (first/oldest) → Restore → Verify.
-    /// Exercises the navigator's setmark/filemark spacing on real hardware.
     /// </summary>
-    private void MultiSet_FirstSet_Core(bool fmksMode)
+    [SkippableFact]
+    public void MultiSet_FirstSet_RoundTrips()
     {
         var fixture = Init();
-        string modeLabel = fmksMode ? "FmksMode" : "NoFmksMode";
 
-        _output.WriteLine($"Testing [{modeLabel}]: {fixture.DriveDescription}");
+        _output.WriteLine($"Testing: {fixture.DriveDescription}");
 
         // Set A: small text files
         using var treeA = new TempFileTree(seed: 100);
@@ -250,14 +233,12 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
 
         // Backup set A then set B
         var notifyA = new TestNotifiable();
-        fixture.BackupFiles(treeA.Files, description: "Set A",
-            useFilemarks: fmksMode, notifiable: notifyA);
+        fixture.BackupFiles(treeA.Files, description: "Set A", notifiable: notifyA);
         notifyA.AssertAllSucceeded(treeA.Files.Count);
         _output.WriteLine($"Set A backed up: {treeA.Files.Count} files");
 
         var notifyB = new TestNotifiable();
-        fixture.BackupFiles(treeB.Files, description: "Set B",
-            useFilemarks: fmksMode, notifiable: notifyB);
+        fixture.BackupFiles(treeB.Files, description: "Set B", notifiable: notifyB);
         notifyB.AssertAllSucceeded(treeB.Files.Count);
         _output.WriteLine($"Set B backed up: {treeB.Files.Count} files, TOC has {fixture.TOC.Count} set(s)");
 
@@ -281,7 +262,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
 
             FileComparer.AssertFilesMatch(treeA.RootPath, treeA.Files,
                 RestoreEquivalentRoot(restoreDir, treeA.RootPath));
-            _output.WriteLine($"=== MULTI-SET FIRST [{modeLabel}] PASSED ===");
+            _output.WriteLine($"=== MULTI-SET FIRST PASSED ===");
         }
         finally
         {
@@ -293,25 +274,15 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
 
     #region *** (4) Multi-Set: Latest Set ***
 
-    /// <summary>With filemarks.</summary>
-    [SkippableFact]
-    public void MultiSet_LatestSet_WithFilemarks() => MultiSet_LatestSet_Core(fmksMode: true);
-
-    /// <summary>Without filemarks.</summary>
-    [SkippableFact]
-    public void MultiSet_LatestSet_NoFilemarks() => MultiSet_LatestSet_Core(fmksMode: false);
-
     /// <summary>
     /// Backup set A → Backup set B → Navigate to set B (latest) → Restore → Verify.
-    /// Complementary to <see cref="MultiSet_FirstSet_Core"/>: verifies
-    /// that the latest set is also reachable after multiple sets.
     /// </summary>
-    private void MultiSet_LatestSet_Core(bool fmksMode)
+    [SkippableFact]
+    public void MultiSet_LatestSet_RoundTrips()
     {
         var fixture = Init();
-        string modeLabel = fmksMode ? "FmksMode" : "NoFmksMode";
 
-        _output.WriteLine($"Testing [{modeLabel}]: {fixture.DriveDescription}");
+        _output.WriteLine($"Testing: {fixture.DriveDescription}");
 
         using var treeA = new TempFileTree(seed: 300);
         treeA.AddFiles("setA", count: 3, minSize: 100, maxSize: 4 * 1024);
@@ -320,8 +291,8 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
         treeB.AddFiles("setB", count: 4, minSize: 200, maxSize: 16 * 1024);
         treeB.AddEdgeCases(fixture.Drive.BlockSize);
 
-        fixture.BackupFiles(treeA.Files, description: "Set A - Latest", useFilemarks: fmksMode);
-        fixture.BackupFiles(treeB.Files, description: "Set B - Latest", useFilemarks: fmksMode);
+        fixture.BackupFiles(treeA.Files, description: "Set A - Latest");
+        fixture.BackupFiles(treeB.Files, description: "Set B - Latest");
         _output.WriteLine($"Two sets backed up, TOC has {fixture.TOC.Count} set(s)");
 
         fixture.SaveAndReloadTOC();
@@ -344,7 +315,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
 
             FileComparer.AssertFilesMatch(treeB.RootPath, treeB.Files,
                 RestoreEquivalentRoot(restoreDir, treeB.RootPath));
-            _output.WriteLine($"=== MULTI-SET LATEST [{modeLabel}] PASSED ===");
+            _output.WriteLine($"=== MULTI-SET LATEST PASSED ===");
         }
         finally
         {
@@ -356,26 +327,15 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
 
     #region *** (5) Multi-Set: Middle Set ***
 
-    /// <summary>With filemarks.</summary>
-    [SkippableFact]
-    public void MultiSet_MiddleSet_WithFilemarks() => MultiSet_MiddleSet_Core(fmksMode: true);
-
-    /// <summary>Without filemarks.</summary>
-    [SkippableFact]
-    public void MultiSet_MiddleSet_NoFilemarks() => MultiSet_MiddleSet_Core(fmksMode: false);
-
     /// <summary>
     /// Backup A → B → C → Navigate to middle set B (index 2) → Restore → Verify.
-    /// Tests navigation past the first set and before the last — the trickiest
-    /// case for setmark/filemark spacing because the tape head must skip both
-    /// forward and past the end of the preceding set.
     /// </summary>
-    private void MultiSet_MiddleSet_Core(bool fmksMode)
+    [SkippableFact]
+    public void MultiSet_MiddleSet_RoundTrips()
     {
         var fixture = Init();
-        string modeLabel = fmksMode ? "FmksMode" : "NoFmksMode";
 
-        _output.WriteLine($"Testing [{modeLabel}]: {fixture.DriveDescription}");
+        _output.WriteLine($"Testing: {fixture.DriveDescription}");
 
         using var treeA = new TempFileTree(seed: 500);
         treeA.AddFiles("setA", count: 3, minSize: 100, maxSize: 2 * 1024);
@@ -388,13 +348,13 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
         treeC.AddFiles("setC", count: 3, minSize: 500, maxSize: 16 * 1024);
 
         // Backup three sets
-        fixture.BackupFiles(treeA.Files, description: "Set A - First", useFilemarks: fmksMode);
+        fixture.BackupFiles(treeA.Files, description: "Set A - First");
         _output.WriteLine($"Set A backed up: {treeA.Files.Count} files");
 
-        fixture.BackupFiles(treeB.Files, description: "Set B - Middle", useFilemarks: fmksMode);
+        fixture.BackupFiles(treeB.Files, description: "Set B - Middle");
         _output.WriteLine($"Set B backed up: {treeB.Files.Count} files");
 
-        fixture.BackupFiles(treeC.Files, description: "Set C - Last", useFilemarks: fmksMode);
+        fixture.BackupFiles(treeC.Files, description: "Set C - Last");
         _output.WriteLine($"Set C backed up: {treeC.Files.Count} files, TOC has {fixture.TOC.Count} set(s)");
 
         fixture.SaveAndReloadTOC();
@@ -418,7 +378,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
 
             FileComparer.AssertFilesMatch(treeB.RootPath, treeB.Files,
                 RestoreEquivalentRoot(restoreDir, treeB.RootPath));
-            _output.WriteLine($"=== MULTI-SET MIDDLE [{modeLabel}] PASSED ===");
+            _output.WriteLine($"=== MULTI-SET MIDDLE PASSED ===");
         }
         finally
         {
@@ -430,31 +390,18 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
 
     #region *** (6) Multi-Set: Random Files from Random Sets ***
 
-    /// <summary>With filemarks.</summary>
-    [SkippableFact]
-    public void MultiSet_RandomFiles_WithFilemarks() => MultiSet_RandomFiles_Core(fmksMode: true);
-
-    /// <summary>Without filemarks.</summary>
-    [SkippableFact]
-    public void MultiSet_RandomFiles_NoFilemarks() => MultiSet_RandomFiles_Core(fmksMode: false);
-
     /// <summary>
     /// Backup A → B → C → Select random files from sets A and C (skip B) →
     /// Restore via <see cref="TapeFileRestoreBaseAgent.RestoreFilesFromCurrentSetDown"/>
     /// with a pre-assembled <c>filesSelected</c> array → Verify only the selected
     /// files are present on disk.
-    /// <para>
-    /// Exercises file-granularity navigation: the restore agent must position the
-    /// tape to specific files within specific sets, skipping entire sets and
-    /// individual files within a set.
-    /// </para>
     /// </summary>
-    private void MultiSet_RandomFiles_Core(bool fmksMode)
+    [SkippableFact]
+    public void MultiSet_RandomFiles_RoundTrips()
     {
         var fixture = Init();
-        string modeLabel = fmksMode ? "FmksMode" : "NoFmksMode";
 
-        _output.WriteLine($"Testing [{modeLabel}]: {fixture.DriveDescription}");
+        _output.WriteLine($"Testing: {fixture.DriveDescription}");
 
         // Three sets with distinct seeds for unique file content
         using var treeA = new TempFileTree(seed: 800);
@@ -468,11 +415,11 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
 
         // Backup all three sets
         fixture.BackupFiles(treeA.Files, description: "Set A - Random",
-            useFilemarks: fmksMode, hashAlgorithm: TapeHashAlgorithm.Crc64);
+            hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(treeB.Files, description: "Set B - Skipped",
-            useFilemarks: fmksMode, hashAlgorithm: TapeHashAlgorithm.Crc64);
+            hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(treeC.Files, description: "Set C - Random",
-            useFilemarks: fmksMode, hashAlgorithm: TapeHashAlgorithm.Crc64);
+            hashAlgorithm: TapeHashAlgorithm.Crc64);
         _output.WriteLine($"Three sets backed up, TOC has {fixture.TOC.Count} set(s)");
 
         fixture.SaveAndReloadTOC();
@@ -543,7 +490,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
             }
             _output.WriteLine("Set C selected files verified");
 
-            _output.WriteLine($"=== MULTI-SET RANDOM FILES [{modeLabel}] PASSED ===");
+            _output.WriteLine($"=== MULTI-SET RANDOM FILES PASSED ===");
         }
         finally
         {
@@ -555,30 +502,22 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
 
     #region *** (7) Validate Agent ***
 
-    /// <summary>With filemarks.</summary>
-    [SkippableFact]
-    public void Validate_CRC_WithFilemarks() => Validate_CRC_Core(fmksMode: true);
-
-    /// <summary>Without filemarks.</summary>
-    [SkippableFact]
-    public void Validate_CRC_NoFilemarks() => Validate_CRC_Core(fmksMode: false);
-
     /// <summary>
     /// Backup files → CRC validation pass (no restore to disk).
     /// Exercises <see cref="TapeFileValidateAgent"/> on real hardware.
     /// </summary>
-    private void Validate_CRC_Core(bool fmksMode)
+    [SkippableFact]
+    public void Validate_CRC()
     {
         var fixture = Init();
-        string modeLabel = fmksMode ? "FmksMode" : "NoFmksMode";
 
-        _output.WriteLine($"Testing [{modeLabel}]: {fixture.DriveDescription}");
+        _output.WriteLine($"Testing: {fixture.DriveDescription}");
 
         using var tree = new TempFileTree();
         tree.AddFiles("validate", count: 5, minSize: 100, maxSize: 16 * 1024);
 
-        fixture.BackupFiles(tree.Files, description: $"Validate {modeLabel}",
-            useFilemarks: fmksMode, hashAlgorithm: TapeHashAlgorithm.Crc64);
+        fixture.BackupFiles(tree.Files, description: "Validate Set",
+            hashAlgorithm: TapeHashAlgorithm.Crc64);
 
         fixture.SaveAndReloadTOC();
 
@@ -592,7 +531,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
 
         Assert.True(valid, "CRC validation failed");
         validateNotifiable.AssertAllSucceeded(tree.Files.Count);
-        _output.WriteLine($"=== CRC VALIDATION [{modeLabel}] PASSED ===");
+        _output.WriteLine($"=== CRC VALIDATION PASSED ===");
     }
 
     #endregion

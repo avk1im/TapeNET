@@ -151,25 +151,11 @@ public partial class TapeServiceBase
                                 (count == 0 ? "none" : $"{count} file(s):"));
                         }
 
-                        if (toc.CurrentSetTOC.FmksMode)
+                        foreach (var tfi in tfis)
                         {
-                            var indexes = toc[sub].RefsToIndexes(tfis);
-                            foreach (var index in indexes)
-                            {
-                                var tfi = toc.CurrentSetTOC[index];
-                                LogInfoSub(FormatFileInfoIndex(tfi, index, options.ShowFullPath));
-                                setFiles++;
-                                setSize += tfi.FileDescr.Length;
-                            }
-                        }
-                        else
-                        {
-                            foreach (var tfi in tfis)
-                            {
-                                LogInfoSub(FormatFileInfo(tfi, options.ShowFullPath));
-                                setFiles++;
-                                setSize += tfi.FileDescr.Length;
-                            }
+                            LogInfoSub(FormatFileInfo(tfi, options.ShowFullPath));
+                            setFiles++;
+                            setSize += tfi.FileDescr.Length;
                         }
                     }
 
@@ -334,7 +320,6 @@ public partial class TapeServiceBase
         LogInfoSub($"Created on: {setTOC.CreationTime}");
         LogInfoSub($"Last saved: {setTOC.LastSaveTime}");
         LogInfoSub($"Block size: {Helpers.BytesToStringLong(setTOC.BlockSize)}");
-        LogInfoSub($"Filemarks: {(setTOC.FmksMode ? "ON" : "OFF")}");
         LogInfoSub($"Hash algorithm: {setTOC.HashAlgorithm}");
         LogInfoSub($"Incremental: {(setTOC.Incremental ? "Yes" : "No")}");
         LogInfoSub($"Volume: #{setTOC.Volume}");
@@ -351,14 +336,7 @@ public partial class TapeServiceBase
     {
         var fileDescr = tfi.FileDescr;
         var name = fullPath ? fileDescr.FullName : Path.GetFileName(fileDescr.FullName);
-        return $"{tfi.Block,10:N0}: {fileDescr.LastWriteTime,24:G} {fileDescr.Length,16:N0}\t{name}";
-    }
-
-    private static string FormatFileInfoIndex(TapeFileInfo tfi, int index, bool fullPath)
-    {
-        var fileDescr = tfi.FileDescr;
-        var name = fullPath ? fileDescr.FullName : Path.GetFileName(fileDescr.FullName);
-        return $"{index,10:N0}# {fileDescr.LastWriteTime,24:G} {fileDescr.Length,16:N0}\t{name}";
+        return $"{tfi.Address,10}: {fileDescr.LastWriteTime,24:G} {fileDescr.Length,16:N0}\t{name}";
     }
 
     #endregion

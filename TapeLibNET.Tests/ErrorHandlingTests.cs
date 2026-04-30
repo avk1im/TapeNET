@@ -82,7 +82,6 @@ public class ErrorHandlingTests
         fixture.TOC.CurrentSetTOC.Description = description;
         fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
         fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
-        fixture.TOC.CurrentSetTOC.FmksMode = true;
 
         using var agent = fixture.CreateBackupAgent();
         configureAgent?.Invoke(agent);
@@ -215,7 +214,6 @@ public class ErrorHandlingTests
         fixture.TOC.CurrentSetTOC.Description = "Abort test";
         fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
         fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
-        fixture.TOC.CurrentSetTOC.FmksMode = true;
 
         using var agent = fixture.CreateBackupAgent();
         agent.SimulateFileFailures.Enabled = true;
@@ -240,15 +238,14 @@ public class ErrorHandlingTests
     }
 
     /// <summary>
-    /// Simulates an interleaved failure pattern during backup (ok → fail → ok → fail → ok)
-    /// with filemarks enabled, then performs a full restore and verifies that the
-    /// succeeded files are restored correctly byte-for-byte.
-    /// This specifically exercises the filemark-based tape positioning recovery path
-    /// used when restoring files that follow a failed-file gap on tape.
+    /// Simulates an interleaved failure pattern during backup (ok → fail → ok → fail → ok),
+    /// then performs a full restore and verifies that the succeeded files are restored
+    /// correctly byte-for-byte. Exercises block-based positioning recovery when restoring
+    /// files that follow a failed-file gap on tape.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
-    public void Backup_InterleavedFailure_WithFilemarks_SurvivorFilesRestoredCorrectly(DriveProfile profile)
+    public void Backup_InterleavedFailure_SurvivorFilesRestoredCorrectly(DriveProfile profile)
     {
         // 9 files: fail every 4th (files 4 and 8 fail) → 7 succeed
         //  positions: ok ok ok FAIL ok ok ok FAIL ok
@@ -264,12 +261,11 @@ public class ErrorHandlingTests
         {
             using var fixture = new VirtualTapeFixture(profile);
 
-            // Configure set manually so we can control FmksMode
+            // Configure set manually
             fixture.TOC.AddNewSetTOC(0, incremental: false);
-            fixture.TOC.CurrentSetTOC.Description = "Interleaved Failure FmksMode=true";
+            fixture.TOC.CurrentSetTOC.Description = "Interleaved Failure Test";
             fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
             fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
-            fixture.TOC.CurrentSetTOC.FmksMode = true;
 
             var backupNotify = new TestNotifiable { FailedAction = FileFailedAction.Skip };
 
@@ -343,12 +339,11 @@ public class ErrorHandlingTests
         {
             using var fixture = new VirtualTapeFixture(profile);
 
-            // Configure set manually — FmksMode disabled
+            // Configure set manually
             fixture.TOC.AddNewSetTOC(0, incremental: false);
-            fixture.TOC.CurrentSetTOC.Description = "Interleaved Failure FmksMode=false";
+            fixture.TOC.CurrentSetTOC.Description = "Interleaved Failure Test";
             fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
             fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
-            fixture.TOC.CurrentSetTOC.FmksMode = false;
 
             var backupNotify = new TestNotifiable { FailedAction = FileFailedAction.Skip };
 
@@ -548,7 +543,6 @@ public class ErrorHandlingTests
         fixture.TOC.CurrentSetTOC.Description = "Abort pre-process test";
         fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
         fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
-        fixture.TOC.CurrentSetTOC.FmksMode = true;
 
         using var agent = fixture.CreateBackupAgent();
 
@@ -592,7 +586,6 @@ public class ErrorHandlingTests
         fixture.TOC.CurrentSetTOC.Description = "Abort post-process test";
         fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
         fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
-        fixture.TOC.CurrentSetTOC.FmksMode = true;
 
         using var agent = fixture.CreateBackupAgent();
 
@@ -667,11 +660,11 @@ public class ErrorHandlingTests
     }
 
     /// <summary>
-    /// Simulates restore failures with Retry in FmksMode. The retry naturally
+    /// Simulates restore failures with Retry. The retry naturally
     /// succeeds because the counter advances past the failing modulus. Offsets
     /// the failure counter so that the very first file triggers a failure,
     /// exercising both the first-file-on-volume recovery path and the regular
-    /// two-step filemark repositioning for subsequent files.
+    /// block repositioning for subsequent files.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -689,7 +682,7 @@ public class ErrorHandlingTests
         {
             using var fixture = new VirtualTapeFixture(profile);
 
-            // Backup with filemarks (FmksMode) to exercise filemark-based retry
+            // Backup cleanly
             fixture.BackupFiles(tree.Files);
 
             // Per-file retry limit: allow one retry per file, then skip

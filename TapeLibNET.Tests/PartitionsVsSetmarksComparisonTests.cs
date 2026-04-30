@@ -314,7 +314,6 @@ public class PartitionsVsSetmarksComparisonTests(ITestOutputHelper output)
         fixture.TOC.CurrentSetTOC.Description = "Set 1";
         fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
         fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
-        fixture.TOC.CurrentSetTOC.FmksMode = true;
 
         using (var agent1 = fixture.CreateBackupAgent())
         {
@@ -333,7 +332,6 @@ public class PartitionsVsSetmarksComparisonTests(ITestOutputHelper output)
         fixture.TOC.CurrentSetTOC.Description = "Set 2";
         fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
         fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
-        fixture.TOC.CurrentSetTOC.FmksMode = true;
 
         using (var agent2 = fixture.CreateBackupAgent())
         {

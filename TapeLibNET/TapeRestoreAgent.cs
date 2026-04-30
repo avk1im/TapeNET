@@ -51,8 +51,7 @@ namespace TapeLibNET
                 return false;
             }
 
-            // set the filemarks and block size from the set to the manager
-            Navigator.FmksMode = TOC.CurrentSetTOC.FmksMode;
+            // set the block size from the set to the manager
             Drive.SetBlockSize(TOC.CurrentSetTOC.BlockSize);
 
             // Success
@@ -223,177 +222,83 @@ namespace TapeLibNET
             FileFailedAction fileFailedAction;
             LastFileSkipped = false;
 
-            if (Navigator.FmksMode)
+            int lastIndex = -1; // used only for tape move optimization
+            bool lastFileFailed = false;
+
+            foreach (var tfi in tfis)
             {
-                // In filemarks mode, we need to use indexes for tape positioning
-                var indexes = TOC.CurrentSetTOC.RefsToIndexes(tfis); // indexes are sorted so that we only move tape forward,
-                int lastIndex = 0;
+            RETRY:
+                fileFailedAction = FileFailedAction.Skip; // reset to skip to avoid infinite loop
 
-                foreach (int index in indexes)
+                if (tfi == null || !tfi.IsValid)
                 {
-                RETRY:
-                    fileFailedAction = FileFailedAction.Skip; // reset to skip to avoid infinite loop
-
-                    var tfi = TOC.CurrentSetTOC[index]; // index is a position in the full set (from RefsToIndexes)
-
-                    if (tfi == null || !tfi.IsValid)
-                    {
-                        m_logger.LogWarning("Invalid file info in {Method}", nameof(RestoreFilesFromCurrentSet));
-                        goto FAILURE;
-                    }
-
-                    m_logger.LogTrace("Restoring file #{Number} >{File}< at index {Index}", _stats.FilesProcessed + 1, tfi.FileDescr.FullName, index);
-
-                    int moveBy = index - lastIndex;
-                    if (LastFileSkipped || moveBy != 0) // optimization: even though MoveToNextFilemark() will ignore moves by 0, it still takes time
-                    {
-                        if (!Navigator.MoveToNextContentFilemark(moveBy))
-                        {
-                            m_logger.LogWarning("Failed to move to filemark for file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
-                            goto FAILURE;
-                        }
-                    }
-                    if (!RestoreNextFile(tfi, ref fileFailedAction, fileNotify))
-                    {
-                        lastIndex = index; // tape position uncertain after failure
-                        m_logger.LogWarning("Failed to restore file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
-                        goto FAILURE;
-                    }
-
-                    // success — EndReadFile (called on stream disposal) already advanced past one filemark,
-                    //  so the tape is now positioned at the start of the next file (index + 1)
-                    lastIndex = index + 1;
-                    m_logger.LogTrace("File >{File}< restored ok", tfi.FileDescr.FullName);
-
-                    continue;
-
-                FAILURE:
-                    if (fileFailedAction == FileFailedAction.Retry && tfi != null && tfi.IsValid)
-                    {
-                        m_logger.LogTrace("Retrying file >{File}< as per file failed action", tfi.FileDescr.FullName);
-
-                        // EndReadFile already advanced past the file's trailing filemark,
-                        //  so we must go back by 2 (past that FM and the preceding one),
-                        //  then forward by 1 (past the preceding FM to the start of the file's data)
-                        if (!Navigator.MoveToNextContentFilemark(-2))
-                        {
-                            // the failure can happen if this is the very first file in the first set on volume
-                            if (index == 0 && TOC.CurrentSetIndexOnVolume == 0)
-                            {
-                                m_logger.LogTrace("Retrying first file on volume");
-                                Navigator.ResetError();
-                                StatsUndoFailure(); // don't double-count
-                                goto RETRY;
-                            }
-                            else
-                            {
-                                m_logger.LogWarning("Failed to move back to filemark for retrying file >{File}< in {Method}",
-                                    tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
-                            }
-                        }
-                        else // success: moved by -2 filemarks
-                        {
-                            if (Navigator.MoveToNextContentFilemark(1)) // move forward past the preceding FM to file data start
-                            {
-                                StatsUndoFailure(); // don't double-count
-                                goto RETRY;
-                            }
-                            else
-                            {
-                                m_logger.LogWarning("Failed to move forward to filemark for retrying file >{File}< in {Method}",
-                                    tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
-                            }
-                        }
-                    }
-
-                    overallSuccess = false;
-
-                    if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
-                        continue;
-                    else
-                        break;
+                    m_logger.LogWarning("Invalid file info in {Method}", nameof(RestoreFilesFromCurrentSet));
+                    goto FAILURE;
                 }
-            }
-            else // !FmksMode
-            {
-                int lastIndex = -1; // used only for tape move optimization
-                bool lastFileFailed = false;
 
-                foreach (var tfi in tfis)
+                m_logger.LogTrace("Restoring file #{Number} >{File}< at block {Block}", _stats.FilesProcessed + 1, tfi.FileDescr.FullName, tfi.Block);
+
+                // Optimization: determine if we're at the next tfi so that we can skip moving the tape
+                int index = (lastIndex >= 0)? TOC.CurrentSetTOC.IndexOf(tfi, lastIndex) : TOC.CurrentSetTOC.IndexOf(tfi);
+
+                // Do move if the previous file has been skipped, failed, or is not the next one
+                bool doMove = LastFileSkipped || lastFileFailed || index < 0 || lastIndex < 0 || index != lastIndex + 1;
+
+                if (!doMove) // validate we're at the right block
                 {
-                RETRY:
-                    fileFailedAction = FileFailedAction.Skip; // reset to skip to avoid infinite loop
-
-                    if (tfi == null || !tfi.IsValid)
+                    long currentBlock = Drive.BlockCounter;
+                    if (currentBlock != tfi.Block)
                     {
-                        m_logger.LogWarning("Invalid file info in {Method}", nameof(RestoreFilesFromCurrentSet));
-                        goto FAILURE;
+                        m_logger.LogWarning("Unexpected block {Block} (expected {ExpectedBlock}) for file >{File}< in {Method}",
+                            currentBlock, tfi.Block, tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
+                        doMove = true;
                     }
-
-                    m_logger.LogTrace("Restoring file #{Number} >{File}< at block {Block}", _stats.FilesProcessed + 1, tfi.FileDescr.FullName, tfi.Block);
-
-                    // Optimization: determine if we're at the next tfi so that we can skip moving the tape
-                    int index = (lastIndex >= 0)? TOC.CurrentSetTOC.IndexOf(tfi, lastIndex) : TOC.CurrentSetTOC.IndexOf(tfi);
-
-                    // Do move if the previous file has been skipped, failed, or is not the next one
-                    bool doMove = LastFileSkipped || lastFileFailed || index < 0 || lastIndex < 0 || index != lastIndex + 1;
-
-                    if (!doMove) // validate we're at the right block
-                    {
-                        long currentBlock = Drive.BlockCounter;
-                        if (currentBlock != tfi.Block)
-                        {
-                            m_logger.LogWarning("Unexpected block {Block} (expected {ExpectedBlock}) for file >{File}< in {Method}",
-                                currentBlock, tfi.Block, tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
-                            doMove = true;
-                        }
-                    }
-
-                    if (doMove)
-                    {
-                        if (Drive.MoveToBlock(tfi.Block))
-                        {
-                            m_logger.LogTrace("Moved to block {Block} for file >{File}<", tfi.Block, tfi.FileDescr.FullName);
-                        }
-                        else
-                        {
-                            m_logger.LogWarning("Failed to move to block {Block} for file >{File}< in {Method}",
-                                tfi.Block, tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
-                            goto FAILURE;
-                        }
-                    }
-
-                    if (!RestoreNextFile(tfi, ref fileFailedAction, fileNotify))
-                    {
-                        m_logger.LogWarning("Failed to restore file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
-                        goto FAILURE;
-                    }
-
-                    // success
-                    if (index >= 0)
-                        lastIndex = index;
-
-                    lastFileFailed = false;
-                    m_logger.LogTrace("File >{File}< restored ok", tfi.FileDescr.FullName);
-                    continue;
-
-                FAILURE:
-                   lastFileFailed = true; // must indicate this so that the tape moves back if we retry
-
-                   if (fileFailedAction == FileFailedAction.Retry && tfi != null && tfi.IsValid)
-                   {
-                        m_logger.LogTrace("Retrying file >{File}< as per file failed action", tfi.FileDescr.FullName);
-                        StatsUndoFailure(); // don't double-count
-                        goto RETRY;
-                   }
-
-                    overallSuccess = false;
-
-                    if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
-                        continue;
-                    else
-                        break;
                 }
+
+                if (doMove)
+                {
+                    if (Drive.MoveToBlock(tfi.Block))
+                    {
+                        m_logger.LogTrace("Moved to block {Block} for file >{File}<", tfi.Block, tfi.FileDescr.FullName);
+                    }
+                    else
+                    {
+                        m_logger.LogWarning("Failed to move to block {Block} for file >{File}< in {Method}",
+                            tfi.Block, tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
+                        goto FAILURE;
+                    }
+                }
+
+                if (!RestoreNextFile(tfi, ref fileFailedAction, fileNotify))
+                {
+                    m_logger.LogWarning("Failed to restore file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
+                    goto FAILURE;
+                }
+
+                // success
+                if (index >= 0)
+                    lastIndex = index;
+
+                lastFileFailed = false;
+                m_logger.LogTrace("File >{File}< restored ok", tfi.FileDescr.FullName);
+                continue;
+
+            FAILURE:
+               lastFileFailed = true; // must indicate this so that the tape moves back if we retry
+
+               if (fileFailedAction == FileFailedAction.Retry && tfi != null && tfi.IsValid)
+               {
+                    m_logger.LogTrace("Retrying file >{File}< as per file failed action", tfi.FileDescr.FullName);
+                    StatsUndoFailure(); // don't double-count
+                    goto RETRY;
+               }
+
+                overallSuccess = false;
+
+                if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
+                    continue;
+                else
+                    break;
             }
 
             NotifyBatchEnd(fileNotify);
@@ -433,8 +338,8 @@ namespace TapeLibNET
 
                 m_logger.LogTrace("Restoring file #{Number} >{File}<", _stats.FilesProcessed + 1, tfi.FileDescr.FullName);
 
-                // in non-Fmks mode, we might need to move tape if last file was skipped or failed
-                if (!Navigator.FmksMode && (LastFileSkipped || lastFileFailed))
+                // move tape if last file was skipped or failed
+                if (LastFileSkipped || lastFileFailed)
                 {
                     if (!Drive.MoveToBlock(tfi.Block))
                     {
@@ -461,46 +366,9 @@ namespace TapeLibNET
                 if (fileFailedAction == FileFailedAction.Retry && tfi != null && tfi.IsValid)
                 {
                     m_logger.LogTrace("Retrying file >{File}< as per file failed action", tfi.FileDescr.FullName);
-
-                    if (!Navigator.FmksMode)
-                    {
-                        // Non-FmksMode: block-based positioning handles retry without filemark navigation
-                        StatsUndoFailure(); // don't double-count
-                        goto RETRY;
-                    }
-
-                    // FmksMode: EndReadFile already advanced past the file's trailing filemark,
-                    //  so we must go back by 2 (past that FM and the preceding one),
-                    //  then forward by 1 (past the preceding FM to the start of the file's data)
-                    if (!Navigator.MoveToNextContentFilemark(-2))
-                    {
-                        // Move-back failure is expected for the very first file on the volume
-                        if (fileIndex == 0 && TOC.CurrentSetIndexOnVolume == 0)
-                        {
-                            m_logger.LogTrace("Retrying first file on volume");
-                            Navigator.ResetError();
-                            StatsUndoFailure(); // don't double-count
-                            goto RETRY;
-                        }
-                        else
-                        {
-                            m_logger.LogWarning("Failed to move back to filemark for retrying file >{File}< in {Method}",
-                                tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
-                        }
-                    }
-                    else // success: moved by -2 filemarks
-                    {
-                        if (Navigator.MoveToNextContentFilemark(1)) // move forward past the preceding FM to file data start
-                        {
-                            StatsUndoFailure(); // don't double-count
-                            goto RETRY;
-                        }
-                        else
-                        {
-                            m_logger.LogWarning("Failed to move forward to filemark for retrying file >{File}< in {Method}",
-                                tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
-                        }
-                    }
+                    // Block-based positioning handles retry: the next iteration will MoveToBlock(tfi.Block)
+                    StatsUndoFailure(); // don't double-count
+                    goto RETRY;
                 }
 
                 overallSuccess = false;

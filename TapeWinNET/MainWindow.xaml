@@ -407,8 +407,8 @@
                                                         DisplayMemberBinding="{Binding SizeFormatted}" />
                                         <GridViewColumn Header="Modified" Width="130"
                                                         DisplayMemberBinding="{Binding LastModified}" />
-                                        <GridViewColumn Header="Block" Width="70"
-                                                        DisplayMemberBinding="{Binding Block}" />
+                                        <GridViewColumn Header="Address" Width="70"
+                                                        DisplayMemberBinding="{Binding AddressFormatted}" />
                                         <GridViewColumn Header="Path" Width="250">
                                             <GridViewColumn.CellTemplate>
                                                 <DataTemplate>

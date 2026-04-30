@@ -186,8 +186,7 @@ namespace TapeLibNET
             }
         }
 
-        protected override uint BufferSizeToAllocate => m_mgr.Navigator.FmksMode ? base.BufferSizeToAllocate * 4 : BlockSize;
-            // when reading without filemarks, must read just one block at a time
+        protected override uint BufferSizeToAllocate => BlockSize;
 
 
         // a TapeStream object can only be produced by a TapeStreamManager

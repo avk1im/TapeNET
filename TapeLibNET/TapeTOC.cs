@@ -129,19 +129,27 @@ namespace TapeLibNET
 
     /// <summary>
     /// On-tape file record — serves as both a TOC entry and an on-tape file header.
-    /// <para>Each instance carries a unique <see cref="UID"/>, the tape <see cref="Block"/> address,
+    /// <para>Each instance carries a unique <see cref="UID"/>, the tape <see cref="Address"/>,
     ///  a <see cref="TapeFileDescriptor"/>, and an optional integrity <see cref="Hash"/>.
     ///  Implements <see cref="ITapeSerializable"/> for full and header-only serialization.</para>
     /// </summary>
-    public class TapeFileInfo(TypeUID UID, long block, TapeFileDescriptor fileDescr) : ITapeSerializable
+    public class TapeFileInfo(TypeUID UID, TapeAddress address, TapeFileDescriptor fileDescr) : ITapeSerializable
     {
         public TypeUID UID { get; } = UID;
-        public long Block { get; } = block;
+        /// <summary>Tape address (block + offset) where this file's data begins.</summary>
+        public TapeAddress Address { get; } = address;
+        /// <summary>Block number where this file's data begins. Convenience accessor for <see cref="Address"/>.Block.</summary>
+        public long Block => Address.Block;
         public TapeFileDescriptor FileDescr { get; } = fileDescr;
         internal byte[]? Hash { get; set; } = null;
 
+        /// <summary>Convenience constructor: wraps a bare block number in a <see cref="TapeAddress"/> with zero offset.</summary>
+        public TapeFileInfo(TypeUID UID, long block, TapeFileDescriptor fileDescr)
+            : this(UID, new TapeAddress(block, 0), fileDescr)
+        { }
+
         public TapeFileInfo(TypeUID UID, long block, FileInfo fileInfo)
-            : this(UID, block, new TapeFileDescriptor(fileInfo))
+            : this(UID, new TapeAddress(block, 0), new TapeFileDescriptor(fileInfo))
         { }
 
         public bool SameFileName(TapeFileInfo other) => FileDescr.SameFileName(other.FileDescr);
@@ -154,7 +162,7 @@ namespace TapeLibNET
         {
             serializer.SerializeSignature();
             serializer.Serialize((ulong)UID);
-            serializer.Serialize(Block);
+            serializer.Serialize(Address);
             serializer.Serialize(FileDescr);
             serializer.SerializeNullableWithLength(Hash);
         }
@@ -164,10 +172,10 @@ namespace TapeLibNET
                 return null; // version mismatch
 
             var UID = (TypeUID)deserializer.DeserializeUInt64();
-            var block = deserializer.DeserializeInt64();
+            var address = deserializer.DeserializeTapeAddress();
             var fileDescr = deserializer.DeserializeFileDescriptor();
 
-            return new TapeFileInfo(UID, block, fileDescr)
+            return new TapeFileInfo(UID, address, fileDescr)
             {
                 Hash = deserializer.DeserializeNullableBytesWithLength()
             };
@@ -180,8 +188,8 @@ namespace TapeLibNET
             int size = TapeSerializer.Signature.Length + sizeof(ushort);
             // UID: 8 bytes (ulong)
             size += sizeof(TypeUID);
-            // Block: 8 bytes (long)
-            size += sizeof(long);
+            // Address: Block (8 bytes long) + Offset (4 bytes uint)
+            size += sizeof(long) + sizeof(uint);
             // FileDescr
             size += FileDescr.EstimateSerializedSize();
             // Hash: length prefix (4 bytes) + optional bytes
@@ -242,7 +250,6 @@ namespace TapeLibNET
         }
         public string Description { get; set; } = string.Empty;
         public DateTime CreationTime { get; internal set; } = DateTime.Now;
-        public bool FmksMode { get; set; } = false;
         public uint BlockSize { get; set; } = 0;
         public DateTime LastSaveTime { get; internal set; } = DateTime.Now;
         public TapeHashAlgorithm HashAlgorithm { get; set; } = TapeHashAlgorithm.Crc32;
@@ -267,7 +274,6 @@ namespace TapeLibNET
             serializer.Serialize<List<TapeFileInfo>, TapeFileInfo>(m_tapeFileInfos);
             serializer.Serialize(Description);
             serializer.Serialize(CreationTime);
-            serializer.Serialize(FmksMode);
             serializer.Serialize(BlockSize);
             serializer.Serialize(LastSaveTime = DateTime.Now);
             serializer.Serialize((int)HashAlgorithm);
@@ -289,7 +295,6 @@ namespace TapeLibNET
             {
                 Description = deserializer.DeserializeString(),
                 CreationTime = deserializer.DeserializeDateTime(),
-                FmksMode = deserializer.DeserializeBoolean(),
                 BlockSize = deserializer.DeserializeUInt32(),
                 LastSaveTime = deserializer.DeserializeDateTime(),
                 HashAlgorithm = (TapeHashAlgorithm)deserializer.DeserializeInt32(),
@@ -324,7 +329,6 @@ namespace TapeLibNET
             m_tapeFileInfos.AddRange(toc.m_tapeFileInfos);
             Description = toc.Description;
             CreationTime = toc.CreationTime;
-            FmksMode = toc.FmksMode;
             BlockSize = toc.BlockSize;
             LastSaveTime = toc.LastSaveTime;
             HashAlgorithm = toc.HashAlgorithm;
@@ -703,7 +707,6 @@ namespace TapeLibNET
                     HashAlgorithm = setTOC.HashAlgorithm,
                     Description = setTOC.Description,
                     BlockSize = setTOC.BlockSize,
-                    FmksMode = setTOC.FmksMode,
                     ContinuedFromPrevVolume = contFromPrevVolume && (m_setTOCs.Count > 0), // the very first set may not be continued
                 }
             );

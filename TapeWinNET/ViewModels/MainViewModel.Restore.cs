@@ -609,7 +609,10 @@ public partial class MainViewModel
                     TargetDirectory: targetDirectory,
                     RecurseSubdirectories: recurseSubdirectories,
                     HandleExisting: handleExisting,
-                    SkipAllErrors: request.SkipAllErrors));
+                    SkipAllErrors: request.SkipAllErrors)
+                {
+                    NoMultivolume = request.NoMultivolume,
+                });
 
             // Uncheck successfully processed files before refreshing the UI —
             //  RefreshAsync rebuilds BackupSetList from _tocView which already

@@ -71,7 +71,7 @@ public class FileListItem(FilteredFileList? owner, TapeFileInfo fileInfo, bool s
 
     public DateTime LastModified => _fileInfo.FileDescr.LastWriteTime;
 
-    public long Block => _fileInfo.Block;
+    public string AddressFormatted => _fileInfo.Address.ToString();
 
     public TapeFileInfo FileInfo => _fileInfo;
 

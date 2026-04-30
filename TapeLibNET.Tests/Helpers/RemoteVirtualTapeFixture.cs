@@ -166,7 +166,6 @@ public sealed class RemoteVirtualTapeFixture : IDisposable
         List<string> fileList,
         string description = "Test Set",
         bool incremental = false,
-        bool useFilemarks = true,
         TapeHashAlgorithm hashAlgorithm = TapeHashAlgorithm.Crc64,
         uint blockSize = 0,
         ITapeFileNotifiable? notifiable = null)
@@ -175,7 +174,6 @@ public sealed class RemoteVirtualTapeFixture : IDisposable
         TOC.CurrentSetTOC.Description = description;
         TOC.CurrentSetTOC.HashAlgorithm = hashAlgorithm;
         TOC.CurrentSetTOC.BlockSize = blockSize == 0 ? Drive.DefaultBlockSize : blockSize;
-        TOC.CurrentSetTOC.FmksMode = useFilemarks;
 
         using var agent = CreateBackupAgent();
 

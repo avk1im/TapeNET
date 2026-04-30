@@ -143,6 +143,33 @@ public partial class TapeServiceBase
             // Assemble the combined work package and log the initial summary
             var combined   = toc.SelectFilesFromSets(request.Incremental, checkedBySet);
             int newestIdx  = setIndexes.Max();
+            int oldestIdx = setIndexes.Min();
+
+            // If we must confine to the current volume...
+            if (request.NoMultivolume)
+            {
+                // ...check if we have any sets from the current volume...
+                if (oldestIdx > toc.LastSetOnVolume || newestIdx < toc.FirstSetOnVolume)
+                {
+                    LogInfo("No files to process: no selected sets are on the current volume");
+                    return MakeResult();
+                }
+
+                // ...and confine to the current volume
+                newestIdx = Math.Min(newestIdx, toc.LastSetOnVolume);
+                oldestIdx = Math.Max(oldestIdx, toc.FirstSetOnVolume);
+
+                // clear entries in combined for stes outside [oldestIdex..newestIdx]
+                foreach (var setIndex in setIndexes)
+                {
+                    if (setIndex < oldestIdx || setIndex > newestIdx)
+                    {
+                        setIndexes.Remove(setIndex);
+                        combined[setIndex] = []; // do NOT set to null, which means "all files in set"!
+                    }
+                }
+            } // if no-multivolume
+
             toc.CurrentSetIndex = newestIdx;
 
             var (totalFiles, perSet) = toc.GetFileCounts(combined, newestIdx);
@@ -179,8 +206,12 @@ public partial class TapeServiceBase
             //  so abort is detected via the flag rather than catching the exception.
             bool wasAborted = agent.IsAbortRequested;
 
+            // If the caller opted out of multi-volume, end here after the current volume
+            if (!wasAborted && !success && agent.CanResumeFromAnotherVolume && request.NoMultivolume)
+                LogInfo("Multi-volume continuation skipped (no-multivolume mode)");
+
             // ── Multi-volume continuation loop ────────────────────────────────
-            while (!wasAborted && !success && agent.CanResumeFromAnotherVolume)
+            while (!wasAborted && !success && agent.CanResumeFromAnotherVolume && !request.NoMultivolume)
             {
                 int volumeNeeded = agent.VolumeToResumeFrom;
                 LogInfo($"{modeName} requires Volume #{volumeNeeded} to continue");

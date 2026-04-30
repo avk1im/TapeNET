@@ -147,7 +147,6 @@ public class TapeTOCRoundTripTests
             toc.CurrentSetTOC.Description = $"Set {s + 1}";
             toc.CurrentSetTOC.HashAlgorithm = (TapeHashAlgorithm)((s % 6) + 1); // cycle through algorithms
             toc.CurrentSetTOC.BlockSize = (uint)(16384 * (1 + s % 3));
-            toc.CurrentSetTOC.FmksMode = s % 2 == 0;
 
             for (int f = 0; f < filesPerSet; f++)
             {
@@ -206,7 +205,6 @@ public class TapeTOCRoundTripTests
     {
         Assert.Equal(expected.Description, actual.Description);
         Assert.Equal(expected.CreationTime, actual.CreationTime);
-        Assert.Equal(expected.FmksMode, actual.FmksMode);
         Assert.Equal(expected.BlockSize, actual.BlockSize);
         Assert.Equal(expected.HashAlgorithm, actual.HashAlgorithm);
         Assert.Equal(expected.Incremental, actual.Incremental);
@@ -403,7 +401,6 @@ public class TapeTOCRoundTripTests
         toc.CurrentSetTOC.Description = "Empty Set";
         toc.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.XxHash64;
         toc.CurrentSetTOC.BlockSize = 32768;
-        toc.CurrentSetTOC.FmksMode = true;
 
         var result = SerializeAndDeserialize(toc);
 
@@ -411,7 +408,6 @@ public class TapeTOCRoundTripTests
         Assert.Equal("Empty Set", result[1].Description);
         Assert.Equal(TapeHashAlgorithm.XxHash64, result[1].HashAlgorithm);
         Assert.Equal(32768u, result[1].BlockSize);
-        Assert.True(result[1].FmksMode);
         Assert.Empty(result[1]);
     }
 
@@ -425,7 +421,6 @@ public class TapeTOCRoundTripTests
         set.Description = "Full Backup 2024-06-15";
         set.HashAlgorithm = TapeHashAlgorithm.Crc64;
         set.BlockSize = 16384;
-        set.FmksMode = false;
 
         // Add files with various properties
         set.Append(MakeFileInfo(toc.GenerateUID(), 0, @"C:\Data\file1.txt", 100));

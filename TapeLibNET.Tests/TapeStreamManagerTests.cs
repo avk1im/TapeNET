@@ -1800,66 +1800,6 @@ public class TapeStreamManagerTests
     #endregion
 
 
-    #region *** FmksMode Content Round-Trip ***
-
-    [Theory]
-    [MemberData(nameof(SetmarkProfiles))]
-    public void FmksMode_MultipleFiles_WriteAndReadBack(DriveProfile profile)
-    {
-        var (fixture, mgr) = CreateManager(profile);
-        using var _ = fixture;
-
-        // Enable FmksMode (only valid for setmark-capable drives)
-        mgr.Navigator.FmksMode = true;
-        Assert.True(mgr.Navigator.FmksMode);
-
-        int fileCount = 3;
-        int fileLength = 512;
-        var files = new byte[fileCount][];
-
-        // Write multiple files with FmksMode enabled
-        mgr.Navigator.TargetContentSet = -1;
-        Assert.True(mgr.BeginWriteContent(100_000_000));
-
-        for (int i = 0; i < fileCount; i++)
-        {
-            files[i] = GenerateTestData(fileLength, (byte)(0x50 + i));
-            using var ws = mgr.ProduceWriteContentStream(fileLength, (long)i * fileLength);
-            Assert.NotNull(ws);
-            ws!.Write(files[i], 0, files[i].Length);
-        }
-
-        Assert.True(mgr.EndWriteContent());
-        WriteTOCViaManager(mgr);
-
-        // Read back with FmksMode
-        mgr.Navigator.TargetContentSet = 0;
-        Assert.True(mgr.BeginReadContent());
-
-        for (int i = 0; i < fileCount; i++)
-        {
-            var buffer = new byte[fileLength];
-            using var rs = mgr.ProduceReadContentStream(lengthLimit: fileLength);
-            Assert.NotNull(rs);
-
-            int totalRead = 0;
-            while (totalRead < fileLength)
-            {
-                int read = rs!.Read(buffer, totalRead, fileLength - totalRead);
-                if (read == 0) break;
-                totalRead += read;
-            }
-
-            Assert.Equal(fileLength, totalRead);
-            Assert.Equal(files[i], buffer);
-        }
-
-        Assert.True(mgr.EndReadContent());
-    }
-
-    #endregion
-
-
     #region *** Edge Cases ***
 
     [Theory]

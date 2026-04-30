@@ -1371,7 +1371,6 @@ public partial class MainViewModel : ViewModelBase
             PropertyList.Add(new PropertyItem("Created On", setTOC.CreationTime.ToString("G")));
             PropertyList.Add(new PropertyItem("Last Saved", setTOC.LastSaveTime.ToString("G")));
             PropertyList.Add(new PropertyItem("Block Size", Helpers.BytesToStringLong(setTOC.BlockSize)));
-            PropertyList.Add(new PropertyItem("Filemarks", setTOC.FmksMode ? "ON" : "OFF"));
             PropertyList.Add(new PropertyItem("Hash Algorithm", setTOC.HashAlgorithm.ToString()));
             PropertyList.Add(new PropertyItem("Incremental", setTOC.Incremental ? "Yes" : "No"));
             PropertyList.Add(new PropertyItem("Volume", $"#{setTOC.Volume}"));

@@ -215,31 +215,33 @@ public class TapeNavigatorTests
     #endregion
 
 
-    #region *** FmksMode Property ***
+    #region *** UseSmks Property ***
 
     [Theory]
     [MemberData(nameof(SetmarkProfiles))]
-    public void FmksMode_WithSetmarks_CanBeSet(DriveProfile profile)
+    public void UseSmks_WithSetmarks_CanBeSetAndCleared(DriveProfile profile)
     {
         var (fixture, nav) = CreateNavigator(profile);
         using var _ = fixture;
 
-        Assert.False(nav.FmksMode); // default off
-        nav.FmksMode = true;
-        Assert.True(nav.FmksMode);
-        nav.FmksMode = false;
-        Assert.False(nav.FmksMode);
+        // Default for setmark-capable drives created via ProduceNavigator is true
+        Assert.True(nav.UseSmks);
+        nav.UseSmks = false;
+        Assert.False(nav.UseSmks);
+        nav.UseSmks = true;
+        Assert.True(nav.UseSmks);
     }
 
     [Theory]
     [MemberData(nameof(FilemarkProfiles))]
-    public void FmksMode_WithoutSetmarks_CannotBeSet(DriveProfile profile)
+    public void UseSmks_WithoutSetmarks_CannotBeEnabled(DriveProfile profile)
     {
         var (fixture, nav) = CreateNavigator(profile);
         using var _ = fixture;
 
-        nav.FmksMode = true;
-        Assert.False(nav.FmksMode); // silently ignored
+        Assert.False(nav.UseSmks); // default off
+        nav.UseSmks = true;
+        Assert.False(nav.UseSmks); // silently ignored — no setmarks available
     }
 
     #endregion
@@ -851,52 +853,6 @@ public class TapeNavigatorTests
         Assert.True(nav.MoveToNextContentSetmark(1));
         Assert.Equal(2, nav.CurrentContentSet);
         Assert.Equal(starts[2], nav.GetCurrentBlock());
-    }
-
-    #endregion
-
-
-    #region *** Content Filemark Handling (FmksMode) ***
-
-    [Theory]
-    [MemberData(nameof(SetmarkProfiles))]
-    public void ContentFilemark_FmksModeOn_WritesAndNavigates(DriveProfile profile)
-    {
-        var (fixture, nav) = CreateNavigator(profile);
-        using var _ = fixture;
-
-        nav.FmksMode = true;
-
-        // Write data, filemark, data, filemark
-        WriteDataBlocks(nav.Drive, 2);
-        Assert.True(nav.WriteContentFilemark());
-        long afterFirstFm = nav.GetCurrentBlock();
-        WriteDataBlocks(nav.Drive, 2);
-        Assert.True(nav.WriteContentFilemark());
-
-        // Navigate back by 1 filemark
-        Assert.True(nav.MoveToNextContentFilemark(-1));
-        long pos = nav.GetCurrentBlock();
-        Assert.True(pos < nav.GetCurrentBlock() || pos >= afterFirstFm);
-    }
-
-    [Theory]
-    [MemberData(nameof(SetmarkProfiles))]
-    public void ContentFilemark_FmksModeOff_WritesNoOp(DriveProfile profile)
-    {
-        var (fixture, nav) = CreateNavigator(profile);
-        using var _ = fixture;
-
-        nav.FmksMode = false;
-
-        long posBefore = nav.GetCurrentBlock();
-
-        // With FmksMode off, WriteContentFilemark and MoveToNextContentFilemark are no-ops
-        Assert.True(nav.WriteContentFilemark());
-        Assert.Equal(posBefore, nav.GetCurrentBlock());
-
-        Assert.True(nav.MoveToNextContentFilemark(1));
-        Assert.Equal(posBefore, nav.GetCurrentBlock());
     }
 
     #endregion

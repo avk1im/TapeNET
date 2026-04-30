@@ -25,7 +25,8 @@ public record RestoreFormData(
     bool RecurseSubdirectories,
     TapeHowToHandleExisting HandleExisting,
     bool UncheckProcessedFiles,
-    bool SkipAllErrors);
+    bool SkipAllErrors,
+    bool NoMultivolume);
 
 /// <summary>
 /// Represents an option in the "Handle existing files" combo box.
@@ -59,6 +60,7 @@ public class RestoreViewModel : ViewModelBase
     private bool _recurseSubdirectories;
     private bool _uncheckProcessedFiles = true;
     private bool _skipAllErrors;
+    private bool _noMultivolume;
     private string _targetDirectory = string.Empty;
     private HandleExistingOption _selectedHandleExisting = HandleExistingOption.All[0]; // Keep Both
     private string _itemsGroupHeader = string.Empty;
@@ -309,6 +311,16 @@ public class RestoreViewModel : ViewModelBase
         set => SetProperty(ref _skipAllErrors, value);
     }
 
+    /// <summary>
+    /// When checked, multi-volume continuation is disabled: if the required volume
+    /// is not available the operation ends with the files processed so far.
+    /// </summary>
+    public bool NoMultivolume
+    {
+        get => _noMultivolume;
+        set => SetProperty(ref _noMultivolume, value);
+    }
+
     /// <summary>Warning level for the options panel.</summary>
     public WarningLevel WarningLevel => _mode == RestoreMode.Restore ? _selectedHandleExisting.Value switch
     {
@@ -459,7 +471,8 @@ public class RestoreViewModel : ViewModelBase
             RecurseSubdirectories: targetDir != null && _recurseSubdirectories,
             HandleExisting: _selectedHandleExisting.Value,
             UncheckProcessedFiles: _uncheckProcessedFiles,
-            SkipAllErrors: _skipAllErrors);
+            SkipAllErrors: _skipAllErrors,
+            NoMultivolume: _noMultivolume);
 
         _onStart(request);
     }

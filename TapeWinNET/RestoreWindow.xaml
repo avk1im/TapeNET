@@ -176,6 +176,10 @@
                         <CheckBox Content="Skip all errors"
                                 IsChecked="{Binding SkipAllErrors}"
                                 ToolTip="Silently skip all file errors without prompting (unattended mode)"
+                                Margin="0,4,0,4"/>
+                        <CheckBox Content="No multivolume"
+                                IsChecked="{Binding NoMultivolume}"
+                                ToolTip="Stop the operation when the current volume is exhausted instead of continuing to another volume"
                                 Margin="0,4,0,0"/>
                         </StackPanel>
                 </GroupBox>

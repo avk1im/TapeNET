@@ -226,7 +226,6 @@ public class ServiceBaselineTests : ServiceTestBase
                 HashAlgorithm:         TapeHashAlgorithm.Crc32,
                 AppendMode:            false,
                 AppendAfterSetIndex:   0,
-                UseFilemarks:          false,
                 SkipAllErrors:         true);
 
             // Start the backup, then signal abort via the agent flag once the backup loop starts.

@@ -284,7 +284,6 @@ public class StatisticsTests
         fixture.TOC.CurrentSetTOC.Description = "Failure test";
         fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
         fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
-        fixture.TOC.CurrentSetTOC.FmksMode = true;
 
         using var agent = fixture.CreateBackupAgent();
         agent.SimulateFileFailures.Enabled = true;
@@ -445,7 +444,6 @@ public class StatisticsTests
         fixture.TOC.CurrentSetTOC.Description = "Empty";
         fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
         fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
-        fixture.TOC.CurrentSetTOC.FmksMode = true;
 
         using var agent = fixture.CreateBackupAgent();
         bool success = agent.BackupFileListToCurrentSet(

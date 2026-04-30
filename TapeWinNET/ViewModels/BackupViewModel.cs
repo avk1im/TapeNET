@@ -26,7 +26,6 @@ namespace TapeWinNET.ViewModels;
 /// <param name="HashAlgorithm">Hash algorithm for verification.</param>
 /// <param name="AppendMode">True to append after existing set, false to overwrite all.</param>
 /// <param name="AppendAfterSetIndex">Set index to append after (-1 for overwrite).</param>
-/// <param name="UseFilemarks">Whether to use filemarks between files.</param>
 /// <param name="IncludeSubdirectories">Whether sources were scanned with subdirectory recursion.</param>
 /// <param name="MediaName">New media description when writing to media with no existing TOC;
 ///  <see langword="null"/> when the media already has a TOC.</param>
@@ -38,9 +37,9 @@ public record BackupFormData(
     TapeHashAlgorithm HashAlgorithm,
     bool AppendMode,
     int AppendAfterSetIndex,
-    bool UseFilemarks,
     bool IncludeSubdirectories,
     bool SkipAllErrors,
+    bool NoMultivolume,
     string? MediaName = null);
 
 /// <summary>
@@ -87,8 +86,8 @@ public class BackupViewModel : ViewModelBase
     private string _description = string.Empty;
     private string _mediaName = string.Empty;
     private bool _incrementalBackup;
-    private bool _useFilemarks;
     private bool _skipAllErrors;
+    private bool _noMultivolume;
     private int _selectedBlockSizeIndex;
     private int _selectedHashIndex = 1;        // Default CRC32
     private bool _appendToSet = true;
@@ -345,12 +344,6 @@ public class BackupViewModel : ViewModelBase
         }
     }
 
-    public bool UseFilemarks
-    {
-        get => _useFilemarks;
-        set => SetProperty(ref _useFilemarks, value);
-    }
-
     /// <summary>
     /// When checked, all file errors during backup are silently skipped without
     /// showing an error dialog (non-assisted / unattended backup mode).
@@ -362,10 +355,14 @@ public class BackupViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Whether the connected drive supports setmarks (filemarks mode).
-    /// When <c>false</c>, the "Use filemarks" option is hidden.
+    /// When checked, multi-volume continuation is disabled: if the media becomes
+    /// full the backup ends with the files written so far.
     /// </summary>
-    public bool DriveSupportsSetmarks => _tapeService.SupportsSetmarks;
+    public bool NoMultivolume
+    {
+        get => _noMultivolume;
+        set => SetProperty(ref _noMultivolume, value);
+    }
 
     public int SelectedBlockSizeIndex
     {
@@ -1045,9 +1042,9 @@ public class BackupViewModel : ViewModelBase
             HashAlgorithm: SelectedHashAlgorithm,
             AppendMode: _appendToSet,
             AppendAfterSetIndex: _selectedAppendOption?.SetIndex ?? -1,
-            UseFilemarks: _useFilemarks,
             IncludeSubdirectories: _sourceView.IncludeSubdirectories,
             SkipAllErrors: _skipAllErrors,
+            NoMultivolume: _noMultivolume,
             MediaName: OverwriteMedia ? _mediaName : null);
 
         _onStartBackup(request);

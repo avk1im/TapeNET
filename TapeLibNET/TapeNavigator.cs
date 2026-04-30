@@ -29,13 +29,6 @@ namespace TapeLibNET
     /// </remarks>
     public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     {
-        #region *** Private fields ***
-
-        protected bool m_fmksMode = false; // use filemarks -- valid only for Content, and only with SmksMode. TOC always uses filemarks
-
-        #endregion // Private fields
-
-
         #region *** Properties ***
 
         /// <summary>Default TOC capacity used when no override is specified (16 MB).</summary>
@@ -76,6 +69,19 @@ namespace TapeLibNET
         /// </summary>
         internal void AssumeBlankMedia() => CurrentContentSet = -1;
 
+        private bool m_useSmks = false;
+        /// <summary>
+        /// When <c>true</c>, real tape setmarks are written/read at content set boundaries.
+        ///  When <c>false</c>, filemarks are used instead — even if the drive supports setmarks.
+        /// <para>Can only be set to <c>true</c> when <see cref="TapeDrive.SupportsSetmarks"/> is <c>true</c>;
+        ///  attempts to enable it on drives without setmark support are silently ignored.</para>
+        /// </summary>
+        public bool UseSmks
+        {
+            get => m_useSmks;
+            set => m_useSmks = value && Drive.SupportsSetmarks;
+        }
+
         #endregion // Properties
 
 
@@ -102,10 +108,22 @@ namespace TapeLibNET
                 return null;
 
             if (drive.HasInitiatorPartition)
-                return new TapeNavigatorTOCInPartition(drive);
+            {
+                var nav = new TapeNavigatorTOCInPartition(drive)
+                {
+                    UseSmks = drive.SupportsSetmarks // use real setmarks by default if the drive supports them
+                };
+                return nav;
+            }
 
             if (drive.SupportsSetmarks)
-                return new TapeNavigatorTOCInSetWithSmks(drive);
+            {
+                TapeNavigatorTOCInSetWithSmks nav = new(drive)
+                {
+                    UseSmks = true // real setmarks available — use them by default
+                };
+                return nav;
+            }
 
             if (drive.SupportsSeqFilemarks && useTOCMark)
                 return new TapeNavigatorTOCInSetWithFmksAndTOCMark(drive);
@@ -127,39 +145,6 @@ namespace TapeLibNET
 
 
         #endregion  // Notifications
-
-
-        #region *** Operation modes ***
-
-        /// <summary>
-        /// When <see langword="true"/>, content files are separated by filemarks in addition to setmarks.
-        /// <para>Only effective when the drive supports setmarks; TOC always uses filemarks regardless.</para>
-        /// </summary>
-        public bool FmksMode // use filemarks — valid only for Content, and only with SmksMode. TOC always uses filemarks
-        {
-            get => m_fmksMode;
-            internal set
-            {
-                if (UseSmks) // can only use filemarks if setmarks are used
-                {
-                    m_fmksMode = value;
-                    m_logger.LogTrace("Drive #{Drive}: FmksMode set to {Value}", DriveNumber, m_fmksMode);
-                }
-                else
-                {
-                    m_fmksMode = false;
-                    if (value != false)
-                        m_logger.LogWarning("Drive #{Drive}: FmksMode not supported since no setmark support", DriveNumber);
-                }
-            }
-        }
-
-        private bool UseSmks // use actual setmarks. Automatically ON if and only if drive supports setmarks; cannot be changed by user
-        {
-            get => Drive.SupportsSetmarks;
-        }
-
-        #endregion // Operation modes
 
 
         #region *** TOC positioning ***
@@ -331,7 +316,7 @@ namespace TapeLibNET
             if (UseSmks)
                 // move forward by 'count' setmarks
                 Drive.MoveToNextSetmark(count);
-            else // we're emulating setmarks with filemarks
+            else // use filemarks to emulate setmarks
                 Drive.MoveToNextFilemark(count);
 
             if (WentOK)
@@ -355,51 +340,13 @@ namespace TapeLibNET
         {
             if (UseSmks)
                 Drive.WriteSetmark();
-            else // we're emulating setmarks with filemarks
+            else // use filemarks to emulate setmarks
                 Drive.WriteFilemark();
 
             if (WentOK)
                 m_logger.LogTrace("Drive #{Drive}: Wrote content setmark", DriveNumber);
             else
                 LogErrorAsDebug("Failed to write content setmark");
-
-            return WentOK;
-        }
-
-        internal bool MoveToNextContentFilemark(int count = 1)
-        {
-            // Filemarks in content are used only in FmksMode
-            if (!FmksMode)
-            {
-                ResetError();
-                return true;
-            }
-            
-            Drive.MoveToNextFilemark(count);
-
-            if (WentOK)
-                m_logger.LogTrace("Drive #{Drive}: Moved by {Count} content filemark(s)", DriveNumber, count);
-            else
-                LogErrorAsDebug("Failed to move to next content filemark(s)");
-
-            return WentOK;
-        }
-
-        internal bool WriteContentFilemark()
-        {
-            // Filemarks in content are used only in FmksMode
-            if (!FmksMode)
-            {
-                ResetError();
-                return true;
-            }
-
-            Drive.WriteFilemark();
-
-            if (WentOK)
-                m_logger.LogTrace("Drive #{Drive}: Wrote a content filemark", DriveNumber);
-            else
-                LogErrorAsDebug("Failed to write a content filemark");
 
             return WentOK;
         }
@@ -607,9 +554,7 @@ namespace TapeLibNET
 
     /// <summary>
     /// Navigator for drives supporting real setmarks (WithSetmarks organization).
-    /// <para>Content sets are delimited by setmarks; the TOC follows the last setmark.
-    ///  When <see cref="TapeNavigator.FmksMode"/> is active, individual files within a set
-    ///  are additionally separated by filemarks.</para>
+    /// <para>Content sets are delimited by setmarks; the TOC follows the last setmark.</para>
     /// <code>
     /// [set0][SM][set1][SM]…[setN][SM][toc1][FM][toc2][FM]
     /// </code>

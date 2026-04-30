@@ -198,7 +198,6 @@ public sealed class VirtualTapeFixture : IDisposable
     /// <param name="fileList">Full paths to back up.</param>
     /// <param name="description">Backup set description.</param>
     /// <param name="incremental">Whether the set is incremental.</param>
-    /// <param name="useFilemarks">Whether to use filemarks between files.</param>
     /// <param name="hashAlgorithm">Hash algorithm for integrity checking.</param>
     /// <param name="blockSize">Block size (0 = drive default).</param>
     /// <param name="notifiable">Optional callback handler.</param>
@@ -207,7 +206,6 @@ public sealed class VirtualTapeFixture : IDisposable
         List<string> fileList,
         string description = "Test Set",
         bool incremental = false,
-        bool useFilemarks = true,
         TapeHashAlgorithm hashAlgorithm = TapeHashAlgorithm.Crc64,
         uint blockSize = 0,
         ITapeFileNotifiable? notifiable = null)
@@ -217,7 +215,6 @@ public sealed class VirtualTapeFixture : IDisposable
         TOC.CurrentSetTOC.Description = description;
         TOC.CurrentSetTOC.HashAlgorithm = hashAlgorithm;
         TOC.CurrentSetTOC.BlockSize = blockSize == 0 ? Drive.DefaultBlockSize : blockSize;
-        TOC.CurrentSetTOC.FmksMode = useFilemarks;
 
         using var agent = CreateBackupAgent();
 
