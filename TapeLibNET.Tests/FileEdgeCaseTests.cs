@@ -1,4 +1,4 @@
-using TapeLibNET.Tests.Helpers;
+﻿using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
 
@@ -44,7 +44,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
 
             // Verify restored file exists and is empty
             string restoredPath = MapRestoredPath(restoreDir, tree.RootPath, tree.Files[0]);
@@ -80,7 +80,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
 
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
                 RestoreEquivalentRoot(restoreDir, tree.RootPath));
@@ -114,7 +114,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
 
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
                 RestoreEquivalentRoot(restoreDir, tree.RootPath));
@@ -153,7 +153,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
 
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
                 RestoreEquivalentRoot(restoreDir, tree.RootPath));
@@ -193,7 +193,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
 
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
                 RestoreEquivalentRoot(restoreDir, tree.RootPath));
@@ -242,7 +242,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
 
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
                 RestoreEquivalentRoot(restoreDir, tree.RootPath));
@@ -279,7 +279,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
 
             // Verify attributes are preserved (byte content + attributes)
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
@@ -313,7 +313,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
 
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
                 RestoreEquivalentRoot(restoreDir, tree.RootPath),
@@ -359,7 +359,7 @@ public class FileEdgeCaseTests
             var restoreNotifiable = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            bool restored = restoreAgent.RestoreAllFilesFromCurrentSet(
+            bool restored = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
                 ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Restore failed");
@@ -415,7 +415,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
 
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
                 RestoreEquivalentRoot(restoreDir, tree.RootPath));
@@ -449,7 +449,7 @@ public class FileEdgeCaseTests
         var notifiable = new TestNotifiable();
         using var validateAgent = fixture.CreateValidateAgent();
         fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-        bool validated = validateAgent.RestoreAllFilesFromCurrentSet(
+        bool validated = validateAgent.RestoreAllFilesFromCurrentSetAligned(
             ignoreFailures: true, fileNotify: notifiable);
 
         Assert.True(validated, "Validation failed on edge-case files");

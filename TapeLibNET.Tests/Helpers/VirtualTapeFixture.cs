@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TapeLibNET;
 using TapeLibNET.Virtual;
@@ -218,7 +218,7 @@ public sealed class VirtualTapeFixture : IDisposable
 
         using var agent = CreateBackupAgent();
 
-        bool success = agent.BackupFileListToCurrentSet(
+        bool success = agent.BackupFileListToCurrentSetAligned(
             newSet: true,
             fileList,
             ignoreFailures: true,

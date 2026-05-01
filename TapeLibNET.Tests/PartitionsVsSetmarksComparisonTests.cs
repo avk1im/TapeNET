@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 using Xunit.Abstractions;
@@ -317,7 +317,7 @@ public class PartitionsVsSetmarksComparisonTests(ITestOutputHelper output)
 
         using (var agent1 = fixture.CreateBackupAgent())
         {
-            bool ok = agent1.BackupFileListToCurrentSet(
+            bool ok = agent1.BackupFileListToCurrentSetAligned(
                 newSet: true, tree1.Files, ignoreFailures: true);
             Assert.True(ok, "Set 1 backup failed");
 
@@ -335,7 +335,7 @@ public class PartitionsVsSetmarksComparisonTests(ITestOutputHelper output)
 
         using (var agent2 = fixture.CreateBackupAgent())
         {
-            bool ok = agent2.BackupFileListToCurrentSet(
+            bool ok = agent2.BackupFileListToCurrentSetAligned(
                 newSet: true, tree2.Files, ignoreFailures: true);
             Assert.True(ok, "Set 2 backup failed");
 

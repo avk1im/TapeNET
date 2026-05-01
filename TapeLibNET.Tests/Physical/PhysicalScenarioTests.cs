@@ -1,4 +1,4 @@
-using TapeLibNET;
+﻿using TapeLibNET;
 using TapeLibNET.Tests.Helpers;
 using Xunit.Abstractions;
 
@@ -191,7 +191,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count; // last set
-            bool restored = restoreAgent.RestoreAllFilesFromCurrentSet(
+            bool restored = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
                 ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Restore failed");
@@ -254,7 +254,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
             var restoreNotifiable = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
-            bool restored = restoreAgent.RestoreAllFilesFromCurrentSet(
+            bool restored = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
                 ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Restore of Set A failed");
@@ -307,7 +307,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
             var restoreNotifiable = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
-            bool restored = restoreAgent.RestoreAllFilesFromCurrentSet(
+            bool restored = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
                 ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Restore of latest set failed");
@@ -370,7 +370,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
             var restoreNotifiable = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
-            bool restored = restoreAgent.RestoreAllFilesFromCurrentSet(
+            bool restored = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
                 ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Restore of middle set B failed");
@@ -392,7 +392,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
 
     /// <summary>
     /// Backup A → B → C → Select random files from sets A and C (skip B) →
-    /// Restore via <see cref="TapeFileRestoreBaseAgent.RestoreFilesFromCurrentSetDown"/>
+    /// Restore via <see cref="TapeFileRestoreBaseAgent.RestoreFilesFromCurrentSetDownAligned"/>
     /// with a pre-assembled <c>filesSelected</c> array → Verify only the selected
     /// files are present on disk.
     /// </summary>
@@ -457,7 +457,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
             var restoreNotifiable = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
-            bool restored = restoreAgent.RestoreFilesFromCurrentSetDown(
+            bool restored = restoreAgent.RestoreFilesFromCurrentSetDownAligned(
                 filesSelected, ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Selective restore failed");
@@ -526,7 +526,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
         using var validateAgent = fixture.CreateValidateAgent();
         var validateNotifiable = new TestNotifiable();
 
-        bool valid = validateAgent.RestoreAllFilesFromCurrentSet(
+        bool valid = validateAgent.RestoreAllFilesFromCurrentSetAligned(
             ignoreFailures: true, fileNotify: validateNotifiable);
 
         Assert.True(valid, "CRC validation failed");

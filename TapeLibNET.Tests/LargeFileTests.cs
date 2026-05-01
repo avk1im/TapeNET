@@ -1,4 +1,4 @@
-using TapeLibNET.Tests.Helpers;
+﻿using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
 
@@ -73,7 +73,7 @@ public class LargeFileTests
             var restoreNotifiable = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            bool restored = restoreAgent.RestoreAllFilesFromCurrentSet(
+            bool restored = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
                 ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Restore failed");
@@ -131,7 +131,7 @@ public class LargeFileTests
             var restoreNotifiable = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            bool restored = restoreAgent.RestoreAllFilesFromCurrentSet(
+            bool restored = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
                 ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Restore failed");
@@ -196,7 +196,7 @@ public class LargeFileTests
             var restoreNotifiable = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            bool restored = restoreAgent.RestoreAllFilesFromCurrentSet(
+            bool restored = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
                 ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Restore failed");
@@ -239,7 +239,7 @@ public class LargeFileTests
         var notifiable = new TestNotifiable();
         using var validateAgent = fixture.CreateValidateAgent();
         fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-        bool validated = validateAgent.RestoreAllFilesFromCurrentSet(
+        bool validated = validateAgent.RestoreAllFilesFromCurrentSetAligned(
             ignoreFailures: true, fileNotify: notifiable);
 
         Assert.True(validated, "Validation failed on >2 GB file");

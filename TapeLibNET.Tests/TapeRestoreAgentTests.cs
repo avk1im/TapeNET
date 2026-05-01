@@ -1,4 +1,4 @@
-using TapeLibNET.Tests.Helpers;
+﻿using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
@@ -105,7 +105,7 @@ public class TapeRestoreAgentTests
         var notifiable = new TestNotifiable();
         using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
         fixture.TOC.CurrentSetIndex = setIndex;
-        bool result = restoreAgent.RestoreAllFilesFromCurrentSet(
+        bool result = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
             ignoreFailures: true, fileNotify: notifiable);
         return (result, notifiable);
     }
@@ -120,7 +120,7 @@ public class TapeRestoreAgentTests
         var notifiable = new TestNotifiable();
         using var validateAgent = fixture.CreateValidateAgent();
         fixture.TOC.CurrentSetIndex = setIndex;
-        bool result = validateAgent.RestoreAllFilesFromCurrentSet(
+        bool result = validateAgent.RestoreAllFilesFromCurrentSetAligned(
             ignoreFailures: true, fileNotify: notifiable);
         return (result, notifiable);
     }
@@ -136,7 +136,7 @@ public class TapeRestoreAgentTests
         var notifiable = new TestNotifiable();
         using var verifyAgent = fixture.CreateVerifyAgent();
         fixture.TOC.CurrentSetIndex = setIndex;
-        bool result = verifyAgent.RestoreAllFilesFromCurrentSet(
+        bool result = verifyAgent.RestoreAllFilesFromCurrentSetAligned(
             ignoreFailures: true, fileNotify: notifiable);
         return (result, notifiable);
     }
@@ -843,7 +843,7 @@ public class TapeRestoreAgentTests
             fixture.TOC.CurrentSetIndex = 1;
 
             Assert.Equal(0L, restoreAgent.BytesRestored);
-            restoreAgent.RestoreAllFilesFromCurrentSet();
+            restoreAgent.RestoreAllFilesFromCurrentSetAligned();
             Assert.True(restoreAgent.BytesRestored > 0,
                 "BytesRestored should be positive after restore");
         }

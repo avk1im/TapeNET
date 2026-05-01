@@ -1,4 +1,4 @@
-using TapeLibNET.Tests.Helpers;
+﻿using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
@@ -180,7 +180,7 @@ public class IncrementalBackupRestoreTests
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
             fixture.TOC.CurrentSetIndex = 4;
-            bool restored = restoreAgent.RestoreFilesFromCurrentSetInc(
+            bool restored = restoreAgent.RestoreFilesFromCurrentSetIncAligned(
                 null, ignoreFailures: true);
 
             Assert.True(restored, "Incremental restore from set 4 failed");
@@ -221,7 +221,7 @@ public class IncrementalBackupRestoreTests
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
             fixture.TOC.CurrentSetIndex = 3;
-            bool restored = restoreAgent.RestoreFilesFromCurrentSetInc(
+            bool restored = restoreAgent.RestoreFilesFromCurrentSetIncAligned(
                 null, ignoreFailures: true);
 
             Assert.True(restored, "Incremental restore from set 3 failed");
@@ -268,7 +268,7 @@ public class IncrementalBackupRestoreTests
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
             fixture.TOC.CurrentSetIndex = 2;
-            bool restored = restoreAgent.RestoreFilesFromCurrentSetInc(
+            bool restored = restoreAgent.RestoreFilesFromCurrentSetIncAligned(
                 null, ignoreFailures: true);
 
             Assert.True(restored, "Incremental restore from set 2 failed");
@@ -307,7 +307,7 @@ public class IncrementalBackupRestoreTests
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
             fixture.TOC.CurrentSetIndex = 1;
-            bool restored = restoreAgent.RestoreFilesFromCurrentSetInc(
+            bool restored = restoreAgent.RestoreFilesFromCurrentSetIncAligned(
                 null, ignoreFailures: true);
 
             Assert.True(restored, "Incremental restore from full set failed");
@@ -352,7 +352,7 @@ public class IncrementalBackupRestoreTests
         {
             using var agent2 = fixture.CreateRestoreAgent(restoreDir2);
             fixture.TOC.CurrentSetIndex = 2;
-            Assert.True(agent2.RestoreAllFilesFromCurrentSet(ignoreFailures: true),
+            Assert.True(agent2.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true),
                 "Non-incremental restore from set 2 failed");
 
             Assert.Equal(3, agent2.Statistics.FilesSucceeded);
@@ -382,7 +382,7 @@ public class IncrementalBackupRestoreTests
         {
             using var agent3 = fixture.CreateRestoreAgent(restoreDir3);
             fixture.TOC.CurrentSetIndex = 3;
-            Assert.True(agent3.RestoreAllFilesFromCurrentSet(ignoreFailures: true),
+            Assert.True(agent3.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true),
                 "Non-incremental restore from set 3 failed");
 
             Assert.Equal(2, agent3.Statistics.FilesSucceeded);
@@ -405,7 +405,7 @@ public class IncrementalBackupRestoreTests
         {
             using var agent4 = fixture.CreateRestoreAgent(restoreDir4);
             fixture.TOC.CurrentSetIndex = 4;
-            Assert.True(agent4.RestoreAllFilesFromCurrentSet(ignoreFailures: true),
+            Assert.True(agent4.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true),
                 "Non-incremental restore from set 4 failed");
 
             Assert.Equal(2, agent4.Statistics.FilesSucceeded);
@@ -452,7 +452,7 @@ public class IncrementalBackupRestoreTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = 1;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(ignoreFailures: true),
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true),
                 "Non-incremental restore from full set failed");
 
             Assert.Equal(InitialFileCount, restoreAgent.Statistics.FilesSucceeded);
@@ -511,7 +511,7 @@ public class IncrementalBackupRestoreTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = 2;
-            Assert.True(restoreAgent.RestoreFilesFromCurrentSetInc(null, ignoreFailures: true),
+            Assert.True(restoreAgent.RestoreFilesFromCurrentSetIncAligned(null, ignoreFailures: true),
                 "Incremental restore after no-changes wave failed");
 
             Assert.Equal(6, restoreAgent.Statistics.FilesSucceeded);
@@ -562,7 +562,7 @@ public class IncrementalBackupRestoreTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = 4;
-            Assert.True(restoreAgent.RestoreFilesFromCurrentSetInc(null, ignoreFailures: true),
+            Assert.True(restoreAgent.RestoreFilesFromCurrentSetIncAligned(null, ignoreFailures: true),
                 "Incremental restore after chain break failed");
 
             // All 5 files restored from the chain (set 3 + set 4)
@@ -632,7 +632,7 @@ public class IncrementalBackupRestoreTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = 4;
-            Assert.True(restoreAgent.RestoreFilesFromCurrentSetInc(null, ignoreFailures: true),
+            Assert.True(restoreAgent.RestoreFilesFromCurrentSetIncAligned(null, ignoreFailures: true),
                 "Incremental restore after TOC reload failed");
 
             Assert.Equal(tree.Files.Count, restoreAgent.Statistics.FilesSucceeded);
@@ -671,7 +671,7 @@ public class IncrementalBackupRestoreTests
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
             fixture.TOC.CurrentSetIndex = 4;
-            Assert.True(restoreAgent.RestoreFilesFromCurrentSetInc(
+            Assert.True(restoreAgent.RestoreFilesFromCurrentSetIncAligned(
                 null, ignoreFailures: true, fileNotify: notifiable),
                 "Incremental restore failed");
 

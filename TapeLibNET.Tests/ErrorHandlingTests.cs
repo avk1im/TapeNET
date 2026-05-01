@@ -1,4 +1,4 @@
-using TapeLibNET.Tests.Helpers;
+﻿using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
@@ -86,7 +86,7 @@ public class ErrorHandlingTests
         using var agent = fixture.CreateBackupAgent();
         configureAgent?.Invoke(agent);
 
-        return agent.BackupFileListToCurrentSet(
+        return agent.BackupFileListToCurrentSetAligned(
             newSet: true,
             fileList,
             ignoreFailures: ignoreFailures,
@@ -106,7 +106,7 @@ public class ErrorHandlingTests
     {
         using var agent = fixture.CreateRestoreAgent(targetDir);
         configureAgent?.Invoke(agent);
-        return agent.RestoreAllFilesFromCurrentSet(ignoreFailures, notifiable);
+        return agent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures, notifiable);
     }
 
     #endregion
@@ -219,7 +219,7 @@ public class ErrorHandlingTests
         agent.SimulateFileFailures.Enabled = true;
         agent.SimulateFileFailures.EveryNth = failEveryN;
 
-        bool success = agent.BackupFileListToCurrentSet(
+        bool success = agent.BackupFileListToCurrentSetAligned(
             newSet: true,
             tree.Files,
             ignoreFailures: true, // even with ignoreFailures, Abort overrides
@@ -273,7 +273,7 @@ public class ErrorHandlingTests
             backupAgent.SimulateFileFailures.Enabled = true;
             backupAgent.SimulateFileFailures.EveryNth = failEveryN;
 
-            bool backupOk = backupAgent.BackupFileListToCurrentSet(
+            bool backupOk = backupAgent.BackupFileListToCurrentSetAligned(
                 newSet: true, tree.Files, ignoreFailures: true, backupNotify);
 
             // Backup should complete (ignoreFailures=true)
@@ -294,7 +294,7 @@ public class ErrorHandlingTests
             // Restore — all TOC-registered (succeeded) files should restore correctly
             var restoreNotify = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
-            bool restoreOk = restoreAgent.RestoreAllFilesFromCurrentSet(ignoreFailures: false, restoreNotify);
+            bool restoreOk = restoreAgent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: false, restoreNotify);
 
             Assert.True(restoreOk, "Restore of survived files should succeed");
             restoreNotify.AssertStatsInvariant();
@@ -351,7 +351,7 @@ public class ErrorHandlingTests
             backupAgent.SimulateFileFailures.Enabled = true;
             backupAgent.SimulateFileFailures.EveryNth = failEveryN;
 
-            bool backupOk = backupAgent.BackupFileListToCurrentSet(
+            bool backupOk = backupAgent.BackupFileListToCurrentSetAligned(
                 newSet: true, tree.Files, ignoreFailures: true, backupNotify);
 
             backupNotify.AssertStatsInvariant();
@@ -371,7 +371,7 @@ public class ErrorHandlingTests
             // Restore
             var restoreNotify = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
-            bool restoreOk = restoreAgent.RestoreAllFilesFromCurrentSet(ignoreFailures: false, restoreNotify);
+            bool restoreOk = restoreAgent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: false, restoreNotify);
 
             Assert.True(restoreOk, "Restore of survived files should succeed");
             restoreNotify.AssertStatsInvariant();
@@ -546,7 +546,7 @@ public class ErrorHandlingTests
 
         using var agent = fixture.CreateBackupAgent();
 
-        bool success = agent.BackupFileListToCurrentSet(
+        bool success = agent.BackupFileListToCurrentSetAligned(
             newSet: true,
             tree.Files,
             ignoreFailures: true,
@@ -589,7 +589,7 @@ public class ErrorHandlingTests
 
         using var agent = fixture.CreateBackupAgent();
 
-        bool success = agent.BackupFileListToCurrentSet(
+        bool success = agent.BackupFileListToCurrentSetAligned(
             newSet: true,
             tree.Files,
             ignoreFailures: true,
@@ -701,7 +701,7 @@ public class ErrorHandlingTests
             agent.SimulateFileFailures.EveryNth = failEveryN;
             agent.SimulateFileFailures.Counter = failEveryN - 1;
 
-            bool restoreOk = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, notifiable);
+            bool restoreOk = agent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true, notifiable);
 
             Assert.True(restoreOk, "Restore with retries should succeed");
 
@@ -748,7 +748,7 @@ public class ErrorHandlingTests
             agent.SimulateFileFailures.Enabled = true;
             agent.SimulateFileFailures.EveryNth = failEveryN;
 
-            bool restoreOk = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, notifiable);
+            bool restoreOk = agent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true, notifiable);
 
             Assert.False(restoreOk, "Restore should fail on abort");
             Assert.True(agent.IsAbortRequested, "IsAbortRequested should be set");
@@ -799,7 +799,7 @@ public class ErrorHandlingTests
             var notifiable = new TestNotifiable { AbortAfterNSucceeded = abortAfter };
 
             using var agent = fixture.CreateRestoreAgent(restoreDir);
-            bool restoreOk = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, notifiable);
+            bool restoreOk = agent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true, notifiable);
 
             Assert.False(restoreOk, "Restore should fail on proactive abort");
 

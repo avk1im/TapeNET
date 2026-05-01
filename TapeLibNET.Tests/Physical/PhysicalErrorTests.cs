@@ -1,4 +1,4 @@
-#if DEBUG
+﻿#if DEBUG
 using TapeLibNET.Tests.Helpers;
 using Xunit.Abstractions;
 
@@ -67,7 +67,7 @@ public class PhysicalErrorTests(PhysicalDriveFixtureWrapper wrapper, ITestOutput
 
         try
         {
-            bool success = agent.BackupFileListToCurrentSet(
+            bool success = agent.BackupFileListToCurrentSetAligned(
                 newSet: true,
                 tree.Files,
                 ignoreFailures: true,
@@ -125,7 +125,7 @@ public class PhysicalErrorTests(PhysicalDriveFixtureWrapper wrapper, ITestOutput
             try
             {
                 using var agent = Fixture.CreateRestoreAgent(restoreDir);
-                bool success = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, notifiable);
+                bool success = agent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true, notifiable);
 
                 notifiable.AssertStatsInvariant();
                 var stats = notifiable.BatchEnds[^1].Stats;
@@ -217,7 +217,7 @@ public class PhysicalErrorTests(PhysicalDriveFixtureWrapper wrapper, ITestOutput
             using var agent = Fixture.CreateBackupAgent();
             var notifiable = new TestNotifiable { FailedAction = FileFailedAction.Skip };
 
-            bool success = agent.BackupFileListToCurrentSet(
+            bool success = agent.BackupFileListToCurrentSetAligned(
                 newSet: true,
                 tree.Files,
                 ignoreFailures: true,
@@ -271,7 +271,7 @@ public class PhysicalErrorTests(PhysicalDriveFixtureWrapper wrapper, ITestOutput
         {
             var notifiable = new TestNotifiable { FailedAction = FileFailedAction.Skip };
             // Backup with errors — we don't care about the result
-            agent.BackupFileListToCurrentSet(true, tree.Files, ignoreFailures: true, fileNotify: notifiable);
+            agent.BackupFileListToCurrentSetAligned(true, tree.Files, ignoreFailures: true, fileNotify: notifiable);
         }
 
         win32Backend.SimulateIOFailures.Enabled = false;

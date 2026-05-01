@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TapeLibNET;
 using Xunit.Abstractions;
@@ -412,7 +412,7 @@ public sealed class PhysicalTapeFixture : IDisposable
 
         using var agent = CreateBackupAgent();
 
-        bool success = agent.BackupFileListToCurrentSet(
+        bool success = agent.BackupFileListToCurrentSetAligned(
             newSet: true,
             fileList,
             ignoreFailures: true,

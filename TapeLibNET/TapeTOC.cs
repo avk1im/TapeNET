@@ -322,6 +322,10 @@ namespace TapeLibNET
         internal void Append(TapeFileInfo tfi)
         {
             m_tapeFileInfos.Add(tfi);
+            // A newly appended file may flip the layout from aligned to packed
+            //  (or remain aligned), so the cached detection must be re-evaluated.
+            if (m_isPackedLayout == false && tfi.Address.Offset != 0)
+                m_isPackedLayout = true;
         }
         internal void CopyFrom(TapeSetTOC toc)
         {
@@ -335,6 +339,7 @@ namespace TapeLibNET
             Incremental = toc.Incremental;
             Volume = toc.Volume;
             // ContinuedFromPrevVolume = toc.ContinuedFromPrevVolume; // set only during construction
+            m_isPackedLayout = toc.m_isPackedLayout;
         }
 
 
@@ -468,8 +473,10 @@ namespace TapeLibNET
             return filesSelected; // don't use "null means all files" shortcut since the list might need editing
         }
         /// <summary>
-        /// Estimates the tape footprint of a single file: file data + serialized header,
-        ///  rounded up to the next block boundary.
+        /// Estimates the tape footprint of a single file under the legacy block-aligned
+        ///  layout: file data + serialized header, rounded up to the next block boundary.
+        /// <para>For packed sets, files share blocks, so per-file rounding is wrong;
+        ///  use <see cref="ComputeTotalFileSizeOnTape(uint)"/> on the whole set instead.</para>
         /// </summary>
         public static long EstimateFileSizeOnTape(long fileLength, uint blockSize)
         {
@@ -479,16 +486,57 @@ namespace TapeLibNET
             return (rawSize + blockSize - 1) / blockSize * blockSize;
         }
 
-        // Compute the size of all files in the set on tape, considering the block size
+        // Cached dynamic detection of packed vs aligned layout, derived from file addresses.
+        //  null = not yet determined; true = at least one file has Address.Offset != 0;
+        //  false = all known files are block-aligned (legacy layout).
+        private bool? m_isPackedLayout;
+
+        // Invalidate cached layout flag when the file set is mutated.
+        internal void InvalidateLayoutCache() => m_isPackedLayout = null;
+
+        // Compute the size of all files in the set on tape, considering the block size.
+        //  Detects packed-layout sets dynamically: if any file has a non-zero intra-block
+        //  offset (Address.Offset != 0), the set is packed and files share blocks, so we
+        //  only round the *total* of (file + header) sizes up to one block boundary
+        //  rather than rounding each file individually. The detection result is cached.
         public long ComputeTotalFileSizeOnTape(uint defaultBlockSize = 0)
         {
             if (Count == 0)
                 return 0L;
             uint blockSize = (BlockSize > 0) ? BlockSize : defaultBlockSize;
-            long totalSize = 0L;
+
+            // If we already know the set is packed, sum raw and round once.
+            if (m_isPackedLayout == true)
+                return RoundUpToBlock(SumRawFileSizes(), blockSize);
+
+            // Otherwise walk once: detect packed-ness while computing the aligned total.
+            //  As soon as we discover a non-zero offset, switch to packed accounting.
+            long alignedTotal = 0L;
+            long rawTotal     = 0L;
+            bool packed       = false;
             foreach (var tfi in this)
-                totalSize += EstimateFileSizeOnTape(tfi.FileDescr.Length, blockSize);
-            return totalSize;
+            {
+                long raw = tfi.FileDescr.Length + TapeFileInfo.EstimateSerializedHeaderSize();
+                rawTotal += raw;
+                if (!packed && tfi.Address.Offset != 0)
+                    packed = true;
+                if (!packed)
+                    alignedTotal += RoundUpToBlock(raw, blockSize);
+            }
+
+            m_isPackedLayout = packed;
+            return packed ? RoundUpToBlock(rawTotal, blockSize) : alignedTotal;
+
+            long SumRawFileSizes()
+            {
+                long sum = 0L;
+                foreach (var tfi in this)
+                    sum += tfi.FileDescr.Length + TapeFileInfo.EstimateSerializedHeaderSize();
+                return sum;
+            }
+
+            static long RoundUpToBlock(long size, uint blockSize)
+                => (blockSize <= 1) ? size : (size + blockSize - 1) / blockSize * blockSize;
         }
 
     } // class TapeSetTOC

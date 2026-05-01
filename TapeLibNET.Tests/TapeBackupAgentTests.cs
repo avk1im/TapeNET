@@ -1,4 +1,4 @@
-using TapeLibNET.Tests.Helpers;
+﻿using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
@@ -73,7 +73,7 @@ public class TapeBackupAgentTests
         toc.CurrentSetTOC.HashAlgorithm = hash;
         toc.CurrentSetTOC.BlockSize = blockSize == 0 ? agent.Manager.Navigator.Drive.DefaultBlockSize : blockSize;
 
-        return agent.BackupFileListToCurrentSet(
+        return agent.BackupFileListToCurrentSetAligned(
             newSet: newSet,
             fileList,
             ignoreFailures: true,

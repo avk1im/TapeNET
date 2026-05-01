@@ -1,4 +1,4 @@
-using TapeLibNET.Tests.Helpers;
+﻿using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
@@ -141,7 +141,7 @@ public class StatisticsTests
             var notifiable = new TestNotifiable();
             using var agent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = 1;
-            bool success = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, fileNotify: notifiable);
+            bool success = agent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true, fileNotify: notifiable);
 
             Assert.True(success, "Restore failed");
             AssertFullSuccess(notifiable, tree.Files.Count, tree.TotalSize);
@@ -173,7 +173,7 @@ public class StatisticsTests
         var notifiable = new TestNotifiable();
         using var agent = fixture.CreateValidateAgent();
         fixture.TOC.CurrentSetIndex = 1;
-        bool success = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, fileNotify: notifiable);
+        bool success = agent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true, fileNotify: notifiable);
 
         Assert.True(success, "Validate failed");
         AssertFullSuccess(notifiable, tree.Files.Count, tree.TotalSize);
@@ -200,7 +200,7 @@ public class StatisticsTests
         var notifiable = new TestNotifiable();
         using var agent = fixture.CreateVerifyAgent();
         fixture.TOC.CurrentSetIndex = 1;
-        bool success = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, fileNotify: notifiable);
+        bool success = agent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true, fileNotify: notifiable);
 
         Assert.True(success, "Verify failed");
         AssertFullSuccess(notifiable, tree.Files.Count, tree.TotalSize);
@@ -289,7 +289,7 @@ public class StatisticsTests
         agent.SimulateFileFailures.Enabled = true;
         agent.SimulateFileFailures.EveryNth = failEveryN;
 
-        bool success = agent.BackupFileListToCurrentSet(
+        bool success = agent.BackupFileListToCurrentSetAligned(
             newSet: true,
             tree.Files,
             ignoreFailures: true,
@@ -339,7 +339,7 @@ public class StatisticsTests
         fixture.BackupFiles(tree2.Files, description: "Multi set 2", notifiable: notify2);
         AssertFullSuccess(notify2, tree2.Files.Count, tree2.TotalSize);
 
-        // Agent stats should reflect set 2 only (reset happened via BackupFileListToCurrentSet)
+        // Agent stats should reflect set 2 only (reset happened via BackupFileListToCurrentSetAligned)
         Assert.Equal(tree2.Files.Count, notify2.BatchEnds[^1].Stats.FilesTotal);
         Assert.NotEqual(notify1.BatchEnds[^1].Stats.BytesProcessed,
                          notify2.BatchEnds[^1].Stats.BytesProcessed);
@@ -404,7 +404,7 @@ public class StatisticsTests
             var notifiable = new TestNotifiable();
             using var agent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = 1;
-            agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, fileNotify: notifiable);
+            agent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true, fileNotify: notifiable);
 
             int prevProcessed = 0;
             long prevBytes = 0;
@@ -446,7 +446,7 @@ public class StatisticsTests
         fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
 
         using var agent = fixture.CreateBackupAgent();
-        bool success = agent.BackupFileListToCurrentSet(
+        bool success = agent.BackupFileListToCurrentSetAligned(
             newSet: true,
             [],
             ignoreFailures: true,
@@ -523,7 +523,7 @@ public class StatisticsTests
             var notifiable = new TestNotifiable();
             using var agent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = 1;
-            bool success = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, fileNotify: notifiable);
+            bool success = agent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true, fileNotify: notifiable);
 
             Assert.True(success);
             var stats = notifiable.BatchEnds[^1].Stats;
@@ -589,7 +589,7 @@ public class StatisticsTests
             var notifiable = new TestNotifiable();
             using var agent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = 1;
-            bool success = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, fileNotify: notifiable);
+            bool success = agent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true, fileNotify: notifiable);
 
             Assert.True(success);
             var stats = notifiable.BatchEnds[^1].Stats;
@@ -638,7 +638,7 @@ public class StatisticsTests
             var restoreNotify = new TestNotifiable();
             using var agent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = 1;
-            bool success = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, fileNotify: restoreNotify);
+            bool success = agent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true, fileNotify: restoreNotify);
 
             Assert.True(success);
             restoreNotify.AssertStatsInvariant();

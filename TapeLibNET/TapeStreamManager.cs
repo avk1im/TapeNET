@@ -7,6 +7,7 @@ using Windows.Win32.Foundation;
 using Microsoft.Extensions.Logging;
 using System.Runtime.InteropServices;
 using TapeLibNET;
+using TapeLibNET.TapeFilePacker;
 
 
 namespace TapeLibNET
@@ -33,6 +34,53 @@ namespace TapeLibNET
         public TapeStream? Stream { get; private set; } = null;
         /// <summary>Whether a stream is currently checked out and in use.</summary>
         public bool IsStreamInUse => Stream != null;
+
+        // -----------------------------------------------------------------------
+        //  Phase 2 packer (shared-block content packing)
+        // -----------------------------------------------------------------------
+
+        // Backend + packer are constructed lazily on BeginWriteContent and torn down
+        //  by EndWriteContent. Both remain null while the manager is not in
+        //  TapeState.WritingContent.
+        private WorkerThreadTapeWriteBackend? m_packerBackend;
+        private TapeFileWritePacker? m_packer;
+
+        // Read-side packer: lazily constructed inside BeginPackedFileRead and torn down
+        //  by EndReadContent. Both remain null while the manager is not in
+        //  TapeState.ReadingContent.
+        private SyncTapeReadBackend? m_readBackend;
+        private TapeFileReadPacker? m_readPacker;
+
+        /// <summary>
+        /// Active write packer for the current content session, or <see langword="null"/>
+        ///  when the manager is not in <see cref="TapeState.WritingContent"/>.
+        /// </summary>
+        internal TapeFileWritePacker? Packer => m_packer;
+
+        /// <summary>
+        /// Multiplier (in tape blocks) for the packer's fill buffer. Packer buffer size =
+        ///  <c>PackerBlockMultiplier × BlockSize</c>. Default 16.
+        /// </summary>
+        public int PackerBlockMultiplier { get; set; } = 16;
+
+        /// <summary>
+        /// Source error mode passed to a freshly constructed <see cref="TapeFileWritePacker"/>.
+        ///  Default <see cref="SourceErrorMode.NoRollback"/>.
+        /// </summary>
+        internal SourceErrorMode PackerSourceErrorMode { get; set; } = SourceErrorMode.NoRollback;
+
+        /// <summary>
+        /// Re-exposes <see cref="TapeFileWritePacker.FilesCommitted"/>. Subscribers see commit
+        ///  notifications across the packer's lifetime within the current content session.
+        ///  Subscriptions persist across <see cref="BeginWriteContent"/>/<see cref="EndWriteContent"/>
+        ///  cycles -- the manager re-wires the inner packer's event each time.
+        /// </summary>
+        internal event Action<IReadOnlyList<CommittedFile>>? FilesCommitted;
+
+        private void OnPackerFilesCommitted(IReadOnlyList<CommittedFile> committed)
+        {
+            FilesCommitted?.Invoke(committed);
+        }
 
         /// <summary>
         /// True after at least one content file write stream has been disposed
@@ -229,6 +277,9 @@ namespace TapeLibNET
             if (WentOK)
                 BeginWriteContentSet(remainingCapacity);
 
+            if (WentOK)
+                EnsurePackerCreated();
+
             if (WentBad)
                 Navigator.ResetContentSet(); // since we don't know where we ended up
 
@@ -247,6 +298,11 @@ namespace TapeLibNET
                 // we've been reading content already -> just ensure we're at the right content set
                 if (Navigator.TargetContentSet == Navigator.CurrentContentSet)
                     return true; // nothing to do
+
+                // Tear down the read packer before crossing a set boundary -- its cached
+                //  blocks and _drivePositionBlock are tied to the previous set and would
+                //  feed stale data into the new set's reads.
+                DisposeReadPacker();
 
                 EndReadContentSet(); // will advance Navigator.CurrentContentSet
                 Navigator.MoveToTargetContentSet();
@@ -324,6 +380,12 @@ namespace TapeLibNET
             if (State != TapeState.WritingContent)
                 LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
 
+            // Flush + dispose the packer first so any tail-block writes complete before
+            //  the set is closed with a setmark. Errors are logged but do not abort the
+            //  state transition -- we still want to leave WritingContent cleanly.
+            if (WentOK)
+                FlushAndDisposePacker();
+
             if (WentOK)
                 EndWriteContentSet(); // will call Navigator.OnContentWritten()
 
@@ -347,6 +409,11 @@ namespace TapeLibNET
 
             if (State != TapeState.ReadingContent)
                 LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
+
+            // Tear down the read packer (if any) before leaving the read state so the
+            //  cached blocks and any open read slot are released cleanly.
+            if (WentOK)
+                DisposeReadPacker();
 
             if (WentOK)
                 EndReadContentSet(); // will advance Navigator.CurrentContentSet
@@ -683,6 +750,310 @@ namespace TapeLibNET
         }
 
         #endregion // Read and write stream provisioning
+
+
+        #region *** Packer-backed content writing (Phase 2) ***
+
+        // Sink that bridges the worker-thread backend to TapeDrive.WriteDirect.
+        //  Captured once and passed to the backend; lives for the backend's lifetime.
+        private WriteResult PackerWriteSink(byte[] buffer, int validBytes)
+        {
+            try
+            {
+                int written = Drive.WriteDirect(buffer, 0, validBytes, out _, out bool eof);
+
+                int blocks = written / (int)Drive.BlockSize;
+
+                // Map drive errors. Treat ERROR_END_OF_MEDIA as the EOM status; everything
+                //  else surfaces as a hard error exception per the backend contract.
+                if (Drive.WentOK)
+                    return new WriteResult(blocks, eof, Exception: null);
+
+                if (Drive.LastErrorWin32 == WIN32_ERROR.ERROR_END_OF_MEDIA)
+                    return new WriteResult(blocks, EomEncountered: true, Exception: null);
+
+                return new WriteResult(
+                    blocks,
+                    EomEncountered: eof,
+                    Exception: new TapeIOException((uint)Drive.LastErrorWin32,
+                        $"WriteDirect failed for {validBytes} bytes"));
+            }
+            catch (Exception ex)
+            {
+                return new WriteResult(0, EomEncountered: false, Exception: ex);
+            }
+        }
+
+        // Construct (or re-construct) the backend + packer for the current content
+        //  session, wiring FilesCommitted re-exposure and the rewind callback.
+        private void EnsurePackerCreated()
+        {
+            if (m_packer is not null)
+                return;
+
+            uint blockSize = Drive.BlockSize;
+            if (blockSize == 0)
+            {
+                m_logger.LogWarning("Drive #{Drive}: Cannot create packer -- block size is 0", DriveNumber);
+                return;
+            }
+
+            m_packerBackend = new WorkerThreadTapeWriteBackend(PackerWriteSink, blockSize, m_logger);
+
+            // Anchor packer to the current absolute drive block so the TapeAddress values
+            //  it surfaces (and we store in the TOC) match the legacy backup's convention
+            //  of recording Drive.BlockCounter -- required for correct packed restore on
+            //  multi-set tapes.
+            long startBlock = Drive.BlockCounter;
+            if (startBlock < 0)
+                startBlock = 0;
+
+            m_packer = new TapeFileWritePacker(
+                backend: m_packerBackend,
+                rewindToBlock: b => Drive.MoveToBlock(b),
+                blockMultiplier: PackerBlockMultiplier,
+                sourceErrorMode: PackerSourceErrorMode,
+                logger: m_logger,
+                initialAbsBlock: startBlock);
+
+            m_packer.FilesCommitted += OnPackerFilesCommitted;
+
+            m_logger.LogTrace("Drive #{Drive}: Packer created (blockSize={Bs}, multiplier={Mul})",
+                DriveNumber, blockSize, PackerBlockMultiplier);
+        }
+
+        // Drain and tear down the packer + backend. Idempotent.
+        private void FlushAndDisposePacker()
+        {
+            if (m_packer is null)
+                return;
+
+            try
+            {
+                // Dispose flushes the fill buffer, which fires FilesCommitted for the
+                //  tail commits. Unsubscribe AFTER disposal so those tail notifications
+                //  reach OnPackerFilesCommitted (and downstream subscribers).
+                m_packer.Dispose(); // calls Flush() internally
+                m_packer.FilesCommitted -= OnPackerFilesCommitted;
+            }
+            catch (Exception ex)
+            {
+                m_logger.LogWarning(ex, "Drive #{Drive}: Exception disposing packer", DriveNumber);
+            }
+            finally
+            {
+                m_packer = null;
+            }
+
+            try
+            {
+                m_packerBackend?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                m_logger.LogWarning(ex, "Drive #{Drive}: Exception disposing packer backend", DriveNumber);
+            }
+            finally
+            {
+                m_packerBackend = null;
+            }
+
+            m_logger.LogTrace("Drive #{Drive}: Packer disposed", DriveNumber);
+        }
+
+        /// <summary>
+        /// Opens the packer-backed content write stream for one logical file.
+        /// Transitions to <see cref="TapeState.WritingContent"/> if needed (no capacity
+        ///  pre-check -- callers that need it should call <see cref="BeginWriteContent"/>
+        ///  explicitly first).
+        /// <para>The returned <see cref="TapeWriteStreamFacade"/> writes through the active
+        ///  <see cref="TapeFileWritePacker"/>. Final tape addresses are surfaced via
+        ///  <see cref="FilesCommitted"/> once the file's tail block is durably on tape.</para>
+        /// </summary>
+        internal TapeWriteStreamFacade? BeginPackedFile()
+        {
+            ResetError();
+
+            if (State != TapeState.WritingContent)
+            {
+                if (!BeginWriteContent(-1))
+                    return null;
+            }
+
+            EnsurePackerCreated();
+            if (m_packer is null)
+            {
+                LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
+                return null;
+            }
+
+            // Treat the packer file as an active write so ContentWritten / set bookkeeping
+            //  remains consistent with the legacy stream path.
+            ContentWritten = true;
+
+            try
+            {
+                return m_packer.BeginFile();
+            }
+            catch (Exception ex)
+            {
+                m_logger.LogWarning(ex, "Drive #{Drive}: Packer.BeginFile failed", DriveNumber);
+                LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Closes the open packer file and returns its <see cref="CommitToken"/> for
+        ///  correlation with the eventual <see cref="FilesCommitted"/> notification.
+        /// </summary>
+        internal CommitToken EndPackedFile()
+        {
+            if (m_packer is null)
+                throw new InvalidOperationException("Packer is not active.");
+
+            return m_packer.EndFile();
+        }
+
+        // -----------------------------------------------------------------------
+        //  Packer-backed content reading (Phase 2 Step E)
+        // -----------------------------------------------------------------------
+
+        // Sink that bridges the synchronous read backend to TapeDrive.ReadDirect.
+        //  Captured once and passed to the backend; lives for the backend's lifetime.
+        private ReadResult PackerReadSink(byte[] buffer, int bytesRequested)
+        {
+            try
+            {
+                int read = Drive.ReadDirect(buffer, 0, bytesRequested, out bool tapemark, out bool eof);
+
+                if (Drive.WentOK || tapemark || eof)
+                    return new ReadResult(read, tapemark, eof, Exception: null);
+
+                return new ReadResult(
+                    read,
+                    TapemarkEncountered: false,
+                    EofEncountered: false,
+                    Exception: new TapeIOException((uint)Drive.LastErrorWin32,
+                        $"ReadDirect failed for {bytesRequested} bytes"));
+            }
+            catch (Exception ex)
+            {
+                return new ReadResult(0, false, false, ex);
+            }
+        }
+
+        // Construct (or re-construct) the read backend + read packer for the current
+        //  content read session. Idempotent.
+        private void EnsureReadPackerCreated()
+        {
+            if (m_readPacker is not null)
+                return;
+
+            uint blockSize = Drive.BlockSize;
+            if (blockSize == 0)
+            {
+                m_logger.LogWarning("Drive #{Drive}: Cannot create read packer -- block size is 0", DriveNumber);
+                return;
+            }
+
+            m_readBackend = new SyncTapeReadBackend(
+                readSink: PackerReadSink,
+                seekSink: b => Drive.MoveToBlock(b),
+                blockSize: blockSize,
+                logger: m_logger);
+
+            m_readPacker = new TapeFileReadPacker(
+                backend: m_readBackend,
+                slotCount: PackerBlockMultiplier,
+                logger: m_logger);
+
+            m_logger.LogTrace("Drive #{Drive}: Read packer created (blockSize={Bs}, slots={Slots})",
+                DriveNumber, blockSize, PackerBlockMultiplier);
+        }
+
+        // Tear down the read packer + backend. Idempotent.
+        private void DisposeReadPacker()
+        {
+            if (m_readPacker is null && m_readBackend is null)
+                return;
+
+            try
+            {
+                m_readPacker?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                m_logger.LogWarning(ex, "Drive #{Drive}: Exception disposing read packer", DriveNumber);
+            }
+            finally
+            {
+                m_readPacker = null;
+            }
+
+            try
+            {
+                m_readBackend?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                m_logger.LogWarning(ex, "Drive #{Drive}: Exception disposing read backend", DriveNumber);
+            }
+            finally
+            {
+                m_readBackend = null;
+            }
+
+            m_logger.LogTrace("Drive #{Drive}: Read packer disposed", DriveNumber);
+        }
+
+        /// <summary>
+        /// Opens a packer-backed content read stream for one logical file located at
+        ///  <paramref name="addr"/> and spanning <paramref name="length"/> bytes.
+        ///  Transitions to <see cref="TapeState.ReadingContent"/> if needed.
+        /// <para>The returned <see cref="TapeReadStreamFacade"/> hides tape block boundaries
+        ///  and intra-block file offsets. Disposing the stream closes the packer's open-read
+        ///  slot but retains cached blocks for the next caller.</para>
+        /// </summary>
+        internal TapeReadStreamFacade? BeginPackedFileRead(TapeAddress addr, long length)
+        {
+            ResetError();
+
+            if (State != TapeState.ReadingContent)
+            {
+                if (!BeginReadContent())
+                    return null;
+            }
+
+            EnsureReadPackerCreated();
+            if (m_readPacker is null)
+            {
+                LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
+                return null;
+            }
+
+            try
+            {
+                return m_readPacker.BeginRead(addr, length);
+            }
+            catch (Exception ex)
+            {
+                m_logger.LogWarning(ex, "Drive #{Drive}: ReadPacker.BeginRead failed", DriveNumber);
+                LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Closes the currently open packer-backed read slot. Cached blocks are retained.
+        ///  No-op if no slot is open.
+        /// </summary>
+        internal void EndPackedFileRead()
+        {
+            m_readPacker?.EndRead();
+        }
+
+        #endregion // Packer-backed content writing
 
     }
 } // namespace TapeNET

@@ -1,4 +1,4 @@
-using Grpc.Net.Client;
+﻿using Grpc.Net.Client;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TapeLibNET.Remote;
@@ -177,7 +177,7 @@ public sealed class RemoteVirtualTapeFixture : IDisposable
 
         using var agent = CreateBackupAgent();
 
-        bool success = agent.BackupFileListToCurrentSet(
+        bool success = agent.BackupFileListToCurrentSetAligned(
             newSet: true,
             fileList,
             ignoreFailures: true,

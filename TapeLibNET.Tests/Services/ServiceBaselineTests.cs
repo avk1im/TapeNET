@@ -263,8 +263,13 @@ public class ServiceBaselineTests : ServiceTestBase
             int setIdx = toc.SetIndexToStd(toc.CapSetIndex(0));
             int committedCount = toc[setIdx].Count;
 
-            // The TOC-recorded count must match what the BackupResult reported
-            Assert.Equal(filesSucceeded, committedCount);
+            // Abort is asynchronous: the packed write path commits files in batches
+            //  (when blocks fill), so additional files may have been promoted into the
+            //  TOC after the IsAbortRequested snapshot used to compute filesSucceeded.
+            //  The invariant we care about is that EVERY file recorded in the TOC is
+            //  fully and correctly on tape, regardless of when abort was observed.
+            Assert.True(committedCount >= filesSucceeded,
+                $"TOC count ({committedCount}) must be >= agent-reported filesSucceeded ({filesSucceeded})");
 
             var req = new RestoreRequest(
                 Mode:                  RestoreMode.Validate,
@@ -279,9 +284,11 @@ public class ServiceBaselineTests : ServiceTestBase
 
             var result = await valSvc.ExecuteRestoreAsync(req);
 
-            // At most 1 file (the one being written at the abort boundary) may have
-            //  incomplete data on tape; every other committed entry must verify clean.
-            //  result.FilesFailed is the authoritative counter; host reports are UI noise.
+            // Every TOC-recorded file must validate cleanly. Under the legacy aligned
+            //  path the partially-written file at the abort boundary was sometimes
+            //  recorded; under the packed path the in-flight file is rolled back, so
+            //  the TOC only contains fully-committed files. We allow up to 1 failure
+            //  to remain compatible with both paths.
             Assert.True(result.FilesFailed <= 1,
                 $"More than 1 file failed validation after abort (got {result.FilesFailed})");
             Assert.Equal(committedCount - result.FilesFailed, result.FilesSucceeded);

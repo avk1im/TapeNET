@@ -53,8 +53,23 @@ public class TestNotifiable : ITapeFileNotifiable
     /// <see cref="TapeAbortRequestedException"/> after this many files
     /// have been posted as succeeded. Simulates a proactive user abort.
     /// &lt;= 0 means disabled (default).
+    /// <para>
+    /// NOTE: on the packed backup path, <c>FilesSucceeded</c> only advances when
+    /// the packer surfaces a commit (typically at flush time), so this trigger
+    /// may never fire mid-loop for small-file workloads. Use
+    /// <see cref="AbortAfterNPreProcessed"/> for a packed-friendly per-file trigger.
+    /// </para>
     /// </summary>
     public int AbortAfterNSucceeded { get; set; } = 0;
+
+    /// <summary>
+    /// When positive, <see cref="PreProcessFile"/> throws
+    /// <see cref="TapeAbortRequestedException"/> on the Nth invocation. Triggers
+    /// on the synchronous PreProcess sequence regardless of commit timing, so it
+    /// works uniformly on both the legacy and packed backup paths.
+    /// &lt;= 0 means disabled (default).
+    /// </summary>
+    public int AbortAfterNPreProcessed { get; set; } = 0;
 
     /// <summary>
     /// When positive, <see cref="PostProcessFile"/> throws
@@ -85,6 +100,10 @@ public class TestNotifiable : ITapeFileNotifiable
         // Proactive abort: throw after N files have succeeded
         if (AbortAfterNSucceeded > 0 && stats.FilesSucceeded >= AbortAfterNSucceeded)
             throw new TapeAbortRequestedException($"Test abort after {stats.FilesSucceeded} succeeded files");
+
+        // Proactive abort: throw on the Nth PreProcess call (commit-timing-independent)
+        if (AbortAfterNPreProcessed > 0 && PreProcessed.Count > AbortAfterNPreProcessed)
+            throw new TapeAbortRequestedException($"Test abort at PreProcess #{PreProcessed.Count}");
 
         // Skip if in the skip set
         return !FilesToSkip.Contains(fileInfo.FileDescr.FullName);

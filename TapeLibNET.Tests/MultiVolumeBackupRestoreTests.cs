@@ -1,4 +1,4 @@
-using TapeLibNET.Tests.Helpers;
+﻿using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
@@ -145,7 +145,7 @@ public class MultiVolumeBackupRestoreTests
             // For multi-volume restore, we need to position to the latest set
             fixture.TOC.MakeLastSetCurrent();
 
-            var restoreStats = fixture.RestoreAllFilesFromCurrentSet(restoreDir);
+            var restoreStats = fixture.RestoreAllFilesFromCurrentSetAligned(restoreDir);
 
             Assert.Equal(FileCount, restoreStats.FilesSucceeded);
             Assert.Equal(0, restoreStats.FilesFailed);
@@ -247,7 +247,7 @@ public class MultiVolumeBackupRestoreTests
         try
         {
             fixture.TOC.MakeLastSetCurrent();
-            var restoreStats = fixture.RestoreFilesFromCurrentSetInc(restoreDir);
+            var restoreStats = fixture.RestoreFilesFromCurrentSetIncAligned(restoreDir);
 
             // All 8 files should be restored — latest version from inc sets
             Assert.Equal(8, restoreStats.FilesSucceeded);
@@ -297,7 +297,7 @@ public class MultiVolumeBackupRestoreTests
         try
         {
             fixture.TOC.MakeLastSetCurrent();
-            var restoreStats = fixture.RestoreFilesFromCurrentSetInc(restoreDir);
+            var restoreStats = fixture.RestoreFilesFromCurrentSetIncAligned(restoreDir);
 
             // All files restored
             Assert.Equal(FileCount, restoreStats.FilesSucceeded);
@@ -370,7 +370,7 @@ public class MultiVolumeBackupRestoreTests
         try
         {
             fixture.TOC.MakeLastSetCurrent();
-            var restoreStats = fixture.RestoreAllFilesFromCurrentSet(restoreDir);
+            var restoreStats = fixture.RestoreAllFilesFromCurrentSetAligned(restoreDir);
 
             Assert.Equal(FileCount, restoreStats.FilesSucceeded);
 
@@ -419,7 +419,7 @@ public class MultiVolumeBackupRestoreTests
             fixture.TOC.MakeLastSetCurrent();
 
             var restoreNotifiable = new TestNotifiable();
-            var restoreStats = fixture.RestoreAllFilesFromCurrentSet(restoreDir,
+            var restoreStats = fixture.RestoreAllFilesFromCurrentSetAligned(restoreDir,
                 notifiable: restoreNotifiable);
 
             // Restore invariant
@@ -479,7 +479,7 @@ public class MultiVolumeBackupRestoreTests
         try
         {
             fixture.TOC.MakeLastSetCurrent();
-            var stats2 = fixture.RestoreAllFilesFromCurrentSet(restoreDir2);
+            var stats2 = fixture.RestoreAllFilesFromCurrentSetAligned(restoreDir2);
 
             Assert.Equal(batch2.Count, stats2.FilesSucceeded);
 
@@ -533,7 +533,7 @@ public class MultiVolumeBackupRestoreTests
         string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_MVCont_{Guid.NewGuid():N}");
         try
         {
-            var restoreStats = fixture.RestoreAllFilesFromCurrentSet(restoreDir);
+            var restoreStats = fixture.RestoreAllFilesFromCurrentSetAligned(restoreDir);
 
             Assert.Equal(FileCount, restoreStats.FilesSucceeded);
 
@@ -582,7 +582,7 @@ public class MultiVolumeBackupRestoreTests
         try
         {
             fixture.TOC.MakeLastSetCurrent();
-            var restoreStats = fixture.RestoreFilesFromCurrentSetInc(restoreDir);
+            var restoreStats = fixture.RestoreFilesFromCurrentSetIncAligned(restoreDir);
 
             Assert.Equal(FileCount, restoreStats.FilesSucceeded);
             Assert.Equal(0, restoreStats.FilesFailed);

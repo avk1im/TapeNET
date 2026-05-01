@@ -18,12 +18,19 @@ public class ServiceMultiVolumeTests : ServiceTestBase
 
     /// <summary>
     /// Number of files written by <see cref="AddMultiVolumeContent"/>.
+    ///  Sized so that 2 volumes definitely cannot hold all files (each volume's
+    ///  usable area is well below the total content). The test then constrains
+    ///  the backup to exactly 2 volumes via <see cref="ServiceOperationRequest.NoMultivolume"/>
+    ///  on the second volume and verifies that the files actually committed to
+    ///  the TOC restore byte-for-byte.
     /// </summary>
-    private const int MultiVolumeFileCount = 16;
+    private const int MultiVolumeFileCount = 64;
 
     /// <summary>
     /// Size of each file produced by <see cref="AddMultiVolumeContent"/>: 350 KiB.
-    ///  Total file content = 16 × 350 KiB ≈ 5.5 MiB.
+    ///  Total file content = 64 × 350 KiB ≈ 22 MiB — well above the per-volume
+    ///  usable area on either profile, so spillover onto vol-2 is guaranteed
+    ///  regardless of packed vs aligned per-file padding.
     /// </summary>
     private const long MultiVolumeFileSize = 350L * 1024;
 
@@ -31,16 +38,14 @@ public class ServiceMultiVolumeTests : ServiceTestBase
     /// Content-partition capacity for setmarks (single-partition) multi-volume test volumes.
     ///  Must be larger than <see cref="TapeNavigator.DefaultTOCCapacity"/> (16 MiB) because
     ///  the backup agent reserves that space for the in-tape TOC on setmarks drives.
-    ///  20 MiB gives 4 MiB of usable headroom per volume, which is less than the
-    ///  ~5.5 MiB total file content — guaranteeing at least one volume overflow.
+    ///  20 MiB → 4 MiB usable per volume; 22 MiB total content overflows trivially.
     /// </summary>
     private const long MultiVolumeCapacity_Setmarks = 20L * 1024 * 1024;
 
     /// <summary>
     /// Content-partition capacity for initiator-partition multi-volume test volumes.
     ///  The TOC lives in the initiator partition so the full content space is available
-    ///  for file data. 3 MiB is less than the ~5.5 MiB total file content, guaranteeing
-    ///  at least one volume overflow.
+    ///  for file data. 3 MiB per volume; total 22 MiB overflows trivially.
     /// </summary>
     private const long MultiVolumeCapacity_Initiator = 3L * 1024 * 1024;
 

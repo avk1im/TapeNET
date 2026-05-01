@@ -3,6 +3,7 @@ using Windows.Win32.Foundation;
 using Microsoft.Extensions.Logging;
 using Windows.Win32.System.SystemServices;
 using TapeLibNET;
+using TapeLibNET.TapeFilePacker;
 
 
 namespace TapeLibNET
@@ -39,6 +40,18 @@ namespace TapeLibNET
 
             BytesBackedupMarker = BytesBackedup; // important in case of multi-volume backup continuation
 
+            // Apply the set's preferred block size BEFORE entering the writing-content state.
+            //  This matters for the packed path: TapeStreamManager.EnsurePackerCreated() (called
+            //  from BeginWriteContent) captures Drive.BlockSize at packer-creation time. If we
+            //  set the block size only afterwards, the packer ends up with a stale value (e.g.
+            //  the TOC's 16 KB block size) while the drive writes the new set's larger blocks --
+            //  leading to BlocksWritten == 0 in the sink, no FilesCommitted events, and pending
+            //  files that never get promoted.
+            if (!Drive.SetBlockSize(TOC.CurrentSetTOC.BlockSize))
+                m_logger.LogWarning("Failed to set block size to {Size0} in {Method}; proceeding with {Size1}",
+                    TOC.CurrentSetTOC.BlockSize, nameof(BeginWriteContentForCurrentSet), Drive.BlockSize);
+            TOC.CurrentSetTOC.BlockSize = Drive.BlockSize; // in any case, ensure the set has what the manager has
+
             if (!Manager.BeginWriteContent(remainingCapacity))
             {
                 m_logger.LogWarning("Failed to transition to writing content in {Method}",
@@ -46,12 +59,6 @@ namespace TapeLibNET
                 SyncErrorFrom(Manager);
                 return false;
             }
-
-            // Try to set block size -- Drive has the final say.
-            if (!Drive.SetBlockSize(TOC.CurrentSetTOC.BlockSize))
-                m_logger.LogWarning("Failed to set block size to {Size0} in {Method}; proceeding with {Size1}",
-                    TOC.CurrentSetTOC.BlockSize, nameof(BeginWriteContentForCurrentSet), Drive.BlockSize);
-            TOC.CurrentSetTOC.BlockSize = Drive.BlockSize; // in any case, ensure the set has what the manager has
 
             return true;
         }
@@ -210,12 +217,13 @@ namespace TapeLibNET
         }
 
         // The context with which we can resume backup on the next volume
-        private struct TapeBackupContext(List<string> fileList, bool ignoreFailures, ITapeFileNotifiable? fileNotify, bool incremental)
+        private struct TapeBackupContext(List<string> fileList, bool ignoreFailures, ITapeFileNotifiable? fileNotify, bool incremental, bool packed)
         {
             internal readonly List<string> fileList = fileList;
             internal readonly bool ignoreFailures = ignoreFailures;
             internal readonly ITapeFileNotifiable? fileNotify = fileNotify;
             internal readonly bool incremental = incremental; // preserve original incremental flag across volume swaps
+            internal readonly bool packed = packed;           // dispatches Resume to the packed or legacy path
 
             internal int fileIndex = 0;
             internal bool overallSuccess = true;
@@ -262,11 +270,13 @@ namespace TapeLibNET
             //  a different set (e.g. after RemoveLastEmptySet removed the original empty set)
             TOC.MarkCurrentSetIncremental(MultiVolumeContext.Value.incremental);
 
-            return BackupFilesToCurrentSet(newSet: true)
-                ? TapeResult.OK : TapeResult.Fail(this);
+            bool ok = MultiVolumeContext.Value.packed
+                ? BackupFilesToCurrentSet(newSet: true)
+                : BackupFilesToCurrentSetAligned(newSet: true);
+            return ok ? TapeResult.OK : TapeResult.Fail(this);
         }
 
-        private bool BackupFilesToCurrentSet(bool newSet = true)
+        private bool BackupFilesToCurrentSetAligned(bool newSet = true)
         {
             Debug.Assert(MultiVolumeContext != null);
 
@@ -274,14 +284,14 @@ namespace TapeLibNET
 
             if (bc.fileList.Count == 0)
             {
-                m_logger.LogWarning("No files found to backup in {Method}", nameof(BackupFilesToCurrentSet));
+                m_logger.LogWarning("No files found to backup in {Method}", nameof(BackupFilesToCurrentSetAligned));
                 return true; // no files found to back up -> treat as success
             }
 
             if (!BeginWriteContentForCurrentSet(newSet)) // start conent writing mode in tape manager so that tape positioning works correctly
             {
                 NotifyBatchEnd(bc.fileNotify);
-                m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSet));
+                m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSetAligned));
                 return false;
             }
 
@@ -312,7 +322,7 @@ namespace TapeLibNET
                 try
                 {
                     // first check for abort request
-                    ThrowIfAbortRequested(nameof(BackupFileListToCurrentSet));
+                    ThrowIfAbortRequested(nameof(BackupFileListToCurrentSetAligned));
 
                     if (!NotifyPreProcessFile(bc.fileNotify, tfi))
                     {
@@ -351,7 +361,7 @@ namespace TapeLibNET
                     //  We do NOT propagate the exception out of this method — the public API
                     //  is contractually bool/TapeResult based.
                     m_logger.LogTrace("{Method}: Abort requested before file #{Number} >{File}< was written",
-                        nameof(BackupFilesToCurrentSet), _stats.FilesProcessed + 1, fileName);
+                        nameof(BackupFilesToCurrentSetAligned), _stats.FilesProcessed + 1, fileName);
                     bc.overallSuccess = false;
                     break;
                 }
@@ -360,7 +370,7 @@ namespace TapeLibNET
                     SetError(ex);
 
                     m_logger.LogWarning("{Method}: File #{Number} >{File}< backup failed. Exception: {Ex}",
-                        nameof(BackupFilesToCurrentSet), _stats.FilesProcessed + 1, fileName, ex);
+                        nameof(BackupFilesToCurrentSetAligned), _stats.FilesProcessed + 1, fileName, ex);
 
                     if (IsEOM || ex is TapeIOException { IsEOM: true })
                     {
@@ -445,7 +455,7 @@ namespace TapeLibNET
                     catch (TapeAbortRequestedException)
                     {
                         m_logger.LogTrace("{Method}: Abort requested while post-processing file #{Number} >{File}<",
-                            nameof(BackupFilesToCurrentSet), _stats.FilesProcessed, fileName);
+                            nameof(BackupFilesToCurrentSetAligned), _stats.FilesProcessed, fileName);
                         bc.overallSuccess = false;
                         break;
                     }
@@ -466,13 +476,13 @@ namespace TapeLibNET
         /// <summary>
         /// Expands file/directory patterns via <see cref="BuildFileNameList"/> and backs them up to the current set.
         /// </summary>
-        public TapeResult BackupFilesToCurrentSet(bool newSet, List<string> fileAndDirectoryPatterns, bool recurseSubdirs, bool ignoreFailures = true,
+        public TapeResult BackupFilesToCurrentSetAligned(bool newSet, List<string> fileAndDirectoryPatterns, bool recurseSubdirs, bool ignoreFailures = true,
             ITapeFileNotifiable? fileNotify = null)
         {
             var fileList = BuildFileNameList(fileAndDirectoryPatterns, recurseSubdirs);
 
-            return BackupFileListToCurrentSet(newSet, fileList, ignoreFailures, fileNotify);
-        } // BackupFilesToCurrentSet()
+            return BackupFileListToCurrentSetAligned(newSet, fileList, ignoreFailures, fileNotify);
+        } // BackupFilesToCurrentSetAligned()
 
         /// <summary>
         /// Backs up a pre-built file list to the current set. Resets statistics and starts
@@ -482,12 +492,12 @@ namespace TapeLibNET
         /// <param name="fileList">Fully resolved file paths to back up.</param>
         /// <param name="ignoreFailures">When <see langword="true"/>, continues after per-file errors.</param>
         /// <param name="fileNotify">Optional callback for progress, skip/retry/abort decisions.</param>
-        public TapeResult BackupFileListToCurrentSet(bool newSet, List<string> fileList, bool ignoreFailures = true,
+        public TapeResult BackupFileListToCurrentSetAligned(bool newSet, List<string> fileList, bool ignoreFailures = true,
             ITapeFileNotifiable? fileNotify = null)
         {
             if (fileList.Count == 0)
             {
-                m_logger.LogWarning("No files found to backup in {Method}", nameof(BackupFilesToCurrentSet));
+                m_logger.LogWarning("No files found to backup in {Method}", nameof(BackupFilesToCurrentSetAligned));
                 return TapeResult.OK; // no files found to back up -> treat as success
             }
 
@@ -498,11 +508,315 @@ namespace TapeLibNET
             if (TOC.CurrentSetTOC.Incremental)
                 m_logger.LogTrace("Performing incremental backup to incremental set #{Set}", TOC.CurrentSetIndex);
 
-            MultiVolumeContext = new(fileList, ignoreFailures, fileNotify, TOC.CurrentSetTOC.Incremental);
+            MultiVolumeContext = new(fileList, ignoreFailures, fileNotify, TOC.CurrentSetTOC.Incremental, packed: false);
+
+            return BackupFilesToCurrentSetAligned(newSet)
+                ? TapeResult.OK : TapeResult.Fail(this);
+        } // BackupFilesToCurrentSetAligned()
+
+
+        // =====================================================================
+        //  Packed (Phase 2) backup pendants
+        //
+        //  Mirror BackupFile / BackupFilesToCurrentSetAligned / BackupFileListToCurrentSetAligned
+        //  but route content writes through the TapeFileWritePacker so multiple
+        //  small files can share tape blocks. The packer surfaces final
+        //  TapeAddress values asynchronously via Manager.FilesCommitted, so:
+        //    * TapeFileInfo for each file is constructed with its REAL address
+        //      inside the commit handler (the loop's per-file tfi is a template
+        //      carrying UID + FileDescr only; its Block field is unused on the
+        //      packed path),
+        //    * NotifyPostProcessFile is deferred until the file is committed.
+        // =====================================================================
+
+        // Writes the file (header + hashed body) via the packer's per-file façade.
+        //  Returns the CommitToken so the caller can register the pending entry.
+        //  Throws on any failure -- the caller catches and decides recovery.
+        private CommitToken BackupFilePacked(TapeFileInfo template, out byte[]? hash)
+        {
+            m_logger.LogTrace("Backing up (packed) file >{File}< in {Method}",
+                template.FileDescr.FullName, nameof(BackupFilePacked));
+
+            var wstream = Manager.BeginPackedFile() ??
+                throw new TapeIOException(this, this, $"failed to open packed write stream for >{template.FileDescr.FullName}<");
+
+            CommitToken token = wstream.CommitToken;
+            hash = null;
+
+            try
+            {
+                var hasher = CreateHasher(TOC.CurrentSetTOC.HashAlgorithm);
+
+                TapeSerializer ts = new(wstream);
+                template.SerializeHeaderTo(ts);
+                // header is excluded from CRC hashing -- validated via DeserializeAndCheckHeaderFrom()
+
+#if DEBUG
+                if (SimulateFileFailures.ShouldFailNow())
+                {
+                    m_logger.LogWarning("SIMULATED failure for file #{Counter} >{File}<",
+                        SimulateFileFailures.Counter, template.FileDescr.FullName);
+                    throw new TapeIOException((uint)WIN32_ERROR.ERROR_UNHANDLED_EXCEPTION,
+                        $"Simulated backup failure for testing (file #{SimulateFileFailures.Counter})");
+                }
+#endif
+
+                // No BufferedTapeWriteStream needed: the packer's worker-thread backend
+                //  already overlaps reads and writes.
+                var fileInfo = template.FileDescr.CreateFileInfo();
+                if (hasher == null)
+                {
+                    using var srcFileStream = fileInfo.OpenRead();
+                    srcFileStream.CopyTo(wstream);
+                }
+                else
+                {
+                    var srcFileStream = fileInfo.OpenRead();
+                    using var hashingStream = new HashingStream(srcFileStream, hasher, ownInner: true);
+                    hashingStream.CopyTo(wstream);
+                    hash = hasher.GetCurrentHash();
+                }
+
+                BytesBackedup += wstream.Length;
+
+                // Close the packer file slot. The actual TapeAddress will be reported
+                //  later via Manager.FilesCommitted, keyed by the returned token.
+                Manager.EndPackedFile();
+
+                m_logger.LogTrace("File >{File}< handed off to packer ok", template.FileDescr.FullName);
+                return token;
+            }
+            catch
+            {
+                // Discard the open file from the packer. NoRollback mode (the default)
+                //  truncates the still-buffered tail; bytes already flushed remain as
+                //  on-tape garbage but earlier files in the same fill buffer survive.
+                //  Critically, do NOT MoveToBlock here: that would clobber prior files.
+                try { Manager.Packer?.DiscardOpenFile(); }
+                catch (Exception dex) { m_logger.LogDebug(dex, "Packer.DiscardOpenFile threw"); }
+
+                throw;
+            }
+        } // BackupFilePacked()
+
+
+        private bool BackupFilesToCurrentSet(bool newSet = true)
+        {
+            Debug.Assert(MultiVolumeContext != null);
+
+            TapeBackupContext bc = MultiVolumeContext.Value;
+
+            if (bc.fileList.Count == 0)
+            {
+                m_logger.LogWarning("No files found to backup in {Method}", nameof(BackupFilesToCurrentSet));
+                return true;
+            }
+
+            if (!BeginWriteContentForCurrentSet(newSet))
+            {
+                NotifyBatchEnd(bc.fileNotify);
+                m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSet));
+                return false;
+            }
+
+            // Consolidated bookkeeping: pending tokens, TOC promotion, and post-process queue.
+            var tracker = new PackedCommitTracker(TOC.CurrentSetTOC, m_logger);
+
+            void OnCommitted(IReadOnlyList<CommittedFile> committed) => tracker.OnCommitted(committed);
+
+            Manager.FilesCommitted += OnCommitted;
+
+            try
+            {
+                m_logger.LogTrace("Continuing (multi-volume, packed) backup from file #{Number} >{File}<",
+                    bc.fileIndex + 1, bc.fileList[bc.fileIndex]);
+
+                for (; bc.fileIndex < bc.fileList.Count; bc.fileIndex++)
+                {
+                    var fileName = bc.fileList[bc.fileIndex];
+
+                    FileInfo fileInfo = new(fileName);
+                    // Block field is unused on the packed path -- the real address comes
+                    //  from FilesCommitted. Use 0 as a placeholder.
+                    TapeFileInfo template = new(TOC.GenerateUID(), 0L, fileInfo);
+
+                    try
+                    {
+                        ThrowIfAbortRequested(nameof(BackupFilesToCurrentSet));
+
+                        if (!NotifyPreProcessFile(bc.fileNotify, template))
+                        {
+                            NotifyFileSkipped(bc.fileNotify, template);
+                            m_logger.LogTrace("File #{Number} >{File}< skipped per pre-processor request",
+                                _stats.FilesProcessed, fileName);
+                            continue;
+                        }
+
+                        if (!fileInfo.Exists)
+                            throw new FileNotFoundException("File not found", fileName);
+
+                        m_logger.LogTrace("Backing up (packed) file #{Number} >{File}< of length {Length}",
+                            _stats.FilesProcessed + 1, fileName, Helpers.BytesToString(fileInfo.Length));
+
+                        if (TOC.CurrentSetTOC.Incremental && TOC.IsFileUptodateInc(fileInfo))
+                        {
+                            NotifyFileSkipped(bc.fileNotify, template);
+                            m_logger.LogTrace("File #{Number} >{File}< found up-to-date in an incremental set -> skipping",
+                                _stats.FilesProcessed, fileName);
+                            continue;
+                        }
+
+                        var token = BackupFilePacked(template, out var hash);
+                        tracker.Register(token, template, bc.fileIndex, hash);
+                    }
+                    catch (TapeAbortRequestedException)
+                    {
+                        m_logger.LogTrace("{Method}: Abort requested before file #{Number} >{File}< was written",
+                            nameof(BackupFilesToCurrentSet), _stats.FilesProcessed + 1, fileName);
+                        bc.overallSuccess = false;
+                        break;
+                    }
+                    catch (TapePackerEndOfMediaException eomEx)
+                    {
+                        // EOM during packer harvest. The packer rolled back the listed pending
+                        //  tokens; rewind bc.fileIndex to the earliest rolled-back file (or the
+                        //  current file if it was the open one).
+                        SetError((uint)WIN32_ERROR.ERROR_END_OF_MEDIA);
+                        m_logger.LogWarning("{Method}: EOM at file #{Number} >{File}<; {RolledBack} pending file(s) rolled back",
+                            nameof(BackupFilesToCurrentSet), _stats.FilesProcessed + 1, fileName, eomEx.RolledBackTokens.Count);
+
+                        int earliestRolledIndex = tracker.RemoveRolledBack(eomEx.RolledBackTokens, bc.fileIndex);
+
+                        BytesBackedupMarker = BytesBackedup;
+                        bc.prevVolumeHasFiles = TOC.CurrentSetTOC.Count > 0;
+                        bc.fileIndex = earliestRolledIndex;
+                        MultiVolumeContext = bc;
+
+                        if (NotifyFileFailed(bc.fileNotify, template, eomEx) == FileFailedAction.Abort)
+                            break;
+                        StatsUndoFailure(); // file will be re-tried on next volume
+
+                        NotifyBatchEnd(bc.fileNotify);
+
+                        TOC.ContinuedOnNextVolume = true;
+                        Debug.Assert(CanResumeToNextVolume);
+                        return false;
+                    }
+                    catch (Exception ex)
+                    {
+                        SetError(ex);
+
+                        m_logger.LogWarning("{Method}: File #{Number} >{File}< backup failed. Exception: {Ex}",
+                            nameof(BackupFilesToCurrentSet), _stats.FilesProcessed + 1, fileName, ex);
+
+                        // Per-file failure on the packed path: BackupFilePacked already called
+                        //  Packer.DiscardOpenFile to truncate the open file's tail. We do NOT
+                        //  rewind the drive here -- earlier files queued in the same fill
+                        //  buffer must remain intact to commit later.
+                        var retryAction = NotifyFileFailed(bc.fileNotify, template, ex);
+                        if (retryAction == FileFailedAction.Abort)
+                        {
+                            bc.overallSuccess = false;
+                            break;
+                        }
+                        else if (retryAction == FileFailedAction.Retry)
+                        {
+                            bc.fileIndex--;
+                            StatsUndoFailure();
+                            continue;
+                        }
+
+                        bc.overallSuccess = false;
+                        if (!bc.ignoreFailures)
+                            break;
+                    }
+
+                    // Drain post-process notifications for files that committed during this
+                    //  iteration. Same abort semantics as the legacy path: an abort here
+                    //  breaks the loop without rewinding -- the file is already on tape and
+                    //  in the TOC.
+                    if (!tracker.DrainPostProcess(tfi => NotifyPostProcessFile(bc.fileNotify, tfi)))
+                    {
+                        bc.overallSuccess = false;
+                        break;
+                    }
+
+                } // for bc.fileIndex
+
+                // Final flush: closing the content session forces the packer to drain its
+                //  fill buffer; FilesCommitted fires synchronously from EndWriteContent for
+                //  the tail commits, so the TOC is fully populated before we proceed.
+                //  The subscription must remain active here -- otherwise tail commits would
+                //  bypass the tracker and PendingCount would stay non-zero.
+                if (!Manager.EndWriteContent())
+                {
+                    SyncErrorFrom(Manager);
+                    m_logger.LogWarning("EndWriteContent failed during {Method}", nameof(BackupFilesToCurrentSet));
+                    bc.overallSuccess = false;
+                }
+
+                // Drain post-process for tail commits that arrived during EndWriteContent.
+                if (!tracker.DrainPostProcess(tfi => NotifyPostProcessFile(bc.fileNotify, tfi)))
+                    bc.overallSuccess = false;
+
+                if (tracker.PendingCount > 0)
+                {
+                    m_logger.LogWarning("{Method}: {Count} pending file(s) never received commit notification",
+                        nameof(BackupFilesToCurrentSet), tracker.PendingCount);
+                    bc.overallSuccess = false;
+                }
+            }
+            finally
+            {
+                Manager.FilesCommitted -= OnCommitted;
+            }
+
+            BytesBackedupMarker = BytesBackedup;
+            NotifyBatchEnd(bc.fileNotify);
+
+            MultiVolumeContext = null;
+
+            return bc.overallSuccess;
+        } // BackupFilesToCurrentSet()
+
+        /// <summary>
+        /// Packed pendant of <see cref="BackupFilesToCurrentSetAligned(bool, List{string}, bool, bool, ITapeFileNotifiable)"/>.
+        ///  Routes content writes through the shared-block packer.
+        /// </summary>
+        public TapeResult BackupFilesToCurrentSet(bool newSet, List<string> fileAndDirectoryPatterns, bool recurseSubdirs,
+            bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+        {
+            var fileList = BuildFileNameList(fileAndDirectoryPatterns, recurseSubdirs);
+
+            return BackupFileListToCurrentSet(newSet, fileList, ignoreFailures, fileNotify);
+        }
+
+        /// <summary>
+        /// Packed pendant of <see cref="BackupFileListToCurrentSetAligned(bool, List{string}, bool, ITapeFileNotifiable)"/>.
+        ///  Routes content writes through the shared-block packer; supports multi-volume continuation.
+        /// </summary>
+        public TapeResult BackupFileListToCurrentSet(bool newSet, List<string> fileList, bool ignoreFailures = true,
+            ITapeFileNotifiable? fileNotify = null)
+        {
+            if (fileList.Count == 0)
+            {
+                m_logger.LogWarning("No files found to backup in {Method}", nameof(BackupFileListToCurrentSet));
+                return TapeResult.OK;
+            }
+
+            _stats.Reset();
+            NotifyBatchStart(fileNotify, fileList.Count);
+
+            m_logger.LogTrace("Starting backing up (packed) {Count} files to current set #{Set}",
+                fileList.Count, TOC.CurrentSetIndex);
+            if (TOC.CurrentSetTOC.Incremental)
+                m_logger.LogTrace("Performing incremental (packed) backup to incremental set #{Set}", TOC.CurrentSetIndex);
+
+            MultiVolumeContext = new(fileList, ignoreFailures, fileNotify, TOC.CurrentSetTOC.Incremental, packed: true);
 
             return BackupFilesToCurrentSet(newSet)
                 ? TapeResult.OK : TapeResult.Fail(this);
-        } // BackupFilesToCurrentSet()
+        }
 
     } // class TapeFileBackupAgent
 

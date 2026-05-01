@@ -1,4 +1,4 @@
-using TapeLibNET.Tests.Helpers;
+﻿using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
@@ -326,7 +326,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         fixture.LoadTOC();
 
         using var agent = fixture.CreateRestoreAgent(targetDir);
-        bool restoreOk = agent.RestoreAllFilesFromCurrentSet();
+        bool restoreOk = agent.RestoreAllFilesFromCurrentSetAligned();
         Assert.True(restoreOk, "Restore failed");
 
         // Verify restored file exists and matches
@@ -359,7 +359,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         fixture.LoadTOC();
 
         using var validator = fixture.CreateValidateAgent();
-        bool validateOk = validator.RestoreAllFilesFromCurrentSet();
+        bool validateOk = validator.RestoreAllFilesFromCurrentSetAligned();
         Assert.True(validateOk, "Validation failed");
     }
 

@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 
 using Windows.Win32.System.SystemServices; // Helpers, Stopwatch
 

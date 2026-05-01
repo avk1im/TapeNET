@@ -124,7 +124,7 @@ With FmksMode gone, `BeginWriteContentForCurrentSet` simplifies; with `TapeAddre
 - Write buffer: `max(N × BlockSize, MinBufferBytes)` where `N` is configurable (default 16) and `MinBufferBytes` defaults to 16 MiB.
 - Read buffer: same formula. (Phase 3 may grow it for read-ahead.)
 - Buffer is a single contiguous `byte[]` allocated once per session and reused across all files in the session.
-- Not pooled across sessions — sessions are long-lived; pooling adds complexity with no measurable benefit.
+- Employ `ByteBufferCache` for buffer allocation and management via `ArrayPool<byte>`.
 
 ### 4.3 `TapeFilePacker` API surface
 
@@ -138,8 +138,10 @@ internal sealed class TapeFilePacker : IDisposable
     internal TapeFilePacker(TapeStreamManager mgr, uint blockSize, int blockMultiplier);
 
     // Mode switching — mutually exclusive. Must be called before any Begin* call.
-    internal void EnterWriteMode(long startingBlockOnTape);
-    internal void EnterReadMode();
+    // The tape is assumed in the right position to start the respective mode.
+    // The blockSize remains valid for the whole session.
+    internal void EnterWriteMode(uint blockSize);
+    internal void EnterReadMode(uint blockSize);
 
     // Returns the drive to a clean state. For write mode: flushes the trailing
     // partial block (zero-padded), drains pending commits, returns the final list.
@@ -178,7 +180,7 @@ internal void RollbackOpenFile();
 // Roll back ALL pending-commit files (those EndFile'd but not yet on tape).
 // Drops their bytes from the buffer and repositions the drive to the last
 // committed block. Returns the list of rolled-back tokens so the agent can
-// re-queue them. Used on EOM.
+// re-queue them. Used on EOM (end-of-media).
 internal IReadOnlyList<CommitToken> RollbackPending();
 
 // Force-flush the buffer up to and including the file identified by the
@@ -238,7 +240,7 @@ Minimal but principled — designed to extend cleanly to Phase 3 read-ahead.
 - **No prefetch in Phase 2.** The cache only fills on demand. Phase 3 adds a background prefetcher that reads ahead by up to `K-1` blocks while consumer reads.
 - **Eviction:** LRU. Never evict the slot currently being served from.
 - **Cross-block files:** handled entirely inside the packer; the agent does not see block boundaries on read.
-- **Out-of-order reads (e.g. selective restore):** supported — `BeginReadAsync` will seek backward if needed. Cache hit/miss logic is identical. Phase 3 prefetcher will be disabled when the agent enqueues non-monotonic addresses.
+- **Out-of-order reads (e.g. selective restore):** supported, even if not desired: the caller is encouraged to sort the accesses — `BeginReadAsync` will seek backward if needed. Cache hit/miss logic is identical. Phase 3 prefetcher will be disabled when the agent enqueues non-monotonic addresses.
 
 ### 4.5 Rollback state machine
 
@@ -302,13 +304,13 @@ This is the section we most need to lock down. Three error classes; each maps to
 2. Call `packer.RollbackOpenFile()` — discards the file currently being written.
 3. Call `packer.RollbackPending()` — returns rolled-back tokens.
 4. **Files already reported via `FilesCommitted` are kept in the TOC. No notifications retracted.** Pending-but-uncommitted files have *not* yet had `PostProcess` fired (per option (b), `PostProcess` only fires on commit), so no notification retraction is needed.
-5. The rolled-back files are re-queued at the head of the multi-volume context's pending list. Their `PreProcess` will be re-fired when the new volume processes them. Per your spec, double `PreProcess` is acceptable.
-6. The currently-open file is also re-queued. Its previous `PreProcess` already fired; the second one on the new volume is harmless.
+5. The rolled-back files are re-queued at the head of the multi-volume context's pending list. Their `PreProcess` will be re-fired when the new volume processes them. For this reason, firing multiple `PreProcess` for the same file is acceptable.
+6. The currently-open file is also re-queued. Its previous `PreProcess` already fired; the second one on the new volume is likewise acceptable.
 7. Set `MultiVolumeContext` and return — caller asks user to load a new volume, then calls `ResumeBackupToNextVolume`.
 
 **No `OnFileFailed` is fired for EOM rollback.** It's expected, recoverable, and unambiguous.
 
-#### 4.6.2 Source file read error (or any error *before* `EndFile`)
+#### 4.6.2 Source file read error (or any other error *before* `EndFile`)
 **Symptom:** `BackupFile` is mid-CopyTo and the source `FileStream.Read` throws (corrupt file, network share dropped, etc.). The packer is healthy.
 
 **Packer action:** none yet — packer doesn't know.
@@ -317,10 +319,10 @@ This is the section we most need to lock down. Three error classes; each maps to
 1. Catch the exception.
 2. Call `packer.RollbackOpenFile()`. Cheap — just truncates the buffer to `openFileStartAddress`.
 3. Tape head is unchanged; previously-committed files are unaffected.
-4. Fire `OnFileFailed(tfi, ex)` and ask for the action.
-5. **Action `Abort`:** stop the loop, return failure. Pending-commit files (if any) remain pending — they will be flushed by the eventual `EndWriteMode` triggered by leaving content-write mode. They get committed and `PostProcess`-notified during that flush. (This matches today's "abort writes what's already buffered to disk" semantics.)
+4. Fire `OnFileFailed(tfi, ex)` to ask the caller for the action.
+5. **Action `Abort`:** stop the loop, return failure. Pending-commit files (if any) remain pending — they will be flushed by the eventual `EndWriteMode` triggered by leaving content-write mode. They get committed and `PostProcess`-notified during that flush. (This matches today's "abort writes what's already buffered" semantics.)
 6. **Action `Skip`:** continue to next file. The skipped file leaves no trace on tape and no TOC entry. Other pending files keep accumulating.
-7. **Action `Retry`:** call `BeginFile` again with the same `tfi` (yields the same `TapeAddress` since `openFileStartAddress` was reset). Re-fire `PreProcess` (acceptable per your note). Re-stream the source file. The packer is in a clean Idle state — there is no tape rewind needed, because nothing was written to tape for this file.
+7. **Action `Retry`:** call `BeginFile` again with the same `tfi` (yields the same `TapeAddress` since `openFileStartAddress` was reset). Re-fire `PreProcess` (acceptable). Re-stream the source file. The packer is in a clean Idle state — there is no tape rewind needed, because nothing was written to tape for this file.
 
 **Important distinction:** in today's code, retry requires `Drive.MoveToBlock(tfi.Block)` because each file already started a fresh tape block. In Phase 2, retry of an open-file failure requires **no drive movement at all** — the rollback is purely in-memory. This is a significant simplification.
 
@@ -485,11 +487,275 @@ Cross-block reads are invisible to the agent. Errors propagate directly; `OnFile
 - Phase 1: unchanged (still useful for source-side double-buffering).
 - Phase 2: redundant — the packer's write buffer subsumes its role. Remove the wrapping in `BackupFile` and delete the class (verify no external callers in `Services`/apps first).
 
+### 4.13 Phase 2 Refinements (supersedes parts of §4.1–§4.12)
+
+This section consolidates the design adjustments agreed during Phase 2 implementation
+planning. Where it conflicts with earlier sections, this section wins.
+
+#### 4.13.1 Layered architecture
+
+Two layers per direction, no "middle layer" class. The middle is just a few
+methods on the high layer that swap the active fill-buffer with the in-flight
+buffer.
+
+**Write side:**
+
+- **Low layer — `ITapeWriteBackend`** (interface) with default implementation
+  `WorkerThreadTapeWriteBackend`. Owns ONE in-flight write; serializes writes to
+  `TapeDrive.WriteDirect` on a dedicated worker thread. Buffers are caller-owned
+  and handed off explicitly across the worker boundary.
+- **High layer — `TapeFileWritePacker`** (sealed class). Owns the file registry,
+  token machinery, double-buffered fill, commit-promotion logic, and rollback
+  state. Produces `TapeWriteStream` façade instances via `BeginFile()`.
+
+**Read side (mirror, simpler — no async needed in Phase 2):**
+
+- **Low layer — `ITapeReadBackend`** (interface) with default
+  `SyncTapeReadBackend`. Reads N blocks at a time into a caller-owned buffer.
+- **High layer — `TapeFileReadPacker`** (sealed class). Owns LRU block cache and
+  produces `TapeReadStream` façades via `BeginRead()`.
+
+No common base class between write and read packers — they share too little.
+`TapeStreamManager` owns the lifecycle of the appropriate packer for the current
+content mode (mirroring how it owns `TapeWriteStream`/`TapeReadStream` today).
+
+#### 4.13.2 Why async is in Phase 2 (not Phase 3)
+
+The original plan parked async behind Phase 3. We bring **single-write-in-flight**
+asynchrony forward into Phase 2 because:
+
+- Cost is low — one dedicated worker thread, no OVERLAPPED, no thread-pool tuning.
+- Benefit is the *primary* throughput win: source-file ingest overlaps with the
+  previous buffer's tape write. Without it, we save tape footprint but burn the
+  same wall-clock time on small-file backups.
+- Risk is bounded — exactly two pool-rented buffers alternate; one is being
+  filled, one is being written. The state machine remains tractable.
+
+True OVERLAPPED IO and read-ahead pipelining stay deferred to Phase 3.
+
+#### 4.13.3 Low-layer write backend API
+
+```text
+internal enum WriteBackendStatus { Idle, Busy }
+
+internal readonly record struct WriteResult(
+    int BlocksWritten,         // always block-aligned (backend rounds down)
+    bool EomEncountered,       // ERROR_END_OF_MEDIA seen during this write
+    Exception? Exception);     // null on success / pure EOM; non-null on hard error
+
+internal interface ITapeWriteBackend : IDisposable
+{
+    uint BlockSize { get; }
+    int  MaxBlocksPerWrite { get; }   // capacity hint for the high layer
+
+    // Hand off `validBytes` of `buffer` to the worker. Blocks until the previous
+    // write (if any) has completed. After the call, the high layer MUST NOT touch
+    // `buffer` until it is returned via the WriteResult of the NEXT call to
+    // StartWriting or AwaitCompletion.
+    void StartWriting(byte[] buffer, int validBytes);
+
+    // Non-blocking snapshot. Returns Idle if no write is in flight.
+    WriteBackendStatus PollStatus();
+
+    // Blocks until any in-flight write finishes. Returns the result + the
+    // buffer that was last in flight (caller may now reuse/return-to-pool).
+    // If no write is in flight, returns a sentinel "nothing to await" result
+    // with buffer == null. Idempotent.
+    (WriteResult Result, byte[]? Buffer) AwaitCompletion();
+}
+```
+
+Notes on the contract:
+
+- **`BlocksWritten` is reliable as-is** — the backend interprets the byte count
+  returned by `TapeDrive.WriteDirect` and rounds down to block boundary. The high
+  layer treats `committedTapeBlock` as advancing by exactly `BlocksWritten`. (We
+  do **not** apply the "minus one to be safe" precaution suggested earlier — the
+  drive's count is authoritative.)
+- **EOM as a non-fatal status, not an exception.** A write that hits EOM may still
+  have committed some blocks; the backend reports `(BlocksWritten = K, Eom = true,
+  Exception = null)`. Hard errors (media defect, hardware failure) come back with
+  `Exception != null` and `Eom = false`.
+- **Cancellation:** the worker observes the agent's abort flag between writes
+  (i.e. on the next `StartWriting`). It does NOT interrupt an in-flight
+  `WriteDirect` — that is the unit of cancellability.
+- **Disposal** drains any in-flight write before returning. Disposing while a
+  write is in flight is legal and blocks; aborting cleanly is the high layer's
+  responsibility.
+
+#### 4.13.4 High-layer write packer — adjusted API
+
+```text
+internal enum SourceErrorMode
+{
+    /// Discard the open file's in-buffer bytes, including any already-flushed
+    /// blocks; reposition tape to last committed block. Recovers tape space at
+    /// the cost of one MoveToBlock when a multi-buffer file fails mid-stream.
+    /// Recommended for archives dominated by very large files.
+    Rollback,
+
+    /// Leave whatever was already flushed for the open file as on-tape garbage;
+    /// only truncate the still-buffered tail. Never repositions the tape.
+    /// Recommended default — for the typical small-file workload, no flush has
+    /// happened yet for the open file, so this is identical to Rollback but
+    /// without the failure-mode complexity.
+    NoRollback
+}
+
+internal sealed class TapeFileWritePacker : IDisposable
+{
+    internal TapeFileWritePacker(
+        TapeStreamManager mgr,
+        ITapeWriteBackend backend,
+        int blockMultiplier = 16,
+        SourceErrorMode sourceErrorMode = SourceErrorMode.NoRollback);
+
+    // Open a logical write slot for one file. Returns a stream the caller writes
+    // source bytes into. The file's TapeAddress is NOT known yet; it surfaces in
+    // the FilesCommitted event when the file's tail block is on tape.
+    internal TapeWriteStream BeginFile();
+
+    // Close the open file. Returns a CommitToken for correlation with the
+    // eventual FilesCommitted event. Also assigned to TapeWriteStream.CommitToken
+    // before this returns, so the agent can read it from the stream after Dispose.
+    internal CommitToken EndFile();
+
+    // Discard the open file according to SourceErrorMode. Both modes truncate the
+    // still-buffered tail. Rollback mode additionally repositions the tape if any
+    // of the open file's content has already flushed.
+    internal void DiscardOpenFile();
+
+    // Discard ALL pending-commit files; reposition tape to last committed block.
+    // Used on EOM. Returns the rolled-back tokens in original order.
+    internal IReadOnlyList<CommitToken> RollbackPending();
+
+    // Drain everything: zero-pads the trailing partial block, hands off the final
+    // buffer, awaits backend completion, fires FilesCommitted for all newly
+    // committed tokens. Idempotent; safe to call after errors.
+    internal void Flush();
+
+    // Fired (synchronously, on the calling thread) whenever one or more files
+    // cross the commit boundary as a side effect of writes triggered by
+    // TapeWriteStream.Write, EndFile, Flush, or Dispose.
+    internal event Action<IReadOnlyList<CommittedFile>>? FilesCommitted;
+
+    public void Dispose();   // ensures Flush() is attempted; releases buffers
+}
+
+internal readonly record struct CommitToken(ulong Sequence);
+
+internal sealed record CommittedFile(
+    CommitToken Token,
+    TapeAddress StartAddress,
+    long Length);            // body length; padding excluded
+```
+
+Key changes vs. §4.3:
+
+- **`BeginFile()` takes no `TapeFileInfo`** — the packer doesn't know about the
+  TOC and shouldn't.
+- **`BeginFile()` returns `TapeWriteStream`, not `TapeAddress`.** The address is
+  reported only at commit time, in the `CommittedFile` payload. The agent stamps
+  `TapeFileInfo.Address` inside its commit handler. No "provisional address" is
+  ever exposed.
+- **No `WriteAsync` on the packer.** Bytes flow exclusively through the stream's
+  synchronous `Write`. The asynchrony lives in the backend, behind the buffer
+  swap — invisible to the agent.
+- **`Flush()` drains all pending** (no per-token `upTo` granularity). Simpler,
+  and we have no use case for partial flush.
+- **`DiscardOpenFile()` replaces `RollbackOpenFile()`** and is governed by
+  `SourceErrorMode`. Both Rollback and NoRollback modes are implemented in
+  Phase 2 — selectable per backup operation, defaulting to NoRollback.
+- The packer maintains a **file registry** keyed by `CommitToken`, holding
+  `{ startAddress, length-so-far, isOpen }`. Entries are removed at commit time
+  (or at rollback/discard time). The agent maintains its own
+  `Dictionary<CommitToken, TapeFileInfo>` for TOC stamping.
+
+#### 4.13.5 SourceErrorMode — semantics in detail
+
+For a file that fails mid-ingest (source `Read` throws):
+
+- **Common case (open file's bytes never flushed):** both modes truncate the
+  fill-buffer back to the open file's start offset. No tape I/O. Identical
+  outcome.
+- **Open file already triggered ≥1 buffer flushes:**
+  - **NoRollback:** leave already-flushed bytes on tape as anonymous garbage
+    (no TOC entry, no token). Truncate only the still-buffered tail. Subsequent
+    files start at `bufferedThruOffset` of the current buffer. Tape head is not
+    moved.
+  - **Rollback:** await backend completion, then `Drive.MoveToBlock(committedTapeBlock + 1)`
+    where `committedTapeBlock` is the last block belonging to a committed file.
+    The current fill-buffer is discarded entirely (any pending-commit files in it
+    must have started after the open file, which is impossible — at most one open
+    file exists — so there is nothing to lose). All bytes of the open file are
+    reclaimed.
+
+The mode is set per packer instance (i.e. per backup operation) at construction.
+
+#### 4.13.6 Buffer-handoff sketch (Option A, double-buffered)
+
+```text
+Two pool-rented byte[] buffers: `fill` (high layer writes into) and `inflight`
+(backend writing from). Initially `fill = pool.Rent(N*BlockSize)`,
+`inflight = null`.
+
+When `fill` becomes full (or Flush is called):
+  1. validBytes = (fill.PositionAfterLastFullBlock)   [trailing partial held back]
+  2. backend.StartWriting(fill, validBytes)           [blocks if previous still busy]
+  3. (result, returnedBuffer) = packer.harvest()      [collect the just-finished write]
+     - Promotes pending tokens whose end-block ≤ committedTapeBlock + result.BlocksWritten
+     - Fires FilesCommitted
+     - Returns returnedBuffer to ArrayPool
+  4. fill = pool.Rent(N*BlockSize); copy held-back trailing partial into fill[0..]
+  5. inflight = (the buffer just handed to backend) — tracked internally
+```
+
+`harvest()` calls `backend.AwaitCompletion()`; it is also called from `Flush()`
+and from a quick `PollStatus()`-driven check at `BeginFile()` time (proactive
+EOM detection without waiting).
+
+#### 4.13.7 EOM detection cadence
+
+Both reactive and proactive, with deliberately coarse proactive cadence:
+
+- **Reactive (mandatory):** every `StartWriting` implicitly awaits the previous
+  write. EOM bubbles up here.
+- **Proactive (opportunistic):** `BeginFile()` does a non-blocking
+  `backend.PollStatus()` and, if `Idle`, harvests the result. This catches EOM
+  one-file-late instead of one-buffer-late. Per-`Write`-call polling is too
+  fine-grained (a large file produces many Writes); per-file is the right
+  cadence.
+
+#### 4.13.8 Notification timing — minor tweak
+
+Per §4.9, but with one clarification reflecting the API change: `PreProcessFile`
+fires at `BeginFile()` time. Since `BeginFile()` no longer takes a `TapeFileInfo`,
+the agent fires `PreProcessFile` itself **immediately before** calling
+`BeginFile()`, and `PostProcessFile` from inside its `FilesCommitted` handler.
+The packer is unaware of notifications.
+
+#### 4.13.9 Open questions resolved
+
+- **§6.1 Filemark policy:** closed (no filemarks after files; one after each
+  TOC copy retained).
+- **§6.3 `FilesCommitted` event threading:** synchronous on the calling thread
+  in Phase 2 — confirmed.
+- **§6.4 Unknown token in `FilesCommitted`:** throw — confirmed (invariant
+  violation).
+- **§6.5 Re-pack onto last committed block after `RollbackPending`:** no — one
+  block wasted per EOM accepted (Phase 2 simplification).
+- **§6.7 `BeginFile` returning provisional address:** revised — `BeginFile`
+  returns a stream, address surfaces only at commit. No provisional address
+  ever exists.
+
+Open question §6.2 (non-EOM write error coarseness) remains under review;
+Phase 2 implements per-file `OnFileFailed` for now.
+
 ---
 
 ## 5. Updated Implementation Plan
 
-### Phase 1 — combined foundation (estimated 2–3 dev-days)
+### Phase 1 — combined foundation: COMPLETE
 
 1. **Introduce `TapeAddress`** (new file `TapeLibNET/TapeAddress.cs`).
 2. **TOC migration:**
@@ -519,47 +785,303 @@ Cross-block reads are invisible to the agent. Errors propagate directly; `OnFile
    - Add a focused test asserting `TapeAddress.ToString()` formatting and `Parse` round-trip.
    - Add a TOC round-trip test that asserts the new wire format reads back correctly.
 9. **Build + run all tests + virtual-drive backup/restore round-trip + manual real-LTO smoke.**
-10. **Tag** as `phase1-complete` for rollback safety.
 
-### Phase 2 — packing (estimated 5–8 dev-days)
+All steps completed.
 
-1. **Spike `TapeFilePacker` write side** with an in-memory backend (no `TapeDrive`). Validate:
-   - `BeginFile` → `WriteAsync` × N → `EndFile` → eventual `FilesCommitted`.
-   - `RollbackOpenFile` truncates correctly.
-   - `RollbackPending` returns exactly the right token set.
-   - Cross-block file boundaries land at the correct `(Block, Offset)`.
-2. **Wire the packer into `TapeStreamManager`** in place of the current per-file write path. `TapeWriteStream` becomes the façade described in §4.3.4.
-3. **Implement Phase 2 filemark policy (F1)** in `TapeStreamManager`'s flush path.
-4. **Read side:** implement `BeginReadAsync` / `ReadAsync` / `EndRead` with the LRU block cache from §4.4.
-5. **Restore agent migration** — straightforward, no commit decoupling.
-6. **Backup agent migration:**
-   - Introduce `pendingByToken` map and `OnPackerCommit` handler.
-   - Move `TOC.Append` and `NotifyPostProcessFile` into the commit handler.
-   - Update stats helpers to support backwards movement on rollback.
-   - Reshape `MultiVolumeContext` per §4.8.
-   - Implement the three error-handling paths from §4.6.
-7. **Remove `BufferedTapeWriteStream`** wrapping in `BackupFile`. Delete the class once no callers remain.
-8. **Tests:**
-   - Unit tests for `TapeFilePacker` against an in-memory drive: pack many small files, verify addresses are contiguous (offsets follow lengths), verify `RollbackOpenFile` and `RollbackPending` invariants, verify cache hit/miss on read.
-   - Integration tests on `VirtualTapeDriveBackend`:
-     - 10 000 × 1 KiB files round-trip; verify total tape footprint is `≈ 10 MiB` (not `10 GiB`).
-     - Mixed sizes (1 KiB / 1 MiB / 100 MiB) round-trip.
-     - EOM injected mid-flush — verify rollback, multi-volume continuation succeeds, no file lost.
-     - Source-read error mid-file — Skip / Retry / Abort each cover.
-     - Abort during pending-commit window — verify pending files still get committed and `PostProcess`-notified.
-   - Manual real-LTO: full backup/restore of a representative small-file directory; compare elapsed time vs. Phase 1 baseline.
-9. **Doc updates:** README sections on tape footprint, agent contract, notification timing.
-10. **Tag** as `phase2-complete`.
+### Phase 2 — packing (revised; supersedes the earlier Phase 2 list)
+
+Executed in independently-buildable steps. Each step has its own test scope so
+regressions are caught at the layer they originate in.
+
+> **Status (Steps A–D): COMPLETE.** The write side of the packer pipeline is
+> implemented end-to-end, integrated into `TapeStreamManager` and
+> `TapeFileBackupAgent`, and validated by a 65-test focused suite plus the full
+> 1393-test regression run (all green). Steps E (read side) and F (large-scale
+> integration + real-LTO smoke) remain. The narrative below records what was
+> actually built and the key design decisions that shaped each step.
+
+#### Step A — Low-layer write backend [DONE]
+
+**What was built**
+
+- `TapeLibNET/TapeFilePacker/ITapeWriteBackend.cs` defines the contract plus
+  `WriteBackendStatus`, `WriteResult`, and the `TapeWriteSink` delegate.
+- `WorkerThreadTapeWriteBackend` runs a single dedicated worker `Thread`, with
+  a single in-flight write coordinated through `ManualResetEventSlim` pairs.
+  Writes are routed through a caller-supplied `TapeWriteSink` (not directly
+  through `TapeDrive`), which keeps the backend testable in isolation.
+- `MemoryTapeWriteBackend` records all handed-off buffers and supports
+  scripted EOM and scripted hard-error injection for unit tests.
+- 13 unit tests cover round-trip, blocking handoff, `PollStatus` accuracy,
+  `AwaitCompletion` idempotency, scripted EOM, scripted hard error, and clean
+  drain on `Dispose` while a write is in flight.
+
+**Key design points**
+
+- **Decoupled from `TapeDrive`** via the `TapeWriteSink` delegate — the manager
+  injects the actual `Drive.WriteDirect` call site, so the backend can be unit-
+  tested without any drive plumbing.
+- **EOM is a status, not an exception.** A write that hits end-of-media still
+  reports the partial `BlocksWritten` it managed before the boundary; only
+  *hard* errors surface as `Exception`. This was essential to make the high
+  layer's commit accounting work in the EOM rollback path.
+- **`BlocksWritten` is authoritative** — the backend rounds the drive's byte
+  count down to a block boundary, and the high layer trusts the value as-is.
+  No "minus one to be safe" precaution.
+- **Cancellation granularity is one write.** The worker checks the abort flag
+  between writes; an in-flight `WriteDirect` runs to completion. This kept the
+  state machine tractable.
+- **Backend is not "poisoned" by errors** — error policy lives entirely in the
+  high layer. The backend remains usable for the next `StartWriting` call, so
+  the packer can decide whether to retry, drain, or dispose.
+
+#### Step B — High-layer write packer [DONE]
+
+**What was built**
+
+- `TapeLibNET/TapeFilePacker/TapeFileWritePacker.cs` (sealed class) implements
+  the file registry keyed by `CommitToken`, the double-buffered fill/in-flight
+  swap from §4.13.6, both `SourceErrorMode` paths from §4.13.5, and the
+  `FilesCommitted` event for commit promotion.
+- `TapeWriteStreamFacade` is the per-file `Stream` returned from `BeginFile()`.
+  It tracks logical length and carries its `CommitToken`, becoming inert when
+  closed.
+- `TapePackerEndOfMediaException` carries the rolled-back token list across the
+  packer/agent seam.
+- `PackerTypes.cs` collects `CommitToken`, `CommittedFile`, and `SourceErrorMode`.
+- 14 unit tests cover packed `(Block, Offset)` math, cross-block files, both
+  `DiscardOpenFile` modes (with and without prior flush), `RollbackPending`
+  token sets, token promotion across buffer boundaries, and scripted EOM mid-
+  flush.
+
+**Key design points**
+
+- **`BeginFile()` returns a stream, not an address.** The address is unknown
+  until the file commits — exposing a "provisional" address would invite
+  callers to depend on a value that can move on rollback. Resolution from
+  §4.13.4 / §6.7.
+- **`CommitToken` is opaque, surfaces via the stream after `Dispose`.** This
+  lets the agent correlate pending entries with `FilesCommitted` payloads
+  without ever holding a tentative address.
+- **Single-open-file invariant.** At most one file is open at a time; this
+  collapses a number of buffer-management corner cases and makes
+  `DiscardOpenFile` a pure in-memory truncation in the common case.
+- **`SourceErrorMode.NoRollback` is the default.** For typical small-file
+  workloads the open file's bytes have not yet flushed, so `Rollback` and
+  `NoRollback` are observationally equivalent — but `NoRollback` never
+  performs a tape `MoveToBlock`, which keeps the failure path strictly
+  in-memory and hazard-free.
+- **`Flush()` drains everything; no per-token granularity.** No use case
+  required partial flush, and the simpler API removed an entire class of
+  "what's on tape after flush(token X)?" reasoning.
+- **EOM detection is reactive + opportunistically proactive.** Every
+  `StartWriting` implicitly awaits the previous write (reactive); `BeginFile`
+  does a non-blocking `PollStatus` harvest (proactive). Per-`Write` polling
+  was rejected as too fine-grained.
+
+#### Step C — Manager integration [DONE]
+
+**What was built**
+
+- `TapeStreamManager` owns packer/backend lifecycle: `EnsurePackerCreated()`
+  constructs the `WorkerThreadTapeWriteBackend` (bridged to `Drive.WriteDirect`
+  via a `PackerWriteSink` lambda) and the `TapeFileWritePacker`.
+- `BeginPackedFile()` / `EndPackedFile()` expose per-file packer slots to the
+  agent without exposing the packer object's full surface.
+- `FlushAndDisposePacker()` zero-pads the trailing partial block, awaits the
+  backend, fires the final `FilesCommitted` for tail commits, then disposes.
+- `Manager.FilesCommitted` is re-exposed (forwarded from `m_packer.FilesCommitted`)
+  so the agent subscribes once at the manager level and never needs a direct
+  packer reference.
+
+**Key design points**
+
+- **Manager owns lifecycle; agent owns subscriptions.** The agent never
+  constructs or disposes the packer — it just calls `BeginWriteContent` /
+  `EndWriteContent` and listens for `FilesCommitted`. This mirrors how the
+  manager already owned `TapeWriteStream` / `TapeReadStream` lifetimes.
+- **The legacy stream path stayed in parallel.** `BeginWriteContent(...)` still
+  serves the existing per-file stream API; the packed path is opt-in via
+  `BeginPackedFile()`. This was a safe migration strategy that let us validate
+  the packer without destabilizing existing callers.
+- **Subscription order matters at teardown.** `FlushAndDisposePacker` disposes
+  the packer **before** unsubscribing from `m_packer.FilesCommitted`, so tail
+  commits emitted during the final flush are still observed. Inverting this
+  order silently dropped tail commits — caught and fixed during Step D
+  testing.
+- **Packer must observe the *final* drive block size at creation.** Discovered
+  during Step D debugging on `DriveProfile.FilemarksOnly`: the agent must call
+  `Drive.SetBlockSize(...)` **before** `Manager.BeginWriteContent(...)`,
+  otherwise the packer caches the prior set's TOC block size and the in-sink
+  arithmetic `blocks = bytes / Drive.BlockSize` rounds to zero. Fix landed in
+  `BeginWriteContentForCurrentSet(bool)`; documented inline.
+
+#### Step D — Backup-agent integration [DONE]
+
+**What was built**
+
+- `TapeFileBackupAgent.BackupFilePacked(...)`, `BackupFilesToCurrentSetPacked(bool)`,
+  `BackupFileListToCurrentSetPacked(...)`, and the public
+  `BackupFilesToCurrentSetPacked(...)` pendant. The packed methods sit alongside
+  their legacy counterparts; callers opt in by name.
+- `BeginWriteContentForCurrentSet(bool packed)` reorders the per-set startup
+  so `Drive.SetBlockSize(...)` runs before `Manager.BeginWriteContent(...)`
+  (see Step C key point).
+- `TapeLibNET/TapeFilePacker/PackedCommitTracker.cs` consolidates the three
+  collections the agent would otherwise hand-roll (pending registry, TOC
+  promotion, post-process queue) behind three verbs: `Register`,
+  `OnCommitted`, `DrainPostProcess` (plus `RemoveRolledBack` for the EOM
+  path).
+- `TapeBackupAgentPackedTests` (65 tests over 4 drive profiles × multiple
+  hash algorithms) exercises single-file, multi-file, many-small-files
+  block-sharing, monotonic addresses, TOC reload of `(Block, Offset)`,
+  sequential two-set backup, statistics invariants, deferred post-process
+  ordering, pre-process skip, missing-file Skip/Abort, abort-in-pre-process,
+  and packed-then-legacy coexistence.
+
+**Key design points**
+
+- **`TapeFileInfo.Address` is stamped at commit time** inside the
+  `FilesCommitted` handler — it is the *only* moment the real address is
+  known. The per-iteration `template` carries UID + `FileDescr` only and is
+  promoted to a real `TapeFileInfo` in the tracker.
+- **`NotifyPostProcessFile` is deferred** until the file's commit is observed,
+  per §4.9. The drain runs on the main loop thread between iterations (and
+  once more after `EndWriteContent`), preserving the legacy abort semantics:
+  an abort thrown from `PostProcess` breaks the loop without rewinding the
+  tape, because the file is already on tape and in the TOC.
+- **No per-file `Drive.MoveToBlock` on the packed failure path.** The legacy
+  path rewinds to `tfi.Block` after a per-file failure; the packed path must
+  not — earlier files queued in the same fill buffer would be clobbered.
+  Instead, `Manager.Packer?.DiscardOpenFile()` truncates the open file's tail
+  in memory, leaving prior pending files intact to commit later.
+- **`PackedCommitTracker` collapses three ad-hoc collections into one helper.**
+  Without it, the packed loop juggled a `Dictionary<CommitToken, TapeFileInfo>`,
+  a TOC-append site, and a `Queue<TapeFileInfo>` for deferred post-process.
+  With it, the loop's commit handling is `tracker.Register(...)` /
+  `tracker.OnCommitted(...)` / `tracker.DrainPostProcess(...)` and nothing
+  else.
+- **Subscription must remain active through final flush.** The agent
+  subscribes to `Manager.FilesCommitted` *before* the loop and unsubscribes
+  in a `finally` *after* `Manager.EndWriteContent()` returns, so tail
+  commits emitted by the manager's flush still reach the tracker.
+- **Overall-success semantics match legacy.** A per-file failure flips
+  `bc.overallSuccess = false` even when the chosen action is `Skip` and
+  `ignoreFailures` is `true`. The loop continues, but the final `TapeResult`
+  reports failure — consistent with `BackupFilesToCurrentSet`.
+- **EOM rollback re-queues by earliest rolled-back file index.** On
+  `TapePackerEndOfMediaException`, the tracker returns the smallest
+  `FileIndex` among the rolled-back tokens; the agent sets `bc.fileIndex` to
+  that value so multi-volume continuation re-attempts every uncommitted file
+  (per §4.8). No `OnFileFailed` is fired for the rolled-back set; only the
+  open file gets a `NotifyFileFailed` (with `StatsUndoFailure` if not Abort).
+
+#### Step E — Read side (mirrors A–D, simpler) [DONE]
+
+**What was built**
+
+- `TapeLibNET/TapeFilePacker/ITapeReadBackend.cs` defines the read contract
+  plus `ReadResult` and the `TapeReadSink` / `TapeSeekSink` delegates. The
+  read backend is **synchronous** in Phase 2 (no worker thread, no
+  prefetch); the surface is shaped to admit a Phase 3 prefetcher behind the
+  same interface.
+- `SyncTapeReadBackend` issues `Drive.ReadDirect` calls one block at a time
+  and reports filemark / EOF / hard-error conditions through `ReadResult`.
+  Seeks are routed through the injected `TapeSeekSink` so the backend stays
+  testable in isolation from `TapeDrive`.
+- `TapeLibNET/TapeFilePacker/TapeFileReadPacker.cs` implements the high
+  layer: a small LRU ring of block-sized cache slots (sized by
+  `PackerBlockMultiplier`), single-open-file slot state, exact
+  `(Block, Offset)` positioning via `BeginRead(TapeAddress, long)`, and
+  cross-block reads hidden from the caller. `_drivePositionBlock` tracks
+  the drive head so adjacent forward reads skip a `MoveToBlock`.
+- `TapeReadStreamFacade` is the per-file `Stream` returned from
+  `BeginRead()`. It forwards `Read(...)` to
+  `TapeFileReadPacker.ReadIntoOpenFile(...)`, tracks logical position,
+  and closes the packer slot on `Dispose` via `EndRead()`.
+- `TapeStreamManager` owns the read packer/backend lifecycle:
+  `EnsureReadPackerCreated()` constructs the `SyncTapeReadBackend` (bridged
+  to `Drive.ReadDirect` via `PackerReadSink` and to `Drive.MoveToBlock`
+  via the seek sink) and the `TapeFileReadPacker`.
+  `BeginPackedFileRead(addr, length)` is the agent-facing entry point;
+  `EndPackedFileRead()` closes the slot.
+- `TapeFileRestoreBaseAgent` adds packed pendants: `RestoreNextFilePacked`,
+  `RestoreFilesFromCurrentSetPacked` (selected files), and
+  `RestoreAllFilesFromCurrentSetPacked` (all files). The three concrete
+  agents (`TapeFileRestoreAgent`, `TapeFileValidateAgent`,
+  `TapeFileVerifyAgent`) each implement `RestoreFileCorePacked` over a
+  generic `Stream` (the façade), keeping block boundaries invisible to the
+  restore policy.
+- `TapeLibNET.Tests/TapeRestoreAgentPackedTests.cs` covers single-file,
+  multi-file, many-small-files (block-sharing), mixed-size, edge-case,
+  TOC-reload, selective-restore, two-set independent, validate, verify,
+  and the legacy-backup → packed-restore cross-path. All pass on every
+  drive profile.
+
+**Key design points**
+
+- **Read packer is reset on every set boundary.** The cached blocks and
+  `_drivePositionBlock` are tied to the current set's position state.
+  `BeginReadContent()` disposes the read packer when the manager moves
+  to a different set within the reading state, and `EndReadContent()`
+  disposes it on exit. Without this reset, the cache fed stale blocks
+  into the new set's reads, manifesting as a deterministic second-set
+  mismatch in `Packed_TwoSets_RoundTripIndependently`.
+- **Write packer anchors at the absolute drive block.** The fix that
+  made multi-set packed restore work was on the *write* side:
+  `TapeFileWritePacker` now takes `initialAbsBlock` and
+  `TapeStreamManager.EnsurePackerCreated()` passes
+  `Drive.BlockCounter`. The `TapeAddress` values surfaced through
+  `FilesCommitted` are absolute and match the legacy aligned backup's
+  convention of recording `Drive.BlockCounter`. Without this, set-2
+  TOC entries pointed one set-worth of blocks too low, so the packed
+  restore's `MoveToBlock` landed inside set 1.
+- **No commit decoupling on the read side.** Restore is a direct
+  stream-consume loop; failures propagate inline as today, and
+  `OnFileFailed` policy is unchanged. The packer only adds transparent
+  caching and intra-block positioning.
+- **Out-of-order / selective restore is supported but not optimized.**
+  `BeginRead` will seek backward when needed; the cache still serves
+  hits regardless of direction. Phase 3 prefetch will be disabled for
+  non-monotonic access patterns.
+- **Cross-path compatibility, asymmetric.** Legacy (aligned) backup
+  output restores cleanly through the packed path because
+  `Address.Offset == 0` is just a special case of
+  `BeginRead(addr, length)`. The reverse — legacy restore over packed
+  backup — is **not** supported in general: packed backup may place
+  files at non-zero intra-block offsets even when each file is larger
+  than one block (the tail of one file shares a block with the head
+  of the next). The corresponding cross-path test was removed; only
+  the packed restore path is a correct consumer of packed-backup
+  output.
+- **`BufferedTapeWriteStream` retained for the aligned path.** It is
+  still wrapped by `BackupFile` (the aligned write path) to overlap
+  source-file reads with tape writes. The packed write path needs no
+  such wrapper because the worker-thread backend already overlaps
+  source ingest with the previous buffer's tape write. Removal is
+  deferred until the aligned path itself is retired.
+
+#### Step F — Integration tests + doc
+23. `VirtualTapeDriveBackend` integration tests:
+    - 10 000 × 1 KiB files round-trip; verify total tape footprint ≈ 10 MiB.
+    - Mixed sizes (1 KiB / 1 MiB / 100 MiB) round-trip.
+    - Injected EOM mid-flush — multi-volume continuation succeeds, no file lost.
+    - Source-read error — Skip / Retry / Abort × NoRollback / Rollback.
+    - Abort during pending-commit window — pending files committed and
+      `PostProcess`-notified.
+24. Manual real-LTO smoke test; compare elapsed time vs. Phase 1 baseline.
+25. Tag `phase2-complete`.
 
 ### Phase 3 (deferred, sketched only)
 - Extract `IPackerIoBackend`.
 - Implement `ThreadPoolPackerBackend` (bounded write queue + read prefetcher).
 - Wire cancellation through `TapePackerCancellation` (already plumbed in Phase 2 via `CancellationToken`).
 - Optional `OverlappedPackerBackend` if profiling shows the worker is the bottleneck.
+- NOTICE we already implemented double-buffered tape writing in Phase 2!
 
 ---
 
-## 6. Open Questions for Review
+## 6. Open Questions for Review [pre-Phase 1 -> potentially outdated]
 
 1. **Filemark policy** [CLOSED] — NO filemarks after files once FmksMode is gone. Filemarks after each stored TOC copy retained.
 2. **Non-EOM write error policy** — current proposal: packer reports, agent fires `OnFileFailed` per pending file. Do you want a coarser `OnBatchFailed` semantic instead?

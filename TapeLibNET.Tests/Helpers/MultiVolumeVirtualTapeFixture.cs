@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TapeLibNET;
 using TapeLibNET.Virtual;
@@ -265,7 +265,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
         using var agent = CreateBackupAgent();
 
-        bool success = agent.BackupFileListToCurrentSet(
+        bool success = agent.BackupFileListToCurrentSetAligned(
             newSet: true,
             fileList,
             ignoreFailures: true,
@@ -313,13 +313,13 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// <param name="restoreDir">Target directory for restored files.</param>
     /// <param name="notifiable">Optional callback handler.</param>
     /// <returns>Statistics snapshot after the entire restore completes.</returns>
-    public TapeFileStatistics RestoreAllFilesFromCurrentSet(
+    public TapeFileStatistics RestoreAllFilesFromCurrentSetAligned(
         string restoreDir,
         ITapeFileNotifiable? notifiable = null)
     {
         using var agent = CreateRestoreAgent(restoreDir);
 
-        bool success = agent.RestoreAllFilesFromCurrentSet(
+        bool success = agent.RestoreAllFilesFromCurrentSetAligned(
             ignoreFailures: true, fileNotify: notifiable);
 
         // Multi-volume loop
@@ -342,13 +342,13 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// <param name="restoreDir">Target directory for restored files.</param>
     /// <param name="notifiable">Optional callback handler.</param>
     /// <returns>Statistics snapshot after the entire restore completes.</returns>
-    public TapeFileStatistics RestoreFilesFromCurrentSetInc(
+    public TapeFileStatistics RestoreFilesFromCurrentSetIncAligned(
         string restoreDir,
         ITapeFileNotifiable? notifiable = null)
     {
         using var agent = CreateRestoreAgent(restoreDir);
 
-        bool success = agent.RestoreFilesFromCurrentSetInc(
+        bool success = agent.RestoreFilesFromCurrentSetIncAligned(
             null, ignoreFailures: true, fileNotify: notifiable);
 
         // Multi-volume loop
