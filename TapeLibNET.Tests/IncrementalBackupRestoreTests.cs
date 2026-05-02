@@ -1,11 +1,11 @@
-﻿using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
 
 /// <summary>
 /// Comprehensive tests for incremental backup and restore behavior.
-/// Exercises multi-wave backup chains (full → modify → incremental → modify → incremental)
+/// Exercises multi-wave backup chains (full ? modify ? incremental ? modify ? incremental)
 /// and verifies:
 /// <list type="bullet">
 ///   <item>Backup statistics: correct skip/succeed counts per wave</item>
@@ -44,10 +44,10 @@ public class IncrementalBackupRestoreTests
     /// <summary>
     /// Performs a 4-wave incremental backup chain on the given fixture and temp tree:
     /// <list type="bullet">
-    ///   <item>Wave 0 → set 1: Full backup of 8 files at version 0</item>
-    ///   <item>Wave 1 → set 2: Modify files[0,1,2] to v1 → incremental (3 backed up, 5 skipped)</item>
-    ///   <item>Wave 2 → set 3: Modify files[3,4] to v2 → incremental (2 backed up, 6 skipped)</item>
-    ///   <item>Wave 3 → set 4: Modify files[0] to v3 + add new file → incremental (2 backed up, 7 skipped)</item>
+    ///   <item>Wave 0 ? set 1: Full backup of 8 files at version 0</item>
+    ///   <item>Wave 1 ? set 2: Modify files[0,1,2] to v1 ? incremental (3 backed up, 5 skipped)</item>
+    ///   <item>Wave 2 ? set 3: Modify files[3,4] to v2 ? incremental (2 backed up, 6 skipped)</item>
+    ///   <item>Wave 3 ? set 4: Modify files[0] to v3 + add new file ? incremental (2 backed up, 7 skipped)</item>
     /// </list>
     /// </summary>
     /// <returns>Backup statistics per wave and the path of the file added in wave 3.</returns>
@@ -56,24 +56,24 @@ public class IncrementalBackupRestoreTests
     {
         var stats = new TapeFileStatistics[4];
 
-        // Create initial 8 files (1–8 KB each)
+        // Create initial 8 files (1�8 KB each)
         tree.AddFiles("data", count: InitialFileCount, minSize: 1024, maxSize: 8 * 1024);
 
-        // Wave 0: Full backup — all 8 files at version 0
+        // Wave 0: Full backup � all 8 files at version 0
         stats[0] = fixture.BackupFiles(tree.Files, "Full backup");
 
-        // Wave 1: Modify files[0,1,2] to version 1 → incremental
+        // Wave 1: Modify files[0,1,2] to version 1 ? incremental
         tree.ModifyFile(tree.Files[0], version: 1);
         tree.ModifyFile(tree.Files[1], version: 1);
         tree.ModifyFile(tree.Files[2], version: 1);
         stats[1] = fixture.BackupFiles(tree.Files, "Incremental 1", incremental: true);
 
-        // Wave 2: Modify files[3,4] to version 2 → incremental
+        // Wave 2: Modify files[3,4] to version 2 ? incremental
         tree.ModifyFile(tree.Files[3], version: 2);
         tree.ModifyFile(tree.Files[4], version: 2);
         stats[2] = fixture.BackupFiles(tree.Files, "Incremental 2", incremental: true);
 
-        // Wave 3: Modify files[0] to version 3 + add a new file → incremental
+        // Wave 3: Modify files[0] to version 3 + add a new file ? incremental
         tree.ModifyFile(tree.Files[0], version: 3);
         string newFile = tree.AddFile("data/file_new.dat", 4096);
         stats[3] = fixture.BackupFiles(tree.Files, "Incremental 3", incremental: true);
@@ -90,7 +90,7 @@ public class IncrementalBackupRestoreTests
 
     /// <summary>
     /// Expected file version after incremental restore from set 3 (wave 2).
-    /// Only the 8 original files — new file (added in wave 3) is absent.
+    /// Only the 8 original files � new file (added in wave 3) is absent.
     /// </summary>
     private static readonly int[] s_versionsAtWave2 = [1, 1, 1, 2, 2, 0, 0, 0];
 
@@ -118,25 +118,25 @@ public class IncrementalBackupRestoreTests
 
         var (stats, _) = SetupFourWaveChain(fixture, tree);
 
-        // Wave 0: Full backup — all 8 files backed up, none skipped
+        // Wave 0: Full backup � all 8 files backed up, none skipped
         Assert.Equal(InitialFileCount, stats[0].FilesTotal);
         Assert.Equal(InitialFileCount, stats[0].FilesSucceeded);
         Assert.Equal(0, stats[0].FilesSkipped);
         Assert.Equal(0, stats[0].FilesFailed);
 
-        // Wave 1: 3 modified → backed up, 5 unchanged → skipped
+        // Wave 1: 3 modified ? backed up, 5 unchanged ? skipped
         Assert.Equal(InitialFileCount, stats[1].FilesTotal);
         Assert.Equal(3, stats[1].FilesSucceeded);
         Assert.Equal(5, stats[1].FilesSkipped);
         Assert.Equal(0, stats[1].FilesFailed);
 
-        // Wave 2: 2 modified → backed up, 6 unchanged → skipped
+        // Wave 2: 2 modified ? backed up, 6 unchanged ? skipped
         Assert.Equal(InitialFileCount, stats[2].FilesTotal);
         Assert.Equal(2, stats[2].FilesSucceeded);
         Assert.Equal(6, stats[2].FilesSkipped);
         Assert.Equal(0, stats[2].FilesFailed);
 
-        // Wave 3: 1 re-modified + 1 new file → 2 backed up, 7 unchanged → skipped
+        // Wave 3: 1 re-modified + 1 new file ? 2 backed up, 7 unchanged ? skipped
         Assert.Equal(InitialFileCount + 1, stats[3].FilesTotal);
         Assert.Equal(2, stats[3].FilesSucceeded);
         Assert.Equal(7, stats[3].FilesSkipped);
@@ -180,7 +180,7 @@ public class IncrementalBackupRestoreTests
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
             fixture.TOC.CurrentSetIndex = 4;
-            bool restored = restoreAgent.RestoreFilesFromCurrentSetIncAligned(
+            bool restored = restoreAgent.RestoreFilesFromCurrentSetInc(
                 null, ignoreFailures: true);
 
             Assert.True(restored, "Incremental restore from set 4 failed");
@@ -189,7 +189,7 @@ public class IncrementalBackupRestoreTests
             Assert.Equal(tree.Files.Count, restoreAgent.Statistics.FilesSucceeded);
             Assert.Equal(0, restoreAgent.Statistics.FilesFailed);
 
-            // Source files on disk have the latest versions — FileComparer byte-for-byte works
+            // Source files on disk have the latest versions � FileComparer byte-for-byte works
             string restoreRoot = RestoreEquivalentRoot(restoreDir, tree.RootPath);
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files, restoreRoot);
 
@@ -204,7 +204,7 @@ public class IncrementalBackupRestoreTests
 
     /// <summary>
     /// Incremental restore from set 3 (wave 2) should yield file versions as of that wave:
-    /// files[0,1,2]=v1, files[3,4]=v2, files[5-7]=v0 — and NO new file from wave 3.
+    /// files[0,1,2]=v1, files[3,4]=v2, files[5-7]=v0 � and NO new file from wave 3.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -221,7 +221,7 @@ public class IncrementalBackupRestoreTests
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
             fixture.TOC.CurrentSetIndex = 3;
-            bool restored = restoreAgent.RestoreFilesFromCurrentSetIncAligned(
+            bool restored = restoreAgent.RestoreFilesFromCurrentSetInc(
                 null, ignoreFailures: true);
 
             Assert.True(restored, "Incremental restore from set 3 failed");
@@ -251,7 +251,7 @@ public class IncrementalBackupRestoreTests
 
     /// <summary>
     /// Incremental restore from set 2 (wave 1) should yield:
-    /// files[0,1,2]=v1, files[3-7]=v0 — the state after only the first incremental wave.
+    /// files[0,1,2]=v1, files[3-7]=v0 � the state after only the first incremental wave.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -268,7 +268,7 @@ public class IncrementalBackupRestoreTests
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
             fixture.TOC.CurrentSetIndex = 2;
-            bool restored = restoreAgent.RestoreFilesFromCurrentSetIncAligned(
+            bool restored = restoreAgent.RestoreFilesFromCurrentSetInc(
                 null, ignoreFailures: true);
 
             Assert.True(restored, "Incremental restore from set 2 failed");
@@ -290,7 +290,7 @@ public class IncrementalBackupRestoreTests
 
     /// <summary>
     /// Incremental restore from the full backup set (set 1, non-incremental) should
-    /// behave identically to a non-incremental restore — returning all 8 files at version 0.
+    /// behave identically to a non-incremental restore � returning all 8 files at version 0.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -307,7 +307,7 @@ public class IncrementalBackupRestoreTests
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
             fixture.TOC.CurrentSetIndex = 1;
-            bool restored = restoreAgent.RestoreFilesFromCurrentSetIncAligned(
+            bool restored = restoreAgent.RestoreFilesFromCurrentSetInc(
                 null, ignoreFailures: true);
 
             Assert.True(restored, "Incremental restore from full set failed");
@@ -335,7 +335,7 @@ public class IncrementalBackupRestoreTests
 
     /// <summary>
     /// Non-incremental restore from each incremental set should yield ONLY the files
-    /// that were actually backed up in that specific set — not the entire chain.
+    /// that were actually backed up in that specific set � not the entire chain.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -352,7 +352,7 @@ public class IncrementalBackupRestoreTests
         {
             using var agent2 = fixture.CreateRestoreAgent(restoreDir2);
             fixture.TOC.CurrentSetIndex = 2;
-            Assert.True(agent2.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true),
+            Assert.True(agent2.RestoreAllFilesFromCurrentSet(ignoreFailures: true),
                 "Non-incremental restore from set 2 failed");
 
             Assert.Equal(3, agent2.Statistics.FilesSucceeded);
@@ -382,7 +382,7 @@ public class IncrementalBackupRestoreTests
         {
             using var agent3 = fixture.CreateRestoreAgent(restoreDir3);
             fixture.TOC.CurrentSetIndex = 3;
-            Assert.True(agent3.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true),
+            Assert.True(agent3.RestoreAllFilesFromCurrentSet(ignoreFailures: true),
                 "Non-incremental restore from set 3 failed");
 
             Assert.Equal(2, agent3.Statistics.FilesSucceeded);
@@ -405,7 +405,7 @@ public class IncrementalBackupRestoreTests
         {
             using var agent4 = fixture.CreateRestoreAgent(restoreDir4);
             fixture.TOC.CurrentSetIndex = 4;
-            Assert.True(agent4.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true),
+            Assert.True(agent4.RestoreAllFilesFromCurrentSet(ignoreFailures: true),
                 "Non-incremental restore from set 4 failed");
 
             Assert.Equal(2, agent4.Statistics.FilesSucceeded);
@@ -452,7 +452,7 @@ public class IncrementalBackupRestoreTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = 1;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true),
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(ignoreFailures: true),
                 "Non-incremental restore from full set failed");
 
             Assert.Equal(InitialFileCount, restoreAgent.Statistics.FilesSucceeded);
@@ -511,7 +511,7 @@ public class IncrementalBackupRestoreTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = 2;
-            Assert.True(restoreAgent.RestoreFilesFromCurrentSetIncAligned(null, ignoreFailures: true),
+            Assert.True(restoreAgent.RestoreFilesFromCurrentSetInc(null, ignoreFailures: true),
                 "Incremental restore after no-changes wave failed");
 
             Assert.Equal(6, restoreAgent.Statistics.FilesSucceeded);
@@ -538,7 +538,7 @@ public class IncrementalBackupRestoreTests
         // Set 1: Full backup (chain 1 base)
         fixture.BackupFiles(tree.Files, "Full 1");
 
-        // Set 2: Modify files[0] → incremental
+        // Set 2: Modify files[0] ? incremental
         tree.ModifyFile(tree.Files[0], version: 1);
         fixture.BackupFiles(tree.Files, "Inc 1", incremental: true);
 
@@ -546,7 +546,7 @@ public class IncrementalBackupRestoreTests
         tree.ModifyFile(tree.Files[1], version: 2);
         fixture.BackupFiles(tree.Files, "Full 2");
 
-        // Set 4: Modify files[2] → incremental (chains to set 3)
+        // Set 4: Modify files[2] ? incremental (chains to set 3)
         tree.ModifyFile(tree.Files[2], version: 3);
         fixture.BackupFiles(tree.Files, "Inc 2", incremental: true);
 
@@ -562,7 +562,7 @@ public class IncrementalBackupRestoreTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = 4;
-            Assert.True(restoreAgent.RestoreFilesFromCurrentSetIncAligned(null, ignoreFailures: true),
+            Assert.True(restoreAgent.RestoreFilesFromCurrentSetInc(null, ignoreFailures: true),
                 "Incremental restore after chain break failed");
 
             // All 5 files restored from the chain (set 3 + set 4)
@@ -611,7 +611,7 @@ public class IncrementalBackupRestoreTests
 
         SetupFourWaveChain(fixture, tree);
 
-        // Save and reload TOC from tape — exercises serialization round-trip.
+        // Save and reload TOC from tape � exercises serialization round-trip.
         // For SeqFilemarks, BackupFiles already saves the TOC after each wave and
         // a standalone SaveTOC creates a duplicate TOC mark, so just reload.
         if (profile is DriveProfile.SeqFilemarks or DriveProfile.FilemarksOnly)
@@ -632,7 +632,7 @@ public class IncrementalBackupRestoreTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = 4;
-            Assert.True(restoreAgent.RestoreFilesFromCurrentSetIncAligned(null, ignoreFailures: true),
+            Assert.True(restoreAgent.RestoreFilesFromCurrentSetInc(null, ignoreFailures: true),
                 "Incremental restore after TOC reload failed");
 
             Assert.Equal(tree.Files.Count, restoreAgent.Statistics.FilesSucceeded);
@@ -671,7 +671,7 @@ public class IncrementalBackupRestoreTests
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
             fixture.TOC.CurrentSetIndex = 4;
-            Assert.True(restoreAgent.RestoreFilesFromCurrentSetIncAligned(
+            Assert.True(restoreAgent.RestoreFilesFromCurrentSetInc(
                 null, ignoreFailures: true, fileNotify: notifiable),
                 "Incremental restore failed");
 
@@ -688,7 +688,7 @@ public class IncrementalBackupRestoreTests
             Assert.Equal(0, stats.FilesSkipped);
             Assert.True(stats.BytesProcessed > 0, "BytesProcessed should be > 0");
 
-            // One batch start/end per set in the chain (4 sets: 1→2→3→4)
+            // One batch start/end per set in the chain (4 sets: 1?2?3?4)
             Assert.Equal(4, notifiable.BatchStarts.Count);
             Assert.Equal(4, notifiable.BatchEnds.Count);
 
@@ -784,7 +784,7 @@ public class IncrementalBackupRestoreTests
         }
         catch
         {
-            // Best effort — temp directories may be locked
+            // Best effort � temp directories may be locked
         }
     }
 

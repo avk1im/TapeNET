@@ -1,21 +1,21 @@
-ï»¿using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
 
 /// <summary>
-/// Focused tests for the restore agent hierarchy â€”
+/// Focused tests for the restore agent hierarchy —
 /// <see cref="TapeFileRestoreAgent"/>, <see cref="TapeFileValidateAgent"/>,
 /// <see cref="TapeFileVerifyAgent"/>, and <see cref="TapeFileRestoreAgentEx"/>.
 /// <para>
-/// These tests isolate the restore path from the full backupâ†’restore round-trip tests
+/// These tests isolate the restore path from the full backup?restore round-trip tests
 /// by building known tape content via backup, then exercising:
 /// <list type="bullet">
 ///   <item>Single-set restore to disk with byte-level verification</item>
-///   <item>Multi-set restore â€” restoring set 1 vs set 2 independently (Partitions bug hunt)</item>
+///   <item>Multi-set restore — restoring set 1 vs set 2 independently (Partitions bug hunt)</item>
 ///   <item>Validate agent (CRC-only, no disk writes)</item>
 ///   <item>Verify agent (byte-for-byte comparison with originals)</item>
-///   <item>TOC reload before restore â€” ensures tape positioning uses deserialized data</item>
+///   <item>TOC reload before restore — ensures tape positioning uses deserialized data</item>
 ///   <item>Block-level file positioning across profiles</item>
 ///   <item>Statistics and callback correctness during restore</item>
 ///   <item>Edge-case files through restore path</item>
@@ -39,7 +39,7 @@ public class TapeRestoreAgentTests
 #pragma warning restore CA1825 // Avoid zero-length array allocations
 
     /// <summary>
-    /// Cross-product of drive profile Ã— hash algorithm.
+    /// Cross-product of drive profile × hash algorithm.
     /// </summary>
     public static TheoryData<DriveProfile, TapeHashAlgorithm> ProfilesAndHashes
     {
@@ -105,7 +105,7 @@ public class TapeRestoreAgentTests
         var notifiable = new TestNotifiable();
         using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
         fixture.TOC.CurrentSetIndex = setIndex;
-        bool result = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
+        bool result = restoreAgent.RestoreAllFilesFromCurrentSet(
             ignoreFailures: true, fileNotify: notifiable);
         return (result, notifiable);
     }
@@ -120,7 +120,7 @@ public class TapeRestoreAgentTests
         var notifiable = new TestNotifiable();
         using var validateAgent = fixture.CreateValidateAgent();
         fixture.TOC.CurrentSetIndex = setIndex;
-        bool result = validateAgent.RestoreAllFilesFromCurrentSetAligned(
+        bool result = validateAgent.RestoreAllFilesFromCurrentSet(
             ignoreFailures: true, fileNotify: notifiable);
         return (result, notifiable);
     }
@@ -136,7 +136,7 @@ public class TapeRestoreAgentTests
         var notifiable = new TestNotifiable();
         using var verifyAgent = fixture.CreateVerifyAgent();
         fixture.TOC.CurrentSetIndex = setIndex;
-        bool result = verifyAgent.RestoreAllFilesFromCurrentSetAligned(
+        bool result = verifyAgent.RestoreAllFilesFromCurrentSet(
             ignoreFailures: true, fileNotify: notifiable);
         return (result, notifiable);
     }
@@ -248,7 +248,7 @@ public class TapeRestoreAgentTests
     #endregion
 
 
-    #region *** Multi-Set Restore â€” Key Scenario for Partitions Bug ***
+    #region *** Multi-Set Restore — Key Scenario for Partitions Bug ***
 
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -330,7 +330,7 @@ public class TapeRestoreAgentTests
     [MemberData(nameof(AllProfiles))]
     public void TwoSets_RestoreBothIndependently_ByteForByteMatch(DriveProfile profile)
     {
-        // Full independent restore of both sets â€” the exact scenario that fails for Partitions
+        // Full independent restore of both sets — the exact scenario that fails for Partitions
         using var tree1 = new TempFileTree(seed: 100);
         tree1.AddFiles("set1", count: 4, minSize: 100, maxSize: 8 * 1024);
 
@@ -360,7 +360,7 @@ public class TapeRestoreAgentTests
             TryDeleteDirectory(restoreDir1);
         }
 
-        // Restore set 2 (with a FRESH agent â€” tape must reposition)
+        // Restore set 2 (with a FRESH agent — tape must reposition)
         string restoreDir2 = Path.Combine(Path.GetTempPath(), $"TapeNET_AgentRestore_{Guid.NewGuid():N}");
         try
         {
@@ -496,7 +496,7 @@ public class TapeRestoreAgentTests
     #endregion
 
 
-    #region *** TOC Reload Before Restore â€” Deserialized Positioning ***
+    #region *** TOC Reload Before Restore — Deserialized Positioning ***
 
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -514,7 +514,7 @@ public class TapeRestoreAgentTests
         fixture.BackupFiles(tree1.Files, description: "Set 1", hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(tree2.Files, description: "Set 2", hashAlgorithm: TapeHashAlgorithm.XxHash3);
 
-        // Reload TOC from tape â€” now all data comes from deserialization
+        // Reload TOC from tape — now all data comes from deserialization
         fixture.LoadTOC();
 
         string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_AgentRestore_{Guid.NewGuid():N}");
@@ -628,7 +628,7 @@ public class TapeRestoreAgentTests
     #endregion
 
 
-    #region *** Three Sets â€” Set 2 Specifically ***
+    #region *** Three Sets — Set 2 Specifically ***
 
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -843,7 +843,7 @@ public class TapeRestoreAgentTests
             fixture.TOC.CurrentSetIndex = 1;
 
             Assert.Equal(0L, restoreAgent.BytesRestored);
-            restoreAgent.RestoreAllFilesFromCurrentSetAligned();
+            restoreAgent.RestoreAllFilesFromCurrentSet();
             Assert.True(restoreAgent.BytesRestored > 0,
                 "BytesRestored should be positive after restore");
         }
@@ -862,7 +862,7 @@ public class TapeRestoreAgentTests
     [MemberData(nameof(AllProfiles))]
     public void DiagHeaderMismatch_TwoSets_ValidateEachAfterBackup(DriveProfile profile)
     {
-        // Backup two sets, then validate each set immediately â€” no TOC reload.
+        // Backup two sets, then validate each set immediately — no TOC reload.
         // If this passes but TOC-reload versions fail, the bug is in TOC serialization
         //  or block-number recording.
         using var tree1 = new TempFileTree(seed: 100);
@@ -892,7 +892,7 @@ public class TapeRestoreAgentTests
     [MemberData(nameof(AllProfiles))]
     public void DiagHeaderMismatch_TwoSets_ValidateEachAfterTOCReload(DriveProfile profile)
     {
-        // Same as above, but with TOC reload â€” if this fails but the no-reload version
+        // Same as above, but with TOC reload — if this fails but the no-reload version
         //  passes, the block numbers changed during serialization/deserialization.
         using var tree1 = new TempFileTree(seed: 100);
         tree1.AddFiles("set1", count: 4, minSize: 100, maxSize: 8 * 1024);
@@ -924,7 +924,7 @@ public class TapeRestoreAgentTests
     [MemberData(nameof(AllProfiles))]
     public void DiagHeaderMismatch_ThreeSets_ValidateMiddleSet(DriveProfile profile)
     {
-        // Validates the middle set of three â€” exercises set-boundary crossing
+        // Validates the middle set of three — exercises set-boundary crossing
         using var tree1 = new TempFileTree(seed: 10);
         tree1.AddFiles("a", count: 3, minSize: 100, maxSize: 4 * 1024);
 
@@ -952,7 +952,7 @@ public class TapeRestoreAgentTests
     [MemberData(nameof(AllProfiles))]
     public void DiagHeaderMismatch_SingleSet_ValidateAfterTOCReload(DriveProfile profile)
     {
-        // Baseline: a single set should never fail â€” isolates multi-set from single-set issues
+        // Baseline: a single set should never fail — isolates multi-set from single-set issues
         using var tree = new TempFileTree();
         tree.AddFiles("data", count: 5, minSize: 100, maxSize: 8 * 1024);
 

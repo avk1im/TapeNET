@@ -13,7 +13,7 @@ internal sealed class MemoryTapeWriteBackend : ITapeWriteBackend
     private readonly List<byte[]> _written = [];
     private readonly uint _blockSize;
 
-    private long _capacityBlocks;          // -1 means unlimited
+    //private long _capacityBlocks;          // -1 means unlimited
     private long _eomAfterBlock;           // -1 means no EOM scripted
     private long _errorAfterBlock;         // -1 means no error scripted
     private string? _errorMessage;
@@ -25,7 +25,7 @@ internal sealed class MemoryTapeWriteBackend : ITapeWriteBackend
     /// <summary>Snapshot of all bytes successfully written so far, concatenated in submission order.</summary>
     public IReadOnlyList<byte[]> WrittenBuffers
     {
-        get { lock (_stateLock) return _written.ToArray(); }
+        get { lock (_stateLock) return [.._written]; }
     }
 
     /// <summary>Total full blocks reported as written (sum of <see cref="WriteResult.BlocksWritten"/>).</summary>
@@ -36,11 +36,10 @@ internal sealed class MemoryTapeWriteBackend : ITapeWriteBackend
 
     public MemoryTapeWriteBackend(uint blockSize)
     {
-        if (blockSize == 0)
-            throw new ArgumentOutOfRangeException(nameof(blockSize));
+        ArgumentOutOfRangeException.ThrowIfZero(blockSize);
 
         _blockSize = blockSize;
-        _capacityBlocks = -1;
+        //_capacityBlocks = -1;
         _eomAfterBlock = -1;
         _errorAfterBlock = -1;
 
@@ -50,16 +49,14 @@ internal sealed class MemoryTapeWriteBackend : ITapeWriteBackend
     /// <summary>Inject EOM behavior: the (1-based) block index after which the drive returns EOM.</summary>
     public void ScriptEomAfterBlocks(long blockIndex)
     {
-        if (blockIndex < 0)
-            throw new ArgumentOutOfRangeException(nameof(blockIndex));
+        ArgumentOutOfRangeException.ThrowIfNegative(blockIndex);
         lock (_stateLock) _eomAfterBlock = blockIndex;
     }
 
     /// <summary>Inject hard error after the given (1-based) block index has been written.</summary>
     public void ScriptHardErrorAfterBlocks(long blockIndex, string message = "scripted hardware error")
     {
-        if (blockIndex < 0)
-            throw new ArgumentOutOfRangeException(nameof(blockIndex));
+        ArgumentOutOfRangeException.ThrowIfNegative(blockIndex);
         lock (_stateLock)
         {
             _errorAfterBlock = blockIndex;

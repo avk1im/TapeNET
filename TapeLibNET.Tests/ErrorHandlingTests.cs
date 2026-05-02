@@ -1,4 +1,4 @@
-﻿using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
@@ -86,7 +86,7 @@ public class ErrorHandlingTests
         using var agent = fixture.CreateBackupAgent();
         configureAgent?.Invoke(agent);
 
-        return agent.BackupFileListToCurrentSetAligned(
+        return agent.BackupFileListToCurrentSet(
             newSet: true,
             fileList,
             ignoreFailures: ignoreFailures,
@@ -106,12 +106,12 @@ public class ErrorHandlingTests
     {
         using var agent = fixture.CreateRestoreAgent(targetDir);
         configureAgent?.Invoke(agent);
-        return agent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures, notifiable);
+        return agent.RestoreAllFilesFromCurrentSet(ignoreFailures, notifiable);
     }
 
     #endregion
 
-    #region *** (A) Backup IO Failure — Skip / Retry / Abort ***
+    #region *** (A) Backup IO Failure � Skip / Retry / Abort ***
 
 #if DEBUG
 
@@ -125,7 +125,7 @@ public class ErrorHandlingTests
     public void Backup_SimulatedFailure_Skip_StatsCorrect(DriveProfile profile)
     {
         const int fileCount = 8;
-        const int failEveryN = 2; // every 2nd file fails → 4 failures
+        const int failEveryN = 2; // every 2nd file fails ? 4 failures
 
         using var tree = new TempFileTree();
         tree.AddFiles("skip", count: fileCount, minSize: 100, maxSize: 4 * 1024);
@@ -219,7 +219,7 @@ public class ErrorHandlingTests
         agent.SimulateFileFailures.Enabled = true;
         agent.SimulateFileFailures.EveryNth = failEveryN;
 
-        bool success = agent.BackupFileListToCurrentSetAligned(
+        bool success = agent.BackupFileListToCurrentSet(
             newSet: true,
             tree.Files,
             ignoreFailures: true, // even with ignoreFailures, Abort overrides
@@ -238,7 +238,7 @@ public class ErrorHandlingTests
     }
 
     /// <summary>
-    /// Simulates an interleaved failure pattern during backup (ok → fail → ok → fail → ok),
+    /// Simulates an interleaved failure pattern during backup (ok ? fail ? ok ? fail ? ok),
     /// then performs a full restore and verifies that the succeeded files are restored
     /// correctly byte-for-byte. Exercises block-based positioning recovery when restoring
     /// files that follow a failed-file gap on tape.
@@ -247,7 +247,7 @@ public class ErrorHandlingTests
     [MemberData(nameof(AllProfiles))]
     public void Backup_InterleavedFailure_SurvivorFilesRestoredCorrectly(DriveProfile profile)
     {
-        // 9 files: fail every 4th (files 4 and 8 fail) → 7 succeed
+        // 9 files: fail every 4th (files 4 and 8 fail) ? 7 succeed
         //  positions: ok ok ok FAIL ok ok ok FAIL ok
         const int fileCount = 9;
         const int failEveryN = 4;
@@ -273,7 +273,7 @@ public class ErrorHandlingTests
             backupAgent.SimulateFileFailures.Enabled = true;
             backupAgent.SimulateFileFailures.EveryNth = failEveryN;
 
-            bool backupOk = backupAgent.BackupFileListToCurrentSetAligned(
+            bool backupOk = backupAgent.BackupFileListToCurrentSet(
                 newSet: true, tree.Files, ignoreFailures: true, backupNotify);
 
             // Backup should complete (ignoreFailures=true)
@@ -291,10 +291,10 @@ public class ErrorHandlingTests
                 .Select(p => p.FileInfo.FileDescr.FullName)
                 .ToList();
 
-            // Restore — all TOC-registered (succeeded) files should restore correctly
+            // Restore � all TOC-registered (succeeded) files should restore correctly
             var restoreNotify = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
-            bool restoreOk = restoreAgent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: false, restoreNotify);
+            bool restoreOk = restoreAgent.RestoreAllFilesFromCurrentSet(ignoreFailures: false, restoreNotify);
 
             Assert.True(restoreOk, "Restore of survived files should succeed");
             restoreNotify.AssertStatsInvariant();
@@ -302,7 +302,7 @@ public class ErrorHandlingTests
             Assert.Equal(succeededCount, restoreStats.FilesSucceeded);
             Assert.Equal(0, restoreStats.FilesFailed);
 
-            // Byte-for-byte content verification — the restore agent mirrors the original
+            // Byte-for-byte content verification � the restore agent mirrors the original
             //  absolute path structure under restoreDir (stripped of the drive root)
             string restoreEquivalent1 = Path.Combine(
                 restoreDir, Path.GetRelativePath(Path.GetPathRoot(tree.RootPath)!, tree.RootPath));
@@ -315,7 +315,7 @@ public class ErrorHandlingTests
     }
 
     /// <summary>
-    /// Simulates an interleaved failure pattern during backup (ok → fail → ok → fail → ok)
+    /// Simulates an interleaved failure pattern during backup (ok ? fail ? ok ? fail ? ok)
     /// with filemarks <em>disabled</em>
     /// restore and verifies that the succeeded files are restored correctly byte-for-byte.
     /// Exercises the non-filemark restore path where tape position is tracked solely via
@@ -325,7 +325,7 @@ public class ErrorHandlingTests
     [MemberData(nameof(AllProfiles))]
     public void Backup_InterleavedFailure_WithoutFilemarks_SurvivorFilesRestoredCorrectly(DriveProfile profile)
     {
-        // 9 files: fail every 4th (files 4 and 8 fail) → 7 succeed
+        // 9 files: fail every 4th (files 4 and 8 fail) ? 7 succeed
         //  positions: ok ok ok FAIL ok ok ok FAIL ok
         const int fileCount = 9;
         const int failEveryN = 4;
@@ -351,7 +351,7 @@ public class ErrorHandlingTests
             backupAgent.SimulateFileFailures.Enabled = true;
             backupAgent.SimulateFileFailures.EveryNth = failEveryN;
 
-            bool backupOk = backupAgent.BackupFileListToCurrentSetAligned(
+            bool backupOk = backupAgent.BackupFileListToCurrentSet(
                 newSet: true, tree.Files, ignoreFailures: true, backupNotify);
 
             backupNotify.AssertStatsInvariant();
@@ -371,7 +371,7 @@ public class ErrorHandlingTests
             // Restore
             var restoreNotify = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
-            bool restoreOk = restoreAgent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: false, restoreNotify);
+            bool restoreOk = restoreAgent.RestoreAllFilesFromCurrentSet(ignoreFailures: false, restoreNotify);
 
             Assert.True(restoreOk, "Restore of survived files should succeed");
             restoreNotify.AssertStatsInvariant();
@@ -379,7 +379,7 @@ public class ErrorHandlingTests
             Assert.Equal(succeededCount, restoreStats.FilesSucceeded);
             Assert.Equal(0, restoreStats.FilesFailed);
 
-            // Byte-for-byte content verification — mirror the original path structure under restoreDir
+            // Byte-for-byte content verification � mirror the original path structure under restoreDir
             string restoreEquivalent2 = Path.Combine(
                 restoreDir, Path.GetRelativePath(Path.GetPathRoot(tree.RootPath)!, tree.RootPath));
             FileComparer.AssertFilesMatch(tree.RootPath, succeededPaths, restoreEquivalent2);
@@ -401,7 +401,7 @@ public class ErrorHandlingTests
     public void Backup_PartialFailure_SurvivorFilesRestorable(DriveProfile profile)
     {
         const int fileCount = 8;
-        const int failEveryN = 2; // every 2nd file fails → 4 succeed
+        const int failEveryN = 2; // every 2nd file fails ? 4 succeed
 
         using var tree = new TempFileTree();
         tree.AddFiles("partial", count: fileCount, minSize: 100, maxSize: 4 * 1024);
@@ -447,7 +447,7 @@ public class ErrorHandlingTests
 
     #endregion
 
-    #region *** (B) Backup Empty Set — All Files Fail / All Files Skipped ***
+    #region *** (B) Backup Empty Set � All Files Fail / All Files Skipped ***
 
 #if DEBUG
 
@@ -478,7 +478,7 @@ public class ErrorHandlingTests
         Assert.Equal(fileCount, stats.FilesFailed);
         Assert.Equal(0, stats.FilesSucceeded);
 
-        // The set should be empty → removable
+        // The set should be empty ? removable
         Assert.Empty(fixture.TOC.CurrentSetTOC);
         Assert.True(fixture.TOC.RemoveLastEmptySet(), "Empty set should be removable");
     }
@@ -512,7 +512,7 @@ public class ErrorHandlingTests
         Assert.Equal(fileCount, stats.FilesSkipped);
         Assert.Equal(0, stats.FilesSucceeded);
 
-        // The set should be empty → removable
+        // The set should be empty ? removable
         Assert.Empty(fixture.TOC.CurrentSetTOC);
         Assert.True(fixture.TOC.RemoveLastEmptySet(), "Empty set should be removable");
     }
@@ -521,7 +521,6 @@ public class ErrorHandlingTests
 
     #region *** (C) Backup Proactive Abort ***
 
-    /// <summary>
     /// User aborts from <see cref="ITapeFileNotifiable.PreProcessFile"/> after N
     /// files have succeeded. The remaining files should not be processed.
     /// </summary>
@@ -529,7 +528,50 @@ public class ErrorHandlingTests
     [MemberData(nameof(AllProfiles))]
     public void Backup_UserAbort_FromPreProcess(DriveProfile profile)
     {
-        const int fileCount = 8;
+        const int fileCount = 10;
+        const int abortAfter = 3; // abort before 4th file
+
+        using var tree = new TempFileTree();
+        tree.AddFiles("abort_pre", count: fileCount, minSize: 100, maxSize: 4 * 1024);
+
+        var notifiable = new TestNotifiable { AbortAfterNPreProcessed = abortAfter };
+
+        using var fixture = new VirtualTapeFixture(profile);
+
+        fixture.TOC.AddNewSetTOC(0, incremental: false);
+        fixture.TOC.CurrentSetTOC.Description = "Abort pre-process test";
+        fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
+        fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
+
+        using var agent = fixture.CreateBackupAgent();
+
+        bool success = agent.BackupFileListToCurrentSet(
+            newSet: true,
+            tree.Files,
+            ignoreFailures: true,
+            fileNotify: notifiable);
+
+        // TapeAbortRequestedException from PreProcess is rethrown ? caught as failure
+        Assert.False(success, "Backup should fail on proactive abort");
+
+        notifiable.AssertStatsInvariant();
+        var stats = notifiable.BatchEnds[^1].Stats;
+
+        // Exactly abortAfter files should have succeeded before the abort
+        Assert.Equal(abortAfter, stats.FilesSucceeded);
+        Assert.True(stats.FilesProcessed < fileCount,
+            $"Expected fewer than {fileCount} processed, got {stats.FilesProcessed}");
+    }
+
+    /// <summary>
+    /// User aborts from <see cref="ITapeFileNotifiable.PreProcessFile"/> after N
+    /// files have succeeded. The remaining files should not be processed.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Backup_UserAbort_AfterNSucceeded(DriveProfile profile)
+    {
+        const int fileCount = 10;
         const int abortAfter = 3; // abort before 4th file
 
         using var tree = new TempFileTree();
@@ -546,19 +588,20 @@ public class ErrorHandlingTests
 
         using var agent = fixture.CreateBackupAgent();
 
-        bool success = agent.BackupFileListToCurrentSetAligned(
+        bool success = agent.BackupFileListToCurrentSet(
             newSet: true,
             tree.Files,
             ignoreFailures: true,
             fileNotify: notifiable);
 
-        // TapeAbortRequestedException from PreProcess is rethrown → caught as failure
+        // TapeAbortRequestedException from PreProcess is rethrown ? caught as failure
         Assert.False(success, "Backup should fail on proactive abort");
 
         notifiable.AssertStatsInvariant();
         var stats = notifiable.BatchEnds[^1].Stats;
 
         // Exactly abortAfter files should have succeeded before the abort
+        //  CAREFUL: this won't be true for the packing path if aborted from pre-process!
         Assert.Equal(abortAfter, stats.FilesSucceeded);
         Assert.True(stats.FilesProcessed < fileCount,
             $"Expected fewer than {fileCount} processed, got {stats.FilesProcessed}");
@@ -589,7 +632,7 @@ public class ErrorHandlingTests
 
         using var agent = fixture.CreateBackupAgent();
 
-        bool success = agent.BackupFileListToCurrentSetAligned(
+        bool success = agent.BackupFileListToCurrentSet(
             newSet: true,
             tree.Files,
             ignoreFailures: true,
@@ -609,7 +652,7 @@ public class ErrorHandlingTests
 
     #endregion
 
-    #region *** (D) Restore IO Failure — Skip / Retry / Abort ***
+    #region *** (D) Restore IO Failure � Skip / Retry / Abort ***
 
 #if DEBUG
 
@@ -694,14 +737,14 @@ public class ErrorHandlingTests
             };
 
             // Create agent directly so we can offset the failure counter:
-            //  counter 2 → file 1 bumps to 3 (3%3=0 → fail, first-file-on-volume path),
-            //  file 3 → counter 6 (fail, two-step filemark retry), file 5 → counter 9 (fail)
+            //  counter 2 ? file 1 bumps to 3 (3%3=0 ? fail, first-file-on-volume path),
+            //  file 3 ? counter 6 (fail, two-step filemark retry), file 5 ? counter 9 (fail)
             using var agent = fixture.CreateRestoreAgent(restoreDir);
             agent.SimulateFileFailures.Enabled = true;
             agent.SimulateFileFailures.EveryNth = failEveryN;
             agent.SimulateFileFailures.Counter = failEveryN - 1;
 
-            bool restoreOk = agent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true, notifiable);
+            bool restoreOk = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, notifiable);
 
             Assert.True(restoreOk, "Restore with retries should succeed");
 
@@ -727,7 +770,7 @@ public class ErrorHandlingTests
     public void Restore_SimulatedFailure_Abort_StopsImmediately(DriveProfile profile)
     {
         const int fileCount = 6;
-        const int failEveryN = 2; // 2nd file fails → abort
+        const int failEveryN = 2; // 2nd file fails ? abort
 
         using var tree = new TempFileTree();
         tree.AddFiles("rabort", count: fileCount, minSize: 100, maxSize: 4 * 1024);
@@ -748,7 +791,7 @@ public class ErrorHandlingTests
             agent.SimulateFileFailures.Enabled = true;
             agent.SimulateFileFailures.EveryNth = failEveryN;
 
-            bool restoreOk = agent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true, notifiable);
+            bool restoreOk = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, notifiable);
 
             Assert.False(restoreOk, "Restore should fail on abort");
             Assert.True(agent.IsAbortRequested, "IsAbortRequested should be set");
@@ -799,7 +842,7 @@ public class ErrorHandlingTests
             var notifiable = new TestNotifiable { AbortAfterNSucceeded = abortAfter };
 
             using var agent = fixture.CreateRestoreAgent(restoreDir);
-            bool restoreOk = agent.RestoreAllFilesFromCurrentSetAligned(ignoreFailures: true, notifiable);
+            bool restoreOk = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, notifiable);
 
             Assert.False(restoreOk, "Restore should fail on proactive abort");
 
@@ -851,7 +894,7 @@ public class ErrorHandlingTests
         bool tocWriteOk = writeAgent.BackupTOC(enforce: true);
         Assert.True(tocWriteOk, "BackupTOC should succeed when only 1st copy fails");
 
-        // Restore TOC — should recover from the 2nd copy
+        // Restore TOC � should recover from the 2nd copy
         using var readAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
         bool tocReadOk = readAgent.RestoreTOC();
         Assert.True(tocReadOk, "RestoreTOC should succeed from 2nd copy");

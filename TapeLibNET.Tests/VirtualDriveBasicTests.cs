@@ -19,6 +19,7 @@ public class VirtualDriveBasicTests
     /// <summary>
     /// Provides the three real-world drive profiles as <c>[Theory]</c> data.
     /// </summary>
+#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> AllProfiles =>
     [
         DriveProfile.Setmarks,
@@ -26,6 +27,7 @@ public class VirtualDriveBasicTests
         DriveProfile.SeqFilemarks,
         DriveProfile.FilemarksOnly,
     ];
+#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     /// <summary>
     /// Profiles that can save/restore TOC on an empty tape (no prior content).
@@ -33,11 +35,13 @@ public class VirtualDriveBasicTests
     ///  requires existing TOC markers on tape, which only exist after content has been written.
     ///  This matches real SDLT hardware behavior.
     /// </summary>
+#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> ProfilesWithTOCOnEmptyTape =>
     [
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
     ];
+#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     #endregion
 
@@ -456,7 +460,7 @@ public class VirtualDriveBasicTests
         toc.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
         toc.CurrentSetTOC.BlockSize = 16384;
         toc.CurrentSetTOC.Append(new TapeFileInfo(
-            toc.GenerateUID(), block: 0,
+            toc.GenerateUID(), address: TapeAddress.Zero,
             new TapeFileDescriptor("C:\\dummy1.txt") { Length = 100 }));
 
         // Now adding set 2 will actually create a new set (set 1 is non-empty)
@@ -465,7 +469,7 @@ public class VirtualDriveBasicTests
         toc.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.XxHash3;
         toc.CurrentSetTOC.BlockSize = 32768;
         toc.CurrentSetTOC.Append(new TapeFileInfo(
-            toc.GenerateUID(), block: 0,
+            toc.GenerateUID(), address: TapeAddress.Zero,
             new TapeFileDescriptor("C:\\dummy2.txt") { Length = 200 }));
 
         // Save and reload

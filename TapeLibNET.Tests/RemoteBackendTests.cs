@@ -1,15 +1,15 @@
-﻿using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
 
 /// <summary>
 /// Integration tests that exercise the full gRPC remote backend path:
-/// <c>TapeDrive → RemoteTapeDriveBackend → gRPC → TapeDriveGrpcService → VirtualTapeDriveBackend</c>.
+/// <c>TapeDrive ? RemoteTapeDriveBackend ? gRPC ? TapeDriveGrpcService ? VirtualTapeDriveBackend</c>.
 /// <para>
 /// All tests share a single gRPC server via an <see cref="ITapeServiceFixture"/>
 /// (collection fixture). Each test creates its own <see cref="RemoteVirtualTapeFixture"/>
-/// for full isolation — the server replaces its backend on each <c>OpenVirtual</c> call.
+/// for full isolation � the server replaces its backend on each <c>OpenVirtual</c> call.
 /// </para>
 /// These tests mirror a curated subset of <see cref="VirtualDriveBasicTests"/>,
 /// <see cref="TapeBackupAgentTests"/>, and <see cref="TapeTOCRoundTripTests"/> to
@@ -326,7 +326,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         fixture.LoadTOC();
 
         using var agent = fixture.CreateRestoreAgent(targetDir);
-        bool restoreOk = agent.RestoreAllFilesFromCurrentSetAligned();
+        bool restoreOk = agent.RestoreAllFilesFromCurrentSet();
         Assert.True(restoreOk, "Restore failed");
 
         // Verify restored file exists and matches
@@ -359,7 +359,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         fixture.LoadTOC();
 
         using var validator = fixture.CreateValidateAgent();
-        bool validateOk = validator.RestoreAllFilesFromCurrentSetAligned();
+        bool validateOk = validator.RestoreAllFilesFromCurrentSet();
         Assert.True(validateOk, "Validation failed");
     }
 
@@ -408,7 +408,7 @@ public class LocalHostBackendTests(LocalHostTapeServiceFixture service)
 /// <para>
 /// Resource-intensive: requires external gRPC server configuration.
 /// Excluded from routine runs via <c>FullyQualifiedName!~RemoteHostBackendTests</c> in
-/// <c>TapeNET.runsettings</c> — trait-based filtering does not work here because test
+/// <c>TapeNET.runsettings</c> � trait-based filtering does not work here because test
 /// methods are inherited from <see cref="RemoteBackendTestsBase"/>, and xUnit applies
 /// traits from the declaring (base) class, not the concrete subclass.
 /// </para>

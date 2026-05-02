@@ -1061,16 +1061,17 @@ regressions are caught at the layer they originate in.
   source ingest with the previous buffer's tape write. Removal is
   deferred until the aligned path itself is retired.
 
-#### Step F — Integration tests + doc
-23. `VirtualTapeDriveBackend` integration tests:
+#### Step F — Integration tests
+- In `TapeFileBackupAgent` and `TapeFileRestoreBaseAgent` we retained the legacy methods with "Aligned" suffix and [Obsolete] attribute - to use in the tests for side-by-side comparisons
+- Suggestion: `VirtualTapeDriveBackend` integration tests:
     - 10 000 × 1 KiB files round-trip; verify total tape footprint ≈ 10 MiB.
     - Mixed sizes (1 KiB / 1 MiB / 100 MiB) round-trip.
     - Injected EOM mid-flush — multi-volume continuation succeeds, no file lost.
     - Source-read error — Skip / Retry / Abort × NoRollback / Rollback.
     - Abort during pending-commit window — pending files committed and
       `PostProcess`-notified.
-24. Manual real-LTO smoke test; compare elapsed time vs. Phase 1 baseline.
-25. Tag `phase2-complete`.
+- Manual real-LTO smoke test; compare elapsed time vs. Phase 1 baseline.
+- Tag `phase2-complete`.
 
 ### Phase 3 (deferred, sketched only)
 - Extract `IPackerIoBackend`.

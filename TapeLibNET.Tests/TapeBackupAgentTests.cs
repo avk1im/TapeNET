@@ -1,11 +1,11 @@
-ï»¿using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
 
 /// <summary>
-/// Focused tests for <see cref="TapeFileBackupAgent"/> â€” the middle layer between
-/// low-level tape stream/navigator tests and full backupâ†’restore round-trips.
+/// Focused tests for <see cref="TapeFileBackupAgent"/> — the middle layer between
+/// low-level tape stream/navigator tests and full backup?restore round-trips.
 /// <para>
 /// These tests verify that the backup agent correctly:
 /// <list type="bullet">
@@ -35,7 +35,7 @@ public class TapeBackupAgentTests
 #pragma warning restore CA1825 // Avoid zero-length array allocations
 
     /// <summary>
-    /// Cross-product of drive profile Ã— hash algorithm for backup theories.
+    /// Cross-product of drive profile × hash algorithm for backup theories.
     /// </summary>
     public static TheoryData<DriveProfile, TapeHashAlgorithm> ProfilesAndHashes
     {
@@ -56,7 +56,7 @@ public class TapeBackupAgentTests
 
     /// <summary>
     /// Backs up a file list to a new set using the given agent, with common defaults.
-    /// Does NOT save the TOC â€” caller controls when TOC is written.
+    /// Does NOT save the TOC — caller controls when TOC is written.
     /// </summary>
     private static bool BackupFileList(
         TapeFileBackupAgent agent,
@@ -73,7 +73,7 @@ public class TapeBackupAgentTests
         toc.CurrentSetTOC.HashAlgorithm = hash;
         toc.CurrentSetTOC.BlockSize = blockSize == 0 ? agent.Manager.Navigator.Drive.DefaultBlockSize : blockSize;
 
-        return agent.BackupFileListToCurrentSetAligned(
+        return agent.BackupFileListToCurrentSet(
             newSet: newSet,
             fileList,
             ignoreFailures: true,
@@ -172,7 +172,7 @@ public class TapeBackupAgentTests
     #endregion
 
 
-    #region *** Multiple Sets â€” Sequential Backup ***
+    #region *** Multiple Sets — Sequential Backup ***
 
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -277,7 +277,7 @@ public class TapeBackupAgentTests
 
     [Theory]
     [MemberData(nameof(AllProfiles))]
-    public void TOC_AfterBackup_BlockNumbersAreMonotonicallyIncreasing(DriveProfile profile)
+    public void TOC_AfterBackup_AddressesAreMonotonicallyIncreasing(DriveProfile profile)
     {
         using var tree = new TempFileTree();
         tree.AddFiles("ordered", count: 10, minSize: 100, maxSize: 8 * 1024);
@@ -289,9 +289,9 @@ public class TapeBackupAgentTests
         var setToc = fixture.TOC[1];
         for (int i = 1; i < setToc.Count; i++)
         {
-            Assert.True(setToc[i].Block > setToc[i - 1].Block,
-                $"Block numbers not monotonically increasing: " +
-                $"file[{i - 1}].Block={setToc[i - 1].Block}, file[{i}].Block={setToc[i].Block}");
+            Assert.True(setToc[i].Address > setToc[i - 1].Address,
+                $"Addresses not monotonically increasing: " +
+                $"file[{i - 1}].Address={setToc[i - 1].Address}, file[{i}].Address={setToc[i].Address}");
         }
     }
 
@@ -316,7 +316,7 @@ public class TapeBackupAgentTests
 
     [Theory]
     [MemberData(nameof(AllProfiles))]
-    public void TOC_AfterTwoSets_BlockNumbersAreDistinctPerSet(DriveProfile profile)
+    public void TOC_AfterTwoSets_AddressesAreDistinctPerSet(DriveProfile profile)
     {
         using var tree1 = new TempFileTree(seed: 100);
         tree1.AddFiles("s1", count: 4, minSize: 100, maxSize: 8 * 1024);
@@ -330,11 +330,11 @@ public class TapeBackupAgentTests
 
         // Set 2's first block should be after set 1's last block
         // (tape wrote set2 content after set1 content)
-        long lastBlockSet1 = fixture.TOC[1][^1].Block;
-        long firstBlockSet2 = fixture.TOC[2][0].Block;
+        var lastAddressSet1 = fixture.TOC[1][^1].Address;
+        var firstAddressSet2 = fixture.TOC[2][0].Address;
 
-        Assert.True(firstBlockSet2 > lastBlockSet1,
-            $"Set 2 first block ({firstBlockSet2}) should be after set 1 last block ({lastBlockSet1})");
+        Assert.True(firstAddressSet2 > lastAddressSet1,
+            $"Set 2 first address ({firstAddressSet2}) should be after set 1 last address ({lastAddressSet1})");
     }
 
     [Theory]
@@ -520,7 +520,7 @@ public class TapeBackupAgentTests
     [MemberData(nameof(AllProfiles))]
     public void TwoSets_SameAgent_BackupAndSaveTOC(DriveProfile profile)
     {
-        // Uses a single agent session for both sets â€” mirrors real-world usage
+        // Uses a single agent session for both sets — mirrors real-world usage
         using var tree1 = new TempFileTree(seed: 100);
         tree1.AddFiles("set1", count: 5, minSize: 100, maxSize: 8 * 1024);
 
@@ -556,7 +556,7 @@ public class TapeBackupAgentTests
     [MemberData(nameof(AllProfiles))]
     public void ThreeSets_FreshAgentPerSet_TOCAccumulates(DriveProfile profile)
     {
-        // Uses separate agent sessions per set â€” mirrors the VirtualTapeFixture.BackupFiles pattern
+        // Uses separate agent sessions per set — mirrors the VirtualTapeFixture.BackupFiles pattern
         using var tree1 = new TempFileTree(seed: 10);
         tree1.AddFiles("a", count: 3, minSize: 100, maxSize: 4 * 1024);
 

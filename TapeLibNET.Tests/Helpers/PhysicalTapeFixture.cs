@@ -412,7 +412,7 @@ public sealed class PhysicalTapeFixture : IDisposable
 
         using var agent = CreateBackupAgent();
 
-        bool success = agent.BackupFileListToCurrentSetAligned(
+        bool success = agent.BackupFileListToCurrentSet(
             newSet: true,
             fileList,
             ignoreFailures: true,

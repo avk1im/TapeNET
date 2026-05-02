@@ -1,9 +1,10 @@
-﻿using System.Diagnostics;
+﻿using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 using System.IO.Hashing;
-using Windows.Win32.Foundation;
-using Microsoft.Extensions.Logging;
-using TapeLibNET;
 using System.Net.Http.Headers;
+using System.Runtime.Intrinsics.X86;
+using TapeLibNET;
+using Windows.Win32.Foundation;
 
 
 namespace TapeLibNET
@@ -100,7 +101,8 @@ namespace TapeLibNET
 
         // Returns true if success, false if failure.
         //  Sets fileFailedAction to true only if the caller should abort entire operation, otherwise doesn't modify fileFailedAction
-        private bool RestoreNextFile(TapeFileInfo tfi, ref FileFailedAction fileFailedAction, ITapeFileNotifiable? fileNotify = null)
+        [Obsolete("Use the non-Aligned (Packed) version")]
+        private bool RestoreNextFileAligned(TapeFileInfo tfi, ref FileFailedAction fileFailedAction, ITapeFileNotifiable? fileNotify = null)
         {
             try
             {
@@ -108,7 +110,7 @@ namespace TapeLibNET
                 if (IsAbortRequested)
                 {
                     fileFailedAction = FileFailedAction.Abort;
-                    m_logger.LogTrace("Abort requested before restoring file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreNextFile));
+                    m_logger.LogTrace("Abort requested before restoring file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreNextFileAligned));
                     return false;
                 }
 
@@ -117,7 +119,7 @@ namespace TapeLibNET
                 using var rstream = OpenReadContentStream();
                 if (rstream == null)
                 {
-                    m_logger.LogWarning("Failed to open content read stream in {Method}", nameof(RestoreNextFile));
+                    m_logger.LogWarning("Failed to open content read stream in {Method}", nameof(RestoreNextFileAligned));
                     return false;
                 }
 
@@ -125,7 +127,7 @@ namespace TapeLibNET
                 if (IsAbortRequested)
                 {
                     fileFailedAction = FileFailedAction.Abort;
-                    m_logger.LogTrace("Abort requested after opening file stream before restoring file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreNextFile));
+                    m_logger.LogTrace("Abort requested after opening file stream before restoring file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreNextFileAligned));
                     return false;
                 }
 
@@ -223,7 +225,7 @@ namespace TapeLibNET
 
         // Returns true on success, false on failure.
         //  Sets fileFailedAction only if the caller should abort entire operation.
-        private bool RestoreNextFilePacked(TapeFileInfo tfi, ref FileFailedAction fileFailedAction, ITapeFileNotifiable? fileNotify = null)
+        private bool RestoreNextFile(TapeFileInfo tfi, ref FileFailedAction fileFailedAction, ITapeFileNotifiable? fileNotify = null)
         {
             try
             {
@@ -231,7 +233,7 @@ namespace TapeLibNET
                 {
                     fileFailedAction = FileFailedAction.Abort;
                     m_logger.LogTrace("Abort requested before restoring (packed) file >{File}< in {Method}",
-                        tfi.FileDescr.FullName, nameof(RestoreNextFilePacked));
+                        tfi.FileDescr.FullName, nameof(RestoreNextFile));
                     return false;
                 }
 
@@ -242,7 +244,7 @@ namespace TapeLibNET
                 if (rstream == null)
                 {
                     m_logger.LogWarning("Failed to open packed content read stream in {Method}",
-                        nameof(RestoreNextFilePacked));
+                        nameof(RestoreNextFile));
                     return false;
                 }
 
@@ -250,7 +252,7 @@ namespace TapeLibNET
                 {
                     fileFailedAction = FileFailedAction.Abort;
                     m_logger.LogTrace("Abort requested after opening packed file stream before restoring file >{File}< in {Method}",
-                        tfi.FileDescr.FullName, nameof(RestoreNextFilePacked));
+                        tfi.FileDescr.FullName, nameof(RestoreNextFile));
                     return false;
                 }
 
@@ -315,7 +317,7 @@ namespace TapeLibNET
                 m_logger.LogWarning("Exception {Exception} while processing (packed) file >{File}<", ex, tfi.FileDescr.FullName);
                 return false;
             }
-        } // RestoreNextFilePacked()
+        } // RestoreNextFile()
 
 
         // Restore the files specified by 'tfis' from the current set via the packer.
@@ -325,7 +327,7 @@ namespace TapeLibNET
         private bool RestoreFilesFromCurrentSet(List<TapeFileInfo>? tfis, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             if (tfis == null) // null means restore all files
-                return RestoreAllFilesFromCurrentSetPackedInt(ignoreFailures, fileNotify);
+                return RestoreAllFilesFromCurrentSetInt(ignoreFailures, fileNotify);
 
             NotifyBatchStart(fileNotify, tfis.Count);
 
@@ -357,7 +359,7 @@ namespace TapeLibNET
                 m_logger.LogTrace("Restoring (packed) file #{Number} >{File}< at {Addr}",
                     _stats.FilesProcessed + 1, tfi.FileDescr.FullName, tfi.Address);
 
-                if (!RestoreNextFilePacked(tfi, ref fileFailedAction, fileNotify))
+                if (!RestoreNextFile(tfi, ref fileFailedAction, fileNotify))
                 {
                     m_logger.LogWarning("Failed to restore (packed) file >{File}< in {Method}",
                         tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSet));
@@ -390,7 +392,7 @@ namespace TapeLibNET
 
 
         // Restore ALL files from the current set via the packer.
-        private bool RestoreAllFilesFromCurrentSetPackedInt(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+        private bool RestoreAllFilesFromCurrentSetInt(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             NotifyBatchStart(fileNotify, TOC.CurrentSetTOC.Count);
 
@@ -421,7 +423,7 @@ namespace TapeLibNET
                 m_logger.LogTrace("Restoring (packed) file #{Number} >{File}<",
                     _stats.FilesProcessed + 1, tfi.FileDescr.FullName);
 
-                if (!RestoreNextFilePacked(tfi, ref fileFailedAction, fileNotify))
+                if (!RestoreNextFile(tfi, ref fileFailedAction, fileNotify))
                 {
                     m_logger.LogWarning("Failed to restore (packed) file >{File}< in {Method}",
                         tfi.FileDescr.FullName, nameof(RestoreAllFilesFromCurrentSet));
@@ -487,6 +489,7 @@ namespace TapeLibNET
         // Restore the files specified by 'tfis' from the current set
         //  For optimal performance (to ensure moving always forward) tfis should follow the same order as in the SetTOC
         //  If tfis were selected by iterating thru SetTOC, this recommendation is met automatically
+        [Obsolete("Use the non-Aligned (Packed) version")]
         private bool RestoreFilesFromCurrentSetAligned(List<TapeFileInfo>? tfis, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             if (tfis == null) // null means restore all files
@@ -553,7 +556,7 @@ namespace TapeLibNET
                     }
                 }
 
-                if (!RestoreNextFile(tfi, ref fileFailedAction, fileNotify))
+                if (!RestoreNextFileAligned(tfi, ref fileFailedAction, fileNotify))
                 {
                     m_logger.LogWarning("Failed to restore file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSetAligned));
                     goto FAILURE;
@@ -591,6 +594,7 @@ namespace TapeLibNET
         }
 
         // Restore ALL files from the current set
+        [Obsolete("Use the non-Aligned (Packed) version")]
         private bool RestoreFilesFromCurrentSetAligned(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             NotifyBatchStart(fileNotify, TOC.CurrentSetTOC.Count);
@@ -633,7 +637,7 @@ namespace TapeLibNET
                     }
                 }
 
-                if (!RestoreNextFile(tfi, ref fileFailedAction, fileNotify))
+                if (!RestoreNextFileAligned(tfi, ref fileFailedAction, fileNotify))
                 {
                     m_logger.LogWarning("Failed to restore file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSetAligned));
                     goto FAILURE;
@@ -774,13 +778,15 @@ namespace TapeLibNET
                     return false;
                 }
 
+#pragma warning disable CS0618 // Type or member is obsolete -- FIXME transition period
                 bool result = rc.packed
                     ? ((rc.filesSelected[rc.filesSelectedIdx] != null) ?
                         RestoreFilesFromCurrentSet(rc.filesSelected[rc.filesSelectedIdx], ignoreFailures, fileNotify) :
-                        RestoreAllFilesFromCurrentSetPackedInt(ignoreFailures, fileNotify))
+                        RestoreAllFilesFromCurrentSetInt(ignoreFailures, fileNotify))
                     : ((rc.filesSelected[rc.filesSelectedIdx] != null) ?
                         RestoreFilesFromCurrentSetAligned(rc.filesSelected[rc.filesSelectedIdx], ignoreFailures, fileNotify) :
                         RestoreFilesFromCurrentSetAligned(ignoreFailures, fileNotify)); // null means restore all files
+#pragma warning restore CS0618 // Type or member is obsolete
                 if (!result)
                 {
                     rc.overallSuccess = false;
@@ -798,7 +804,7 @@ namespace TapeLibNET
             TOC.CurrentSetIndex = rc.initialCurrSetIdx; // restore the initial current set index
 
             return rc.overallSuccess;
-        } // RestoreFilesFromCurrentSetDownAligned(List<string>)
+        } // RestoreFilesFromCurrentSetDownInt(List<string>)
 
 
         /// <summary>
@@ -806,6 +812,7 @@ namespace TapeLibNET
         /// <para>The array is indexed newest-first; a <see langword="null"/> entry means all files
         ///  from the corresponding set. Supports multi-volume continuation.</para>
         /// </summary>
+        [Obsolete("Use the non-Aligned (Packed) version")]
         public TapeResult RestoreFilesFromCurrentSetDownAligned(List<TapeFileInfo>?[] filesSelected, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting restoring pre-selected files from current set #{Set} down", TOC.CurrentSetIndex);
@@ -830,6 +837,7 @@ namespace TapeLibNET
 
 
         /// <summary>Restores filtered files from the current set, resolving multi-volume continuation chains.</summary>
+        [Obsolete("Use the non-Aligned (Packed) version")]
         public TapeResult RestoreFilesFromCurrentSetAligned(ITapeFileFilter? fileFilter, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting restoring files from current set #{Set}", TOC.CurrentSetIndex);
@@ -840,6 +848,7 @@ namespace TapeLibNET
         } // RestoreFilesFromCurrentSetAligned(ITapeFileFilter?)
 
         /// <summary>Restores filtered files from the current set and its incremental chain.</summary>
+        [Obsolete("Use the non-Aligned (Packed) version")]
         public TapeResult RestoreFilesFromCurrentSetIncAligned(ITapeFileFilter? fileFilter, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting incrementally restoring files from current set #{Set}", TOC.CurrentSetIndex);
@@ -850,6 +859,7 @@ namespace TapeLibNET
         } // RestoreFilesFromCurrentSetIncAligned(ITapeFileFilter?)
 
         /// <summary>Restores all files from the current set (no filter).</summary>
+        [Obsolete("Use the non-Aligned (Packed) version")]
         public TapeResult RestoreAllFilesFromCurrentSetAligned(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting restoring all files from current set #{Set}", TOC.CurrentSetIndex);
@@ -860,6 +870,7 @@ namespace TapeLibNET
         } // RestoreAllFilesFromCurrentSetAligned()
 
         /// <summary>Restores all files from the current set and its incremental chain (no filter).</summary>
+        [Obsolete("Use the non-Aligned (Packed) version")]
         public TapeResult RestoreAllFilesFromCurrentSetIncAligned(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
         {
             m_logger.LogTrace("Starting incrementally restoring all files from current set #{Set}", TOC.CurrentSetIndex);
@@ -901,6 +912,7 @@ namespace TapeLibNET
         /// <param name="fileFilter">Optional file filter (null = all files).</param>
         /// <param name="ignoreFailures">If true, continue past individual file failures.</param>
         /// <param name="fileNotify">Optional progress/error notification callback.</param>
+        [Obsolete("Use the non-Aligned (Packed) version")]
         public TapeResult RestoreFilesFromSetsAligned(
             List<int> setIndexes,
             bool incremental,

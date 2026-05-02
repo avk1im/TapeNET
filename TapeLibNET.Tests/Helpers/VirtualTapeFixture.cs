@@ -208,7 +208,8 @@ public sealed class VirtualTapeFixture : IDisposable
         bool incremental = false,
         TapeHashAlgorithm hashAlgorithm = TapeHashAlgorithm.Crc64,
         uint blockSize = 0,
-        ITapeFileNotifiable? notifiable = null)
+        ITapeFileNotifiable? notifiable = null,
+        bool useAligned = false)
     {
         // Configure the set
         TOC.AddNewSetTOC(0, incremental);
@@ -218,11 +219,26 @@ public sealed class VirtualTapeFixture : IDisposable
 
         using var agent = CreateBackupAgent();
 
-        bool success = agent.BackupFileListToCurrentSetAligned(
+        /*
+        bool success = agent.BackupFileListToCurrentSet(
             newSet: true,
             fileList,
             ignoreFailures: true,
             fileNotify: notifiable);
+        */
+#pragma warning disable CS0618 // Type or member is obsolete // FIXME - transition period test
+        bool success = useAligned
+            ? agent.BackupFileListToCurrentSetAligned(
+                newSet: true,
+                fileList,
+                ignoreFailures: true,
+                fileNotify: notifiable)
+            : agent.BackupFileListToCurrentSet(
+                newSet: true,
+                fileList,
+                ignoreFailures: true,
+                fileNotify: notifiable);
+#pragma warning restore CS0618 // Type or member is obsolete
 
         Assert.True(success, "Backup failed");
 

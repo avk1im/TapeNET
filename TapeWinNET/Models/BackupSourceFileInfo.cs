@@ -18,7 +18,7 @@ using TypeUID = ulong;
 /// <param name="uid">Monotonic UID assigned by <see cref="BackupSourceView"/>.</param>
 /// <param name="fileDescr">Descriptor populated from <see cref="FileInfo"/>.</param>
 public class BackupSourceFileInfo(TypeUID uid, TapeFileDescriptor fileDescr)
-    : TapeFileInfo(uid, block: 0, fileDescr)
+    : TapeFileInfo(uid, address: TapeAddress.Zero, fileDescr)
 {
     /// <summary>
     /// Creates a <see cref="BackupSourceFileInfo"/> from a <see cref="FileInfo"/>.

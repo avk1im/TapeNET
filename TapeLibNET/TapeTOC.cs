@@ -139,15 +139,21 @@ namespace TapeLibNET
         /// <summary>Tape address (block + offset) where this file's data begins.</summary>
         public TapeAddress Address { get; } = address;
         /// <summary>Block number where this file's data begins. Convenience accessor for <see cref="Address"/>.Block.</summary>
+        [Obsolete("Use Address")]
         public long Block => Address.Block;
         public TapeFileDescriptor FileDescr { get; } = fileDescr;
         internal byte[]? Hash { get; set; } = null;
 
-        /// <summary>Convenience constructor: wraps a bare block number in a <see cref="TapeAddress"/> with zero offset.</summary>
+        /// <summary>Convenience constructor for transition: wraps a bare block number in a <see cref="TapeAddress"/> with zero offset.</summary>
+        [Obsolete("Use TapeAddress address instead of long block")]
         public TapeFileInfo(TypeUID UID, long block, TapeFileDescriptor fileDescr)
             : this(UID, new TapeAddress(block, 0), fileDescr)
         { }
 
+        public TapeFileInfo(TypeUID UID, TapeAddress address, FileInfo fileInfo)
+            : this(UID, address, new TapeFileDescriptor(fileInfo))
+        { }
+        [Obsolete("Use TapeAddress address instead of long block")]
         public TapeFileInfo(TypeUID UID, long block, FileInfo fileInfo)
             : this(UID, new TapeAddress(block, 0), new TapeFileDescriptor(fileInfo))
         { }

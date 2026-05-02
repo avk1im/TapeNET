@@ -97,10 +97,6 @@ public class TestNotifiable : ITapeFileNotifiable
     {
         PreProcessed.Add(new PreProcessEvent(fileInfo, stats));
 
-        // Proactive abort: throw after N files have succeeded
-        if (AbortAfterNSucceeded > 0 && stats.FilesSucceeded >= AbortAfterNSucceeded)
-            throw new TapeAbortRequestedException($"Test abort after {stats.FilesSucceeded} succeeded files");
-
         // Proactive abort: throw on the Nth PreProcess call (commit-timing-independent)
         if (AbortAfterNPreProcessed > 0 && PreProcessed.Count > AbortAfterNPreProcessed)
             throw new TapeAbortRequestedException($"Test abort at PreProcess #{PreProcessed.Count}");
@@ -112,6 +108,10 @@ public class TestNotifiable : ITapeFileNotifiable
     public bool PostProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats)
     {
         PostProcessed.Add(new PostProcessEvent(fileInfo, stats));
+
+        // Proactive abort: throw after N files have succeeded
+        if (AbortAfterNSucceeded > 0 && stats.FilesSucceeded >= AbortAfterNSucceeded)
+            throw new TapeAbortRequestedException($"Test abort after {stats.FilesSucceeded} succeeded files");
 
         // Proactive abort: throw after N files have succeeded
         if (AbortInPostProcessAfterN > 0 && stats.FilesSucceeded >= AbortInPostProcessAfterN)

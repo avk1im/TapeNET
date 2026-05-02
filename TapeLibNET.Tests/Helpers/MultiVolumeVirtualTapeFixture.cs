@@ -265,7 +265,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
         using var agent = CreateBackupAgent();
 
-        bool success = agent.BackupFileListToCurrentSetAligned(
+        bool success = agent.BackupFileListToCurrentSet(
             newSet: true,
             fileList,
             ignoreFailures: true,
@@ -313,13 +313,13 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// <param name="restoreDir">Target directory for restored files.</param>
     /// <param name="notifiable">Optional callback handler.</param>
     /// <returns>Statistics snapshot after the entire restore completes.</returns>
-    public TapeFileStatistics RestoreAllFilesFromCurrentSetAligned(
+    public TapeFileStatistics RestoreAllFilesFromCurrentSet(
         string restoreDir,
         ITapeFileNotifiable? notifiable = null)
     {
         using var agent = CreateRestoreAgent(restoreDir);
 
-        bool success = agent.RestoreAllFilesFromCurrentSetAligned(
+        bool success = agent.RestoreAllFilesFromCurrentSet(
             ignoreFailures: true, fileNotify: notifiable);
 
         // Multi-volume loop
@@ -342,13 +342,13 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// <param name="restoreDir">Target directory for restored files.</param>
     /// <param name="notifiable">Optional callback handler.</param>
     /// <returns>Statistics snapshot after the entire restore completes.</returns>
-    public TapeFileStatistics RestoreFilesFromCurrentSetIncAligned(
+    public TapeFileStatistics RestoreFilesFromCurrentSetInc(
         string restoreDir,
         ITapeFileNotifiable? notifiable = null)
     {
         using var agent = CreateRestoreAgent(restoreDir);
 
-        bool success = agent.RestoreFilesFromCurrentSetIncAligned(
+        bool success = agent.RestoreFilesFromCurrentSetInc(
             null, ignoreFailures: true, fileNotify: notifiable);
 
         // Multi-volume loop

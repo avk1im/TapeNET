@@ -22,6 +22,35 @@ namespace TapeLibNET
         ///  Always true for Phase 1 addresses.</summary>
         public bool IsAligned => Offset == 0;
 
+        #region *** Comparison / Equality ***
+        /// <summary>
+        /// Compares the current TapeAddress instance with another TapeAddress and returns an integer that indicates
+        /// their relative position in the sort order.
+        /// </summary>
+        /// <remarks>The comparison is performed first on the Block property, and if equal, then on the
+        /// Offset property. This method is typically used to support sorting and ordering of TapeAddress
+        /// instances. Used by the comparison operator definitions.</remarks>
+        /// <param name="other">The TapeAddress to compare with the current instance.</param>
+        /// <returns>A value less than zero if this instance precedes <paramref name="other"/> in the sort order; zero if they
+        /// are equal; or a value greater than zero if this instance follows <paramref name="other"/>.</returns>
+        public int CompareTo(TapeAddress other)
+        {
+            var blockCmp = Block.CompareTo(other.Block);
+            if (blockCmp != 0)
+                return blockCmp;
+
+            return Offset.CompareTo(other.Offset);
+        }
+        public static bool operator <(TapeAddress left, TapeAddress right)
+            => left.CompareTo(right) < 0;
+        public static bool operator >(TapeAddress left, TapeAddress right)
+            => left.CompareTo(right) > 0;
+        public static bool operator <=(TapeAddress left, TapeAddress right)
+            => left.CompareTo(right) <= 0;
+        public static bool operator >=(TapeAddress left, TapeAddress right)
+            => left.CompareTo(right) >= 0;
+        #endregion
+
         /// <summary>
         /// Returns <c>"block"</c> when the offset is zero (Phase 1 / aligned),
         ///  or <c>"block:offset"</c> when a non-zero offset is present (Phase 2 packed files).

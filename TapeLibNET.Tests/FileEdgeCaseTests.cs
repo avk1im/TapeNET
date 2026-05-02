@@ -1,10 +1,10 @@
-ï»¿using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
 
 /// <summary>
 /// Focused edge-case file tests: one [Fact] or [Theory] per tricky file scenario.
-/// Each test exercises the full backup â†’ restore â†’ verify pipeline through the
+/// Each test exercises the full backup ? restore ? verify pipeline through the
 /// virtual tape drive, confirming byte-for-byte fidelity and metadata preservation.
 /// </summary>
 public class FileEdgeCaseTests
@@ -44,7 +44,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
 
             // Verify restored file exists and is empty
             string restoredPath = MapRestoredPath(restoreDir, tree.RootPath, tree.Files[0]);
@@ -80,7 +80,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
 
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
                 RestoreEquivalentRoot(restoreDir, tree.RootPath));
@@ -114,7 +114,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
 
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
                 RestoreEquivalentRoot(restoreDir, tree.RootPath));
@@ -134,7 +134,7 @@ public class FileEdgeCaseTests
     public void LargeFile_SeveralMB_RoundTrips(DriveProfile profile)
     {
         using var tree = new TempFileTree();
-        // 4 MB â€” exercises multi-block read/write across many blocks
+        // 4 MB — exercises multi-block read/write across many blocks
         tree.AddFile("large_4mb.dat", 4L * 1024 * 1024);
 
         using var fixture = new VirtualTapeFixture(profile);
@@ -153,7 +153,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
 
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
                 RestoreEquivalentRoot(restoreDir, tree.RootPath));
@@ -181,7 +181,7 @@ public class FileEdgeCaseTests
         using var tree = new TempFileTree();
         tree.AddFile(Path.Combine("names", fileName), 256);
 
-        // Use Setmarks as representative â€” name handling is profile-independent
+        // Use Setmarks as representative — name handling is profile-independent
         using var fixture = new VirtualTapeFixture(DriveProfile.Setmarks);
         var notifiable = new TestNotifiable();
 
@@ -193,7 +193,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
 
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
                 RestoreEquivalentRoot(restoreDir, tree.RootPath));
@@ -242,7 +242,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
 
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
                 RestoreEquivalentRoot(restoreDir, tree.RootPath));
@@ -279,7 +279,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
 
             // Verify attributes are preserved (byte content + attributes)
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
@@ -313,7 +313,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
 
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
                 RestoreEquivalentRoot(restoreDir, tree.RootPath),
@@ -334,7 +334,7 @@ public class FileEdgeCaseTests
     public void ManySmallFiles_500Plus_StressesTocAndFileIndex(DriveProfile profile)
     {
         using var tree = new TempFileTree();
-        // 500 small files (10â€“500 bytes each) â€” stresses TOC serialization and file-index machinery
+        // 500 small files (10–500 bytes each) — stresses TOC serialization and file-index machinery
         tree.AddFiles("batch", count: 500, minSize: 10, maxSize: 500);
 
         using var fixture = new VirtualTapeFixture(profile);
@@ -359,7 +359,7 @@ public class FileEdgeCaseTests
             var restoreNotifiable = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            bool restored = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
+            bool restored = restoreAgent.RestoreAllFilesFromCurrentSet(
                 ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Restore failed");
@@ -380,14 +380,14 @@ public class FileEdgeCaseTests
 
     /// <summary>
     /// Parameterized test for sizes around the block boundary:
-    /// blockSize - 1, blockSize, blockSize + 1, 2 Ã— blockSize, 2 Ã— blockSize + 1.
+    /// blockSize - 1, blockSize, blockSize + 1, 2 × blockSize, 2 × blockSize + 1.
     /// </summary>
     [Theory]
     [InlineData(-1, "block minus 1")]
     [InlineData(0, "exact block")]
     [InlineData(1, "block plus 1")]
-    [InlineData(16384, "two blocks")]       // blockSize * 1 offset â†’ 2 Ã— blockSize
-    [InlineData(16385, "two blocks plus 1")] // blockSize * 1 + 1 offset â†’ 2 Ã— blockSize + 1
+    [InlineData(16384, "two blocks")]       // blockSize * 1 offset ? 2 × blockSize
+    [InlineData(16385, "two blocks plus 1")] // blockSize * 1 + 1 offset ? 2 × blockSize + 1
     public void BlockBoundarySizes_BackupRestore_RoundTrips(int offsetFromBlock, string label)
     {
         using var fixture = new VirtualTapeFixture(DriveProfile.Setmarks);
@@ -415,7 +415,7 @@ public class FileEdgeCaseTests
         {
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSetAligned(), "Restore failed");
+            Assert.True(restoreAgent.RestoreAllFilesFromCurrentSet(), "Restore failed");
 
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
                 RestoreEquivalentRoot(restoreDir, tree.RootPath));
@@ -445,11 +445,11 @@ public class FileEdgeCaseTests
             description: "Edge validate",
             hashAlgorithm: TapeHashAlgorithm.Crc64);
 
-        // CRC-only validation â€” no disk writes
+        // CRC-only validation — no disk writes
         var notifiable = new TestNotifiable();
         using var validateAgent = fixture.CreateValidateAgent();
         fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-        bool validated = validateAgent.RestoreAllFilesFromCurrentSetAligned(
+        bool validated = validateAgent.RestoreAllFilesFromCurrentSet(
             ignoreFailures: true, fileNotify: notifiable);
 
         Assert.True(validated, "Validation failed on edge-case files");
@@ -507,7 +507,7 @@ public class FileEdgeCaseTests
         }
         catch
         {
-            // Best effort â€” temp directories may be locked
+            // Best effort — temp directories may be locked
         }
     }
 

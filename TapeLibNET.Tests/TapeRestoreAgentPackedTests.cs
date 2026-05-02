@@ -540,7 +540,7 @@ public class TapeRestoreAgentPackedTests
         tree.AddFiles("legacy_to_packed", count: 8, minSize: 200, maxSize: 6 * 1024);
 
         using var fixture = new VirtualTapeFixture(profile);
-        fixture.BackupFiles(tree.Files, description: "Legacy backup, packed restore");
+        fixture.BackupFiles(tree.Files, useAligned: true, description: "Legacy backup, packed restore");
 
         // All addresses should be block-aligned for legacy backup.
         Assert.All(fixture.TOC[1], tfi => Assert.Equal(0u, tfi.Address.Offset));

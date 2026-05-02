@@ -80,9 +80,10 @@ namespace TapeLibNET
         // Writes the file data to tape and sets the hash on tfi.
         //  Does not modify the TOC — the caller appends tfi on success.
         //  Throws if any failure — for the caller to catch.
-        private void BackupFile(TapeFileInfo tfi)
+        [Obsolete("Use the non-Aligned (Packed) version")]
+        private void BackupFileAligned(TapeFileInfo tfi)
         {
-            m_logger.LogTrace("Backing up file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(BackupFile));
+            m_logger.LogTrace("Backing up file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(BackupFileAligned));
 
             using var wstream = OpenWriteContentStream(tfi.FileDescr.Length) ??
                 throw new TapeIOException(this, this, $"failed to open content write stream for >{tfi.FileDescr.FullName}<");
@@ -270,12 +271,15 @@ namespace TapeLibNET
             //  a different set (e.g. after RemoveLastEmptySet removed the original empty set)
             TOC.MarkCurrentSetIncremental(MultiVolumeContext.Value.incremental);
 
+#pragma warning disable CS0618 // Type or member is obsolete -- FIXME: transition period
             bool ok = MultiVolumeContext.Value.packed
                 ? BackupFilesToCurrentSet(newSet: true)
                 : BackupFilesToCurrentSetAligned(newSet: true);
+#pragma warning restore CS0618 // Type or member is obsolete
             return ok ? TapeResult.OK : TapeResult.Fail(this);
         }
 
+        [Obsolete("Use the non-Aligned (Packed) version")]
         private bool BackupFilesToCurrentSetAligned(bool newSet = true)
         {
             Debug.Assert(MultiVolumeContext != null);
@@ -344,7 +348,7 @@ namespace TapeLibNET
                         continue; // not a failure, yet post-processing not called
                     }
 
-                    BackupFile(tfi);
+                    BackupFileAligned(tfi);
 
                     // success — append to TOC; post-process notification is deferred until
                     //  AFTER the catch block so that an abort raised during notification
@@ -476,6 +480,7 @@ namespace TapeLibNET
         /// <summary>
         /// Expands file/directory patterns via <see cref="BuildFileNameList"/> and backs them up to the current set.
         /// </summary>
+        [Obsolete("Use the non-Aligned (Packed) version")]
         public TapeResult BackupFilesToCurrentSetAligned(bool newSet, List<string> fileAndDirectoryPatterns, bool recurseSubdirs, bool ignoreFailures = true,
             ITapeFileNotifiable? fileNotify = null)
         {
@@ -492,6 +497,7 @@ namespace TapeLibNET
         /// <param name="fileList">Fully resolved file paths to back up.</param>
         /// <param name="ignoreFailures">When <see langword="true"/>, continues after per-file errors.</param>
         /// <param name="fileNotify">Optional callback for progress, skip/retry/abort decisions.</param>
+        [Obsolete("Use the non-Aligned (Packed) version")]
         public TapeResult BackupFileListToCurrentSetAligned(bool newSet, List<string> fileList, bool ignoreFailures = true,
             ITapeFileNotifiable? fileNotify = null)
         {
@@ -532,10 +538,10 @@ namespace TapeLibNET
         // Writes the file (header + hashed body) via the packer's per-file façade.
         //  Returns the CommitToken so the caller can register the pending entry.
         //  Throws on any failure -- the caller catches and decides recovery.
-        private CommitToken BackupFilePacked(TapeFileInfo template, out byte[]? hash)
+        private CommitToken BackupFile(TapeFileInfo template, out byte[]? hash)
         {
             m_logger.LogTrace("Backing up (packed) file >{File}< in {Method}",
-                template.FileDescr.FullName, nameof(BackupFilePacked));
+                template.FileDescr.FullName, nameof(BackupFile));
 
             var wstream = Manager.BeginPackedFile() ??
                 throw new TapeIOException(this, this, $"failed to open packed write stream for >{template.FileDescr.FullName}<");
@@ -636,9 +642,9 @@ namespace TapeLibNET
                     var fileName = bc.fileList[bc.fileIndex];
 
                     FileInfo fileInfo = new(fileName);
-                    // Block field is unused on the packed path -- the real address comes
-                    //  from FilesCommitted. Use 0 as a placeholder.
-                    TapeFileInfo template = new(TOC.GenerateUID(), 0L, fileInfo);
+                    // Address field is unused on the packed path -- the real address comes
+                    //  from FilesCommitted. Use Zero as a placeholder.
+                    TapeFileInfo template = new(TOC.GenerateUID(), TapeAddress.Zero, fileInfo);
 
                     try
                     {
@@ -666,7 +672,7 @@ namespace TapeLibNET
                             continue;
                         }
 
-                        var token = BackupFilePacked(template, out var hash);
+                        var token = BackupFile(template, out var hash);
                         tracker.Register(token, template, bc.fileIndex, hash);
                     }
                     catch (TapeAbortRequestedException)

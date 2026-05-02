@@ -1,11 +1,11 @@
-﻿using TapeLibNET;
+using TapeLibNET;
 using TapeLibNET.Tests.Helpers;
 using Xunit.Abstractions;
 
 namespace TapeLibNET.Tests.Physical;
 
 /// <summary>
-/// Layer 3 — Physical Scenario Tests.
+/// Layer 3 � Physical Scenario Tests.
 /// <para>
 /// End-to-end scenarios that exercise the full agent pipeline
 /// (<see cref="TapeFileBackupAgent"/> / <see cref="TapeFileRestoreAgentEx"/>)
@@ -92,8 +92,8 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
     #region *** (1) TOC Persistence ***
 
     /// <summary>
-    /// TOC round-trip: Backup files → Save TOC → Close drive → Reopen drive →
-    /// Restore TOC → Verify set count and file metadata.
+    /// TOC round-trip: Backup files ? Save TOC ? Close drive ? Reopen drive ?
+    /// Restore TOC ? Verify set count and file metadata.
     /// <para>
     /// Uses <see cref="TapeDrive.CloseDrive"/>/<see cref="TapeDrive.ReopenDrive"/>
     /// instead of UnloadMedia/ReloadMedia to avoid physically ejecting the tape
@@ -153,7 +153,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
     #region *** (2) Single-Set Round-Trip ***
 
     /// <summary>
-    /// Backup a mixed set of files → TOC round-trip → Restore all → Byte-for-byte comparison.
+    /// Backup a mixed set of files ? TOC round-trip ? Restore all ? Byte-for-byte comparison.
     /// </summary>
     [SkippableFact]
     public void SingleSet_RoundTrips()
@@ -191,7 +191,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count; // last set
-            bool restored = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
+            bool restored = restoreAgent.RestoreAllFilesFromCurrentSet(
                 ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Restore failed");
@@ -214,7 +214,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
     #region *** (3) Multi-Set: First Set ***
 
     /// <summary>
-    /// Backup set A → Backup set B → Navigate to set A (first/oldest) → Restore → Verify.
+    /// Backup set A ? Backup set B ? Navigate to set A (first/oldest) ? Restore ? Verify.
     /// </summary>
     [SkippableFact]
     public void MultiSet_FirstSet_RoundTrips()
@@ -254,7 +254,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
             var restoreNotifiable = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
-            bool restored = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
+            bool restored = restoreAgent.RestoreAllFilesFromCurrentSet(
                 ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Restore of Set A failed");
@@ -275,7 +275,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
     #region *** (4) Multi-Set: Latest Set ***
 
     /// <summary>
-    /// Backup set A → Backup set B → Navigate to set B (latest) → Restore → Verify.
+    /// Backup set A ? Backup set B ? Navigate to set B (latest) ? Restore ? Verify.
     /// </summary>
     [SkippableFact]
     public void MultiSet_LatestSet_RoundTrips()
@@ -307,7 +307,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
             var restoreNotifiable = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
-            bool restored = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
+            bool restored = restoreAgent.RestoreAllFilesFromCurrentSet(
                 ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Restore of latest set failed");
@@ -328,7 +328,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
     #region *** (5) Multi-Set: Middle Set ***
 
     /// <summary>
-    /// Backup A → B → C → Navigate to middle set B (index 2) → Restore → Verify.
+    /// Backup A ? B ? C ? Navigate to middle set B (index 2) ? Restore ? Verify.
     /// </summary>
     [SkippableFact]
     public void MultiSet_MiddleSet_RoundTrips()
@@ -370,7 +370,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
             var restoreNotifiable = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
-            bool restored = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
+            bool restored = restoreAgent.RestoreAllFilesFromCurrentSet(
                 ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Restore of middle set B failed");
@@ -391,9 +391,9 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
     #region *** (6) Multi-Set: Random Files from Random Sets ***
 
     /// <summary>
-    /// Backup A → B → C → Select random files from sets A and C (skip B) →
+    /// Backup A ? B ? C ? Select random files from sets A and C (skip B) ?
     /// Restore via <see cref="TapeFileRestoreBaseAgent.RestoreFilesFromCurrentSetDownAligned"/>
-    /// with a pre-assembled <c>filesSelected</c> array → Verify only the selected
+    /// with a pre-assembled <c>filesSelected</c> array ? Verify only the selected
     /// files are present on disk.
     /// </summary>
     [SkippableFact]
@@ -443,9 +443,9 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
         // Build the filesSelected array: [0]=newest(C), [1]=middle(B=skip), [2]=oldest(A)
         var filesSelected = new List<TapeFileInfo>?[]
         {
-            selectedFromC,   // [0] = newest set (C) — selected files
-            [],              // [1] = middle set (B) — skip entirely
-            selectedFromA,   // [2] = oldest set (A) — selected files
+            selectedFromC,   // [0] = newest set (C) � selected files
+            [],              // [1] = middle set (B) � skip entirely
+            selectedFromA,   // [2] = oldest set (A) � selected files
         };
 
         // Position to the newest selected set and restore
@@ -457,7 +457,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
             var restoreNotifiable = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
 
-            bool restored = restoreAgent.RestoreFilesFromCurrentSetDownAligned(
+            bool restored = restoreAgent.RestoreFilesFromCurrentSetDown(
                 filesSelected, ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Selective restore failed");
@@ -503,7 +503,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
     #region *** (7) Validate Agent ***
 
     /// <summary>
-    /// Backup files → CRC validation pass (no restore to disk).
+    /// Backup files ? CRC validation pass (no restore to disk).
     /// Exercises <see cref="TapeFileValidateAgent"/> on real hardware.
     /// </summary>
     [SkippableFact]
@@ -526,7 +526,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
         using var validateAgent = fixture.CreateValidateAgent();
         var validateNotifiable = new TestNotifiable();
 
-        bool valid = validateAgent.RestoreAllFilesFromCurrentSetAligned(
+        bool valid = validateAgent.RestoreAllFilesFromCurrentSet(
             ignoreFailures: true, fileNotify: validateNotifiable);
 
         Assert.True(valid, "CRC validation failed");

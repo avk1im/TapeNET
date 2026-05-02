@@ -72,7 +72,7 @@ public class DeleteSetsTests
         using var restoreDir = new TempFileTree();
         using var restoreAgent = fixture.CreateRestoreAgent(restoreDir.RootPath);
         fixture.TOC.CurrentSetIndex = 1;
-        var restoreResult = restoreAgent.RestoreFilesFromCurrentSetDownAligned(
+        var restoreResult = restoreAgent.RestoreFilesFromCurrentSetDown(
             [null], // all files from set 1
             fileNotify: null);
         Assert.True(restoreResult, "Restore of retained set failed");

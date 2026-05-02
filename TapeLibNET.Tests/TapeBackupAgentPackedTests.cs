@@ -486,8 +486,13 @@ public class TapeBackupAgentPackedTests
         fixture.TOC.CurrentSetTOC.Description = "Legacy";
         fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
         fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
+        // FIXME transition: this test deliberately exercises the legacy aligned path
+        //  alongside the packed path to verify both can coexist within the same TOC.
+        //  Once the aligned API is removed, this test should be removed as well.
+#pragma warning disable CS0618 // Aligned API is intentionally used for coexistence coverage
         Assert.True((bool)agent.BackupFileListToCurrentSetAligned(
             newSet: true, tree2.Files, ignoreFailures: true, fileNotify: null));
+#pragma warning restore CS0618
         Assert.True(agent.BackupTOC());
 
         Assert.Equal(2, fixture.TOC.Count);

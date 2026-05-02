@@ -283,8 +283,8 @@ public class PartitionsVsSetmarksComparisonTests(ITestOutputHelper output)
                     partitions.TOC[i][j].FileDescr.Length,
                     setmarks.TOC[i][j].FileDescr.Length);
                 Assert.Equal(
-                    partitions.TOC[i][j].Block,
-                    setmarks.TOC[i][j].Block);
+                    partitions.TOC[i][j].Address,
+                    setmarks.TOC[i][j].Address);
             }
         }
     }
@@ -317,7 +317,7 @@ public class PartitionsVsSetmarksComparisonTests(ITestOutputHelper output)
 
         using (var agent1 = fixture.CreateBackupAgent())
         {
-            bool ok = agent1.BackupFileListToCurrentSetAligned(
+            bool ok = agent1.BackupFileListToCurrentSet(
                 newSet: true, tree1.Files, ignoreFailures: true);
             Assert.True(ok, "Set 1 backup failed");
 
@@ -335,7 +335,7 @@ public class PartitionsVsSetmarksComparisonTests(ITestOutputHelper output)
 
         using (var agent2 = fixture.CreateBackupAgent())
         {
-            bool ok = agent2.BackupFileListToCurrentSetAligned(
+            bool ok = agent2.BackupFileListToCurrentSet(
                 newSet: true, tree2.Files, ignoreFailures: true);
             Assert.True(ok, "Set 2 backup failed");
 
@@ -423,11 +423,11 @@ public class PartitionsVsSetmarksComparisonTests(ITestOutputHelper output)
                 var sEntry = setmarks.TOC[s][f];
 
                 string name = Path.GetFileName(pEntry.FileDescr.FullName);
-                bool blockMatch = pEntry.Block == sEntry.Block;
+                bool blockMatch = pEntry.Address == sEntry.Address;
 
                 _output.WriteLine(
                     $"  [{f}] {name}: " +
-                    $"P.Block={pEntry.Block} S.Block={sEntry.Block} " +
+                    $"P.Address={pEntry.Address} S.Address={sEntry.Address} " +
                     $"{(blockMatch ? "✓" : "✗ MISMATCH")} " +
                     $"Size={pEntry.FileDescr.Length}");
             }

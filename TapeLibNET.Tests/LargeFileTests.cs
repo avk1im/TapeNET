@@ -1,10 +1,10 @@
-ï»¿using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
 
 /// <summary>
 /// Tests for files exceeding 2 GB and 4 GB to verify 64-bit counter correctness
-/// throughout the backup â†’ restore â†’ verify pipeline.
+/// throughout the backup ? restore ? verify pipeline.
 /// <para>
 /// Resource-intensive: multi-GB virtual memory (memory-mapped) and disk I/O.
 /// Tagged with <c>[Trait("Category", "LargeFile")]</c> for selective execution.
@@ -12,7 +12,7 @@ namespace TapeLibNET.Tests;
 /// <para>
 /// <b>Exclude from routine runs:</b><br/>
 /// CLI: <c>dotnet test --filter "Category!=LargeFile"</c><br/>
-/// Visual Studio Test Explorer: filter by Trait â†’ Category â‰  LargeFile.
+/// Visual Studio Test Explorer: filter by Trait ? Category ? LargeFile.
 /// </para>
 /// </summary>
 [Trait("Category", "LargeFile")]
@@ -20,10 +20,10 @@ public class LargeFileTests
 {
     #region *** Constants ***
 
-    /// <summary>2 GB + 1 MB â€” just past <c>int.MaxValue</c> (2,147,483,647).</summary>
+    /// <summary>2 GB + 1 MB — just past <c>int.MaxValue</c> (2,147,483,647).</summary>
     private const long Size2GBPlus = 2L * 1024 * 1024 * 1024 + 1024 * 1024;
 
-    /// <summary>4 GB + 1 MB â€” just past <c>uint.MaxValue</c> (4,294,967,295).</summary>
+    /// <summary>4 GB + 1 MB — just past <c>uint.MaxValue</c> (4,294,967,295).</summary>
     private const long Size4GBPlus = 4L * 1024 * 1024 * 1024 + 1024 * 1024;
 
     #endregion
@@ -40,7 +40,7 @@ public class LargeFileTests
         using var tree = new TempFileTree();
         tree.AddSparseFile("large_2gb.dat", Size2GBPlus);
 
-        // 3 GB tape capacity â€” enough for the file plus TOC overhead
+        // 3 GB tape capacity — enough for the file plus TOC overhead
         using var fixture = new VirtualTapeFixture(
             DriveProfile.Setmarks,
             contentCapacity: 3L * 1024 * 1024 * 1024,
@@ -55,7 +55,7 @@ public class LargeFileTests
 
         notifiable.AssertAllSucceeded(1);
 
-        // BytesProcessed tracks cumulative logical bytes â€” should exceed int.MaxValue
+        // BytesProcessed tracks cumulative logical bytes — should exceed int.MaxValue
         Assert.True(stats.BytesProcessed > int.MaxValue,
             $"BytesProcessed ({stats.BytesProcessed}) should exceed int.MaxValue " +
             $"after backing up a {Size2GBPlus}-byte file");
@@ -73,7 +73,7 @@ public class LargeFileTests
             var restoreNotifiable = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            bool restored = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
+            bool restored = restoreAgent.RestoreAllFilesFromCurrentSet(
                 ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Restore failed");
@@ -131,7 +131,7 @@ public class LargeFileTests
             var restoreNotifiable = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            bool restored = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
+            bool restored = restoreAgent.RestoreAllFilesFromCurrentSet(
                 ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Restore failed");
@@ -162,7 +162,7 @@ public class LargeFileTests
         tree.AddSparseFile("batch/file_a.dat", Size2GBPlus);
         tree.AddSparseFile("batch/file_b.dat", Size2GBPlus);
 
-        // Two files Ã— 2.1 GB â‰ˆ 4.2 GB total â†’ 5 GB tape capacity
+        // Two files × 2.1 GB ˜ 4.2 GB total ? 5 GB tape capacity
         using var fixture = new VirtualTapeFixture(
             DriveProfile.Setmarks,
             contentCapacity: 5L * 1024 * 1024 * 1024,
@@ -177,7 +177,7 @@ public class LargeFileTests
 
         notifiable.AssertAllSucceeded(2);
 
-        // Cumulative BytesProcessed should exceed uint.MaxValue (2 Ã— 2.1 GB â‰ˆ 4.2 GB)
+        // Cumulative BytesProcessed should exceed uint.MaxValue (2 × 2.1 GB ˜ 4.2 GB)
         Assert.True(stats.BytesProcessed > uint.MaxValue,
             $"BytesProcessed ({stats.BytesProcessed}) should exceed uint.MaxValue " +
             $"after backing up {Size2GBPlus * 2} bytes across 2 files");
@@ -196,7 +196,7 @@ public class LargeFileTests
             var restoreNotifiable = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-            bool restored = restoreAgent.RestoreAllFilesFromCurrentSetAligned(
+            bool restored = restoreAgent.RestoreAllFilesFromCurrentSet(
                 ignoreFailures: true, fileNotify: restoreNotifiable);
 
             Assert.True(restored, "Restore failed");
@@ -216,7 +216,7 @@ public class LargeFileTests
     #region *** Validate Agent on Large Files ***
 
     /// <summary>
-    /// CRC-only validation of a file exceeding 2 GB â€” no disk writes, just
+    /// CRC-only validation of a file exceeding 2 GB — no disk writes, just
     /// verifies the tape data integrity via hash check.
     /// </summary>
     [Fact]
@@ -235,11 +235,11 @@ public class LargeFileTests
             description: ">2 GB validate",
             hashAlgorithm: TapeHashAlgorithm.Crc64);
 
-        // CRC-only validation â€” no disk writes
+        // CRC-only validation — no disk writes
         var notifiable = new TestNotifiable();
         using var validateAgent = fixture.CreateValidateAgent();
         fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
-        bool validated = validateAgent.RestoreAllFilesFromCurrentSetAligned(
+        bool validated = validateAgent.RestoreAllFilesFromCurrentSet(
             ignoreFailures: true, fileNotify: notifiable);
 
         Assert.True(validated, "Validation failed on >2 GB file");
@@ -287,7 +287,7 @@ public class LargeFileTests
         }
         catch
         {
-            // Best effort â€” temp directories may be locked
+            // Best effort — temp directories may be locked
         }
     }
 

@@ -1,4 +1,4 @@
-ï»¿using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
@@ -8,8 +8,8 @@ namespace TapeLibNET.Tests;
 /// Exercises backup sets that span volume boundaries for both regular and
 /// incremental modes, verifying:
 /// <list type="bullet">
-///   <item>Regular backup spanning 2+ volumes â†’ full restore from both volumes</item>
-///   <item>Incremental chain across volumes â†’ restore assembles correct versions</item>
+///   <item>Regular backup spanning 2+ volumes ? full restore from both volumes</item>
+///   <item>Incremental chain across volumes ? restore assembles correct versions</item>
 ///   <item>TOC persistence across volumes after save/reload</item>
 ///   <item>Backup and restore statistics consistency across volume boundaries</item>
 ///   <item>ContinuedFromPrevVolume / ContinuedOnNextVolume flags are set correctly</item>
@@ -33,14 +33,14 @@ public class MultiVolumeBackupRestoreTests
 #pragma warning restore CA1825 // Avoid zero-length array allocations
 
     /// <summary>
-    /// Content capacity per volume â€” small enough to trigger volume overflow with
+    /// Content capacity per volume — small enough to trigger volume overflow with
     /// a moderate number of files, large enough for TOC + a few files per volume.
     /// With 16 KB block size, ~8 files of 16..32 KB each should fill a volume.
     /// </summary>
     private const long VolumeCapacity = 256L * 1024;
 
     /// <summary>
-    /// Number of files to create â€” enough to span at least 2 volumes at
+    /// Number of files to create — enough to span at least 2 volumes at
     /// <see cref="VolumeCapacity"/> bytes each.
     /// </summary>
     private const int FileCount = 16;
@@ -97,7 +97,7 @@ public class MultiVolumeBackupRestoreTests
     #endregion
 
 
-    #region *** Regular Backup â†’ Multi-Volume â†’ Restore ***
+    #region *** Regular Backup ? Multi-Volume ? Restore ***
 
     /// <summary>
     /// A regular (non-incremental) backup that exceeds volume capacity should
@@ -113,7 +113,7 @@ public class MultiVolumeBackupRestoreTests
 
         using var fixture = new MultiVolumeVirtualTapeFixture(profile, VolumeCapacity);
 
-        // Backup â€” should span to at least volume 2
+        // Backup — should span to at least volume 2
         var stats = fixture.BackupFiles(tree.Files, "Regular multi-volume");
 
         Assert.Equal(FileCount, stats.FilesSucceeded);
@@ -145,7 +145,7 @@ public class MultiVolumeBackupRestoreTests
             // For multi-volume restore, we need to position to the latest set
             fixture.TOC.MakeLastSetCurrent();
 
-            var restoreStats = fixture.RestoreAllFilesFromCurrentSetAligned(restoreDir);
+            var restoreStats = fixture.RestoreAllFilesFromCurrentSet(restoreDir);
 
             Assert.Equal(FileCount, restoreStats.FilesSucceeded);
             Assert.Equal(0, restoreStats.FilesFailed);
@@ -201,7 +201,7 @@ public class MultiVolumeBackupRestoreTests
     #endregion
 
 
-    #region *** Incremental Backup â†’ Multi-Volume â†’ Restore ***
+    #region *** Incremental Backup ? Multi-Volume ? Restore ***
 
     /// <summary>
     /// Full backup on volume 1, then incremental backup that also spans to volume 2.
@@ -227,12 +227,12 @@ public class MultiVolumeBackupRestoreTests
         Assert.Equal(8, stats0.FilesSucceeded);
         int volumeAfterFull = fixture.CurrentVolume;
 
-        // Modify all files â€” this ensures every file is included in the incremental backup,
+        // Modify all files — this ensures every file is included in the incremental backup,
         //  making it large enough to span volumes
         for (int i = 0; i < tree.Files.Count; i++)
             tree.ModifyFile(tree.Files[i], version: 1);
 
-        // Wave 1: Incremental backup â€” should span to another volume
+        // Wave 1: Incremental backup — should span to another volume
         //  (backing up all 8 modified files, same sizes, plus overhead)
         var stats1 = fixture.BackupFiles(tree.Files, "Incremental multi-vol", incremental: true);
         Assert.Equal(8, stats1.FilesSucceeded);
@@ -247,9 +247,9 @@ public class MultiVolumeBackupRestoreTests
         try
         {
             fixture.TOC.MakeLastSetCurrent();
-            var restoreStats = fixture.RestoreFilesFromCurrentSetIncAligned(restoreDir);
+            var restoreStats = fixture.RestoreFilesFromCurrentSetInc(restoreDir);
 
-            // All 8 files should be restored â€” latest version from inc sets
+            // All 8 files should be restored — latest version from inc sets
             Assert.Equal(8, restoreStats.FilesSucceeded);
             Assert.Equal(0, restoreStats.FilesFailed);
 
@@ -268,7 +268,7 @@ public class MultiVolumeBackupRestoreTests
     }
 
     /// <summary>
-    /// Full backup â†’ modify a subset â†’ incremental backup. All on volumes that span.
+    /// Full backup ? modify a subset ? incremental backup. All on volumes that span.
     /// Incremental restore should pick latest file versions from the correct set.
     /// </summary>
     [Theory]
@@ -280,14 +280,14 @@ public class MultiVolumeBackupRestoreTests
 
         using var fixture = new MultiVolumeVirtualTapeFixture(profile, VolumeCapacity);
 
-        // Wave 0: Full backup â€” spans multiple volumes
+        // Wave 0: Full backup — spans multiple volumes
         fixture.BackupFiles(tree.Files, "Full backup");
 
         // Modify first half of files
         for (int i = 0; i < FileCount / 2; i++)
             tree.ModifyFile(tree.Files[i], version: 1);
 
-        // Wave 1: Incremental â€” only modified files backed up, may span volumes
+        // Wave 1: Incremental — only modified files backed up, may span volumes
         var stats1 = fixture.BackupFiles(tree.Files, "Incremental 1", incremental: true);
         Assert.Equal(FileCount / 2, stats1.FilesSucceeded);
         Assert.Equal(FileCount / 2, stats1.FilesSkipped);
@@ -297,7 +297,7 @@ public class MultiVolumeBackupRestoreTests
         try
         {
             fixture.TOC.MakeLastSetCurrent();
-            var restoreStats = fixture.RestoreFilesFromCurrentSetIncAligned(restoreDir);
+            var restoreStats = fixture.RestoreFilesFromCurrentSetInc(restoreDir);
 
             // All files restored
             Assert.Equal(FileCount, restoreStats.FilesSucceeded);
@@ -370,7 +370,7 @@ public class MultiVolumeBackupRestoreTests
         try
         {
             fixture.TOC.MakeLastSetCurrent();
-            var restoreStats = fixture.RestoreAllFilesFromCurrentSetAligned(restoreDir);
+            var restoreStats = fixture.RestoreAllFilesFromCurrentSet(restoreDir);
 
             Assert.Equal(FileCount, restoreStats.FilesSucceeded);
 
@@ -390,7 +390,7 @@ public class MultiVolumeBackupRestoreTests
 
     /// <summary>
     /// Verifies that backup and restore statistics are consistent across volume
-    /// boundaries â€” total files, succeeded, failed, skipped, and bytes.
+    /// boundaries — total files, succeeded, failed, skipped, and bytes.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -419,7 +419,7 @@ public class MultiVolumeBackupRestoreTests
             fixture.TOC.MakeLastSetCurrent();
 
             var restoreNotifiable = new TestNotifiable();
-            var restoreStats = fixture.RestoreAllFilesFromCurrentSetAligned(restoreDir,
+            var restoreStats = fixture.RestoreAllFilesFromCurrentSet(restoreDir,
                 notifiable: restoreNotifiable);
 
             // Restore invariant
@@ -462,7 +462,7 @@ public class MultiVolumeBackupRestoreTests
 
         using var fixture = new MultiVolumeVirtualTapeFixture(profile, VolumeCapacity);
 
-        // Set 1: first batch â€” may span volumes
+        // Set 1: first batch — may span volumes
         fixture.BackupFiles(tree.Files, "Set 1 - batch 1");
         int set1Count = fixture.TOC.Count; // may be >1 if spanned
 
@@ -474,12 +474,12 @@ public class MultiVolumeBackupRestoreTests
         Assert.True(fixture.TOC.Count > set1Count,
             "Second backup should add at least one more set");
 
-        // Restore set 2 (latest) â€” should yield only batch2 files
+        // Restore set 2 (latest) — should yield only batch2 files
         string restoreDir2 = Path.Combine(Path.GetTempPath(), $"TapeNET_MVSet2_{Guid.NewGuid():N}");
         try
         {
             fixture.TOC.MakeLastSetCurrent();
-            var stats2 = fixture.RestoreAllFilesFromCurrentSetAligned(restoreDir2);
+            var stats2 = fixture.RestoreAllFilesFromCurrentSet(restoreDir2);
 
             Assert.Equal(batch2.Count, stats2.FilesSucceeded);
 
@@ -527,13 +527,13 @@ public class MultiVolumeBackupRestoreTests
         }
         Assert.True(continuedSetIdx > 0, "Expected a continued set");
 
-        // Restore from the continued set â€” should trigger multi-volume swap to volume 1
+        // Restore from the continued set — should trigger multi-volume swap to volume 1
         fixture.TOC.CurrentSetIndex = continuedSetIdx;
 
         string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_MVCont_{Guid.NewGuid():N}");
         try
         {
-            var restoreStats = fixture.RestoreAllFilesFromCurrentSetAligned(restoreDir);
+            var restoreStats = fixture.RestoreAllFilesFromCurrentSet(restoreDir);
 
             Assert.Equal(FileCount, restoreStats.FilesSucceeded);
 
@@ -552,7 +552,7 @@ public class MultiVolumeBackupRestoreTests
     #region *** Incremental with Full Backup on Different Volumes ***
 
     /// <summary>
-    /// Full backup spans volumes 1â€“2. Then files are modified and an incremental backup
+    /// Full backup spans volumes 1–2. Then files are modified and an incremental backup
     /// is performed (may land on volume 2 or 3). Incremental restore should find the
     /// full backup's files across volumes and combine with the incremental updates.
     /// </summary>
@@ -565,7 +565,7 @@ public class MultiVolumeBackupRestoreTests
 
         using var fixture = new MultiVolumeVirtualTapeFixture(profile, VolumeCapacity);
 
-        // Full backup â€” spans volumes
+        // Full backup — spans volumes
         fixture.BackupFiles(tree.Files, "Full spanning");
 
         // Modify 4 files to version 1
@@ -582,7 +582,7 @@ public class MultiVolumeBackupRestoreTests
         try
         {
             fixture.TOC.MakeLastSetCurrent();
-            var restoreStats = fixture.RestoreFilesFromCurrentSetIncAligned(restoreDir);
+            var restoreStats = fixture.RestoreFilesFromCurrentSetInc(restoreDir);
 
             Assert.Equal(FileCount, restoreStats.FilesSucceeded);
             Assert.Equal(0, restoreStats.FilesFailed);
@@ -669,7 +669,7 @@ public class MultiVolumeBackupRestoreTests
         }
         catch
         {
-            // Best effort â€” temp directories may be locked
+            // Best effort — temp directories may be locked
         }
     }
 
