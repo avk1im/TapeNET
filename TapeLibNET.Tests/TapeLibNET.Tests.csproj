@@ -24,6 +24,7 @@
     <PackageReference Include="Xunit.SkippableFact" Version="1.5.61" />
     <PackageReference Include="Grpc.AspNetCore" Version="2.67.0" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="8.0.1" />
   </ItemGroup>
 
   <ItemGroup>

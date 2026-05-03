@@ -45,6 +45,12 @@ namespace TapeLibNET
         private WorkerThreadTapeWriteBackend? m_packerBackend;
         private TapeFileWritePacker? m_packer;
 
+        // Bytes already handed off to the drive by the packer in the current content
+        //  session. Used to enforce CapacityForCurrentSet (which reserves room for the
+        //  TOC when there's no Initiator partition) -- the aligned path enforces this in
+        //  ProduceWriteContentStream, and the packed path enforces it in PackerWriteSink.
+        private long m_packerBytesWritten;
+
         // Read-side packer: lazily constructed inside BeginPackedFileRead and torn down
         //  by EndReadContent. Both remain null while the manager is not in
         //  TapeState.ReadingContent.
@@ -383,14 +389,33 @@ namespace TapeLibNET
             // Flush + dispose the packer first so any tail-block writes complete before
             //  the set is closed with a setmark. Errors are logged but do not abort the
             //  state transition -- we still want to leave WritingContent cleanly.
+            //  EOM during the final flush is special: capture it, finish the state
+            //  transition, then rethrow so the agent can roll back uncommitted files
+            //  and continue on the next volume.
+            TapePackerEndOfMediaException? pendingEom = null;
             if (WentOK)
-                FlushAndDisposePacker();
+            {
+                try { FlushAndDisposePacker(); }
+                catch (TapePackerEndOfMediaException eom)
+                {
+                    pendingEom = eom;
+                    LastErrorWin32 = WIN32_ERROR.ERROR_END_OF_MEDIA;
+                }
+            }
 
-            if (WentOK)
+            // Always try to close the set + transition state, even on EOM, so the
+            //  manager is left in a consistent state for the multi-volume retry.
+            if (pendingEom is not null || WentOK)
                 EndWriteContentSet(); // will call Navigator.OnContentWritten()
 
-            if (WentOK)
+            if (pendingEom is not null || WentOK)
                 State.TransitionTo(TapeState.MediaPrepared);
+
+            if (pendingEom is not null)
+            {
+                m_logger.LogTrace("Drive #{Drive}: EOM during final packer flush; surfacing to caller", DriveNumber);
+                throw pendingEom;
+            }
 
             if (WentOK)
                 m_logger.LogTrace("Drive #{Drive}: Content written", DriveNumber);
@@ -760,9 +785,50 @@ namespace TapeLibNET
         {
             try
             {
+                // Enforce CapacityForCurrentSet only when the TOC is co-located with content
+                //  (no Initiator partition) -- there we MUST leave room for the TOC at the end.
+                //  When an Initiator partition is present, the drive's real EOM is authoritative
+                //  and we let it surface through Drive.WriteDirect's eof flag below; clamping
+                //  here would needlessly roll back files that would otherwise have committed.
+                //  The artificial ContentCapacityLimit (test/diagnostic knob) is honored in either case.
+                bool enforceReserved = CapacityForCurrentSet >= 0 && !Drive.HasInitiatorPartition;
+                if (enforceReserved || ContentCapacityLimit > 0L)
+                {
+                    long remaining = long.MaxValue;
+                    if (enforceReserved)
+                        remaining = CapacityForCurrentSet - m_packerBytesWritten;
+                    if (ContentCapacityLimit > 0L)
+                        remaining = Math.Min(remaining, ContentCapacityLimit - m_packerBytesWritten);
+
+                    if (validBytes > remaining)
+                    {
+                        // Allow the portion that still fits to go through (block-aligned),
+                        //  then synthesize EOM so the packer rolls back only the tail
+                        //  pending tokens that didn't fit. Mirrors what a real drive would
+                        //  do: write what it can, return EOM.
+                        uint blockSize = Drive.BlockSize;
+                        int writable = (remaining > 0 && blockSize > 0)
+                            ? (int)(remaining - (remaining % blockSize))
+                            : 0;
+
+                        m_logger.LogTrace("Drive #{Drive}: Packer hit reserved capacity ({Written}+{Bytes} > {Cap}); writing {Writable} B then EOM",
+                            DriveNumber, m_packerBytesWritten, validBytes, CapacityForCurrentSet, writable);
+
+                        int partialBlocks = 0;
+                        if (writable > 0)
+                        {
+                            int w = Drive.WriteDirect(buffer, 0, writable, out _, out _);
+                            partialBlocks = w / (int)blockSize;
+                            m_packerBytesWritten += w;
+                        }
+                        return new WriteResult(partialBlocks, EomEncountered: true, Exception: null);
+                    }
+                }
+
                 int written = Drive.WriteDirect(buffer, 0, validBytes, out _, out bool eof);
 
                 int blocks = written / (int)Drive.BlockSize;
+                m_packerBytesWritten += written;
 
                 // Map drive errors. Treat ERROR_END_OF_MEDIA as the EOM status; everything
                 //  else surfaces as a hard error exception per the backend contract.
@@ -799,6 +865,7 @@ namespace TapeLibNET
             }
 
             m_packerBackend = new WorkerThreadTapeWriteBackend(PackerWriteSink, blockSize, m_logger);
+            m_packerBytesWritten = 0;
 
             // Anchor packer to the current absolute drive block so the TapeAddress values
             //  it surfaces (and we store in the TOC) match the legacy backup's convention
@@ -823,18 +890,25 @@ namespace TapeLibNET
         }
 
         // Drain and tear down the packer + backend. Idempotent.
+        //  Surfaces TapePackerEndOfMediaException raised during the final flush so the
+        //  caller (agent) can roll back uncommitted files and arrange a multi-volume
+        //  continuation. Backend disposal still happens in either case.
         private void FlushAndDisposePacker()
         {
             if (m_packer is null)
                 return;
 
+            TapePackerEndOfMediaException? pendingEom = null;
             try
             {
                 // Dispose flushes the fill buffer, which fires FilesCommitted for the
                 //  tail commits. Unsubscribe AFTER disposal so those tail notifications
                 //  reach OnPackerFilesCommitted (and downstream subscribers).
                 m_packer.Dispose(); // calls Flush() internally
-                m_packer.FilesCommitted -= OnPackerFilesCommitted;
+            }
+            catch (TapePackerEndOfMediaException eom)
+            {
+                pendingEom = eom;
             }
             catch (Exception ex)
             {
@@ -842,6 +916,7 @@ namespace TapeLibNET
             }
             finally
             {
+                m_packer.FilesCommitted -= OnPackerFilesCommitted;
                 m_packer = null;
             }
 
@@ -859,6 +934,9 @@ namespace TapeLibNET
             }
 
             m_logger.LogTrace("Drive #{Drive}: Packer disposed", DriveNumber);
+
+            if (pendingEom is not null)
+                throw pendingEom;
         }
 
         /// <summary>
@@ -894,6 +972,13 @@ namespace TapeLibNET
             try
             {
                 return m_packer.BeginFile();
+            }
+            catch (TapePackerEndOfMediaException)
+            {
+                // rethrow EOM as ERROR_END_OF_MEDIA to the agent to catch and handle.
+                m_logger.LogTrace("Drive #{Drive}: EOM during packer BeginFile; rethrowing to caller", DriveNumber);
+                LastErrorWin32 = WIN32_ERROR.ERROR_END_OF_MEDIA;
+                throw;
             }
             catch (Exception ex)
             {

@@ -153,6 +153,7 @@ internal sealed class TapeFileWritePacker : IDisposable
     /// Open a logical write slot for one file. Returns a stream the caller writes the
     /// source bytes into. The file's <see cref="TapeAddress"/> is not known yet; it is
     /// reported via <see cref="FilesCommitted"/> after the file's tail block is on tape.
+    /// <para>May throw <see cref="TapePackerEndOfMediaException"/> since attempts to harvest!</para>
     /// </summary>
     public TapeWriteStreamFacade BeginFile()
     {
@@ -181,6 +182,7 @@ internal sealed class TapeFileWritePacker : IDisposable
     /// <summary>
     /// Close the open file. Returns its <see cref="CommitToken"/> for correlation with
     /// the eventual <see cref="FilesCommitted"/> notification.
+    /// <para>Does NOT throw <see cref="TapePackerEndOfMediaException"/> since doesn't attempt to harvest.</para>
     /// </summary>
     public CommitToken EndFile()
     {
@@ -543,7 +545,13 @@ internal sealed class TapeFileWritePacker : IDisposable
             return;
 
         // Flush BEFORE flipping the disposed flag — Flush itself early-returns when disposed.
+        //  EOM during the final flush is the only error condition worth propagating to the
+        //  caller (so the agent can roll back uncommitted files and continue on a new volume).
+        //  Capture it, complete disposal cleanup, then rethrow. Other exceptions are logged
+        //  and swallowed -- disposal must not leak resources.
+        TapePackerEndOfMediaException? pendingEom = null;
         try { Flush(); }
+        catch (TapePackerEndOfMediaException eom) { pendingEom = eom; }
         catch (Exception ex) { _logger.LogDebug(ex, "Flush during TapeFileWritePacker.Dispose threw"); }
 
         _disposed = true;
@@ -558,6 +566,9 @@ internal sealed class TapeFileWritePacker : IDisposable
 
         _openStream?.MarkClosed();
         _openStream = null;
+
+        if (pendingEom is not null)
+            throw pendingEom;
     }
 
     private void ThrowIfDisposed()

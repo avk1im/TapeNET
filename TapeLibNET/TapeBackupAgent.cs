@@ -229,6 +229,12 @@ namespace TapeLibNET
             internal int fileIndex = 0;
             internal bool overallSuccess = true;
             internal bool prevVolumeHasFiles = false; // true when the set on the previous volume had files written
+
+            // Snapshot of the previous-volume set's metadata, captured at EOM time. The next
+            //  volume creates a fresh continuation set from these params (no cloning) -- the
+            //  previous-volume set instance may have been removed (RemoveLastEmptySet) before
+            //  saving the full volume's TOC, so we cannot rely on it being there at resume.
+            internal TapeSetTOCParams? continuationSetParams = null;
         }
         private TapeBackupContext? MultiVolumeContext { get; set; } = null;
         /// <summary>Whether a multi-volume continuation context is available (end-of-media was hit during backup).</summary>
@@ -236,8 +242,13 @@ namespace TapeLibNET
 
         /// <summary>
         /// Continues the backup onto a new volume after the caller has loaded fresh media.
-        /// <para>Renews the navigator, increments the volume number, clones the current set TOC,
-        ///  and resumes from the file that triggered end-of-media.</para>
+        /// <para>Renews the navigator, increments the volume number, creates a fresh
+        ///  continuation set TOC seeded from the metadata captured at EOM time, and resumes
+        ///  from the file that triggered end-of-media.</para>
+        /// <para>No cloning of the previous-volume set is performed: per policy, the previous
+        ///  volume's TOC may have had its trailing empty set removed before being saved, so
+        ///  there may not be a suitable set to clone. Instead the metadata
+        ///  (<see cref="TapeSetTOCParams"/>) is carried over via the multi-volume context.</para>
         /// </summary>
         public TapeResult ResumeBackupToNextVolume()
         {
@@ -254,22 +265,22 @@ namespace TapeLibNET
             }
 
             Debug.Assert(MultiVolumeContext != null);
-            Debug.Assert(TOC.Count > 0); // we must have at least one set from previous volume
+            Debug.Assert(MultiVolumeContext.Value.continuationSetParams != null);
 
             TOC.Volume++;
             TOC.ContinuedOnNextVolume = false;
 
-            // Create the new set TOC with the same settings as the last set of the previous volume.
-            // contFromPrevVolume is true only when the set on the previous volume actually had files
-            //  written — otherwise RemoveLastEmptySet may have removed the empty set, and the
-            //  "current" set is now a different (earlier) one that should not be continued.
-            bool isContinuation = MultiVolumeContext.Value.prevVolumeHasFiles;
-            TOC.CloneCurrentSetTOC(contFromPrevVolume: isContinuation);
-            TOC.CurrentSetTOC.Description += $" ({TOC.Volume})";
-
-            // Preserve the original incremental flag — CloneCurrentSetTOC may have cloned
-            //  a different set (e.g. after RemoveLastEmptySet removed the original empty set)
-            TOC.MarkCurrentSetIncremental(MultiVolumeContext.Value.incremental);
+            // Create the new set TOC from the metadata captured on EOM.
+            //  contFromPrevVolume is true only when the set on the previous volume actually
+            //  had files written -- otherwise the trailing empty set was (or should be)
+            //  removed and the new set is logically a fresh start, not a continuation.
+            var setParams = MultiVolumeContext.Value.continuationSetParams! with
+            {
+                Description = MultiVolumeContext.Value.continuationSetParams!.Description + $" ({TOC.Volume})",
+                Incremental = MultiVolumeContext.Value.incremental,
+            };
+            TOC.AddContinuationSetTOC(setParams,
+                contFromPrevVolume: MultiVolumeContext.Value.prevVolumeHasFiles);
 
 #pragma warning disable CS0618 // Type or member is obsolete -- FIXME: transition period
             bool ok = MultiVolumeContext.Value.packed
@@ -396,8 +407,13 @@ namespace TapeLibNET
 
                         // Record whether the current set has files — needed by ResumeBackupToNextVolume
                         //  to decide contFromPrevVolume (an empty set removed by RemoveLastEmptySet
-                        //  means the clone source will be a different, earlier set)
+                        //  means the next volume should NOT be marked as continued from this one)
                         bc.prevVolumeHasFiles = TOC.CurrentSetTOC.Count > 0;
+
+                        // Snapshot the current set's metadata so the next volume can create a
+                        //  fresh continuation set without depending on the previous-volume set
+                        //  instance (which may be removed if it ended up empty).
+                        bc.continuationSetParams = TOC.CurrentSetTOC.ToParams();
 
                         // Make sure to set MultiVolumeContext before calling NotifyFileFailed()
                         //  so that CanResumeToNextVolume indicates true already
@@ -632,6 +648,91 @@ namespace TapeLibNET
 
             Manager.FilesCommitted += OnCommitted;
 
+            bool eomHandled = false; // EOM has been handled -- MultiVolumeContext has been set up
+
+            // Single handler for EOM raised by the packer at any point: from inside the
+            //  per-file write loop OR from the final flush during Manager.EndWriteContent().
+            //  Returns true iff the caller should report failure and bail out (the only
+            //  case where it returns false is when the user chose Abort during the
+            //  failure notification, in which case bc.overallSuccess is set instead).
+            //
+            //  The handler is responsible for:
+            //   (1) capturing continuation metadata (set params, file index, prev-vol-has-files)
+            //   (2) ensuring Manager.EndWriteContent() runs so the write session is closed
+            //       before the caller swaps volumes -- otherwise the packer / write state
+            //       would leak across volumes.
+            //   (3) notifying the failed file and the batch end.
+            bool HandleEom(TapePackerEndOfMediaException eomEx, int currentFileIndex, TapeFileInfo? currentTemplate)
+            {
+                SetError((uint)WIN32_ERROR.ERROR_END_OF_MEDIA);
+
+                int earliestRolledIndex = tracker.RemoveRolledBack(
+                    eomEx.RolledBackTokens, currentFileIndex, out var earliestTemplate);
+
+                // Prefer the template carried by the current iteration (if any); otherwise
+                //  fall back to the earliest rolled-back file's template so the failure
+                //  notification can name a real file.
+                var reportTemplate = currentTemplate ?? earliestTemplate;
+
+                m_logger.LogWarning("{Method}: EOM at file #{Number} >{File}<; {RolledBack} pending file(s) rolled back",
+                    nameof(BackupFilesToCurrentSet), earliestRolledIndex + 1,
+                    reportTemplate?.FileDescr.FullName ?? "(unknown)", eomEx.RolledBackTokens.Count);
+
+                // Undo skips that occurred between the earliest rolled-back file and the
+                //  current file index. These files will be re-processed on the next volume,
+                //  so their skip counts must not carry forward. The number of skipped files
+                //  in the range is the total files in [earliestRolledIndex, currentFileIndex)
+                //  minus the ones that were actually written (and are now rolled back).
+                int filesInRange = currentFileIndex - earliestRolledIndex;
+                int skipsToUndo = filesInRange - eomEx.RolledBackTokens.Count;
+                if (skipsToUndo > 0)
+                    StatsUndoSkips(skipsToUndo);
+
+                BytesBackedupMarker = BytesBackedup;
+                // Snapshot continuation metadata BEFORE EndWriteContent (which may finalize/clear
+                //  the current set). prevVolumeHasFiles reflects what was actually committed.
+                bc.prevVolumeHasFiles = TOC.CurrentSetTOC.Count > 0;
+                bc.continuationSetParams = TOC.CurrentSetTOC.ToParams();
+                bc.fileIndex = earliestRolledIndex;
+                MultiVolumeContext = bc;
+
+                // Always close the write session so the packer/state are clean for the
+                //  next volume. EndWriteContent() handles the post-EOM case (state was
+                //  already transitioned by the throwing path) and is idempotent on
+                //  MediaPrepared. A second EOM from final flush is unlikely here (the
+                //  packer just rolled back) but still possible if a partially-flushed
+                //  block is pending; treat it as already-handled.
+                try
+                {
+                    if (!Manager.EndWriteContent())
+                    {
+                        SyncErrorFrom(Manager);
+                        m_logger.LogDebug("EndWriteContent reported failure during EOM handling in {Method}",
+                            nameof(BackupFilesToCurrentSet));
+                    }
+                }
+                catch (TapePackerEndOfMediaException secondEom)
+                {
+                    m_logger.LogDebug(secondEom, "Second EOM during EndWriteContent in EOM handler -- ignored");
+                }
+
+                if (reportTemplate is not null)
+                {
+                    if (NotifyFileFailed(bc.fileNotify, reportTemplate, eomEx) == FileFailedAction.Abort)
+                    {
+                        bc.overallSuccess = false;
+                        return false;
+                    }
+                    StatsUndoFailure(); // file will be re-tried on next volume
+                }
+
+                NotifyBatchEnd(bc.fileNotify);
+
+                TOC.ContinuedOnNextVolume = true;
+                Debug.Assert(CanResumeToNextVolume);
+                return true;
+            }
+
             try
             {
                 m_logger.LogTrace("Continuing (multi-volume, packed) backup from file #{Number} >{File}<",
@@ -654,7 +755,7 @@ namespace TapeLibNET
                         {
                             NotifyFileSkipped(bc.fileNotify, template);
                             m_logger.LogTrace("File #{Number} >{File}< skipped per pre-processor request",
-                                _stats.FilesProcessed, fileName);
+                                bc.fileIndex + 1, fileName);
                             continue;
                         }
 
@@ -662,13 +763,13 @@ namespace TapeLibNET
                             throw new FileNotFoundException("File not found", fileName);
 
                         m_logger.LogTrace("Backing up (packed) file #{Number} >{File}< of length {Length}",
-                            _stats.FilesProcessed + 1, fileName, Helpers.BytesToString(fileInfo.Length));
+                            bc.fileIndex + 1, fileName, Helpers.BytesToString(fileInfo.Length));
 
                         if (TOC.CurrentSetTOC.Incremental && TOC.IsFileUptodateInc(fileInfo))
                         {
                             NotifyFileSkipped(bc.fileNotify, template);
                             m_logger.LogTrace("File #{Number} >{File}< found up-to-date in an incremental set -> skipping",
-                                _stats.FilesProcessed, fileName);
+                                bc.fileIndex + 1, fileName);
                             continue;
                         }
 
@@ -678,42 +779,24 @@ namespace TapeLibNET
                     catch (TapeAbortRequestedException)
                     {
                         m_logger.LogTrace("{Method}: Abort requested before file #{Number} >{File}< was written",
-                            nameof(BackupFilesToCurrentSet), _stats.FilesProcessed + 1, fileName);
+                            nameof(BackupFilesToCurrentSet), bc.fileIndex + 1, fileName);
                         bc.overallSuccess = false;
                         break;
                     }
                     catch (TapePackerEndOfMediaException eomEx)
                     {
-                        // EOM during packer harvest. The packer rolled back the listed pending
-                        //  tokens; rewind bc.fileIndex to the earliest rolled-back file (or the
-                        //  current file if it was the open one).
-                        SetError((uint)WIN32_ERROR.ERROR_END_OF_MEDIA);
-                        m_logger.LogWarning("{Method}: EOM at file #{Number} >{File}<; {RolledBack} pending file(s) rolled back",
-                            nameof(BackupFilesToCurrentSet), _stats.FilesProcessed + 1, fileName, eomEx.RolledBackTokens.Count);
-
-                        int earliestRolledIndex = tracker.RemoveRolledBack(eomEx.RolledBackTokens, bc.fileIndex);
-
-                        BytesBackedupMarker = BytesBackedup;
-                        bc.prevVolumeHasFiles = TOC.CurrentSetTOC.Count > 0;
-                        bc.fileIndex = earliestRolledIndex;
-                        MultiVolumeContext = bc;
-
-                        if (NotifyFileFailed(bc.fileNotify, template, eomEx) == FileFailedAction.Abort)
-                            break;
-                        StatsUndoFailure(); // file will be re-tried on next volume
-
-                        NotifyBatchEnd(bc.fileNotify);
-
-                        TOC.ContinuedOnNextVolume = true;
-                        Debug.Assert(CanResumeToNextVolume);
-                        return false;
+                        // EOM during packer harvest inside the loop. The packer rolled
+                        //  back the listed pending tokens. Delegate to the shared handler.
+                        eomHandled = HandleEom(eomEx, bc.fileIndex, template);
+                        // do NOT return here since we still need to go thru tracker.DrainPostProcess()!
+                        break;
                     }
                     catch (Exception ex)
                     {
                         SetError(ex);
 
                         m_logger.LogWarning("{Method}: File #{Number} >{File}< backup failed. Exception: {Ex}",
-                            nameof(BackupFilesToCurrentSet), _stats.FilesProcessed + 1, fileName, ex);
+                            nameof(BackupFilesToCurrentSet), bc.fileIndex + 1, fileName, ex);
 
                         // Per-file failure on the packed path: BackupFilePacked already called
                         //  Packer.DiscardOpenFile to truncate the open file's tail. We do NOT
@@ -754,11 +837,20 @@ namespace TapeLibNET
                 //  the tail commits, so the TOC is fully populated before we proceed.
                 //  The subscription must remain active here -- otherwise tail commits would
                 //  bypass the tracker and PendingCount would stay non-zero.
-                if (!Manager.EndWriteContent())
+                //  EOM may surface here too: due to packer buffering the tape may not run
+                //  out until the very last flush. The shared HandleEom takes care of it.
+                try
                 {
-                    SyncErrorFrom(Manager);
-                    m_logger.LogWarning("EndWriteContent failed during {Method}", nameof(BackupFilesToCurrentSet));
-                    bc.overallSuccess = false;
+                    if (!Manager.EndWriteContent())
+                    {
+                        SyncErrorFrom(Manager);
+                        m_logger.LogWarning("EndWriteContent failed during {Method}", nameof(BackupFilesToCurrentSet));
+                        bc.overallSuccess = false;
+                    }
+                }
+                catch (TapePackerEndOfMediaException eomEx)
+                {
+                    eomHandled = HandleEom(eomEx, bc.fileIndex, currentTemplate: null);
                 }
 
                 // Drain post-process for tail commits that arrived during EndWriteContent.
@@ -775,6 +867,17 @@ namespace TapeLibNET
             finally
             {
                 Manager.FilesCommitted -= OnCommitted;
+            }
+
+            if (eomHandled)
+            {
+                Debug.Assert(CanResumeToNextVolume);
+                bc.overallSuccess = false;
+                
+                m_logger.LogTrace("{Method}: EOM was encountered & handled during backup; MultiVolumeContext set up",
+                    nameof(BackupFilesToCurrentSet));
+                
+                return false;
             }
 
             BytesBackedupMarker = BytesBackedup;

@@ -18,13 +18,11 @@ public class ServiceMultiVolumeTests : ServiceTestBase
 
     /// <summary>
     /// Number of files written by <see cref="AddMultiVolumeContent"/>.
-    ///  Sized so that 2 volumes definitely cannot hold all files (each volume's
-    ///  usable area is well below the total content). The test then constrains
-    ///  the backup to exactly 2 volumes via <see cref="ServiceOperationRequest.NoMultivolume"/>
-    ///  on the second volume and verifies that the files actually committed to
-    ///  the TOC restore byte-for-byte.
+    ///  16 files × 350 KiB ˜ 5.6 MiB total — fits in exactly 2 volumes on either
+    ///  drive profile (˜ 4 MiB usable on setmarks, 3 MiB on initiator), guaranteeing
+    ///  at least one automatic volume swap without requiring more than 2 volumes.
     /// </summary>
-    private const int MultiVolumeFileCount = 64;
+    private const int MultiVolumeFileCount = 16;
 
     /// <summary>
     /// Size of each file produced by <see cref="AddMultiVolumeContent"/>: 350 KiB.
@@ -113,15 +111,16 @@ public class ServiceMultiVolumeTests : ServiceTestBase
     // ── A-5: multi-volume regular backup + restore ────────────────────────────
 
     /// <summary>
-    /// Writes 16 files (350 KiB each, ~5.5 MiB total) to a two-volume media set,
-    ///  verifying that the backup engine spans volumes automatically and that a
-    ///  full restore recovers every byte intact.
+    /// Writes <see cref="MultiVolumeFileCount"/> files (350 KiB each, ~5.6 MiB total)
+    ///  to a two-volume media set, verifying that the backup engine spans volumes
+    ///  automatically and that a full restore recovers every byte intact.
     /// <para>
     /// Volume capacity is drive-profile-dependent: 20 MiB for setmarks drives
-    ///  (where 16 MiB is reserved per volume for the in-tape TOC) and 3 MiB for
-    ///  initiator-partition drives (TOC lives in the initiator partition).
-    ///  In both cases total file content (~5.5 MiB) exceeds per-volume headroom,
-    ///  guaranteeing at least one automatic volume swap.
+    ///  (where 16 MiB is reserved per volume for the in-tape TOC, leaving ~4 MiB
+    ///  usable) and 3 MiB for initiator-partition drives (TOC lives in the initiator
+    ///  partition, so the full content area is available). In both cases the total
+    ///  file content (~5.6 MiB) exceeds one volume's usable headroom, guaranteeing
+    ///  at least one automatic volume swap.
     /// </para>
     /// <para>
     /// Parameterised over both drive profiles (setmarks-only and with initiator partition).
@@ -135,10 +134,20 @@ public class ServiceMultiVolumeTests : ServiceTestBase
         // Two pre-allocated virtual volumes; the host swaps them automatically.
         //  Capacity is drive-profile-specific: setmarks drives reserve 16 MiB per volume
         //  for the in-tape TOC, so those volumes must be larger than 16 MiB.
+        //  16 files × 350 KiB ˜ 5.6 MiB — exceeds one volume's headroom on both profiles.
         long volumeCapacity = withInitiator ? MultiVolumeCapacity_Initiator : MultiVolumeCapacity_Setmarks;
         using var vol1 = new TempVirtualMedia(withInitiator, volumeCapacity);
         using var vol2 = new TempVirtualMedia(withInitiator, volumeCapacity);
-        IReadOnlyList<TempVirtualMedia> volumes = [vol1, vol2];
+        /*
+        using var vol3 = new TempVirtualMedia(withInitiator, volumeCapacity);
+        using var vol4 = new TempVirtualMedia(withInitiator, volumeCapacity);
+        using var vol5 = new TempVirtualMedia(withInitiator, volumeCapacity);
+        using var vol6 = new TempVirtualMedia(withInitiator, volumeCapacity);
+        using var vol7 = new TempVirtualMedia(withInitiator, volumeCapacity);
+        using var vol8 = new TempVirtualMedia(withInitiator, volumeCapacity);
+        IReadOnlyList<TempVirtualMedia> volumes = [vol1, vol2, vol3, vol4, vol5, vol6, vol7, vol8];
+        */
+        IReadOnlyList<TempVirtualMedia> volumes = [vol1, vol2, ];
 
         using var src = new TempFileTree();
         AddMultiVolumeContent(src);

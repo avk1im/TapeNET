@@ -1022,6 +1022,17 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
         _stats.FilesFailed--;
     }
 
+    /// <summary>
+    /// Undoes <paramref name="count"/> skip entries from the statistics.
+    /// Call on EOM rollback when skipped files in the rolled-back range will be
+    ///  re-processed on the next volume and their skips counted again.
+    /// </summary>
+    protected void StatsUndoSkips(int count)
+    {
+        _stats.FilesProcessed -= count;
+        _stats.FilesSkipped -= count;
+    }
+
     #endregion // *** Notification wrappers ***
 
     protected void ThrowIfAbortRequested(string where)

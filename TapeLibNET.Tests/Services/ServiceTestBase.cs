@@ -59,7 +59,7 @@ public abstract class ServiceTestBase
         CancellationToken _ = default)
     {
         var host    = new TestTapeServiceHost();
-        var service = new TapeServiceBase(NullLoggerFactory.Instance, host);
+        var service = new TapeServiceBase(TestLoggerFactory.Default, host);
         return (service, host);
     }
 
@@ -167,7 +167,7 @@ public abstract class ServiceTestBase
         CreateMultiVolumeService(IReadOnlyList<TempVirtualMedia> volumes)
     {
         var host    = new MultiVolumeTapeServiceHost(volumes);
-        var service = new TapeServiceBase(NullLoggerFactory.Instance, host);
+        var service = new TapeServiceBase(TestLoggerFactory.Default, host);
         host.Service = service; // back-link; set after construction to break the circular dependency
         return (service, host);
     }

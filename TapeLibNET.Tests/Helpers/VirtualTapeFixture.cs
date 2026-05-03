@@ -78,7 +78,7 @@ public sealed class VirtualTapeFixture : IDisposable
         string mediaDescription = "Test Media",
         bool useMemoryMap = false)
     {
-        LoggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+        LoggerFactory = loggerFactory ?? TestLoggerFactory.Default;
         Capabilities = ProfileToCapabilities(profile);
 
         long initCap = Capabilities.SupportsInitiatorPartition

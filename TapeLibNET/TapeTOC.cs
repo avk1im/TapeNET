@@ -234,6 +234,17 @@ namespace TapeLibNET
 
     
     /// <summary>
+    /// Lightweight bundle of <see cref="TapeSetTOC"/> creation metadata, used to seed a new
+    ///  set on a continuation volume without cloning the previous-volume set instance.
+    /// </summary>
+    public record TapeSetTOCParams(
+        string Description,
+        TapeHashAlgorithm HashAlgorithm,
+        uint BlockSize,
+        bool Incremental,
+        int Capacity = 0);
+
+    /// <summary>
     /// Table of contents for a single backup set — an <see cref="IReadOnlyList{TapeFileInfo}"/>
     ///  with per-set metadata (description, hash algorithm, block size, incremental flag, volume).
     /// <para>New instances are created only via <see cref="TapeTOC.AddNewSetTOC"/>.</para>
@@ -268,6 +279,14 @@ namespace TapeLibNET
         }
         public int Volume { get; internal set; } = 0;
         public bool ContinuedFromPrevVolume { get; init; } = false;
+
+        /// <summary>
+        /// Snapshots this set's metadata (description, hash, block size, incremental, capacity)
+        ///  into a <see cref="TapeSetTOCParams"/> bundle suitable for seeding a continuation
+        ///  set on the next volume via <see cref="TapeTOC.AddContinuationSetTOC"/>.
+        /// </summary>
+        public TapeSetTOCParams ToParams() =>
+            new(Description, HashAlgorithm, BlockSize, Incremental, Capacity);
 
         // deserialization constructor
         private TapeSetTOC(List<TapeFileInfo> fileInfos) => m_tapeFileInfos = fileInfos;
@@ -750,24 +769,28 @@ namespace TapeLibNET
             MakeLastSetCurrent();
         }
 
-        /// <summary>Clones the set at <paramref name="setIndex"/> (metadata only, no files) for multi-volume continuation.</summary>
-        public void CloneSetTOC(int setIndex, bool contFromPrevVolume = false)
+        /// <summary>
+        /// Appends a fresh continuation <see cref="TapeSetTOC"/> seeded from
+        ///  <paramref name="setParams"/> (no file cloning) and makes it current.
+        /// <para>Used by multi-volume continuation: the previous-volume set instance is not
+        ///  referenced — only its metadata is carried over via <see cref="TapeSetTOCParams"/>.
+        ///  This is robust against the policy of removing the trailing empty set from the
+        ///  full volume's TOC before saving (which would leave nothing valid to clone).</para>
+        /// </summary>
+        public void AddContinuationSetTOC(TapeSetTOCParams setParams, bool contFromPrevVolume = false)
         {
-            int setInternal = SetIndexToInternal(setIndex);
-            var setTOC = m_setTOCs[setInternal];
             m_setTOCs.Add(
-                new TapeSetTOC(Volume, setTOC.Capacity, setTOC.Incremental) // notice: use *current* volume
+                new TapeSetTOC(Volume, setParams.Capacity, setParams.Incremental) // notice: use *current* volume
                 {
-                    HashAlgorithm = setTOC.HashAlgorithm,
-                    Description = setTOC.Description,
-                    BlockSize = setTOC.BlockSize,
+                    HashAlgorithm = setParams.HashAlgorithm,
+                    Description = setParams.Description,
+                    BlockSize = setParams.BlockSize,
                     ContinuedFromPrevVolume = contFromPrevVolume && (m_setTOCs.Count > 0), // the very first set may not be continued
                 }
             );
 
             MakeLastSetCurrent();
         }
-        public void CloneCurrentSetTOC(bool contFromPrevVolume = false) => CloneSetTOC(CurrentSetIndex, contFromPrevVolume);
 
         /// <summary>Deep-copies all content from <paramref name="toc"/>, replacing everything in this instance.</summary>
         public void CopyFrom(TapeTOC toc) // Replaces the whole content -> use with CAUTION!

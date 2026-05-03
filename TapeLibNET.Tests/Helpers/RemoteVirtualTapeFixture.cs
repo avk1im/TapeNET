@@ -60,7 +60,7 @@ public sealed class RemoteVirtualTapeFixture : IDisposable
         ILoggerFactory? loggerFactory = null,
         string mediaDescription = "Test Media")
     {
-        LoggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+        LoggerFactory = loggerFactory ?? TestLoggerFactory.Default;
         Capabilities = VirtualTapeFixture.ProfileToCapabilities(profile);
 
         long initCap = Capabilities.SupportsInitiatorPartition

@@ -91,16 +91,26 @@ internal sealed class PackedCommitTracker
 
     /// <summary>
     /// Removes the given rolled-back tokens from the pending map (e.g. on EOM) and
-    /// returns the smallest <c>FileIndex</c> seen among them. If no rolled-back token
-    /// matches a pending entry, <paramref name="fallbackIndex"/> is returned unchanged.
+    /// returns the smallest <c>FileIndex</c> seen among them, along with the matching
+    /// <see cref="TapeFileInfo"/> template. If no rolled-back token matches a pending
+    /// entry, <paramref name="fallbackIndex"/> is returned and <paramref name="earliestTemplate"/>
+    /// is set to <see langword="null"/>.
     /// </summary>
-    public int RemoveRolledBack(IReadOnlyList<CommitToken> rolledBackTokens, int fallbackIndex)
+    public int RemoveRolledBack(IReadOnlyList<CommitToken> rolledBackTokens, int fallbackIndex,
+        out TapeFileInfo? earliestTemplate)
     {
         int earliest = fallbackIndex;
+        earliestTemplate = null;
         foreach (var token in rolledBackTokens)
         {
             if (_pending.Remove(token, out var entry))
-                earliest = Math.Min(earliest, entry.FileIndex);
+            {
+                if (entry.FileIndex <= earliest)
+                {
+                    earliest = entry.FileIndex;
+                    earliestTemplate = entry.Template;
+                }
+            }
         }
         return earliest;
     }

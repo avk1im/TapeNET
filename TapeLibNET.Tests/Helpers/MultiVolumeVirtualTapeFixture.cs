@@ -149,7 +149,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
         string mediaDescription = "Multi-Volume Test Media")
     {
         ContentCapacity = contentCapacity;
-        LoggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+        LoggerFactory = loggerFactory ?? TestLoggerFactory.Default;
         Capabilities = VirtualTapeFixture.ProfileToCapabilities(profile);
 
         long initCap = Capabilities.SupportsInitiatorPartition

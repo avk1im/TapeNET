@@ -121,7 +121,7 @@ public sealed class PhysicalTapeFixture : IDisposable
         ILoggerFactory? loggerFactory = null,
         string mediaDescription = "Physical Test Media")
     {
-        LoggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+        LoggerFactory = loggerFactory ?? TestLoggerFactory.Default;
         DriveNumber = driveNumber;
 
         Drive = TapeDrive.CreateWin32(LoggerFactory);

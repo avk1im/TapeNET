@@ -486,7 +486,7 @@ public class TapeTOCRoundTripTests
         toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), TapeAddress.Zero, @"C:\A.txt", 100));
 
         // Second set — continued from previous volume
-        toc.CloneCurrentSetTOC(contFromPrevVolume: true);
+        toc.AddContinuationSetTOC(toc.CurrentSetTOC.ToParams(), contFromPrevVolume: true);
         toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(100L, 10U), @"C:\B.txt", 200));
         var result = SerializeAndDeserialize(toc);
 
@@ -1494,7 +1494,7 @@ public class TapeTOCRoundTripTests
 
         // Simulated volume 2 set
         toc.Volume = 2;
-        toc.CloneCurrentSetTOC(contFromPrevVolume: true);
+        toc.AddContinuationSetTOC(toc.CurrentSetTOC.ToParams(), contFromPrevVolume: true);
         toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(100L, 10U), @"C:\B.txt"));
 
         var result = SerializeAndDeserialize(toc);
