@@ -230,10 +230,8 @@ public partial class TapeServiceBase
         if (_drive is null) return;
 
         LogInfoSub($"Device name: {_drive.DriveDeviceName}");
-        if (!string.IsNullOrEmpty(_drive.DriveVendor))
-            LogInfoSub($"Vendor: {_drive.DriveVendor}");
-        if (!string.IsNullOrEmpty(_drive.DriveProduct))
-            LogInfoSub($"Product: {_drive.DriveProduct}");
+        if (!string.IsNullOrEmpty(_drive.DriveVendor) || !string.IsNullOrEmpty(_drive.DriveProduct))
+            LogInfoSub($"Device model: {_drive.DriveVendor} {_drive.DriveProduct}");
         LogInfoSub($"Drive open: Yes");
         LogInfoSub($"Supports multiple partitions: {(_drive.SupportsInitiatorPartition ? "Yes" : "No")}");
         LogInfoSub($"Supports setmarks: {(_drive.SupportsSetmarks ? "Yes" : "No")}");

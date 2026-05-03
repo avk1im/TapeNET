@@ -216,6 +216,7 @@ public partial class MainViewModel
             if (result == MessageBoxResult.Yes)
             {
                 agent.IsAbortRequested = true;
+                IsAbortBackupEnabled = false; // disable the command UI to indicate we're aborting
                 BusyMessage = "Aborting backup...";
             }
         }

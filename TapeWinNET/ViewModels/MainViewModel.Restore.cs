@@ -22,6 +22,8 @@ public partial class MainViewModel
     private string _restoreProgressText = string.Empty;
     private string _currentRestoreFile = string.Empty;
     private bool _isRestoreInProgress;
+    // True while no abort has been requested; bound to the Abort Restore button's IsEnabled
+    private bool _isAbortRestoreEnabled = true;
 
     #endregion
 
@@ -30,6 +32,16 @@ public partial class MainViewModel
     /// <summary>
     /// Whether a restore/validate/verify operation is currently in progress.
     /// </summary>
+    /// <summary>
+    /// Becomes <see langword="false"/> once the user confirms the abort, disabling the Abort button.
+    /// Reset to <see langword="true"/> when no restore operation is in progress.
+    /// </summary>
+    public bool IsAbortRestoreEnabled
+    {
+        get => _isAbortRestoreEnabled;
+        set => SetProperty(ref _isAbortRestoreEnabled, value);
+    }
+
     public bool IsRestoreInProgress
     {
         get => _isRestoreInProgress;
@@ -669,6 +681,7 @@ public partial class MainViewModel
         finally
         {
             IsRestoreInProgress = false;
+            IsAbortRestoreEnabled = true;
             IsBusy = false;
             BusyMessage = string.Empty;
             RestoreProgressText = string.Empty;
@@ -690,6 +703,7 @@ public partial class MainViewModel
             if (result == MessageBoxResult.Yes)
             {
                 agent.IsAbortRequested = true;
+                IsAbortRestoreEnabled = false; // disable the command UI to indicate we're aborting
                 BusyMessage = "Aborting...";
             }
         }

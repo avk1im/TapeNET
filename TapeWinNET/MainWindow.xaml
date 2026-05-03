@@ -662,6 +662,7 @@
 
                             <Button Content="Abort" 
                                     Command="{Binding AbortRestoreCommand}"
+                                    IsEnabled="{Binding IsAbortRestoreEnabled}"
                                     HorizontalAlignment="Center"
                                     Width="100"/>
                         </StackPanel>

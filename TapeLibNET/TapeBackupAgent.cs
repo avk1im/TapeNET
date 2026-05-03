@@ -540,7 +540,7 @@ namespace TapeLibNET
         // =====================================================================
         //  Packed (Phase 2) backup pendants
         //
-        //  Mirror BackupFile / BackupFilesToCurrentSetAligned / BackupFileListToCurrentSetAligned
+        //  Mirror BackupFileAligned / BackupFilesToCurrentSetAligned / BackupFileListToCurrentSetAligned
         //  but route content writes through the TapeFileWritePacker so multiple
         //  small files can share tape blocks. The packer surfaces final
         //  TapeAddress values asynchronously via Manager.FilesCommitted, so:
@@ -619,7 +619,7 @@ namespace TapeLibNET
 
                 throw;
             }
-        } // BackupFilePacked()
+        } // BackupFile()
 
 
         private bool BackupFilesToCurrentSet(bool newSet = true)
@@ -661,7 +661,8 @@ namespace TapeLibNET
             //   (2) ensuring Manager.EndWriteContent() runs so the write session is closed
             //       before the caller swaps volumes -- otherwise the packer / write state
             //       would leak across volumes.
-            //   (3) notifying the failed file and the batch end.
+            //   (3) adjusting statistics (skipped, error) to undo any rolled back files
+            //   (4) notifying the failed file and the batch end.
             bool HandleEom(TapePackerEndOfMediaException eomEx, int currentFileIndex, TapeFileInfo? currentTemplate)
             {
                 SetError((uint)WIN32_ERROR.ERROR_END_OF_MEDIA);
