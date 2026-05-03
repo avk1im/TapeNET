@@ -14,6 +14,11 @@
         ResizeMode="CanResizeWithGrip"
         ShowInTaskbar="False">
 
+    <Window.Resources>
+        <converters:BoolToOpacityConverter x:Key="BoolToOpacityIcon" DimmedOpacity="0.4"/>
+        <converters:BoolToOpacityConverter x:Key="BoolToOpacityText" DimmedOpacity="0.6"/>
+    </Window.Resources>
+
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" MinHeight="100"/>
@@ -58,26 +63,63 @@
                                     </DataTemplate>
                                 </GridViewColumn.CellTemplate>
                             </GridViewColumn>
-                            <!-- Icon column -->
+                            <!-- Icon column, dimmed for off-volume sets -->
                             <GridViewColumn Width="28">
                                 <GridViewColumn.CellTemplate>
                                     <DataTemplate>
-                                        <Image Width="16" Height="16" Source="{Binding Icon}"/>
+                                        <Image Width="16" Height="16" Source="{Binding Icon}"
+                                               Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityIcon}}"/>
                                     </DataTemplate>
                                 </GridViewColumn.CellTemplate>
                             </GridViewColumn>
-                            <GridViewColumn Header="Set #" Width="55"
-                                            DisplayMemberBinding="{Binding IndexDisplay}"/>
-                            <GridViewColumn Header="Description" Width="140"
-                                            DisplayMemberBinding="{Binding Description}"/>
-                            <GridViewColumn Header="Selected" Width="65"
-                                            DisplayMemberBinding="{Binding SelectedFileCountFormatted}"/>
-                            <GridViewColumn Header="Files" Width="55"
-                                            DisplayMemberBinding="{Binding FileCountFormatted}"/>
-                            <GridViewColumn Header="Size" Width="65"
-                                            DisplayMemberBinding="{Binding TotalSizeFormatted}"/>
-                            <GridViewColumn Header="Inc?" Width="38"
-                                            DisplayMemberBinding="{Binding IncrementalDisplay}"/>
+                            <GridViewColumn Header="Set #" Width="55">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding IndexDisplay}"
+                                                   Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Description" Width="140">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Description}"
+                                                   Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Selected" Width="65">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding SelectedFileCountFormatted}"
+                                                   Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Files" Width="55">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding FileCountFormatted}"
+                                                   Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Size" Width="65">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding TotalSizeFormatted}"
+                                                   Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Inc?" Width="38">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding IncrementalDisplay}"
+                                                   Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
                         </GridView>
                     </ListView.View>
                 </ListView>

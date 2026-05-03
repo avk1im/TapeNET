@@ -1212,8 +1212,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
     #endregion // TOC operations
 
-    #region Internal timing / formatting helpers
-    // ── Internal timing / formatting helpers ──────────────────────────────────
+    #region Timing / formatting helpers
+    // ── Timing / formatting helpers ──────────────────────────────────────────
 
     /// <summary>
     /// Default name for newly created media, based on the current date/time.
@@ -1222,7 +1222,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     public static string DefaultNewMediaName => $"Media created {DateTime.Now:yyyy-MM-dd HH:mm}";
 
     /// <summary>Formats an elapsed duration as a human-readable string.</summary>
-    protected static string FormatElapsed(double totalSeconds)
+    public static string FormatElapsed(double totalSeconds)
     {
         if (totalSeconds < 1.0) return "< 1s";
         var ts = TimeSpan.FromSeconds(totalSeconds);
@@ -1235,7 +1235,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// Formats a data rate as <c>"X.XX MB/s"</c>; returns an empty string
     ///  when the duration is too short or no bytes were processed.
     /// </summary>
-    protected static string FormatDataRate(long bytes, double totalSeconds)
+    public static string FormatDataRate(long bytes, double totalSeconds)
     {
         if (totalSeconds < 0.001 || bytes <= 0) return string.Empty;
         long bytesPerSecond = (long)(bytes / totalSeconds);

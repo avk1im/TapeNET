@@ -223,6 +223,8 @@ public class RestoreViewModel : ViewModelBase
                 }
                 NotifySelectionChanged();
             }
+
+            NoMultivolume = value; // when "This volume only" is checked, multivolume continuation is disabled
         }
     }
 
@@ -462,6 +464,8 @@ public class RestoreViewModel : ViewModelBase
         // Target directory is only used in Restore mode when "Target directory" radio is selected
         string? targetDir = (_mode == RestoreMode.Restore && !_restoreToOriginal && !string.IsNullOrWhiteSpace(_targetDirectory))
             ? _targetDirectory : null;
+
+        _noMultivolume = _thisVolumeOnly; // "This volume only" implies no multivolume continuation
 
         var request = new RestoreFormData(
             Mode: _mode,

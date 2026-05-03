@@ -155,19 +155,23 @@ public partial class TapeServiceBase
                     return MakeResult();
                 }
 
+                int newestIdxOrg = newestIdx;
+
                 // ...and confine to the current volume
                 newestIdx = Math.Min(newestIdx, toc.LastSetOnVolume);
                 oldestIdx = Math.Max(oldestIdx, toc.FirstSetOnVolume);
 
-                // clear entries in combined for stes outside [oldestIdex..newestIdx]
-                foreach (var setIndex in setIndexes)
+                // Copy entries from combined only for sets inside [oldestIdex..newestIdx]
+                //  Notice combined[0] corresponds to newestIdxOrg; confined[0] corresponds to newestIdx
+                var confined = new List<TapeFileInfo>?[newestIdx - oldestIdx + 1];
+                for (int i = 0; i < confined.Length; i++)
                 {
-                    if (setIndex < oldestIdx || setIndex > newestIdx)
-                    {
-                        setIndexes.Remove(setIndex);
-                        combined[setIndex] = []; // do NOT set to null, which means "all files in set"!
-                    }
+                    confined[i] = combined[newestIdxOrg - newestIdx + i];
                 }
+                combined = confined;
+
+                // Remove all set indexes outside of [oldestIdex..newestIdx] from setIndexes, as they won't be processed
+                setIndexes = [..setIndexes.Where(i => i >= oldestIdx && i <= newestIdx)];
             } // if no-multivolume
 
             toc.CurrentSetIndex = newestIdx;

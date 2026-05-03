@@ -51,6 +51,7 @@ public partial class MainViewModel : ViewModelBase
     private string _tableHeader = "Content";
     private bool _isBusy;
     private bool _isBackupInProgress;
+    private string _ioProgressText = string.Empty;
     private bool _isTOCLoadInProgress;
     // Set to true when the user explicitly cancels a TOC load, so ReadTOCWithUIAsync
     //  can suppress the failure dialog that would otherwise appear.
@@ -173,6 +174,16 @@ public partial class MainViewModel : ViewModelBase
     {
         get => _busyMessage;
         set => SetProperty(ref _busyMessage, value);
+    }
+
+    /// <summary>
+    /// Current IO rate text, shared by both backup and restore progress overlays.
+    ///  Example: "42.3 MB/s"
+    /// </summary>
+    public string IOProgressText
+    {
+        get => _ioProgressText;
+        set => SetProperty(ref _ioProgressText, value);
     }
 
     public string PropertiesHeader

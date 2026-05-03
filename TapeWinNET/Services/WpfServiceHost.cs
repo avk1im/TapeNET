@@ -1,17 +1,15 @@
+using System.DirectoryServices;
 using System.Windows;
 using System.Windows.Threading;
-
-using Windows.Win32.System.SystemServices; // Helpers.BytesToString
-
 using TapeLibNET;
 using TapeLibNET.Services;
 using TapeLibNET.Virtual;
-using TapeWinNET.Models;
-using TapeWinNET.ViewModels;
-
 // ReSharper disable once RedundantUsingDirective — WpfServiceHost itself lives in TapeWinNET.Services
 // but its prompt methods reference dialogs from the TapeWinNET root namespace.
 using TapeWinNET;  // MediaChangeDialog, FileErrorDialog, OpenVirtualDriveWindow
+using TapeWinNET.Models;
+using TapeWinNET.ViewModels;
+using Windows.Win32.System.SystemServices; // Helpers.BytesToString
 
 namespace TapeWinNET.Services;
 
@@ -36,6 +34,8 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
     private readonly Dispatcher _dispatcher = dispatcher;
     private readonly MainViewModel _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
 
+    private readonly Stopwatch _stopwatch = new();
+
     // ── ITapeServiceHost — Logging ────────────────────────────────────────────
 
     /// <inheritdoc/>
@@ -47,7 +47,15 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
 
     /// <inheritdoc/>
     public void OnServiceStateChanged(ServiceStateChange change)
-        => _viewModel.OnServiceStateChanged(change);
+    {
+        if ((change & ServiceStateChange.OperationStarted) != 0)
+            _stopwatch.Restart();
+
+        if ((change & ServiceStateChange.OperationEnded) != 0)
+            _stopwatch.Stop();
+
+        _viewModel.OnServiceStateChanged(change);
+    }
 
     // ── Progress update helpers ───────────────────────────────────────────────────────
 
@@ -63,6 +71,9 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                 _viewModel.CurrentRestoreFile = System.IO.Path.GetFileName(currentFile);
             _viewModel.RestoreProgressPercent = total > 0 ? (int)(100.0 * processed / total) : 0;
             _viewModel.RestoreProgressText    = $"{processed:N0} / {total:N0} files ({Helpers.BytesToString(bytes)})";
+            _viewModel.IOProgressText = _stopwatch.IsRunning
+                ? TapeServiceBase.FormatDataRate(bytes, _stopwatch.ElapsedSeconds)
+                : TapeServiceBase.FormatDataRate(0L, 1.0);
         });
     }
 
@@ -78,6 +89,9 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                 _viewModel.CurrentBackupFile = System.IO.Path.GetFileName(currentFile);
             _viewModel.BackupProgressPercent = total > 0 ? (int)(100.0 * processed / total) : 0;
             _viewModel.BackupProgressText    = $"{processed:N0} / {total:N0} files ({Helpers.BytesToString(bytes)})";
+            _viewModel.IOProgressText = _stopwatch.IsRunning
+                ? TapeServiceBase.FormatDataRate(bytes, _stopwatch.ElapsedSeconds)
+                : TapeServiceBase.FormatDataRate(0L, 1.0);
         });
     }
 

@@ -11,7 +11,7 @@ namespace TapeLibNET
 {
     /// <summary>
     /// Abstract restore agent — reads files from tape content sets, validates headers and CRC,
-    ///  and delegates actual file processing to <see cref="RestoreFileCore"/>.
+    ///  and delegates actual file processing to <see cref="RestoreFileCoreAligned"/>.
     /// <para>Concrete subclasses: <see cref="TapeFileRestoreAgent"/> (restore to disk),
     ///  <see cref="TapeFileValidateAgent"/> (read + CRC only),
     ///  <see cref="TapeFileVerifyAgent"/> (compare tape vs. disk).
@@ -65,7 +65,8 @@ namespace TapeLibNET
         /// Performs the actual file processing (write to disk, validate, or verify).
         ///  Override in subclasses; base implementation only checks stream validity.
         /// </summary>
-        protected virtual bool RestoreFileCore(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
+        [Obsolete("Use the non-Aligned (Packed) version")]
+        protected virtual bool RestoreFileCoreAligned(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
         {
             if (rstream.IsDisposed)
                 throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_HANDLE, "May not dispose tape read stream while restoring");
@@ -74,12 +75,12 @@ namespace TapeLibNET
         }
 
         /// <summary>
-        /// Packed-path pendant of <see cref="RestoreFileCore(FileInfo, TapeReadStream, NonCryptographicHashAlgorithm?)"/>.
+        /// Packed-path pendant of <see cref="RestoreFileCoreAligned(FileInfo, TapeReadStream, NonCryptographicHashAlgorithm?)"/>.
         ///  Operates on a generic <see cref="Stream"/> (the packer-backed
         ///  <c>TapeReadStreamFacade</c>) so block boundaries and intra-block file offsets
         ///  remain hidden from the agent. Default base implementation is a no-op success.
         /// </summary>
-        protected virtual bool RestoreFileCorePacked(FileInfo fileInfo, Stream rstream, NonCryptographicHashAlgorithm? hasher)
+        protected virtual bool RestoreFileCore(FileInfo fileInfo, Stream rstream, NonCryptographicHashAlgorithm? hasher)
         {
             return true;
         }
@@ -167,7 +168,7 @@ namespace TapeLibNET
                 FileInfo fileInfo = fileDescr.CreateFileInfo(); // Notice we shouldn't set fileInfo fields here since the file doesn't exist yet!
 
                 // Now ready to do the actual restoring
-                if (!RestoreFileCore(fileInfo, rstream, hasher))
+                if (!RestoreFileCoreAligned(fileInfo, rstream, hasher))
                 {
                     throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
                         $"Processing failed for file >{tfi.FileDescr.FullName}<");
@@ -284,7 +285,7 @@ namespace TapeLibNET
                 }
                 FileInfo fileInfo = fileDescr.CreateFileInfo();
 
-                if (!RestoreFileCorePacked(fileInfo, rstream, hasher))
+                if (!RestoreFileCore(fileInfo, rstream, hasher))
                 {
                     throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
                         $"Processing failed for file >{tfi.FileDescr.FullName}<");
@@ -1014,7 +1015,8 @@ namespace TapeLibNET
     /// </summary>
     public class TapeFileRestoreAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileRestoreBaseAgent(drive, legacyTOC)
     {
-        protected override bool RestoreFileCore(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
+        [Obsolete("Use the non-Aligned (Packed) version")]
+        protected override bool RestoreFileCoreAligned(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
         {
             // Double-buffer tape reads to overlap with file writes
             using var buffered = new BufferedTapeReadStream(rstream, Drive.BlockSize);
@@ -1032,10 +1034,10 @@ namespace TapeLibNET
                 buffered.CopyTo(hashingStream);
             }
 
-            return base.RestoreFileCore(fileInfo, rstream, hasher);
+            return base.RestoreFileCoreAligned(fileInfo, rstream, hasher);
         }
 
-        protected override bool RestoreFileCorePacked(FileInfo fileInfo, Stream rstream, NonCryptographicHashAlgorithm? hasher)
+        protected override bool RestoreFileCore(FileInfo fileInfo, Stream rstream, NonCryptographicHashAlgorithm? hasher)
         {
             // Packer-backed reads come from a small ring cache; no extra buffering needed.
             if (hasher == null)
@@ -1050,7 +1052,7 @@ namespace TapeLibNET
                 rstream.CopyTo(hashingStream);
             }
 
-            return base.RestoreFileCorePacked(fileInfo, rstream, hasher);
+            return base.RestoreFileCore(fileInfo, rstream, hasher);
         }
 
         protected override bool PostProcessFileInternal(TapeFileDescriptor fileDescr, FileInfo fileInfo)
@@ -1066,7 +1068,8 @@ namespace TapeLibNET
     /// </summary>
     public class TapeFileValidateAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileRestoreBaseAgent(drive, legacyTOC)
     {
-        protected override bool RestoreFileCore(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
+        [Obsolete("Use the non-Aligned (Packed) version")]
+        protected override bool RestoreFileCoreAligned(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
         {
             if (hasher == null)
             {
@@ -1081,10 +1084,10 @@ namespace TapeLibNET
                 rstream.CopyTo(hashingStream);
             }
 
-            return base.RestoreFileCore(fileInfo, rstream, hasher);
+            return base.RestoreFileCoreAligned(fileInfo, rstream, hasher);
         }
 
-        protected override bool RestoreFileCorePacked(FileInfo fileInfo, Stream rstream, NonCryptographicHashAlgorithm? hasher)
+        protected override bool RestoreFileCore(FileInfo fileInfo, Stream rstream, NonCryptographicHashAlgorithm? hasher)
         {
             if (hasher == null)
             {
@@ -1098,7 +1101,7 @@ namespace TapeLibNET
                 rstream.CopyTo(hashingStream);
             }
 
-            return base.RestoreFileCorePacked(fileInfo, rstream, hasher);
+            return base.RestoreFileCore(fileInfo, rstream, hasher);
         }
 
     } // class TapeFileValidateAgent
@@ -1109,7 +1112,8 @@ namespace TapeLibNET
     /// </summary>
     public class TapeFileVerifyAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileRestoreBaseAgent(drive, legacyTOC)
     {
-        protected override bool RestoreFileCore(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
+        [Obsolete("Use the non-Aligned (Packed) version")]
+        protected override bool RestoreFileCoreAligned(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
         {
             // Double-buffer tape reads to overlap with file reads and comparison
             using var buffered = new BufferedTapeReadStream(rstream, Drive.BlockSize);
@@ -1129,10 +1133,10 @@ namespace TapeLibNET
                     return false;
             }
 
-            return base.RestoreFileCore(fileInfo, rstream, hasher);
+            return base.RestoreFileCoreAligned(fileInfo, rstream, hasher);
         }
 
-        protected override bool RestoreFileCorePacked(FileInfo fileInfo, Stream rstream, NonCryptographicHashAlgorithm? hasher)
+        protected override bool RestoreFileCore(FileInfo fileInfo, Stream rstream, NonCryptographicHashAlgorithm? hasher)
         {
             if (hasher == null)
             {
@@ -1148,7 +1152,7 @@ namespace TapeLibNET
                     return false;
             }
 
-            return base.RestoreFileCorePacked(fileInfo, rstream, hasher);
+            return base.RestoreFileCore(fileInfo, rstream, hasher);
         }
 
     } // class TapeFileVerifyAgent

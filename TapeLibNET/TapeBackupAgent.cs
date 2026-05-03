@@ -717,6 +717,9 @@ namespace TapeLibNET
                     m_logger.LogDebug(secondEom, "Second EOM during EndWriteContent in EOM handler -- ignored");
                 }
 
+                // Do NOT treat the reporting file as failed as it will be re-tried on the next volume
+                //  The user will be notified via the "new media" flow
+                /*
                 if (reportTemplate is not null)
                 {
                     if (NotifyFileFailed(bc.fileNotify, reportTemplate, eomEx) == FileFailedAction.Abort)
@@ -726,6 +729,7 @@ namespace TapeLibNET
                     }
                     StatsUndoFailure(); // file will be re-tried on next volume
                 }
+                */
 
                 NotifyBatchEnd(bc.fileNotify);
 

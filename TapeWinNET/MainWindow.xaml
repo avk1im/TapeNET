@@ -615,9 +615,14 @@
                                        FontSize="11"
                                        TextTrimming="CharacterEllipsis"
                                        MaxWidth="300"
+                                       Margin="0,0,0,4"/>
+
+                            <TextBlock Text="{Binding IOProgressText}"
+                                       HorizontalAlignment="Center"
+                                       FontSize="11"
                                        Margin="0,0,0,16"/>
 
-                            <Button Content="Abort Backup" 
+                            <Button Content="Abort Backup"
                                     Command="{Binding AbortBackupCommand}"
                                     IsEnabled="{Binding IsAbortBackupEnabled}"
                                     HorizontalAlignment="Center"
@@ -658,9 +663,14 @@
                                        FontSize="11"
                                        TextTrimming="CharacterEllipsis"
                                        MaxWidth="300"
+                                       Margin="0,0,0,4"/>
+
+                            <TextBlock Text="{Binding IOProgressText}"
+                                       HorizontalAlignment="Center"
+                                       FontSize="11"
                                        Margin="0,0,0,16"/>
 
-                            <Button Content="Abort" 
+                            <Button Content="Abort"
                                     Command="{Binding AbortRestoreCommand}"
                                     IsEnabled="{Binding IsAbortRestoreEnabled}"
                                     HorizontalAlignment="Center"
