@@ -71,7 +71,7 @@ internal sealed class TapeFileWritePacker : IDisposable
 
     // Insertion-ordered list of pending entries. List is small (≤ ~blockMultiplier
     //  small files in flight typically), so a List<T> with linear scans is fine.
-    private readonly List<PendingEntry> _pending = new();
+    private readonly List<PendingEntry> _pending = [];
     private PendingEntry? _openEntry;
     private ulong _nextSequence = 1;
 
@@ -310,7 +310,7 @@ internal sealed class TapeFileWritePacker : IDisposable
         }
 
         if (_pending.Count == 0)
-            return Array.Empty<CommitToken>();
+            return [];
 
         var rolled = new CommitToken[_pending.Count];
         for (int i = 0; i < _pending.Count; i++)
@@ -476,7 +476,7 @@ internal sealed class TapeFileWritePacker : IDisposable
             var entry = _pending[readIdx];
             if (!entry.IsOpen && entry.StartAbsByte + entry.Length <= committedAbsByte)
             {
-                committed ??= new List<CommittedFile>();
+                committed ??= [];
                 committed.Add(new CommittedFile(
                     entry.Token,
                     new TapeAddress(
@@ -502,7 +502,7 @@ internal sealed class TapeFileWritePacker : IDisposable
     private CommitToken[] CollectAndRollbackUncommittedPending()
     {
         if (_pending.Count == 0)
-            return Array.Empty<CommitToken>();
+            return [];
 
         var rolled = new List<CommitToken>(_pending.Count);
         for (int i = 0; i < _pending.Count; i++)
@@ -528,7 +528,7 @@ internal sealed class TapeFileWritePacker : IDisposable
             _openEntry.Length = 0;
         }
 
-        return rolled.ToArray();
+        return [.. rolled];
     }
 
     // For hard errors: same as EOM rollback but no separate token list returned.
@@ -573,7 +573,6 @@ internal sealed class TapeFileWritePacker : IDisposable
 
     private void ThrowIfDisposed()
     {
-        if (_disposed)
-            throw new ObjectDisposedException(nameof(TapeFileWritePacker));
+        ObjectDisposedException.ThrowIf(_disposed, nameof(TapeFileWritePacker));
     }
 }

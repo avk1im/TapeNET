@@ -6,13 +6,8 @@ namespace TapeLibNET.TapeFilePacker;
 /// result, in original order. The open file (if any) is NOT in this list; the caller
 /// should still call <see cref="TapeFileWritePacker.DiscardOpenFile"/> for it.
 /// </summary>
-internal sealed class TapePackerEndOfMediaException : IOException
+internal sealed class TapePackerEndOfMediaException(IReadOnlyList<CommitToken> rolledBackTokens)
+    : IOException($"Tape end-of-media; {rolledBackTokens.Count} pending file(s) rolled back.")
 {
-    public IReadOnlyList<CommitToken> RolledBackTokens { get; }
-
-    public TapePackerEndOfMediaException(IReadOnlyList<CommitToken> rolledBackTokens)
-        : base($"Tape end-of-media; {rolledBackTokens.Count} pending file(s) rolled back.")
-    {
-        RolledBackTokens = rolledBackTokens;
-    }
+    public IReadOnlyList<CommitToken> RolledBackTokens { get; } = rolledBackTokens;
 }

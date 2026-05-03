@@ -37,8 +37,7 @@ internal sealed class TapeReadStreamFacade : Stream
         ArgumentNullException.ThrowIfNull(buffer);
         if (offset < 0 || count < 0 || offset + count > buffer.Length)
             throw new ArgumentOutOfRangeException(nameof(count));
-        if (_closed)
-            throw new ObjectDisposedException(nameof(TapeReadStreamFacade));
+        ObjectDisposedException.ThrowIf(_closed, nameof(TapeReadStreamFacade));
         if (count == 0)
             return 0;
 

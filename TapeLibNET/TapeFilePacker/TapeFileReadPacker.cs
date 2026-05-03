@@ -79,8 +79,7 @@ internal sealed class TapeFileReadPacker : IDisposable
             throw new InvalidOperationException("A file is already open; call EndRead first.");
         if (!addr.IsValid)
             throw new ArgumentException("Invalid tape address.", nameof(addr));
-        if (length < 0)
-            throw new ArgumentOutOfRangeException(nameof(length));
+        ArgumentOutOfRangeException.ThrowIfNegative(length);
 
         _readCurrentAbsByte = checked(addr.Block * (long)_blockSize + addr.Offset);
         _readEndAbsByte = checked(_readCurrentAbsByte + length);
@@ -261,7 +260,6 @@ internal sealed class TapeFileReadPacker : IDisposable
 
     private void ThrowIfDisposed()
     {
-        if (_disposed)
-            throw new ObjectDisposedException(nameof(TapeFileReadPacker));
+        ObjectDisposedException.ThrowIf(_disposed, nameof(TapeFileReadPacker));
     }
 }

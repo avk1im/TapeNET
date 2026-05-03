@@ -209,7 +209,6 @@ internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
 
     private void ThrowIfDisposed()
     {
-        if (_disposed)
-            throw new ObjectDisposedException(nameof(WorkerThreadTapeWriteBackend));
+        ObjectDisposedException.ThrowIf(_disposed, nameof(WorkerThreadTapeWriteBackend));
     }
 }

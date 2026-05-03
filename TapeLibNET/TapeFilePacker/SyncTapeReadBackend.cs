@@ -66,7 +66,6 @@ internal sealed class SyncTapeReadBackend : ITapeReadBackend
 
     private void ThrowIfDisposed()
     {
-        if (_disposed)
-            throw new ObjectDisposedException(nameof(SyncTapeReadBackend));
+        ObjectDisposedException.ThrowIf(_disposed, nameof(SyncTapeReadBackend));
     }
 }

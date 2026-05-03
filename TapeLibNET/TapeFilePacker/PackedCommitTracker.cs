@@ -20,7 +20,7 @@ namespace TapeLibNET.TapeFilePacker;
 /// verbs: <see cref="Register"/>, <see cref="OnCommitted"/>, and <see cref="DrainPostProcess"/>.
 /// </para>
 /// </summary>
-internal sealed class PackedCommitTracker
+internal sealed class PackedCommitTracker(TapeSetTOC setTOC, ILogger logger)
 {
     // Per-file state held until FilesCommitted fires for the file's token.
     private sealed class PendingEntry
@@ -32,14 +32,8 @@ internal sealed class PackedCommitTracker
 
     private readonly Dictionary<CommitToken, PendingEntry> _pending = [];
     private readonly Queue<TapeFileInfo> _awaitingPostProcess = new();
-    private readonly TapeSetTOC _setTOC;
-    private readonly ILogger _logger;
-
-    public PackedCommitTracker(TapeSetTOC setTOC, ILogger logger)
-    {
-        _setTOC = setTOC;
-        _logger = logger;
-    }
+    private readonly TapeSetTOC _setTOC = setTOC;
+    private readonly ILogger _logger = logger;
 
     /// <summary>Number of files written into the packer but not yet committed.</summary>
     public int PendingCount => _pending.Count;
