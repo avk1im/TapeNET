@@ -131,8 +131,8 @@ public partial class IoRateSparklineControl : UserControl
         if (peak <= 0.0)
             return 0.0;
 
-        double[] mantissas = { 1.0, 2.5, 5.0, 7.5 };
-        int[] tens = { 1, 10, 100 }; // 10^0, 10^1, 10^2
+        double[] mantissas = [1.0, 2.5, 5.0, 7.5];
+        int[] tens = [1, 10, 100]; // 10^0, 10^1, 10^2
         double base1024 = 1.0;
 
         // We search increasing k until we exceed peak even with the smallest mantissa.

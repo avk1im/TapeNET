@@ -238,21 +238,22 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                 }
 
                 var vm = new OpenVirtualDriveViewModel(
-                    request =>
+                    onOpen: request =>
                     {
                         Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
                         // InsertVirtualMedia runs on the worker thread that holds the
                         //  semaphore; this Invoke is on the UI thread, so no deadlock.
                         mediaReady = svc.InsertVirtualMedia(request.Media, System.IO.FileMode.Open);
                     },
-                    () =>
+                    onCancel: () =>
                     {
                         Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
                         mediaReady = false;
                     },
                     prePopulate: prePopulate,
                     mediaMode: System.IO.FileMode.Open,
-                    currentCapabilities: currentCaps);
+                    currentCapabilities: currentCaps,
+                    currentIoSpeed: _viewModel.SelectedIoSpeed);
 
                 var window = new OpenVirtualDriveWindow(vm) { Owner = Application.Current.MainWindow };
                 window.ShowDialog();

@@ -115,7 +115,7 @@ public sealed class VirtualTapeFixture : IDisposable
         DriveProfile.Setmarks => VirtualTapeDriveCapabilities.WithSetmarks,
         DriveProfile.Partitions => VirtualTapeDriveCapabilities.WithPartitions,
         DriveProfile.SeqFilemarks => VirtualTapeDriveCapabilities.WithSeqFilemarks,
-        DriveProfile.FilemarksOnly => VirtualTapeDriveCapabilities.WithFilemarksOnly,
+        DriveProfile.FilemarksOnly => VirtualTapeDriveCapabilities.WithFilemarksOnlyLargeBlocks,
         _ => throw new ArgumentOutOfRangeException(nameof(profile)),
     };
 

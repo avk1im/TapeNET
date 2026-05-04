@@ -296,8 +296,8 @@ public class TapeStreamManagerTests
 
         // Write a content set + TOC first so navigation works
         mgr.Navigator.TargetContentSet = -1;
-        Assert.True(mgr.BeginWriteContent(100_000));
         var data = GenerateTestData(512);
+        Assert.True(mgr.BeginWriteContent(data.Length * 3L / 2));
         using (var ws = mgr.ProduceWriteContentStream(data.Length, 0))
         {
             Assert.NotNull(ws);
@@ -685,7 +685,7 @@ public class TapeStreamManagerTests
 
         // Write content
         mgr.Navigator.TargetContentSet = -1;
-        Assert.True(mgr.BeginWriteContent(100_000));
+        Assert.True(mgr.BeginWriteContent(dataLength * 3L / 2));
         using (var ws = mgr.ProduceWriteContentStream(dataLength, 0))
         {
             Assert.NotNull(ws);
@@ -716,7 +716,7 @@ public class TapeStreamManagerTests
         var originalData = GenerateTestData(dataLength, 0xC2);
 
         mgr.Navigator.TargetContentSet = -1;
-        Assert.True(mgr.BeginWriteContent(100_000));
+        Assert.True(mgr.BeginWriteContent(dataLength * 3L / 2));
         using (var ws = mgr.ProduceWriteContentStream(dataLength, 0))
         {
             Assert.NotNull(ws);
@@ -744,7 +744,7 @@ public class TapeStreamManagerTests
         var originalData = GenerateTestData(dataLength, 0xD3);
 
         mgr.Navigator.TargetContentSet = -1;
-        Assert.True(mgr.BeginWriteContent(100_000));
+        Assert.True(mgr.BeginWriteContent(dataLength * 3L / 2));
         using (var ws = mgr.ProduceWriteContentStream(dataLength, 0))
         {
             Assert.NotNull(ws);
@@ -1052,7 +1052,7 @@ public class TapeStreamManagerTests
         // Write a set + TOC
         var data = GenerateTestData(512, 0x55);
         mgr.Navigator.TargetContentSet = -1;
-        Assert.True(mgr.BeginWriteContent(100_000));
+        Assert.True(mgr.BeginWriteContent(data.Length * 3L / 2));
         using (var ws = mgr.ProduceWriteContentStream(data.Length, 0))
         {
             Assert.NotNull(ws);
@@ -1544,7 +1544,7 @@ public class TapeStreamManagerTests
         var originalData = GenerateTestData(dataLength, 0xA5);
 
         mgr.Navigator.TargetContentSet = -1;
-        Assert.True(mgr.BeginWriteContent(100_000));
+        Assert.True(mgr.BeginWriteContent(dataLength * 3L / 2));
         using (var ws = mgr.ProduceWriteContentStream(dataLength, 0))
         {
             Assert.NotNull(ws);
@@ -1598,14 +1598,15 @@ public class TapeStreamManagerTests
     {
         var (fixture, mgr) = CreateManager(profile);
         using var _ = fixture;
+        int dataLength = 512;
 
         // Write first set + TOC
         mgr.Navigator.TargetContentSet = -1;
-        Assert.True(mgr.BeginWriteContent(100_000));
+        Assert.True(mgr.BeginWriteContent(dataLength * 3L / 2));
         using (var ws = mgr.ProduceWriteContentStream(512, 0))
         {
             Assert.NotNull(ws);
-            ws!.Write(GenerateTestData(512, 0x11), 0, 512);
+            ws!.Write(GenerateTestData(dataLength, 0x11), 0, dataLength);
         }
         Assert.True(mgr.EndWriteContent());
         WriteTOCViaManager(mgr);
@@ -1616,11 +1617,11 @@ public class TapeStreamManagerTests
 
         // Write second set — TOC should become invalidated
         mgr.Navigator.TargetContentSet = -1;
-        Assert.True(mgr.BeginWriteContent(100_000));
+        Assert.True(mgr.BeginWriteContent(dataLength * 3L / 2));
         using (var ws = mgr.ProduceWriteContentStream(512, 0))
         {
             Assert.NotNull(ws);
-            ws!.Write(GenerateTestData(512, 0x22), 0, 512);
+            ws!.Write(GenerateTestData(dataLength, 0x22), 0, dataLength);
         }
         Assert.True(mgr.EndWriteContent());
 
@@ -1645,20 +1646,21 @@ public class TapeStreamManagerTests
     {
         var (fixture, mgr) = CreateManager(profile);
         using var _ = fixture;
+        int dataLength = 256;
 
         // Initial state
         Assert.Equal(TapeNavigator.UnknownSet, mgr.Navigator.CurrentContentSet);
 
         // Write content
         mgr.Navigator.TargetContentSet = -1;
-        Assert.True(mgr.BeginWriteContent(100_000));
+        Assert.True(mgr.BeginWriteContent(dataLength * 3L / 2));
         // After BeginWriteContent, navigator moved to end of content
         Assert.Equal(-1, mgr.Navigator.CurrentContentSet);
 
-        using (var ws = mgr.ProduceWriteContentStream(256, 0))
+        using (var ws = mgr.ProduceWriteContentStream(dataLength, 0))
         {
             Assert.NotNull(ws);
-            ws!.Write(GenerateTestData(256), 0, 256);
+            ws!.Write(GenerateTestData(dataLength), 0, dataLength);
         }
         Assert.True(mgr.EndWriteContent());
         // After EndWriteContent, OnContentWritten was called → CurrentContentSet = -1
@@ -1843,21 +1845,22 @@ public class TapeStreamManagerTests
     {
         var (fixture, mgr) = CreateManager(profile);
         using var _ = fixture;
+        int dataLength = 256;
 
         // Write content + TOC
         mgr.Navigator.TargetContentSet = -1;
-        Assert.True(mgr.BeginWriteContent(100_000));
-        using (var ws = mgr.ProduceWriteContentStream(256, 0))
+        Assert.True(mgr.BeginWriteContent(dataLength * 3L / 2));
+        using (var ws = mgr.ProduceWriteContentStream(dataLength, 0))
         {
             Assert.NotNull(ws);
-            ws!.Write(GenerateTestData(256), 0, 256);
+            ws!.Write(GenerateTestData(dataLength), 0, dataLength);
         }
         Assert.True(mgr.EndWriteContent());
         WriteTOCViaManager(mgr);
 
         // Open a content read stream
         mgr.Navigator.TargetContentSet = 0;
-        using var contentStream = mgr.ProduceReadContentStream(lengthLimit: 256);
+        using var contentStream = mgr.ProduceReadContentStream(lengthLimit: dataLength);
         Assert.NotNull(contentStream);
 
         // Requesting a TOC read stream while content stream is in use → null

@@ -1673,7 +1673,7 @@ public partial class MainViewModel : ViewModelBase
         LogInfo($"{modeText} virtual media: {request.Media.ContentPath}");
 
         // Don't add in-memory drives to MRU (they can't be reopened)
-        if (!request.Media.InMemory)
+        if (!_tapeService.IsInMemoryDrive) // same as if (!request.Media.InMemory)
             AddToVirtualDriveMru(request.Media.ContentPath);
     }
 
@@ -1878,12 +1878,12 @@ public partial class MainViewModel : ViewModelBase
         VirtualMediaDescriptor? newVmd = null;
 
         var vm = new OpenVirtualDriveViewModel(
-            request =>
+            onOpen: request =>
             {
                 Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
                 newVmd = request.Media;
             },
-            () =>
+            onCancel: () =>
             {
                 Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
             },
@@ -1930,7 +1930,9 @@ public partial class MainViewModel : ViewModelBase
             UpdateTreeFromTOC(_tapeService.DriveNumber);
             SelectMostRecentSet();
 
-            AddToVirtualDriveMru(newVmd.ContentPath);
+            // Don't add in-memory drives to MRU (they can't be reopened)
+            if (!_tapeService.IsInMemoryDrive)
+                AddToVirtualDriveMru(newVmd.ContentPath);
 
             MessageBox.Show("Virtual media formatted successfully!", "Format Complete",
                 MessageBoxButton.OK, MessageBoxImage.Information);

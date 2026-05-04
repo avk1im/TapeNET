@@ -32,10 +32,14 @@ public record BlockSizeOption(uint Bytes, string Display)
         new(64 * 1024, "64 KB"), // the max supported by known USB-attached drives
         new(128 * 1024, "128 KB"),
         new(256 * 1024, "256 KB"),
+        new(512 * 1024, "512 KB"),
+        new(1024 * 1024, "1 MB"), // the max supported by LTO-5+ drives
     ];
 
+    public static readonly BlockSizeOption Default = new(64 * 1024, "64 KB");
+
     public static BlockSizeOption FromBytes(uint bytes) =>
-        All.FirstOrDefault(b => b.Bytes == bytes) ?? All[0];
+        All.FirstOrDefault(b => b.Bytes == bytes) ?? Default;
 }
 
 /// <summary>
@@ -67,11 +71,11 @@ public record PresetOption(
 
     public static PresetOption[] All { get; } =
     [
-        new("Basic", VirtualTapeDriveCapabilities.Basic, 100 * 1024 * 1024),
-        new("With Setmarks", VirtualTapeDriveCapabilities.WithSetmarks, 500 * 1024 * 1024),
-        new("With Seq. Filemarks", VirtualTapeDriveCapabilities.WithSeqFilemarks, 500 * 1024 * 1024),
-        new("With Partitions", VirtualTapeDriveCapabilities.WithPartitions, 1024L * 1024 * 1024, 16 * 1024 * 1024),
-        new("Full Featured", VirtualTapeDriveCapabilities.FullFeatured, 1024L * 1024 * 1024, 16 * 1024 * 1024),
+        new("Filemarks only (LTO)", VirtualTapeDriveCapabilities.WithFilemarksOnlyLargeBlocks, 500 * 1024 * 1024),
+        new("With Setmarks (DAT-320)", VirtualTapeDriveCapabilities.WithSetmarks, 500 * 1024 * 1024),
+        new("With Seq. Filemarks (DLT-V4)", VirtualTapeDriveCapabilities.WithSeqFilemarks, 500 * 1024 * 1024),
+        new("With Partitions (AIT)", VirtualTapeDriveCapabilities.WithPartitions, 500 * 1024 * 1024, 16 * 1024 * 1024),
+        new("Full Featured", VirtualTapeDriveCapabilities.FullFeatured, 500 * 1024 * 1024, 16 * 1024 * 1024),
     ];
 }
 
@@ -831,7 +835,7 @@ public class OpenVirtualDriveViewModel : ViewModelBase
                 InMemory: _isInMemory),
             IsCreateNew: IsCreateNewMode,
             MediaName: IsCreateNewMode ? MediaName : null,
-            IoSpeed: _isIoSpeedLocked ? null : SelectedIoSpeed);
+            IoSpeed: SelectedIoSpeed);
 
         _onOpen(request);
     }

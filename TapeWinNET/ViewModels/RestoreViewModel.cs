@@ -73,7 +73,8 @@ public class RestoreViewModel : ViewModelBase
         RestoreMode mode,
         List<BackupSetListItem> preSelectedSets,
         Action<RestoreFormData> onStart,
-        Action onCancel)
+        Action onCancel,
+        bool suggestNoMultivolume = false)
     {
         _onStart = onStart;
         _onCancel = onCancel;
@@ -94,6 +95,8 @@ public class RestoreViewModel : ViewModelBase
 
         // Auto-detect incremental: check if any selected set is incremental
         _incremental = preSelectedSets.Any(s => s.IsIncremental);
+
+        _thisVolumeOnly = suggestNoMultivolume;
 
         // Initialize aggregate summaries
         UpdateItemsGroupHeader();

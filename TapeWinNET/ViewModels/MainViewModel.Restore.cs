@@ -119,10 +119,10 @@ public partial class MainViewModel
 
         // (2) Tree or list selected backup set (no per-file selection)
         if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet)
-            return $"set #{_selectedTreeItem.IndexDisplay}";
+            return $"set {_selectedTreeItem.IndexDisplay}";
 
         if (SelectedBackupSet is { } selSet)
-            return $"set #{selSet.IndexDisplay}";
+            return $"set {selSet.IndexDisplay}";
 
         // (3) No specific selection — all sets when media is loaded
         if (_tapeService.TOC is { Count: > 0 })
@@ -227,9 +227,9 @@ public partial class MainViewModel
         string? targetDirectory)
     {
         var viewModel = new RestoreViewModel(
-            mode,
-            setItems,
-            request =>
+            mode: mode,
+            preSelectedSets: setItems,
+            onStart: request =>
             {
                 var updatedRequest = request with
                 {
@@ -240,10 +240,11 @@ public partial class MainViewModel
                 Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
                 _ = ExecuteRestoreAsync(updatedRequest);
             },
-            () =>
+            onCancel: () =>
             {
                 Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
-            });
+            },
+            suggestNoMultivolume: _tapeService.IsInMemoryDrive);
 
         // Pre-fill target directory (e.g. from drag-to-Explorer)
         if (targetDirectory != null)
@@ -515,8 +516,8 @@ public partial class MainViewModel
 
         if (view != null)
         {
-            view.FilteredFiles.SetAllChecked(check);
-            item.CheckedFileCount = check ? view.FilteredFiles.SourceCount : null;
+            view.FilteredFiles.SetFilteredChecked(check);
+            item.CheckedFileCount = check ? view.FilteredFiles.FilteredCheckedCount : null;
         }
         else
         {

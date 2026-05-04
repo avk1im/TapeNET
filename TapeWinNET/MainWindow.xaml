@@ -139,6 +139,11 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- Progress bar fill color -->
+        <Style TargetType="ProgressBar">
+            <Setter Property="Foreground" Value="Blue"/>
+        </Style>
     </Window.Resources>
     
     <Grid>

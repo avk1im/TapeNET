@@ -197,13 +197,13 @@ public class TapeTreeItemViewModel : ViewModelBase
         var description = string.IsNullOrEmpty(setTOC.Description) 
             ? "[Unnamed Set]" 
             : setTOC.Description;
-        var indexDisplay = $"{setIndex} | {altIndex}";
+        var indexDisplay = $"#{setIndex} | {altIndex}";
         bool isOnCurrentVolume = setTOC.Volume == toc.Volume;
 
         var item = new TapeTreeItemViewModel
         {
             // Display format: "1 | -2" for set 1 of 3
-            DisplayName = $"Set #{indexDisplay}: {description}",
+            DisplayName = $"Set {indexDisplay}: {description}",
             IndexDisplay = indexDisplay,
             ItemType = TreeItemType.BackupSet,
             Tag = setIndex,
