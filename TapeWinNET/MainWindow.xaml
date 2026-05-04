@@ -615,6 +615,14 @@
                                        FontSize="11"
                                        TextTrimming="CharacterEllipsis"
                                        MaxWidth="300"
+                                       Margin="0,0,0,6"/>
+
+                            <!-- IO rate sparkline chart -->
+                            <controls:IoRateSparklineControl
+                                       x:Name="BackupSparkline"
+                                       CurrentRate="{Binding IOProgressRate}"
+                                       Height="48"
+                                       Width="300"
                                        Margin="0,0,0,4"/>
 
                             <TextBlock Text="{Binding IOProgressText}"
@@ -663,6 +671,14 @@
                                        FontSize="11"
                                        TextTrimming="CharacterEllipsis"
                                        MaxWidth="300"
+                                       Margin="0,0,0,6"/>
+
+                            <!-- IO rate sparkline chart -->
+                            <controls:IoRateSparklineControl
+                                       x:Name="RestoreSparkline"
+                                       CurrentRate="{Binding IOProgressRate}"
+                                       Height="48"
+                                       Width="300"
                                        Margin="0,0,0,4"/>
 
                             <TextBlock Text="{Binding IOProgressText}"

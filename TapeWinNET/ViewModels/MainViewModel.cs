@@ -52,6 +52,7 @@ public partial class MainViewModel : ViewModelBase
     private bool _isBusy;
     private bool _isBackupInProgress;
     private string _ioProgressText = string.Empty;
+    private double _ioProgressRate;
     private bool _isTOCLoadInProgress;
     // Set to true when the user explicitly cancels a TOC load, so ReadTOCWithUIAsync
     //  can suppress the failure dialog that would otherwise appear.
@@ -186,6 +187,16 @@ public partial class MainViewModel : ViewModelBase
         set => SetProperty(ref _ioProgressText, value);
     }
 
+    /// <summary>
+    /// Current IO rate in bytes per second, bound to <see cref="IoRateSparklineControl.CurrentRate"/>.
+    ///  Shared by both backup and restore progress overlays.
+    /// </summary>
+    public double IOProgressRate
+    {
+        get => _ioProgressRate;
+        set => SetProperty(ref _ioProgressRate, value);
+    }
+
     public string PropertiesHeader
     {
         get => _propertiesHeader;
@@ -271,6 +282,18 @@ public partial class MainViewModel : ViewModelBase
 
     // BackupProgressPercent, BackupProgressText, CurrentBackupFile properties are in MainViewModel.Backup.cs
     // RestoreProgressPercent, RestoreProgressText, CurrentRestoreFile, IsRestoreInProgress properties are in MainViewModel.Restore.cs
+
+    /// <summary>
+    /// Raised at operation start and end so the View can reset the IO-rate sparkline
+    ///  chart, clearing stale samples from the previous operation.
+    /// </summary>
+    public event Action? RequestResetSparkline;
+
+    /// <summary>
+    /// Raises <see cref="RequestResetSparkline"/>. Called by <see cref="WpfServiceHost"/>
+    ///  on operation start and end (already on the UI thread via dispatcher).
+    /// </summary>
+    internal void RaiseResetSparkline() => RequestResetSparkline?.Invoke();
 
     public bool ShowFullPathname
     {

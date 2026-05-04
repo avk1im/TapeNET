@@ -6,7 +6,6 @@ using TapeLibNET.Services;
 using TapeLibNET.Virtual;
 // ReSharper disable once RedundantUsingDirective — WpfServiceHost itself lives in TapeWinNET.Services
 // but its prompt methods reference dialogs from the TapeWinNET root namespace.
-using TapeWinNET;  // MediaChangeDialog, FileErrorDialog, OpenVirtualDriveWindow
 using TapeWinNET.Models;
 using TapeWinNET.ViewModels;
 using Windows.Win32.System.SystemServices; // Helpers.BytesToString
@@ -49,10 +48,15 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
     public void OnServiceStateChanged(ServiceStateChange change)
     {
         if ((change & ServiceStateChange.OperationStarted) != 0)
+        {
             _stopwatch.Restart();
+            _dispatcher.Invoke(_viewModel.RaiseResetSparkline);
+        }
 
         if ((change & ServiceStateChange.OperationEnded) != 0)
+        {
             _stopwatch.Stop();
+        }
 
         _viewModel.OnServiceStateChanged(change);
     }
@@ -71,9 +75,10 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                 _viewModel.CurrentRestoreFile = System.IO.Path.GetFileName(currentFile);
             _viewModel.RestoreProgressPercent = total > 0 ? (int)(100.0 * processed / total) : 0;
             _viewModel.RestoreProgressText    = $"{processed:N0} / {total:N0} files ({Helpers.BytesToString(bytes)})";
-            _viewModel.IOProgressText = _stopwatch.IsRunning
-                ? TapeServiceBase.FormatDataRate(bytes, _stopwatch.ElapsedSeconds)
-                : TapeServiceBase.FormatDataRate(0L, 1.0);
+            double elapsed = _stopwatch.IsRunning ? _stopwatch.ElapsedSeconds : 0.0;
+            double rate    = elapsed > 0.001 ? bytes / elapsed : 0.0;
+            _viewModel.IOProgressText = rate > 0 ? $"{Helpers.BytesToString((long)rate)}/s" : string.Empty;
+            _viewModel.IOProgressRate = rate;
         });
     }
 
@@ -89,9 +94,10 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                 _viewModel.CurrentBackupFile = System.IO.Path.GetFileName(currentFile);
             _viewModel.BackupProgressPercent = total > 0 ? (int)(100.0 * processed / total) : 0;
             _viewModel.BackupProgressText    = $"{processed:N0} / {total:N0} files ({Helpers.BytesToString(bytes)})";
-            _viewModel.IOProgressText = _stopwatch.IsRunning
-                ? TapeServiceBase.FormatDataRate(bytes, _stopwatch.ElapsedSeconds)
-                : TapeServiceBase.FormatDataRate(0L, 1.0);
+            double elapsed = _stopwatch.IsRunning ? _stopwatch.ElapsedSeconds : 0.0;
+            double rate    = elapsed > 0.001 ? bytes / elapsed : 0.0;
+            _viewModel.IOProgressText = rate > 0 ? $"{Helpers.BytesToString((long)rate)}/s" : string.Empty;
+            _viewModel.IOProgressRate = rate;
         });
     }
 

@@ -86,6 +86,13 @@ namespace TapeWinNET
             _viewModel.RequestSaveLogFilePath += () => ShowLogSaveDialog("Save Log");
             _viewModel.RequestMirrorLogFilePath += () => ShowLogSaveDialog("Mirror Log");
 
+            // Sparkline reset: clear stale samples at operation start and end
+            _viewModel.RequestResetSparkline += () =>
+            {
+                BackupSparkline.Reset();
+                RestoreSparkline.Reset();
+            };
+
             // Auto-scroll: the ViewModel raises RequestAutoScroll after each batch flush
             //  when the user hasn't scrolled away from the bottom.
             _viewModel.RequestAutoScroll += () =>

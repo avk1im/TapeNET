@@ -60,7 +60,6 @@ public class RestoreViewModel : ViewModelBase
     private bool _recurseSubdirectories;
     private bool _uncheckProcessedFiles = true;
     private bool _skipAllErrors;
-    private bool _noMultivolume;
     private string _targetDirectory = string.Empty;
     private HandleExistingOption _selectedHandleExisting = HandleExistingOption.All[0]; // Keep Both
     private string _itemsGroupHeader = string.Empty;
@@ -223,8 +222,6 @@ public class RestoreViewModel : ViewModelBase
                 }
                 NotifySelectionChanged();
             }
-
-            NoMultivolume = value; // when "This volume only" is checked, multivolume continuation is disabled
         }
     }
 
@@ -311,16 +308,6 @@ public class RestoreViewModel : ViewModelBase
     {
         get => _skipAllErrors;
         set => SetProperty(ref _skipAllErrors, value);
-    }
-
-    /// <summary>
-    /// When checked, multi-volume continuation is disabled: if the required volume
-    /// is not available the operation ends with the files processed so far.
-    /// </summary>
-    public bool NoMultivolume
-    {
-        get => _noMultivolume;
-        set => SetProperty(ref _noMultivolume, value);
     }
 
     /// <summary>Warning level for the options panel.</summary>
@@ -465,8 +452,6 @@ public class RestoreViewModel : ViewModelBase
         string? targetDir = (_mode == RestoreMode.Restore && !_restoreToOriginal && !string.IsNullOrWhiteSpace(_targetDirectory))
             ? _targetDirectory : null;
 
-        _noMultivolume = _thisVolumeOnly; // "This volume only" implies no multivolume continuation
-
         var request = new RestoreFormData(
             Mode: _mode,
             CheckedFilesBySet: checkedFilesBySet,
@@ -476,7 +461,7 @@ public class RestoreViewModel : ViewModelBase
             HandleExisting: _selectedHandleExisting.Value,
             UncheckProcessedFiles: _uncheckProcessedFiles,
             SkipAllErrors: _skipAllErrors,
-            NoMultivolume: _noMultivolume);
+            NoMultivolume: _thisVolumeOnly);
 
         _onStart(request);
     }

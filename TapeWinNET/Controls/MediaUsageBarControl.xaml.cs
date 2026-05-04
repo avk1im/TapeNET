@@ -39,8 +39,9 @@ public partial class MediaUsageBarControl : UserControl
     // Two alternating blues — dark (Windows accent class) and pale — matching the
     //  Windows Explorer disk-usage aesthetic. Adjacent sets read as immediately distinct
     //  while the overall bar stays monochromatic and consistent with the app's style.
-    private static readonly Color SetColorDark  = Color.FromRgb(0x2E, 0x74, 0xB5); // #2E74B5 — Windows accent blue
-    private static readonly Color SetColorLight = Color.FromRgb(0x9D, 0xC3, 0xE6); // #9DC3E6 — pale blue
+    // Blues sourced from UITheme so MediaUsageBarControl and IoRateSparklineControl share the same palette.
+    private static readonly Color SetColorDark  = WpfTheme.AccentBlueDark;
+    private static readonly Color SetColorLight = WpfTheme.AccentBlueLight;
 
     /// <summary>
     /// Returns the palette color for a given 0-based set index.
