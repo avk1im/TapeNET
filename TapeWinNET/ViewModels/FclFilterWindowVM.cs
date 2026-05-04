@@ -24,6 +24,8 @@ public class FclFilterWindowVM : ViewModelBase
     private FclDiagnostic? _selectedDiagnostic;
     private bool _isDnfCompatible = true;
     private string? _nonDnfMessage;
+    private bool _applyToAll;
+    private bool _hasMultipleSets;
 
     // ─────────────────────────────────────────────────────
     //  Construction
@@ -98,6 +100,27 @@ public class FclFilterWindowVM : ViewModelBase
     /// <summary>Button text for the toggle: "Show Program ▶" / "◀ Hide Program".</summary>
     public string ToggleProgramPaneText =>
         IsProgramPaneOpen ? "◀ Hide Program" : "Show Program ▶";
+
+    /// <summary>
+    /// Whether more than one backup set exists. Controls visibility of the
+    ///  "all sets" checkbox in the dialog.
+    /// </summary>
+    public bool HasMultipleSets
+    {
+        get => _hasMultipleSets;
+        set => SetProperty(ref _hasMultipleSets, value);
+    }
+
+    /// <summary>
+    /// Whether the filter should be applied to / disabled for all backup sets.
+    /// Mirrors <see cref="Controls.FileFilterPane.ApplyToAll"/>; initialised from
+    ///  the pane before the dialog opens and read back when it closes.
+    /// </summary>
+    public bool ApplyToAll
+    {
+        get => _applyToAll;
+        set => SetProperty(ref _applyToAll, value);
+    }
 
     /// <summary>
     /// Whether the user has modified the FCL text since the last sync.

@@ -233,6 +233,7 @@
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
             <!-- Show/Hide Program toggle -->
@@ -247,7 +248,7 @@
                     ToolTip="AI-assisted FCL generation (coming soon)">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="✦" FontSize="14" Margin="0,0,4,0"/>
-                    <TextBlock Text="Generate with AI…"/>
+                    <TextBlock Text="AI Generate…"/>
                 </StackPanel>
             </Button>
 
@@ -262,11 +263,22 @@
                     Command="{Binding CancelCommand}"
                     IsCancel="True"
                     Width="80" Margin="0,0,8,0"/>
-            <Button Grid.Column="5"
-                    Content="Apply Filter"
+
+            <!-- "All sets" checkbox — visible only when multiple sets exist -->
+            <CheckBox Grid.Column="5"
+                      Content="all sets"
+                      IsChecked="{Binding ApplyToAll}"
+                      VerticalAlignment="Center"
+                      Margin="0,0,8,0"
+                      ToolTip="Apply or disable the filter for all backup sets on this tape"
+                      Visibility="{Binding HasMultipleSets,
+                                   Converter={StaticResource BoolToVis}}"/>
+
+            <Button Grid.Column="6"
+                    Content="Apply"
                     Command="{Binding ApplyFilterCommand}"
                     IsDefault="True"
-                    Width="100"/>
+                    Width="80"/>
         </Grid>
     </Grid>
 </Window>

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 
+using FclNET;
 using TapeLibNET;
 using TapeWinNET.Utils;
 
@@ -106,6 +107,13 @@ public class BackupSetView(int setIndex, bool isIncrementalView,
 /// the tree UI structure.
 /// </para>
 /// </summary>
+/// <summary>
+/// Captures the filter to apply to all backup sets at once.
+/// <see cref="Evaluator"/> is null when disabling a global filter.
+/// <see cref="RestoreAction"/> is the pane-state restore delegate for the current set.
+/// </summary>
+public record PendingGlobalFilterRecord(FclEvaluator? Evaluator, Func<Task>? RestoreAction);
+
 /// <remarks>Creates a new <see cref="TOCView"/> for the given TOC.</remarks>
 public class TOCView(TapeTOC toc)
 {
@@ -117,6 +125,41 @@ public class TOCView(TapeTOC toc)
 
     /// <summary>Number of backup sets (= <see cref="TapeTOC.Count"/>).</summary>
     public int Count => _toc.Count;
+
+    /// <summary>
+    /// Pending global filter to apply to newly created <see cref="BackupSetView"/>
+    ///  instances. Set when the user applies a filter "to all sets"; consumed (applied)
+    ///  inside <see cref="GetOrCreate"/> for each newly created view.
+    ///  Cleared by <see cref="ClearPendingGlobalFilter"/> when the global filter is
+    ///  explicitly disabled or superseded.
+    /// </summary>
+    public PendingGlobalFilterRecord? PendingGlobalFilter { get; private set; }
+
+    /// <summary>Clears the pending global filter record.</summary>
+    public void ClearPendingGlobalFilter() => PendingGlobalFilter = null;
+
+    /// <summary>
+    /// Sets the pending global filter to be applied to all future (lazily created) views.
+    /// </summary>
+    public void SetPendingGlobalFilter(FclEvaluator? evaluator, Func<Task>? restoreAction)
+        => PendingGlobalFilter = new PendingGlobalFilterRecord(evaluator, restoreAction);
+
+    /// <summary>
+    /// Enumerates every <see cref="BackupSetView"/> that has already been created
+    ///  (i.e. the user has visited or <see cref="BuildBackupSetItemList"/> has
+    ///  materialised them). Used to apply global filter changes eagerly.
+    /// </summary>
+    public IEnumerable<BackupSetView> ExistingViews
+    {
+        get
+        {
+            for (int i = 1; i < _setViews.Length; i++)
+            {
+                if (_setViews[i] is { } view)
+                    yield return view;
+            }
+        }
+    }
 
     /// <summary>Returns the cached view for the given set, or <c>null</c> if not yet created.</summary>
     public BackupSetView? this[int setIndex] =>
@@ -168,6 +211,17 @@ public class TOCView(TapeTOC toc)
         // Migrate checked state from the previous (stale) view
         if (existing is not null)
             view.MigrateCheckedState(existing.FilteredFiles);
+
+        // Apply the pending global filter (if any) to this freshly created view.
+        //  This covers sets never visited before the user pressed "Apply to all".
+        if (PendingGlobalFilter is { } pgf)
+        {
+            view.FilteredFiles.Filter = pgf.Evaluator is not null
+                ? new FclTapeFileFilter(pgf.Evaluator)
+                : null;
+            // Store a restore delegate so the set behaves like a directly filtered one
+            view.SavedFilterState = pgf.RestoreAction;
+        }
 
         _setViews[setIndex] = view;
         return view;
@@ -355,7 +409,10 @@ public class TOCView(TapeTOC toc)
     /// </para>
     /// </summary>
     /// <param name="checkedOnly">Whether to include only sets with at least one checked file.</param>
-    public List<BackupSetListItem> BuildBackupSetItemList(bool checkedOnly = false)
+    /// <param name="showIncrementalSets">Current incremental display setting. Required when
+    ///  <see cref="PendingGlobalFilter"/> is set, so that unvisited sets can be materialised
+    ///  with the correct file resolution before their filter counts are read.</param>
+    public List<BackupSetListItem> BuildBackupSetItemList(bool checkedOnly = false, bool showIncrementalSets = false)
     {
         var list = new List<BackupSetListItem>(_toc.Count);
 
@@ -363,6 +420,11 @@ public class TOCView(TapeTOC toc)
         {
             int setIndex = _toc.SetIndexToAlt(alt);
             var setTOC = _toc[setIndex];
+
+            // When a global filter is pending, force-create any unvisited set view now
+            //  so the filter is applied and counts are correct for the media snapshot.
+            if (PendingGlobalFilter is not null && _setViews[setIndex] is null)
+                GetOrCreate(setIndex, showIncrementalSets);
 
             // Sync checked and filtered state from existing BackupSetView (user may have
             //  checked/filtered files before navigating back to the media view)

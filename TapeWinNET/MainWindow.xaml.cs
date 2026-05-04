@@ -41,6 +41,7 @@ namespace TapeWinNET
 
             // Wire filter pane to ViewModel via direct mode
             FileFilterPaneControl.FilterStateChanged = _viewModel.OnFilterStateChanged;
+            FileFilterPaneControl.AllSetsFilterRequested = _viewModel.OnAllSetsFilterRequested;
 
             // Bar-click → scroll the backup sets ListView so the selected item is visible
             _viewModel.PropertyChanged += (_, e) =>
@@ -164,6 +165,7 @@ namespace TapeWinNET
 
                 // Point the filter pane at the current set's FilteredFileList
                 FileFilterPaneControl.FilterTarget = _viewModel.ActiveFilterTarget;
+                FileFilterPaneControl.HasMultipleSets = _viewModel.HasMultipleSets;
 
                 // If the set had a saved filter, restore the pane UI and re-apply
                 if (_viewModel.PendingFilterRestore is { } restore)

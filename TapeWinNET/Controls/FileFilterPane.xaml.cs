@@ -84,6 +84,17 @@ public partial class FileFilterPane : UserControl
     /// </summary>
     public Func<Func<Task>?, Task>? FilterStateChanged { get; set; }
 
+    /// <summary>
+    /// Optional callback invoked (in addition to the single-set path) when
+    ///  <see cref="ApplyToAll"/> is checked. The host applies the evaluator to
+    ///  every backup set and updates <see cref="Models.TOCView.PendingGlobalFilter"/>.
+    /// <list type="bullet">
+    ///   <item><c>evaluator</c> — ready-to-use FCL evaluator, or null to disable for all.</item>
+    ///   <item><c>restoreAction</c> — opaque delegate for the current set's pane state.</item>
+    /// </list>
+    /// </summary>
+    public Func<FclEvaluator?, Func<Task>?, Task>? AllSetsFilterRequested { get; set; }
+
     public FileFilterPane()
     {
         ToggleFilterCommand = new RelayCommand(
@@ -132,6 +143,14 @@ public partial class FileFilterPane : UserControl
     public static readonly DependencyProperty AdvancedFilterTooltipProperty =
         DependencyProperty.Register(nameof(AdvancedFilterTooltip), typeof(string), typeof(FileFilterPane),
             new PropertyMetadata("Open the advanced filter editor"));
+
+    public static readonly DependencyProperty HasMultipleSetsProperty =
+        DependencyProperty.Register(nameof(HasMultipleSets), typeof(bool), typeof(FileFilterPane),
+            new PropertyMetadata(false));
+
+    public static readonly DependencyProperty ApplyToAllProperty =
+        DependencyProperty.Register(nameof(ApplyToAll), typeof(bool), typeof(FileFilterPane),
+            new PropertyMetadata(false));
 
     public string FilterText
     {
@@ -182,6 +201,28 @@ public partial class FileFilterPane : UserControl
     }
 
     /// <summary>
+    /// Whether more than one backup set exists in the current TOC.
+    /// Controls the visibility of the "all sets" checkbox. Set by the host.
+    /// </summary>
+    public bool HasMultipleSets
+    {
+        get => (bool)GetValue(HasMultipleSetsProperty);
+        set => SetValue(HasMultipleSetsProperty, value);
+    }
+
+    /// <summary>
+    /// Whether the filter should be applied to / disabled for all sets.
+    /// Bound to the "all sets" checkbox. When true and
+    ///  <see cref="AllSetsFilterRequested"/> is wired, the apply/disable
+    ///  operations also fan out to every backup set.
+    /// </summary>
+    public bool ApplyToAll
+    {
+        get => (bool)GetValue(ApplyToAllProperty);
+        set => SetValue(ApplyToAllProperty, value);
+    }
+
+    /// <summary>
     /// Whether the control is busy performing a filter operation.
     /// While true, all commands are disabled.
     /// </summary>
@@ -219,6 +260,7 @@ public partial class FileFilterPane : UserControl
     public void Reset()
     {
         FilterText = string.Empty;
+        ApplyToAll = false;
         ClearAdvancedFilter();
     }
 
@@ -300,6 +342,10 @@ public partial class FileFilterPane : UserControl
                 // Callback mode — delegate to host
                 await FilterRequested!(evaluator, reapplyAction);
             }
+
+            // "Apply to all sets" fan-out — propagate filter to every other set
+            if (ApplyToAll && AllSetsFilterRequested is not null)
+                await AllSetsFilterRequested(evaluator, reapplyAction);
         }
         finally
         {
@@ -334,6 +380,10 @@ public partial class FileFilterPane : UserControl
             {
                 await FilterRequested!(null, restoreAction);
             }
+
+            // "Disable for all sets" fan-out
+            if (ApplyToAll && AllSetsFilterRequested is not null)
+                await AllSetsFilterRequested(null, restoreAction);
         }
         finally
         {
@@ -405,6 +455,10 @@ public partial class FileFilterPane : UserControl
         else if (!string.IsNullOrWhiteSpace(FilterText))
             vm.InitFromPatterns(FilterText.Trim());
 
+        // Pass "all sets" context to the dialog
+        vm.HasMultipleSets = HasMultipleSets;
+        vm.ApplyToAll = ApplyToAll;
+
         // Restore saved user-edited FCL text (preserves comments, formatting)
         if (_windowState is { SavedFclText: { } savedText })
             vm.RestoreSavedFclText(savedText);
@@ -437,6 +491,9 @@ public partial class FileFilterPane : UserControl
             vm.IsProgramPaneOpen,
             dialog.ProgramColumnWidth,
             vm.AppliedFclText);
+
+        // Sync the "apply to all sets" checkbox back from the dialog
+        ApplyToAll = vm.ApplyToAll;
 
         // Process result
         if (wasCleared)

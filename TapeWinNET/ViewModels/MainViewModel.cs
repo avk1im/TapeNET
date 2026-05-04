@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
@@ -10,6 +10,8 @@ using TapeLibNET;
 using TapeLibNET.Virtual;
 using TapeLibNET.Services;
 using TapeWinNET.Converters;
+
+using FclNET;
 
 using TapeWinNET.Controls;
 using TapeWinNET.Models;
@@ -481,7 +483,58 @@ public partial class MainViewModel : ViewModelBase
         await Task.CompletedTask;
     }
 
-    /// <summary>Resets the ViewModel-side filter state (used when loading new content).</summary>
+    /// <summary>
+    /// Whether more than one backup set exists on the current tape.
+    ///  Bound to <see cref="Controls.FileFilterPane.HasMultipleSets"/> to control
+    ///  visibility of the "all sets" checkbox.
+    /// </summary>
+    public bool HasMultipleSets => (_tocView?.Count ?? 0) > 1;
+
+    /// <summary>
+    /// Called by the View layer when the user applies or disables a filter
+    ///  with "all sets" checked. Eagerly applies the filter to every already-created
+    ///  <see cref="BackupSetView"/> and stores <paramref name="evaluator"/> as the
+    ///  <see cref="TOCView.PendingGlobalFilter"/> so that any set visited later
+    ///  also receives the filter automatically.
+    /// </summary>
+    /// <param name="evaluator">The evaluator to apply, or <c>null</c> to disable.</param>
+    /// <param name="restoreAction">Pane-state restore delegate for the current set.</param>
+    public async Task OnAllSetsFilterRequested(FclEvaluator? evaluator, Func<Task>? restoreAction)
+    {
+        if (_tocView is null)
+            return;
+
+        // Build the filter (null = disable)
+        var filter = evaluator is not null ? new FclTapeFileFilter(evaluator) : null;
+
+        // Store or clear the pending global filter for lazily created views
+        if (evaluator is not null)
+            _tocView.SetPendingGlobalFilter(evaluator, restoreAction);
+        else
+            _tocView.ClearPendingGlobalFilter();
+
+        // Eagerly apply to all already-materialised set views
+        var tasks = new List<Task>();
+        foreach (var view in _tocView.ExistingViews)
+        {
+            // Skip the current set -- already handled by the single-set path
+            if (view == _currentSetView)
+                continue;
+
+            view.FilteredFiles.Filter = filter;
+            view.SavedFilterState = restoreAction;
+            tasks.Add(view.FilteredFiles.FilterTask);
+        }
+
+        // Await all background filter tasks in parallel
+        if (tasks.Count > 0)
+            await Task.WhenAll(tasks);
+
+        // Refresh current view header/counts
+        NotifyFilterPropertiesChanged();
+    }
+
+        /// <summary>Resets the ViewModel-side filter state (used when loading new content).</summary>
     private void ClearFileFilter()
     {
         _currentSetView = null;
@@ -1076,6 +1129,8 @@ public partial class MainViewModel : ViewModelBase
         TreeItems.Add(driveItem);
         WindowTitle = $"TapeWin - Drive {driveNumber}";
 
+        OnPropertyChanged(nameof(HasMultipleSets));
+
         // Show drive info when only drive is available
         LoadDriveInfo();
     }
@@ -1118,6 +1173,8 @@ public partial class MainViewModel : ViewModelBase
         }
 
         WindowTitle = $"TapeWin - {toc.Description ?? $"Volume #{toc.Volume}"}";
+
+        OnPropertyChanged(nameof(HasMultipleSets));
 
         // Status message: TOC-from-file warning takes precedence over in-memory info
         if (_tapeService.IsTOCFromFile)

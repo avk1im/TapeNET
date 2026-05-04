@@ -198,9 +198,25 @@ Callers never track their own counters — they just read the snapshot. `StatsUn
 
 `VirtualTapeDriveBackend` provides file-backed virtual tape drives for testing without hardware. Created via `VirtualTapeDriveBackend.CreateFileBacked(...)` with configurable capabilities (`WithPartitions` / `WithSetmarks`), capacity, and IO speed simulation.
 
+### Shared-block file packing (`TapeFilePacker`)
+
+Complete design specification: `docs/Design-TapeFilePacker.md`.
+
+Multiple files can share a single tape block, eliminating per-file alignment waste. Key design points:
+
+- **`TapeAddress(long Block, uint Offset)`** replaces the old bare `long Block` everywhere a file's tape position is recorded (TOC, agents, services, apps). `ToString()` collapses to the bare block number when `Offset == 0`, so Phase 1 logs look identical to before.
+- **`FmksMode` removed** — the per-file filemark mode was unsupported on LTO, slower, and no longer worth its plumbing cost. One filemark is still written after each TOC copy; no filemarks are written after content files.
+- **Layered write pipeline** — `WorkerThreadTapeWriteBackend` (`ITapeWriteBackend`) serializes writes to `TapeDrive.WriteDirect` on a dedicated worker thread (double-buffered: one fill buffer + one in-flight buffer). `TapeFileWritePacker` owns the file registry, `CommitToken` machinery, buffer-swap logic, commit promotion, and rollback state. `TapeWriteStreamFacade` is the per-file `Stream` façade returned from `BeginFile()`.
+- **Commit decoupling** — writing a file (`BeginFile` / stream `Write` / `EndFile`) is decoupled from committing it to tape. The `FilesCommitted` event fires (synchronously on the calling thread) when a file's tail block is durably on tape. `TapeFileInfo.Address` is stamped at commit time, not at `BeginFile` time.
+- **`CommitToken`** — opaque correlation handle returned by `EndFile` (also accessible via `TapeWriteStreamFacade.CommitToken`). The agent keeps a `Dictionary<CommitToken, TapeFileInfo>` to match pending entries to their `FilesCommitted` payload. `PackedCommitTracker` encapsulates this dictionary, the TOC-append site, and the deferred `PostProcess` queue behind three verbs: `Register`, `OnCommitted`, `DrainPostProcess`.
+- **Rollback state machine** — `DiscardOpenFile()` (in-memory truncation, no tape I/O in the common case) discards the currently-open file on source-read error; `RollbackPending()` discards all pending-commit files and repositions the drive to the last committed block on EOM. `TapePackerEndOfMediaException` carries the rolled-back token list across the packer/agent seam.
+- **Layered read pipeline** — `SyncTapeReadBackend` (`ITapeReadBackend`) issues `Drive.ReadDirect` calls synchronously. `TapeFileReadPacker` implements a small LRU ring cache of block-sized slots, exact `(Block, Offset)` positioning, and cross-block reads hidden from callers. `TapeReadStreamFacade` is the per-file `Stream` façade returned from `BeginRead()`. The read packer is reset on every set boundary.
+- **`TapeStreamManager` integration** — owns packer/backend lifecycle: `EnsurePackerCreated()` / `EnsureReadPackerCreated()` construct the respective stacks; `FlushAndDisposePacker()` / `DisposeReadPacker()` tear them down. `BeginPackedFile()` / `EndPackedFile()` and `BeginPackedFileRead()` / `EndPackedFileRead()` are the agent-facing entry points. `Manager.FilesCommitted` re-exposes the inner packer's event.
+- **Agent integration** — `TapeFileBackupAgent` packed methods (`BackupFilesToCurrentSetPacked`, etc.) sit alongside the legacy aligned methods (retained with `[Obsolete]` for side-by-side testing). `TapeFileRestoreBaseAgent` packed methods (`RestoreAllFilesFromCurrentSetPacked`, etc.) likewise mirror their aligned counterparts. Cross-path compatibility: legacy (aligned) backup output restores correctly through the packed path; packed backup output requires the packed restore path.
+
 ---
 
-## TapeLibNET.Tests — Library Test Suite
+## TapeLibNET.Tests
 
 xUnit test project with **1,170+ tests** across test classes covering the library core and service-layer round-trips, all running against memory-backed virtual tape drives (no hardware required). Parallel execution is disabled globally due to shared virtual drive state.
 
@@ -359,6 +375,17 @@ The pane supports two **dispatch modes** for host integration:
 
 Direct mode takes priority when `FilterTarget` is non-null. The pane captures its full UI state (text, advanced expression, window layout) into the restore delegate for both apply and disable, so the filter definition survives navigation even when disabled.
 
+#### Multi-set ("Apply to all") extension
+
+Both modes can optionally operate across **all backup sets on the current tape** via the "all sets" checkbox, which appears when `HasMultipleSets` is `true`. The feature adds two orthogonal concerns:
+
+- **`AllSetsFilterRequested` callback** (wired in `MainWindow.xaml.cs`) — called instead of (or in addition to) the normal single-set path when the checkbox is checked. The host (`MainViewModel.OnAllSetsFilterRequested`) receives the `FclEvaluator?` and restore delegate, then:
+  1. Eagerly applies the filter (or `null` to disable) to every already-materialized `BackupSetView` in `TOCView.ExistingViews`, awaiting all async `FilterTask`s in parallel.
+  2. Stores or clears `TOCView.PendingGlobalFilter` so that any set visited *later* (lazy creation) automatically inherits the filter.
+- **`TOCView.PendingGlobalFilter`** — a `PendingGlobalFilterRecord(FclEvaluator?, Func<Task>?)` record. `GetOrCreate(setIndex)` applies it to newly created `BackupSetView`s. `BuildBackupSetItemList()` force-materializes all unvisited set views (to get correct media-level statistics) **only** when this record is non-null, avoiding unnecessary work otherwise.
+
+The "all sets" checkbox is mirrored identically in `FclFilterWindow` (the advanced FCL editor), so the same global-apply semantics are available from both filter entry points. Disabling globally clears the filter on every set unconditionally, regardless of whether the individual sets had different filters before.
+
 ### FilteredFileList — Centralized Async Filtering (`TapeWinNET/Utils/`)
 
 `FilteredFileList` is the standard, reusable async filtering mechanism throughout TapeWinNET. It wraps any `IReadOnlyList<TapeFileInfo>` source and centralizes three concerns that were previously scattered across multiple ViewModels:
@@ -512,14 +539,13 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 
 - `TapeWinNET`: Additional UI polish and workflow refinements
 - `TapeLibNET`: Polishing, validation, & hardening of the core functionality, while using and expanding `TapeLibNET.Tests`
-- `TapeConNET`: Consider switching to classes from the top-level program structure.
+- `TapeConNET`: ✅ Consider switching to classes from the top-level program structure.
 
 - `TapeWinNET`: UI enhancement features
-1. [DONE] Log export / clear — Full log pane with batched ingestion (10K cap, smart pruning), severity filtering, auto-scroll lock, timestamp toggle, Save Log / Mirror Log to file (text + CSV), copy (Ctrl+C, multi-select), clear. `MainViewModel.Log.cs` partial class, top-level Log menu + context menu.
-2. [DONE] File filter/search in the backup set table — `FileFilterPane` with pattern mode (wildcards) and advanced mode (full FCL via `FclFilterWindow`). Dynamic stats in the GroupBox header, filter state persistence across tree navigation.
-3. [DONE] Advanced file filtering for Backup — Integrate the `FileFilterPane` into the Backup workflow (New Backup Set dialog or pre-backup file selection) to allow FCL-based filtering of which files to include in a backup operation.
-4. [DONE] Window state persistence — Remember window size, position, splitter proportions, and the last-opened drive number between sessions. JSON serializer based implementation in `%LocalAppData%\TapeWinNET\`.
-5. Operation-complete notification — A FlashWindowEx or system notification when a long backup/restore finishes while the window is in the background. Tape operations can run for hours; easy to miss completion.
-6. [DONE] Delete most-recent backup set(s) — Removing the newest set(s) from the TOC (the library likely supports this via TapeTOC manipulation + TOC rewrite). Useful to make space on the media or when the last backup was accidental or corrupt.
-7. Capacity usage bar — A small visual bar in the Media properties or status bar showing used/remaining as a colored segment bar, broken down by set. Quick situational awareness without reading numbers.
-
+1. ✅ Log export / clear — Full log pane with batched ingestion (10K cap, smart pruning), severity filtering, auto-scroll lock, timestamp toggle, Save Log / Mirror Log to file (text + CSV), copy (Ctrl+C, multi-select), clear. `MainViewModel.Log.cs` partial class, top-level Log menu + context menu.
+2. ✅ File filter/search in the backup set table — `FileFilterPane` with pattern mode (wildcards) and advanced mode (full FCL via `FclFilterWindow`). Dynamic stats in the GroupBox header, filter state persistence across tree navigation.
+3. ✅ Advanced file filtering for Backup — Integrate the `FileFilterPane` into the Backup workflow (New Backup Set dialog or pre-backup file selection) to allow FCL-based filtering of which files to include in a backup operation.
+4. ✅ Window state persistence — Remember window size, position, splitter proportions, and the last-opened drive number between sessions. JSON serializer based implementation in `%LocalAppData%\TapeWinNET\`.
+5. [NEEDED?] Operation-complete notification — A FlashWindowEx or system notification when a long backup/restore finishes while the window is in the background. Tape operations can run for hours; easy to miss completion.
+6. ✅ Delete most-recent backup set(s) — Removing the newest set(s) from the TOC (the library likely supports this via TapeTOC manipulation + TOC rewrite). Useful to make space on the media or when the last backup was accidental or corrupt.
+7. ✅ Capacity usage bar — A small visual bar in the Media properties or status bar showing used/remaining as a colored segment bar, broken down by set. Quick situational awareness without reading numbers.
