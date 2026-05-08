@@ -550,10 +550,10 @@ public class VirtualDriveBasicTests
     {
         using var fixture = new VirtualTapeFixture(profile);
 
-        Assert.Equal(0, fixture.Backend.IoRateBytesPerSecond);
+        Assert.Equal(0, fixture.Backend.IoRate.BytesPerSecond);
         Assert.False(fixture.Backend.IsIoThrottled);
-        Assert.Equal(0, fixture.Backend.LocateRateBytesPerSecond);
-        Assert.Equal(0, fixture.Backend.SearchRateBytesPerSecond);
+        Assert.Equal(0, fixture.Backend.IoRate.LocateBytesPerSecond);
+        Assert.Equal(0, fixture.Backend.IoRate.SearchBytesPerSecond);
         Assert.False(fixture.Backend.IsMovementThrottled);
     }
 

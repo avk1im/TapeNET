@@ -159,9 +159,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
             LoggerFactory, Capabilities, contentCapacity, initCap);
 
         // Disable IO throttling for test speed
-        Backend.IoRateBytesPerSecond = 0;
-        Backend.LocateRateBytesPerSecond = 0;
-        Backend.SearchRateBytesPerSecond = 0;
+        Backend.IoRate = VirtualTapeDriveIoRate.Unlimited;
 
         Drive = new TapeDrive(LoggerFactory, Backend);
 

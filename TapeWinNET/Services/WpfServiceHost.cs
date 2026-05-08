@@ -253,7 +253,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                     prePopulate: prePopulate,
                     mediaMode: System.IO.FileMode.Open,
                     currentCapabilities: currentCaps,
-                    currentIoSpeed: _viewModel.SelectedIoSpeed);
+                    currentIoRate: _viewModel.SelectedIoSpeed);
 
                 var window = new OpenVirtualDriveWindow(vm) { Owner = Application.Current.MainWindow };
                 window.ShowDialog();
@@ -396,7 +396,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
 
 
                 // IoSpeed: read from ViewModel
-                IoSpeedOption? ioSpeed = _viewModel.SelectedIoSpeed;
+                IoRateOption? ioSpeed = _viewModel.SelectedIoSpeed;
 
                 var vm = new OpenVirtualDriveViewModel(
                     request =>
@@ -412,7 +412,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                     prePopulate: prePopulate,
                     mediaMode: System.IO.FileMode.Create,
                     currentCapabilities: currentCaps,
-                    currentIoSpeed: ioSpeed);
+                    currentIoRate: ioSpeed);
 
                 var window = new OpenVirtualDriveWindow(vm) { Owner = Application.Current.MainWindow };
                 window.ShowDialog();

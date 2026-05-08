@@ -178,7 +178,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     ///  when speed simulation is disabled.
     /// </summary>
     public long VirtualIoRateBytesPerSecond =>
-        _drive?.Backend is VirtualTapeDriveBackend vb ? vb.IoRateBytesPerSecond : 0;
+        _drive?.Backend is VirtualTapeDriveBackend vb ? vb.IoRate.BytesPerSecond : 0;
 
     #endregion
 
@@ -340,10 +340,11 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     public Task<bool> OpenVirtualDriveAsync(
         VirtualTapeDriveCapabilities capabilities,
         VirtualMediaDescriptor vmd,
-        FileMode mediaMode = FileMode.OpenOrCreate)
+        FileMode mediaMode = FileMode.OpenOrCreate,
+        VirtualTapeDriveIoRate? ioRate = null)
     {
         if (vmd.InMemory)
-            return OpenVirtualDriveInMemoryAsync(capabilities, vmd);
+            return OpenVirtualDriveInMemoryAsync(capabilities, vmd, ioRate);
 
         return Task.Run(async () =>
         {
@@ -364,6 +365,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     vmd.InitiatorPartitionCapacity,
                     capabilities,
                     mediaMode);
+
+                if (ioRate.HasValue)
+                    backend.IoRate = ioRate.Value;
 
                 _agent?.Dispose();
                 _agent = null;
@@ -400,7 +404,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
     private Task<bool> OpenVirtualDriveInMemoryAsync(
         VirtualTapeDriveCapabilities capabilities,
-        VirtualMediaDescriptor vmd)
+        VirtualMediaDescriptor vmd,
+        VirtualTapeDriveIoRate? ioRate = null)
     {
         return Task.Run(async () =>
         {
@@ -424,6 +429,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                         capabilities,
                         vmd.ContentCapacity,
                         vmd.InitiatorPartitionCapacity);
+
+                if (ioRate.HasValue)
+                    backend.IoRate = ioRate.Value;
 
                 _agent?.Dispose();
                 _agent = null;
@@ -505,11 +513,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// Thread-safe: acquires the lock to prevent modification during a running operation.
     /// </summary>
     /// <returns>True if the rates were set; false if not a virtual drive.</returns>
-    public bool SetVirtualIoRate(
-        long bytesPerSecond,
-        long locateBytesPerSecond = 0,
-        long searchBytesPerSecond = 0,
-        int seekOverheadMs = 0)
+    public bool SetVirtualIoRate(VirtualTapeDriveIoRate rate)
     {
         _operationLock.Wait();
         try
@@ -517,18 +521,15 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             if (_drive?.Backend is not VirtualTapeDriveBackend vb)
                 return false;
 
-            vb.IoRateBytesPerSecond = bytesPerSecond;
-            vb.LocateRateBytesPerSecond = locateBytesPerSecond;
-            vb.SearchRateBytesPerSecond = searchBytesPerSecond;
-            vb.SeekOverheadMs = seekOverheadMs;
+            vb.IoRate = rate;
 
-            if (bytesPerSecond == 0)
-                LogInfo("IO speed simulation: unlimited");
+            if (!vb.IsIoThrottled && !vb.IsMovementThrottled)
+                LogInfo("IO rate simulation: unlimited");
             else
-                LogInfo($"IO speed simulation: {Helpers.BytesToString(bytesPerSecond)}/s" +
-                    $", locate: {Helpers.BytesToString(locateBytesPerSecond)}/s" +
-                    $", search: {Helpers.BytesToString(searchBytesPerSecond)}/s" +
-                    $", seek overhead: {seekOverheadMs} ms");
+                LogInfo($"IO rate simulation: {Helpers.BytesToString(rate.BytesPerSecond)}/s" +
+                    $", locate: {Helpers.BytesToString(rate.LocateBytesPerSecond)}/s" +
+                    $", search: {Helpers.BytesToString(rate.SearchBytesPerSecond)}/s" +
+                    $", seek overhead: {rate.SeekOverheadMs} ms");
 
             return true;
         }

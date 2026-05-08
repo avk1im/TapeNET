@@ -91,9 +91,7 @@ public sealed class VirtualTapeFixture : IDisposable
                 LoggerFactory, Capabilities, contentCapacity, initCap);
 
         // Ensure IO throttling is off — tests should run at memory speed
-        Backend.IoRateBytesPerSecond = 0;
-        Backend.LocateRateBytesPerSecond = 0;
-        Backend.SearchRateBytesPerSecond = 0;
+        Backend.IoRate = VirtualTapeDriveIoRate.Unlimited;
 
         Drive = new TapeDrive(LoggerFactory, Backend);
 

@@ -37,6 +37,11 @@
                 </DataTrigger>
             </Style.Triggers>
         </Style>
+        
+        <!-- Progress bar fill color -->
+        <Style TargetType="ProgressBar">
+            <Setter Property="Foreground" Value="Blue"/>
+        </Style>
     </Window.Resources>
 
     <Grid Margin="16">
@@ -307,9 +312,9 @@
             <!-- IO Speed (right) -->
             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                 <TextBlock Text="IO Speed:" Margin="0,0,0,4"/>
-                <ComboBox ItemsSource="{Binding IoSpeedOptions}"
-                          SelectedItem="{Binding SelectedIoSpeed}"
-                          IsEnabled="{Binding IsIoSpeedEnabled}"
+                <ComboBox ItemsSource="{Binding IoRateOptions}"
+                          SelectedItem="{Binding SelectedIoRate}"
+                          IsEnabled="{Binding IsIoRateEnabled}"
                           Width="180"/>
             </StackPanel>
         </Grid>

@@ -4,6 +4,97 @@ using Windows.Win32.System.SystemServices;
 namespace TapeLibNET.Virtual;
 
 /// <summary>
+/// Encapsulates all four IO throttle parameters for a virtual tape drive:
+/// streaming IO rate, locate speed, search speed, and seek overhead.
+/// Use the static presets for common drive classes, or build a custom instance.
+/// </summary>
+public readonly record struct VirtualTapeDriveIoRate
+{
+    /// <summary>Streaming read/write speed in bytes per second. 0 = unlimited.</summary>
+    public long BytesPerSecond { get; init; }
+
+    /// <summary>Blind-seek speed in tape-equivalent bytes per second (Rewind, SeekToBlock, SeekToEnd). 0 = unlimited.</summary>
+    public long LocateBytesPerSecond { get; init; }
+
+    /// <summary>Mark-scanning speed in tape-equivalent bytes per second (SpaceFilemarks, SpaceSetmarks). 0 = unlimited.</summary>
+    public long SearchBytesPerSecond { get; init; }
+
+    /// <summary>Fixed per-operation mechanical overhead in milliseconds (acceleration + deceleration + settle). 0 = none.</summary>
+    public int SeekOverheadMs { get; init; }
+
+    /// <summary>Is IO throttling enabled.</summary>
+    public bool IsIoThrottled => BytesPerSecond > 0;
+
+    /// <summary>Is movement throttling enabled (either locate or search).</summary>
+    public bool IsMovementThrottled => LocateBytesPerSecond > 0 || SearchBytesPerSecond > 0;
+
+
+    private const long MB = 1024 * 1024;
+    private const long GB = 1024L * 1024 * 1024;
+
+    // Fudge factors to provide more realistic speeds for testing/simulation
+    private const int FuFa1 = 2;
+    private const int FuFa2 = 3;
+
+    /// <summary>Unlimited (no throttling).</summary>
+    public static VirtualTapeDriveIoRate Unlimited => new();
+
+    /// <summary>6 MB/s — AIT-1, DAT-160.</summary>
+    public static VirtualTapeDriveIoRate Ait1 => new()
+    {
+        BytesPerSecond        =   6 * MB / FuFa1,
+        LocateBytesPerSecond  = 1500 * MB / FuFa2,
+        SearchBytesPerSecond  =   36 * MB / FuFa2,
+        SeekOverheadMs        =  400 * FuFa2,
+    };
+
+    /// <summary>12 MB/s — AIT-3Ex, DLT-V4.</summary>
+    public static VirtualTapeDriveIoRate Ait3Ex => new()
+    {
+        BytesPerSecond        =  12 * MB / FuFa1,
+        LocateBytesPerSecond  =   3 * GB / FuFa2,
+        SearchBytesPerSecond  =  72 * MB / FuFa2,
+        SeekOverheadMs        = 350 * FuFa2,
+    };
+
+    /// <summary>24 MB/s — AIT-4/5.</summary>
+    public static VirtualTapeDriveIoRate Ait4 => new()
+    {
+        BytesPerSecond        =  24 * MB / FuFa1,
+        LocateBytesPerSecond  =   5 * GB / FuFa2,
+        SearchBytesPerSecond  = 144 * MB / FuFa2,
+        SeekOverheadMs        = 300 * FuFa2,
+    };
+
+    /// <summary>60 MB/s — LTO-3/4.</summary>
+    public static VirtualTapeDriveIoRate Lto4 => new()
+    {
+        BytesPerSecond        =  60 * MB / FuFa1,
+        LocateBytesPerSecond  =   8 * GB / FuFa2,
+        SearchBytesPerSecond  = 300 * MB / FuFa2,
+        SeekOverheadMs        = 250 * FuFa2,
+    };
+
+    /// <summary>160 MB/s — LTO-5/6.</summary>
+    public static VirtualTapeDriveIoRate Lto6 => new()
+    {
+        BytesPerSecond        =  160 * MB / FuFa1,
+        LocateBytesPerSecond  =   18 * GB / FuFa2,
+        SearchBytesPerSecond  =  640 * MB / FuFa2,
+        SeekOverheadMs        =  200 * FuFa2,
+    };
+
+    /// <summary>400 MB/s — LTO-8/9.</summary>
+    public static VirtualTapeDriveIoRate Lto9 => new()
+    {
+        BytesPerSecond        =  400 * MB / FuFa1,
+        LocateBytesPerSecond  =   80 * GB / FuFa2,
+        SearchBytesPerSecond  = 1200 * MB / FuFa2,
+        SeekOverheadMs        =  150 * FuFa2,
+    };
+}
+
+/// <summary>
 /// IO speed and movement throttling for the virtual tape drive backend.
 /// Simulates the relatively slow data transfer rate and tape movement times of physical tape drives
 /// using a cumulative time-debt approach with high-precision stopwatches.
@@ -12,20 +103,17 @@ public partial class VirtualTapeDriveBackend
 {
     #region *** IO Throttle Fields ***
 
-    private long m_ioRateBytesPerSecond;
+    private VirtualTapeDriveIoRate m_ioRate;
     private readonly Stopwatch m_ioStopwatch = new();
     private long m_ioDebtMicroseconds;
 
     /// <summary>Minimum sleep threshold in microseconds to avoid sub-granularity sleeps.</summary>
-    private const long IoThrottleSleepThresholdUs = 1000; // 1 ms
+    private const long c_ioThrottleSleepThresholdUs = 1000; // 1 ms
 
     #endregion
 
     #region *** Movement Throttle Fields ***
 
-    private long m_locateRateBytesPerSecond;
-    private long m_searchRateBytesPerSecond;
-    private int m_seekOverheadMs;
     private readonly Stopwatch m_seekStopwatch = new();
     private long m_seekDebtMicroseconds;
 
@@ -34,98 +122,43 @@ public partial class VirtualTapeDriveBackend
     #region *** IO Throttle Properties ***
 
     /// <summary>
-    /// Simulated IO speed in bytes per second. 0 = unlimited (no throttling).
+    /// Simulated IO rate (streaming speed, locate speed, search speed, seek overhead).
+    /// Set to <see cref="VirtualTapeDriveIoRate.Unlimited"/> to disable all throttling.
     /// Changing this property resets the accumulated time debt.
     /// </summary>
-    public long IoRateBytesPerSecond
+    public VirtualTapeDriveIoRate IoRate
     {
-        get => m_ioRateBytesPerSecond;
+        get => m_ioRate;
         set
         {
-            if (value < 0)
-                throw new ArgumentOutOfRangeException(nameof(value), "IO rate must be non-negative (0 = unlimited).");
-
-            m_ioRateBytesPerSecond = value;
+            m_ioRate = value;
             ResetIoThrottle();
+            ResetSeekThrottle();
+            SyncOdometerEnabled(m_contentMedia);
+            SyncOdometerEnabled(m_initiatorMedia);
 
-            m_logger.LogTrace("{Prefix}: IO rate set to {Rate}",
-                LogPrefix, value == 0 ? "unlimited" : $"{Helpers.BytesToString(value)}/s");
+            m_logger.LogTrace("{Prefix}: IO rate set — stream: {Stream}, locate: {Locate}, search: {Search}, seek overhead: {Overhead}",
+                LogPrefix,
+                value.BytesPerSecond == 0 ? "unlimited" : $"{Helpers.BytesToString(value.BytesPerSecond)}/s",
+                value.LocateBytesPerSecond == 0 ? "unlimited" : $"{Helpers.BytesToString(value.LocateBytesPerSecond)}/s",
+                value.SearchBytesPerSecond == 0 ? "unlimited" : $"{Helpers.BytesToString(value.SearchBytesPerSecond)}/s",
+                value.SeekOverheadMs == 0 ? "none" : $"{value.SeekOverheadMs} ms");
         }
     }
 
     /// <summary>
     /// Whether IO throttling is active.
     /// </summary>
-    public bool IsIoThrottled => m_ioRateBytesPerSecond > 0;
+    public bool IsIoThrottled => m_ioRate.IsIoThrottled;
 
     #endregion
 
     #region *** Movement Throttle Properties ***
 
     /// <summary>
-    /// Simulated blind-seek (locate) speed in tape-equivalent bytes per second.
-    /// Used for Rewind, SeekToBlock, SeekToEnd. 0 = unlimited.
-    /// </summary>
-    public long LocateRateBytesPerSecond
-    {
-        get => m_locateRateBytesPerSecond;
-        set
-        {
-            if (value < 0)
-                throw new ArgumentOutOfRangeException(nameof(value), "Locate rate must be non-negative (0 = unlimited).");
-
-            m_locateRateBytesPerSecond = value;
-            ResetSeekThrottle();
-            SyncOdometerEnabled(m_contentMedia);
-            SyncOdometerEnabled(m_initiatorMedia);
-
-            m_logger.LogTrace("{Prefix}: Locate rate set to {Rate}",
-                LogPrefix, value == 0 ? "unlimited" : $"{Helpers.BytesToString(value)}/s");
-        }
-    }
-
-    /// <summary>
-    /// Simulated mark-scanning (search) speed in tape-equivalent bytes per second.
-    /// Used for SpaceFilemarks, SpaceSetmarks. 0 = unlimited.
-    /// </summary>
-    public long SearchRateBytesPerSecond
-    {
-        get => m_searchRateBytesPerSecond;
-        set
-        {
-            if (value < 0)
-                throw new ArgumentOutOfRangeException(nameof(value), "Search rate must be non-negative (0 = unlimited).");
-
-            m_searchRateBytesPerSecond = value;
-            ResetSeekThrottle();
-            SyncOdometerEnabled(m_contentMedia);
-            SyncOdometerEnabled(m_initiatorMedia);
-
-            m_logger.LogTrace("{Prefix}: Search rate set to {Rate}",
-                LogPrefix, value == 0 ? "unlimited" : $"{Helpers.BytesToString(value)}/s");
-        }
-    }
-
-    /// <summary>
-    /// Fixed mechanical overhead per movement operation in milliseconds.
-    /// Models acceleration, deceleration, and servo settle time. 0 = no overhead.
-    /// </summary>
-    public int SeekOverheadMs
-    {
-        get => m_seekOverheadMs;
-        set
-        {
-            if (value < 0)
-                throw new ArgumentOutOfRangeException(nameof(value), "Seek overhead must be non-negative.");
-
-            m_seekOverheadMs = value;
-        }
-    }
-
-    /// <summary>
     /// Whether movement throttling is active (either locate or search).
     /// </summary>
-    public bool IsMovementThrottled => m_locateRateBytesPerSecond > 0 || m_searchRateBytesPerSecond > 0;
+    public bool IsMovementThrottled => m_ioRate.IsMovementThrottled;
 
     #endregion
 
@@ -150,7 +183,7 @@ public partial class VirtualTapeDriveBackend
     /// <param name="bytesTransferred">Number of bytes just transferred in the Read/Write operation.</param>
     private void ThrottleIo(int bytesTransferred)
     {
-        if (bytesTransferred <= 0 || m_ioRateBytesPerSecond <= 0)
+        if (bytesTransferred <= 0 || m_ioRate.BytesPerSecond <= 0)
             return;
 
         // Start stopwatch on first throttled IO
@@ -159,13 +192,13 @@ public partial class VirtualTapeDriveBackend
 
         // Accumulate time debt: how long this transfer should have taken
         //  debt_us = bytes * 1,000,000 / rate
-        m_ioDebtMicroseconds += bytesTransferred * 1_000_000L / m_ioRateBytesPerSecond;
+        m_ioDebtMicroseconds += bytesTransferred * 1_000_000L / m_ioRate.BytesPerSecond;
 
         // Check if real time has fallen behind the debt
         long elapsedUs = m_ioStopwatch.ElapsedMicroseconds;
         long behindUs = m_ioDebtMicroseconds - elapsedUs;
 
-        if (behindUs > IoThrottleSleepThresholdUs)
+        if (behindUs > c_ioThrottleSleepThresholdUs)
         {
             // Sleep for the deficit (coarse but self-correcting over time)
             int sleepMs = (int)(behindUs / 1000);
@@ -206,7 +239,7 @@ public partial class VirtualTapeDriveBackend
         long elapsedUs = m_seekStopwatch.ElapsedMicroseconds;
         long behindUs = m_seekDebtMicroseconds - elapsedUs;
 
-        if (behindUs > IoThrottleSleepThresholdUs)
+        if (behindUs > c_ioThrottleSleepThresholdUs)
         {
             int sleepMs = (int)(behindUs / 1000);
             if (sleepMs > 0)
@@ -241,8 +274,8 @@ public partial class VirtualTapeDriveBackend
             m_ioStopwatch.Stop();
 
         // Apply fixed mechanical overhead (accel + decel + settle)
-        if (m_seekOverheadMs > 0)
-            Thread.Sleep(m_seekOverheadMs);
+        if (m_ioRate.SeekOverheadMs > 0)
+            Thread.Sleep(m_ioRate.SeekOverheadMs);
 
         // Apply distance-based transport time
         if (rateBytesPerSecond > 0)

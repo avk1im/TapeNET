@@ -402,7 +402,7 @@ public partial class MainViewModel : ViewModelBase
     public ObservableCollection<DriveMenuItem> DriveMenuItems { get; } = [];
 
     /// <summary>Available IO speed options for the virtual drive.</summary>
-    public IoSpeedOption[] IoSpeedOptions { get; } = IoSpeedOption.All;
+    public IoRateOption[] IoSpeedOptions { get; } = IoRateOption.All;
 
     /// <summary>Whether IO speed simulation controls should be visible (virtual drive is open).</summary>
     public bool IsIoSpeedVisible => _tapeService.IsVirtualDrive;
@@ -410,17 +410,17 @@ public partial class MainViewModel : ViewModelBase
     /// <summary>Whether IO speed simulation controls should be enabled (not busy).</summary>
     public bool IsIoSpeedEnabled => _tapeService.IsVirtualDrive && !IsBusy;
 
-    private IoSpeedOption _selectedIoSpeed = IoSpeedOption.Unlimited;
+    private IoRateOption _selectedIoSpeed = IoRateOption.Unlimited;
 
     /// <summary>Currently selected IO speed simulation rate.</summary>
-    public IoSpeedOption SelectedIoSpeed
+    public IoRateOption SelectedIoSpeed
     {
         get => _selectedIoSpeed;
         set
         {
             if (SetProperty(ref _selectedIoSpeed, value) && value != null)
             {
-                _tapeService.SetVirtualIoRate(value.BytesPerSecond, value.LocateBytesPerSecond, value.SearchBytesPerSecond, value.SeekOverheadMs);
+                _tapeService.SetVirtualIoRate(value.Rate);
             }
         }
     }
@@ -740,7 +740,8 @@ public partial class MainViewModel : ViewModelBase
             : mediaMode == FileMode.Create ? "Creating virtual drive..."
             : "Opening virtual drive...";
         return RunBusyAsync(msg,
-            () => _tapeService.OpenVirtualDriveAsync(request.Capabilities, request.Media, mediaMode));
+            () => _tapeService.OpenVirtualDriveAsync(request.Capabilities, request.Media, mediaMode,
+                request.IoRate?.Rate));
     }
 
     // B — Load media
@@ -1082,7 +1083,7 @@ public partial class MainViewModel : ViewModelBase
 
     private void SetIoSpeed(object? parameter)
     {
-        if (parameter is IoSpeedOption option)
+        if (parameter is IoRateOption option)
             SelectedIoSpeed = option;
     }
 
@@ -1566,7 +1567,7 @@ public partial class MainViewModel : ViewModelBase
     private void NotifyIoSpeedChanged()
     {
         // Sync selection from the backend's current rate
-        _selectedIoSpeed = IoSpeedOption.FromBytesPerSecond(_tapeService.VirtualIoRateBytesPerSecond);
+        _selectedIoSpeed = IoRateOption.FromBytesPerSecond(_tapeService.VirtualIoRateBytesPerSecond);
         OnPropertyChanged(nameof(SelectedIoSpeed));
         OnPropertyChanged(nameof(IsIoSpeedVisible));
         OnPropertyChanged(nameof(IsIoSpeedEnabled));
@@ -1701,8 +1702,8 @@ public partial class MainViewModel : ViewModelBase
 
         // Apply IO speed selected in the dialog (if any) before any TOC operations
         //  so that the TOC operations already reflect the selected speed.
-        if (request.IoSpeed != null)
-            SelectedIoSpeed = request.IoSpeed;
+        if (request.IoRate != null)
+            SelectedIoSpeed = request.IoRate;
         NotifyIoSpeedChanged();
 
         // For "Create new", create and save the initial TOC (warning only on failure)
@@ -1947,7 +1948,7 @@ public partial class MainViewModel : ViewModelBase
             prePopulate: lastVmd,
             mediaMode: FileMode.Create,
             currentCapabilities: currentCaps,
-            currentIoSpeed: _selectedIoSpeed);
+            currentIoRate: _selectedIoSpeed);
 
         var window = new OpenVirtualDriveWindow(vm)
         {

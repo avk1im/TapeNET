@@ -133,6 +133,7 @@ public partial class TapeServiceBase
                 LogInfo("Creating new backup, replacing all existing content");
                 backupTOC = new TapeTOC(toc);
                 toc.RemoveAllSets();
+                toc.Volume = 1; // reset volume to 1 (volume indexing starts from 1)
             }
             // else: Mode 2 — straight append (no TOC modification needed here)
 

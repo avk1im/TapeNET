@@ -80,7 +80,7 @@ public record PresetOption(
 }
 
 /// <summary>
-/// Represents a simulated IO speed option for the virtual tape drive.
+/// Represents a simulated IO rate option for the virtual tape drive.
 /// BytesPerSecond of 0 means unlimited (no throttling).
 /// Each tier carries three rates plus mechanical overhead:
 ///   - BytesPerSecond: streaming read/write speed
@@ -88,31 +88,39 @@ public record PresetOption(
 ///   - SearchBytesPerSecond: mark scanning speed (space filemarks/setmarks) — tape reading at high speed
 ///   - SeekOverheadMs: fixed per-operation overhead (acceleration + deceleration + settle/servo lock)
 /// </summary>
-public record IoSpeedOption(long BytesPerSecond, long LocateBytesPerSecond, long SearchBytesPerSecond, int SeekOverheadMs, string Display)
+public record IoRateOption(long BytesPerSecond, long LocateBytesPerSecond, long SearchBytesPerSecond, int SeekOverheadMs, string Display)
 {
     public override string ToString() => Display;
 
-    private const long MB = 1024 * 1024;
-    private const long GB = 1024 * 1024 * 1024;
-    private const int FuFa1 = 2; // fudge factor to provide more realistic speeds for testing
-    private const int FuFa2 = 3; // fudge factor to provide more realistic speeds for testing
-
-    public static IoSpeedOption[] All { get; } =
+    public static IoRateOption[] All { get; } =
     [
-        new(  6 * MB / FuFa1,    1500 * MB / FuFa2,   36 * MB / FuFa2,  400 * FuFa2, "6 MB/s (AIT-1, DAT-160)"),
-        new( 12 * MB / FuFa1,       3 * GB / FuFa2,   72 * MB / FuFa2,  350 * FuFa2, "12 MB/s (AIT-3Ex, DLT-V4)"),
-        new( 24 * MB / FuFa1,       5 * GB / FuFa2,  144 * MB / FuFa2,  300 * FuFa2, "24 MB/s (AIT-4/5)"),
-        new( 60 * MB / FuFa1,       8 * GB / FuFa2,  300 * MB / FuFa2,  250 * FuFa2, "60 MB/s (LTO-3/4)"),
-        new(160 * MB / FuFa1,      18 * GB / FuFa2,  640 * MB / FuFa2,  200 * FuFa2, "160 MB/s (LTO-5/6)"),
-        new(400 * MB / FuFa1,      80 * GB / FuFa2, 1200 * MB / FuFa2,  150 * FuFa2, "400 MB/s (LTO-8/9)"),
-        new(  0,            0,        0,           0, "Unlimited"),
+        new(VirtualTapeDriveIoRate.Ait1,   "6 MB/s (AIT-1, DAT-160)"),
+        new(VirtualTapeDriveIoRate.Ait3Ex, "12 MB/s (AIT-3Ex, DLT-V4)"),
+        new(VirtualTapeDriveIoRate.Ait4,   "24 MB/s (AIT-4/5)"),
+        new(VirtualTapeDriveIoRate.Lto4,   "60 MB/s (LTO-3/4)"),
+        new(VirtualTapeDriveIoRate.Lto6,   "160 MB/s (LTO-5/6)"),
+        new(VirtualTapeDriveIoRate.Lto9,   "400 MB/s (LTO-8/9)"),
+        new(VirtualTapeDriveIoRate.Unlimited, "Unlimited"),
     ];
 
-    /// <summary>Returns the Unlimited option (default).</summary>
-    public static IoSpeedOption Unlimited => All[^1];
+    /// <summary>Constructs an option from a <see cref="VirtualTapeDriveIoRate"/> and display string.</summary>
+    public IoRateOption(VirtualTapeDriveIoRate rate, string display)
+        : this(rate.BytesPerSecond, rate.LocateBytesPerSecond, rate.SearchBytesPerSecond, rate.SeekOverheadMs, display) { }
 
-    public static IoSpeedOption FromBytesPerSecond(long bytesPerSecond) =>
+    /// <summary>Returns the Unlimited option (default).</summary>
+    public static IoRateOption Unlimited => All[^1];
+
+    public static IoRateOption FromBytesPerSecond(long bytesPerSecond) =>
         All.FirstOrDefault(o => o.BytesPerSecond == bytesPerSecond) ?? Unlimited;
+
+    /// <summary>Returns the corresponding <see cref="VirtualTapeDriveIoRate"/> for this option.</summary>
+    public VirtualTapeDriveIoRate Rate => new()
+    {
+        BytesPerSecond       = BytesPerSecond,
+        LocateBytesPerSecond = LocateBytesPerSecond,
+        SearchBytesPerSecond = SearchBytesPerSecond,
+        SeekOverheadMs       = SeekOverheadMs,
+    };
 }
 
 /// <summary>
@@ -135,7 +143,7 @@ public record VirtualDriveOpenRequest(
     VirtualMediaDescriptor Media,
     bool IsCreateNew,
     string? MediaName,
-    IoSpeedOption? IoSpeed = null
+    IoRateOption? IoRate = null
 );
 
 /// <summary>
@@ -265,8 +273,8 @@ public class OpenVirtualDriveViewModel : ViewModelBase
     private bool _supportsSeqFilemarks;
 
     // IO Speed
-    private IoSpeedOption _selectedIoSpeed = IoSpeedOption.Unlimited;
-    private readonly bool _isIoSpeedLocked;
+    private IoRateOption _selectedIoRate = IoRateOption.Unlimited;
+    private readonly bool _isIoRateLocked;
 
     // Preset
     private PresetOption _selectedPreset = PresetOption.All[1]; // WithSetmarks
@@ -287,7 +295,7 @@ public class OpenVirtualDriveViewModel : ViewModelBase
         bool? preferCreateNew = null,
         FileMode mediaMode = FileMode.OpenOrCreate,
         VirtualTapeDriveCapabilities? currentCapabilities = null,
-        IoSpeedOption? currentIoSpeed = null)
+        IoRateOption? currentIoRate = null)
     {
         _onOpen = onOpen;
         _onCancel = onCancel;
@@ -315,11 +323,11 @@ public class OpenVirtualDriveViewModel : ViewModelBase
                 _enableInitiatorPartition = caps.SupportsInitiatorPartition;
             }
 
-            // Lock IO speed to the drive's current setting
-            if (currentIoSpeed != null)
+            // Lock IO rate to the drive's current setting
+            if (currentIoRate != null)
             {
-                _selectedIoSpeed = currentIoSpeed;
-                _isIoSpeedLocked = true;
+                _selectedIoRate = currentIoRate;
+                _isIoRateLocked = true;
             }
         }
 
@@ -631,23 +639,23 @@ public class OpenVirtualDriveViewModel : ViewModelBase
 
     #endregion
 
-    #region IO Speed
+    #region IO Rate
 
-    /// <summary>Available IO speed simulation options.</summary>
-    public IoSpeedOption[] IoSpeedOptions { get; } = IoSpeedOption.All;
+    /// <summary>Available IO rate simulation options.</summary>
+    public IoRateOption[] IoRateOptions { get; } = IoRateOption.All;
 
     /// <summary>
-    /// Selected IO speed for the new drive. In newMediaOnly mode this is
+    /// Selected IO rate for the new drive. In newMediaOnly mode this is
     /// locked to the drive's current value and the combo is disabled.
     /// </summary>
-    public IoSpeedOption SelectedIoSpeed
+    public IoRateOption SelectedIoRate
     {
-        get => _selectedIoSpeed;
-        set => SetProperty(ref _selectedIoSpeed, value);
+        get => _selectedIoRate;
+        set => SetProperty(ref _selectedIoRate, value);
     }
 
-    /// <summary>Whether the IO speed combo is enabled (disabled in newMediaOnly mode).</summary>
-    public bool IsIoSpeedEnabled => !_isIoSpeedLocked;
+    /// <summary>Whether the IO rate combo is enabled (disabled in newMediaOnly mode).</summary>
+    public bool IsIoRateEnabled => !_isIoRateLocked;
 
     #endregion
 
@@ -835,7 +843,7 @@ public class OpenVirtualDriveViewModel : ViewModelBase
                 InMemory: _isInMemory),
             IsCreateNew: IsCreateNewMode,
             MediaName: IsCreateNewMode ? MediaName : null,
-            IoSpeed: SelectedIoSpeed);
+            IoRate: SelectedIoRate);
 
         _onOpen(request);
     }

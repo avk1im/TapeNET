@@ -967,7 +967,7 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
             return false;
         }
 
-        ThrottleMovementFromOdometer(m_locateRateBytesPerSecond);
+        ThrottleMovementFromOdometer(m_ioRate.LocateBytesPerSecond);
         return true;
     }
 
@@ -1023,7 +1023,7 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
 
         m_currentMedia.ResetOdometer();
         m_currentMedia.Rewind();
-        ThrottleMovementFromOdometer(m_locateRateBytesPerSecond);
+        ThrottleMovementFromOdometer(m_ioRate.LocateBytesPerSecond);
         return m_currentMedia.WentOK;
     }
 
@@ -1036,7 +1036,7 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
 
         m_currentMedia!.ResetOdometer();
         m_currentMedia!.SeekToEnd();
-        ThrottleMovementFromOdometer(m_locateRateBytesPerSecond);
+        ThrottleMovementFromOdometer(m_ioRate.LocateBytesPerSecond);
         return m_currentMedia!.WentOK;
     }
 
@@ -1052,7 +1052,7 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
 
         m_currentMedia.ResetOdometer();
         int moved = m_currentMedia.SpaceMarks(TapeMarkType.Filemark, count);
-        ThrottleMovementFromOdometer(m_searchRateBytesPerSecond);
+        ThrottleMovementFromOdometer(m_ioRate.SearchBytesPerSecond);
 
         if (!m_currentMedia.WentOK)
         {
@@ -1093,7 +1093,7 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
 
         m_currentMedia.ResetOdometer();
         int moved = m_currentMedia.SpaceMarks(TapeMarkType.Setmark, count);
-        ThrottleMovementFromOdometer(m_searchRateBytesPerSecond);
+        ThrottleMovementFromOdometer(m_ioRate.SearchBytesPerSecond);
 
         if (!m_currentMedia.WentOK)
         {
@@ -1128,7 +1128,7 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
 
         m_currentMedia.ResetOdometer();
         int moved = m_currentMedia.SpaceSequentialMarks(TapeMarkType.Filemark, count);
-        ThrottleMovementFromOdometer(m_searchRateBytesPerSecond);
+        ThrottleMovementFromOdometer(m_ioRate.SearchBytesPerSecond);
 
         if (!m_currentMedia.WentOK)
         {
