@@ -8,10 +8,12 @@ namespace TapeServiceNET;
 
 /// <summary>
 /// gRPC service implementation that forwards all RPCs to the <see cref="TapeDriveBackend"/>
-/// held by the singleton <see cref="TapeDriveSession"/>.
+/// held by the singleton <see cref="TapeDriveSessionRegistry"/>.
 /// <para>
 /// This class is transient (one instance per request, the gRPC default).
-/// All mutable state lives in the injected <see cref="TapeDriveSession"/>.
+/// The registry maps session IDs to backends so that multiple clients can
+/// each own a separate drive concurrently. Every RPC (except Open*) must
+/// supply the <c>x-tape-session-id</c> header obtained from the Open* response.
 /// </para>
 /// Client                                    Tape Server
 /// ─────────────────────────────             ─────────────────────────────
@@ -19,76 +21,71 @@ namespace TapeServiceNET;
 ///   └─ RemoteTapeDriveBackend    ──gRPC──►    └─ TapeDriveBackend
 /// (generated client stub)                  (Win32 or Virtual)
 /// </summary>
-public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrpcService> logger)
+public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<TapeDriveGrpcService> logger)
     : TapeDriveService.TapeDriveServiceBase
 {
     #region *** Helper Methods ***
 
-    /// <summary>
-    /// Captures current backend state into a <see cref="BackendState"/> message.
-    /// Returns an empty state if no backend is active.
-    /// </summary>
-    private BackendState CaptureState()
-    {
-        var b = session.Backend;
-        if (b == null)
-            return new BackendState();
-
-        return new BackendState
-        {
-            IsOpen = b.IsOpen,
-            HasMedia = b.HasMedia,
-            DeviceName = b.DeviceName,
-            DriveNumber = b.DriveNumber,
-            BlockSize = b.BlockSize,
-            MinBlockSize = b.MinBlockSize,
-            MaxBlockSize = b.MaxBlockSize,
-            DefaultBlockSize = b.DefaultBlockSize,
-            Capacity = b.Capacity,
-            Remaining = b.Remaining,
-            Position = b.Position,
-            SupportsInitiatorPartition = b.SupportsInitiatorPartition,
-            HasInitiatorPartition = b.HasInitiatorPartition,
-            SupportsSetmarks = b.SupportsSetmarks,
-            SupportsSeqFilemarks = b.SupportsSeqFilemarks,
-            Vendor = b.Vendor,
-            Product = b.Product,
-        };
-    }
+    // ── Session header key ────────────────────────────────────────────────────
+    private const string SessionIdHeader = "x-tape-session-id";
 
     /// <summary>
-    /// Creates an <see cref="ErrorInfo"/> from the current backend error state.
+    /// Captures backend state into a <see cref="BackendState"/> message.
     /// </summary>
-    private ErrorInfo CaptureError()
+    private static BackendState CaptureState(TapeDriveBackend b) => new()
     {
-        var b = session.Backend;
-        if (b == null)
-            return new ErrorInfo();
+        IsOpen = b.IsOpen,
+        HasMedia = b.HasMedia,
+        DeviceName = b.DeviceName,
+        DriveNumber = b.DriveNumber,
+        BlockSize = b.BlockSize,
+        MinBlockSize = b.MinBlockSize,
+        MaxBlockSize = b.MaxBlockSize,
+        DefaultBlockSize = b.DefaultBlockSize,
+        Capacity = b.Capacity,
+        Remaining = b.Remaining,
+        Position = b.Position,
+        SupportsInitiatorPartition = b.SupportsInitiatorPartition,
+        HasInitiatorPartition = b.HasInitiatorPartition,
+        SupportsSetmarks = b.SupportsSetmarks,
+        SupportsSeqFilemarks = b.SupportsSeqFilemarks,
+        Vendor = b.Vendor,
+        Product = b.Product,
+    };
 
-        return new ErrorInfo
-        {
-            ErrorCode = b.LastError,
-            ErrorMessage = b.LastErrorMessage ?? string.Empty,
-        };
-    }
+    /// <summary>
+    /// Creates an <see cref="ErrorInfo"/> from the backend error state.
+    /// </summary>
+    private static ErrorInfo CaptureError(TapeDriveBackend b) => new()
+    {
+        ErrorCode = b.LastError,
+        ErrorMessage = b.LastErrorMessage ?? string.Empty,
+    };
 
     /// <summary>
     /// Builds an <see cref="OperationResponse"/> from a bool result, capturing error and state.
     /// </summary>
-    private OperationResponse MakeResponse(bool success) => new()
+    private static OperationResponse MakeResponse(TapeDriveBackend b, bool success) => new()
     {
         Success = success,
-        Error = CaptureError(),
-        State = CaptureState(),
+        Error = CaptureError(b),
+        State = CaptureState(b),
     };
 
     /// <summary>
-    /// Ensures a backend is available, throwing an RPC error if not.
+    /// Validates the <c>x-tape-session-id</c> header and returns the associated backend.
+    /// Throws <see cref="RpcException"/> with <see cref="StatusCode.Unauthenticated"/> if the
+    /// header is missing, or <see cref="StatusCode.NotFound"/> if the session is unknown.
     /// </summary>
-    private TapeDriveBackend RequireBackend()
+    private TapeDriveBackend RequireSession(ServerCallContext context)
     {
-        return session.Backend ?? throw new RpcException(
-            new Status(StatusCode.FailedPrecondition, "No backend is open. Call OpenWin32 or OpenVirtual first."));
+        var id = context.RequestHeaders.GetValue(SessionIdHeader)
+            ?? throw new RpcException(new Status(
+                StatusCode.Unauthenticated, $"Missing '{SessionIdHeader}' header."));
+
+        return registry.Get(id)?.Backend
+            ?? throw new RpcException(new Status(
+                StatusCode.NotFound, $"Session '{id}' not found or already closed."));
     }
 
     /// <summary>
@@ -136,29 +133,32 @@ public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrp
 
     #region *** Drive Lifecycle ***
 
-    public override Task<OperationResponse> OpenWin32(OpenWin32Request request, ServerCallContext context)
+    public override async Task<OperationResponse> OpenWin32(OpenWin32Request request, ServerCallContext context)
     {
         logger.LogInformation("OpenWin32: drive #{DriveNumber}", request.DriveNumber);
 
-        var backend = new TapeDriveWin32Backend(session.LoggerFactory);
+        var backend = new TapeDriveWin32Backend(registry.LoggerFactory);
         bool success = backend.Open(request.DriveNumber);
 
         if (success)
         {
-            session.SetBackend(backend);
+            var sessionId = Guid.NewGuid().ToString("N");
+            registry.Add(sessionId, backend, context.Peer);
+            await context.WriteResponseHeadersAsync(
+                new Metadata { { SessionIdHeader, sessionId } });
         }
         else
         {
             // Capture error before disposing the failed backend
             var error = new ErrorInfo { ErrorCode = backend.LastError, ErrorMessage = backend.LastErrorMessage };
             backend.Dispose();
-            return Task.FromResult(new OperationResponse { Success = false, Error = error, State = CaptureState() });
+            return new OperationResponse { Success = false, Error = error };
         }
 
-        return Task.FromResult(MakeResponse(success));
+        return MakeResponse(backend, success);
     }
 
-    public override Task<OperationResponse> OpenVirtual(OpenVirtualRequest request, ServerCallContext context)
+    public override async Task<OperationResponse> OpenVirtual(OpenVirtualRequest request, ServerCallContext context)
     {
         logger.LogInformation("OpenVirtual: drive #{DriveNumber}, config: {Config}",
             request.DriveNumber, request.ConfigCase);
@@ -168,23 +168,26 @@ public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrp
             OpenVirtualRequest.ConfigOneofCase.MemoryConfig => CreateMemoryBackend(request.MemoryConfig),
             OpenVirtualRequest.ConfigOneofCase.MemoryMapConfig => CreateMemoryMapBackend(request.MemoryMapConfig),
             OpenVirtualRequest.ConfigOneofCase.FileConfig => CreateFileBackend(request.FileConfig),
-            _ => VirtualTapeDriveBackend.CreateMemoryBacked(session.LoggerFactory),
+            _ => VirtualTapeDriveBackend.CreateMemoryBacked(registry.LoggerFactory),
         };
 
         bool success = backend.Open(request.DriveNumber);
 
         if (success)
         {
-            session.SetBackend(backend);
+            var sessionId = Guid.NewGuid().ToString("N");
+            registry.Add(sessionId, backend, context.Peer);
+            await context.WriteResponseHeadersAsync(
+                new Metadata { { SessionIdHeader, sessionId } });
         }
         else
         {
             var error = new ErrorInfo { ErrorCode = backend.LastError, ErrorMessage = backend.LastErrorMessage };
             backend.Dispose();
-            return Task.FromResult(new OperationResponse { Success = false, Error = error, State = CaptureState() });
+            return new OperationResponse { Success = false, Error = error };
         }
 
-        return Task.FromResult(MakeResponse(success));
+        return MakeResponse(backend, success);
     }
 
     private VirtualTapeDriveBackend CreateMemoryBackend(VirtualMemoryConfig cfg)
@@ -192,7 +195,7 @@ public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrp
         var caps = MapCapabilities(cfg.Capabilities);
         long contentCap = cfg.ContentCapacity > 0 ? cfg.ContentCapacity : 500L * 1024 * 1024;
         long initCap = cfg.InitiatorCapacity > 0 ? cfg.InitiatorCapacity : 16L * 1024 * 1024;
-        return VirtualTapeDriveBackend.CreateMemoryBacked(session.LoggerFactory, caps, contentCap, initCap);
+        return VirtualTapeDriveBackend.CreateMemoryBacked(registry.LoggerFactory, caps, contentCap, initCap);
     }
 
     private VirtualTapeDriveBackend CreateMemoryMapBackend(VirtualMemoryMapConfig cfg)
@@ -200,7 +203,7 @@ public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrp
         var caps = MapCapabilities(cfg.Capabilities);
         long contentCap = cfg.ContentCapacity > 0 ? cfg.ContentCapacity : 4L * 1024 * 1024 * 1024;
         long initCap = cfg.InitiatorCapacity > 0 ? cfg.InitiatorCapacity : 16L * 1024 * 1024;
-        return VirtualTapeDriveBackend.CreateMemoryMapBacked(session.LoggerFactory, caps, contentCap, initCap);
+        return VirtualTapeDriveBackend.CreateMemoryMapBacked(registry.LoggerFactory, caps, contentCap, initCap);
     }
 
     private VirtualTapeDriveBackend CreateFileBackend(VirtualFileConfig cfg)
@@ -208,7 +211,7 @@ public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrp
         var caps = MapCapabilities(cfg.Capabilities);
         var mediaMode = cfg.MediaMode != 0 ? (FileMode)cfg.MediaMode : FileMode.OpenOrCreate;
         return VirtualTapeDriveBackend.CreateFileBacked(
-            session.LoggerFactory,
+            registry.LoggerFactory,
             cfg.ContentFilePath,
             cfg.ContentCapacity,
             string.IsNullOrEmpty(cfg.InitiatorFilePath) ? null : cfg.InitiatorFilePath,
@@ -219,23 +222,29 @@ public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrp
 
     public override Task<OperationResponse> Close(EmptyRequest request, ServerCallContext context)
     {
-        var b = session.Backend;
-        if (b != null)
+        var id = context.RequestHeaders.GetValue(SessionIdHeader);
+        if (id != null)
         {
-            b.Close();
-            logger.LogInformation("Close: drive closed");
+            // Close() signals a clean shutdown — call b.Close() before removing so the
+            // backend can flush and rewind, then Remove() disposes it.
+            var entry = registry.Get(id);
+            entry?.Backend.Close();
+            registry.Remove(id);
         }
 
-        return Task.FromResult(MakeResponse(true));
+        logger.LogInformation("Close: session {SessionId} closed", id ?? "<none>");
+
+        // Return a minimal success response — state is gone, backend already disposed
+        return Task.FromResult(new OperationResponse { Success = true });
     }
 
     public override Task<OperationResponse> SetDriveParameters(SetDriveParametersRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
+        var b = RequireSession(context);
         bool ok = b.SetDriveParameters(
             request.Compression, request.Ecc, request.DataPadding,
             request.ReportSetmarks, request.EotWarningZoneSize);
-        return Task.FromResult(MakeResponse(ok));
+        return Task.FromResult(MakeResponse(b, ok));
     }
 
     #endregion
@@ -244,26 +253,26 @@ public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrp
 
     public override Task<OperationResponse> LoadMedia(EmptyRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
-        return Task.FromResult(MakeResponse(b.LoadMedia()));
+        var b = RequireSession(context);
+        return Task.FromResult(MakeResponse(b, b.LoadMedia()));
     }
 
     public override Task<OperationResponse> UnloadMedia(EmptyRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
-        return Task.FromResult(MakeResponse(b.UnloadMedia()));
+        var b = RequireSession(context);
+        return Task.FromResult(MakeResponse(b, b.UnloadMedia()));
     }
 
     public override Task<OperationResponse> SetBlockSize(SetBlockSizeRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
-        return Task.FromResult(MakeResponse(b.SetBlockSize(request.Size)));
+        var b = RequireSession(context);
+        return Task.FromResult(MakeResponse(b, b.SetBlockSize(request.Size)));
     }
 
     public override Task<OperationResponse> FormatMedia(FormatMediaRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
-        return Task.FromResult(MakeResponse(b.FormatMedia(request.InitiatorPartitionSize)));
+        var b = RequireSession(context);
+        return Task.FromResult(MakeResponse(b, b.FormatMedia(request.InitiatorPartitionSize)));
     }
 
     #endregion
@@ -272,7 +281,7 @@ public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrp
 
     public override Task<ReadResponse> Read(ReadRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
+        var b = RequireSession(context);
 
         var buffer = new byte[request.Count];
         int bytesRead = b.Read(buffer, 0, request.Count, out bool tapemark, out bool eof);
@@ -283,8 +292,8 @@ public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrp
             Data = Google.Protobuf.ByteString.CopyFrom(buffer, 0, bytesRead),
             Tapemark = tapemark,
             Eof = eof,
-            Error = CaptureError(),
-            State = CaptureState(),
+            Error = CaptureError(b),
+            State = CaptureState(b),
         };
 
         return Task.FromResult(response);
@@ -292,7 +301,7 @@ public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrp
 
     public override Task<WriteResponse> Write(WriteRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
+        var b = RequireSession(context);
 
         var data = request.Data.ToByteArray();
         int written = b.Write(data, 0, data.Length, out bool tapemark, out bool eof);
@@ -302,8 +311,8 @@ public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrp
             BytesWritten = written,
             Tapemark = tapemark,
             Eof = eof,
-            Error = CaptureError(),
-            State = CaptureState(),
+            Error = CaptureError(b),
+            State = CaptureState(b),
         };
 
         return Task.FromResult(response);
@@ -315,67 +324,67 @@ public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrp
 
     public override Task<OperationResponse> SetPosition(SetPositionRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
-        return Task.FromResult(MakeResponse(b.SetPosition(request.Block)));
+        var b = RequireSession(context);
+        return Task.FromResult(MakeResponse(b, b.SetPosition(request.Block)));
     }
 
     public override Task<OperationResponse> SetPositionToPartition(SetPositionToPartitionRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
-        return Task.FromResult(MakeResponse(
+        var b = RequireSession(context);
+        return Task.FromResult(MakeResponse(b,
             b.SetPositionToPartition(MapPartition(request.Partition), request.Block)));
     }
 
     public override Task<GetPositionResponse> GetPosition(EmptyRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
+        var b = RequireSession(context);
         return Task.FromResult(new GetPositionResponse
         {
             Position = b.GetPosition(),
-            Error = CaptureError(),
-            State = CaptureState(),
+            Error = CaptureError(b),
+            State = CaptureState(b),
         });
     }
 
     public override Task<GetCurrentPartitionResponse> GetCurrentPartition(EmptyRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
+        var b = RequireSession(context);
         return Task.FromResult(new GetCurrentPartitionResponse
         {
             Partition = MapPartition(b.GetCurrentPartition()),
-            Error = CaptureError(),
-            State = CaptureState(),
+            Error = CaptureError(b),
+            State = CaptureState(b),
         });
     }
 
     public override Task<OperationResponse> Rewind(EmptyRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
-        return Task.FromResult(MakeResponse(b.Rewind()));
+        var b = RequireSession(context);
+        return Task.FromResult(MakeResponse(b, b.Rewind()));
     }
 
     public override Task<OperationResponse> SeekToEnd(SeekToEndRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
-        return Task.FromResult(MakeResponse(b.SeekToEnd(MapPartition(request.Partition))));
+        var b = RequireSession(context);
+        return Task.FromResult(MakeResponse(b, b.SeekToEnd(MapPartition(request.Partition))));
     }
 
     public override Task<OperationResponse> SpaceFilemarks(SpaceMarksRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
-        return Task.FromResult(MakeResponse(b.SpaceFilemarks(request.Count)));
+        var b = RequireSession(context);
+        return Task.FromResult(MakeResponse(b, b.SpaceFilemarks(request.Count)));
     }
 
     public override Task<OperationResponse> SpaceSetmarks(SpaceMarksRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
-        return Task.FromResult(MakeResponse(b.SpaceSetmarks(request.Count)));
+        var b = RequireSession(context);
+        return Task.FromResult(MakeResponse(b, b.SpaceSetmarks(request.Count)));
     }
 
     public override Task<OperationResponse> SpaceSequentialFilemarks(SpaceMarksRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
-        return Task.FromResult(MakeResponse(b.SpaceSequentialFilemarks(request.Count)));
+        var b = RequireSession(context);
+        return Task.FromResult(MakeResponse(b, b.SpaceSequentialFilemarks(request.Count)));
     }
 
     #endregion
@@ -384,14 +393,14 @@ public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrp
 
     public override Task<OperationResponse> WriteFilemarks(WriteMarksRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
-        return Task.FromResult(MakeResponse(b.WriteFilemarks(request.Count)));
+        var b = RequireSession(context);
+        return Task.FromResult(MakeResponse(b, b.WriteFilemarks(request.Count)));
     }
 
     public override Task<OperationResponse> WriteSetmarks(WriteMarksRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
-        return Task.FromResult(MakeResponse(b.WriteSetmarks(request.Count)));
+        var b = RequireSession(context);
+        return Task.FromResult(MakeResponse(b, b.WriteSetmarks(request.Count)));
     }
 
     #endregion
@@ -400,7 +409,7 @@ public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrp
 
     public override Task<DriveCapabilitiesResponse> FillDriveCapabilities(EmptyRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
+        var b = RequireSession(context);
         b.FillDriveCapabilities(out DriveCapabilities caps);
 
         return Task.FromResult(new DriveCapabilitiesResponse
@@ -414,14 +423,14 @@ public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrp
             SupportsSetmarks = caps.SupportsSetmarks,
             SupportsSeqFilemarks = caps.SupportsSeqFilemarks,
             SupportsInitiatorPartition = caps.SupportsInitiatorPartition,
-            Error = CaptureError(),
-            State = CaptureState(),
+            Error = CaptureError(b),
+            State = CaptureState(b),
         });
     }
 
     public override Task<MediaParametersResponse> FillMediaParameters(EmptyRequest request, ServerCallContext context)
     {
-        var b = RequireBackend();
+        var b = RequireSession(context);
         b.FillMediaParameters(out MediaParameters media);
 
         return Task.FromResult(new MediaParametersResponse
@@ -431,8 +440,8 @@ public class TapeDriveGrpcService(TapeDriveSession session, ILogger<TapeDriveGrp
             BlockSize = media.BlockSize,
             HasInitiatorPartition = media.HasInitiatorPartition,
             WriteProtected = media.WriteProtected,
-            Error = CaptureError(),
-            State = CaptureState(),
+            Error = CaptureError(b),
+            State = CaptureState(b),
         });
     }
 

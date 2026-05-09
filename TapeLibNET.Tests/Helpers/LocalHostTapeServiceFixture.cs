@@ -48,7 +48,7 @@ public sealed class LocalHostTapeServiceFixture : IAsyncLifetime, IDisposable, I
         // Suppress noisy ASP.NET Core logs during tests
         builder.Logging.SetMinimumLevel(LogLevel.Warning);
 
-        builder.Services.AddSingleton<TapeDriveSession>();
+        builder.Services.AddSingleton<TapeDriveSessionRegistry>();
         builder.Services.AddGrpc();
 
         _app = builder.Build();

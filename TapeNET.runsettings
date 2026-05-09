@@ -22,6 +22,9 @@
 -->
 <RunSettings>
   <RunConfiguration>
-    <TestCaseFilter>Category!=LargeFile &amp; FullyQualifiedName!~RemoteHostBackendTests</TestCaseFilter>
+	  <TestCaseFilter>Category!=LargeFile</TestCaseFilter>
+	  <!--
+	  <TestCaseFilter>Category!=LargeFile &amp; FullyQualifiedName!~RemoteHostBackendTests</TestCaseFilter>
+	  -->
   </RunConfiguration>
 </RunSettings>

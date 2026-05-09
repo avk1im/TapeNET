@@ -1,4 +1,5 @@
 using Google.Protobuf;
+using Grpc.Core;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Logging;
 
@@ -26,6 +27,10 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     private readonly GrpcChannel _channel;
     private readonly TapeDriveService.TapeDriveServiceClient _client;
     private readonly bool _ownsChannel;
+
+    // Session ID issued by the server on Open* and echoed in x-tape-session-id metadata
+    // on every subsequent call. Empty string means no session is established yet.
+    private string _sessionId = string.Empty;
 
     // Cached property snapshot, refreshed on every RPC response
     private BackendState _state = new();
@@ -71,6 +76,9 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
 
     #region *** State Synchronization ***
 
+    // Header key that carries the session ID on every call after Open
+    private const string SessionIdHeader = "x-tape-session-id";
+
     /// <summary>
     /// Updates the cached state and error from an <see cref="OperationResponse"/>.
     /// </summary>
@@ -100,6 +108,13 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
         else
             SetError(error.ErrorCode, error.ErrorMessage);
     }
+
+    /// <summary>
+    /// Returns <see cref="CallOptions"/> carrying the current session ID in metadata.
+    /// Must only be called after a successful Open* call has established <see cref="_sessionId"/>.
+    /// </summary>
+    private CallOptions WithSession() => new(
+        headers: new Grpc.Core.Metadata { { SessionIdHeader, _sessionId } });
 
     #endregion
 
@@ -144,7 +159,11 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     /// </summary>
     public override bool Open(uint driveNumber)
     {
-        var response = _client.OpenWin32(new OpenWin32Request { DriveNumber = driveNumber });
+        var call = _client.OpenWin32Async(new OpenWin32Request { DriveNumber = driveNumber });
+        // Response headers contain the session ID issued by the server
+        var headers = call.ResponseHeadersAsync.GetAwaiter().GetResult();
+        _sessionId = headers.GetValue(SessionIdHeader) ?? string.Empty;
+        var response = call.ResponseAsync.GetAwaiter().GetResult();
         return Sync(response);
     }
 
@@ -155,13 +174,18 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     /// <returns>True if the remote backend was created and opened successfully.</returns>
     public bool OpenVirtual(OpenVirtualRequest request)
     {
-        var response = _client.OpenVirtual(request);
+        var call = _client.OpenVirtualAsync(request);
+        // Response headers contain the session ID issued by the server
+        var headers = call.ResponseHeadersAsync.GetAwaiter().GetResult();
+        _sessionId = headers.GetValue(SessionIdHeader) ?? string.Empty;
+        var response = call.ResponseAsync.GetAwaiter().GetResult();
         return Sync(response);
     }
 
     public override void Close()
     {
-        var response = _client.Close(new EmptyRequest());
+        var response = _client.Close(new EmptyRequest(), WithSession());
+        _sessionId = string.Empty;
         Sync(response);
     }
 
@@ -175,7 +199,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
             DataPadding = dataPadding,
             ReportSetmarks = reportSetmarks,
             EotWarningZoneSize = eotWarningZoneSize,
-        });
+        }, WithSession());
         return Sync(response);
     }
 
@@ -185,19 +209,19 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
 
     public override bool LoadMedia()
     {
-        var response = _client.LoadMedia(new EmptyRequest());
+        var response = _client.LoadMedia(new EmptyRequest(), WithSession());
         return Sync(response);
     }
 
     public override bool UnloadMedia()
     {
-        var response = _client.UnloadMedia(new EmptyRequest());
+        var response = _client.UnloadMedia(new EmptyRequest(), WithSession());
         return Sync(response);
     }
 
     public override bool SetBlockSize(uint size)
     {
-        var response = _client.SetBlockSize(new SetBlockSizeRequest { Size = size });
+        var response = _client.SetBlockSize(new SetBlockSizeRequest { Size = size }, WithSession());
         return Sync(response);
     }
 
@@ -206,7 +230,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
         var response = _client.FormatMedia(new FormatMediaRequest
         {
             InitiatorPartitionSize = initiatorPartitionSize,
-        });
+        }, WithSession());
         return Sync(response);
     }
 
@@ -216,7 +240,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
 
     public override int Read(byte[] buffer, int offset, int count, out bool tapemark, out bool eof)
     {
-        var response = _client.Read(new ReadRequest { Count = count });
+        var response = _client.Read(new ReadRequest { Count = count }, WithSession());
         SyncState(response.State);
         SyncError(response.Error);
 
@@ -235,7 +259,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
         // Extract the segment to send — avoid sending the entire buffer
         var data = ByteString.CopyFrom(buffer, offset, count);
 
-        var response = _client.Write(new WriteRequest { Data = data });
+        var response = _client.Write(new WriteRequest { Data = data }, WithSession());
         SyncState(response.State);
         SyncError(response.Error);
 
@@ -251,7 +275,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
 
     public override bool SetPosition(long block)
     {
-        var response = _client.SetPosition(new SetPositionRequest { Block = block });
+        var response = _client.SetPosition(new SetPositionRequest { Block = block }, WithSession());
         return Sync(response);
     }
 
@@ -261,13 +285,13 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
         {
             Partition = MapPartition(partition),
             Block = block,
-        });
+        }, WithSession());
         return Sync(response);
     }
 
     public override long GetPosition()
     {
-        var response = _client.GetPosition(new EmptyRequest());
+        var response = _client.GetPosition(new EmptyRequest(), WithSession());
         SyncState(response.State);
         SyncError(response.Error);
         return response.Position;
@@ -275,7 +299,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
 
     public override MediaPartition GetCurrentPartition()
     {
-        var response = _client.GetCurrentPartition(new EmptyRequest());
+        var response = _client.GetCurrentPartition(new EmptyRequest(), WithSession());
         SyncState(response.State);
         SyncError(response.Error);
         return MapPartition(response.Partition);
@@ -283,7 +307,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
 
     public override bool Rewind()
     {
-        var response = _client.Rewind(new EmptyRequest());
+        var response = _client.Rewind(new EmptyRequest(), WithSession());
         return Sync(response);
     }
 
@@ -292,25 +316,25 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
         var response = _client.SeekToEnd(new SeekToEndRequest
         {
             Partition = MapPartition(partition),
-        });
+        }, WithSession());
         return Sync(response);
     }
 
     public override bool SpaceFilemarks(int count)
     {
-        var response = _client.SpaceFilemarks(new SpaceMarksRequest { Count = count });
+        var response = _client.SpaceFilemarks(new SpaceMarksRequest { Count = count }, WithSession());
         return Sync(response);
     }
 
     public override bool SpaceSetmarks(int count)
     {
-        var response = _client.SpaceSetmarks(new SpaceMarksRequest { Count = count });
+        var response = _client.SpaceSetmarks(new SpaceMarksRequest { Count = count }, WithSession());
         return Sync(response);
     }
 
     public override bool SpaceSequentialFilemarks(int count)
     {
-        var response = _client.SpaceSequentialFilemarks(new SpaceMarksRequest { Count = count });
+        var response = _client.SpaceSequentialFilemarks(new SpaceMarksRequest { Count = count }, WithSession());
         return Sync(response);
     }
 
@@ -320,13 +344,13 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
 
     public override bool WriteFilemarks(uint count)
     {
-        var response = _client.WriteFilemarks(new WriteMarksRequest { Count = count });
+        var response = _client.WriteFilemarks(new WriteMarksRequest { Count = count }, WithSession());
         return Sync(response);
     }
 
     public override bool WriteSetmarks(uint count)
     {
-        var response = _client.WriteSetmarks(new WriteMarksRequest { Count = count });
+        var response = _client.WriteSetmarks(new WriteMarksRequest { Count = count }, WithSession());
         return Sync(response);
     }
 
@@ -336,7 +360,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
 
     public override void FillDriveCapabilities(out DriveCapabilities parameters)
     {
-        var response = _client.FillDriveCapabilities(new EmptyRequest());
+        var response = _client.FillDriveCapabilities(new EmptyRequest(), WithSession());
         SyncState(response.State);
         SyncError(response.Error);
 
@@ -354,7 +378,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
 
     public override void FillMediaParameters(out MediaParameters parameters)
     {
-        var response = _client.FillMediaParameters(new EmptyRequest());
+        var response = _client.FillMediaParameters(new EmptyRequest(), WithSession());
         SyncState(response.State);
         SyncError(response.Error);
 

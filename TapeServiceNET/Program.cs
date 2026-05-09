@@ -9,9 +9,9 @@ builder.Host.UseWindowsService(options =>
     options.ServiceName = "TapeNET Tape Service";
 });
 
-// Singleton session that owns the active TapeDriveBackend across gRPC requests.
-// Disposed automatically on host shutdown, closing any open drive.
-builder.Services.AddSingleton<TapeDriveSession>();
+// Singleton registry that owns all active TapeDriveBackend instances, keyed by session ID.
+// Disposed automatically on host shutdown, closing any open drives.
+builder.Services.AddSingleton<TapeDriveSessionRegistry>();
 
 builder.Services.AddGrpc();
 

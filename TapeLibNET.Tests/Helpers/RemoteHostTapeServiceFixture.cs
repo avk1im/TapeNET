@@ -51,7 +51,7 @@ public sealed class RemoteHostTapeServiceFixture : IAsyncLifetime, IDisposable, 
     /// <summary>Human-readable reason when <see cref="IsConfigured"/> is <c>false</c>.</summary>
     public string SkipReason { get; private set; } = string.Empty;
 
-    public Task InitializeAsync()
+    public async Task InitializeAsync()
     {
         // Build configuration: JSON file (optional) → environment variables (override)
         var configBuilder = new ConfigurationBuilder();
@@ -89,7 +89,7 @@ public sealed class RemoteHostTapeServiceFixture : IAsyncLifetime, IDisposable, 
             IsConfigured = false;
             SkipReason = $"Remote host not configured. Set '{EnvPrefix}HOST' environment variable " +
                 $"or create '{SettingsFileName}' with a 'RemoteHost' key.";
-            return Task.CompletedTask;
+            return;
         }
 
         int port = DefaultPort;
@@ -114,7 +114,24 @@ public sealed class RemoteHostTapeServiceFixture : IAsyncLifetime, IDisposable, 
             MaxSendMessageSize = 16 * 1024 * 1024,
         });
 
-        return Task.CompletedTask;
+        // Probe the channel — gRPC channels are lazy and won't fail until the first RPC.
+        // A 3-second ConnectAsync tells us right now whether the service is actually up,
+        // so tests can skip cleanly instead of failing with Unavailable exceptions.
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            await _channel.ConnectAsync(cts.Token);
+            IsConfigured = true;
+        }
+        catch (Exception ex)
+        {
+            IsConfigured = false;
+            SkipReason = $"Remote service at {Address} is not reachable: {ex.Message}";
+            _channel.Dispose();
+            _channel = null;
+        }
+
+        return;
     }
 
     public Task DisposeAsync()
