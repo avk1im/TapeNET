@@ -53,6 +53,11 @@ service TapeDriveService {
   // --- Parameter queries ---
   rpc FillDriveCapabilities(EmptyRequest)       returns (DriveCapabilitiesResponse);
   rpc FillMediaParameters(EmptyRequest)         returns (MediaParametersResponse);
+
+  // --- Session keepalive ---
+  // Called by the client on a background timer while idle to keep the session alive.
+  // The server touches LastActivity and returns immediately.
+  rpc Ping(EmptyRequest)                        returns (EmptyResponse);
 }
 
 // ============================================================================
@@ -61,6 +66,9 @@ service TapeDriveService {
 
 // Placeholder for RPCs that need no input parameters.
 message EmptyRequest {}
+
+// Placeholder for RPCs that return no meaningful data (e.g. Ping).
+message EmptyResponse {}
 
 // Error information piggybacked on every response.
 // error_code 0 = NO_ERROR (success). Non-zero = Win32 error code.

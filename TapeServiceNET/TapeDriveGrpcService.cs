@@ -26,9 +26,6 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
 {
     #region *** Helper Methods ***
 
-    // ── Session header key ────────────────────────────────────────────────────
-    private const string SessionIdHeader = "x-tape-session-id";
-
     /// <summary>
     /// Captures backend state into a <see cref="BackendState"/> message.
     /// </summary>
@@ -73,20 +70,13 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
     };
 
     /// <summary>
-    /// Validates the <c>x-tape-session-id</c> header and returns the associated backend.
-    /// Throws <see cref="RpcException"/> with <see cref="StatusCode.Unauthenticated"/> if the
-    /// header is missing, or <see cref="StatusCode.NotFound"/> if the session is unknown.
+    /// Extracts the session ID from the request headers and returns a <see cref="TapeDriveSessionScope"/>
+    /// that protects the session from the reaper for the duration of this RPC handler.
+    /// Always consume with <c>using</c>.
     /// </summary>
-    private TapeDriveBackend RequireSession(ServerCallContext context)
-    {
-        var id = context.RequestHeaders.GetValue(SessionIdHeader)
-            ?? throw new RpcException(new Status(
-                StatusCode.Unauthenticated, $"Missing '{SessionIdHeader}' header."));
-
-        return registry.Get(id)?.Backend
-            ?? throw new RpcException(new Status(
-                StatusCode.NotFound, $"Session '{id}' not found or already closed."));
-    }
+    private TapeDriveSessionScope GetScope(ServerCallContext context)
+        => registry.RequireSession(
+            context.RequestHeaders.GetValue(TapeSessionConstants.SessionIdHeader));
 
     /// <summary>
     /// Maps a <see cref="ProtoMediaPartition"/> enum to the TapeLibNET <see cref="MediaPartition"/>.
@@ -145,7 +135,7 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
             var sessionId = Guid.NewGuid().ToString("N");
             registry.Add(sessionId, backend, context.Peer);
             await context.WriteResponseHeadersAsync(
-                new Metadata { { SessionIdHeader, sessionId } });
+                new Metadata { { TapeSessionConstants.SessionIdHeader, sessionId } });
         }
         else
         {
@@ -178,7 +168,7 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
             var sessionId = Guid.NewGuid().ToString("N");
             registry.Add(sessionId, backend, context.Peer);
             await context.WriteResponseHeadersAsync(
-                new Metadata { { SessionIdHeader, sessionId } });
+                new Metadata { { TapeSessionConstants.SessionIdHeader, sessionId } });
         }
         else
         {
@@ -222,25 +212,34 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
 
     public override Task<OperationResponse> Close(EmptyRequest request, ServerCallContext context)
     {
-        var id = context.RequestHeaders.GetValue(SessionIdHeader);
-        if (id != null)
+        var id = context.RequestHeaders.GetValue(TapeSessionConstants.SessionIdHeader);
+
+        if (!string.IsNullOrEmpty(id))
         {
-            // Close() signals a clean shutdown — call b.Close() before removing so the
-            // backend can flush and rewind, then Remove() disposes it.
-            var entry = registry.Get(id);
-            entry?.Backend.Close();
+            // Call backend.Close() before Remove() so the drive can flush and rewind.
+            // RequireSession increments the in-flight counter; we release it immediately
+            // since Remove() will dispose the backend right after.
+            try
+            {
+                using var scope = registry.RequireSession(id);
+                scope.Backend.Close();
+            }
+            catch (Grpc.Core.RpcException)
+            {
+                // Session already gone (e.g. reaped between the client's last Ping and Close).
+                // Nothing left to clean up — fall through to the success response.
+            }
+
             registry.Remove(id);
         }
 
         logger.LogInformation("Close: session {SessionId} closed", id ?? "<none>");
-
-        // Return a minimal success response — state is gone, backend already disposed
         return Task.FromResult(new OperationResponse { Success = true });
     }
 
     public override Task<OperationResponse> SetDriveParameters(SetDriveParametersRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         bool ok = b.SetDriveParameters(
             request.Compression, request.Ecc, request.DataPadding,
             request.ReportSetmarks, request.EotWarningZoneSize);
@@ -253,25 +252,25 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
 
     public override Task<OperationResponse> LoadMedia(EmptyRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         return Task.FromResult(MakeResponse(b, b.LoadMedia()));
     }
 
     public override Task<OperationResponse> UnloadMedia(EmptyRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         return Task.FromResult(MakeResponse(b, b.UnloadMedia()));
     }
 
     public override Task<OperationResponse> SetBlockSize(SetBlockSizeRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         return Task.FromResult(MakeResponse(b, b.SetBlockSize(request.Size)));
     }
 
     public override Task<OperationResponse> FormatMedia(FormatMediaRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         return Task.FromResult(MakeResponse(b, b.FormatMedia(request.InitiatorPartitionSize)));
     }
 
@@ -281,7 +280,7 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
 
     public override Task<ReadResponse> Read(ReadRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
 
         var buffer = new byte[request.Count];
         int bytesRead = b.Read(buffer, 0, request.Count, out bool tapemark, out bool eof);
@@ -301,7 +300,7 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
 
     public override Task<WriteResponse> Write(WriteRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
 
         var data = request.Data.ToByteArray();
         int written = b.Write(data, 0, data.Length, out bool tapemark, out bool eof);
@@ -324,20 +323,20 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
 
     public override Task<OperationResponse> SetPosition(SetPositionRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         return Task.FromResult(MakeResponse(b, b.SetPosition(request.Block)));
     }
 
     public override Task<OperationResponse> SetPositionToPartition(SetPositionToPartitionRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         return Task.FromResult(MakeResponse(b,
             b.SetPositionToPartition(MapPartition(request.Partition), request.Block)));
     }
 
     public override Task<GetPositionResponse> GetPosition(EmptyRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         return Task.FromResult(new GetPositionResponse
         {
             Position = b.GetPosition(),
@@ -348,7 +347,7 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
 
     public override Task<GetCurrentPartitionResponse> GetCurrentPartition(EmptyRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         return Task.FromResult(new GetCurrentPartitionResponse
         {
             Partition = MapPartition(b.GetCurrentPartition()),
@@ -359,31 +358,31 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
 
     public override Task<OperationResponse> Rewind(EmptyRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         return Task.FromResult(MakeResponse(b, b.Rewind()));
     }
 
     public override Task<OperationResponse> SeekToEnd(SeekToEndRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         return Task.FromResult(MakeResponse(b, b.SeekToEnd(MapPartition(request.Partition))));
     }
 
     public override Task<OperationResponse> SpaceFilemarks(SpaceMarksRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         return Task.FromResult(MakeResponse(b, b.SpaceFilemarks(request.Count)));
     }
 
     public override Task<OperationResponse> SpaceSetmarks(SpaceMarksRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         return Task.FromResult(MakeResponse(b, b.SpaceSetmarks(request.Count)));
     }
 
     public override Task<OperationResponse> SpaceSequentialFilemarks(SpaceMarksRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         return Task.FromResult(MakeResponse(b, b.SpaceSequentialFilemarks(request.Count)));
     }
 
@@ -393,13 +392,13 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
 
     public override Task<OperationResponse> WriteFilemarks(WriteMarksRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         return Task.FromResult(MakeResponse(b, b.WriteFilemarks(request.Count)));
     }
 
     public override Task<OperationResponse> WriteSetmarks(WriteMarksRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         return Task.FromResult(MakeResponse(b, b.WriteSetmarks(request.Count)));
     }
 
@@ -409,7 +408,7 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
 
     public override Task<DriveCapabilitiesResponse> FillDriveCapabilities(EmptyRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         b.FillDriveCapabilities(out DriveCapabilities caps);
 
         return Task.FromResult(new DriveCapabilitiesResponse
@@ -430,7 +429,7 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
 
     public override Task<MediaParametersResponse> FillMediaParameters(EmptyRequest request, ServerCallContext context)
     {
-        var b = RequireSession(context);
+        using var scope = GetScope(context); var b = scope.Backend;
         b.FillMediaParameters(out MediaParameters media);
 
         return Task.FromResult(new MediaParametersResponse
@@ -443,6 +442,24 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
             Error = CaptureError(b),
             State = CaptureState(b),
         });
+    }
+
+    #endregion
+
+    #region *** Session Keepalive ***
+
+    /// <summary>
+    /// No-op heartbeat called by the client on a background timer while idle.
+    /// Touching <see cref="TapeDriveSessionEntry.LastActivity"/> is done inside
+    /// <see cref="TapeDriveSessionRegistry.RequireSession"/>, so the reaper clock resets
+    /// automatically just by entering the scope.
+    /// </summary>
+    public override Task<EmptyResponse> Ping(EmptyRequest request, ServerCallContext context)
+    {
+        // Acquiring (and immediately releasing) the scope is sufficient — RequireSession
+        // already bumps LastActivity, preventing a reap between now and the next Ping.
+        using var _ = GetScope(context);
+        return Task.FromResult(new EmptyResponse());
     }
 
     #endregion

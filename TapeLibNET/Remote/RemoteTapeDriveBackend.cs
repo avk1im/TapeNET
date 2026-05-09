@@ -35,6 +35,15 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     // Cached property snapshot, refreshed on every RPC response
     private BackendState _state = new();
 
+    // Background timer that sends periodic Ping RPCs to keep the session alive while the
+    // client is idle (e.g. interactive user taking a break). Started after Open*, stopped
+    // in Close/Dispose. Null when no session is established.
+    private Timer? _pingTimer;
+
+    // How often to send keepalive pings. Chosen so that at least two pings arrive within
+    // the server-side IdleTimeout (default 30 min), giving ample margin.
+    private static readonly TimeSpan PingInterval = TimeSpan.FromMinutes(9);
+
     #endregion
 
     #region *** Constructors ***
@@ -51,9 +60,9 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
         var address = $"http://{host}:{port}";
         _channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
         {
-            // Tape I/O can transfer large blocks — allow up to 16 MB messages
-            MaxReceiveMessageSize = 16 * 1024 * 1024,
-            MaxSendMessageSize = 16 * 1024 * 1024,
+            // Tape I/O can transfer large blocks — allow up to 16 MB messages (+ 8 KB slack)
+            MaxReceiveMessageSize = 16 * 1024 * 1024 + 8 * 1024,
+            MaxSendMessageSize = 16 * 1024 * 1024 + 8 * 1024,
         });
         _client = new TapeDriveService.TapeDriveServiceClient(_channel);
         _ownsChannel = true;
@@ -164,7 +173,10 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
         var headers = call.ResponseHeadersAsync.GetAwaiter().GetResult();
         _sessionId = headers.GetValue(SessionIdHeader) ?? string.Empty;
         var response = call.ResponseAsync.GetAwaiter().GetResult();
-        return Sync(response);
+        bool ok = Sync(response);
+        if (ok)
+            StartPingTimer();
+        return ok;
     }
 
     /// <summary>
@@ -179,14 +191,23 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
         var headers = call.ResponseHeadersAsync.GetAwaiter().GetResult();
         _sessionId = headers.GetValue(SessionIdHeader) ?? string.Empty;
         var response = call.ResponseAsync.GetAwaiter().GetResult();
-        return Sync(response);
+        bool ok = Sync(response);
+        if (ok)
+            StartPingTimer();
+        return ok;
     }
 
     public override void Close()
     {
-        var response = _client.Close(new EmptyRequest(), WithSession());
-        _sessionId = string.Empty;
-        Sync(response);
+        StopPingTimer();
+
+        // Skip the RPC if we never obtained a session (Open failed) or it was already closed.
+        if (!string.IsNullOrEmpty(_sessionId))
+        {
+            var response = _client.Close(new EmptyRequest(), WithSession());
+            _sessionId = string.Empty;
+            Sync(response);
+        }
     }
 
     public override bool SetDriveParameters(bool compression, bool ecc, bool dataPadding,
@@ -410,13 +431,47 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
 
     #endregion
 
+    #region *** Keepalive Ping ***
+
+    private void StartPingTimer()
+    {
+        _pingTimer = new Timer(SendPing, null, PingInterval, PingInterval);
+    }
+
+    private void StopPingTimer()
+    {
+        _pingTimer?.Dispose();
+        _pingTimer = null;
+    }
+
+    private void SendPing(object? _)
+    {
+        if (string.IsNullOrEmpty(_sessionId)) return;
+        try
+        {
+            _client.Ping(new EmptyRequest(), WithSession());
+            m_logger.LogTrace("Keepalive ping sent for session {SessionId}", _sessionId);
+        }
+        catch (Exception ex)
+        {
+            // A failed ping is non-fatal — log it and let the next interval try again.
+            // If the server has already reaped the session, the next real operation will
+            // surface a proper RpcException with NotFound/Unauthenticated.
+            m_logger.LogWarning(ex, "Keepalive ping failed for session {SessionId}", _sessionId);
+        }
+    }
+
+    #endregion
+
     #region *** Dispose ***
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing && _ownsChannel)
+        if (disposing)
         {
-            _channel.Dispose();
+            StopPingTimer();
+            if (_ownsChannel)
+                _channel.Dispose();
         }
 
         base.Dispose(disposing);

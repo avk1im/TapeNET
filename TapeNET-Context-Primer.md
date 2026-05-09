@@ -11,11 +11,12 @@ The **TapeNET** solution (`D:\Documents.DEV\Projects\TapeNET`) targets **.NET 8 
 | `FclAiNET` | Class library | AI-assisted natural language → FCL translation using `Microsoft.Extensions.AI` |
 | `TapeConNET` | Console app | CLI tape backup utility (`tapecon`) — verb-based command-line interface (System.CommandLine + Spectre.Console) |
 | `TapeWinNET` | WPF app | GUI tape backup manager — MVVM, tree-based navigation, log pane, FCL-based file filtering |
+| `TapeServiceNET` | ASP.NET Core service | Windows Service / console host exposing `TapeDriveGrpcService` over gRPC (port 50551) |
 | `FclAiNET.Test` | Console app | Interactive NL → FCL REPL for testing AI translation |
 
-**Test projects:** `FclNET.Tests` (xUnit, 469+ tests covering lexer, parser, validator, evaluator, formatter, pipeline). `TapeLibNET.Tests` (xUnit, 1,170+ tests covering virtual drives, navigation, streams, TOC serialization, backup/restore agents, incremental chains, multi-volume, error handling, and service-layer round-trips). `TapeConNET.Tests` (xUnit, 56+ tests covering CLI parsing, lifecycle, FCL filtering, backup/restore round-trips, large/incremental stress scenarios, and the embedded-docs verb).
+**Test projects:** `FclNET.Tests` (xUnit, 469+ tests covering lexer, parser, validator, evaluator, formatter, pipeline). `TapeLibNET.Tests` (xUnit, 1,170+ tests covering virtual drives, navigation, streams, TOC serialization, backup/restore agents, incremental chains, multi-volume, error handling, service-layer round-trips, and gRPC remote-backend round-trips via `LocalHostBackendTests` / `RemoteHostBackendTests`). `TapeConNET.Tests` (xUnit, 56+ tests covering CLI parsing, lifecycle, FCL filtering, backup/restore round-trips, large/incremental stress scenarios, and the embedded-docs verb).
 
-**Dependencies:** The apps depend on the libraries. `FclNET` has no dependencies on other solution projects. `FclAiNET` depends on `FclNET`. `TapeWinNET` depends on `FclNET` for file filtering in the MainWindow via the `FclTapeFileFilter` adapter (the restore pipeline uses a dictionary-based selection path — see below). `TapeConNET` depends on `FclNET` for its `ITapeFileFilter`-based restore path. `TapeLibNET` remains independent of the FCL projects.
+**Dependencies:** The apps depend on the libraries. `FclNET` has no dependencies on other solution projects. `FclAiNET` depends on `FclNET`. `TapeWinNET` depends on `FclNET` for file filtering in the MainWindow via the `FclTapeFileFilter` adapter (the restore pipeline uses a dictionary-based selection path — see below). `TapeConNET` depends on `FclNET` for its `ITapeFileFilter`-based restore path. `TapeLibNET` remains independent of the FCL projects. `TapeServiceNET` depends on `TapeLibNET` only; proto-generated stubs are compiled in `TapeLibNET` (`GrpcServices="Both"`) and consumed via project reference.
 
 Git repo: `https://github.com/avk1im/TapeNET`, branch `dev`.
 
@@ -214,6 +215,23 @@ Multiple files can share a single tape block, eliminating per-file alignment was
 - **`TapeStreamManager` integration** — owns packer/backend lifecycle: `EnsurePackerCreated()` / `EnsureReadPackerCreated()` construct the respective stacks; `FlushAndDisposePacker()` / `DisposeReadPacker()` tear them down. `BeginPackedFile()` / `EndPackedFile()` and `BeginPackedFileRead()` / `EndPackedFileRead()` are the agent-facing entry points. `Manager.FilesCommitted` re-exposes the inner packer's event.
 - **Agent integration** — `TapeFileBackupAgent` packed methods (`BackupFilesToCurrentSetPacked`, etc.) sit alongside the legacy aligned methods (retained with `[Obsolete]` for side-by-side testing). `TapeFileRestoreBaseAgent` packed methods (`RestoreAllFilesFromCurrentSetPacked`, etc.) likewise mirror their aligned counterparts. Cross-path compatibility: legacy (aligned) backup output restores correctly through the packed path; packed backup output requires the packed restore path.
 
+### Remote backend (`TapeLibNET.Remote`)
+
+`RemoteTapeDriveBackend` is a `TapeDriveBackend` subclass that forwards every operation to a remote `TapeDriveGrpcService` via gRPC, making a network-attached tape drive a transparent drop-in for `TapeDrive`. All backend properties are served from a cached `BackendState` snapshot piggybacked on every RPC response.
+
+**Session management:** gRPC is stateless at the request level, so sessions are tracked via the `x-tape-session-id` metadata header. The server issues a session ID in the response headers of `OpenWin32` / `OpenVirtual`; the client stores it in `_sessionId` and attaches it to every subsequent call via `WithSession()` (`CallOptions` with the header). The server's `TapeDriveSessionRegistry` maps session IDs to backends, enabling multiple clients to work with separate drives concurrently.
+
+| Type | Role |
+|------|------|
+| `RemoteTapeDriveBackend` | `TapeDriveBackend` subclass; owns the gRPC channel (or borrows one), stores `_sessionId`, forwards all operations |
+| `OpenVirtualRequest` | Proto message passed to `OpenVirtual` — carries backend type (memory / memory-map / file) and capabilities |
+
+**Key implementation notes:**
+- `Open(uint)` and `OpenVirtual(OpenVirtualRequest)` use the async client stubs to await `ResponseHeadersAsync` before awaiting the response, extracting the session ID from headers.
+- `Close()` sends the session header on the close call (so the server can remove the session entry) then clears `_sessionId`.
+- `_ownsChannel` controls whether `Dispose` shuts down the underlying `GrpcChannel` — borrowed channels (test fixtures) are left open.
+- **Keepalive timer:** after a successful `Open` / `OpenVirtual`, a `System.Threading.Timer` fires every `PingInterval` (default 9 minutes) and sends a `Ping` RPC (`SendPing`). Failures are logged non-fatally and do not close the session. The timer is stopped (and disposed) in `Close()` and `Dispose()`. This prevents the server-side idle reaper from evicting sessions that are open but momentarily idle.
+
 ---
 
 ## TapeLibNET.Tests
@@ -248,6 +266,8 @@ Tests are parameterized via `[Theory]` + `[MemberData]` across three `DriveProfi
 | `ServiceIncrementalTests` | Three-wave incremental chain, per-set restore selection |
 | `ServiceMultiVolumeTests` | Volume-spanning backup and restore via `MultiVolumeTapeServiceHost` |
 | `ServiceSelectiveRestoreTests` | Hand-picked `TapeFileInfo` subset restore across multiple sets |
+| `LocalHostBackendTests` | Full gRPC round-trip: `RemoteTapeDriveBackend` → in-process `TapeDriveGrpcService` → `VirtualTapeDriveBackend`; always runs |
+| `RemoteHostBackendTests` | Same suite against an external `TapeServiceNET` process; skips automatically when the service is unreachable. Excluded from routine runs by `TapeNET.runsettings` (`FullyQualifiedName!~RemoteHostBackendTests`); run explicitly with `dotnet test --filter "FullyQualifiedName~RemoteHostBackendTests"` or by deselecting the runsettings in VS Test Explorer |
 
 ### Key test helpers (`Helpers/`)
 
@@ -262,6 +282,34 @@ Tests are parameterized via `[Theory]` + `[MemberData]` across three `DriveProfi
 | `TestNotifiable` | `ITapeFileNotifiable` recorder — captures all callbacks with assertion helpers (`AssertAllSucceeded`, `AssertFileCount`, etc.) |
 | `FileComparer` | Byte-for-byte comparison of original vs. restored files |
 | `XunitLoggerFactory` | `ILoggerFactory` bridge routing library log output to xUnit's `ITestOutputHelper` |
+| `LocalHostTapeServiceFixture` | xUnit collection fixture that hosts `TapeDriveGrpcService` in-process on a random port; shared across all `LocalHostBackendTests` |
+| `RemoteHostTapeServiceFixture` | xUnit collection fixture that connects to an already-running `TapeServiceNET`; reads `remote-test-settings.json` (gitignored) or `TAPE_REMOTE_*` env vars; probes the channel on startup and sets `IsConfigured = false` (skip) if the service is unreachable |
+| `RemoteVirtualTapeFixture` | Per-test fixture used by both remote test classes; instructs the server to open a memory-backed virtual drive via `OpenVirtual` and wraps the result in a local `TapeDrive` |
+
+---
+
+## TapeServiceNET — Remote Tape Service
+
+ASP.NET Core gRPC service (`tapesvc.exe`) that exposes a `TapeDriveBackend` over the network on port 50551 (HTTP/2, no TLS by default). Runs as a Windows Service (`sc.exe create`) or as a console process for development. The binary name is `tapesvc`; assembly name is set via `<AssemblyName>tapesvc</AssemblyName>`.
+
+**Proto stubs** are generated in `TapeLibNET` (`GrpcServices="Both"`) and consumed via project reference — no `.proto` compilation in `TapeServiceNET` itself.
+
+### Session registry
+
+gRPC is stateless at the request level, so concurrent client support is built on a session-ID header (`x-tape-session-id`). On `OpenWin32` / `OpenVirtual` the service creates a backend, registers it in the singleton `TapeDriveSessionRegistry`, and writes the session ID into the response headers via `WriteResponseHeadersAsync`. Every subsequent RPC reads the header and resolves the backend via `RequireSession(context)`, which throws `Unauthenticated` (missing header) or `NotFound` (unknown/closed session) as appropriate.
+
+| Type | Role |
+|------|------|
+| `TapeDriveSessionRegistry` | Singleton `ConcurrentDictionary<string, TapeDriveSessionEntry>`; owns backend lifetimes; `Add` / `Get` (touches `LastActivity`) / `Remove` (disposes backend) / `Dispose` (disposes all on shutdown) |
+| `TapeDriveSessionEntry` | Record: `Backend`, `CreatedAt`, `RemoteIp`, `LastActivity` — metadata for logging and future timeout/reaper support |
+| `TapeDriveGrpcService` | Transient gRPC service; resolves the session backend on each call; Open* handlers are `async` to emit response headers before returning |
+| `Program.cs` | Registers `TapeDriveSessionRegistry` as singleton; maps `TapeDriveGrpcService`; enables Windows Service hosting |
+
+**Concurrency model:** Multiple clients can each hold an independent session against different drives simultaneously. Physical drives are mutually exclusive at the OS level (`CreateFile` fails for the second opener). Virtual drives have no OS-level exclusion — two sessions can open the same virtual backend parameters; it is the caller's responsibility to avoid this.
+
+**Session lifecycle / reaper:** Idle sessions are reaped by `TapeSessionReaperService`, a `BackgroundService` registered in `Program.cs`. It wakes on `ReaperInterval` (default 5 minutes) and removes any session whose `LastActivity` exceeds `IdleTimeout` (default 30 minutes), *unless* `ActiveRpcCount > 0` — sessions with an in-flight RPC are never evicted. `ActiveRpcCount` is managed by `TapeDriveSessionScope`, a disposable RAII guard acquired at the start of every RPC handler. Timeouts are configurable via `appsettings.json` under the `"TapeSession"` section (`TapeSessionSettings`). The `Ping` RPC (client-initiated keepalive) resets `LastActivity` without performing any drive I/O.
+
+**Security:** No authentication beyond the session token. Firewall-level access control is the recommended approach for restricting which hosts can reach port 50551.
 
 ---
 
@@ -546,6 +594,6 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 2. ✅ File filter/search in the backup set table — `FileFilterPane` with pattern mode (wildcards) and advanced mode (full FCL via `FclFilterWindow`). Dynamic stats in the GroupBox header, filter state persistence across tree navigation.
 3. ✅ Advanced file filtering for Backup — Integrate the `FileFilterPane` into the Backup workflow (New Backup Set dialog or pre-backup file selection) to allow FCL-based filtering of which files to include in a backup operation.
 4. ✅ Window state persistence — Remember window size, position, splitter proportions, and the last-opened drive number between sessions. JSON serializer based implementation in `%LocalAppData%\TapeWinNET\`.
-5. [NEEDED?] Operation-complete notification — A FlashWindowEx or system notification when a long backup/restore finishes while the window is in the background. Tape operations can run for hours; easy to miss completion.
+5. [?NEEDED?] Operation-complete notification — A FlashWindowEx or system notification when a long backup/restore finishes while the window is in the background. Tape operations can run for hours; easy to miss completion.
 6. ✅ Delete most-recent backup set(s) — Removing the newest set(s) from the TOC (the library likely supports this via TapeTOC manipulation + TOC rewrite). Useful to make space on the media or when the last backup was accidental or corrupt.
 7. ✅ Capacity usage bar — A small visual bar in the Media properties or status bar showing used/remaining as a colored segment bar, broken down by set. Quick situational awareness without reading numbers.

@@ -9,9 +9,16 @@ builder.Host.UseWindowsService(options =>
     options.ServiceName = "TapeNET Tape Service";
 });
 
+// Session lifecycle settings (IdleTimeout, ReaperInterval) — override in appsettings.json.
+builder.Services.Configure<TapeSessionSettings>(
+    builder.Configuration.GetSection(TapeSessionSettings.Section));
+
 // Singleton registry that owns all active TapeDriveBackend instances, keyed by session ID.
 // Disposed automatically on host shutdown, closing any open drives.
 builder.Services.AddSingleton<TapeDriveSessionRegistry>();
+
+// Background service that periodically reaps idle sessions.
+builder.Services.AddHostedService<TapeSessionReaperService>();
 
 builder.Services.AddGrpc();
 
