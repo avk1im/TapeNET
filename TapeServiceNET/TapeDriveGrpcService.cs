@@ -446,6 +446,31 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
 
     #endregion
 
+    #region *** Drive Discovery (sessionless) ***
+
+    /// <summary>
+    /// Probes Win32 tape drive numbers 0 .. <c>request.MaxDrive</c> without opening them
+    /// and returns those that exist. Sessionless — no session ID header is required.
+    /// </summary>
+    public override Task<ProbeDrivesResponse> ProbeDrives(ProbeDrivesRequest request, ServerCallContext context)
+    {
+        uint maxDrive = request.MaxDrive > 0 ? request.MaxDrive : 9;
+        logger.LogDebug("ProbeDrives: probing drives 0..{MaxDrive}", maxDrive);
+
+        var response = new ProbeDrivesResponse();
+        for (uint i = 0; i <= maxDrive; i++)
+        {
+            if (TapeLibNET.TapeDrive.ProbeWin32(i))
+                response.DriveNumbers.Add(i);
+        }
+
+        logger.LogDebug("ProbeDrives: found drives [{DriveList}]",
+            string.Join(", ", response.DriveNumbers));
+        return Task.FromResult(response);
+    }
+
+    #endregion
+
     #region *** Session Keepalive ***
 
     /// <summary>

@@ -1,5 +1,6 @@
 using Grpc.Net.Client;
 using Microsoft.Extensions.Configuration;
+using TapeLibNET.Remote;
 
 namespace TapeLibNET.Tests.Helpers;
 
@@ -15,8 +16,9 @@ namespace TapeLibNET.Tests.Helpers;
 /// <list type="table">
 ///   <listheader><term>Key</term><description>Purpose</description></listheader>
 ///   <item><term>RemoteHost</term><description>IP address or hostname (required)</description></item>
-///   <item><term>RemotePort</term><description>gRPC listen port (default: 50551)</description></item>
+///   <item><term>RemotePort</term><description>plain-HTTP gRPC port (default: 50551)</description></item>
 ///   <item><term>UseTls</term><description><c>true</c> for HTTPS, <c>false</c> for HTTP (default: false)</description></item>
+///   <item><term>DangerousAcceptAnyServerCertificate</term><description>Skip TLS cert validation for self-signed dev certs (default: false)</description></item>
 /// </list>
 /// </summary>
 public sealed class RemoteHostTapeServiceFixture : IAsyncLifetime, IDisposable, ITapeServiceFixture
@@ -104,15 +106,21 @@ public sealed class RemoteHostTapeServiceFixture : IAsyncLifetime, IDisposable, 
         if (!string.IsNullOrEmpty(tlsStr) && bool.TryParse(tlsStr, out bool parsedTls))
             useTls = parsedTls;
 
-        string scheme = useTls ? "https" : "http";
-        Address = $"{scheme}://{host}:{port}";
+        // Read DangerousAcceptAny from TlsTestSettings (same JSON file / env vars)
+        bool dangerousAcceptAny = false;
+        if (useTls)
+            dangerousAcceptAny = new TlsTestSettings().DangerousAcceptAny;
+
+        var settings = new RemoteHostSettings(
+            Host: host,
+            Port: port,
+            UseTls: useTls,
+            DangerousAcceptAnyServerCertificate: dangerousAcceptAny);
+
+        Address = settings.ChannelAddress;
         IsConfigured = true;
 
-        _channel = GrpcChannel.ForAddress(Address, new GrpcChannelOptions
-        {
-            MaxReceiveMessageSize = 16 * 1024 * 1024,
-            MaxSendMessageSize = 16 * 1024 * 1024,
-        });
+        _channel = GrpcChannel.ForAddress(Address, settings.BuildChannelOptions());
 
         // Probe the channel — gRPC channels are lazy and won't fail until the first RPC.
         // A 3-second ConnectAsync tells us right now whether the service is actually up,

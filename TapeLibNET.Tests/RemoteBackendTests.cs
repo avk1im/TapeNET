@@ -1,3 +1,4 @@
+using TapeLibNET.Remote;
 using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
@@ -300,6 +301,103 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
     #endregion
 
     // ========================================================================
+    //  Drive Discovery (ProbeDrives)
+    // ========================================================================
+
+    #region *** ProbeDrives Tests ***
+
+    [SkippableFact]
+    public void ProbeDrives_DefaultMaxDrive_ReturnsListWithoutSession()
+    {
+        // ProbeDrives must work without any prior Open* call (sessionless).
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        var drives = backend.ProbeDrives();
+
+        // Result is always a valid list — empty when no physical drives are present.
+        Assert.NotNull(drives);
+    }
+
+    [SkippableFact]
+    public void ProbeDrives_MaxDriveZero_ProbesOnlyDriveZero()
+    {
+        // When maxDrive = 0, only drive 0 is probed — result has 0 or 1 entries.
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        var drives = backend.ProbeDrives(maxDrive: 0);
+
+        Assert.NotNull(drives);
+        Assert.True(drives.Count <= 1, "ProbeDrives(0) should return at most one drive");
+        Assert.True(drives.All(d => d == 0), "ProbeDrives(0) should only report drive number 0");
+    }
+
+    [SkippableFact]
+    public void ProbeDrives_AllResultsWithinRange()
+    {
+        // Every returned drive number must be <= maxDrive.
+        EnsureServiceAvailable();
+        const uint maxDrive = 9;
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        var drives = backend.ProbeDrives(maxDrive);
+
+        Assert.All(drives, d => Assert.True(d <= maxDrive,
+            $"Drive number {d} exceeds maxDrive ({maxDrive})"));
+    }
+
+    [SkippableFact]
+    public void ProbeDrives_ReturnsNoDuplicates()
+    {
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        var drives = backend.ProbeDrives();
+
+        Assert.Equal(drives.Count, drives.Distinct().Count());
+    }
+
+    [SkippableFact]
+    public void ProbeDrives_CalledTwice_ReturnsSameResult()
+    {
+        // The call is idempotent and safe to repeat.
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        var first  = backend.ProbeDrives();
+        var second = backend.ProbeDrives();
+
+        Assert.Equal(first, second);
+    }
+
+    [SkippableFact]
+    public void ProbeDrives_DoesNotAffectSubsequentOpen()
+    {
+        // Calling ProbeDrives before Open must not corrupt the session state.
+        EnsureServiceAvailable();
+        using var fixture = new RemoteVirtualTapeFixture(_service.Channel, DriveProfile.Setmarks);
+
+        // Probe using the same channel (but a separate, sessionless backend instance)
+        using var probeBackend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+        _ = probeBackend.ProbeDrives();
+
+        // The fixture's drive (opened before the probe) should still be operational
+        var drive = fixture.Drive;
+        var buffer = new byte[drive.BlockSize];
+        int written = drive.WriteDirect(buffer, 0, buffer.Length, out _, out _);
+        Assert.Equal(buffer.Length, written);
+    }
+
+    #endregion
+
+    // ========================================================================
     //  Backup & Restore Round-Trip
     // ========================================================================
 
@@ -420,6 +518,55 @@ public class LocalHostBackendTests(LocalHostTapeServiceFixture service)
 /// </summary>
 [Collection(RemoteHostTapeServiceCollection.Name)]
 public class RemoteHostBackendTests(RemoteHostTapeServiceFixture service)
+    : RemoteBackendTestsBase(service)
+{
+    protected override void EnsureServiceAvailable()
+    {
+        Skip.If(!service.IsConfigured, service.SkipReason);
+    }
+}
+
+/// <summary>
+/// Runs all <see cref="RemoteBackendTestsBase"/> tests against an in-process gRPC server
+/// hosted by <see cref="LocalHostTlsTapeServiceFixture"/> over TLS / HTTPS.
+/// <para>
+/// Tests skip automatically when the TLS certificate is not configured or the HTTPS
+/// connection cannot be established. Configure TLS via <c>remote-test-settings.json</c>:
+/// </para>
+/// <code>
+/// {
+///   "TlsCertPath":  "certs/tapesvc.pfx",
+///   "TlsCertPassword": "YourPassword",
+///   "DangerousAcceptAnyServerCertificate": true
+/// }
+/// </code>
+/// </summary>
+[Collection(LocalHostTlsTapeServiceCollection.Name)]
+public class LocalHostTlsBackendTests(LocalHostTlsTapeServiceFixture service)
+    : RemoteBackendTestsBase(service)
+{
+    protected override void EnsureServiceAvailable()
+    {
+        Skip.If(!service.IsConfigured, service.SkipReason);
+    }
+}
+
+/// <summary>
+/// Runs all <see cref="RemoteBackendTestsBase"/> tests against an external gRPC server
+/// configured via <c>remote-test-settings.json</c> or <c>TAPE_REMOTE_*</c> environment
+/// variables, using TLS / HTTPS on <c>RemoteTlsPort</c> (default: 50552).
+/// <para>
+/// Tests skip automatically when no remote host is configured, TLS settings are absent,
+/// or the HTTPS endpoint is unreachable.
+/// </para>
+/// <para>
+/// <b>To run these tests explicitly:</b><br/>
+/// CLI: <c>dotnet test --filter "FullyQualifiedName~RemoteHostTlsBackendTests"</c><br/>
+/// Visual Studio Test Explorer: disable or override <c>TapeNET.runsettings</c>.
+/// </para>
+/// </summary>
+[Collection(RemoteHostTlsTapeServiceCollection.Name)]
+public class RemoteHostTlsBackendTests(RemoteHostTlsTapeServiceFixture service)
     : RemoteBackendTestsBase(service)
 {
     protected override void EnsureServiceAvailable()

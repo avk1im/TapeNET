@@ -58,6 +58,11 @@ service TapeDriveService {
   // Called by the client on a background timer while idle to keep the session alive.
   // The server touches LastActivity and returns immediately.
   rpc Ping(EmptyRequest)                        returns (EmptyResponse);
+
+  // --- Drive discovery (sessionless) ---
+  // Probes which Win32 tape drive numbers exist on the host without opening them.
+  // Safe to call unauthenticated; no session ID required.
+  rpc ProbeDrives(ProbeDrivesRequest)           returns (ProbeDrivesResponse);
 }
 
 // ============================================================================
@@ -199,6 +204,19 @@ message SetBlockSizeRequest {
 
 message FormatMediaRequest {
   int64 initiator_partition_size = 1;  // -1 = no initiator partition
+}
+
+// ============================================================================
+//  Drive discovery (sessionless)
+// ============================================================================
+
+// Probes drive numbers 0 .. max_drive (inclusive) and returns those that exist.
+message ProbeDrivesRequest {
+  uint32 max_drive = 1; // highest drive number to probe (suggest 9)
+}
+
+message ProbeDrivesResponse {
+  repeated uint32 drive_numbers = 1; // Win32 drive numbers that were found
 }
 
 // ============================================================================

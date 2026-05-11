@@ -58,6 +58,19 @@ public class TapeDrive : ErrorManageableBase, IDisposable
     }
 
     /// <summary>
+    /// Creates a TapeDrive with a remote backend connecting to a tape service on the network,
+    /// using the supplied <see cref="Remote.RemoteHostSettings"/> (supports TLS).
+    /// The remote service manages the actual hardware (or virtual) backend.
+    /// </summary>
+    /// <param name="settings">Host, port, TLS and certificate settings.</param>
+    /// <param name="loggerFactory">Logger factory for logging.</param>
+    public static TapeDrive CreateRemote(Remote.RemoteHostSettings settings, ILoggerFactory? loggerFactory = null)
+    {
+        loggerFactory ??= NullLoggerFactory.Instance;
+        return new TapeDrive(new Remote.RemoteTapeDriveBackend(settings, loggerFactory));
+    }
+
+    /// <summary>
     /// Creates a TapeDrive with a remote backend connecting to a tape service on the network.
     /// The remote service manages the actual hardware (or virtual) backend.
     /// </summary>
@@ -65,10 +78,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
     /// <param name="port">gRPC port (default 50551).</param>
     /// <param name="loggerFactory">Logger factory for logging.</param>
     public static TapeDrive CreateRemote(string host, int port = 50551, ILoggerFactory? loggerFactory = null)
-    {
-        loggerFactory ??= NullLoggerFactory.Instance;
-        return new TapeDrive(new RemoteTapeDriveBackend(host, port, loggerFactory));
-    }
+        => CreateRemote(new Remote.RemoteHostSettings(host, port), loggerFactory);
 
     /// <summary>Probe if a tape drive with specified number is present.</summary>
     public static bool ProbeWin32(uint driveNumber = 0)

@@ -37,12 +37,14 @@ public sealed class LocalHostTapeServiceFixture : IAsyncLifetime, IDisposable, I
     {
         var builder = WebApplication.CreateBuilder();
 
-        // Override any inherited Kestrel endpoint config (e.g. from TapeServiceNET's appsettings.json)
-        //  with an empty Endpoints section, then bind programmatically to a random port
+        // Clear all configuration sources (appsettings.json, env vars, etc.) so that
+        // any Kestrel TLS endpoint definitions from the service's appsettings do not
+        // bleed into the test host.  We then supply only the single HTTP/2 endpoint we need.
+        builder.Configuration.Sources.Clear();
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["Kestrel:Endpoints:Grpc:Url"] = "http://127.0.0.1:0",
-            ["Kestrel:Endpoints:Grpc:Protocols"] = "Http2",
+            ["Kestrel:Endpoints:Grpc:Url"]       = "http://127.0.0.1:0",
+            ["Kestrel:Endpoints:Grpc:Protocols"]  = "Http2",
         });
 
         // Suppress noisy ASP.NET Core logs during tests

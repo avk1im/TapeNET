@@ -1,0 +1,30 @@
+{
+  // Overlay this file over appsettings.json to enable the TLS gRPC endpoint on port 50552.
+  //
+  // Rename to appsettings.Tls.json and add it to the hosting environment's configuration
+  // pipeline, or copy the "GrpcTls" block manually into appsettings.json.
+  //
+  // Certificate setup (self-signed dev cert):
+  //   mkdir certs
+  //   dotnet dev-certs https -ep certs/tapesvc.pfx -p <password> --trust
+  //   E.g. (notice single quotes prevent interpolation of '$'!):
+  //     dotnet dev-certs https -ep certs/tapesvc.pfx -p 'Test$01' --trust
+  //
+  // For production, replace with a CA-issued PFX certificate.
+  //
+  // Client side: set UseTls = true (and optionally DangerousAcceptAnyServerCertificate = true
+  // for self-signed certs) on RemoteHostSettings and use port 50552.
+
+  "Kestrel": {
+    "Endpoints": {
+      "GrpcTls": {
+        "Url": "https://*:50552",
+        "Protocols": "Http2",
+        "Certificate": {
+          "Path": "certs/tapesvc.pfx",
+          "Password": "<your-pfx-password>"
+        }
+      }
+    }
+  }
+}

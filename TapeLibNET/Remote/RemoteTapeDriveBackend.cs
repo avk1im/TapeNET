@@ -49,26 +49,31 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     #region *** Constructors ***
 
     /// <summary>
-    /// Creates a remote backend connecting to the specified host and port.
+    /// Creates a remote backend using the supplied connection settings.
+    /// This is the primary constructor — it derives the channel URI and transport
+    /// security from <paramref name="settings"/>.
+    /// </summary>
+    /// <param name="settings">Host, port, TLS and certificate settings.</param>
+    /// <param name="loggerFactory">Logger factory for logging.</param>
+    public RemoteTapeDriveBackend(RemoteHostSettings settings, ILoggerFactory loggerFactory)
+        : base(loggerFactory)
+    {
+        _channel = GrpcChannel.ForAddress(settings.ChannelAddress, settings.BuildChannelOptions());
+        _client = new TapeDriveService.TapeDriveServiceClient(_channel);
+        _ownsChannel = true;
+
+        m_logger.LogTrace("RemoteTapeDriveBackend created for {Address}", settings.ChannelAddress);
+    }
+
+    /// <summary>
+    /// Convenience shim: creates a plain-HTTP remote backend from individual host and port values.
+    /// Equivalent to <c>new RemoteTapeDriveBackend(new RemoteHostSettings(host, port), loggerFactory)</c>.
     /// </summary>
     /// <param name="host">Hostname or IP address of the tape service.</param>
     /// <param name="port">gRPC port (default 50551).</param>
     /// <param name="loggerFactory">Logger factory for logging.</param>
     public RemoteTapeDriveBackend(string host, int port, ILoggerFactory loggerFactory)
-        : base(loggerFactory)
-    {
-        var address = $"http://{host}:{port}";
-        _channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
-        {
-            // Tape I/O can transfer large blocks — allow up to 16 MB messages (+ 8 KB slack)
-            MaxReceiveMessageSize = 16 * 1024 * 1024 + 8 * 1024,
-            MaxSendMessageSize = 16 * 1024 * 1024 + 8 * 1024,
-        });
-        _client = new TapeDriveService.TapeDriveServiceClient(_channel);
-        _ownsChannel = true;
-
-        m_logger.LogTrace("RemoteTapeDriveBackend created for {Address}", address);
-    }
+        : this(new RemoteHostSettings(host, port), loggerFactory) { }
 
     /// <summary>
     /// Creates a remote backend from an existing gRPC channel (for testing or shared channels).
@@ -82,6 +87,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     }
 
     #endregion
+
 
     #region *** State Synchronization ***
 
@@ -158,6 +164,22 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
 
     /// <summary>The remote service address this backend is connected to.</summary>
     public string RemoteAddress => _channel.Target;
+
+    #endregion
+
+    #region *** Drive Discovery (sessionless) ***
+
+    /// <summary>
+    /// Probes the remote host for available Win32 tape drives 0...<paramref name="maxDrive"/> without
+    /// opening any of them. Safe to call before <see cref="Open"/> — no session required.
+    /// </summary>
+    /// <param name="maxDrive">Highest drive number to probe (default 9).</param>
+    /// <returns>Read-only list of Win32 drive numbers that exist on the remote host.</returns>
+    public IReadOnlyList<uint> ProbeDrives(uint maxDrive = 9)
+    {
+        var response = _client.ProbeDrives(new ProbeDrivesRequest { MaxDrive = maxDrive });
+        return [.. response.DriveNumbers];
+    }
 
     #endregion
 
