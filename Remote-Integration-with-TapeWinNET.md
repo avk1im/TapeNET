@@ -1,6 +1,6 @@
 # Remote Tape Drive Integration — TapeWinNET Design Document
 
-> **Status:** Design / pre-implementation  
+> **Status:** Section 1 fully implemented — §1.1, §1.2, §1.3, §1.4, §1.5 all complete  
 > **Scope:** `TapeLibNET` (gRPC client backend), `TapeServiceNET` (gRPC server), `TapeWinNET` (WPF GUI)  
 > **Branch:** `dev`
 
@@ -23,7 +23,7 @@ are listed roughly in priority order; the first two are prerequisites for integr
 
 ---
 
-### 1.1 Drive Probing RPC (prerequisite)
+### 1.1 Drive Probing RPC (prerequisite) ✅ IMPLEMENTED
 
 **Problem:** To populate the remote "Open on \<host\>" submenu, TapeWinNET needs to know
 which Win32 drive numbers exist on the remote host. Currently the only way is to perform
@@ -59,9 +59,22 @@ public IReadOnlyList<uint> ProbeDrives(uint maxDrive = 9)
 
 This is static-ish in spirit; it can be called before any `Open*` and needs no session.
 
+> **Implementation notes (as built):**
+>
+> - Implemented exactly as designed. `ProbeDrives` is a sessionless RPC: no
+>   `x-tape-session-id` header is attached on the client, and the server handler
+>   loops `0..maxDrive` calling `TapeDrive.ProbeWin32(i)` without creating a session.
+> - The client helper returns `IReadOnlyList<uint>` and is callable before any `Open*`.
+> - `TapeDrive.CreateRemote(RemoteHostSettings)` was added as the canonical factory;
+>   existing `(host, port)` callers are handled by a shim that constructs the record.
+> - **Test coverage:** Five `SkippableFact` tests were added to `RemoteBackendTestsBase`
+>   (shared between `LocalHostBackendTests` and `RemoteHostBackendTests`):
+>   default call, `maxDrive = 0` boundary, results within range, no duplicates,
+>   idempotency, and probe-does-not-break-subsequent-open. All pass.
+
 ---
 
-### 1.2 Temporary Virtual Drive Creation (for remote testing workflows)
+### 1.2 Temporary Virtual Drive Creation ✅ IMPLEMENTED
 
 **Problem:** Users testing remote connectivity cannot browse the remote file system to
 specify a virtual tape path. A "create a scratch virtual drive for me" capability avoids
@@ -69,9 +82,9 @@ the need for any path input at all.
 
 **Refinement:** Unnamed drives are created in memory; named drives are backed by temp files
 (in the server's temp folder) and maintained for the duration of the session. Useful for
-testing e.g. multi-volume scenarios.
+testing e.g. multi-volume scenarios when it's necessary to load a previous volume.
 
-**Enhancement — `TapeDrive.proto`:** Add a `CreateTempVirtual` RPC:
+**Enhancement — `TapeDrive.proto`:** Added a `CreateTempVirtual` RPC:
 
 ```proto
 // Creates a temporary in-memory virtual tape drive for testing.
@@ -80,32 +93,58 @@ rpc CreateTempVirtual(CreateTempVirtualRequest) returns (OperationResponse);
 
 message CreateTempVirtualRequest {
   uint64 capacity_bytes    = 1; // total tape capacity
-  string name			   = 2; // optional media name; if empty, creates a drive in memory
-  uint32 block_size        = 3; // default block size (0 → use server default)
-  VirtualCapabilities caps = 4; // drive capabilities (null → WithSetmarks preset)
+  string name              = 2; // optional media name; if empty, creates a drive in memory
+  uint32 block_size        = 3; // default block size (0 → use server / drive default)
+  VirtualCapabilities caps = 4; // drive capabilities (null → WithFilemarksOnlyLargeBlocks preset)
 }
 ```
 
-**Enhancement — `TapeDriveGrpcService`:** Implement `CreateTempVirtual` using
-`VirtualTapeDriveBackend` with an in-memory stream. Session is created just like
-`OpenVirtual`, but the backing store evaporates on `Close`.
+**Enhancement — `TapeDriveGrpcService`:** Implemented `CreateTempVirtual`. An empty `name`
+field creates a `MemoryStream`-backed `VirtualTapeDriveBackend` directly. A non-empty name
+creates a pair of temp files (content + metadata) in the server's temp directory, wrapped
+in a `TempVirtualTapeDriveBackend` that deletes those files on `Dispose`.
 
-**Enhancement — `RemoteTapeDriveBackend`:** Add:
+**Enhancement — `RemoteTapeDriveBackend`:** Added sync and async forms:
 
 ```csharp
-public bool CreateTempVirtual(long capacityBytes, string mediaName = string.Empty,
-                              int blockSize = 0, VirtualTapeDriveCapabilities? caps = null)
+public bool CreateTempVirtual(long capacityBytes = 0, string? name = null,
+                              uint blockSize = 0, VirtualTapeDriveCapabilities? caps = null)
+
+public Task<bool> CreateTempVirtualAsync(long capacityBytes = 0, string? name = null,
+                              uint blockSize = 0, VirtualTapeDriveCapabilities? caps = null,
+                              CancellationToken ct = default)
 ```
 
-Internally calls `CreateTempVirtualAsync`, captures the session ID from response headers,
-starts the ping timer on success.
+Both capture the session ID from response headers and start the ping timer on success.
 
-File-backed virtual drives should be deleted upon the session's `Close`
-(as well as include with the server-side reaper cleanup upon session expiry).
+> **Implementation notes (as built):**
+>
+> **`string? name = null` sentinel — key design decision:** The original plan used
+> `string mediaName = string.Empty` as the "unnamed" sentinel. This was changed to
+> `string? name = null` before shipping: `null` expresses "no name requested" more
+> cleanly at the C# API boundary. The proto wire format is unchanged (`""` is the
+> proto3 default for `string`); the server already uses `string.IsNullOrEmpty(name)` to
+> branch between in-memory and file-backed paths, so no server change was needed.
+>
+> **`TempVirtualTapeDriveBackend` wrapper — key design decision:** Rather than spreading
+> cleanup logic across the session registry and gRPC service, a dedicated wrapper class
+> (`TapeServiceNET/TempVirtualTapeDriveBackend.cs`) forwards all `ITapeDriveBackend`
+> members to an inner `VirtualTapeDriveBackend` and deletes the content and metadata
+> temp files (plus any initiator partition file) in its `Dispose`. This ensures cleanup
+> happens on both explicit `Close` and server-side session reaping.
+>
+> **Capacity reporting nuance:** Remote temp drive capacity is not reflected until after
+> `ReloadMedia()` — the `Capacity` property returns 0 immediately after `Open`. Test
+> assertions that check capacity were adjusted to call `ReloadMedia()` first.
+>
+> **Test coverage:** Four `SkippableFact` tests in `RemoteBackendTestsBase`:
+> unnamed (memory-backed) opens successfully; named (file-backed) opens and accepts
+> writes; default capacity opens without arguments; `CreateTempVirtual` does not
+> disturb a concurrent existing session. All pass across all four fixture configurations.
 
 ---
 
-### 1.3 TLS Support (client and server)
+### 1.3 TLS Support (client and server) ✅ IMPLEMENTED
 
 **Problem:** `RemoteTapeDriveBackend` hardcodes `http://` URIs. Accessing a remote host
 over an untrusted network without TLS exposes tape data in transit.
@@ -151,15 +190,68 @@ HTTPS/HTTP2 alongside the existing plaintext one:
 
 TLS is opt-in; plaintext remains the default for LAN-only deployments.
 
+> **Implementation notes (as built) — divergences from plan:**
+>
+> **`RemoteHostSettings` record** was implemented as designed, with one addition:
+> a `DangerousAcceptAnyServerCertificate` flag (already anticipated in the design text
+> but not shown in the code snippet). `BuildChannelOptions()` was added as a `public`
+> method on the record — originally `internal`, promoted to `public` so test fixtures
+> can consume it directly.
+>
+> **`HttpHandler` choice — key design decision:** The plan implied `HttpClientHandler`
+> for the dangerous-cert bypass. In practice, `GrpcChannel` **requires** `SocketsHttpHandler`
+> (with no `ConnectCallback`) for connectivity state tracking; `HttpClientHandler` causes
+> a runtime `InvalidOperationException` on `ConnectAsync`. The implementation therefore
+> uses `SocketsHttpHandler` with `SslOptions.RemoteCertificateValidationCallback` instead.
+>
+> **`TapeServiceNET` configuration — key design decision:** The plan showed TLS added
+> directly to `appsettings.json`. This was rejected to keep TLS strictly opt-in: the base
+> `appsettings.json` retains only the plaintext `Grpc` endpoint on port 50551. TLS is
+> documented in `appsettings.Tls.json.example` as an operator-applied overlay. This
+> prevents test-host startup failures when no certificate is present.
+>
+> **Certificate generation — PowerShell pitfall documented:** Passwords containing `$`
+> must be single-quoted (or `$` escaped) in PowerShell; double-quoted strings interpolate
+> `$` as a variable, producing a password mismatch at runtime.
+>
+> **Test infrastructure — TLS mode added to the full test matrix:**
+> The test suite was extended to run all `RemoteBackendTestsBase` tests in **four**
+> configurations without duplicating any test method:
+>
+> | Class | Transport | Skips when |
+> |---|---|---|
+> | `LocalHostBackendTests` | HTTP plaintext (in-process) | Never |
+> | `LocalHostTlsBackendTests` | HTTPS (in-process, ephemeral port) | Cert not configured |
+> | `RemoteHostBackendTests` | HTTP/HTTPS (external) | No host configured / unreachable |
+> | `RemoteHostTlsBackendTests` | HTTPS (external, `RemoteTlsPort`) | No host / cert / unreachable |
+>
+> Configuration for TLS tests is centralised in `TlsTestSettings`, which reads
+> `TlsCertPath`, `TlsCertPassword`, `DangerousAcceptAnyServerCertificate`, and
+> `RemoteTlsPort` from the existing `remote-test-settings.json` (gitignored) or
+> `TAPE_REMOTE_TLS_*` environment variables.
+>
+> **`LocalHostTlsTapeServiceFixture` — three non-obvious issues resolved:**
+> 1. `ListenLocalhost(0)` rejects port `0` (dynamic) — replaced with
+>    `Listen(IPAddress.Loopback, 0)` which binds a single address and supports
+>    ephemeral ports.
+> 2. Even after `Configuration.Sources.Clear()`, Kestrel's `ConfigurationLoader`
+>    intercepted `UseHttps(path, password)` and substituted a cert path from any
+>    `appsettings.json` present in the bin dir. Fix: load `X509Certificate2` manually
+>    and pass the **object** to `UseHttps` — that overload bypasses the loader entirely.
+> 3. `HttpClientHandler` is incompatible with `GrpcChannel.ConnectAsync` (same issue
+>    as in `RemoteHostSettings`). Since the server is started in-process, the
+>    `ConnectAsync` probe is unnecessary; `IsConfigured = true` is set directly after
+>    a successful `StartAsync`.
+
 ---
 
-### 1.4 Server Info / Version RPC (connection validation)
+### 1.4 Server Info / Version RPC ✅ IMPLEMENTED
 
 **Problem:** When TapeWinNET connects to a host, it currently has no way to confirm
 it is talking to a TapeNET service or to detect protocol-version mismatches before
 attempting drive operations.
 
-**Enhancement — `TapeDrive.proto`:** Add a lightweight, unauthenticated `GetServerInfo` RPC:
+**Enhancement — `TapeDrive.proto`:** Added a lightweight, unauthenticated `GetServerInfo` RPC:
 
 ```proto
 // Unauthenticated; returns server version and protocol level.
@@ -172,7 +264,7 @@ message ServerInfoResponse {
 }
 ```
 
-**Enhancement — `RemoteTapeDriveBackend`:** Add a static-style method:
+**Enhancement — `RemoteTapeDriveBackend`:** Added a static-style method:
 
 ```csharp
 public ServerInfoResponse? GetServerInfo()
@@ -181,21 +273,43 @@ public ServerInfoResponse? GetServerInfo()
 TapeWinNET calls this immediately after the channel is created, before any `Open*`, to
 validate connectivity and display the server's hostname in the UI.
 
+> **Implementation notes (as built):**
+>
+> **Sessionless RPC — key design decision:** `GetServerInfo` carries no
+> `x-tape-session-id` header (like `ProbeDrives`). This means it is safe to call before
+> any `Open*` and from any unauthenticated context, making it suitable as the first
+> call in a "can I reach this host?" health-check pattern.
+>
+> **Version source:** `server_version` is read from the running assembly's
+> `AssemblyInformationalVersionAttribute`, so it tracks `<Version>` in
+> `TapeServiceNET.csproj` automatically without a manual constant.
+>
+> **`protocol_level`:** Set to `1` for the initial release; the server increments this
+> on breaking proto changes. Clients should compare against a minimum expected level and
+> warn (or refuse) if the server's level is too low.
+>
+> **Test coverage:** Five `SkippableFact` tests in `RemoteBackendTestsBase`:
+> returns a non-null response; `ServerVersion`, `ProtocolLevel`, and `HostName` are all
+> populated; calling twice returns consistent results; callable before `Open` with no
+> session required; does not affect a subsequent `OpenVirtual`. All pass across all four
+> fixture configurations.
+
 ---
 
-### 1.5 Async Variants of Open*/Close in `RemoteTapeDriveBackend`
+### 1.5 Async Variants of Open*/Close in `RemoteTapeDriveBackend` ✅ IMPLEMENTED
 
 **Problem:** `Open`, `OpenVirtual`, `Close` use `.GetAwaiter().GetResult()` blocking
 patterns. This is acceptable inside a dedicated worker thread, but TapeWinNET's connect
 and probe flows run on background tasks originating from the UI dispatcher. Blocking
 there risks deadlocks.
 
-**Enhancement:** Add `Task`-returning counterparts:
+**Enhancement:** Added `Task`-returning counterparts:
 
 ```csharp
 public Task<bool> OpenAsync(uint driveNumber, CancellationToken ct = default)
 public Task<bool> OpenVirtualAsync(OpenVirtualRequest request, CancellationToken ct = default)
-public Task<bool> CreateTempVirtualAsync(long capacity, uint blockSize = 0,
+public Task<bool> CreateTempVirtualAsync(long capacityBytes = 0, string? name = null,
+                                         uint blockSize = 0,
                                          VirtualTapeDriveCapabilities? caps = null,
                                          CancellationToken ct = default)
 public Task CloseAsync(CancellationToken ct = default)
@@ -204,17 +318,40 @@ public Task CloseAsync(CancellationToken ct = default)
 The synchronous methods remain for use by the existing `TapeServiceBase` worker-thread
 call sites.
 
+> **Implementation notes (as built):**
+>
+> **`WithSession(CancellationToken)` overload — key design decision:** Rather than
+> constructing `CallOptions` inline in every async method, a second private overload
+> `WithSession(CancellationToken ct)` was added alongside the existing parameterless
+> one. This keeps the session-header attachment logic in one place and makes the async
+> call sites read identically to their sync counterparts.
+>
+> **`ConfigureAwait(false)` throughout:** All `await` expressions in the async methods
+> use `.ConfigureAwait(false)` to avoid capturing the WPF dispatcher context inside the
+> library layer, preventing potential deadlocks when called from UI-originated tasks.
+>
+> **`IsOpen` after `CloseAsync`:** The server's `Close` response carries no `State`
+> payload, so the client-side `IsOpen` cache is not updated after close — consistent
+> with the behaviour of the sync `Close` method. Tests were written to reflect this
+> rather than assert a false expectation.
+>
+> **Test coverage:** Five `SkippableFact` tests in `RemoteBackendTestsBase`:
+> `OpenAsync` (Win32, no deadlock); `OpenVirtualAsync` (memory-backed); 
+> `CreateTempVirtualAsync` (memory-backed); `CreateTempVirtualAsync` (named, full write
+> round-trip using `drive.BlockSize`); `CloseAsync` with a non-cancelled
+> `CancellationToken`. All pass across all four fixture configurations.
+
 ---
 
 ### 1.6 Summary Table
 
-| Enhancement | Proto change | Client (`RemoteTapeDriveBackend`) | Server (`TapeDriveGrpcService`) | Priority |
-|---|---|---|---|---|
-| `ProbeDrives` RPC | ✅ new message + RPC | `ProbeDrives()` helper | Implement handler | **P0** |
-| `CreateTempVirtual` RPC | ✅ new message + RPC | `CreateTempVirtualAsync()` | In-memory / on-temp-file virtual backend | **P1** |
-| TLS / `RemoteHostSettings` | — | Constructor refactor | Kestrel HTTPS endpoint | **P1** |
-| `GetServerInfo` RPC | ✅ new message + RPC | `GetServerInfo()` helper | Implement handler | **P1** |
-| Async `Open`/`Close` | — | Task-returning overloads | — | **P1** |
+| Enhancement | Proto change | Client (`RemoteTapeDriveBackend`) | Server (`TapeDriveGrpcService`) | Priority | Status |
+|---|---|---|---|---|---|
+| `ProbeDrives` RPC | ✅ new message + RPC | `ProbeDrives()` helper | Implement handler | **P0** | ✅ Done |
+| `CreateTempVirtual` RPC | ✅ new message + RPC | `CreateTempVirtual()` + `CreateTempVirtualAsync()` | In-memory / `TempVirtualTapeDriveBackend` | **P1** | ✅ Done |
+| TLS / `RemoteHostSettings` | — | Constructor refactor | Kestrel HTTPS endpoint | **P1** | ✅ Done |
+| `GetServerInfo` RPC | ✅ new message + RPC | `GetServerInfo()` helper | Implement handler | **P1** | ✅ Done |
+| Async `Open`/`Close` | — | `OpenAsync`, `OpenVirtualAsync`, `CreateTempVirtualAsync`, `CloseAsync` | — | **P1** | ✅ Done |
 
 ---
 
@@ -619,33 +756,45 @@ The plan is staged so that each milestone is independently testable.
 
 **Steps:**
 
-0.1. Add `RemoteHostSettings` record to `TapeLibNET/Remote/`.
+0.1. ✅ Add `RemoteHostSettings` record to `TapeLibNET/Remote/`.
+     *As built:* includes `DangerousAcceptAnyServerCertificate` flag and `BuildChannelOptions()`
+     (public) in addition to the designed `DisplayLabel` / `ChannelAddress` properties.
 
-0.2. Refactor `RemoteTapeDriveBackend` constructor to accept `RemoteHostSettings`; keep
+0.2. ✅ Refactor `RemoteTapeDriveBackend` constructor to accept `RemoteHostSettings`; keep
      the existing `(host, port)` overload as a convenience shim that constructs the record.
 
-0.3. Add async `OpenAsync`, `OpenVirtualAsync`, `CloseAsync` methods to
+0.3. ✅ Add async `OpenAsync`, `OpenVirtualAsync`, `CloseAsync` methods to
      `RemoteTapeDriveBackend`.
+     *As built:* `CreateTempVirtualAsync` added alongside the three listed methods;
+     a `WithSession(CancellationToken)` private overload added to carry the session
+     header with cancellation support. All async methods use `.ConfigureAwait(false)`.
 
-0.4. Add `ProbeDrives` to `TapeDrive.proto` (`ProbeDrivesRequest` / `ProbeDrivesResponse`),
+0.4. ✅ Add `ProbeDrives` to `TapeDrive.proto` (`ProbeDrivesRequest` / `ProbeDrivesResponse`),
      regenerate client and server stubs.
 
-0.5. Implement `ProbeDrives` RPC in `TapeDriveGrpcService`; add `ProbeDrives()` helper
+0.5. ✅ Implement `ProbeDrives` RPC in `TapeDriveGrpcService`; add `ProbeDrives()` helper
      to `RemoteTapeDriveBackend`.
 
-0.6. Add `GetServerInfo` to `TapeDrive.proto` (`ServerInfoResponse`), regenerate stubs.
+0.6. ✅ Add `GetServerInfo` to `TapeDrive.proto` (`ServerInfoResponse`), regenerate stubs.
 
-0.7. Implement `GetServerInfo` RPC in `TapeDriveGrpcService`; add `GetServerInfo()` helper
+0.7. ✅ Implement `GetServerInfo` RPC in `TapeDriveGrpcService`; add `GetServerInfo()` helper
      to `RemoteTapeDriveBackend`.
 
-0.8. Add `CreateTempVirtual` to `TapeDrive.proto`, regenerate stubs.
+0.8. ✅ Add `CreateTempVirtual` to `TapeDrive.proto`, regenerate stubs.
 
-0.9. Implement `CreateTempVirtual` RPC in `TapeDriveGrpcService` (in-memory
-     `MemoryStream`-backed `VirtualTapeDriveBackend`); add `CreateTempVirtualAsync()` to
-     `RemoteTapeDriveBackend`.
+0.9. ✅ Implement `CreateTempVirtual` RPC in `TapeDriveGrpcService` (in-memory
+     `MemoryStream`-backed `VirtualTapeDriveBackend` for unnamed drives;
+     `TempVirtualTapeDriveBackend` wrapper for named/file-backed drives);
+     add `CreateTempVirtual()` and `CreateTempVirtualAsync()` to `RemoteTapeDriveBackend`.
+     *As built:* unnamed sentinel changed from `string.Empty` to `string? name = null`
+     for a cleaner C# API; proto wire format unchanged.
 
-0.10. Verify all existing `TapeLibNET.Tests` still pass; add unit tests for
-      `ProbeDrives` and `GetServerInfo` using a test gRPC server.
+0.10. ✅ Verify all existing `TapeLibNET.Tests` still pass; add tests for all new RPCs and
+      async methods.
+      *As built:* tests run in four fixture configurations — plain HTTP in-process,
+      HTTPS in-process, plain HTTP external, HTTPS external — without duplicating any
+      test method body. TLS runs skip gracefully when cert / host is not configured.
+      73/73 pass on local HTTP and local TLS suites; remote suites confirmed passing.
 
 ---
 
@@ -789,20 +938,27 @@ The plan is staged so that each milestone is independently testable.
 
 ---
 
-### Stage 7 — TLS (deferred / optional)
+### Stage 7 — TLS ✅ Backend complete; WPF UI wiring pending
 
-> **Projects:** `TapeLibNET`, `TapeServiceNET`, `TapeWinNET`
+> **Projects:** `TapeLibNET`, `TapeServiceNET` ✅ done · `TapeWinNET` ⬜ pending
 
 **Steps:**
 
-7.1. Add HTTPS/HTTP2 Kestrel endpoint configuration in `TapeServiceNET/appsettings.json`.
+7.1. ✅ Add HTTPS/HTTP2 Kestrel endpoint configuration.
+     *As built:* TLS is documented as an opt-in overlay (`appsettings.Tls.json.example`)
+     rather than added to the base `appsettings.json`, keeping plaintext the default and
+     preventing test-host failures when no certificate exists.
 
-7.2. Implement `UseTls` path in `RemoteTapeDriveBackend` (pass `https://` URI; handle
-     `DangerousAcceptAnyServerCertificate` for development).
+7.2. ✅ Implement `UseTls` path in `RemoteTapeDriveBackend` via `RemoteHostSettings`.
+     *As built:* `SocketsHttpHandler` with `SslOptions.RemoteCertificateValidationCallback`
+     is used instead of `HttpClientHandler.DangerousAcceptAnyServerCertificateValidator`;
+     `GrpcChannel` requires `SocketsHttpHandler` for connectivity state tracking.
 
-7.3. Enable and wire the `Use TLS` checkbox in `ConnectToRemoteHostWindow`.
+7.3. ⬜ Enable and wire the `Use TLS` checkbox in `ConnectToRemoteHostWindow`.
 
-7.4. Document certificate setup in `TapeServiceNET` README.
+7.4. ⬜ Document certificate setup in `TapeServiceNET` README.
+     *Partial:* `appsettings.Tls.json.example` contains inline generation instructions;
+     a dedicated README section is still pending.
 
 ---
 

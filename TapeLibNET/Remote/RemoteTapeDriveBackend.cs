@@ -2,6 +2,7 @@ using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Logging;
+using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Remote;
 
@@ -131,6 +132,10 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     private CallOptions WithSession() => new(
         headers: new Grpc.Core.Metadata { { SessionIdHeader, _sessionId } });
 
+    private CallOptions WithSession(CancellationToken ct) => new(
+        headers: new Grpc.Core.Metadata { { SessionIdHeader, _sessionId } },
+        cancellationToken: ct);
+
     #endregion
 
     #region *** State Properties (from cache) ***
@@ -181,6 +186,121 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
         return [.. response.DriveNumbers];
     }
 
+    /// <summary>
+    /// Creates a temporary virtual tape drive on the remote host for testing.
+    /// Unnamed drives (empty <paramref name="mediaName"/>) are in-memory and vanish when the session closes.
+    /// Named drives are file-backed in the server's temp folder and are deleted on <see cref="Close"/>.
+    /// Safe to call before any <see cref="Open"/> — establishes a new session on success.
+    /// </summary>
+    /// <param name="capacityBytes">Total tape capacity in bytes (0 → server default of 500 MB).</param>
+    /// <param name="mediaName">Optional media name; null or empty string creates an in-memory drive.</param>
+    /// <param name="blockSize">Default block size in bytes (0 → drive default).</param>
+    /// <param name="caps">Drive capabilities (null → server uses <c>WithFilemarksOnlyLargeBlocks</c>).</param>
+    /// <returns>True if the temporary drive was created and opened successfully.</returns>
+    public bool CreateTempVirtual(long capacityBytes = 0, string? name = null,
+        uint blockSize = 0, VirtualTapeDriveCapabilities? caps = null)
+    {
+        var request = new CreateTempVirtualRequest
+        {
+            CapacityBytes = capacityBytes > 0 ? (ulong)capacityBytes : 0UL,
+            Name          = name ?? string.Empty,
+            BlockSize     = blockSize,
+        };
+
+        if (caps.HasValue)
+        {
+            request.Caps = new VirtualCapabilities
+            {
+                MinBlockSize             = caps.Value.MinBlockSize,
+                MaxBlockSize             = caps.Value.MaxBlockSize,
+                DefaultBlockSize         = caps.Value.DefaultBlockSize,
+                SupportsSetmarks         = caps.Value.SupportsSetmarks,
+                SupportsSeqFilemarks     = caps.Value.SupportsSeqFilemarks,
+                SupportsInitiatorPartition = caps.Value.SupportsInitiatorPartition,
+                SupportsCompression      = caps.Value.SupportsCompression,
+            };
+        }
+
+        var call = _client.CreateTempVirtualAsync(request);
+        var headers = call.ResponseHeadersAsync.GetAwaiter().GetResult();
+        _sessionId = headers.GetValue(SessionIdHeader) ?? string.Empty;
+        var response = call.ResponseAsync.GetAwaiter().GetResult();
+        bool ok = Sync(response);
+        if (ok)
+            StartPingTimer();
+        return ok;
+    }
+
+    /// <summary>
+    /// Asynchronously creates a temporary virtual drive on the remote service.
+    /// <para>
+    /// Pass <paramref name="name"/> as <c>null</c> (the default) for a memory-backed drive
+    /// that leaves no files on the server. Provide a non-empty name to get a temp-file-backed
+    /// drive that persists media content and is cleaned up when the session closes.
+    /// </para>
+    /// </summary>
+    /// <param name="capacityBytes">Maximum capacity in bytes (0 → server default).</param>
+    /// <param name="name">Drive name; <c>null</c> or empty → anonymous memory-backed drive.</param>
+    /// <param name="blockSize">Default block size in bytes (0 → drive default).</param>
+    /// <param name="caps">Drive capabilities (null → server uses <c>WithFilemarksOnlyLargeBlocks</c>).</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>True if the temporary drive was created and opened successfully.</returns>
+    public async Task<bool> CreateTempVirtualAsync(long capacityBytes = 0, string? name = null,
+        uint blockSize = 0, VirtualTapeDriveCapabilities? caps = null, CancellationToken ct = default)
+    {
+        var request = new CreateTempVirtualRequest
+        {
+            CapacityBytes = capacityBytes > 0 ? (ulong)capacityBytes : 0UL,
+            Name          = name ?? string.Empty,
+            BlockSize     = blockSize,
+        };
+
+        if (caps.HasValue)
+        {
+            request.Caps = new VirtualCapabilities
+            {
+                MinBlockSize               = caps.Value.MinBlockSize,
+                MaxBlockSize               = caps.Value.MaxBlockSize,
+                DefaultBlockSize           = caps.Value.DefaultBlockSize,
+                SupportsSetmarks           = caps.Value.SupportsSetmarks,
+                SupportsSeqFilemarks       = caps.Value.SupportsSeqFilemarks,
+                SupportsInitiatorPartition = caps.Value.SupportsInitiatorPartition,
+                SupportsCompression        = caps.Value.SupportsCompression,
+            };
+        }
+
+        var call = _client.CreateTempVirtualAsync(request, cancellationToken: ct);
+        var headers = await call.ResponseHeadersAsync.ConfigureAwait(false);
+        _sessionId = headers.GetValue(SessionIdHeader) ?? string.Empty;
+        var response = await call.ResponseAsync.ConfigureAwait(false);
+        bool ok = Sync(response);
+        if (ok)
+            StartPingTimer();
+        return ok;
+    }
+
+    /// <summary>
+    /// Retrieves version and host information from the remote service without opening a session.
+    /// Safe to call before any <see cref="Open"/> — no session ID required.
+    /// </summary>
+    /// <returns>
+    /// A <see cref="ServerInfoResponse"/> with <c>ServerVersion</c>, <c>ProtocolLevel</c>,
+    /// and <c>HostName</c>, or <c>null</c> if the call fails (service unreachable or not a
+    /// TapeNET service).
+    /// </returns>
+    public ServerInfoResponse? GetServerInfo()
+    {
+        try
+        {
+            return _client.GetServerInfo(new EmptyRequest());
+        }
+        catch (RpcException ex)
+        {
+            m_logger.LogWarning(ex, "GetServerInfo failed for {Address}", RemoteAddress);
+            return null;
+        }
+    }
+
     #endregion
 
     #region *** Drive Operations ***
@@ -195,6 +315,25 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
         var headers = call.ResponseHeadersAsync.GetAwaiter().GetResult();
         _sessionId = headers.GetValue(SessionIdHeader) ?? string.Empty;
         var response = call.ResponseAsync.GetAwaiter().GetResult();
+        bool ok = Sync(response);
+        if (ok)
+            StartPingTimer();
+        return ok;
+    }
+
+    /// <summary>
+    /// Asynchronously opens a Win32 tape drive on the remote system.
+    /// </summary>
+    /// <param name="driveNumber">Tape drive index (0-based).</param>
+    /// <param name="ct">Cancellation token.</param>
+    public async Task<bool> OpenAsync(uint driveNumber, CancellationToken ct = default)
+    {
+        var call = _client.OpenWin32Async(new OpenWin32Request { DriveNumber = driveNumber },
+            cancellationToken: ct);
+        // Response headers contain the session ID issued by the server
+        var headers = await call.ResponseHeadersAsync.ConfigureAwait(false);
+        _sessionId = headers.GetValue(SessionIdHeader) ?? string.Empty;
+        var response = await call.ResponseAsync.ConfigureAwait(false);
         bool ok = Sync(response);
         if (ok)
             StartPingTimer();
@@ -219,6 +358,24 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
         return ok;
     }
 
+    /// <summary>
+    /// Asynchronously opens a virtual tape drive on the remote system.
+    /// </summary>
+    /// <param name="request">The fully configured open request with backend type and parameters.</param>
+    /// <param name="ct">Cancellation token.</param>
+    public async Task<bool> OpenVirtualAsync(OpenVirtualRequest request, CancellationToken ct = default)
+    {
+        var call = _client.OpenVirtualAsync(request, cancellationToken: ct);
+        // Response headers contain the session ID issued by the server
+        var headers = await call.ResponseHeadersAsync.ConfigureAwait(false);
+        _sessionId = headers.GetValue(SessionIdHeader) ?? string.Empty;
+        var response = await call.ResponseAsync.ConfigureAwait(false);
+        bool ok = Sync(response);
+        if (ok)
+            StartPingTimer();
+        return ok;
+    }
+
     public override void Close()
     {
         StopPingTimer();
@@ -229,6 +386,23 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
             var response = _client.Close(new EmptyRequest(), WithSession());
             _sessionId = string.Empty;
             Sync(response);
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously closes the current remote session and releases server-side resources.
+    /// </summary>
+    /// <param name="ct">Cancellation token.</param>
+    public async Task CloseAsync(CancellationToken ct = default)
+    {
+        StopPingTimer();
+
+        // Skip the RPC if we never obtained a session (Open failed) or it was already closed.
+        if (!string.IsNullOrEmpty(_sessionId))
+        {
+            var call = _client.CloseAsync(new EmptyRequest(), WithSession(ct));
+            _sessionId = string.Empty;
+            Sync(await call.ResponseAsync.ConfigureAwait(false));
         }
     }
 

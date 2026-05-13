@@ -63,6 +63,17 @@ service TapeDriveService {
   // Probes which Win32 tape drive numbers exist on the host without opening them.
   // Safe to call unauthenticated; no session ID required.
   rpc ProbeDrives(ProbeDrivesRequest)           returns (ProbeDrivesResponse);
+
+  // --- Temporary virtual drive ---
+  // Creates a temporary virtual tape drive for testing purposes.
+  // Unnamed drives (empty name) are memory-backed and vanish when the session closes.
+  // Named drives are file-backed in the server's temp folder and are deleted on Close.
+  rpc CreateTempVirtual(CreateTempVirtualRequest) returns (OperationResponse);
+
+  // --- Server info (sessionless) ---
+  // Returns server version, protocol level and OS host name. Unauthenticated.
+  // Call before any Open* to confirm the service is alive and detect version mismatches.
+  rpc GetServerInfo(EmptyRequest)               returns (ServerInfoResponse);
 }
 
 // ============================================================================
@@ -217,6 +228,23 @@ message ProbeDrivesRequest {
 
 message ProbeDrivesResponse {
   repeated uint32 drive_numbers = 1; // Win32 drive numbers that were found
+}
+
+// Creates a temporary virtual tape drive for testing.
+// Unnamed drives (empty name) are memory-backed; named drives are file-backed in the
+// server's temp folder and deleted automatically when the session is closed.
+message CreateTempVirtualRequest {
+  uint64              capacity_bytes = 1; // total tape capacity (0 → 500 MB default)
+  string              name           = 2; // optional media name; empty = in-memory drive
+  uint32              block_size     = 3; // default block size (0 → drive default)
+  VirtualCapabilities caps           = 4; // drive capabilities (null → WithFilemarksOnlyLargeBlocks)
+}
+
+// Returned by GetServerInfo. All fields are informational — no session required.
+message ServerInfoResponse {
+  string server_version  = 1; // e.g. "1.2.0" — assembly version of TapeServiceNET
+  uint32 protocol_level  = 2; // incremented on breaking proto changes; current = 1
+  string host_name       = 3; // OS hostname of the server for display
 }
 
 // ============================================================================

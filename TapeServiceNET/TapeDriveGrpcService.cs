@@ -469,6 +469,100 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
         return Task.FromResult(response);
     }
 
+    /// <summary>
+    /// Creates a temporary virtual tape drive for testing.
+    /// Unnamed drives (empty <c>request.Name</c>) are memory-backed and vanish with the session.
+    /// Named drives are file-backed in the server's temp folder and deleted when the session closes.
+    /// </summary>
+    public override async Task<OperationResponse> CreateTempVirtual(
+        CreateTempVirtualRequest request, ServerCallContext context)
+    {
+        logger.LogInformation("CreateTempVirtual: name='{Name}', capacity={Capacity}, blockSize={BlockSize}",
+            request.Name, request.CapacityBytes, request.BlockSize);
+
+        var caps = (request.Caps == null || request.Caps.DefaultBlockSize == 0)
+            ? VirtualTapeDriveCapabilities.WithFilemarksOnlyLargeBlocks
+            : MapCapabilities(request.Caps);
+
+        long capacityBytes = request.CapacityBytes > 0 ? (long)request.CapacityBytes : 500L * 1024 * 1024;
+
+        TapeDriveBackend backend;
+
+        if (string.IsNullOrEmpty(request.Name))
+        {
+            // Unnamed: pure in-memory drive, no cleanup needed
+            var memBackend = VirtualTapeDriveBackend.CreateMemoryBacked(
+                registry.LoggerFactory, caps, capacityBytes);
+
+            if (request.BlockSize > 0)
+                memBackend.SetBlockSize(request.BlockSize);
+
+            backend = memBackend;
+        }
+        else
+        {
+            // Named: file-backed in system temp folder, wrapped for automatic cleanup on dispose
+            string basePath = Path.Combine(Path.GetTempPath(),
+                $"tapenet_tmp_{request.Name}_{Guid.NewGuid():N}.vtape");
+
+            // No initiator partition for temp drives (keeps it simple)
+            var fileBackend = VirtualTapeDriveBackend.CreateFileBacked(
+                registry.LoggerFactory,
+                contentFilePath: basePath,
+                contentCapacity: capacityBytes,
+                initiatorFilePath: null,
+                capabilities: caps,
+                mediaMode: FileMode.Create);
+
+            if (request.BlockSize > 0)
+                fileBackend.SetBlockSize(request.BlockSize);
+
+            backend = new TempVirtualTapeDriveBackend(fileBackend, basePath, initiatorFilePath: null);
+        }
+
+        // Use drive number 0 for all temp virtual drives (the number is cosmetic for virtual backends)
+        const uint TempDriveNumber = 0;
+        bool success = backend.Open(TempDriveNumber);
+
+        if (success)
+        {
+            var sessionId = Guid.NewGuid().ToString("N");
+            registry.Add(sessionId, backend, context.Peer);
+            await context.WriteResponseHeadersAsync(
+                new Metadata { { TapeSessionConstants.SessionIdHeader, sessionId } });
+        }
+        else
+        {
+            var error = new ErrorInfo { ErrorCode = backend.LastError, ErrorMessage = backend.LastErrorMessage };
+            backend.Dispose();
+            return new OperationResponse { Success = false, Error = error };
+        }
+
+        return MakeResponse(backend, success);
+    }
+
+    /// <summary>
+    /// Returns server version, protocol level and OS host name.
+    /// Sessionless — no session ID header required. Safe to call unauthenticated.
+    /// </summary>
+    public override Task<ServerInfoResponse> GetServerInfo(EmptyRequest request, ServerCallContext context)
+    {
+        var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        string versionString = version != null
+            ? $"{version.Major}.{version.Minor}.{version.Build}"
+            : "0.0.0";
+
+        var response = new ServerInfoResponse
+        {
+            ServerVersion = versionString,
+            ProtocolLevel = 1,
+            HostName      = System.Net.Dns.GetHostName(),
+        };
+
+        logger.LogDebug("GetServerInfo: version={Version}, host={Host}", versionString, response.HostName);
+        return Task.FromResult(response);
+    }
+
     #endregion
 
     #region *** Session Keepalive ***

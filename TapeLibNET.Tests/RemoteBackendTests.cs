@@ -398,6 +398,290 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
     #endregion
 
     // ========================================================================
+    //  CreateTempVirtual
+    // ========================================================================
+
+    #region *** CreateTempVirtual Tests ***
+
+    [SkippableFact]
+    public void CreateTempVirtual_Unnamed_OpensAndIsWritable()
+    {
+        // An unnamed drive is memory-backed and must open successfully and accept writes.
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        bool ok = backend.CreateTempVirtual(capacityBytes: 50L * 1024 * 1024);
+        Assert.True(ok, "CreateTempVirtual (unnamed) failed");
+        Assert.True(backend.IsOpen);
+
+        var drive = new TapeDrive(Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance, backend);
+        Assert.True(drive.ReopenDrive(0));
+        Assert.True(drive.ReloadMedia());
+        Assert.True(drive.PrepareMedia());
+
+        var buffer = new byte[drive.BlockSize];
+        int written = drive.WriteDirect(buffer, 0, buffer.Length, out _, out _);
+        Assert.Equal(buffer.Length, written);
+    }
+
+    [SkippableFact]
+    public void CreateTempVirtual_Named_OpensAndIsWritable()
+    {
+        // A named drive is file-backed in the server's temp folder and must also accept writes.
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        bool ok = backend.CreateTempVirtual(
+            capacityBytes: 50L * 1024 * 1024,
+            name: "test_named_drive");
+        Assert.True(ok, "CreateTempVirtual (named) failed");
+        Assert.True(backend.IsOpen);
+
+        var drive = new TapeDrive(Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance, backend);
+        Assert.True(drive.ReopenDrive(0));
+        Assert.True(drive.ReloadMedia());
+        Assert.True(drive.PrepareMedia());
+
+        var buffer = new byte[drive.BlockSize];
+        int written = drive.WriteDirect(buffer, 0, buffer.Length, out _, out _);
+        Assert.Equal(buffer.Length, written);
+    }
+
+    [SkippableFact]
+    public void CreateTempVirtual_DefaultCapacity_Opens()
+    {
+        // Passing capacityBytes = 0 lets the server use its 500 MB default.
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        bool ok = backend.CreateTempVirtual(); // all defaults
+        Assert.True(ok, "CreateTempVirtual with defaults failed");
+        Assert.True(backend.IsOpen);
+
+        // Capacity is reported after media load, not just after open
+        var drive = new TapeDrive(Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance, backend);
+        Assert.True(drive.ReopenDrive(0));
+        Assert.True(drive.ReloadMedia());
+        Assert.True(backend.Capacity > 0, "Capacity should be non-zero after media load");
+    }
+
+    [SkippableFact]
+    public void CreateTempVirtual_DoesNotInterferWithConcurrentSession()
+    {
+        // Creating a temp drive on a new backend must not disturb an already-open session.
+        EnsureServiceAvailable();
+        using var existingFixture = new RemoteVirtualTapeFixture(_service.Channel, DriveProfile.Setmarks);
+
+        using var tempBackend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+        bool ok = tempBackend.CreateTempVirtual(capacityBytes: 10L * 1024 * 1024);
+        Assert.True(ok, "CreateTempVirtual failed");
+
+        // The existing fixture's drive should still respond correctly
+        var drive = existingFixture.Drive;
+        var buffer = new byte[drive.BlockSize];
+        int written = drive.WriteDirect(buffer, 0, buffer.Length, out _, out _);
+        Assert.Equal(buffer.Length, written);
+    }
+
+    #endregion
+
+    // ========================================================================
+    //  GetServerInfo
+    // ========================================================================
+
+    #region *** GetServerInfo Tests ***
+
+    [SkippableFact]
+    public void GetServerInfo_ReturnsNonNullWithPopulatedFields()
+    {
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        var info = backend.GetServerInfo();
+
+        Assert.NotNull(info);
+        Assert.False(string.IsNullOrWhiteSpace(info.ServerVersion),  "ServerVersion should be non-empty");
+        Assert.False(string.IsNullOrWhiteSpace(info.HostName),       "HostName should be non-empty");
+        Assert.True(info.ProtocolLevel >= 1,                         "ProtocolLevel should be >= 1");
+    }
+
+    [SkippableFact]
+    public void GetServerInfo_CallableBeforeOpen_NoSessionRequired()
+    {
+        // Must succeed on a brand-new backend that has never called Open*.
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        Assert.False(backend.IsOpen, "Precondition: backend must not be open yet");
+
+        var info = backend.GetServerInfo();
+        Assert.NotNull(info);
+    }
+
+    [SkippableFact]
+    public void GetServerInfo_CalledTwice_ReturnsSameResult()
+    {
+        // The call is stateless and idempotent.
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        var first  = backend.GetServerInfo();
+        var second = backend.GetServerInfo();
+
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        Assert.Equal(first.ServerVersion,  second.ServerVersion);
+        Assert.Equal(first.ProtocolLevel,  second.ProtocolLevel);
+        Assert.Equal(first.HostName,       second.HostName);
+    }
+
+    [SkippableFact]
+    public void GetServerInfo_DoesNotAffectSubsequentOpen()
+    {
+        // Calling GetServerInfo before Open must not corrupt session state.
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        _ = backend.GetServerInfo();
+
+        // Now open a real virtual drive on the same backend
+        var request = new TapeLibNET.Remote.OpenVirtualRequest
+        {
+            DriveNumber = 0,
+            MemoryConfig = new TapeLibNET.Remote.VirtualMemoryConfig
+            {
+                ContentCapacity = 50L * 1024 * 1024,
+            },
+        };
+        Assert.True(backend.OpenVirtual(request), "OpenVirtual should succeed after GetServerInfo");
+        Assert.True(backend.IsOpen);
+    }
+
+    #endregion
+
+    // ========================================================================
+    //  Async API
+    // ========================================================================
+
+    #region *** Async API Tests ***
+
+    [SkippableFact]
+    public async Task OpenAsync_Win32Drive_OpensAndClosesCleanly()
+    {
+        // Win32 drives may not be present — a "not found" error from the server is fine;
+        // we only verify the async path completes without deadlock and without throwing
+        // on connection-level problems.
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        bool ok = await backend.OpenAsync(0).ConfigureAwait(false);
+        // On a machine with no physical tape drive the server returns false; that is
+        // acceptable — the goal is no hang / no exception.
+        Assert.False(backend.IsOpen == ok ? false : true,
+            "IsOpen must match the return value of OpenAsync");
+        if (ok)
+            await backend.CloseAsync().ConfigureAwait(false);
+    }
+
+    [SkippableFact]
+    public async Task OpenVirtualAsync_MemoryBacked_OpensSuccessfully()
+    {
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        var request = new TapeLibNET.Remote.OpenVirtualRequest
+        {
+            DriveNumber = 0,
+            MemoryConfig = new TapeLibNET.Remote.VirtualMemoryConfig
+            {
+                ContentCapacity = 20L * 1024 * 1024,
+            },
+        };
+
+        bool ok = await backend.OpenVirtualAsync(request).ConfigureAwait(false);
+        Assert.True(ok, "OpenVirtualAsync should succeed");
+        Assert.True(backend.IsOpen);
+
+        await backend.CloseAsync().ConfigureAwait(false);
+        // Note: IsOpen reflects cached server state; the Close response carries no State,
+        // so the cache is not updated — consistent with the sync Close behaviour.
+    }
+
+    [SkippableFact]
+    public async Task CreateTempVirtualAsync_MemoryBacked_OpensSuccessfully()
+    {
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        bool ok = await backend.CreateTempVirtualAsync(capacityBytes: 20L * 1024 * 1024)
+            .ConfigureAwait(false);
+        Assert.True(ok, "CreateTempVirtualAsync (memory-backed) failed");
+        Assert.True(backend.IsOpen);
+
+        await backend.CloseAsync().ConfigureAwait(false);
+        // Note: IsOpen reflects cached server state; the Close response carries no State.
+    }
+
+    [SkippableFact]
+    public async Task CreateTempVirtualAsync_Named_OpensAndCanWriteData()
+    {
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        bool ok = await backend.CreateTempVirtualAsync(
+                capacityBytes: 30L * 1024 * 1024,
+                name: "async_named_drive")
+            .ConfigureAwait(false);
+        Assert.True(ok, "CreateTempVirtualAsync (named) failed");
+        Assert.True(backend.IsOpen);
+
+        var drive = new TapeDrive(Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance, backend);
+        Assert.True(drive.ReopenDrive(0));
+        Assert.True(drive.ReloadMedia());
+        Assert.True(drive.PrepareMedia());
+
+        // Write a block to prove the session is fully functional.
+        var data = new byte[drive.BlockSize];
+        new Random(42).NextBytes(data);
+        int written = drive.WriteDirect(data, 0, data.Length, out _, out _);
+        Assert.Equal(data.Length, written);
+
+        await backend.CloseAsync().ConfigureAwait(false);
+        // Note: IsOpen reflects cached server state; the Close response carries no State.
+    }
+
+    [SkippableFact]
+    public async Task CloseAsync_WithCancellationToken_CompletesOrCancels()
+    {
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        bool ok = await backend.CreateTempVirtualAsync(capacityBytes: 10L * 1024 * 1024)
+            .ConfigureAwait(false);
+        Assert.True(ok, "Setup: CreateTempVirtualAsync failed");
+
+        // A non-cancelled token should allow clean close without throwing.
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await backend.CloseAsync(cts.Token).ConfigureAwait(false);
+        // Note: IsOpen reflects cached server state; the Close response carries no State.
+    }
+
+    #endregion
+
+    // ========================================================================
     //  Backup & Restore Round-Trip
     // ========================================================================
 
