@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 
 using Windows.Win32.System.SystemServices; // Helpers.BytesToStringLong
 
+using TapeLibNET.Remote;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Services;
@@ -222,6 +223,150 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             {
                 LastError = ex.Message;
                 LogErr($"Exception opening drive: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                _operationLock.Release();
+            }
+        });
+    }
+
+    #endregion
+
+    #region Drive lifecycle: open remote physical
+    // ── Drive lifecycle: open remote physical drive ───────────────────────────
+
+    /// <summary>
+    /// Opens a remote physical tape drive by number. Creates a
+    ///  <see cref="RemoteTapeDriveBackend"/> from <paramref name="settings"/> using the
+    ///  service's own <c>_loggerFactory</c>, then wraps it in a <see cref="TapeDrive"/>
+    ///  and calls <c>ReopenDrive</c> (which issues the gRPC Open RPC internally).
+    ///  Disposes the backend on failure. Mirrors <see cref="OpenDriveAsync"/>.
+    /// On success fires <see cref="ServiceStateChange.DriveOpened"/>.
+    /// </summary>
+    /// <param name="settings">Connection settings for the remote tape service.</param>
+    /// <param name="driveNumber">Remote drive number to open.</param>
+    public Task<bool> OpenRemoteDriveAsync(RemoteHostSettings settings, uint driveNumber)
+    {
+        return Task.Run(async () =>
+        {
+            await _operationLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                LogInfo($"Opening remote drive {driveNumber} on {settings.DisplayLabel}...");
+
+                _agent?.Dispose();
+                _agent = null;
+                _toc = null;
+                _drive?.Dispose();
+
+                // TapeDrive.CreateRemote builds the RemoteTapeDriveBackend internally,
+                //  using our _loggerFactory so remote RPC calls are properly logged.
+                _drive = TapeDrive.CreateRemote(settings, _loggerFactory);
+
+                if (!_drive.ReopenDrive(driveNumber))
+                {
+                    LastError = _drive.LastErrorMessage;
+                    LogErr($"Couldn't open remote drive. Error: {LastError}");
+                    _drive.Dispose();
+                    _drive = null;
+                    return false;
+                }
+
+                DriveNumber = (int)driveNumber;
+                LogOk($"Remote drive {driveNumber} opened on {settings.DisplayLabel}");
+                LogInfoSub($"Device name: {_drive.DriveDeviceName}");
+                _host.OnServiceStateChanged(ServiceStateChange.DriveOpened);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                LogErr($"Exception opening remote drive: {ex.Message}");
+                _drive?.Dispose();
+                _drive = null;
+                return false;
+            }
+            finally
+            {
+                _operationLock.Release();
+            }
+        });
+    }
+
+    /// <summary>
+    /// Creates a temporary remote virtual tape drive and opens it as the active drive.
+    /// Creates a <see cref="RemoteTapeDriveBackend"/> from <paramref name="settings"/>,
+    ///  calls <c>CreateTempVirtualAsync</c> to create and open the virtual drive on the server,
+    ///  then wraps it in a <see cref="TapeDrive"/> and calls <c>ReopenDrive(0)</c> to read
+    ///  drive parameters. Disposes the backend on any failure path.
+    ///  Mirrors <see cref="OpenVirtualDriveAsync"/> for the local case.
+    /// On success fires <see cref="ServiceStateChange.DriveOpened"/>.
+    /// </summary>
+    /// <param name="settings">Connection settings for the remote tape service.</param>
+    /// <param name="capacityBytes">Virtual tape capacity in bytes (0 → server default).</param>
+    /// <param name="mediaName">Optional media name; null/empty → anonymous in-memory drive.</param>
+    /// <param name="blockSize">Default block size in bytes (0 → drive default).</param>
+    /// <param name="caps">Drive capabilities (null → server uses its default preset).</param>
+    public Task<bool> CreateRemoteVirtualDriveAsync(
+        RemoteHostSettings settings,
+        long capacityBytes = 0,
+        string? mediaName = null,
+        uint blockSize = 0,
+        VirtualTapeDriveCapabilities? caps = null)
+    {
+        return Task.Run(async () =>
+        {
+            await _operationLock.WaitAsync().ConfigureAwait(false);
+
+            var backend = new RemoteTapeDriveBackend(settings, _loggerFactory);
+            try
+            {
+                LogInfo($"Creating remote virtual drive on {settings.DisplayLabel}...");
+
+                // CreateTempVirtualAsync opens the virtual drive on the server
+                // and establishes the session before we wrap it in TapeDrive.
+                if (!await backend.CreateTempVirtualAsync(capacityBytes, mediaName, blockSize, caps)
+                        .ConfigureAwait(false))
+                {
+                    LastError = backend.LastErrorMessage;
+                    LogErr($"Couldn't create remote virtual drive. Error: {LastError}");
+                    backend.Dispose();
+                    return false;
+                }
+
+                _agent?.Dispose();
+                _agent = null;
+                _toc = null;
+                _drive?.Dispose();
+
+                _drive = new TapeDrive(_loggerFactory, backend);
+
+                // Backend is already open — ReopenDrive(0) skips Open() and only refreshes caps.
+                if (!_drive.ReopenDrive(0))
+                {
+                    LastError = _drive.LastErrorMessage;
+                    LogErr($"Couldn't open remote virtual drive. Error: {LastError}");
+                    _drive.Dispose();
+                    _drive = null;
+                    return false;
+                }
+
+                _vmdLast = null; // no local VirtualMediaDescriptor for remote virtual drives
+                DriveNumber = 0;
+                LogOk($"Remote virtual drive created on {settings.DisplayLabel}");
+                LogInfoSub($"Device name: {_drive.DriveDeviceName}");
+                _host.OnServiceStateChanged(ServiceStateChange.DriveOpened);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                LogErr($"Exception creating remote virtual drive: {ex.Message}");
+                _drive?.Dispose();
+                if (_drive is null) backend.Dispose(); // dispose backend if not yet handed to _drive
+                _drive = null;
                 return false;
             }
             finally

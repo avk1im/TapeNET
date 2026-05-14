@@ -62,6 +62,21 @@ public class BoolToVisibilityHiddenConverter : IValueConverter
 }
 
 /// <summary>
+/// Converts a null/non-null value to Visibility: non-null → Visible, null → Collapsed.
+/// Useful for showing UI elements only when an optional string or object is present.
+/// </summary>
+public class NullToVisibilityCollapsedConverter : IValueConverter
+{
+    public static NullToVisibilityCollapsedConverter Instance { get; } = new();
+
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        => value != null ? Visibility.Visible : Visibility.Collapsed;
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
+/// <summary>
 /// Converts bool to Gray/LightGray brush for enabled/disabled text styling.
 /// </summary>
 public class BoolToGrayBrushConverter : IValueConverter

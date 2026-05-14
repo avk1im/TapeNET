@@ -28,6 +28,8 @@ public class TapeTreeItemViewModel : ViewModelBase
     private bool _isOnCurrentVolume = true;
     private bool _isTOCFromFile;
     private bool _isInMemory;
+    private bool _isRemote;
+    private string? _remoteHost;
 
     static TapeTreeItemViewModel()
     {
@@ -132,6 +134,26 @@ public class TapeTreeItemViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// When true on a Drive item, indicates the drive is a remote drive.
+    /// Drives the green foreground trigger in the tree view.
+    /// </summary>
+    public bool IsRemote
+    {
+        get => _isRemote;
+        set => SetProperty(ref _isRemote, value);
+    }
+
+    /// <summary>
+    /// The display label of the remote host (e.g. "192.168.178.22:50551") for
+    ///  tooltip display and drive display name prefixing. Null for local drives.
+    /// </summary>
+    public string? RemoteHost
+    {
+        get => _remoteHost;
+        set => SetProperty(ref _remoteHost, value);
+    }
+
+    /// <summary>
     /// Numeric identifier for this item: drive number (Drive), volume number (Tape),
     ///  or 1-based set index (BackupSet).
     /// </summary>
@@ -149,15 +171,23 @@ public class TapeTreeItemViewModel : ViewModelBase
     public int? SetIndex => ItemType == TreeItemType.BackupSet ? Tag : null;
     public int? VolumeNumber => ItemType == TreeItemType.Tape ? Tag : null;
 
-    public static TapeTreeItemViewModel CreateDriveItem(int driveNumber, string deviceName)
+    public static TapeTreeItemViewModel CreateDriveItem(int driveNumber, string deviceName,
+        string? remoteHost = null)
     {
+        // Prefix display name with remote host label when applicable (§2.6)
+        string displayName = remoteHost != null
+            ? $"[{remoteHost}] Drive {driveNumber}: {deviceName}"
+            : $"Drive {driveNumber}: {deviceName}";
+
         return new TapeTreeItemViewModel
         {
-            DisplayName = $"Drive {driveNumber}: {deviceName}",
+            DisplayName = displayName,
             IndexDisplay = string.Empty,
             ItemType = TreeItemType.Drive,
             Tag = driveNumber,
-            IsExpanded = true
+            IsExpanded = true,
+            IsRemote = remoteHost != null,
+            RemoteHost = remoteHost
         };
     }
 

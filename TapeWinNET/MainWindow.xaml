@@ -20,6 +20,7 @@
 
     <Window.Resources>
         <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVis" />
+        <converters:NullToVisibilityCollapsedConverter x:Key="NullToVis" />
         <converters:BoolToOpacityConverter x:Key="BoolToOpacityIcon" DimmedOpacity="0.4"/>
         <converters:BoolToOpacityConverter x:Key="BoolToOpacityText" DimmedOpacity="0.6"/>
 
@@ -99,7 +100,8 @@
         <HierarchicalDataTemplate x:Key="TreeItemTemplate" 
                                   DataType="{x:Type vm:TapeTreeItemViewModel}"
                                   ItemsSource="{Binding Children}">
-            <StackPanel Orientation="Horizontal" Margin="2">
+            <StackPanel Orientation="Horizontal" Margin="2"
+                        ToolTip="{Binding RemoteHost, StringFormat='Remote drive via {0}', TargetNullValue={x:Null}}">
                 <!-- Icon bound to the Icon property, dimmed for off-volume sets -->
                 <Image Width="16" Height="16" Margin="0,0,4,0"
                        Source="{Binding Icon}"
@@ -121,6 +123,10 @@
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding IsTOCFromFile}" Value="True">
                                     <Setter Property="Foreground" Value="{StaticResource WarningFg.Failed}" />
+                                </DataTrigger>
+                                <!-- Remote drive (green) — last so it overrides IsInMemory/IsTOCFromFile -->
+                                <DataTrigger Binding="{Binding IsRemote}" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource WarningFg.Completed}" />
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
@@ -179,7 +185,21 @@
                     </MenuItem.ItemContainerStyle>
                 </MenuItem>
                 <Separator/>
-                <MenuItem Header="Virtual _IO Speed" 
+                <!-- Remote host: shows 'Connect to Remote Host...' or 'Open on host:port' with submenu.
+                     RemoteDriveMenuItems is empty when not connected, so no submenu appears. -->
+                <MenuItem Header="{Binding RemoteMenuHeader}"
+                          Command="{Binding ConnectToRemoteHostCommand}"
+                          ItemsSource="{Binding RemoteDriveMenuItems}">
+                    <MenuItem.ItemContainerStyle>
+                        <Style TargetType="MenuItem">
+                            <Setter Property="Header" Value="{Binding Header}"/>
+                            <Setter Property="Command" Value="{Binding Command}"/>
+                            <Setter Property="CommandParameter" Value="{Binding DriveNumber}"/>
+                        </Style>
+                    </MenuItem.ItemContainerStyle>
+                </MenuItem>
+                <Separator/>
+                <MenuItem Header="Virtual _IO Speed"
                           ItemsSource="{Binding IoSpeedOptions}"
                           Visibility="{Binding IsIoSpeedVisible, Converter={StaticResource BoolToVis}}"
                           IsEnabled="{Binding IsIoSpeedEnabled}">
@@ -937,8 +957,15 @@
                               Width="180" FontSize="11"/>
                 </StackPanel>
             </StatusBarItem>
+            <StatusBarItem HorizontalAlignment="Right"
+                           Visibility="{Binding RemoteStatusLabel, Converter={StaticResource NullToVis}}">
+                <TextBlock Text="{Binding RemoteStatusLabel}"
+                           Foreground="{StaticResource WarningFg.Completed}"
+                           FontWeight="SemiBold"
+                           Margin="0,0,8,0"/>
+            </StatusBarItem>
             <StatusBarItem HorizontalAlignment="Right">
-                <ProgressBar Width="150" Height="16" 
+                <ProgressBar Width="150" Height="16"
                              IsIndeterminate="{Binding IsBusy}"
                              Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" />
             </StatusBarItem>

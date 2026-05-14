@@ -64,6 +64,22 @@ public class AppSettings
 
     #endregion
 
+    #region Remote Host
+
+    /// <summary>Hostname or IP address from the last successful remote connection.</summary>
+    public string? LastRemoteHost { get; set; }
+
+    /// <summary>Port from the last successful remote connection.</summary>
+    public int? LastRemotePort { get; set; }
+
+    /// <summary>Whether TLS was used in the last successful remote connection.</summary>
+    public bool LastRemoteUseTls { get; set; }
+
+    /// <summary>Whether "Use local host" was checked in the last connect dialog.</summary>
+    public bool LastRemoteUseLocalHost { get; set; }
+
+    #endregion
+
     #region Stream-level API
 
     public void Save(Stream stream)

@@ -388,8 +388,7 @@ File
       Drive 1
       Specify...
       ─────────────────────
-      Open Remote Virtual Drive...
-      Create Remote Test Drive...
+      Create Remote Virtual Drive...
       ─────────────────────
       Disconnect
   ─────────────────────────
@@ -425,7 +424,7 @@ The drive context menu on the tree view gets the same remote submenu added below
 ║            tape-server.local                 ║
 ║                                              ║
 ║  [x] Use local host (127.0.0.1)              ║
-║  [ ] Use TLS                                 ║
+║  [ ] Use secure connection (TLS)             ║
 ║                                              ║
 ║            [  Cancel  ]  [  Connect  ]       ║
 ╚══════════════════════════════════════════════╝
@@ -438,7 +437,7 @@ The drive context menu on the tree view gets the same remote submenu added below
 | Host | `TextBox` | Non-empty; accepts IPv4, IPv6, DNS name, `localhost` |
 | Port | `TextBox` | Integer 1–65535; default `50551` |
 | Use local host | `CheckBox` | Fills host with `127.0.0.1`; disables host field |
-| Use TLS | `CheckBox` | Disabled with tooltip "TLS support is coming soon" until implemented |
+| Use TLS | `CheckBox` | TLS support has been implemented, s. section 1. |
 
 **Why a plain `TextBox` for host:**
 There is no standard WPF IP-address control that also accepts hostnames. A plain `TextBox`
@@ -453,7 +452,7 @@ when the connection attempt fails.
    the server hostname.
 4. If successful: close dialog, fire connected event.
 5. If failed: re-enable fields, show inline error message below the port field (same
-   style as other dialogs) — do **not** open a separate error box.
+   "warning / error" style as other dialogs) — do **not** open a separate error box.
 
 **Persistence:** On successful connect, store `Host`, `Port`, and `UseTls` in `AppSettings`
 and pre-populate next time. Failed attempts are not stored.
@@ -475,7 +474,14 @@ After a successful connection:
 
 ---
 
-### 2.4 Open Remote Virtual Drive Dialog
+### 2.4 Open Remote Virtual Drive Dialog *(deferred — future feature)*
+
+> **Deferred:** The `CreateTempVirtualAsync` backend (§1.2) covers the primary remote
+> virtual drive scenario without requiring any server-side path knowledge. Implementing
+> a path-based open dialog requires the user to know and type a fully-qualified path on
+> the remote host's file system — a significant UX friction point that is not justified
+> for v1. This feature is recorded here for future implementation if a use case arises
+> (e.g., re-attaching to a persistent virtual tape across sessions).
 
 A simplified dialog — no local file browsing, path is typed manually:
 
@@ -504,36 +510,62 @@ A simplified dialog — no local file browsing, path is typed manually:
 ╚══════════════════════════════════════════════════════╝
 ```
 
-- The `Block size`, `Capacity`, and `Preset` controls reuse the same `BlockSizeOption` and
-  `CapacityUnit` records already defined in `OpenVirtualDriveViewModel`.
-- Recent remote paths are stored per host in `AppSettings` (small MRU list, accessible
-  via a dropdown arrow on the path field).
+- The `Block size`, `Capacity`, and `Preset` controls would reuse the same
+  `BlockSizeOption` and `CapacityUnit` records already defined in
+  `OpenVirtualDriveViewModel`.
+- Recent remote paths would be stored per host in `AppSettings` (small MRU list).
 - The path label "The path is resolved on the remote host" prevents user confusion.
+
+If implemented, add an `AppSettings.RemoteVirtualPathMru` dictionary (keyed by
+`"host:port"`) and a corresponding `OpenRemoteVirtualDriveViewModel` / window.
 
 ---
 
-### 2.5 Create Remote Test Drive Dialog
+### 2.5 Create Remote Virtual Drive Dialog
 
-The smallest possible dialog for quick connectivity testing:
+The primary dialog for opening any remote virtual tape drive. Because the
+`CreateTempVirtualAsync` backend creates and owns the backing store entirely on the
+server (either in-memory or as temp files deleted on `Close`), the user never needs to
+specify or know a server-side path. This replaces §2.4 for all practical purposes.
+
+The dialog mirrors the local `Open Virtual Drive` dialog in terms of options, exposing
+the full `CreateTempVirtualRequest` parameter set:
 
 ```
 ╔══════════════════════════════════════════════════════╗
-║  Create Remote Test Drive                            ║
+║  Create Remote Virtual Drive                         ║
 ╠══════════════════════════════════════════════════════╣
 ║                                                      ║
-║  A temporary in-memory virtual tape will be          ║
-║  created on the remote host for testing.             ║
-║  It will be deleted automatically on close.          ║
+║  A virtual drive and media will be created on the    ║  ← grey, italic
+║  remote host. They are deleted automatically when    ║
+║  the drive is closed.                                ║
 ║                                                      ║
-║  Capacity:   [ 500  ] [ MB ▼ ]                       ║
-║  Preset:     [ With Setmarks (DAT-320) ▼ ]           ║
+║  Remote host: 192.168.178.22:50551  (read-only)      ║
+║                                                      ║
+║  Name:        [                              ]       ║
+║  Leave empty for an in-memory drive (no files        ║  ← grey, italic
+║  created on the server).                             ║
+║                                                      ║
+║  Preset:      [ With Setmarks (DAT-320)     ▼ ]      ║
+║  Block size:  [ 64 KB                       ▼ ]      ║
+║  Capacity:    [ 500   ] [ MB               ▼ ]       ║
 ║                                                      ║
 ║              [  Cancel  ]  [  Create  ]              ║
 ╚══════════════════════════════════════════════════════╝
 ```
 
-No path required. The server allocates an in-memory stream; it is gone when the session
-closes. This is the recommended starting point for testing a new remote connection.
+**Field details:**
+
+| Field | Notes |
+|---|---|
+| Name | Optional free-text. Empty → anonymous in-memory drive (`string? name = null` → server uses `MemoryStream`). Non-empty → server creates temp files, named media, deleted on `Close`. |
+| Preset | Reuses `PresetOption` from `OpenVirtualDriveViewModel`; populates Block size and sets `VirtualTapeDriveCapabilities`. |
+| Block size | Reuses `BlockSizeOption`; overrides the preset's default if changed manually. |
+| Capacity | Reuses `CapacityUnit`; maps to `CreateTempVirtualRequest.CapacityBytes`. |
+
+- The read-only host label provides constant context (same style as `BackupWindow.xaml` labels).
+- Choosing a preset auto-fills Block size; the user can still override it individually.
+- This is the recommended first action after a successful connection.
 
 ---
 
@@ -542,11 +574,14 @@ closes. This is the recommended starting point for testing a new remote connecti
 Remote drive tree items are shown in the **Completed / OK green** (`WarningFg.Completed`)
 to distinguish them from local drives at a glance.
 
+Precede the names with the host address / name (stored once the connection had been established).
+Otherwise use the same naming as for the local drives.
+
 **Display name format:**
 
-- Physical: `[192.168.178.22] \\.\TAPE0`
-- Virtual:  `[192.168.178.22] Virtual: test.vtape`
-- Test:     `[192.168.178.22] Virtual: (test drive)`
+- Physical:   `[192.168.178.22] Drive 0: \\.\TAPE0`
+- Named temp: `[192.168.178.22] Drive 0: VTAPE0 [my-tape]`
+- Anonymous:  `[192.168.178.22] Drive 0: VTAPE0 [in-memory]`
 
 **Tooltip** (on the tree item):
 
@@ -560,6 +595,28 @@ Server: tape-server (v1.2.0)
 `MainWindow.xaml` to set `Foreground = WarningFg.Completed` when `IsRemote = true`.
 This trigger should be ordered last (highest specificity) so it overrides `IsInMemory`
 (blue) and `IsTOCFromFile` (red) triggers, which do not apply to remote drives anyway.
+
+**Drive Properties pane — Remote Connection section:**
+
+When a remote drive node is selected in the tree view, the existing `DriveInfo` content
+pane gains an additional **Remote Connection** section below the standard drive properties,
+populated from the `GetServerInfo` response captured at connect time:
+
+```
+── Remote Connection ────────────────────────────────────
+Host:             192.168.178.22:50551
+Server hostname:  tape-server
+Server version:   1.2.0
+Protocol level:   1
+Transport:        plaintext HTTP/2  (or TLS/HTTPS)
+```
+
+The data is already available in `MainViewModel.Remote.cs` (`_remoteHostSettings`,
+`_remoteServerHostName`, `_remoteServerVersion`) at no extra RPC cost — it was fetched
+during `ConnectCommand` execution. Bind these fields through a
+`RemoteConnectionInfo` value object (or directly from `MainViewModel`) to the
+`DriveInfoView` / `BackupSetInfoView` content controls. Show the section only when
+`IsRemote = true`; hide it entirely for local drives.
 
 ---
 
@@ -592,6 +649,15 @@ Opening any local physical or local virtual drive:
 
 This is intentionally silent / automatic. The user chose to open a local drive;
 the implied intent is to work locally.
+
+**Implementation note:** `TapeDrive.Close()` / `Dispose()` closes the underlying
+backend session but does not clear `MainViewModel`'s remote state (`_remoteHostSettings`,
+status bar segment, menu header). `DisconnectRemoteHost()` must therefore explicitly:
+1. Call the backend's `CloseAsync()` (if a remote drive is currently open).
+2. Dispose the `RemoteTapeDriveBackend` (releases the gRPC channel if owned).
+3. Null out `_remoteHostSettings`, `_remoteServerVersion`, `_remoteServerHostName`.
+4. Raise `PropertyChanged` for `IsRemoteConnected`, `RemoteMenuHeader`, and the
+   status bar binding — these drive all menu and status bar updates automatically.
 
 ---
 
@@ -641,9 +707,10 @@ public string RemoteMenuHeader => _remoteHostSettings != null
 Commands:
 - `ConnectToRemoteHostCommand` — opens `ConnectToRemoteHostWindow` (dialog).
 - `OpenRemoteDriveCommand` — same as `OpenDriveCommand` but routes to `RemoteTapeDriveBackend.OpenAsync`.
-- `OpenRemoteVirtualDriveCommand` — opens `OpenRemoteVirtualDriveWindow`.
-- `CreateRemoteTestDriveCommand` — opens `CreateRemoteTestDriveWindow`.
+- `CreateRemoteVirtualDriveCommand` — opens `CreateRemoteVirtualDriveWindow` (§2.5); calls `CreateTempVirtualAsync`.
 - `DisconnectRemoteHostCommand` — closes any open remote drive, disposes backend, clears state.
+
+`OpenRemoteVirtualDriveCommand` (path-based open, §2.4) is deferred to a future stage.
 
 The existing `TapeService.OpenDriveAsync` / `OpenVirtualDriveAsync` are extended or
 complemented by remote-aware overloads rather than replaced, keeping the local code path
@@ -682,13 +749,13 @@ The probe backend (`RemoteTapeDriveBackend`) is constructed solely for the
 ```csharp
 #region Remote Host
 
-public string? LastRemoteHost    { get; set; }
-public int?    LastRemotePort    { get; set; }
-public bool    LastRemoteUseTls  { get; set; }
+public string? LastRemoteHost         { get; set; }
+public int?    LastRemotePort         { get; set; }
+public bool    LastRemoteUseTls       { get; set; }
 public bool    LastRemoteUseLocalHost { get; set; }
 
-// MRU remote virtual paths keyed by "host:port"
-public Dictionary<string, List<string>> RemoteVirtualPathMru { get; set; } = [];
+// Deferred (§2.4): MRU remote virtual paths keyed by "host:port"
+// public Dictionary<string, List<string>> RemoteVirtualPathMru { get; set; } = [];
 
 #endregion
 ```
@@ -700,12 +767,17 @@ public Dictionary<string, List<string>> RemoteVirtualPathMru { get; set; } = [];
 | Class | File | Purpose |
 |---|---|---|
 | `ConnectToRemoteHostViewModel` | `ViewModels/ConnectToRemoteHostViewModel.cs` | Dialog VM for the connect dialog |
-| `OpenRemoteVirtualDriveViewModel` | `ViewModels/OpenRemoteVirtualDriveViewModel.cs` | Dialog VM for open/create remote virtual drive |
-| `CreateRemoteTestDriveViewModel` | `ViewModels/CreateRemoteTestDriveViewModel.cs` | Dialog VM for temp drive creation |
+| `CreateRemoteVirtualDriveViewModel` | `ViewModels/CreateRemoteVirtualDriveViewModel.cs` | Dialog VM for §2.5 — full virtual drive creation via `CreateTempVirtualAsync` |
+| `OpenRemoteVirtualDriveViewModel` | `ViewModels/OpenRemoteVirtualDriveViewModel.cs` | *(deferred — §2.4)* Dialog VM for path-based open/create |
 
 `ConnectToRemoteHostViewModel` runs `GetServerInfo()` asynchronously on Connect click,
 reports errors inline (no `MessageBox`), and exposes a `ConnectedSettings` result property
 that the window code-behind reads on success.
+
+`CreateRemoteVirtualDriveViewModel` exposes `Name`, `SelectedPreset`, `SelectedBlockSize`,
+`SelectedCapacity`, `SelectedCapacityUnit` — reusing the same option types
+(`PresetOption`, `BlockSizeOption`, `CapacityUnit`) from `OpenVirtualDriveViewModel` so
+no new option types are needed.
 
 ---
 
@@ -713,9 +785,9 @@ that the window code-behind reads on success.
 
 | Window | XAML file | Notes |
 |---|---|---|
-| `ConnectToRemoteHostWindow` | `ConnectToRemoteHostWindow.xaml` | Simple two-field form with inline error |
-| `OpenRemoteVirtualDriveWindow` | `OpenRemoteVirtualDriveWindow.xaml` | Reuses `BlockSizeOption`, `CapacityUnit`, `PresetOption` |
-| `CreateRemoteTestDriveWindow` | `CreateRemoteTestDriveWindow.xaml` | Minimal two-control form |
+| `ConnectToRemoteHostWindow` | `ConnectToRemoteHostWindow.xaml` | Two-field form (host, port) with TLS checkbox and inline error panel |
+| `CreateRemoteVirtualDriveWindow` | `CreateRemoteVirtualDriveWindow.xaml` | Full-options form: name, preset, block size, capacity (§2.5) |
+| `OpenRemoteVirtualDriveWindow` | `OpenRemoteVirtualDriveWindow.xaml` | *(deferred — §2.4)* Path-based open; reuses `BlockSizeOption`, `CapacityUnit`, `PresetOption` |
 
 ---
 
@@ -805,7 +877,8 @@ The plan is staged so that each milestone is independently testable.
 **Steps:**
 
 1.1. Add remote host properties to `AppSettings` (`LastRemoteHost`, `LastRemotePort`,
-     `LastRemoteUseTls`, `LastRemoteUseLocalHost`, `RemoteVirtualPathMru`).
+     `LastRemoteUseTls`, `LastRemoteUseLocalHost`). `RemoteVirtualPathMru` is deferred
+     to §2.4 (path-based open dialog).
 
 1.2. Create `MainViewModel.Remote.cs` partial with `_remoteHostSettings`, `IsRemoteConnected`,
      `RemoteMenuHeader`, `ConnectToRemoteHostCommand`, `DisconnectRemoteHostCommand`,
@@ -866,17 +939,26 @@ The plan is staged so that each milestone is independently testable.
      `TapeTreeItemViewModel` for the drive node; add the green foreground trigger to
      `MainWindow.xaml` `HierarchicalDataTemplate`.
 
-3.5. Add status bar remote segment bound to `IsRemoteConnected` / `_remoteHostSettings.DisplayLabel`.
+3.5. Expose `RemoteConnectionInfo` (host, server hostname, version, protocol level,
+     transport) from `MainViewModel.Remote.cs`; add a "Remote Connection" section to
+     the `DriveInfo` content pane, visible only when `IsRemote = true` (§2.6).
 
-3.6. Wire `Disconnect` submenu item to `DisconnectRemoteHostCommand`.
+3.6. Add status bar remote segment bound to `IsRemoteConnected` / `_remoteHostSettings.DisplayLabel`.
+
+3.7. Wire `Disconnect` submenu item to `DisconnectRemoteHostCommand`.
 
 ---
 
-### Stage 4 — Open Remote Virtual Drive
+### Stage 4 — Open Remote Virtual Drive *(deferred)*
 
 > **Projects:** `TapeWinNET`
 
-**Steps:**
+> **Deferred:** Stage 5 (`CreateTempVirtualAsync`) covers all practical remote virtual
+> drive scenarios without requiring a server-side path. Stage 4 (path-based open) is
+> retained for future implementation only — e.g., to re-attach to a persistent virtual
+> tape across sessions. Do not implement until a concrete use case arises.
+
+**Steps (future):**
 
 4.1. Create `OpenRemoteVirtualDriveViewModel`: `RemotePath`, `Mode` (open existing /
      create new), `SelectedBlockSize`, `SelectedCapacity`, `SelectedCapacityUnit`,
@@ -890,24 +972,34 @@ The plan is staged so that each milestone is independently testable.
      open the dialog, construct `OpenVirtualRequest` from the VM result, call
      `RemoteTapeDriveBackend.OpenVirtualAsync`.
 
-4.4. Store recent remote paths in `AppSettings.RemoteVirtualPathMru`; populate path
-     field MRU dropdown.
+4.4. Add `AppSettings.RemoteVirtualPathMru`; store recent remote paths per host;
+     populate path field MRU dropdown.
 
 ---
 
-### Stage 5 — Create Remote Test Drive
+### Stage 5 — Create Remote Virtual Drive
 
 > **Projects:** `TapeWinNET`
 
 **Steps:**
 
-5.1. Create `CreateRemoteTestDriveViewModel`: `SelectedCapacity`, `SelectedCapacityUnit`,
-     `SelectedPreset`.
+5.1. Create `CreateRemoteVirtualDriveViewModel` with `Name`, `SelectedPreset`,
+     `SelectedBlockSize`, `SelectedCapacity`, `SelectedCapacityUnit`; reuse
+     `PresetOption`, `BlockSizeOption`, `CapacityUnit` from `OpenVirtualDriveViewModel`.
+     Selecting a preset auto-fills `SelectedBlockSize` (can be overridden).
 
-5.2. Create `CreateRemoteTestDriveWindow.xaml`; minimal two-control layout.
+5.2. Create `CreateRemoteVirtualDriveWindow.xaml`; layout mirrors the local
+     `OpenVirtualDriveWindow` but adds a `Name` field and a read-only host label;
+     hint text explains empty name → in-memory (no server-side files).
 
-5.3. Implement `CreateRemoteTestDriveCommand` in `MainViewModel.Remote.cs`:
-     call `RemoteTapeDriveBackend.CreateTempVirtualAsync`.
+5.3. Implement `CreateRemoteVirtualDriveCommand` in `MainViewModel.Remote.cs`:
+     open the dialog, map VM properties to `CreateTempVirtualAsync` parameters
+     (`capacityBytes`, `name`, `blockSize`, `caps` from preset), call
+     `RemoteTapeDriveBackend.CreateTempVirtualAsync`.
+
+5.4. On success, pass the opened backend to `TapeService` (same post-open path as
+     local virtual drives); set `IsRemote = true`, `RemoteHost` on the new
+     `TapeTreeItemViewModel`.
 
 ---
 

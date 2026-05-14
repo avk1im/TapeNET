@@ -113,6 +113,9 @@ public partial class MainViewModel : ViewModelBase
         // Initialize restore commands (from MainViewModel.Restore.cs)
         InitializeRestoreCommands();
 
+        // Initialize remote host commands (from MainViewModel.Remote.cs)
+        InitializeRemoteCommands();
+
         // Initialize drive menu items
         InitializeDriveMenu();
 
@@ -652,6 +655,8 @@ public partial class MainViewModel : ViewModelBase
     {
         _logFlushTimer?.Stop();
         StopMirroring();
+        // Ensure any remote session is torn down cleanly on app exit (§2.8)
+        DisconnectRemoteHost();
         _tapeService.Dispose();
     }
 
@@ -844,6 +849,9 @@ public partial class MainViewModel : ViewModelBase
     private async Task OpenDriveAsync(object? parameter)
     {
         int driveNumber = parameter as int? ?? 0;
+
+        // Disconnect any active remote session before opening a local drive (§2.8)
+        DisconnectRemoteHost();
 
         if (!await OpenPhysicalDriveWithUIAsync(driveNumber))
         {
@@ -1370,6 +1378,10 @@ public partial class MainViewModel : ViewModelBase
         }
 
         StatusMessage = "Drive information displayed";
+
+        // Append remote connection info section when a remote host is active (§2.6)
+        if (IsRemoteConnected)
+            AppendRemoteConnectionInfo();
     }
 
     private void LoadMediaInfo()
@@ -1666,6 +1678,9 @@ public partial class MainViewModel : ViewModelBase
 
     private async Task OpenVirtualDriveAsync(VirtualDriveOpenRequest request)
     {
+        // Disconnect any active remote session before opening a local virtual drive (§2.8)
+        DisconnectRemoteHost();
+
         // A — Open virtual drive. Custom failure UI: "open existing" re-shows the
         //  dialog so the user can switch to "create new"; "create new" just errors.
         var mediaMode = request.IsCreateNew ? FileMode.Create : FileMode.Open;
