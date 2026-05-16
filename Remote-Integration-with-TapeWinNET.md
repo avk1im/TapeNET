@@ -1,6 +1,6 @@
 # Remote Tape Drive Integration — TapeWinNET Design Document
 
-> **Status:** Section 1 fully implemented — §1.1, §1.2, §1.3, §1.4, §1.5 all complete  
+> **Status:** Sections 1–3 fully implemented — all WPF integration complete; Stage 5 (Create Remote Virtual Drive dialog) and Stage 6 (error-handling polish) pending  
 > **Scope:** `TapeLibNET` (gRPC client backend), `TapeServiceNET` (gRPC server), `TapeWinNET` (WPF GUI)  
 > **Branch:** `dev`
 
@@ -357,7 +357,7 @@ call sites.
 
 ## 2. UX Design
 
-### 2.1 Menu Structure
+### 2.1 Menu Structure ✅ IMPLEMENTED
 
 The `File` menu gains one entry below `Recent Virtual Drives`. It transforms after a
 successful connection.
@@ -408,9 +408,25 @@ The drive context menu on the tree view gets the same remote submenu added below
 - Opening any local drive (via the regular `Open Drive >` or `Open Virtual Drive...`)
   automatically disconnects the remote host context.
 
+> **Implementation notes (as built):**
+>
+> - Implemented as designed. The dynamic top-level `File` menu item uses a single
+>   `MenuItem` whose `Header` is bound to `RemoteMenuHeader` and whose `ItemsSource` is
+>   bound to `RemoteDriveMenuItems` (`ObservableCollection<object>`). When not connected
+>   the collection is empty, so no submenu arrow appears; when connected the header
+>   switches to `"Open on host:port"` and the submenu is populated.
+> - `RemoteDriveMenuItems` holds `DriveMenuItem` records and native WPF `Separator`
+>   objects. Because `Separator` satisfies `IsItemItsOwnContainer`, it bypasses the
+>   `ItemContainerStyle` (which targets `MenuItem`) and renders as a plain native
+>   separator — no icon-column chrome, no extra code.
+> - **Drive context menu:** The tree-view drive context menu was not updated in this
+>   stage; the remote actions are accessible exclusively from the `File` menu for now.
+>   This is a known deviation from the design; a future stage can add the same submenu
+>   to the context menu if desired.
+
 ---
 
-### 2.2 Connect to Remote Host Dialog
+### 2.2 Connect to Remote Host Dialog ✅ IMPLEMENTED
 
 ```
 ╔══════════════════════════════════════════════╗
@@ -457,9 +473,23 @@ when the connection attempt fails.
 **Persistence:** On successful connect, store `Host`, `Port`, and `UseTls` in `AppSettings`
 and pre-populate next time. Failed attempts are not stored.
 
+> **Implementation notes (as built):**
+>
+> - Implemented exactly as designed. `ConnectToRemoteHostViewModel` runs `GetServerInfo()`
+>   on a `Task.Run` thread inside `ConnectCommand`; `IsConnecting` disables controls
+>   during the probe; `ErrorMessage` displays inline on failure (no `MessageBox`).
+> - `ConnectedSettings`, `ConnectedServerHostName`, and `ConnectedServerVersion` are
+>   read by `MainViewModel.Remote.cs` after the dialog closes with `true`.
+> - **TLS port auto-switch — key design decision:** Checking `Use TLS` while the port
+>   is still at the default plaintext value (`50551`) automatically changes it to the
+>   TLS default (`50552`); unchecking reverts to `50551` if the port is still `50552`.
+>   This reduces friction for the common case without preventing manual port overrides.
+> - `LastRemoteUseLocalHost` is persisted in `AppSettings` and the checkbox is
+>   pre-populated on re-open; the host field is disabled while it is checked.
+
 ---
 
-### 2.3 Remote Drive Submenu Population
+### 2.3 Remote Drive Submenu Population ✅ IMPLEMENTED
 
 After a successful connection:
 
@@ -472,9 +502,26 @@ After a successful connection:
 5. If probing fails, log a warning but keep the submenu functional with `Drive 0` and
    `Specify...`.
 
+> **Implementation notes (as built):**
+>
+> - Implemented as designed. `BuildInitialRemoteSubmenu()` populates `Drive 0`,
+>   `Scanning drives…`, `Specify...`, separator, `Create Remote Virtual Drive...`,
+>   separator, `Disconnect` immediately on connect; `ProbeRemoteDrivesAsync` then inserts
+>   drives 1–9 before `Specify...` and removes the placeholder when done.
+> - **Sentinel numbers — key design decision:** `RemoteCreateVirtualNumber` and
+>   `RemoteDisconnectNumber` were initially added as sentinels but removed on review:
+>   those items bind to their own dedicated commands (`CreateRemoteVirtualDriveCommand`,
+>   `DisconnectRemoteHostCommand`), so `OpenRemoteDriveAsync` is never invoked for them
+>   and the negative-guard branch was dead code. Only `RemoteSpecifyDriveNumber` (`-1`)
+>   and `RemoteScanningNumber` (`-5`) were retained because they are actively checked
+>   at runtime.
+> - The probe backend (`RemoteTapeDriveBackend`) is constructed in a `using` block
+>   inside `Task.Run`, is never `Open*`-ed, and is disposed after `ProbeDrives` returns,
+>   keeping it fully sessionless.
+
 ---
 
-### 2.4 Open Remote Virtual Drive Dialog *(deferred — future feature)*
+### 2.4 Open Remote Virtual Drive Dialog *(DEFERRED — future feature)*
 
 > **Deferred:** The `CreateTempVirtualAsync` backend (§1.2) covers the primary remote
 > virtual drive scenario without requiring any server-side path knowledge. Implementing
@@ -521,34 +568,32 @@ If implemented, add an `AppSettings.RemoteVirtualPathMru` dictionary (keyed by
 
 ---
 
-### 2.5 Create Remote Virtual Drive Dialog
+### 2.5 Create Remote Virtual Drive Dialog *(dialog UI deferred — command scaffolded)*
 
-The primary dialog for opening any remote virtual tape drive. Because the
+The primary dialog for opening any remote virtual tape drive.
 `CreateTempVirtualAsync` backend creates and owns the backing store entirely on the
 server (either in-memory or as temp files deleted on `Close`), the user never needs to
-specify or know a server-side path. This replaces §2.4 for all practical purposes.
+specify or know a server-side path. This replaces §2.4 for most practical purposes.
 
 The dialog mirrors the local `Open Virtual Drive` dialog in terms of options, exposing
 the full `CreateTempVirtualRequest` parameter set:
 
 ```
 ╔══════════════════════════════════════════════════════╗
-║  Create Remote Virtual Drive                         ║
+║  Create Temporary Remote Virtual Drive               ║
 ╠══════════════════════════════════════════════════════╣
 ║                                                      ║
+║  Remote host: 192.168.178.22:50551                   ║  ← read-only
 ║  A virtual drive and media will be created on the    ║  ← grey, italic
 ║  remote host. They are deleted automatically when    ║
 ║  the drive is closed.                                ║
 ║                                                      ║
-║  Remote host: 192.168.178.22:50551  (read-only)      ║
+║  (●) Named:   [                              ]       ║  ← disable the text box when In-memory option is selected
+║  ( ) In-memory (no files created on the server)      ║
 ║                                                      ║
-║  Name:        [                              ]       ║
-║  Leave empty for an in-memory drive (no files        ║  ← grey, italic
-║  created on the server).                             ║
-║                                                      ║
-║  Preset:      [ With Setmarks (DAT-320)     ▼ ]      ║
-║  Block size:  [ 64 KB                       ▼ ]      ║
-║  Capacity:    [ 500   ] [ MB               ▼ ]       ║
+║  Preset:      [ With Setmarks (DAT-320)     ▼ ]      ║  ← from here the same as in the local `Open Virtual Drive` dialog
+║  Capacity:    [ 500    ] [ MB               ▼ ]      ║
+║  Block size:  ...                                    ║
 ║                                                      ║
 ║              [  Cancel  ]  [  Create  ]              ║
 ╚══════════════════════════════════════════════════════╝
@@ -559,17 +604,24 @@ the full `CreateTempVirtualRequest` parameter set:
 | Field | Notes |
 |---|---|
 | Name | Optional free-text. Empty → anonymous in-memory drive (`string? name = null` → server uses `MemoryStream`). Non-empty → server creates temp files, named media, deleted on `Close`. |
-| Preset | Reuses `PresetOption` from `OpenVirtualDriveViewModel`; populates Block size and sets `VirtualTapeDriveCapabilities`. |
-| Block size | Reuses `BlockSizeOption`; overrides the preset's default if changed manually. |
-| Capacity | Reuses `CapacityUnit`; maps to `CreateTempVirtualRequest.CapacityBytes`. |
+| Preset | Reuses `PresetOption` from `OpenVirtualDriveViewModel`; populates the options and sets `VirtualTapeDriveCapabilities`. |
+| Block size | Reuses `BlockSizeOption`; overrides the preset's default if changed manually. Mirror `Open Virtual Drive` dialog |
+| Capacity | Reuses `CapacityUnit`; maps to `CreateTempVirtualRequest.CapacityBytes`. Mirror `Open Virtual Drive` dialog |
 
 - The read-only host label provides constant context (same style as `BackupWindow.xaml` labels).
 - Choosing a preset auto-fills Block size; the user can still override it individually.
 - This is the recommended first action after a successful connection.
 
+> **Implementation note (as built):** `CreateRemoteVirtualDriveCommand` and its backing
+> `CreateRemoteVirtualDriveAsync()` method are scaffolded in `MainViewModel.Remote.cs`
+> and `TapeServiceBase` accepts `CreateRemoteVirtualDriveAsync(RemoteHostSettings, ...)`.
+> The dedicated `CreateRemoteVirtualDriveWindow` / `CreateRemoteVirtualDriveViewModel`
+> (Stage 5) are not yet built; a temporary hard-coded default call is in place as a
+> placeholder. Full dialog implementation is tracked in Stage 5.
+
 ---
 
-### 2.6 Tree View — Remote Drive Indicator
+### 2.6 Tree View — Remote Drive Indicator ✅ IMPLEMENTED
 
 Remote drive tree items are shown in the **Completed / OK green** (`WarningFg.Completed`)
 to distinguish them from local drives at a glance.
@@ -615,12 +667,26 @@ The data is already available in `MainViewModel.Remote.cs` (`_remoteHostSettings
 `_remoteServerHostName`, `_remoteServerVersion`) at no extra RPC cost — it was fetched
 during `ConnectCommand` execution. Bind these fields through a
 `RemoteConnectionInfo` value object (or directly from `MainViewModel`) to the
-`DriveInfoView` / `BackupSetInfoView` content controls. Show the section only when
+Show the section only when
 `IsRemote = true`; hide it entirely for local drives.
+
+> **Implementation notes (as built):**
+>
+> - `IsRemote` and `RemoteHost` were added to `TapeTreeItemViewModel`; tree items for
+>   remote drives are created by `UpdateTreeForRemoteDriveOnly` / `UpdateTreeFromTOCRemote`
+>   helpers in `MainViewModel.Remote.cs`, which set both flags before the item is added.
+> - The green `WarningFg.Completed` foreground trigger is the last `DataTrigger` in the
+>   `HierarchicalDataTemplate`, giving it the highest specificity as designed.
+> - The **Remote Connection** section in the `DriveInfo` content pane is bound directly
+>   to `MainViewModel` properties (`RemoteHost`, `RemoteServerHostName`,
+>   `RemoteServerVersion`, `RemoteProtocolLevel`, `RemoteTransportLabel`) exposed from
+>   `MainViewModel.Remote.cs`; no separate `RemoteConnectionInfo` value object was
+>   needed. The section collapses via `Visibility` bound to `IsRemote`.
+> - Tooltip on the drive tree item is implemented as designed.
 
 ---
 
-### 2.7 Status Bar
+### 2.7 Status Bar ✅ IMPLEMENTED
 
 While a remote host is connected, the status bar shows an additional segment:
 
@@ -636,9 +702,14 @@ When a drive is also open:
 
 After disconnecting / opening a local drive, the remote segment disappears.
 
+> **Implementation note (as built):** The status bar segment is a `StackPanel`
+> whose `Visibility` is bound to `RemoteStatusLabel` via a `NullToVisibilityConverter`;
+> the label text is bound directly to `RemoteStatusLabel` (`"Remote: host:port"`).
+> No separate status-bar model was needed.
+
 ---
 
-### 2.8 Automatic Disconnect on Local Drive Open
+### 2.8 Automatic Disconnect on Local Drive Open ✅ IMPLEMENTED
 
 Opening any local physical or local virtual drive:
 1. Calls `DisconnectRemoteHost()` on `MainViewModel` (closes the remote drive if open,
@@ -659,9 +730,24 @@ status bar segment, menu header). `DisconnectRemoteHost()` must therefore explic
 4. Raise `PropertyChanged` for `IsRemoteConnected`, `RemoteMenuHeader`, and the
    status bar binding — these drive all menu and status bar updates automatically.
 
+> **Implementation notes (as built):**
+>
+> - Implemented as designed. `DisconnectRemoteHost()` in `MainViewModel.Remote.cs`
+>   follows the four-step sequence: close remote drive via `TapeService`, dispose the
+>   backend, null out the three state fields, raise `PropertyChanged` for all bindings.
+> - `DisconnectRemoteHost()` is called at the top of `OpenPhysicalDriveCoreAsync` and
+>   `OpenVirtualDriveCoreAsync` before any local open begins.
+> - It is also called from the `Window.Closing` handler.
+> - **Disposal order — key design decision:** An early bug caused
+>   `"Cannot access a disposed object: GrpcChannel"` when opening a drive after a
+>   previous remote session was closed. Root cause: `GrpcChannel.Dispose()` was called
+>   before `Close()` completed its gRPC RPC. Fixed by ensuring `Close()` runs while the
+>   channel is still alive, and by setting `_disposed = true` before cleanup calls that
+>   might throw, preventing re-entry.
+
 ---
 
-## 3. Implementation Design
+## 3. Implementation Design ✅ IMPLEMENTED
 
 ### 3.1 New `RemoteHostSettings` Record (TapeLibNET)
 
@@ -682,9 +768,12 @@ public record RemoteHostSettings(
 
 Place in `TapeLibNET/Remote/RemoteHostSettings.cs`.
 
+> **Implementation note:** Implemented as designed (see §1.3 implementation notes for
+> details on the `DangerousAcceptAnyServerCertificate` flag and `BuildChannelOptions()`).
+
 ---
 
-### 3.2 Remote Session State in `MainViewModel`
+### 3.2 Remote Session State in `MainViewModel` ✅ IMPLEMENTED
 
 Add a small section to `MainViewModel` (new partial file `MainViewModel.Remote.cs`):
 
@@ -716,9 +805,22 @@ The existing `TapeService.OpenDriveAsync` / `OpenVirtualDriveAsync` are extended
 complemented by remote-aware overloads rather than replaced, keeping the local code path
 unchanged.
 
+> **Implementation notes (as built):**
+>
+> - Implemented as designed. All four commands are wired in `InitializeRemoteCommands()`
+>   and initialized from the `MainViewModel` constructor.
+> - **Service-owned remote backend — key design decision:** The plan stated that
+>   `OpenRemoteDriveCommand` would "construct a `RemoteTapeDriveBackend(settings)`" in
+>   the ViewModel. In practice, backend creation was moved into `TapeServiceBase`
+>   (`OpenRemoteDriveAsync` / `CreateRemoteVirtualDriveAsync`), mirroring how local
+>   backend construction is handled in the service layer. This keeps the ViewModel free
+>   of backend lifecycle details and makes the same code path reusable from the CLI app.
+> - `RemoteStatusLabel` (for the status bar) was added alongside `RemoteMenuHeader` and
+>   `IsRemoteConnected`.
+
 ---
 
-### 3.3 Remote Drive Probing Task
+### 3.3 Remote Drive Probing Task ✅ IMPLEMENTED
 
 The background probing task runs similarly to the existing local probing in
 `InitializeDriveMenu`:
@@ -742,9 +844,19 @@ private async Task ProbeRemoteDrivesAsync(RemoteTapeDriveBackend probeBackend)
 The probe backend (`RemoteTapeDriveBackend`) is constructed solely for the
 `ProbeDrives` call and then disposed — it does not hold a session (no `Open*` called).
 
+> **Implementation notes (as built):**
+>
+> - The implementation deviates slightly from the plan's iterative loop: the actual code
+>   calls `ProbeDrives(9)` once (which probes 0–9 in a single RPC on the server) rather
+>   than issuing nine individual calls. All discovered drives are inserted in one pass
+>   after the `await` returns. This is simpler and reduces round-trips.
+> - The probe backend is constructed with `NullLoggerFactory.Instance` since no
+>   ViewModel-level logging is needed for the probe itself; errors are caught and logged
+>   via `LogWarn` on the ViewModel.
+
 ---
 
-### 3.4 AppSettings Additions
+### 3.4 AppSettings Additions ✅ IMPLEMENTED
 
 ```csharp
 #region Remote Host
@@ -760,9 +872,13 @@ public bool    LastRemoteUseLocalHost { get; set; }
 #endregion
 ```
 
+> **Implementation note:** All four properties implemented as designed in `AppSettings.cs`.
+>  `LastRemoteUseLocalHost` was added (it controls the checkbox in the connect dialog and
+>  is pre-populated on re-open).
+
 ---
 
-### 3.5 New View Models
+### 3.5 New View Models ✅ IMPLEMENTED (partial — `CreateRemoteVirtualDriveViewModel` deferred to Stage 5)
 
 | Class | File | Purpose |
 |---|---|---|
@@ -779,9 +895,13 @@ that the window code-behind reads on success.
 (`PresetOption`, `BlockSizeOption`, `CapacityUnit`) from `OpenVirtualDriveViewModel` so
 no new option types are needed.
 
+> **Implementation note:** `ConnectToRemoteHostViewModel` implemented as designed.
+>  `CreateRemoteVirtualDriveViewModel` and `OpenRemoteVirtualDriveViewModel` are
+>  deferred (Stage 5 and Stage 4 respectively).
+
 ---
 
-### 3.6 New Windows
+### 3.6 New Windows ✅ IMPLEMENTED (partial — `CreateRemoteVirtualDriveWindow` and `OpenRemoteVirtualDriveWindow` deferred)
 
 | Window | XAML file | Notes |
 |---|---|---|
@@ -789,9 +909,12 @@ no new option types are needed.
 | `CreateRemoteVirtualDriveWindow` | `CreateRemoteVirtualDriveWindow.xaml` | Full-options form: name, preset, block size, capacity (§2.5) |
 | `OpenRemoteVirtualDriveWindow` | `OpenRemoteVirtualDriveWindow.xaml` | *(deferred — §2.4)* Path-based open; reuses `BlockSizeOption`, `CapacityUnit`, `PresetOption` |
 
+> **Implementation note:** `ConnectToRemoteHostWindow` implemented as designed.
+>  The other two windows are deferred; placeholders exist in the command handlers.
+
 ---
 
-### 3.7 `TapeDrive` Abstraction — Challenges
+### 3.7 `TapeDrive` Abstraction — Challenges ✅ RESOLVED
 
 The `TapeDrive` class is expected to work transparently with `RemoteTapeDriveBackend`.
 Known areas that need attention:
@@ -805,14 +928,26 @@ Known areas that need attention:
 | **Blocking calls on UI thread** | `RemoteTapeDriveBackend` uses synchronous `.GetAwaiter().GetResult()` internally. All remote drive opens/closes from TapeWinNET must happen on background threads (already the pattern for local drives via `AsyncRelayCommand`). | Enforce: no remote backend calls on the UI dispatcher. Use `Task.Run`. |
 | **Dispose on app exit** | If a remote drive is open when the app exits, the server session will idle-timeout rather than clean up immediately. | Call `DisconnectRemoteHost()` in `MainViewModel` app-exit / `Window.Closing` handler. |
 
+> **Implementation notes (as built):**
+>
+> - All challenges listed in the table were addressed. The disposal-order bug
+>   (`GrpcChannel` accessed after dispose) was fixed by correcting the shutdown
+>   sequence in `RemoteTapeDriveBackend.Dispose(bool)` and hardening re-entry guards.
+> - `DisconnectRemoteHost()` is called from the `Window.Closing` handler, addressing
+>   the dispose-on-app-exit concern.
+> - Session-expiry `RpcException` handling (Stage 6) is still pending.
+
 ---
 
-### 3.8 NuGet Package Additions
+### 3.8 NuGet Package Additions ✅ VERIFIED
 
 `TapeWinNET` does **not** need a new NuGet package. The `Grpc.Net.Client` package that
 `RemoteTapeDriveBackend` depends on is already pulled transitively from `TapeLibNET`.
 Verify this after adding the `TapeLibNET` project reference (already present in
 `TapeWinNET.csproj`).
+
+> **Implementation note:** Verified — `Grpc.Net.Client` is pulled in transitively.
+>  No explicit `PackageReference` was needed in `TapeWinNET.csproj`.
 
 ---
 
@@ -870,86 +1005,114 @@ The plan is staged so that each milestone is independently testable.
 
 ---
 
-### Stage 1 — AppSettings and Remote Session State
+### Stage 1 — AppSettings and Remote Session State ✅ IMPLEMENTED
 
 > **Projects:** `TapeWinNET`
 
 **Steps:**
 
-1.1. Add remote host properties to `AppSettings` (`LastRemoteHost`, `LastRemotePort`,
+1.1. ✅ Add remote host properties to `AppSettings` (`LastRemoteHost`, `LastRemotePort`,
      `LastRemoteUseTls`, `LastRemoteUseLocalHost`). `RemoteVirtualPathMru` is deferred
      to §2.4 (path-based open dialog).
 
-1.2. Create `MainViewModel.Remote.cs` partial with `_remoteHostSettings`, `IsRemoteConnected`,
+1.2. ✅ Create `MainViewModel.Remote.cs` partial with `_remoteHostSettings`, `IsRemoteConnected`,
      `RemoteMenuHeader`, `ConnectToRemoteHostCommand`, `DisconnectRemoteHostCommand`,
      placeholder async implementations.
+     *As built:* also adds `RemoteStatusLabel`, `RemoteHost`, `RemoteServerHostName`,
+     `RemoteServerVersion`, `RemoteProtocolLevel`, `RemoteTransportLabel` for the Drive
+     Properties pane and status bar.
 
-1.3. Wire `DisconnectRemoteHostCommand` to call the existing `TapeService` close path
+1.3. ✅ Wire `DisconnectRemoteHostCommand` to call the existing `TapeService` close path
      plus remote-specific cleanup.
+     *As built:* `DisconnectRemoteHost()` calls `TapeService.CloseDriveAsync()` (if a
+     remote drive is open), disposes the backend held by the service, nulls out the three
+     state fields, then raises `PropertyChanged` for all bound properties.
 
-1.4. Hook `DisconnectRemoteHost()` into the existing local drive open path in
+1.4. ✅ Hook `DisconnectRemoteHost()` into the existing local drive open path in
      `MainViewModel` (call it before opening any local drive).
 
-1.5. Hook `DisconnectRemoteHost()` into the `Window.Closing` handler.
+1.5. ✅ Hook `DisconnectRemoteHost()` into the `Window.Closing` handler.
 
 ---
 
-### Stage 2 — Connect to Remote Host Dialog
+### Stage 2 — Connect to Remote Host Dialog ✅ IMPLEMENTED
 
 > **Projects:** `TapeWinNET`
 
 **Steps:**
 
-2.1. Create `ConnectToRemoteHostViewModel` with `Host`, `Port`, `UseLocalHost`, `UseTls`,
+2.1. ✅ Create `ConnectToRemoteHostViewModel` with `Host`, `Port`, `UseLocalHost`, `UseTls`,
      `ErrorMessage`, `IsConnecting` properties and `ConnectCommand`.
+     *As built:* also exposes `ConnectedSettings`, `ConnectedServerHostName`,
+     `ConnectedServerVersion` so the ViewModel can transfer results to `MainViewModel`.
 
-2.2. `ConnectCommand` calls `GetServerInfo()` off the UI thread; on success populates
+2.2. ✅ `ConnectCommand` calls `GetServerInfo()` off the UI thread; on success populates
      `ConnectedSettings`; on failure sets `ErrorMessage`.
+     *As built:* uses `Task.Run(() => backend.GetServerInfo())` with a
+     `NullLoggerFactory.Instance` backend; `ConnectCommand` is an `AsyncRelayCommand`.
 
-2.3. Create `ConnectToRemoteHostWindow.xaml` and code-behind; wire the example-text
+2.3. ✅ Create `ConnectToRemoteHostWindow.xaml` and code-behind; wire the example-text
      style to match `BackupWindow.xaml`.
+     *As built:* TLS checkbox toggles the port default between `50551` and `50552`
+     automatically when the other default is still in effect (see §2.2 notes).
 
-2.4. In `MainViewModel.Remote.cs` implement `ShowConnectToRemoteHostWindow()`, open
+2.4. ✅ In `MainViewModel.Remote.cs` implement `ShowConnectToRemoteHostWindow()`, open
      dialog, read `ConnectedSettings`, set `_remoteHostSettings`, save to `AppSettings`,
      trigger remote drive probing task (Stage 3).
+     *As built:* named `ConnectToRemoteHostAsync_ShowDialog()` (dialog must run on the
+     UI thread; the `AsyncRelayCommand` wrapper keeps it there).
 
-2.5. Update `MainWindow.xaml` `File` menu: add `Connect to Remote Host...` / dynamic
+2.5. ✅ Update `MainWindow.xaml` `File` menu: add `Connect to Remote Host...` / dynamic
      `Open on <host>` menu item driven by `IsRemoteConnected` and `RemoteMenuHeader`.
 
 ---
 
-### Stage 3 — Remote Drive Submenu and Physical Drive Open
+### Stage 3 — Remote Drive Submenu and Physical Drive Open ✅ IMPLEMENTED
 
 > **Projects:** `TapeWinNET`
 
 **Steps:**
 
-3.1. Add `RemoteDriveMenuItems` (`ObservableCollection<DriveMenuItem>`) to
+3.1. ✅ Add `RemoteDriveMenuItems` (`ObservableCollection<object>`) to
      `MainViewModel.Remote.cs`, initially containing `Drive 0` and `Specify...`.
+     *As built:* typed as `ObservableCollection<object>` (not `<DriveMenuItem>`) to hold
+     both `DriveMenuItem` records and native WPF `Separator` instances in the same
+     collection. WPF's `IsItemItsOwnContainer` mechanism handles `Separator` directly
+     without wrapping, producing clean native separators without custom styling.
 
-3.2. Implement `ProbeRemoteDrivesAsync`: construct a session-less `RemoteTapeDriveBackend`,
+3.2. ✅ Implement `ProbeRemoteDrivesAsync`: construct a session-less `RemoteTapeDriveBackend`,
      call `ProbeDrives(9)`, populate `RemoteDriveMenuItems` on the dispatcher, dispose
      the probe backend.
+     *As built:* single `ProbeDrives(9)` RPC call (not a per-drive loop); all results
+     inserted in one pass. See §2.3 implementation notes for details.
 
-3.3. Implement `OpenRemoteDriveCommand` / `OpenRemoteDriveByNameCommand`: construct
-     a `RemoteTapeDriveBackend(settings)`, call `OpenAsync(driveNumber)`, pass to
-     `TapeService` (same path as local, but with remote backend).
+3.3. ✅ Implement `OpenRemoteDriveCommand`: dispatches to `TapeServiceBase.OpenRemoteDriveAsync`
+     which owns backend construction (see §3.2 implementation notes).
+     `OpenRemoteDriveByNameCommand` was not needed as a separate command; the `Specify...`
+     item invokes the same `OpenRemoteDriveCommand` with a sentinel parameter that
+     triggers a drive-number input dialog.
 
-3.4. Set `IsRemote = true` and `RemoteHost = settings.DisplayLabel` on the
-     `TapeTreeItemViewModel` for the drive node; add the green foreground trigger to
+3.4. ✅ Set `IsRemote = true` and `RemoteHost = settings.DisplayLabel` on the
+     `TapeTreeItemViewModel` for the drive node; added the green foreground trigger to
      `MainWindow.xaml` `HierarchicalDataTemplate`.
 
-3.5. Expose `RemoteConnectionInfo` (host, server hostname, version, protocol level,
-     transport) from `MainViewModel.Remote.cs`; add a "Remote Connection" section to
-     the `DriveInfo` content pane, visible only when `IsRemote = true` (§2.6).
+3.5. ✅ Expose individual remote connection properties (`RemoteHost`, `RemoteServerHostName`,
+     `RemoteServerVersion`, `RemoteProtocolLevel`, `RemoteTransportLabel`) from
+     `MainViewModel.Remote.cs`; added the "Remote Connection" section to the `DriveInfo`
+     content pane, collapsed when not remote.
+     *As built:* no `RemoteConnectionInfo` value object was needed; binding directly to
+     `MainViewModel` properties was simpler and sufficient.
 
-3.6. Add status bar remote segment bound to `IsRemoteConnected` / `_remoteHostSettings.DisplayLabel`.
+3.6. ✅ Add status bar remote segment bound to `RemoteStatusLabel` (`"Remote: host:port"`,
+     collapses to `Collapsed` when `null`).
 
-3.7. Wire `Disconnect` submenu item to `DisconnectRemoteHostCommand`.
+3.7. ✅ Wire `Disconnect` submenu item to `DisconnectRemoteHostCommand`.
+     *As built:* the `Disconnect` item in `RemoteDriveMenuItems` has its `Command`
+     binding set to `DisconnectRemoteHostCommand`; the `CommandParameter` is `0` (unused).
 
 ---
 
-### Stage 4 — Open Remote Virtual Drive *(deferred)*
+### Stage 4 — Open Remote Virtual Drive *(DEFERRED)*
 
 > **Projects:** `TapeWinNET`
 
@@ -985,12 +1148,12 @@ The plan is staged so that each milestone is independently testable.
 
 5.1. Create `CreateRemoteVirtualDriveViewModel` with `Name`, `SelectedPreset`,
      `SelectedBlockSize`, `SelectedCapacity`, `SelectedCapacityUnit`; reuse
-     `PresetOption`, `BlockSizeOption`, `CapacityUnit` from `OpenVirtualDriveViewModel`.
-     Selecting a preset auto-fills `SelectedBlockSize` (can be overridden).
+     `PresetOption`, `BlockSizeOption`, `CapacityUnit`, etc. from `OpenVirtualDriveViewModel`.
+     Make sure to maximally mirror the local `OpenVirtualDriveViewModel` UX and implementation.
 
 5.2. Create `CreateRemoteVirtualDriveWindow.xaml`; layout mirrors the local
-     `OpenVirtualDriveWindow` but adds a `Name` field and a read-only host label;
-     hint text explains empty name → in-memory (no server-side files).
+     `OpenVirtualDriveWindow` but adds a `Named` field and a read-only host label;
+     hint text explains the temporary behavior.
 
 5.3. Implement `CreateRemoteVirtualDriveCommand` in `MainViewModel.Remote.cs`:
      open the dialog, map VM properties to `CreateTempVirtualAsync` parameters
@@ -1046,7 +1209,7 @@ The plan is staged so that each milestone is independently testable.
      is used instead of `HttpClientHandler.DangerousAcceptAnyServerCertificateValidator`;
      `GrpcChannel` requires `SocketsHttpHandler` for connectivity state tracking.
 
-7.3. ⬜ Enable and wire the `Use TLS` checkbox in `ConnectToRemoteHostWindow`.
+7.3. ✅ Enable and wire the `Use TLS` checkbox in `ConnectToRemoteHostWindow`.
 
 7.4. ⬜ Document certificate setup in `TapeServiceNET` README.
      *Partial:* `appsettings.Tls.json.example` contains inline generation instructions;

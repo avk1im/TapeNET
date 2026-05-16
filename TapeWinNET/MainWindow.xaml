@@ -191,9 +191,9 @@
                           Command="{Binding ConnectToRemoteHostCommand}"
                           ItemsSource="{Binding RemoteDriveMenuItems}">
                     <MenuItem.ItemContainerStyle>
-                        <!-- Applied only to DriveMenuItem items; Separator objects in the
-                             collection are used directly as containers by WPF (IsItemItsOwnContainer)
-                             and bypass this style entirely — so no chrome or icon-column gutter. -->
+                        <!-- Style applies to DriveMenuItem containers only. Separator objects
+                             in the collection are their own containers (WPF IsItemItsOwnContainer)
+                             and bypass this style, rendering as native menu separators. -->
                         <Style TargetType="MenuItem">
                             <Setter Property="Header"           Value="{Binding Header}"/>
                             <Setter Property="Command"          Value="{Binding Command}"/>
