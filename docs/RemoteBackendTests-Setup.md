@@ -36,14 +36,14 @@ in the project file). Assuming the target machine's IP is `192.168.178.142`:
 
 ```powershell
 # On your dev machine — publish a self-contained release build
-dotnet publish TapeServiceNET -c Release -o C:\TapeService
+dotnet publish TapeServiceNET -c Release -o D:\TapeService
 
 # Copy the output to the target machine (or publish directly there)
 ```
 
 ```powershell
 # On 192.168.178.142 — run the service
-cd C:\TapeService
+cd D:\TapeService
 dotnet tapesvc.dll
 ```
 

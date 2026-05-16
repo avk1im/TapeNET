@@ -17,12 +17,15 @@ public class ConnectToRemoteHostViewModel : ViewModelBase
     // ── Fields ────────────────────────────────────────────────────────────────
 
     private string _host = string.Empty;
-    private string _port = "50551";
+    private string _port = DefaultPortPlain.ToString();
     private bool _useLocalHost;
     private bool _useTls;
     private bool _isConnecting;
     private string _errorMessage = string.Empty;
     private WarningLevel _warningLevel = WarningLevel.None;
+
+    private const int DefaultPortPlain = 50551;
+    private const int DefaultPortTls   = 50552;
 
     // ── Construction ──────────────────────────────────────────────────────────
 
@@ -104,7 +107,18 @@ public class ConnectToRemoteHostViewModel : ViewModelBase
     public bool UseTls
     {
         get => _useTls;
-        set => SetProperty(ref _useTls, value);
+        set
+        {
+            if (SetProperty(ref _useTls, value))
+            {
+                // Auto-switch port between the two defaults when the user toggles TLS,
+                //  but only if the port still holds the default for the previous state.
+                if (value && _port == DefaultPortPlain.ToString())
+                    Port = DefaultPortTls.ToString();
+                else if (!value && _port == DefaultPortTls.ToString())
+                    Port = DefaultPortPlain.ToString();
+            }
+        }
     }
 
     /// <summary>True when the Host field should be editable (i.e. UseLocalHost is off).</summary>

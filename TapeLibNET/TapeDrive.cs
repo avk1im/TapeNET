@@ -227,12 +227,14 @@ public class TapeDrive : ErrorManageableBase, IDisposable
         {
             m_logger.LogTrace("{Prefix}: Disposing", LogPrefix);
 
+            // Set the flag before calling backend.Dispose() so that any exception
+            //  from the backend does not leave this object re-entrant.
+            m_disposed = true;
+
             if (disposing)
             {
                 m_backend.Dispose();
             }
-
-            m_disposed = true;
         }
     }
 

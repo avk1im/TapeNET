@@ -244,11 +244,13 @@ public abstract class TapeDriveBackend : ErrorManageableBase, IDisposable
     {
         if (!IsDisposed)
         {
+            // Set the flag before calling Close() so that any exception from Close()
+            //  (e.g. a failed RPC) does not leave the object in a re-entrant state.
+            IsDisposed = true;
             if (disposing)
             {
                 Close();
             }
-            IsDisposed = true;
         }
     }
 

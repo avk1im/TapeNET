@@ -664,13 +664,14 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     protected override void Dispose(bool disposing)
     {
         if (disposing)
-        {
             StopPingTimer();
-            if (_ownsChannel)
-                _channel.Dispose();
-        }
 
+        // base.Dispose calls Close(), which sends the gRPC Close RPC and needs the
+        //  channel to be alive — so we MUST call base first, then dispose the channel.
         base.Dispose(disposing);
+
+        if (disposing && _ownsChannel)
+            _channel.Dispose();
     }
 
     #endregion

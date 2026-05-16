@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 
 using Microsoft.Extensions.Logging.Abstractions;
@@ -42,10 +43,11 @@ public partial class MainViewModel
     /// <summary>
     /// Populated after a successful connect: Drive 0, any probed drives 1–9,
     ///  an optional "Scanning drives…" placeholder, then "Specify...",
-    ///  a separator (represented by <c>DriveNumber = -2</c>),
-    ///  "Create Remote Virtual Drive...", another separator (-2), and "Disconnect".
+    ///  a real <see cref="System.Windows.Controls.Separator"/> (used as-is by WPF —
+    ///  no MenuItem wrapping, no icon-column chrome), "Create Remote Virtual Drive...",
+    ///  another separator, and "Disconnect".
     /// </summary>
-    public ObservableCollection<DriveMenuItem> RemoteDriveMenuItems { get; } = [];
+    public ObservableCollection<object> RemoteDriveMenuItems { get; } = [];
 
     // ── Remote Properties ─────────────────────────────────────────────────────
 
@@ -131,11 +133,10 @@ public partial class MainViewModel
 
     // ── Remote submenu construction ───────────────────────────────────────────
 
-    private const int RemoteSeparatorDriveNumber = -2;   // sentinel for separator items
-    private const int RemoteSpecifyDriveNumber   = -1;
-    private const int RemoteCreateVirtualNumber  = -3;   // sentinel for Create Virtual item
-    private const int RemoteDisconnectNumber     = -4;   // sentinel for Disconnect item
-    private const int RemoteScanningNumber       = -5;   // sentinel for "Scanning..." placeholder
+    private const int RemoteSpecifyDriveNumber  = -1;
+    private const int RemoteCreateVirtualNumber = -3;   // sentinel for Create Virtual item
+    private const int RemoteDisconnectNumber    = -4;   // sentinel for Disconnect item
+    private const int RemoteScanningNumber      = -5;   // sentinel for "Scanning..." placeholder
 
     /// <summary>
     /// Builds the initial submenu immediately after a successful connection:
@@ -148,13 +149,13 @@ public partial class MainViewModel
     {
         RemoteDriveMenuItems.Clear();
 
-        RemoteDriveMenuItems.Add(new DriveMenuItem("Drive _0", 0,                       OpenRemoteDriveCommand));
-        RemoteDriveMenuItems.Add(new DriveMenuItem("Scanning drives…", RemoteScanningNumber, OpenRemoteDriveCommand));
-        RemoteDriveMenuItems.Add(new DriveMenuItem("_Specify...", RemoteSpecifyDriveNumber, OpenRemoteDriveCommand));
-        RemoteDriveMenuItems.Add(new DriveMenuItem("──────────────", RemoteSeparatorDriveNumber, OpenRemoteDriveCommand));
+        RemoteDriveMenuItems.Add(new DriveMenuItem("Drive _0",              0,                        OpenRemoteDriveCommand));
+        RemoteDriveMenuItems.Add(new DriveMenuItem("Scanning drives…",      RemoteScanningNumber,     OpenRemoteDriveCommand));
+        RemoteDriveMenuItems.Add(new DriveMenuItem("_Specify...",            RemoteSpecifyDriveNumber, OpenRemoteDriveCommand));
+        RemoteDriveMenuItems.Add(new Separator());
         RemoteDriveMenuItems.Add(new DriveMenuItem("_Create Remote Virtual Drive...", RemoteCreateVirtualNumber, CreateRemoteVirtualDriveCommand));
-        RemoteDriveMenuItems.Add(new DriveMenuItem("──────────────", RemoteSeparatorDriveNumber, OpenRemoteDriveCommand));
-        RemoteDriveMenuItems.Add(new DriveMenuItem("_Disconnect", RemoteDisconnectNumber, DisconnectRemoteHostCommand));
+        RemoteDriveMenuItems.Add(new Separator());
+        RemoteDriveMenuItems.Add(new DriveMenuItem("_Disconnect",           RemoteDisconnectNumber,   DisconnectRemoteHostCommand));
     }
 
     /// <summary>
@@ -181,8 +182,9 @@ public partial class MainViewModel
         }
 
         // Remove the "Scanning drives…" placeholder
-        var scanningItem = RemoteDriveMenuItems.FirstOrDefault(
-            i => i.DriveNumber == RemoteScanningNumber);
+        var scanningItem = RemoteDriveMenuItems
+            .OfType<DriveMenuItem>()
+            .FirstOrDefault(i => i.DriveNumber == RemoteScanningNumber);
         if (scanningItem is not null)
             RemoteDriveMenuItems.Remove(scanningItem);
 
@@ -193,7 +195,7 @@ public partial class MainViewModel
         // Find insertion point (just before "Specify...")
         int specifyIndex = RemoteDriveMenuItems
             .Select((item, idx) => (item, idx))
-            .FirstOrDefault(t => t.item.DriveNumber == RemoteSpecifyDriveNumber).idx;
+            .FirstOrDefault(t => t.item is DriveMenuItem dm && dm.DriveNumber == RemoteSpecifyDriveNumber).idx;
 
         if (specifyIndex < 0)
             specifyIndex = 1; // fallback: insert after Drive 0
@@ -202,7 +204,7 @@ public partial class MainViewModel
         foreach (uint driveNum in probedDrives.Where(n => n >= 1))
         {
             // Only add if not already present
-            if (RemoteDriveMenuItems.All(i => i.DriveNumber != (int)driveNum))
+            if (RemoteDriveMenuItems.OfType<DriveMenuItem>().All(i => i.DriveNumber != (int)driveNum))
             {
                 RemoteDriveMenuItems.Insert(insertAt,
                     new DriveMenuItem($"Drive _{driveNum}", (int)driveNum, OpenRemoteDriveCommand));
