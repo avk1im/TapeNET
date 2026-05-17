@@ -1146,6 +1146,14 @@ public partial class MainViewModel : ViewModelBase
 
     private void UpdateTreeFromTOC(int driveNumber)
     {
+        // Delegate to the remote helper when a remote host is active so the drive
+        //  node retains its IsRemote flag (green foreground) after any tree rebuild
+        if (IsRemoteConnected && _remoteHostSettings is not null)
+        {
+            UpdateTreeFromTOCRemote(driveNumber, _remoteHostSettings);
+            return;
+        }
+
         TreeItems.Clear();
         _currentSetView = null;
 

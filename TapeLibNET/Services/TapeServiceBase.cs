@@ -165,8 +165,10 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         finally { _operationLock.Release(); }
     }
 
-    /// <summary>True when the current drive is backed by a virtual tape backend.</summary>
-    public bool IsVirtualDrive => _drive?.Backend is VirtualTapeDriveBackend;
+    /// <summary>True when the current drive is backed by a virtual tape backend or a remote backend
+    ///  (i.e. not a local physical drive — should not be offered for auto-reopen on startup).</summary>
+    public bool IsVirtualDrive => _drive?.Backend is VirtualTapeDriveBackend
+                                                  or RemoteTapeDriveBackend;
 
     /// <summary>True when the virtual drive uses in-memory streams (no persistent files).</summary>
     public bool IsInMemoryDrive => _vmdLast?.InMemory ?? false;
@@ -307,18 +309,25 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// <param name="settings">Connection settings for the remote tape service.</param>
     /// <param name="capacityBytes">Virtual tape capacity in bytes (0 → server default).</param>
     /// <param name="mediaName">Optional media name; null/empty → anonymous in-memory drive.</param>
-    /// <param name="blockSize">Default block size in bytes (0 → drive default).</param>
-    /// <param name="caps">Drive capabilities (null → server uses its default preset).</param>
+    /// <param name="vmd">Virtual media descriptor; stored as <c>_vmdLast</c> so
+    ///  <see cref="IsInMemoryDrive"/> reports the correct value.</param>
+    /// <param name="caps">Drive capabilities (null → drive default).</param>
+    /// <param name="mediaName">Optional media label.</param>
     public Task<bool> CreateRemoteVirtualDriveAsync(
         RemoteHostSettings settings,
-        long capacityBytes = 0,
-        string? mediaName = null,
-        uint blockSize = 0,
-        VirtualTapeDriveCapabilities? caps = null)
+        VirtualMediaDescriptor? vmd,
+        VirtualTapeDriveCapabilities? caps = null,
+        string? mediaName = null)
     {
         return Task.Run(async () =>
         {
             await _operationLock.WaitAsync().ConfigureAwait(false);
+
+            long capacityBytes = vmd?.ContentCapacity ?? 0;
+            uint blockSize     = caps?.DefaultBlockSize ?? 0;
+            // ContentPath is the server-side backing filename for named drives;
+            //  null / "(in-memory)" for in-memory drives — server interprets null as in-memory.
+            string? contentPath = (vmd is null || vmd.InMemory) ? null : vmd.ContentPath;
 
             var backend = new RemoteTapeDriveBackend(settings, _loggerFactory);
             try
@@ -327,7 +336,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 // CreateTempVirtualAsync opens the virtual drive on the server
                 // and establishes the session before we wrap it in TapeDrive.
-                if (!await backend.CreateTempVirtualAsync(capacityBytes, mediaName, blockSize, caps)
+                if (!await backend.CreateTempVirtualAsync(capacityBytes, contentPath, blockSize, caps)
                         .ConfigureAwait(false))
                 {
                     LastError = backend.LastErrorMessage;
@@ -353,7 +362,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     return false;
                 }
 
-                _vmdLast = null; // no local VirtualMediaDescriptor for remote virtual drives
+                // Store the VMD so IsInMemoryDrive reflects in-memory vs named correctly.
+                _vmdLast = vmd;
                 DriveNumber = 0;
                 LogOk($"Remote virtual drive created on {settings.DisplayLabel}");
                 LogInfoSub($"Device name: {_drive.DriveDeviceName}");

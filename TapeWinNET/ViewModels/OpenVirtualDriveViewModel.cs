@@ -149,8 +149,9 @@ public record VirtualDriveOpenRequest(
 /// <summary>
 /// ViewModel for the Open Virtual Drive dialog.
 /// Supports both opening existing virtual media and creating new virtual media.
+/// Extends <see cref="VirtualDriveConfigViewModelBase"/> for the shared "create new" configuration surface.
 /// </summary>
-public class OpenVirtualDriveViewModel : ViewModelBase
+public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
 {
     #region *** Static Path Helpers ***
 
@@ -255,38 +256,16 @@ public class OpenVirtualDriveViewModel : ViewModelBase
 
     // File paths
     private string _contentFilePath = string.Empty;
-    private bool _enableInitiatorPartition;
-
-    // Block sizes
-    private BlockSizeOption _minBlockSize = BlockSizeOption.FromBytes(512);
-    private BlockSizeOption _defaultBlockSize = BlockSizeOption.FromBytes(16 * 1024);
-    private BlockSizeOption _maxBlockSize = BlockSizeOption.FromBytes(64 * 1024);
-
-    // Capacity
-    private string _contentCapacityValue = "500";
-    private CapacityUnit _contentCapacityUnit = CapacityUnit.All[2]; // MB
-    private string _initiatorCapacityValue = "16";
-    private CapacityUnit _initiatorCapacityUnit = CapacityUnit.All[2]; // MB
-
-    // Features
-    private bool _supportsSetmarks = true;
-    private bool _supportsSeqFilemarks;
-
-    // IO Speed
-    private IoRateOption _selectedIoRate = IoRateOption.Unlimited;
-    private readonly bool _isIoRateLocked;
-
-    // Preset
-    private PresetOption _selectedPreset = PresetOption.All[1]; // WithSetmarks
-
-    // Media name (for new media)
-    private string _mediaName = $"Virtual media created {DateTime.Now:yyyy-MM-dd HH:mm}";
 
     // Probe state
     private VirtualDriveProbeStatus _probeStatus = VirtualDriveProbeStatus.None;
     private VirtualDriveProbeResult? _lastProbeResult;
     private CancellationTokenSource? _probeCts;
     private Task? _probeTask;
+
+    // IO Speed
+    private IoRateOption _selectedIoRate = IoRateOption.Unlimited;
+    private readonly bool _isIoRateLocked;
 
     public OpenVirtualDriveViewModel(
         Action<VirtualDriveOpenRequest> onOpen,
@@ -315,11 +294,11 @@ public class OpenVirtualDriveViewModel : ViewModelBase
             if (currentCapabilities.HasValue)
             {
                 var caps = currentCapabilities.Value;
-                _minBlockSize = BlockSizeOption.FromBytes(caps.MinBlockSize);
+                _minBlockSize    = BlockSizeOption.FromBytes(caps.MinBlockSize);
                 _defaultBlockSize = BlockSizeOption.FromBytes(caps.DefaultBlockSize);
-                _maxBlockSize = BlockSizeOption.FromBytes(caps.MaxBlockSize);
-                _supportsSetmarks = caps.SupportsSetmarks;
-                _supportsSeqFilemarks = caps.SupportsSeqFilemarks;
+                _maxBlockSize    = BlockSizeOption.FromBytes(caps.MaxBlockSize);
+                _supportsSetmarks        = caps.SupportsSetmarks;
+                _supportsSeqFilemarks    = caps.SupportsSeqFilemarks;
                 _enableInitiatorPartition = caps.SupportsInitiatorPartition;
             }
 
@@ -347,13 +326,15 @@ public class OpenVirtualDriveViewModel : ViewModelBase
             }
 
             if (prePopulate.ContentCapacity > 0)
-                SetCapacityFromBytes(prePopulate.ContentCapacity, v => _contentCapacityValue = v, u => _contentCapacityUnit = u);
+                SetCapacityFromBytes(prePopulate.ContentCapacity,
+                    v => _contentCapacityValue = v, u => _contentCapacityUnit = u);
 
             if (prePopulate.InitiatorPath != null)
                 _enableInitiatorPartition = true;
 
             if (prePopulate.InitiatorPartitionCapacity > 0)
-                SetCapacityFromBytes(prePopulate.InitiatorPartitionCapacity, v => _initiatorCapacityValue = v, u => _initiatorCapacityUnit = u);
+                SetCapacityFromBytes(prePopulate.InitiatorPartitionCapacity,
+                    v => _initiatorCapacityValue = v, u => _initiatorCapacityUnit = u);
         }
 
         // Pre-select mode if specified (ignored in newMediaOnly / existingMediaOnly modes)
@@ -363,7 +344,6 @@ public class OpenVirtualDriveViewModel : ViewModelBase
         }
 
         BrowseContentFileCommand = new RelayCommand(BrowseContentFile);
-        ApplyPresetCommand = new RelayCommand(ApplyPreset);
         OpenCommand = new RelayCommand(ExecuteOpen, _ => CanExecute);
         CancelCommand = new RelayCommand(_ => _onCancel());
     }
@@ -473,169 +453,8 @@ public class OpenVirtualDriveViewModel : ViewModelBase
             ? "(auto-generated from content path)"
             : BuildInitiatorFilePath(ContentFilePath);
 
-    public bool EnableInitiatorPartition
-    {
-        get => _enableInitiatorPartition;
-        set
-        {
-            if (SetProperty(ref _enableInitiatorPartition, value))
-            {
-                OnPropertyChanged(nameof(IsInitiatorCapacityEnabled));
-                CommandManager.InvalidateRequerySuggested();
-            }
-        }
-    }
-
-    public bool IsInitiatorCapacityEnabled => EnableInitiatorPartition && IsCreateNewMode;
-
-    #endregion
-
-    #region Block Sizes
-
-    public ObservableCollection<BlockSizeOption> BlockSizeOptions { get; } = new(BlockSizeOption.All);
-
-    public BlockSizeOption MinBlockSize
-    {
-        get => _minBlockSize;
-        set
-        {
-            if (SetProperty(ref _minBlockSize, value))
-            {
-                // Auto-adjust: ensure min <= default <= max
-                if (DefaultBlockSize.Bytes < value.Bytes)
-                    DefaultBlockSize = value;
-                if (MaxBlockSize.Bytes < value.Bytes)
-                    MaxBlockSize = value;
-            }
-        }
-    }
-
-    public BlockSizeOption DefaultBlockSize
-    {
-        get => _defaultBlockSize;
-        set
-        {
-            if (SetProperty(ref _defaultBlockSize, value))
-            {
-                // Auto-adjust: ensure min <= default <= max
-                if (MinBlockSize.Bytes > value.Bytes)
-                    MinBlockSize = value;
-                if (MaxBlockSize.Bytes < value.Bytes)
-                    MaxBlockSize = value;
-            }
-        }
-    }
-
-    public BlockSizeOption MaxBlockSize
-    {
-        get => _maxBlockSize;
-        set
-        {
-            if (SetProperty(ref _maxBlockSize, value))
-            {
-                // Auto-adjust: ensure min <= default <= max
-                if (DefaultBlockSize.Bytes > value.Bytes)
-                    DefaultBlockSize = value;
-                if (MinBlockSize.Bytes > value.Bytes)
-                    MinBlockSize = value;
-            }
-        }
-    }
-
-    #endregion
-
-    #region Capacity
-
-    public ObservableCollection<CapacityUnit> CapacityUnits { get; } = new(CapacityUnit.All);
-
-    public string ContentCapacityValue
-    {
-        get => _contentCapacityValue;
-        set
-        {
-            if (SetProperty(ref _contentCapacityValue, value))
-            {
-                OnPropertyChanged(nameof(ContentCapacityBytes));
-                OnPropertyChanged(nameof(ContentCapacityBytesDisplay));
-                OnPropertyChanged(nameof(IsContentCapacityValid));
-                OnPropertyChanged(nameof(CanExecute));
-            }
-        }
-    }
-
-    public CapacityUnit ContentCapacityUnit
-    {
-        get => _contentCapacityUnit;
-        set
-        {
-            if (SetProperty(ref _contentCapacityUnit, value))
-            {
-                OnPropertyChanged(nameof(ContentCapacityBytes));
-                OnPropertyChanged(nameof(ContentCapacityBytesDisplay));
-            }
-        }
-    }
-
-    public long ContentCapacityBytes =>
-        long.TryParse(ContentCapacityValue, out var val) ? val * ContentCapacityUnit.Multiplier : 0;
-
-    public string ContentCapacityBytesDisplay =>
-        IsContentCapacityValid ? $"= {ContentCapacityBytes:N0} bytes" : "Invalid";
-
-    public bool IsContentCapacityValid =>
-        long.TryParse(ContentCapacityValue, out var val) && val > 0;
-
-    public string InitiatorCapacityValue
-    {
-        get => _initiatorCapacityValue;
-        set
-        {
-            if (SetProperty(ref _initiatorCapacityValue, value))
-            {
-                OnPropertyChanged(nameof(InitiatorCapacityBytes));
-                OnPropertyChanged(nameof(InitiatorCapacityBytesDisplay));
-                OnPropertyChanged(nameof(IsInitiatorCapacityValid));
-            }
-        }
-    }
-
-    public CapacityUnit InitiatorCapacityUnit
-    {
-        get => _initiatorCapacityUnit;
-        set
-        {
-            if (SetProperty(ref _initiatorCapacityUnit, value))
-            {
-                OnPropertyChanged(nameof(InitiatorCapacityBytes));
-                OnPropertyChanged(nameof(InitiatorCapacityBytesDisplay));
-            }
-        }
-    }
-
-    public long InitiatorCapacityBytes =>
-        long.TryParse(InitiatorCapacityValue, out var val) ? val * InitiatorCapacityUnit.Multiplier : 0;
-
-    public string InitiatorCapacityBytesDisplay =>
-        IsInitiatorCapacityValid ? $"= {InitiatorCapacityBytes:N0} bytes" : "Invalid";
-
-    public bool IsInitiatorCapacityValid =>
-        long.TryParse(InitiatorCapacityValue, out var val) && val > 0;
-
-    #endregion
-
-    #region Features
-
-    public bool SupportsSetmarks
-    {
-        get => _supportsSetmarks;
-        set => SetProperty(ref _supportsSetmarks, value);
-    }
-
-    public bool SupportsSeqFilemarks
-    {
-        get => _supportsSeqFilemarks;
-        set => SetProperty(ref _supportsSeqFilemarks, value);
-    }
+    /// <summary>Override: initiator capacity is only editable when creating new media.</summary>
+    public override bool IsInitiatorCapacityEnabled => EnableInitiatorPartition && IsCreateNewMode;
 
     #endregion
 
@@ -656,28 +475,6 @@ public class OpenVirtualDriveViewModel : ViewModelBase
 
     /// <summary>Whether the IO rate combo is enabled (disabled in newMediaOnly mode).</summary>
     public bool IsIoRateEnabled => !_isIoRateLocked;
-
-    #endregion
-
-    #region Presets
-
-    public ObservableCollection<PresetOption> Presets { get; } = new(PresetOption.All);
-
-    public PresetOption SelectedPreset
-    {
-        get => _selectedPreset;
-        set => SetProperty(ref _selectedPreset, value);
-    }
-
-    #endregion
-
-    #region Media Name
-
-    public string MediaName
-    {
-        get => _mediaName;
-        set => SetProperty(ref _mediaName, value);
-    }
 
     #endregion
 
@@ -725,7 +522,6 @@ public class OpenVirtualDriveViewModel : ViewModelBase
     #region Commands
 
     public ICommand BrowseContentFileCommand { get; }
-    public ICommand ApplyPresetCommand { get; }
     public ICommand OpenCommand { get; }
     public ICommand CancelCommand { get; }
 
@@ -749,7 +545,7 @@ public class OpenVirtualDriveViewModel : ViewModelBase
             ? "Existing files will be overwritten."
             : string.Empty;
 
-    public bool CanExecute =>
+    public override bool CanExecute =>
         !IsProbing &&
         (_isInMemory
             ? IsContentCapacityValid && (!EnableInitiatorPartition || IsInitiatorCapacityValid)
@@ -773,60 +569,8 @@ public class OpenVirtualDriveViewModel : ViewModelBase
             ContentFilePath = dialog.FileName;
     }
 
-    private void ApplyPreset(object? _)
-    {
-        var caps = SelectedPreset.Capabilities;
-
-        MinBlockSize = BlockSizeOption.FromBytes(caps.MinBlockSize);
-        DefaultBlockSize = BlockSizeOption.FromBytes(caps.DefaultBlockSize);
-        MaxBlockSize = BlockSizeOption.FromBytes(caps.MaxBlockSize);
-
-        SupportsSetmarks = caps.SupportsSetmarks;
-        SupportsSeqFilemarks = caps.SupportsSeqFilemarks;
-        EnableInitiatorPartition = caps.SupportsInitiatorPartition;
-
-        // Convert capacity to appropriate unit
-        SetCapacityFromBytes(SelectedPreset.ContentCapacity, v => ContentCapacityValue = v, u => ContentCapacityUnit = u);
-        SetCapacityFromBytes(SelectedPreset.InitiatorPartitionCapacity, v => InitiatorCapacityValue = v, u => InitiatorCapacityUnit = u);
-    }
-
-    private static void SetCapacityFromBytes(long bytes, Action<string> setValue, Action<CapacityUnit> setUnit)
-    {
-        if (bytes >= 1024L * 1024 * 1024 && bytes % (1024L * 1024 * 1024) == 0)
-        {
-            setValue((bytes / (1024L * 1024 * 1024)).ToString());
-            setUnit(CapacityUnit.All[3]); // GB
-        }
-        else if (bytes >= 1024 * 1024 && bytes % (1024 * 1024) == 0)
-        {
-            setValue((bytes / (1024 * 1024)).ToString());
-            setUnit(CapacityUnit.All[2]); // MB
-        }
-        else if (bytes >= 1024 && bytes % 1024 == 0)
-        {
-            setValue((bytes / 1024).ToString());
-            setUnit(CapacityUnit.All[1]); // KB
-        }
-        else
-        {
-            setValue(bytes.ToString());
-            setUnit(CapacityUnit.All[0]); // B
-        }
-    }
-
     private void ExecuteOpen(object? _)
     {
-        var capabilities = new VirtualTapeDriveCapabilities
-        {
-            MinBlockSize = MinBlockSize.Bytes,
-            DefaultBlockSize = DefaultBlockSize.Bytes,
-            MaxBlockSize = MaxBlockSize.Bytes,
-            SupportsSetmarks = SupportsSetmarks,
-            SupportsSeqFilemarks = SupportsSeqFilemarks,
-            SupportsInitiatorPartition = EnableInitiatorPartition,
-            SupportsCompression = false,
-        };
-
         // Use computed initiator path from naming convention
         //  For in-memory: use a placeholder path to signal initiator partition presence
         string? initiatorPath = EnableInitiatorPartition
@@ -834,7 +578,7 @@ public class OpenVirtualDriveViewModel : ViewModelBase
             : null;
 
         var request = new VirtualDriveOpenRequest(
-            Capabilities: capabilities,
+            Capabilities: BuildCapabilities(),
             Media: new VirtualMediaDescriptor(
                 _isInMemory ? "(in-memory)" : ContentFilePath,
                 ContentCapacityBytes,

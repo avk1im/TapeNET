@@ -188,10 +188,11 @@
                     <StackPanel Margin="8">
                         <CheckBox Content="Include incremental chain"
                                   IsChecked="{Binding Incremental}"
-                                  Margin="0,0,0,4"/>
-                        <CheckBox Content="This volume only"
-                                  IsChecked="{Binding ThisVolumeOnly}"
-                                  IsEnabled="{Binding IsThisVolumeOnlyEnabled}"
+                                  Margin="0,0,0,4"
+                                  ToolTip="Process files from all backup sets of the incremental chain"/>
+                            <CheckBox Content="This volume only"
+                                  IsChecked="{Binding NoMultivolume}"
+                                  IsEnabled="{Binding IsNoMultivolumeEnabled}"
                                   Margin="0,4,0,4"
                                   ToolTip="Confine operation to backup sets on the current volume"/>
                         <CheckBox Content="Uncheck processed files"
@@ -218,10 +219,6 @@
                         <CheckBox Content="Skip all errors"
                                 IsChecked="{Binding SkipAllErrors}"
                                 ToolTip="Silently skip all file errors without prompting (unattended mode)"
-                                Margin="0,4,0,4"/>
-                        <CheckBox Content="No multivolume"
-                                IsChecked="{Binding NoMultivolume}"
-                                ToolTip="Stop the operation when the current volume is exhausted instead of continuing to another volume"
                                 Margin="0,4,0,0"/>
                         </StackPanel>
                 </GroupBox>

@@ -6,6 +6,7 @@ using System.Windows.Input;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using TapeLibNET.Remote;
+using TapeLibNET.Virtual;
 using TapeWinNET.Models;
 using TapeWinNET.Utils;
 
@@ -268,22 +269,62 @@ public partial class MainViewModel
 
     // ── Create remote virtual drive ───────────────────────────────────────────
 
-    // Core helper — mirrors OpenVirtualDriveCoreAsync for the remote virtual path
-    private Task<bool> CreateRemoteVirtualDriveCoreAsync(
-        RemoteHostSettings settings, long capacityBytes, string? mediaName) =>
-        RunBusyAsync($"Creating remote virtual drive on {settings.DisplayLabel}...",
-            () => _tapeService.CreateRemoteVirtualDriveAsync(settings, capacityBytes, mediaName));
-
-    private Task CreateRemoteVirtualDriveAsync()
+    private async Task CreateRemoteVirtualDriveAsync()
     {
-        // TODO (Stage 4): implement a dedicated Create Remote Virtual Drive dialog
-        //  (CreateRemoteVirtualDriveWindow / CreateRemoteVirtualDriveViewModel) that
-        //  collects capacity, name, block size, and capabilities, then calls
-        //  CreateRemoteVirtualDriveCoreAsync(settings, ...).
-        MessageBox.Show(
-            "Create Remote Virtual Drive will be available in a future release.",
-            "Not Yet Implemented", MessageBoxButton.OK, MessageBoxImage.Information);
-        return Task.CompletedTask;
+        if (_remoteHostSettings is null)
+            return;
+
+        var settings = _remoteHostSettings;
+
+        // Show dialog on the UI thread (AsyncRelayCommand already runs there)
+        var viewModel = new CreateRemoteVirtualDriveViewModel(settings);
+        var window = new CreateRemoteVirtualDriveWindow(viewModel)
+        {
+            Owner = Application.Current.MainWindow
+        };
+
+        if (window.ShowDialog() != true || viewModel.Result is null)
+            return;
+
+        var request = viewModel.Result;
+
+        if (!await RunBusyAsync($"Creating remote virtual drive on {settings.DisplayLabel}...",
+                () => _tapeService.CreateRemoteVirtualDriveAsync(settings, request.Media, request.Capabilities, request.MediaName)))
+        {
+            MessageBox.Show(
+                $"Failed to create remote virtual drive on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
+                "Create Remote Virtual Drive", MessageBoxButton.OK, MessageBoxImage.Error);
+            UpdateTreeForRemoteDriveOnly(0, settings);
+            return;
+        }
+
+        if (!await LoadMediaWithUIAsync())
+        {
+            UpdateTreeForRemoteDriveOnly(0, settings);
+            NotifyIoSpeedChanged();
+            return;
+        }
+
+        // Create the initial TOC on freshly created remote virtual media
+        //  (mirrors the local "Create new" path in MainViewModel)
+        string tocLabel = string.IsNullOrWhiteSpace(request.MediaName)
+            ? "Remote virtual tape"
+            : request.MediaName;
+        var tocCreated = await RunBusyAsync("Creating initial TOC...",
+            () => _tapeService.CreateInitialTOCAsync(tocLabel));
+        if (!tocCreated)
+            LogWarn("Could not create initial TOC on remote virtual drive");
+
+        if (!await ReadTOCWithUIAsync(offerFileImportOnFailure: false))
+        {
+            UpdateTreeForRemoteDriveOnly(0, settings);
+            NotifyIoSpeedChanged();
+            return;
+        }
+
+        UpdateTreeFromTOCRemote(0, settings);
+        SelectMostRecentSet();
+        NotifyIoSpeedChanged();
     }
 
     // ── Remote tree helpers ───────────────────────────────────────────────────
@@ -330,7 +371,7 @@ public partial class MainViewModel
             ? System.IO.Path.GetFileName(_tapeService.TOCFilePath ?? "file")
             : null;
         var tapeItem = TapeTreeItemViewModel.CreateTapeItem(
-            toc, driveItem, tocFileName, isInMemory: false);
+            toc, driveItem, tocFileName, isInMemory: _tapeService.IsInMemoryDrive);
         driveItem.Children.Add(tapeItem);
 
         // Backup sets (newest-first)

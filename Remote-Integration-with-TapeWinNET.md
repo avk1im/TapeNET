@@ -1,6 +1,6 @@
 # Remote Tape Drive Integration — TapeWinNET Design Document
 
-> **Status:** Sections 1–3 fully implemented — all WPF integration complete; Stage 5 (Create Remote Virtual Drive dialog) and Stage 6 (error-handling polish) pending  
+> **Status:** Stages 0–3 and Stage 5 fully implemented; Stage 6 (error-handling polish) pending  
 > **Scope:** `TapeLibNET` (gRPC client backend), `TapeServiceNET` (gRPC server), `TapeWinNET` (WPF GUI)  
 > **Branch:** `dev`
 
@@ -568,7 +568,7 @@ If implemented, add an `AppSettings.RemoteVirtualPathMru` dictionary (keyed by
 
 ---
 
-### 2.5 Create Remote Virtual Drive Dialog *(dialog UI deferred — command scaffolded)*
+### 2.5 Create Remote Virtual Drive Dialog ✅ IMPLEMENTED
 
 The primary dialog for opening any remote virtual tape drive.
 `CreateTempVirtualAsync` backend creates and owns the backing store entirely on the
@@ -612,12 +612,64 @@ the full `CreateTempVirtualRequest` parameter set:
 - Choosing a preset auto-fills Block size; the user can still override it individually.
 - This is the recommended first action after a successful connection.
 
-> **Implementation note (as built):** `CreateRemoteVirtualDriveCommand` and its backing
-> `CreateRemoteVirtualDriveAsync()` method are scaffolded in `MainViewModel.Remote.cs`
-> and `TapeServiceBase` accepts `CreateRemoteVirtualDriveAsync(RemoteHostSettings, ...)`.
-> The dedicated `CreateRemoteVirtualDriveWindow` / `CreateRemoteVirtualDriveViewModel`
-> (Stage 5) are not yet built; a temporary hard-coded default call is in place as a
-> placeholder. Full dialog implementation is tracked in Stage 5.
+> **Implementation notes (as built):**
+>
+> - Fully implemented in Stage 5. The dialog layout deviates from the original sketch
+>   in two important ways, described below.
+>
+> - **`Named:` field is the content-partition backing filename — key design decision:**
+>   The original sketch used the `Named:` text box for a generic media name that would
+>   also be synthesised into the backing filename. In the final design, `Named:` is
+>   bound to `ContentFilePath` (the actual server-side temp-file base name passed to
+>   `CreateTempVirtualAsync`). A separate **Media description** field (like the local
+>   `Open Virtual Drive` dialog) captures the TOC label, which becomes the initial
+>   tape name visible in the tree and backup dialogs. This separation prevents the
+>   TOC label from being mangled by filesystem-safe escaping of the filename.
+>
+> - **Shared ViewModel base `VirtualDriveConfigViewModelBase` — key design decision:**
+>   Rather than duplicating the ~80 % of state that `CreateRemoteVirtualDriveViewModel`
+>   shares with `OpenVirtualDriveViewModel` (presets, capacity controls, initiator
+>   partition, setmark/filemark feature flags, block size options, `ApplyPreset`,
+>   `BuildCapabilities`), a common abstract base class
+>   `VirtualDriveConfigViewModelBase` was introduced in
+>   `ViewModels/VirtualDriveConfigViewModelBase.cs`. Both concrete ViewModels inherit
+>   from it. `OpenVirtualDriveViewModel` retains its local-only additions
+>   (`ContentFilePath` probe, `IsCreateNewMode`, `IsOpenExistingMode`, `IsInMemory`
+>   toggle) as overrides; `CreateRemoteVirtualDriveViewModel` adds `IsNamed` /
+>   `IsInMemory` radio-button state, `ContentFilePath` (file base name), `WarningLevel`,
+>   `WarningMessage`, and the `Result` (`VirtualDriveOpenRequest`) property consumed
+>   by `MainViewModel.Remote.cs`.
+>
+> - **`VirtualDriveOpenRequest` / `VirtualMediaDescriptor` pipeline:** The dialog
+>   result is a `VirtualDriveOpenRequest` carrying a `VirtualMediaDescriptor` (same
+>   record used by local virtual drive opens). `TapeServiceBase.CreateRemoteVirtualDriveAsync`
+>   was updated to accept `VirtualMediaDescriptor?` and `string? mediaName` so both
+>   the backing-file path and the TOC label flow through a single well-typed object.
+>   `_vmdLast` is stored on success, making `IsInMemoryDrive` reflect remote drives
+>   correctly (fixing a prior bug where remote drives were wrongly reported as physical).
+>
+> - **Initial TOC creation on the remote create path:** After `CreateTempVirtualAsync`
+>   succeeds, `MainViewModel.Remote.cs` calls `CreateInitialTOCAsync(request.MediaName)`
+>   and then `ReadTOCWithUIAsync(offerFileImportOnFailure: false)` — mirroring the
+>   local create-new path in `MainViewModel.OpenVirtualDriveCoreAsync`. The
+>   `offerFileImportOnFailure: false` flag suppresses the file-import recovery prompt
+>   that would be confusing for freshly-created remote media.
+>
+> - **`TempVirtualTapeDriveBackend` error-state delegation fix:** When the server
+>   restores the newly created initial TOC on a file-backed named temp drive, the
+>   navigator calls `SpaceSetmarks(-1)` to detect blank media. The wrapper originally
+>   returned `LastError = 0` (its own unset `m_errorOwn`) instead of forwarding the
+>   inner backend's `ERROR_BEGINNING_OF_MEDIA`, causing the client navigator to
+>   misinterpret `WentOK = true` and overflow `CurrentContentSet`. Fixed by overriding
+>   `LastError`, `LastErrorMessage`, `WentOK`, and `WentBad` in
+>   `TempVirtualTapeDriveBackend` to delegate to `_inner`.
+>
+> - **`IsVirtualDrive` false-positive for remote drives fix:** `TapeServiceBase.
+>   IsVirtualDrive` previously checked only for `VirtualTapeDriveBackend`. A remote
+>   session's `RemoteTapeDriveBackend` was therefore classified as non-virtual, causing
+>   `SaveSettings` to persist the remote drive number (always 0) as a physical drive
+>   and offer to reopen it as physical drive 0 on next startup. Fixed by extending the
+>   `is` pattern to also match `RemoteTapeDriveBackend`.
 
 ---
 
@@ -878,7 +930,7 @@ public bool    LastRemoteUseLocalHost { get; set; }
 
 ---
 
-### 3.5 New View Models ✅ IMPLEMENTED (partial — `CreateRemoteVirtualDriveViewModel` deferred to Stage 5)
+### 3.5 New View Models ✅ IMPLEMENTED
 
 | Class | File | Purpose |
 |---|---|---|
@@ -895,13 +947,15 @@ that the window code-behind reads on success.
 (`PresetOption`, `BlockSizeOption`, `CapacityUnit`) from `OpenVirtualDriveViewModel` so
 no new option types are needed.
 
-> **Implementation note:** `ConnectToRemoteHostViewModel` implemented as designed.
->  `CreateRemoteVirtualDriveViewModel` and `OpenRemoteVirtualDriveViewModel` are
->  deferred (Stage 5 and Stage 4 respectively).
+> **Implementation notes (as built):** `ConnectToRemoteHostViewModel` implemented as
+>  designed. `CreateRemoteVirtualDriveViewModel` implemented in Stage 5 — inherits from
+>  `VirtualDriveConfigViewModelBase` (see §2.5 notes); exposes `IsNamed`, `IsInMemory`,
+>  `ContentFilePath`, `MediaName`, `WarningLevel`, `WarningMessage`, and `Result`.
+>  `OpenRemoteVirtualDriveViewModel` remains deferred (Stage 4).
 
 ---
 
-### 3.6 New Windows ✅ IMPLEMENTED (partial — `CreateRemoteVirtualDriveWindow` and `OpenRemoteVirtualDriveWindow` deferred)
+### 3.6 New Windows ✅ IMPLEMENTED
 
 | Window | XAML file | Notes |
 |---|---|---|
@@ -909,8 +963,15 @@ no new option types are needed.
 | `CreateRemoteVirtualDriveWindow` | `CreateRemoteVirtualDriveWindow.xaml` | Full-options form: name, preset, block size, capacity (§2.5) |
 | `OpenRemoteVirtualDriveWindow` | `OpenRemoteVirtualDriveWindow.xaml` | *(deferred — §2.4)* Path-based open; reuses `BlockSizeOption`, `CapacityUnit`, `PresetOption` |
 
-> **Implementation note:** `ConnectToRemoteHostWindow` implemented as designed.
->  The other two windows are deferred; placeholders exist in the command handlers.
+> **Implementation notes (as built):** `ConnectToRemoteHostWindow` implemented as
+>  designed. `CreateRemoteVirtualDriveWindow` implemented in Stage 5 — layout closely
+>  mirrors `OpenVirtualDriveWindow` with the following additions: read-only host info
+>  header, `Named` / `In-memory` radio buttons, `ContentFilePath` text box (disabled
+>  when `In-memory` is selected), a separate `MediaName` description field, and an
+>  in-memory warning panel reusing `WarningPanelStyle`. All capacity, preset, initiator
+>  partition, and block-size controls are bound to inherited
+>  `VirtualDriveConfigViewModelBase` properties. `OpenRemoteVirtualDriveWindow` remains
+>  deferred (Stage 4).
 
 ---
 
@@ -1140,29 +1201,53 @@ The plan is staged so that each milestone is independently testable.
 
 ---
 
-### Stage 5 — Create Remote Virtual Drive
+### Stage 5 — Create Remote Virtual Drive ✅ IMPLEMENTED
 
 > **Projects:** `TapeWinNET`
 
 **Steps:**
 
-5.1. Create `CreateRemoteVirtualDriveViewModel` with `Name`, `SelectedPreset`,
-     `SelectedBlockSize`, `SelectedCapacity`, `SelectedCapacityUnit`; reuse
-     `PresetOption`, `BlockSizeOption`, `CapacityUnit`, etc. from `OpenVirtualDriveViewModel`.
-     Make sure to maximally mirror the local `OpenVirtualDriveViewModel` UX and implementation.
+5.1. ✅ Create `VirtualDriveConfigViewModelBase` abstract base class in
+     `ViewModels/VirtualDriveConfigViewModelBase.cs`; move shared preset, capacity,
+     initiator partition, features, block-size, and `MediaName` state from
+     `OpenVirtualDriveViewModel` into it; have both concrete ViewModels inherit from it.
+     *As built:* `OpenVirtualDriveViewModel` retains `IsInitiatorCapacityEnabled` as an
+     override that additionally gates on `IsCreateNewMode`. `BuildCapabilities()` and
+     `ApplyPreset()` are implemented once on the base class.
 
-5.2. Create `CreateRemoteVirtualDriveWindow.xaml`; layout mirrors the local
-     `OpenVirtualDriveWindow` but adds a `Named` field and a read-only host label;
-     hint text explains the temporary behavior.
+5.2. ✅ Create `CreateRemoteVirtualDriveViewModel` inheriting from
+     `VirtualDriveConfigViewModelBase`; add `IsNamed`, `IsInMemory`,
+     `IsNameFieldEnabled`, `IsContentFilePathEnabled`, `ContentFilePath` (backing
+     filename), `MediaName` (TOC description), `WarningLevel`, `WarningMessage`, and
+     `Result` (`VirtualDriveOpenRequest`).
+     *As built:* `ContentFilePath` and `MediaName` are explicitly separated — the
+     former is the server-side file base name; the latter is the TOC label (see §2.5
+     key design decision).
 
-5.3. Implement `CreateRemoteVirtualDriveCommand` in `MainViewModel.Remote.cs`:
-     open the dialog, map VM properties to `CreateTempVirtualAsync` parameters
-     (`capacityBytes`, `name`, `blockSize`, `caps` from preset), call
-     `RemoteTapeDriveBackend.CreateTempVirtualAsync`.
+5.3. ✅ Create `CreateRemoteVirtualDriveWindow.xaml` and code-behind; layout mirrors
+     `OpenVirtualDriveWindow` with host info header, `Named` / `In-memory` radio
+     buttons, separate description field, and in-memory warning panel.
 
-5.4. On success, pass the opened backend to `TapeService` (same post-open path as
-     local virtual drives); set `IsRemote = true`, `RemoteHost` on the new
-     `TapeTreeItemViewModel`.
+5.4. ✅ Implement `CreateRemoteVirtualDriveCommand` in `MainViewModel.Remote.cs`:
+     open the dialog, build `VirtualDriveOpenRequest` from VM `Result`, call
+     `TapeServiceBase.CreateRemoteVirtualDriveAsync(settings, vmd, caps, mediaName)`.
+     *As built:* `TapeServiceBase.CreateRemoteVirtualDriveAsync` updated to accept
+     `VirtualMediaDescriptor?` and stores it in `_vmdLast`; derives `contentPath` from
+     `vmd?.ContentPath` so the named-drive backing filename flows through correctly.
+
+5.5. ✅ After `CreateRemoteVirtualDriveAsync` succeeds: call
+     `CreateInitialTOCAsync(request.MediaName)` then
+     `ReadTOCWithUIAsync(offerFileImportOnFailure: false)`; set `IsRemote = true` and
+     `RemoteHost` on the new `TapeTreeItemViewModel`; update tree and content pane.
+
+5.6. ✅ Fix `TempVirtualTapeDriveBackend` error-state delegation: override `LastError`,
+     `LastErrorMessage`, `WentOK`, `WentBad` to forward to `_inner`, so the gRPC
+     `CaptureError()` call sees `ERROR_BEGINNING_OF_MEDIA` from the inner backend
+     rather than the wrapper's own unset `m_errorOwn = 0`.
+
+5.7. ✅ Fix `IsVirtualDrive` in `TapeServiceBase` to also match `RemoteTapeDriveBackend`,
+     preventing remote drive numbers from being persisted as physical drives in
+     `AppSettings` and offered for reopen on next startup.
 
 ---
 

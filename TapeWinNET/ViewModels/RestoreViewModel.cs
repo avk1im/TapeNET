@@ -55,7 +55,7 @@ public class RestoreViewModel : ViewModelBase
 
     private RestoreMode _mode;
     private bool _incremental;
-    private bool _thisVolumeOnly;
+    private bool _noMultivolume;
     private bool _restoreToOriginal = true;
     private bool _recurseSubdirectories;
     private bool _uncheckProcessedFiles = true;
@@ -96,7 +96,7 @@ public class RestoreViewModel : ViewModelBase
         // Auto-detect incremental: check if any selected set is incremental
         _incremental = preSelectedSets.Any(s => s.IsIncremental);
 
-        _thisVolumeOnly = suggestNoMultivolume;
+        _noMultivolume = suggestNoMultivolume;
 
         // Initialize aggregate summaries
         UpdateItemsGroupHeader();
@@ -210,12 +210,12 @@ public class RestoreViewModel : ViewModelBase
     ///  When checked, unchecks all sets not on the current volume. Only enabled
     ///  when the selection spans multiple volumes.
     /// </summary>
-    public bool ThisVolumeOnly
+    public bool NoMultivolume
     {
-        get => _thisVolumeOnly;
+        get => _noMultivolume;
         set
         {
-            if (SetProperty(ref _thisVolumeOnly, value) && value)
+            if (SetProperty(ref _noMultivolume, value) && value)
             {
                 // Uncheck all sets that aren't on the current volume
                 foreach (var item in BackupSets)
@@ -231,7 +231,7 @@ public class RestoreViewModel : ViewModelBase
     /// <summary>
     /// "This volume only" is enabled only when multivolume is detected.
     /// </summary>
-    public bool IsThisVolumeOnlyEnabled => _isMultivolume;
+    public bool IsNoMultivolumeEnabled => _isMultivolume;
 
     /// <summary>Whether to restore files to their original locations.</summary>
     public bool RestoreToOriginal
@@ -386,10 +386,10 @@ public class RestoreViewModel : ViewModelBase
                 item.IsCheckedForRestore = check;
 
             // If checking all includes non-current-volume sets, uncheck "This volume only"
-            if (check && _thisVolumeOnly && BackupSets.Any(b => !b.IsOnCurrentVolume))
+            if (check && _noMultivolume && BackupSets.Any(b => !b.IsOnCurrentVolume))
             {
-                _thisVolumeOnly = false;
-                OnPropertyChanged(nameof(ThisVolumeOnly));
+                _noMultivolume = false;
+                OnPropertyChanged(nameof(NoMultivolume));
             }
 
             NotifySelectionChanged();
@@ -408,10 +408,10 @@ public class RestoreViewModel : ViewModelBase
     {
         // If a non-current-volume set is (re-)checked, uncheck "This volume only"
         if (changedItem is { IsOnCurrentVolume: false, IsCheckedForRestore: not false }
-            && _thisVolumeOnly)
+            && _noMultivolume)
         {
-            _thisVolumeOnly = false;
-            OnPropertyChanged(nameof(ThisVolumeOnly));
+            _noMultivolume = false;
+            OnPropertyChanged(nameof(NoMultivolume));
         }
 
         NotifySelectionChanged();
@@ -464,7 +464,7 @@ public class RestoreViewModel : ViewModelBase
             HandleExisting: _selectedHandleExisting.Value,
             UncheckProcessedFiles: _uncheckProcessedFiles,
             SkipAllErrors: _skipAllErrors,
-            NoMultivolume: _thisVolumeOnly);
+            NoMultivolume: _noMultivolume);
 
         _onStart(request);
     }

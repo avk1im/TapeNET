@@ -21,6 +21,16 @@ internal sealed class TempVirtualTapeDriveBackend(
     private readonly string _contentFilePath = contentFilePath;
     private readonly string? _initiatorFilePath = initiatorFilePath;
 
+    // ── Error state: delegate to inner so CaptureError() on the wrapper sees ─
+    //    the correct error code after any inner backend operation.           ──
+    //    Without this, CaptureError(wrapper) always returns 0 because the   ──
+    //    wrapper's own m_errorOwn is never set.                              ──
+
+    public override uint LastError => _inner.LastError;
+    public override string LastErrorMessage => _inner.LastErrorMessage;
+    public override bool WentOK => _inner.WentOK;
+    public override bool WentBad => _inner.WentBad;
+
     // ── Forward all backend members to the inner backend ────────────────────
 
     public override bool IsOpen => _inner.IsOpen;

@@ -14,11 +14,12 @@ namespace TapeLibNET;
 ///  while providing error handling, media lifecycle, and direct read/write access.
 /// <para>Lifecycle: <see cref="ReopenDrive"/> → <see cref="ReloadMedia"/> → <see cref="PrepareMedia"/> → I/O → <see cref="Dispose"/>.</para>
 /// </summary>
-public class TapeDrive : ErrorManageableBase, IDisposable
+public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
+    : ErrorManageableBase(loggerFactory.CreateLogger<TapeDrive>()), IDisposable
 {
     #region *** Private Fields ***
 
-    private readonly TapeDriveBackend m_backend;
+    private readonly TapeDriveBackend m_backend = backend;
     private DriveCapabilities? m_driveParams = null;
     private MediaParameters? m_mediaParams = null;
 
@@ -36,14 +37,7 @@ public class TapeDrive : ErrorManageableBase, IDisposable
     private const int c_gapFileLength = 64;
 
     #endregion
-
     #region *** Constructors ***
-
-    public TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
-        : base(loggerFactory.CreateLogger<TapeDrive>())
-    {
-        m_backend = backend;
-    }
 
     public TapeDrive(TapeDriveBackend backend)
         : this(backend.LoggerFactory, backend)
