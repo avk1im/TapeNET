@@ -73,7 +73,7 @@ public partial class MainViewModel
     private void InitializeRemoteCommands()
     {
         ConnectToRemoteHostCommand       = new AsyncRelayCommand(ConnectToRemoteHostAsync,          () => !IsBusy);
-        DisconnectRemoteHostCommand      = new RelayCommand(_ => DisconnectRemoteHost(),             _ => IsRemoteConnected);
+        DisconnectRemoteHostCommand      = new AsyncRelayCommand(_ => DisconnectRemoteHostAsync(),   _ => IsRemoteConnected);
         OpenRemoteDriveCommand           = new AsyncRelayCommand(OpenRemoteDriveAsync,              _ => !IsBusy && IsRemoteConnected);
         CreateRemoteVirtualDriveCommand  = new AsyncRelayCommand(CreateRemoteVirtualDriveAsync,     () => !IsBusy && IsRemoteConnected);
     }
@@ -394,27 +394,28 @@ public partial class MainViewModel
     /// Disconnects from the remote host: closes any open remote drive, disposes the
     /// backend/channel, clears session state, and notifies all UI bindings.
     /// </summary>
-    internal void DisconnectRemoteHost()
+    internal async Task DisconnectRemoteHostAsync()
     {
         if (_remoteHostSettings == null)
             return;
 
         var label = _remoteHostSettings.DisplayLabel;
 
-        // If a remote drive is currently open in TapeService, close it.
-        // The RemoteTapeDriveBackend.CloseAsync is called by TapeDrive.Dispose via
-        //  TapeServiceBase when we call CloseDrive. We close synchronously here since
-        //  DisconnectRemoteHost is called from both sync and async contexts.
-        // Note: calling _tapeService.CloseDriveAsync() would be cleaner but is not
-        //  available as a public method; Dispose of the drive is handled internally.
-        // For now, we just clear the service state — the backend channel will be
-        //  closed by the gRPC channel's GC/finalizer if the drive was open.
-        // TODO (Stage 6): add a proper CloseDriveAsync() to TapeServiceBase and await it here.
+        // Close the drive (and its RemoteTapeDriveBackend / gRPC channel) gracefully.
+        // TapeServiceBase.CloseAsync acquires the operation lock so it is safe to await
+        //  from the UI thread via DisconnectRemoteHostCommand.
+        await _tapeService.CloseAsync().ConfigureAwait(true); // back to UI thread
 
         _remoteHostSettings   = null;
         _remoteServerVersion  = null;
         _remoteServerHostName = null;
         RemoteDriveMenuItems.Clear();
+
+        TreeItems.Clear();
+        _tocView = null;
+        _currentSetView = null;
+        WindowTitle = "TapeWin";
+        OnPropertyChanged(nameof(HasMultipleSets));
 
         OnPropertyChanged(nameof(IsRemoteConnected));
         OnPropertyChanged(nameof(RemoteMenuHeader));
@@ -423,6 +424,9 @@ public partial class MainViewModel
 
         LogInfo($"Disconnected from remote host {label}");
     }
+
+    /// <summary>Synchronous wrapper used by the relay command (fire-and-forget with logging).</summary>
+    internal void DisconnectRemoteHost() => _ = DisconnectRemoteHostAsync();
 
     // ── AppSettings persistence ───────────────────────────────────────────────
 

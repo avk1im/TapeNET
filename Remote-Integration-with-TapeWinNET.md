@@ -1251,7 +1251,7 @@ The plan is staged so that each milestone is independently testable.
 
 ---
 
-### Stage 6 — Error Handling and Polish
+### Stage 6 — Error Handling, Tests, and Polish
 
 > **Projects:** `TapeWinNET`, `TapeLibNET`
 

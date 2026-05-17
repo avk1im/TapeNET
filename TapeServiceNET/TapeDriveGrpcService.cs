@@ -542,6 +542,56 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
     }
 
     /// <summary>
+    /// Replaces the current session's virtual tape with a new file-backed tape without
+    ///  destroying the session. Used by multi-volume sequences: the host mounts the next
+    ///  tape volume by calling this instead of Close+OpenVirtual, preserving the session ID.
+    /// <para>
+    ///  The old backend is closed and disposed; a new <see cref="VirtualTapeDriveBackend"/>
+    ///  is created from <paramref name="request"/>.FileConfig and opened on drive 0.
+    ///  The session's backend entry is replaced atomically.
+    /// </para>
+    /// </summary>
+    public override async Task<OperationResponse> InsertMedia(
+        InsertMediaRequest request, ServerCallContext context)
+    {
+        using var scope = GetScope(context);
+        var oldBackend = scope.Backend;
+
+        if (request.FileConfig == null || string.IsNullOrEmpty(request.FileConfig.ContentFilePath))
+            return new OperationResponse
+            {
+                Success = false,
+                Error   = new ErrorInfo { ErrorMessage = "InsertMedia requires a non-empty file_config.content_file_path" },
+            };
+
+        logger.LogInformation("InsertMedia: swapping to '{Path}'", request.FileConfig.ContentFilePath);
+
+        // Close the current tape (flush, rewind) but keep the session alive.
+        oldBackend.Close();
+
+        // Build and open the replacement backend.
+        var newBackend = CreateFileBackend(request.FileConfig);
+        bool success = newBackend.Open(0);
+
+        if (!success)
+        {
+            var err = new ErrorInfo { ErrorCode = newBackend.LastError, ErrorMessage = newBackend.LastErrorMessage };
+            newBackend.Dispose();
+            // Reopen the old backend so the session is still usable (best-effort).
+            oldBackend.Open(0);
+            return new OperationResponse { Success = false, Error = err };
+        }
+
+        // Swap the session's backend: replace in the registry and dispose old.
+        var id = context.RequestHeaders.GetValue(TapeSessionConstants.SessionIdHeader)!;
+        registry.Replace(id, newBackend);
+        oldBackend.Dispose();
+
+        await Task.CompletedTask; // satisfy async signature
+        return MakeResponse(newBackend, true);
+    }
+
+    /// <summary>
     /// Returns server version, protocol level and OS host name.
     /// Sessionless — no session ID header required. Safe to call unauthenticated.
     /// </summary>

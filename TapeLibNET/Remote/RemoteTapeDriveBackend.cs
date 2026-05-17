@@ -1,3 +1,5 @@
+using System.IO;
+
 using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Net.Client;
@@ -299,6 +301,45 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
             m_logger.LogWarning(ex, "GetServerInfo failed for {Address}", RemoteAddress);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Asks the server to swap the session's current virtual tape for a new file-backed tape.
+    /// Used by multi-volume host callbacks to mount the next volume without destroying the session.
+    /// </summary>
+    /// <param name="contentFilePath">Server-side path to the new tape file.</param>
+    /// <param name="contentCapacity">Tape capacity in bytes (0 → keep existing file size).</param>
+    /// <param name="initiatorFilePath">Optional initiator partition file path; null if not needed.</param>
+    /// <param name="caps">Drive capabilities to use; null → server default.</param>
+    /// <param name="mediaMode">
+    ///  <see cref="FileMode"/> for the new file (Open=3, Create=2, OpenOrCreate=4).
+    ///  Defaults to <see cref="FileMode.OpenOrCreate"/>.
+    /// </param>
+    /// <param name="ct">Optional cancellation token.</param>
+    public async Task<bool> InsertMediaAsync(
+        string contentFilePath,
+        long   contentCapacity   = 0,
+        string? initiatorFilePath = null,
+        long   initiatorCapacity  = 0,
+        VirtualCapabilities? caps = null,
+        FileMode mediaMode = FileMode.OpenOrCreate,
+        CancellationToken ct = default)
+    {
+        var request = new InsertMediaRequest
+        {
+            FileConfig = new VirtualFileConfig
+            {
+                ContentFilePath   = contentFilePath,
+                ContentCapacity   = contentCapacity,
+                InitiatorFilePath = initiatorFilePath ?? string.Empty,
+                InitiatorCapacity = initiatorCapacity,
+                MediaMode         = (int)mediaMode,
+                Capabilities      = caps,
+            },
+        };
+
+        var response = await _client.InsertMediaAsync(request, WithSession(ct));
+        return Sync(response);
     }
 
     #endregion

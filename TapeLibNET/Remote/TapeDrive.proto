@@ -70,6 +70,12 @@ service TapeDriveService {
   // Named drives are file-backed in the server's temp folder and are deleted on Close.
   rpc CreateTempVirtual(CreateTempVirtualRequest) returns (OperationResponse);
 
+  // --- Media insertion (virtual drives) ---
+  // Replaces the current session's virtual media with a new file-backed tape.
+  // Used by multi-volume backup/restore sequences: the host calls this in its
+  // volume-swap callback to mount the next tape without destroying the session.
+  rpc InsertMedia(InsertMediaRequest)           returns (OperationResponse);
+
   // --- Server info (sessionless) ---
   // Returns server version, protocol level and OS host name. Unauthenticated.
   // Call before any Open* to confirm the service is alive and detect version mismatches.
@@ -238,6 +244,13 @@ message CreateTempVirtualRequest {
   string              name           = 2; // optional media name; empty = in-memory drive
   uint32              block_size     = 3; // default block size (0 → drive default)
   VirtualCapabilities caps           = 4; // drive capabilities (null → WithFilemarksOnlyLargeBlocks)
+}
+
+// Swaps the session's current virtual tape for a new file-backed tape.
+// On success the session behaves as if OpenVirtual(file_config) was called:
+//  the new tape is rewound and ready to use.
+message InsertMediaRequest {
+  VirtualFileConfig file_config = 1; // new tape file; must have content_file_path set
 }
 
 // Returned by GetServerInfo. All fields are informational — no session required.

@@ -1,5 +1,7 @@
 ﻿using System.IO;
 
+using Grpc.Core;
+
 using Microsoft.Extensions.Logging;
 
 using Windows.Win32.System.SystemServices; // Helpers.BytesToStringLong
@@ -282,6 +284,14 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _host.OnServiceStateChanged(ServiceStateChange.DriveOpened);
                 return true;
             }
+            catch (RpcException rpc)
+            {
+                LastError = FormatRpcError(rpc);
+                LogErr($"gRPC error opening remote drive: {LastError}");
+                _drive?.Dispose();
+                _drive = null;
+                return false;
+            }
             catch (Exception ex)
             {
                 LastError = ex.Message;
@@ -298,7 +308,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     }
 
     /// <summary>
-    /// Creates a temporary remote virtual tape drive and opens it as the active drive.
+    /// Creates a temporary remote virtual tape drive
     /// Creates a <see cref="RemoteTapeDriveBackend"/> from <paramref name="settings"/>,
     ///  calls <c>CreateTempVirtualAsync</c> to create and open the virtual drive on the server,
     ///  then wraps it in a <see cref="TapeDrive"/> and calls <c>ReopenDrive(0)</c> to read
@@ -370,6 +380,15 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _host.OnServiceStateChanged(ServiceStateChange.DriveOpened);
                 return true;
             }
+            catch (RpcException rpc)
+            {
+                LastError = FormatRpcError(rpc);
+                LogErr($"gRPC error creating remote virtual drive: {LastError}");
+                _drive?.Dispose();
+                if (_drive is null) backend.Dispose(); // dispose backend if not yet handed to _drive
+                _drive = null;
+                return false;
+            }
             catch (Exception ex)
             {
                 LastError = ex.Message;
@@ -385,6 +404,206 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             }
         });
     }
+
+    #endregion
+
+    #region Drive lifecycle: open remote virtual file / insert remote media
+    // ── Drive lifecycle: open remote file-backed virtual drive ────────────────
+
+    /// <summary>
+    /// Opens an existing file-backed virtual tape on a remote host as the active drive.
+    /// This is the remote counterpart of <see cref="OpenVirtualDriveAsync"/> (file mode):
+    ///  it re-uses an existing tape file that was previously created by
+    ///  <see cref="CreateRemoteVirtualDriveAsync"/> or a prior remote backup session.
+    /// <para>
+    ///  Used by the remote service test suite to "reopen" a tape between test phases,
+    ///  mirroring how local service tests reopen <see cref="TempVirtualMedia"/> files.
+    /// </para>
+    /// On success fires <see cref="ServiceStateChange.DriveOpened"/>.
+    /// </summary>
+    /// <param name="settings">Connection settings for the remote tape service.</param>
+    /// <param name="contentFilePath">Server-side path to the existing tape file.</param>
+    /// <param name="contentCapacity">Tape capacity in bytes (must match the original).</param>
+    /// <param name="initiatorFilePath">
+    ///  Server-side path to the initiator-partition file, or null for single-partition tapes.
+    /// </param>
+    /// <param name="caps">Drive capabilities; null → server default.</param>
+    /// <param name="mediaMode">
+    ///  File open mode on the server. Use <see cref="System.IO.FileMode.Create"/> to create a fresh
+    ///  tape file for formatting, or <see cref="System.IO.FileMode.Open"/> to reopen an existing one.
+    /// </param>
+    public Task<bool> OpenRemoteVirtualFileAsync(
+        RemoteHostSettings settings,
+        string  contentFilePath,
+        long    contentCapacity,
+        string? initiatorFilePath = null,
+        long    initiatorCapacity = 0,
+        VirtualTapeDriveCapabilities? caps = null,
+        System.IO.FileMode mediaMode = System.IO.FileMode.Open)
+    {
+        return Task.Run(async () =>
+        {
+            await _operationLock.WaitAsync().ConfigureAwait(false);
+
+            var backend = new RemoteTapeDriveBackend(settings, _loggerFactory);
+            try
+            {
+                LogInfo($"Opening remote virtual file '{System.IO.Path.GetFileName(contentFilePath)}' on {settings.DisplayLabel}...");
+
+                var request = new OpenVirtualRequest
+                {
+                    DriveNumber = 0,
+                    FileConfig  = new VirtualFileConfig
+                    {
+                        ContentFilePath   = contentFilePath,
+                        ContentCapacity   = contentCapacity,
+                        InitiatorFilePath = initiatorFilePath ?? string.Empty,
+                        InitiatorCapacity = initiatorCapacity,
+                        MediaMode         = (int)mediaMode,
+                        Capabilities      = caps is VirtualTapeDriveCapabilities c ? MapVirtualCaps(c) : null,
+                    },
+                };
+
+                if (!await backend.OpenVirtualAsync(request).ConfigureAwait(false))
+                {
+                    LastError = backend.LastErrorMessage;
+                    LogErr($"Couldn't open remote virtual file. Error: {LastError}");
+                    backend.Dispose();
+                    return false;
+                }
+
+                _agent?.Dispose();
+                _agent = null;
+                _toc   = null;
+                _drive?.Dispose();
+
+                _drive = new TapeDrive(_loggerFactory, backend);
+
+                // Backend is already open (gRPC session established) — ReopenDrive(0) skips
+                //  Open() and only reads drive capabilities, marking IsDriveOpen = true.
+                if (!_drive.ReopenDrive(0))
+                {
+                    LastError = _drive.LastErrorMessage;
+                    LogErr($"Couldn't open remote virtual file. Error: {LastError}");
+                    _drive.Dispose();
+                    _drive = null;
+                    return false;
+                }
+
+                _vmdLast  = new VirtualMediaDescriptor(contentFilePath, contentCapacity, initiatorFilePath, 0);
+                DriveNumber = 0;
+                LogOk($"Remote virtual file opened on {settings.DisplayLabel}");
+                LogInfoSub($"Device name: {_drive.DriveDeviceName}");
+                _host.OnServiceStateChanged(ServiceStateChange.DriveOpened);
+                return true;
+            }
+            catch (RpcException rpc)
+            {
+                LastError = FormatRpcError(rpc);
+                LogErr($"gRPC error opening remote virtual file: {LastError}");
+                _drive?.Dispose();
+                if (_drive is null) backend.Dispose();
+                _drive = null;
+                return false;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                LogErr($"Exception opening remote virtual file: {ex.Message}");
+                _drive?.Dispose();
+                if (_drive is null) backend.Dispose();
+                _drive = null;
+                return false;
+            }
+            finally
+            {
+                _operationLock.Release();
+            }
+        });
+    }
+
+    /// <summary>
+    /// Swaps the current remote session's virtual tape for a new file-backed tape.
+    /// Calls <see cref="RemoteTapeDriveBackend.InsertMediaAsync"/> on the active backend,
+    ///  which issues the <c>InsertMedia</c> gRPC RPC so the server replaces the session's
+    ///  backing store without closing the session.
+    /// <para>
+    ///  Used by <see cref="RemoteMultiVolumeServiceHost"/> to service volume-swap callbacks
+    ///  in multi-volume backup/restore test sequences.
+    /// </para>
+    /// </summary>
+    /// <param name="contentFilePath">Server-side path to the new tape file.</param>
+    /// <param name="contentCapacity">Tape capacity for the new file.</param>
+    /// <param name="initiatorFilePath">
+    ///  Server-side initiator-partition file path, or null for single-partition tapes.
+    /// </param>
+    /// <param name="mediaMode">
+    ///  <see cref="System.IO.FileMode"/> for the new file.
+    ///  Use <see cref="System.IO.FileMode.Create"/> to create a fresh tape for recording,
+    ///  or <see cref="System.IO.FileMode.Open"/> to re-load an already-written volume.
+    /// </param>
+    public Task<bool> InsertRemoteVirtualMediaAsync(
+        string contentFilePath,
+        long   contentCapacity,
+        string? initiatorFilePath = null,
+        long    initiatorCapacity = 0,
+        VirtualTapeDriveCapabilities? caps = null,
+        System.IO.FileMode mediaMode = System.IO.FileMode.OpenOrCreate)
+    {
+        return Task.Run(async () =>
+        {
+            await _operationLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (_drive?.Backend is not RemoteTapeDriveBackend remoteBackend)
+                {
+                    LastError = "No remote virtual drive is currently open";
+                    return false;
+                }
+
+                var protoCaps = caps is VirtualTapeDriveCapabilities c ? MapVirtualCaps(c) : null;
+                bool ok = await remoteBackend.InsertMediaAsync(
+                    contentFilePath, contentCapacity, initiatorFilePath, initiatorCapacity,
+                    protoCaps, mediaMode: mediaMode)
+                    .ConfigureAwait(false);
+
+                if (!ok)
+                    LastError = remoteBackend.LastErrorMessage;
+
+                return ok;
+            }
+            catch (RpcException rpc)
+            {
+                LastError = FormatRpcError(rpc);
+                LogErr($"gRPC error inserting remote media: {LastError}");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                LogErr($"Exception inserting remote media: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                _operationLock.Release();
+            }
+        });
+    }
+
+    /// <summary>
+    /// Maps a <see cref="VirtualTapeDriveCapabilities"/> to the proto <see cref="VirtualCapabilities"/> message.
+    /// </summary>
+    private static VirtualCapabilities MapVirtualCaps(VirtualTapeDriveCapabilities caps) => new()
+    {
+        MinBlockSize               = caps.MinBlockSize,
+        MaxBlockSize               = caps.MaxBlockSize,
+        DefaultBlockSize           = caps.DefaultBlockSize,
+        SupportsSetmarks           = caps.SupportsSetmarks,
+        SupportsSeqFilemarks       = caps.SupportsSeqFilemarks,
+        SupportsInitiatorPartition = caps.SupportsInitiatorPartition,
+        SupportsCompression        = caps.SupportsCompression,
+    };
 
     #endregion
 
@@ -417,6 +636,12 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 LogMediaInfo();
                 _host.OnServiceStateChanged(ServiceStateChange.MediaLoaded);
                 return true;
+            }
+            catch (RpcException rpc)
+            {
+                LastError = FormatRpcError(rpc);
+                LogErr($"gRPC error loading media: {LastError}");
+                return false;
             }
             catch (Exception ex)
             {
@@ -467,6 +692,12 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 LogOk("Media ejected");
                 _host.OnServiceStateChanged(ServiceStateChange.MediaEjected);
                 return true;
+            }
+            catch (RpcException rpc)
+            {
+                LastError = FormatRpcError(rpc);
+                LogErr($"gRPC error ejecting media: {LastError}");
+                return false;
             }
             catch (Exception ex)
             {
@@ -658,6 +889,63 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         }
     }
 
+    /// <summary>
+    /// Inserts new virtual media into a remote virtual drive by issuing an <c>InsertMedia</c> gRPC RPC.
+    /// <para>
+    /// Must be called from inside a media-change callback where the worker thread already
+    ///  holds the <see cref="_operationLock"/>; this method does <b>not</b> acquire it.
+    ///  Use <see cref="InsertRemoteVirtualMediaAsync"/> for external callers.
+    /// </para>
+    /// </summary>
+    public bool InsertRemoteVirtualMedia(
+        string contentFilePath,
+        long   contentCapacity,
+        string? initiatorFilePath = null,
+        long    initiatorCapacity = 0,
+        VirtualTapeDriveCapabilities? caps = null,
+        FileMode mediaMode = FileMode.OpenOrCreate)
+    {
+        if (_drive?.Backend is not RemoteTapeDriveBackend remoteBackend)
+        {
+            LastError = "No remote virtual drive is currently open";
+            return false;
+        }
+
+        try
+        {
+            LogInfo("Inserting remote virtual media...");
+            LogInfoSub($"Content file: >{contentFilePath}<");
+            if (initiatorFilePath is not null)
+                LogInfoSub($"Initiator file: >{initiatorFilePath}<");
+            LogInfoSub($"Media mode: {mediaMode}");
+
+            var protoCaps = caps is VirtualTapeDriveCapabilities c ? MapVirtualCaps(c) : null;
+            bool ok = remoteBackend.InsertMediaAsync(
+                contentFilePath, contentCapacity, initiatorFilePath, initiatorCapacity,
+                protoCaps, mediaMode: mediaMode)
+                .GetAwaiter().GetResult();
+
+            if (!ok)
+                LastError = remoteBackend.LastErrorMessage;
+            else
+                LogOk("Remote virtual media inserted");
+
+            return ok;
+        }
+        catch (RpcException rpc)
+        {
+            LastError = FormatRpcError(rpc);
+            LogErr($"gRPC error inserting remote media: {LastError}");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            LastError = ex.Message;
+            LogErr($"Exception inserting remote media: {ex.Message}");
+            return false;
+        }
+    }
+
     #endregion
 
     #region Misc: IO speed simulation
@@ -776,6 +1064,21 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     protected void LogFailSub(string msg)  => _host.Report(ServiceReportLevel.Failed, msg, isSubEntry: true);
     protected void LogErr(string msg)      => _host.Report(ServiceReportLevel.Error, msg);
     protected void LogErrSub(string msg)   => _host.Report(ServiceReportLevel.Error, msg, isSubEntry: true);
+
+    /// <summary>
+    /// Formats a <see cref="RpcException"/> into a concise user-facing string,
+    ///  mapping well-known gRPC status codes to descriptive phrases.
+    /// </summary>
+    protected static string FormatRpcError(RpcException rpc) => rpc.StatusCode switch
+    {
+        StatusCode.Unavailable      => $"Remote service unavailable: {rpc.Status.Detail}",
+        StatusCode.NotFound         => $"Session not found (server may have restarted): {rpc.Status.Detail}",
+        StatusCode.Unauthenticated  => $"Authentication required: {rpc.Status.Detail}",
+        StatusCode.PermissionDenied => $"Permission denied: {rpc.Status.Detail}",
+        StatusCode.DeadlineExceeded => $"Operation timed out: {rpc.Status.Detail}",
+        StatusCode.Cancelled        => $"Operation cancelled: {rpc.Status.Detail}",
+        _                           => $"gRPC {rpc.StatusCode}: {rpc.Status.Detail}",
+    };
 
     #endregion
 
@@ -911,6 +1214,12 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
                 return true;
             }
+            catch (RpcException rpc)
+            {
+                LastError = FormatRpcError(rpc);
+                LogErr($"gRPC error restoring TOC: {LastError}");
+                return false;
+            }
             catch (Exception ex)
             {
                 LastError = ex.Message;
@@ -963,6 +1272,12 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 OnStatusUpdate("Initial TOC created");
                 _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
                 return true;
+            }
+            catch (RpcException rpc)
+            {
+                LastError = FormatRpcError(rpc);
+                LogErr($"gRPC error creating initial TOC: {LastError}");
+                return false;
             }
             catch (Exception ex)
             {
@@ -1044,6 +1359,12 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 OnStatusUpdate("Media formatted");
                 _host.OnServiceStateChanged(ServiceStateChange.TocChanged | ServiceStateChange.MediaLoaded);
                 return true;
+            }
+            catch (RpcException rpc)
+            {
+                LastError = FormatRpcError(rpc);
+                LogErr($"gRPC error formatting media: {LastError}");
+                return false;
             }
             catch (Exception ex)
             {

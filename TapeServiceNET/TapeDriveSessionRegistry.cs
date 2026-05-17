@@ -14,8 +14,8 @@ public sealed class TapeDriveSessionEntry(
     DateTime CreatedAt,
     string RemoteIp)
 {
-    /// <summary>The backend owned by this session.</summary>
-    public TapeDriveBackend Backend { get; } = Backend;
+    /// <summary>The backend owned by this session. May be replaced by InsertMedia.</summary>
+    public TapeDriveBackend Backend { get; set; } = Backend;
 
     /// <summary>UTC timestamp when the session was opened.</summary>
     public DateTime CreatedAt { get; } = CreatedAt;
@@ -112,6 +112,24 @@ public sealed class TapeDriveSessionRegistry(
                 sessionId, entry.Backend.DeviceName);
             entry.Backend.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Replaces the backend on an existing session without disrupting it.
+    /// The old backend must already be disposed by the caller before calling this.
+    /// Used by <c>InsertMedia</c> for multi-volume tape swaps.
+    /// </summary>
+    public void Replace(string sessionId, TapeDriveBackend newBackend)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var entry))
+            throw new Grpc.Core.RpcException(new Grpc.Core.Status(
+                Grpc.Core.StatusCode.NotFound,
+                $"Session '{sessionId}' not found; cannot replace backend."));
+
+        entry.Backend = newBackend;
+        entry.LastActivity = DateTime.UtcNow;
+        logger.LogInformation("Session backend replaced: {SessionId} | new drive {DeviceName}",
+            sessionId, newBackend.DeviceName);
     }
 
     /// <summary>
