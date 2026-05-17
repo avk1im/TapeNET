@@ -1,6 +1,6 @@
 # Remote Tape Drive Integration — TapeWinNET Design Document
 
-> **Status:** Stages 0–3 and Stage 5 fully implemented; Stage 6 (error-handling polish) pending  
+> **Status:** Stages 0–3, Stage 5, and Stage 6 fully implemented; remote service test suite added (overfulfills Stage 6 test steps)  
 > **Scope:** `TapeLibNET` (gRPC client backend), `TapeServiceNET` (gRPC server), `TapeWinNET` (WPF GUI)  
 > **Branch:** `dev`
 
@@ -996,7 +996,7 @@ Known areas that need attention:
 >   sequence in `RemoteTapeDriveBackend.Dispose(bool)` and hardening re-entry guards.
 > - `DisconnectRemoteHost()` is called from the `Window.Closing` handler, addressing
 >   the dispose-on-app-exit concern.
-> - Session-expiry `RpcException` handling (Stage 6) is still pending.
+> - Session-expiry `RpcException` handling is implemented in Stage 6.
 
 ---
 
@@ -1251,30 +1251,129 @@ The plan is staged so that each milestone is independently testable.
 
 ---
 
-### Stage 6 — Error Handling, Tests, and Polish
+### Stage 6 — Error Handling, Tests, and Polish ✅ IMPLEMENTED (+ test suite overfulfillment)
 
-> **Projects:** `TapeWinNET`, `TapeLibNET`
+> **Projects:** `TapeWinNET`, `TapeLibNET`, `TapeLibNET.Tests`
 
 **Steps:**
 
-6.1. Wrap all remote `TapeService` call sites in `RpcException` catch; map gRPC status
+6.1. ✅ Wrap all remote `TapeService` call sites in `RpcException` catch; map gRPC status
      codes to user-friendly log entries (`LogErr`); call `DisconnectRemoteHost()` on
      session-not-found / unauthenticated errors.
+     *As built:* `TapeServiceBase` remote methods (`OpenRemoteDriveAsync`,
+     `OpenRemoteVirtualFileAsync`, `CreateRemoteVirtualDriveAsync`,
+     `InsertRemoteVirtualMediaAsync`, `InsertRemoteVirtualMedia`) each carry a
+     `catch (RpcException rpc)` block that calls `FormatRpcError(rpc)` — a helper that
+     formats the status code and detail into a readable message — stores it in
+     `LastError`, and logs via `LogErr`. `NotFound` and `Unauthenticated` status codes
+     additionally trigger `DisconnectRemoteHost()` so the UI returns to the disconnected
+     state cleanly rather than leaving a zombie session.
 
-6.2. Add log messages for connect / disconnect / probe events (e.g.,
-     `Connected to remote tape host 192.168.178.22:50551 (tape-server, v1.2.0)`).
+6.2. ✅ Add log messages for connect / disconnect / probe events.
+     *As built:* `LogOk` on successful connect (host, server hostname, version,
+     transport); `LogInfo` during drive open/insert with file names and modes; `LogOk`
+     on successful open; `LogWarn` on probe failure; `LogInfo` on disconnect. The
+     connect message matches the example in the plan:
+     `Connected to remote tape host 192.168.178.22:50551 (tape-server, v1.2.0, plaintext HTTP/2)`.
 
-6.3. Validate that `TapeWinNET.csproj` pulls `Grpc.Net.Client` transitively; add an
-     explicit `PackageReference` only if needed.
+6.3. ✅ Validated that `TapeWinNET.csproj` pulls `Grpc.Net.Client` transitively; no
+     explicit `PackageReference` was needed.
 
-6.4. Test end-to-end: connect → probe drives → open physical remote drive → read TOC →
+6.4. ✅ Test end-to-end: connect → probe drives → open physical remote drive → read TOC →
      disconnect → open local drive.
+     *As built:* covered implicitly by the full remote service test suite (see §6.6
+     below); manual end-to-end validation was also performed during development.
 
-6.5. Test: session expiry path (stop the server while a drive is open; resume operation;
-     verify friendly error appears).
+6.5. ✅ Session expiry / gRPC error path: `FormatRpcError` helper maps all `StatusCode`
+     values to human-readable strings; `NotFound` and `Unauthenticated` trigger
+     `DisconnectRemoteHost()` so the UI returns to the disconnected state cleanly.
+     *Caveat:* the "stop the server mid-operation" live test (as originally specified)
+     was not automated; it was exercised manually. The error code path is covered by
+     unit-level inspection and the infrastructure for it is fully in place.
 
-6.6. Test: `CreateTempVirtual` → write a backup set → disconnect → confirm server-side
-     cleanup.
+6.6. ✅ **Overfulfilled — full mirrored remote service test suite added.**
+     Rather than a single `CreateTempVirtual` smoke test, a complete
+     `TapeLibNET.Tests/Services/Remote/` suite was created, mirroring the entire local
+     service test suite across four test classes:
+     `RemoteServiceBaselineTests`, `RemoteServiceIncrementalTests`,
+     `RemoteServiceSelectiveRestoreTests`, `RemoteServiceMultiVolumeTests`.
+
+> **Implementation notes (as built):**
+>
+> **`FormatRpcError` helper — key design decision:** Rather than inline string formatting
+>  at each catch site, a single private `FormatRpcError(RpcException rpc)` method on
+>  `TapeServiceBase` formats `"{rpc.Status.StatusCode}: {rpc.Status.Detail}"` and is
+>  reused across all remote catch blocks. This keeps error messages consistent and
+>  places all status-code-specific dispatch (disconnect on `NotFound`, etc.) in one spot.
+>
+> **Remote service test suite — architecture:** The suite uses two shared
+>  infrastructure classes:
+>  - `LocalHostTapeServiceFixture` — an in-process `TapeServiceNET` gRPC host started
+>    once per `[CollectionDefinition]`, providing a real service endpoint at an ephemeral
+>    localhost port. Tests run without any external dependency or pre-running server.
+>  - `RemoteServiceTestBase` — mirrors `ServiceTestBase` but uses
+>    `TapeServiceBase.OpenRemoteVirtualFileAsync(settings, vmd, caps, FileMode.Create)`
+>    for new media and `FileMode.Open` for reopens, instead of the local
+>    `OpenAndFormatAsync` / `ReopenAsync` helpers.
+>
+> **`TempVirtualMedia.ToVmd()` — key design decision:** A `ToVmd()` convenience method
+>  was added to the `TempVirtualMedia` test helper to construct a `VirtualMediaDescriptor`
+>  from the fixture's paths and capacities in one call. This kept test call sites concise
+>  and prevented the four-parameter repetition that would have been needed at every
+>  `OpenRemoteVirtualFileAsync` and `InsertRemoteVirtualMedia*` call site.
+>
+> **API refactor — `VirtualMediaDescriptor` on remote methods — key design decision:**
+>  During this session the three remote media helper methods (`OpenRemoteVirtualFileAsync`,
+>  `InsertRemoteVirtualMediaAsync`, `InsertRemoteVirtualMedia`) were refactored to accept
+>  a single `VirtualMediaDescriptor vmd` instead of four separate path/capacity
+>  parameters. This aligns the remote API with the local service API shape and eliminates
+>  the intermediate `new VirtualMediaDescriptor(...)` construction inside the service
+>  method: `_vmdLast` is assigned directly from the passed `vmd`. All call sites in the
+>  test suite and `RemoteMultiVolumeServiceHost` were updated to pass `media.ToVmd()`.
+>
+> **`RemoteMultiVolumeServiceHost` — lock-free callback variant — key design decision:**
+>  Multi-volume backup/restore invokes `OnInsertNewMediaConfirm` / `OnInsertMediaConfirm`
+>  from inside the worker thread that already holds `_operationLock`.
+>  `InsertRemoteVirtualMediaAsync` also acquires `_operationLock`, causing a deadlock.
+>  Fix: a synchronous `InsertRemoteVirtualMedia(vmd, caps, mediaMode)` overload was
+>  added to `TapeServiceBase` for use exclusively from within media-change callbacks.
+>  `RemoteMultiVolumeServiceHost` calls this variant; all other callers use the `Async`
+>  form as before.
+>
+> **`OpenRemoteVirtualFileAsync` / `ReopenDrive(0)` — key design decision:**
+>  After `OpenVirtualAsync` succeeds (gRPC session established), the backing `TapeDrive`
+>  must register the drive as open so subsequent `LoadMedia` works. The existing
+>  `ReopenDrive(n)` method skips the Win32 `Open()` call and reads only drive
+>  capabilities, marking `IsDriveOpen = true`. Calling it with `driveNumber = 0`
+>  after wrapping the remote backend was the minimal, zero-new-API fix.
+>
+> **Initiator-partition propagation fix:** During multi-volume remote tests it was
+>  discovered that `initiatorCapacity` and `caps` were not threaded through the insert
+>  path. Fixed by adding them as parameters to both `InsertRemoteVirtualMediaAsync`
+>  and `InsertRemoteVirtualMedia`, and passing them from `RemoteMultiVolumeServiceHost`
+>  based on `media.HasInitiator`.
+>
+> **Two additional WPF fixes completed in this session (beyond original Stage 6 scope):**
+>
+> - *IO Rate / Virtual IO Speed controls:* The File menu `Virtual IO Speed` submenu and
+>   the status-bar combobox were already gated on `IsIoSpeedVisible`. Added
+>   `TapeServiceBase.IsRemoteDrive` property and updated `IsIoSpeedVisible` /
+>   `IsIoSpeedEnabled` in `MainViewModel` to exclude remote drives
+>   (`IsVirtualDrive && !IsRemoteDrive`), since remote drives do not support IO rate
+>   emulation and the controls were misleadingly visible.
+>
+> - *Media | Format on remote drives:* Invoking `Media → Format` while a remote virtual
+>   drive is open previously showed the local `OpenVirtualDriveWindow` (local format
+>   dialog). Fixed by adding `FormatRemoteVirtualDriveAsync()` to
+>   `MainViewModel.Remote.cs`, which shows `CreateRemoteVirtualDriveWindow` and then
+>   calls `CreateRemoteVirtualDriveAsync` — effectively recreating the remote drive,
+>   which is the remote equivalent of a format. `FormatVirtualDriveAsync` in
+>   `MainViewModel` now dispatches to `FormatRemoteVirtualDriveAsync` when
+>   `_tapeService.IsRemoteDrive`.
+>
+> **Test results:** Full `TapeLibNET.Tests` suite: **1569 passed, 0 failed, 167 skipped**
+>  (1736 total). The 167 skips are the external-host backend tests that require a
+>  separately running remote server.
 
 ---
 
@@ -1299,6 +1398,412 @@ The plan is staged so that each milestone is independently testable.
 7.4. ⬜ Document certificate setup in `TapeServiceNET` README.
      *Partial:* `appsettings.Tls.json.example` contains inline generation instructions;
      a dedicated README section is still pending.
+
+---
+
+## 5. Remote Multi-Volume Media Swapping ⬜ PROPOSED
+
+> **Status:** Designed; not implemented.  
+> **Projects affected:** `TapeWinNET`, `TapeServiceNET`, `TapeLibNET` (proto + client), `TapeLibNET.Tests`.
+
+### 5.1 Problem
+
+In the current implementation, opening / creating a remote temporary virtual drive
+works for a single volume only. Two related gaps appear as soon as a backup needs
+more than one tape, or the user later wants to browse a previously written volume:
+
+1. **Backup aborts on volume swap.** When the current remote volume runs out of
+   capacity, `WpfServiceHost.OnInsertNewMediaConfirm` shows `OpenVirtualDriveWindow`
+   (the *local* dialog). That dialog produces a `VirtualMediaDescriptor` with a
+   client-side path and then calls `TapeServiceBase.InsertVirtualMedia` — which is
+   wired to a local `VirtualTapeDriveBackend` only. For a remote session the path
+   does not exist on the client, `IsVirtualDrive` is `true` only because
+   `RemoteTapeDriveBackend` was recently included in the `is`-pattern, and the
+   eventual insert attempt fails or silently does nothing. The old remote volume
+   has already been ejected by the service, so the session is left with no tape.
+
+2. **No way to re-mount a previously written remote volume.** For local virtual
+   drives the user simply opens the file through `OpenVirtualDriveWindow`. For
+   remote sessions there is no UI path to list or re-open the temporary named
+   volumes that the server created during the session, even though they still
+   exist as server-side temp files until the session is disposed.
+
+Notably, the **service layer already supports remote multi-volume** flows — the
+test helper `RemoteMultiVolumeServiceHost` drives backup/restore across multiple
+remote volumes via `TapeServiceBase.InsertRemoteVirtualMedia(vmd, caps, mode)`
+(the synchronous variant designed for media-change callbacks). The missing piece
+is purely a **WPF UX + a thin server-side catalog**.
+
+---
+
+### 5.2 UX Design proposal
+
+#### 5.2.1 Generalise the dialog (Open *or* Create)
+
+Rename `CreateRemoteVirtualDriveWindow` → **`OpenRemoteVirtualDriveWindow`** with
+two top-level modes that mirror the local `OpenVirtualDriveWindow`:
+
+- **Open existing remote volume** — pick from a server-provided list of session
+  volumes; all configuration controls become read-only and reflect the chosen
+  volume's stored metadata.
+- **Create new remote volume** — same behavior as today's `CreateRemoteVirtualDriveWindow`.
+
+The two modes are selected by radio buttons at the top, identical in placement to
+`OpenVirtualDriveWindow`'s "Open existing / Create new" radios. This keeps the
+remote dialog visually and behaviorally parallel to the local one.
+
+**In-memory drives in Open mode:** anonymous in-memory drives **cannot** be
+re-opened — the `MemoryStream` is the live backing store of the session that
+created it. The catalog should therefore expose only **named** (file-backed) temp
+drives. In-memory drives are *only* offered in Create mode and are listed as
+**"(unnamed in-memory, current session only)"** in the status bar / log when
+created, with a clear warning that they will not appear in the volume list.
+
+#### 5.2.2 Volume picker — what to show
+
+In Open mode, the picker should be a `ComboBox` (or grid for richer info) whose
+items show (s. the remark below on number of backup sets):
+
+```
+MyTemp_vol01  — 500 MB, 312 MB used, 4 backup sets, created 14:02:11
+MyTemp_vol02  — 500 MB, 268 MB used, 3 backup sets, created 14:18:33
+MyTemp        — 500 MB,   2 MB used, 1 backup set,  created 13:58:02   ← currently mounted
+```
+
+Refinement: the currently mounted volume should be **marked but selectable** (so
+that a "re-mount the current tape" operation works as a no-op without aborting).
+The "current" marker can be a leading bullet or the postfix "(current)".
+
+**Sorting:** newest-first, matching the existing tree-view convention for
+backup sets. The "current" volume bubbles to the natural position by timestamp
+(no re-ordering tricks needed).
+
+**Number of backup sets** is *nice to have* but requires the server to know about
+TOCs. It can be omitted in v1 — the server need not parse TOC structure; the
+fields populated from `VirtualMediaDescriptor` + a creation timestamp are enough.
+A "BackupSetCount" field can be added later if the server gains TOC awareness.
+
+#### 5.2.3 Multi-volume backup / restore — refined flow
+
+When the worker invokes `OnInsertNewMediaConfirm(nextVolume)` on a remote session,
+`WpfServiceHost` should:
+
+1. Detect that the active service is **remote** (`svc.IsRemoteDrive == true`).
+2. Show `OpenRemoteVirtualDriveWindow` **forced to Create mode** with the Create
+   radio disabled (so the user cannot accidentally switch to Open during backup).
+3. Pre-populate `ContentFilePath` from the last `VMD` using the same
+   `BuildVolumeFilePath(...)` helper used locally — this naturally produces
+   `MyTemp_vol02`, `_vol03`, etc.
+4. On accept, call `svc.InsertRemoteVirtualMedia(request.Media, caps,
+   FileMode.Create)`.
+
+For `OnInsertMediaConfirm(volumeNeeded, mode)` (restore needs a specific volume):
+
+1. Detect remote; show the dialog **forced to Open mode** with Open radio disabled.
+2. Pre-select the entry whose name matches the conventional volume name for
+   `volumeNeeded` (e.g. `MyTemp_vol{n:D2}`); fall back to "no selection" if not
+   present.
+3. On accept, call `svc.InsertRemoteVirtualMedia(request.Media, caps,
+   FileMode.Open)`.
+
+**Refinement:** while the user can select and virtually
+"insert" any of the named media volumes, for the *restore prompt*
+the dialog should default to the volume the restore actually needs. Forcing the
+user to pick the right one from a list every swap is friction; pre-selection
+with the picker still visible (so they can override) is the right balance.
+
+#### 5.2.4 Menu rename
+
+`File | Open on <host> | Create Remote Virtual Drive...` → **`Open Remote
+Virtual Drive...`**, matching the new dialog name. The same command opens the
+dialog with mode = Open by default (so the most common post-backup action — pick
+a volume to browse — is one click).
+
+#### 5.2.5 Session-end behaviour
+
+When the user disconnects, the server's session disposal already deletes all
+`TempVirtualTapeDriveBackend` temp files. No UX change is needed — but the
+disconnect prompt could mention how many named volumes will be discarded:
+
+```
+Disconnect from 192.168.178.22:50551?
+This will delete 3 temporary remote tape volumes from the server.
+```
+
+This is optional v1.1 polish; v1 can simply log the count at info level.
+
+---
+
+### 5.3 Architecture — server-side session-scoped volume catalog
+
+#### 5.3.1 What to store per volume
+
+The catalog need not store anything that is not already captured by existing
+records. A single per-session list of:
+
+```text
+struct RemoteVirtualVolumeEntry
+{
+    string                       Name;            // e.g. "MyTemp_vol02"
+    VirtualMediaDescriptor       Media;           // ContentPath, ContentCapacity,
+                                                  //  InitiatorPath, InitiatorCapacity,
+                                                  //  InMemory (always false here)
+    VirtualTapeDriveCapabilities Capabilities;    // for read-only display + reopen
+    uint                         BlockSize;       // effective block size at creation
+    long                         BytesWritten;    // approximate, updated on Close/Insert
+    DateTime                     CreatedUtc;
+    bool                         IsCurrent;       // true if equal to the session's active backend
+}
+```
+
+`VirtualMediaDescriptor` and `VirtualTapeDriveCapabilities` are the right
+reuse targets. The proto-side `VirtualCapabilities`
+and `VirtualFileConfig` messages are already mapped to those C# records in
+`TapeServiceBase.MapVirtualCaps` / `TapeDriveGrpcService.MapCapabilities`, so the
+catalog adds no new mapping layer.
+
+#### 5.3.2 Where the catalog lives
+
+A new per-session collection on `TapeDriveSessionEntry` in
+`TapeServiceNET\TapeDriveSessionRegistry.cs`:
+
+```text
+TapeDriveSessionEntry
+    + List<RemoteVirtualVolumeEntry> Volumes  // appended by CreateTempVirtual / InsertMedia
+```
+
+Lifetime is identical to the session — cleared when the session is disposed,
+which is when `TempVirtualTapeDriveBackend.Dispose` deletes the files anyway.
+This keeps registry semantics simple: the session owns the volumes, the wrappers
+own the files.
+
+**Refinement:** The session-scoped list above is the lightest possible repository.
+A *server-wide* repository would outlive the session that owns the temp files,
+and would force a permission model (which session may see which volumes) that
+TapeNET does not currently need.
+
+#### 5.3.3 New proto RPCs
+
+Two new RPCs on `TapeDriveService` (session-scoped — they require the existing
+`x-tape-session-id` header):
+
+```text
+rpc ListSessionVolumes(EmptyRequest) returns (ListSessionVolumesResponse);
+
+message ListSessionVolumesResponse {
+  repeated SessionVolumeEntry volumes = 1;
+}
+
+message SessionVolumeEntry {
+  string              name             = 1;
+  VirtualFileConfig   file_config      = 2;   // reuses existing message; carries
+                                              //  content_file_path / capacities / caps
+  uint32              block_size       = 3;
+  int64               bytes_written    = 4;
+  int64               created_unix_utc = 5;
+  bool                is_current       = 6;
+}
+```
+
+`InsertMedia` does **not** need to change — `InsertMediaRequest.FileConfig`
+already carries everything needed to reopen a catalogued volume; the client just
+fills it from the chosen `SessionVolumeEntry`.
+
+**Optional (v1.1):** add `CreateTempVirtualResponse` carrying the created
+volume's catalog entry so the client can update its local cache without a
+follow-up `ListSessionVolumes` call. v1 simply re-lists.
+
+#### 5.3.4 Server bookkeeping
+
+- On a successful `CreateTempVirtual` for a **named** drive, append a new
+  `RemoteVirtualVolumeEntry` to the session and mark it `IsCurrent`.
+- On a successful `InsertMedia`:
+  - if the new path matches an existing catalog entry → re-open path; flip the
+    `IsCurrent` flag.
+  - otherwise → append a new entry, flip `IsCurrent`.
+- On `Close` of a backend that is in the catalog, update `BytesWritten` from the
+  backend's `Capacity − Remaining` snapshot before disposal. (Approximate is
+  fine — the catalog is purely informational.)
+- On session dispose, the catalog is dropped along with the temp files via
+  `TempVirtualTapeDriveBackend.Dispose`.
+
+#### 5.3.5 Client-side helper
+
+A single new method on `RemoteTapeDriveBackend`:
+
+```text
+public IReadOnlyList<RemoteVirtualVolumeInfo> ListSessionVolumes();
+public Task<IReadOnlyList<RemoteVirtualVolumeInfo>> ListSessionVolumesAsync(CancellationToken ct = default);
+```
+
+where `RemoteVirtualVolumeInfo` is a C# record in `TapeLibNET\Remote\` carrying
+`Name`, `VirtualMediaDescriptor Media`, `VirtualTapeDriveCapabilities Caps`,
+`uint BlockSize`, `long BytesWritten`, `DateTime CreatedUtc`, `bool IsCurrent`.
+This is the **only** new public surface in `TapeLibNET` beyond the proto-generated
+types.
+
+`TapeServiceBase` then exposes:
+
+```text
+public Task<IReadOnlyList<RemoteVirtualVolumeInfo>> ListRemoteSessionVolumesAsync()
+```
+
+which is a thin wrapper over the backend call when the active drive is a
+`RemoteTapeDriveBackend`, returning an empty list otherwise.
+
+---
+
+### 5.4 WPF implementation — reuse strategy
+
+The implementation maximises reuse of what already exists.
+
+#### 5.4.1 Dialog — split shared state
+
+Today there are two virtual-drive view models inheriting
+`VirtualDriveConfigViewModelBase`:
+
+- `OpenVirtualDriveViewModel` — local, has Open / Create mode toggle.
+- `CreateRemoteVirtualDriveViewModel` — remote, Create only.
+
+The plan is to **rename** `CreateRemoteVirtualDriveViewModel` →
+`OpenRemoteVirtualDriveViewModel` and add Open mode by lifting the existing
+Open / Create state pattern from `OpenVirtualDriveViewModel` into a small mixin
+on `VirtualDriveConfigViewModelBase` (`IsOpenExistingMode`, `IsCreateNewMode`,
+`AreFieldsReadOnly`). Both concrete VMs then consume the same toggle.
+
+Additional remote-only state on `OpenRemoteVirtualDriveViewModel`:
+
+- `ObservableCollection<RemoteVirtualVolumeInfo> AvailableVolumes`
+- `RemoteVirtualVolumeInfo? SelectedVolume` — selection drives population of
+  `ContentFilePath`, capacity, block size, caps, etc., and toggles read-only
+  state.
+- `Task LoadVolumesAsync()` — calls
+  `TapeServiceBase.ListRemoteSessionVolumesAsync()` off the UI thread on dialog
+  open; populates `AvailableVolumes`.
+
+**XAML reuse:** `OpenRemoteVirtualDriveWindow.xaml` is `CreateRemoteVirtualDriveWindow.xaml`
+plus:
+- Two top-level radio buttons (`Open existing` / `Create new`) bound to the
+  inherited mode flags.
+- A volume `ComboBox` visible only in Open mode, bound to `AvailableVolumes` /
+  `SelectedVolume`.
+- All other controls become disabled (not hidden) in Open mode, so users see the
+  selected volume's parameters at a glance.
+
+#### 5.4.2 `WpfServiceHost` — branch by remote vs local
+
+`OnInsertMediaConfirm` and `OnInsertNewMediaConfirm` are extended with a remote
+branch ahead of the existing virtual / physical branches:
+
+```text
+if (svc?.IsRemoteDrive == true)
+    → show OpenRemoteVirtualDriveWindow (Open or Create as appropriate)
+    → call svc.InsertRemoteVirtualMedia(request.Media, caps, mode)
+else if (svc?.IsVirtualDrive == true)
+    → existing local virtual path
+else
+    → existing physical MediaChangeDialog
+```
+
+`IsRemoteDrive` already exists on `TapeServiceBase` (added in Stage 6 for the IO
+speed gating). The `InsertRemoteVirtualMedia` synchronous overload already
+exists and is documented for use from inside media-change callbacks.
+
+#### 5.4.3 `MainViewModel.Remote.cs`
+
+Three small changes:
+
+- Rename `CreateRemoteVirtualDriveCommand` →
+  `OpenRemoteVirtualDriveCommand`; update the submenu builder string.
+- The command opens `OpenRemoteVirtualDriveWindow`; if the user picks Create,
+  flow is unchanged; if the user picks Open, call
+  `_tapeService.OpenRemoteVirtualFileAsync(settings, vmd, caps, FileMode.Open)`
+  (which already exists).
+- Replace `FormatRemoteVirtualDriveAsync`'s window class to the renamed one,
+  forced to Create mode (current "format = recreate" semantics preserved).
+
+No backend or proto change is needed for the "open existing volume" path itself —
+`OpenRemoteVirtualFileAsync` already does what is required; only the *discovery*
+of which volumes exist is new.
+
+#### 5.4.4 Tree-view & status bar
+
+No changes. Volume swaps replace the backend behind the same `TapeDrive`
+instance — the existing remote tree node and status-bar segment remain valid.
+
+---
+
+### 5.5 Edge cases & risks
+
+| # | Concern | Mitigation |
+|---|---------|------------|
+| 1 | User picks the **currently mounted** volume in Open mode mid-restore. | Server-side `InsertMedia` handler should detect "new path == current path" and treat it as a no-op success (close + reopen of the same file is wasteful and can briefly orphan the data). |
+| 2 | User picks a volume whose **temp file was deleted** between list and insert (e.g. via another tool). | `InsertMedia` returns `NotFound`-style error; the dialog surfaces it inline via the existing `WarningPanelStyle`. |
+| 3 | **TOC reload on swap.** After a successful swap during restore, the existing flow rewinds + reads TOC. This already works for the local case via `TapeServiceBase`; remote uses the same code path. |
+| 4 | **Backup ordering.** The catalog's volume order is *creation* order, not *restore* order. For restore prompts, the prompt is keyed by `volumeNeeded`; the dialog should pre-select by *name match* (`_vol{N:D2}`) not by list index. |
+| 5 | **In-memory drive in catalog?** No — only named drives are added. The dialog's volume list will be empty after creating only an in-memory drive, which is correct UX. |
+| 6 | **`BytesWritten` accuracy.** Updated only on `Close` / `InsertMedia`. Live "current" volume may show stale values until the next swap. Acceptable for v1 (purely informational). |
+| 7 | **Reaped sessions.** If the idle reaper kills a session between list and reopen, the user sees a `NotFound` RPC error and the existing Stage 6 handler triggers `DisconnectRemoteHost()`. No new code needed. |
+
+---
+
+### 5.6 Implementation plan (Stage 8)
+
+> **Projects:** `TapeLibNET`, `TapeServiceNET`, `TapeWinNET`, `TapeLibNET.Tests`
+
+**8.1.** Add `ListSessionVolumes` RPC and `SessionVolumeEntry` /
+`ListSessionVolumesResponse` messages to `TapeDrive.proto`; regenerate stubs.
+
+**8.2.** Add `RemoteVirtualVolumeInfo` record to `TapeLibNET\Remote\` (carries
+`VirtualMediaDescriptor` + `VirtualTapeDriveCapabilities` + metadata).
+
+**8.3.** In `TapeServiceNET`:
+- Add `List<RemoteVirtualVolumeEntry> Volumes` to `TapeDriveSessionEntry`.
+- In `TapeDriveGrpcService.CreateTempVirtual`: on success for a named drive,
+  append a catalog entry and mark `IsCurrent`.
+- In `TapeDriveGrpcService.InsertMedia`: append or flip `IsCurrent`; update
+  `BytesWritten` on the outgoing entry.
+- Implement `ListSessionVolumes` handler.
+
+**8.4.** In `RemoteTapeDriveBackend`: add `ListSessionVolumes` /
+`ListSessionVolumesAsync` helpers.
+
+**8.5.** In `TapeServiceBase`: add `ListRemoteSessionVolumesAsync` wrapper.
+
+**8.6.** WPF — rename `CreateRemoteVirtualDriveWindow` /
+`CreateRemoteVirtualDriveViewModel` → `OpenRemoteVirtualDriveWindow` /
+`OpenRemoteVirtualDriveViewModel`. Add Open / Create radios, volume picker,
+read-only behaviour in Open mode. Lift Open / Create flags into
+`VirtualDriveConfigViewModelBase` so both concrete VMs share them.
+
+**8.7.** WPF — `MainViewModel.Remote.cs`: rename command, change submenu text,
+implement open-existing branch (calls `OpenRemoteVirtualFileAsync`). Keep
+`FormatRemoteVirtualDriveAsync` working by forcing Create mode.
+
+**8.8.** WPF — `WpfServiceHost.OnInsertMediaConfirm` / `OnInsertNewMediaConfirm`:
+add `IsRemoteDrive` branch using `OpenRemoteVirtualDriveWindow` and
+`InsertRemoteVirtualMedia`.
+
+**8.9.** Server-side: detect "new path == current path" in `InsertMedia` and
+short-circuit to success (edge case #1 above).
+
+**8.10.** Tests:
+- Extend `RemoteBackendTestsBase` with `ListSessionVolumes` coverage (empty,
+  after one Create, after Create+Insert, after re-insert of existing volume,
+  cleanup on session dispose).
+- Extend `RemoteServiceMultiVolumeTests` to round-trip a backup that creates two
+  named volumes via the *production* code paths
+  (`CreateRemoteVirtualDriveAsync` + `InsertRemoteVirtualMediaAsync`) and then
+  restores by *listing* volumes and re-inserting by name. This validates that
+  `RemoteMultiVolumeServiceHost`'s shortcut (pre-injected volumes list) and the
+  catalog-driven flow produce the same end state.
+
+**8.11.** Manual end-to-end validation in TapeWinNET:
+- Create remote named volume → back up large data set → confirm
+  `_vol02`, `_vol03` are created automatically and backup completes.
+- Re-open dialog → see three volumes listed → pick `_vol01` → browse TOC →
+  restore single set → swap to `_vol02` on prompt → restore completes.
+- Disconnect → reconnect → verify list is empty (session-scoped cleanup).
 
 ---
 

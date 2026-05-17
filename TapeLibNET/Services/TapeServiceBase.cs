@@ -172,6 +172,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     public bool IsVirtualDrive => _drive?.Backend is VirtualTapeDriveBackend
                                                   or RemoteTapeDriveBackend;
 
+    /// <summary>True when the current drive is a remote (gRPC) drive.</summary>
+    public bool IsRemoteDrive => _drive?.Backend is RemoteTapeDriveBackend;
+
     /// <summary>True when the virtual drive uses in-memory streams (no persistent files).</summary>
     public bool IsInMemoryDrive => _vmdLast?.InMemory ?? false;
 
@@ -434,10 +437,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// </param>
     public Task<bool> OpenRemoteVirtualFileAsync(
         RemoteHostSettings settings,
-        string  contentFilePath,
-        long    contentCapacity,
-        string? initiatorFilePath = null,
-        long    initiatorCapacity = 0,
+        VirtualMediaDescriptor vmd,
         VirtualTapeDriveCapabilities? caps = null,
         System.IO.FileMode mediaMode = System.IO.FileMode.Open)
     {
@@ -448,17 +448,17 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             var backend = new RemoteTapeDriveBackend(settings, _loggerFactory);
             try
             {
-                LogInfo($"Opening remote virtual file '{System.IO.Path.GetFileName(contentFilePath)}' on {settings.DisplayLabel}...");
+                LogInfo($"Opening remote virtual file '{System.IO.Path.GetFileName(vmd.ContentPath)}' on {settings.DisplayLabel}...");
 
                 var request = new OpenVirtualRequest
                 {
                     DriveNumber = 0,
                     FileConfig  = new VirtualFileConfig
                     {
-                        ContentFilePath   = contentFilePath,
-                        ContentCapacity   = contentCapacity,
-                        InitiatorFilePath = initiatorFilePath ?? string.Empty,
-                        InitiatorCapacity = initiatorCapacity,
+                        ContentFilePath   = vmd.ContentPath,
+                        ContentCapacity   = vmd.ContentCapacity,
+                        InitiatorFilePath = vmd.InitiatorPath ?? string.Empty,
+                        InitiatorCapacity = vmd.InitiatorPartitionCapacity,
                         MediaMode         = (int)mediaMode,
                         Capabilities      = caps is VirtualTapeDriveCapabilities c ? MapVirtualCaps(c) : null,
                     },
@@ -490,7 +490,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     return false;
                 }
 
-                _vmdLast  = new VirtualMediaDescriptor(contentFilePath, contentCapacity, initiatorFilePath, 0);
+                _vmdLast  = vmd;
                 DriveNumber = 0;
                 LogOk($"Remote virtual file opened on {settings.DisplayLabel}");
                 LogInfoSub($"Device name: {_drive.DriveDeviceName}");
@@ -543,10 +543,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     ///  or <see cref="System.IO.FileMode.Open"/> to re-load an already-written volume.
     /// </param>
     public Task<bool> InsertRemoteVirtualMediaAsync(
-        string contentFilePath,
-        long   contentCapacity,
-        string? initiatorFilePath = null,
-        long    initiatorCapacity = 0,
+        VirtualMediaDescriptor vmd,
         VirtualTapeDriveCapabilities? caps = null,
         System.IO.FileMode mediaMode = System.IO.FileMode.OpenOrCreate)
     {
@@ -563,7 +560,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 var protoCaps = caps is VirtualTapeDriveCapabilities c ? MapVirtualCaps(c) : null;
                 bool ok = await remoteBackend.InsertMediaAsync(
-                    contentFilePath, contentCapacity, initiatorFilePath, initiatorCapacity,
+                    vmd.ContentPath, vmd.ContentCapacity, vmd.InitiatorPath, vmd.InitiatorPartitionCapacity,
                     protoCaps, mediaMode: mediaMode)
                     .ConfigureAwait(false);
 
@@ -898,10 +895,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// </para>
     /// </summary>
     public bool InsertRemoteVirtualMedia(
-        string contentFilePath,
-        long   contentCapacity,
-        string? initiatorFilePath = null,
-        long    initiatorCapacity = 0,
+        VirtualMediaDescriptor vmd,
         VirtualTapeDriveCapabilities? caps = null,
         FileMode mediaMode = FileMode.OpenOrCreate)
     {
@@ -914,14 +908,14 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         try
         {
             LogInfo("Inserting remote virtual media...");
-            LogInfoSub($"Content file: >{contentFilePath}<");
-            if (initiatorFilePath is not null)
-                LogInfoSub($"Initiator file: >{initiatorFilePath}<");
+            LogInfoSub($"Content file: >{vmd.ContentPath}<");
+            if (vmd.InitiatorPath is not null)
+                LogInfoSub($"Initiator file: >{vmd.InitiatorPath}<");
             LogInfoSub($"Media mode: {mediaMode}");
 
             var protoCaps = caps is VirtualTapeDriveCapabilities c ? MapVirtualCaps(c) : null;
             bool ok = remoteBackend.InsertMediaAsync(
-                contentFilePath, contentCapacity, initiatorFilePath, initiatorCapacity,
+                vmd.ContentPath, vmd.ContentCapacity, vmd.InitiatorPath, vmd.InitiatorPartitionCapacity,
                 protoCaps, mediaMode: mediaMode)
                 .GetAwaiter().GetResult();
 

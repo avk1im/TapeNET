@@ -1,12 +1,11 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 
-using Microsoft.Extensions.Logging.Abstractions;
-
+using TapeLibNET;
 using TapeLibNET.Remote;
-using TapeLibNET.Virtual;
 using TapeWinNET.Models;
 using TapeWinNET.Utils;
 
@@ -325,6 +324,76 @@ public partial class MainViewModel
         UpdateTreeFromTOCRemote(0, settings);
         SelectMostRecentSet();
         NotifyIoSpeedChanged();
+    }
+
+    // ── Remote Format (re-create) ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Handles "Media | Format" when a remote virtual drive is open.
+    /// Shows <see cref="CreateRemoteVirtualDriveWindow"/> so the user can reconfigure
+    ///  the drive, then recreates it on the server via
+    ///  <see cref="TapeLibNET.Services.TapeServiceBase.CreateRemoteVirtualDriveAsync"/>.
+    /// Mirrors the local <c>FormatVirtualDriveAsync</c> flow in <c>MainViewModel.cs</c>.
+    /// </summary>
+    internal async Task FormatRemoteVirtualDriveAsync(FormatMediaViewModel formatViewModel)
+    {
+        if (_remoteHostSettings is null)
+            return;
+
+        var settings = _remoteHostSettings;
+
+        var viewModel = new CreateRemoteVirtualDriveViewModel(settings)
+        {
+            MediaName = formatViewModel.MediaName,
+            EnableInitiatorPartition = formatViewModel.CreateInitiatorPartition,
+            //??? FIXME: InitiatorCapacityValue = formatViewModel.CreateInitiatorPartition
+                //? TapeNavigator.DefaultTOCCapacity : -1;
+        };
+        var window = new CreateRemoteVirtualDriveWindow(viewModel)
+        {
+            Owner = Application.Current.MainWindow
+        };
+
+        if (window.ShowDialog() != true || viewModel.Result is null)
+            return;
+
+        var request = viewModel.Result;
+
+        if (!await RunBusyAsync($"Recreating remote virtual drive on {settings.DisplayLabel}...",
+                () => _tapeService.CreateRemoteVirtualDriveAsync(settings, request.Media, request.Capabilities, request.MediaName)))
+        {
+            MessageBox.Show(
+                $"Failed to recreate remote virtual drive on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
+                "Format Remote Drive", MessageBoxButton.OK, MessageBoxImage.Error);
+            UpdateTreeForRemoteDriveOnly(0, settings);
+            return;
+        }
+
+        if (!await LoadMediaWithUIAsync())
+        {
+            UpdateTreeForRemoteDriveOnly(0, settings);
+            return;
+        }
+
+        string tocLabel = string.IsNullOrWhiteSpace(request.MediaName)
+            ? "Remote virtual tape"
+            : request.MediaName;
+        var tocCreated = await RunBusyAsync("Creating initial TOC...",
+            () => _tapeService.CreateInitialTOCAsync(tocLabel));
+        if (!tocCreated)
+            LogWarn("Could not create initial TOC on remote virtual drive");
+
+        if (!await ReadTOCWithUIAsync(offerFileImportOnFailure: false))
+        {
+            UpdateTreeForRemoteDriveOnly(0, settings);
+            return;
+        }
+
+        UpdateTreeFromTOCRemote(0, settings);
+        SelectMostRecentSet();
+
+        MessageBox.Show("Remote virtual media formatted successfully!", "Format Complete",
+            MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     // ── Remote tree helpers ───────────────────────────────────────────────────

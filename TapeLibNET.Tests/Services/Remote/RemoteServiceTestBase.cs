@@ -29,27 +29,21 @@ namespace TapeLibNET.Tests.Services.Remote;
 ///  from both the client and server sides.
 /// </para>
 /// </summary>
-public abstract class RemoteServiceTestBase : ServiceTestBase
+/// <remarks>
+/// Initializes the base class and derives <see cref="RemoteSettings"/> from the
+///  fixture's address (e.g. <c>http://127.0.0.1:12345</c>).
+/// </remarks>
+public abstract class RemoteServiceTestBase(LocalHostTapeServiceFixture fixture) : ServiceTestBase
 {
     // ── Fixture reference ─────────────────────────────────────────────────────
 
     /// <summary>The in-process fixture that owns the gRPC channel and address.</summary>
-    protected readonly LocalHostTapeServiceFixture Fixture;
+    protected readonly LocalHostTapeServiceFixture Fixture = fixture;
 
     /// <summary>
     /// <see cref="RemoteHostSettings"/> derived from <see cref="Fixture"/>'s address.
     /// </summary>
-    protected RemoteHostSettings RemoteSettings { get; }
-
-    /// <summary>
-    /// Initializes the base class and derives <see cref="RemoteSettings"/> from the
-    ///  fixture's address (e.g. <c>http://127.0.0.1:12345</c>).
-    /// </summary>
-    protected RemoteServiceTestBase(LocalHostTapeServiceFixture fixture)
-    {
-        Fixture = fixture;
-        RemoteSettings = ParseAddress(fixture.Address);
-    }
+    protected RemoteHostSettings RemoteSettings { get; } = ParseAddress(fixture.Address);
 
     // ── Address parsing ───────────────────────────────────────────────────────
 
@@ -68,7 +62,7 @@ public abstract class RemoteServiceTestBase : ServiceTestBase
     /// <summary>
     /// Creates a <see cref="TapeServiceBase"/> wired to a new <see cref="TestTapeServiceHost"/>.
     /// </summary>
-    protected (TapeServiceBase service, TestTapeServiceHost host) CreateRemoteService()
+    protected static (TapeServiceBase service, TestTapeServiceHost host) CreateRemoteService()
     {
         var host    = new TestTapeServiceHost();
         var service = new TapeServiceBase(TestLoggerFactory.Default, host);
@@ -82,7 +76,7 @@ public abstract class RemoteServiceTestBase : ServiceTestBase
     /// </summary>
     protected async Task<(TapeServiceBase service, TestTapeServiceHost host)> OpenAndFormatRemoteAsync(
         TempVirtualMedia media,
-        CancellationToken ct = default)
+        CancellationToken _ = default)
     {
         var (service, host) = CreateRemoteService();
 
@@ -94,12 +88,7 @@ public abstract class RemoteServiceTestBase : ServiceTestBase
         //  on the server side without the temp-path prefix that CreateRemoteVirtualDriveAsync adds.
         Assert.True(
             await service.OpenRemoteVirtualFileAsync(
-                RemoteSettings,
-                media.ContentPath,
-                media.ContentCapacity,
-                media.HasInitiator ? media.InitiatorPath : null,
-                media.HasInitiator ? media.InitiatorCapacity : 0,
-                caps,
+                RemoteSettings, media.ToVmd(), caps,
                 mediaMode: System.IO.FileMode.Create),
             $"OpenRemoteVirtualFileAsync (create) failed: {service.LastError}");
         Assert.True(
@@ -121,7 +110,7 @@ public abstract class RemoteServiceTestBase : ServiceTestBase
     /// </summary>
     protected async Task<(TapeServiceBase service, TestTapeServiceHost host)> ReopenRemoteAsync(
         TempVirtualMedia media,
-        CancellationToken ct = default)
+        CancellationToken _ = default)
     {
         var (service, host) = CreateRemoteService();
 
@@ -131,12 +120,7 @@ public abstract class RemoteServiceTestBase : ServiceTestBase
 
         Assert.True(
             await service.OpenRemoteVirtualFileAsync(
-                RemoteSettings,
-                media.ContentPath,
-                media.ContentCapacity,
-                media.HasInitiator ? media.InitiatorPath : null,
-                media.HasInitiator ? media.InitiatorCapacity : 0,
-                caps),
+                RemoteSettings, media.ToVmd(), caps),
             $"OpenRemoteVirtualFileAsync (reopen) failed: {service.LastError}");
         Assert.True(
             await service.LoadMediaAsync(),
@@ -154,7 +138,7 @@ public abstract class RemoteServiceTestBase : ServiceTestBase
     /// Creates a <see cref="TapeServiceBase"/> wired to a <see cref="RemoteMultiVolumeServiceHost"/>
     ///  that services volume-swap callbacks via <c>InsertMedia</c> gRPC RPCs.
     /// </summary>
-    protected (TapeServiceBase service, RemoteMultiVolumeServiceHost host)
+    protected static (TapeServiceBase service, RemoteMultiVolumeServiceHost host)
         CreateRemoteMultiVolumeService(IReadOnlyList<TempVirtualMedia> volumes)
     {
         var host    = new RemoteMultiVolumeServiceHost(volumes);
@@ -183,12 +167,7 @@ public abstract class RemoteServiceTestBase : ServiceTestBase
         //  directly without the temp-path prefix that CreateRemoteVirtualDriveAsync adds.
         Assert.True(
             await service.OpenRemoteVirtualFileAsync(
-                RemoteSettings,
-                first.ContentPath,
-                first.ContentCapacity,
-                first.HasInitiator ? first.InitiatorPath : null,
-                first.HasInitiator ? first.InitiatorCapacity : 0,
-                caps,
+                RemoteSettings, first.ToVmd(), caps,
                 mediaMode: System.IO.FileMode.Create),
             $"OpenRemoteVirtualFileAsync (create, multi-vol, vol-1) failed: {service.LastError}");
         Assert.True(
@@ -222,12 +201,7 @@ public abstract class RemoteServiceTestBase : ServiceTestBase
 
         Assert.True(
             await service.OpenRemoteVirtualFileAsync(
-                RemoteSettings,
-                last.ContentPath,
-                last.ContentCapacity,
-                last.HasInitiator ? last.InitiatorPath : null,
-                last.HasInitiator ? last.InitiatorCapacity : 0,
-                caps),
+                RemoteSettings, last.ToVmd(), caps),
             $"OpenRemoteVirtualFileAsync (remote multi-vol reopen) failed: {service.LastError}");
         Assert.True(
             await service.LoadMediaAsync(),

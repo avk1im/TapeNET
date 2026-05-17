@@ -1,3 +1,5 @@
+using TapeLibNET.Services;
+
 namespace TapeLibNET.Tests.Helpers;
 
 /// <summary>
@@ -76,6 +78,13 @@ public sealed class TempVirtualMedia : IDisposable
         verbArgs.CopyTo(all, 1 + drive.Length);
         return all;
     }
+
+    /// <summary>
+    /// Returns a <see cref="VirtualMediaDescriptor"/> describing this media's file-backed
+    /// configuration (content path/capacity and, if present, initiator path/capacity).
+    /// </summary>
+    public VirtualMediaDescriptor ToVmd() =>
+        new(ContentPath, ContentCapacity, InitiatorPath, InitiatorCapacity);
 
     public void Dispose()
     {

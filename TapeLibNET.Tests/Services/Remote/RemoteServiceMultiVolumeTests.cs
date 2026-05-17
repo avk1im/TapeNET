@@ -114,9 +114,7 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
 
                 Assert.True(
                     await svc2.OpenRemoteVirtualFileAsync(
-                        RemoteSettings, vol2.ContentPath, vol2.ContentCapacity,
-                        vol2.HasInitiator ? vol2.InitiatorPath : null,
-                        vol2.HasInitiator ? vol2.InitiatorCapacity : 0, caps2),
+                        RemoteSettings, vol2.ToVmd(), caps2),
                     $"OpenRemoteVirtualFileAsync (vol2 verify) failed: {svc2.LastError}");
                 Assert.True(await svc2.LoadMediaAsync(),
                     $"LoadMediaAsync (vol2 verify) failed: {svc2.LastError}");
@@ -236,9 +234,7 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
         var (backupSvc2, backupHost2) = CreateRemoteMultiVolumeService(volumes);
         Assert.True(
             await backupSvc2.OpenRemoteVirtualFileAsync(
-                RemoteSettings, vol1.ContentPath, vol1.ContentCapacity,
-                vol1.HasInitiator ? vol1.InitiatorPath : null,
-                vol1.HasInitiator ? vol1.InitiatorCapacity : 0, caps),
+                RemoteSettings, vol1.ToVmd(), caps),
             $"OpenRemoteVirtualFileAsync (incremental, vol-1 reopen) failed: {backupSvc2.LastError}");
         Assert.True(await backupSvc2.LoadMediaAsync(),
             $"LoadMediaAsync (incremental, vol-1 reopen) failed: {backupSvc2.LastError}");
@@ -273,9 +269,7 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
 
                 Assert.True(
                     await svc2.OpenRemoteVirtualFileAsync(
-                        RemoteSettings, vol2.ContentPath, vol2.ContentCapacity,
-                        vol2.HasInitiator ? vol2.InitiatorPath : null,
-                        vol2.HasInitiator ? vol2.InitiatorCapacity : 0, caps2),
+                        RemoteSettings, vol2.ToVmd(), caps2),
                     $"OpenRemoteVirtualFileAsync (vol-2 verify) failed: {svc2.LastError}");
                 Assert.True(await svc2.LoadMediaAsync(),
                     $"LoadMediaAsync (vol-2 verify) failed: {svc2.LastError}");

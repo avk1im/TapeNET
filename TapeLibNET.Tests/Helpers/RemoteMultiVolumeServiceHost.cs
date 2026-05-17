@@ -69,12 +69,7 @@ public sealed class RemoteMultiVolumeServiceHost(
             ? VirtualTapeDriveCapabilities.WithPartitions
             : VirtualTapeDriveCapabilities.WithSetmarks;
         bool ok = Service.InsertRemoteVirtualMedia(
-            media.ContentPath,
-            media.ContentCapacity,
-            media.InitiatorPath,
-            media.InitiatorCapacity,
-            caps,
-            mediaMode: FileMode.Create);
+            media.ToVmd(), caps, mediaMode: FileMode.Create);
 
         if (ok) VolumesInserted++;
         return ok;
@@ -105,12 +100,7 @@ public sealed class RemoteMultiVolumeServiceHost(
             ? VirtualTapeDriveCapabilities.WithPartitions
             : VirtualTapeDriveCapabilities.WithSetmarks;
         bool ok = Service.InsertRemoteVirtualMedia(
-            media.ContentPath,
-            media.ContentCapacity,
-            media.InitiatorPath,
-            media.InitiatorCapacity,
-            caps,
-            mediaMode: FileMode.Open);
+            media.ToVmd(), caps, mediaMode: FileMode.Open);
 
         if (ok) VolumesInserted++;
         return ok;

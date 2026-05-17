@@ -407,11 +407,12 @@ public partial class MainViewModel : ViewModelBase
     /// <summary>Available IO speed options for the virtual drive.</summary>
     public IoRateOption[] IoSpeedOptions { get; } = IoRateOption.All;
 
-    /// <summary>Whether IO speed simulation controls should be visible (virtual drive is open).</summary>
-    public bool IsIoSpeedVisible => _tapeService.IsVirtualDrive;
+    /// <summary>Whether IO speed simulation controls should be visible (local virtual drive is open;
+    ///  remote drives do not support IO rate emulation).</summary>
+    public bool IsIoSpeedVisible => _tapeService.IsVirtualDrive && !_tapeService.IsRemoteDrive;
 
     /// <summary>Whether IO speed simulation controls should be enabled (not busy).</summary>
-    public bool IsIoSpeedEnabled => _tapeService.IsVirtualDrive && !IsBusy;
+    public bool IsIoSpeedEnabled => _tapeService.IsVirtualDrive && !_tapeService.IsRemoteDrive && !IsBusy;
 
     private IoRateOption _selectedIoSpeed = IoRateOption.Unlimited;
 
@@ -1944,6 +1945,13 @@ public partial class MainViewModel : ViewModelBase
 
     private async Task FormatVirtualDriveAsync(FormatMediaViewModel formatViewModel)
     {
+        // Remote virtual drives use a different dialog and service call
+        if (_tapeService.IsRemoteDrive)
+        {
+            await FormatRemoteVirtualDriveAsync(formatViewModel);
+            return;
+        }
+
         var currentCaps = new VirtualTapeDriveCapabilities
         {
             MinBlockSize = _tapeService.MinimumBlockSize,

@@ -245,8 +245,11 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
 
         SetCapacityFromBytes(SelectedPreset.ContentCapacity,
             v => ContentCapacityValue = v, u => ContentCapacityUnit = u);
-        SetCapacityFromBytes(SelectedPreset.InitiatorPartitionCapacity,
-            v => InitiatorCapacityValue = v, u => InitiatorCapacityUnit = u);
+        // Only update initiator capacity when the preset defines one; otherwise keep the existing
+        //  default so the field doesn't reset to "0 B" for non-partition presets.
+        if (SelectedPreset.InitiatorPartitionCapacity > 0)
+            SetCapacityFromBytes(SelectedPreset.InitiatorPartitionCapacity,
+                v => InitiatorCapacityValue = v, u => InitiatorCapacityUnit = u);
     }
 
     // ── Capacity helper ───────────────────────────────────────────────────────
