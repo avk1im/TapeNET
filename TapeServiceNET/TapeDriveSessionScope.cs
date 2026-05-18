@@ -31,6 +31,9 @@ public sealed class TapeDriveSessionScope : IDisposable
     /// <summary>The backend associated with this session.</summary>
     public TapeDriveBackend Backend => _entry.Backend;
 
+    /// <summary>The session entry, for catalog and metadata updates within service handlers.</summary>
+    internal TapeDriveSessionEntry Entry => _entry;
+
     public void Dispose()
     {
         if (_disposed) return;

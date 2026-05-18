@@ -1,10 +1,38 @@
 using System.Collections.Concurrent;
+using System.IO;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TapeLibNET;
 
 namespace TapeServiceNET;
+
+/// <summary>
+/// One entry in the per-session named-volume catalog.
+/// Populated by <see cref="TapeDriveGrpcService.CreateTempVirtual"/> (for named drives)
+/// and updated by <see cref="TapeDriveGrpcService.InsertMedia"/>.
+/// </summary>
+public sealed class RemoteVirtualVolumeEntry(
+    string Name,
+    string ContentFilePath,
+    long ContentCapacity,
+    string? InitiatorFilePath,
+    long InitiatorCapacity,
+    TapeLibNET.Virtual.VirtualTapeDriveCapabilities Capabilities,
+    uint BlockSize,
+    DateTime CreatedUtc)
+{
+    public string Name { get; } = Name;
+    public string ContentFilePath { get; } = ContentFilePath;
+    public long ContentCapacity { get; } = ContentCapacity;
+    public string? InitiatorFilePath { get; } = InitiatorFilePath;
+    public long InitiatorCapacity { get; } = InitiatorCapacity;
+    public TapeLibNET.Virtual.VirtualTapeDriveCapabilities Capabilities { get; } = Capabilities;
+    public uint BlockSize { get; } = BlockSize;
+    public long BytesWritten { get; set; } = 0;
+    public DateTime CreatedUtc { get; } = CreatedUtc;
+    public bool IsCurrent { get; set; } = false;
+}
 
 /// <summary>
 /// Holds one open backend together with session lifecycle metadata.
@@ -32,6 +60,12 @@ public sealed class TapeDriveSessionEntry(
     /// The reaper skips sessions where this is non-zero.
     /// </summary>
     public int ActiveRpcCount;
+
+    /// <summary>
+    /// Catalog of named (file-backed) temp volumes created or inserted during this session.
+    /// In-memory drives are not catalogued. Thread-safe via <c>lock(Volumes)</c>.
+    /// </summary>
+    public List<RemoteVirtualVolumeEntry> Volumes { get; } = [];
 }
 
 /// <summary>
@@ -101,7 +135,8 @@ public sealed class TapeDriveSessionRegistry(
     }
 
     /// <summary>
-    /// Removes and disposes the session entry for the given ID.
+    /// Removes and disposes the session entry for the given ID, then deletes any named
+    ///  temp files that were catalogued for the session.
     /// No-op if the session does not exist.
     /// </summary>
     public void Remove(string sessionId)
@@ -111,8 +146,17 @@ public sealed class TapeDriveSessionRegistry(
             logger.LogInformation("Session closed: {SessionId} | drive {DeviceName}",
                 sessionId, entry.Backend.DeviceName);
             entry.Backend.Dispose();
+            DeleteSessionTempFiles(entry);
         }
     }
+
+    /// <summary>
+    /// Returns the session entry for the given <paramref name="sessionId"/> without
+    /// incrementing the active RPC count. For catalog updates only — do not use for
+    /// operations that require the session to be protected from the reaper.
+    /// </summary>
+    public bool TryGet(string sessionId, out TapeDriveSessionEntry? entry) =>
+        _sessions.TryGetValue(sessionId, out entry);
 
     /// <summary>
     /// Replaces the backend on an existing session without disrupting it.
@@ -157,6 +201,7 @@ public sealed class TapeDriveSessionRegistry(
                         sessionId, removed.Backend.DeviceName,
                         removed.RemoteIp, removed.LastActivity);
                     removed.Backend.Dispose();
+                    DeleteSessionTempFiles(removed);
                 }
             }
         }
@@ -172,9 +217,55 @@ public sealed class TapeDriveSessionRegistry(
             logger.LogInformation("Service shutdown — closing session {SessionId} | drive {DeviceName}",
                 sessionId, entry.Backend.DeviceName);
             entry.Backend.Dispose();
+            DeleteSessionTempFiles(entry);
         }
 
         _sessions.Clear();
+    }
+
+    // ── Temp file cleanup ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Deletes the backing files for all named volumes catalogued in <paramref name="entry"/>.
+    /// Called when the session is truly closed (explicit close or idle reap).
+    /// Files that have already been deleted (e.g. a prior <c>InsertMedia</c> that did dispose)
+    ///  are silently skipped.
+    /// </summary>
+    private void DeleteSessionTempFiles(TapeDriveSessionEntry entry)
+    {
+        List<RemoteVirtualVolumeEntry> snapshot;
+        lock (entry.Volumes)
+            snapshot = [.. entry.Volumes];
+
+        foreach (var vol in snapshot)
+        {
+            TryDeleteFile(vol.ContentFilePath);
+            // Also delete the metadata sidecar (e.g. .vtape.meta)
+            TryDeleteFile(vol.ContentFilePath + TapeLibNET.Virtual.VirtualTapeDriveBackend.MetadataExtension);
+
+            if (!string.IsNullOrEmpty(vol.InitiatorFilePath))
+            {
+                TryDeleteFile(vol.InitiatorFilePath);
+                TryDeleteFile(vol.InitiatorFilePath + TapeLibNET.Virtual.VirtualTapeDriveBackend.MetadataExtension);
+            }
+        }
+    }
+
+    private void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+                logger.LogDebug("Deleted temp file: {Path}", path);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Non-fatal — OS temp folder will eventually purge stale files.
+            logger.LogWarning(ex, "Could not delete temp file: {Path}", path);
+        }
     }
 }
 

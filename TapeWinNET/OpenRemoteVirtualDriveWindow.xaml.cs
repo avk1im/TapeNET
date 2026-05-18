@@ -4,9 +4,9 @@ using TapeWinNET.ViewModels;
 
 namespace TapeWinNET;
 
-public partial class CreateRemoteVirtualDriveWindow : Window
+public partial class OpenRemoteVirtualDriveWindow : Window
 {
-    public CreateRemoteVirtualDriveWindow(CreateRemoteVirtualDriveViewModel viewModel)
+    public OpenRemoteVirtualDriveWindow(OpenRemoteVirtualDriveViewModel viewModel)
     {
         InitializeComponent();
         DataContext = viewModel;
@@ -19,7 +19,7 @@ public partial class CreateRemoteVirtualDriveWindow : Window
         }
 
         // Wire callbacks so the VM can close the window without referencing it directly
-        viewModel.OnCreateSuccess = () => DialogResult = true;
-        viewModel.OnCancel        = () => DialogResult = false;
+        viewModel.OnConfirmSuccess = () => DialogResult = true;
+        viewModel.OnCancel         = () => DialogResult = false;
     }
 }

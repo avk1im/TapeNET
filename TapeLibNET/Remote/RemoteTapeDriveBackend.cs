@@ -29,7 +29,12 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
 
     private readonly GrpcChannel _channel;
     private readonly TapeDriveService.TapeDriveServiceClient _client;
-    private readonly bool _ownsChannel;
+    private bool _ownsChannel;
+
+    // When false, Close() and Dispose() do NOT send the gRPC Close RPC so the server-side
+    // session survives. Used for "drive-swap" backends that share a persistent session
+    // managed by TapeServiceBase across multiple open/create/insert-media cycles.
+    private bool _ownsSession;
 
     // Session ID issued by the server on Open* and echoed in x-tape-session-id metadata
     // on every subsequent call. Empty string means no session is established yet.
@@ -64,6 +69,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
         _channel = GrpcChannel.ForAddress(settings.ChannelAddress, settings.BuildChannelOptions());
         _client = new TapeDriveService.TapeDriveServiceClient(_channel);
         _ownsChannel = true;
+        _ownsSession = true;
 
         m_logger.LogTrace("RemoteTapeDriveBackend created for {Address}", settings.ChannelAddress);
     }
@@ -87,6 +93,35 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
         _channel = channel;
         _client = new TapeDriveService.TapeDriveServiceClient(channel);
         _ownsChannel = false;
+        _ownsSession = true; // caller shares channel but each instance still owns its session
+    }
+
+    /// <summary>
+    /// Re-attaches to an already-open remote session without issuing any Open* RPC.
+    /// The session was previously established by a prior <see cref="CreateTempVirtualAsync"/> or
+    ///  <see cref="OpenAsync"/>/<see cref="OpenVirtualAsync"/> call on the same channel.
+    /// <para>
+    /// Used by <see cref="TapeLibNET.Services.TapeServiceBase"/> to hand the persistent
+    ///  connection-level session to a new <see cref="TapeDrive"/> wrapper without closing the
+    ///  session or breaking the server-side volume catalog.
+    /// </para>
+    /// </summary>
+    /// <param name="channel">Shared gRPC channel (caller retains ownership).</param>
+    /// <param name="sessionId">Session ID previously returned by the server in response headers.</param>
+    /// <param name="loggerFactory">Logger factory.</param>
+    internal RemoteTapeDriveBackend(GrpcChannel channel, string sessionId, ILoggerFactory loggerFactory)
+        : base(loggerFactory)
+    {
+        _channel     = channel;
+        _client      = new TapeDriveService.TapeDriveServiceClient(channel);
+        _sessionId   = sessionId;
+        _ownsChannel = false;
+        _ownsSession = false; // session lifetime is managed by TapeServiceBase
+        // Mark the session as already open so ReopenDrive skips the Open() call.
+        //  The real state snapshot will be refreshed by RefreshDriveCaps() via ReopenDrive.
+        _state = new BackendState { IsOpen = true };
+        // Start the keepalive ping now — the session is already open on the server.
+        StartPingTimer();
     }
 
     #endregion
@@ -171,6 +206,38 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
 
     /// <summary>The remote service address this backend is connected to.</summary>
     public string RemoteAddress => _channel.Target;
+
+    /// <summary>
+    /// The session ID assigned by the server after a successful Open* or CreateTempVirtual* call.
+    /// Empty string if no session has been established yet.
+    /// Exposed so <see cref="TapeLibNET.Services.TapeServiceBase"/> can preserve the session
+    ///  across drive-swap operations (the service keeps the channel + session ID alive and
+    ///  re-attaches to them for each subsequent open/create).
+    /// </summary>
+    internal string SessionId => _sessionId;
+
+    /// <summary>
+    /// The underlying gRPC channel. Exposed so <see cref="TapeLibNET.Services.TapeServiceBase"/>
+    ///  can share the channel with a replacement backend after a drive swap.
+    /// </summary>
+    internal GrpcChannel Channel => _channel;
+
+    /// <summary>
+    /// Transfers ownership of the channel and session to the caller (typically
+    ///  <see cref="TapeLibNET.Services.TapeServiceBase"/>), making this instance
+    ///  non-owning so that subsequent <see cref="Dispose"/> calls neither send the
+    ///  Close RPC nor dispose the channel.
+    /// After calling this, the caller is responsible for the lifetime of the
+    ///  channel and for sending the Close RPC when done.
+    /// </summary>
+    /// <returns>The gRPC channel (now owned by the caller).</returns>
+    internal GrpcChannel DetachOwnership()
+    {
+        _ownsChannel = false;
+        _ownsSession = false;
+        StopPingTimer(); // caller will manage keepalive via the new non-owning backend
+        return _channel;
+    }
 
     #endregion
 
@@ -338,7 +405,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
             },
         };
 
-        var response = await _client.InsertMediaAsync(request, WithSession(ct));
+        var response = await _client.InsertMediaAsync(request, WithSession(ct)).ConfigureAwait(false);
         return Sync(response);
     }
 
@@ -421,13 +488,99 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     {
         StopPingTimer();
 
-        // Skip the RPC if we never obtained a session (Open failed) or it was already closed.
-        if (!string.IsNullOrEmpty(_sessionId))
+        // Skip the RPC if we never obtained a session (Open failed), it was already closed,
+        //  or we don't own the session (persistent connection-level session managed externally).
+        if (!string.IsNullOrEmpty(_sessionId) && _ownsSession)
         {
             var response = _client.Close(new EmptyRequest(), WithSession());
             _sessionId = string.Empty;
             Sync(response);
         }
+    }
+
+    /// <summary>
+    /// Returns all named (file-backed) temporary volumes that have been created or
+    /// inserted in the current session.  In-memory drives are never catalogued.
+    /// </summary>
+    /// <returns>
+    /// A snapshot of the server-side volume catalog, ordered by creation time (oldest first).
+    /// Returns an empty list if the session has no named volumes or if the call fails.
+    /// </returns>
+    public IReadOnlyList<RemoteVirtualVolumeInfo> ListSessionVolumes()
+    {
+        try
+        {
+            var response = _client.ListSessionVolumes(new EmptyRequest(), WithSession());
+            return MapVolumeEntries(response);
+        }
+        catch (RpcException ex)
+        {
+            m_logger.LogWarning(ex, "ListSessionVolumes failed for session {SessionId}", _sessionId);
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously returns all named volumes in the current session.
+    /// </summary>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>
+    /// A snapshot of the server-side volume catalog, ordered by creation time (oldest first).
+    /// Returns an empty list if the session has no named volumes or if the call fails.
+    /// </returns>
+    public async Task<IReadOnlyList<RemoteVirtualVolumeInfo>> ListSessionVolumesAsync(
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var response = await _client.ListSessionVolumesAsync(
+                new EmptyRequest(), WithSession(ct)).ConfigureAwait(false);
+            return MapVolumeEntries(response);
+        }
+        catch (RpcException ex)
+        {
+            m_logger.LogWarning(ex, "ListSessionVolumes failed for session {SessionId}", _sessionId);
+            return [];
+        }
+    }
+
+    /// <summary>Maps a <see cref="ListSessionVolumesResponse"/> to <see cref="RemoteVirtualVolumeInfo"/> records.</summary>
+    private static List<RemoteVirtualVolumeInfo> MapVolumeEntries(ListSessionVolumesResponse response)
+    {
+        var result = new List<RemoteVirtualVolumeInfo>(response.Volumes.Count);
+        foreach (var v in response.Volumes)
+        {
+            var caps = v.FileConfig?.Capabilities != null
+                ? new TapeLibNET.Virtual.VirtualTapeDriveCapabilities
+                {
+                    MinBlockSize               = v.FileConfig.Capabilities.MinBlockSize,
+                    MaxBlockSize               = v.FileConfig.Capabilities.MaxBlockSize,
+                    DefaultBlockSize           = v.FileConfig.Capabilities.DefaultBlockSize,
+                    SupportsSetmarks           = v.FileConfig.Capabilities.SupportsSetmarks,
+                    SupportsSeqFilemarks       = v.FileConfig.Capabilities.SupportsSeqFilemarks,
+                    SupportsInitiatorPartition = v.FileConfig.Capabilities.SupportsInitiatorPartition,
+                    SupportsCompression        = v.FileConfig.Capabilities.SupportsCompression,
+                }
+                : TapeLibNET.Virtual.VirtualTapeDriveCapabilities.WithFilemarksOnlyLargeBlocks;
+
+            var media = new TapeLibNET.Services.VirtualMediaDescriptor(
+                ContentPath:                v.FileConfig?.ContentFilePath ?? string.Empty,
+                ContentCapacity:            v.FileConfig?.ContentCapacity ?? 0,
+                InitiatorPath:              string.IsNullOrEmpty(v.FileConfig?.InitiatorFilePath)
+                                                ? null : v.FileConfig.InitiatorFilePath,
+                InitiatorPartitionCapacity: v.FileConfig?.InitiatorCapacity ?? 0,
+                InMemory:                   false);
+
+            result.Add(new RemoteVirtualVolumeInfo(
+                Name:         v.Name,
+                Media:        media,
+                Capabilities: caps,
+                BlockSize:    v.BlockSize,
+                BytesWritten: v.BytesWritten,
+                CreatedUtc:   DateTimeOffset.FromUnixTimeSeconds(v.CreatedUnixUtc).UtcDateTime,
+                IsCurrent:    v.IsCurrent));
+        }
+        return result;
     }
 
     /// <summary>
@@ -438,8 +591,9 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     {
         StopPingTimer();
 
-        // Skip the RPC if we never obtained a session (Open failed) or it was already closed.
-        if (!string.IsNullOrEmpty(_sessionId))
+        // Skip the RPC if we never obtained a session (Open failed), it was already closed,
+        //  or we don't own the session (persistent connection-level session managed externally).
+        if (!string.IsNullOrEmpty(_sessionId) && _ownsSession)
         {
             var call = _client.CloseAsync(new EmptyRequest(), WithSession(ct));
             _sessionId = string.Empty;

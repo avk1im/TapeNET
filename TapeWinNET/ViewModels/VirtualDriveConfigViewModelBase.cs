@@ -11,7 +11,7 @@ namespace TapeWinNET.ViewModels;
 /// and media description.
 /// <para>
 /// Used by both <see cref="OpenVirtualDriveViewModel"/> (local) and
-///  <see cref="CreateRemoteVirtualDriveViewModel"/> (remote).
+///  <see cref="OpenRemoteVirtualDriveViewModel"/> (remote).
 /// </para>
 /// </summary>
 public abstract class VirtualDriveConfigViewModelBase : ViewModelBase

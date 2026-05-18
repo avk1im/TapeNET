@@ -88,6 +88,20 @@ internal sealed class TempVirtualTapeDriveBackend(
 
     // ── Dispose: close inner backend then delete temp files ─────────────────
 
+    /// <summary>
+    /// Closes and disposes the inner backend <b>without</b> deleting the backing files.
+    /// Used by <see cref="TapeDriveGrpcService.InsertMedia"/> when swapping volumes mid-session:
+    ///  the old backend must be released, but its file must survive so the session catalog
+    ///  can re-mount it later.  File cleanup is deferred to session close / idle reap.
+    /// </summary>
+    public void CloseWithoutDelete()
+    {
+        _inner.Close();
+        _inner.Dispose();
+        // Skip DeleteTempFiles() intentionally — caller owns cleanup.
+        GC.SuppressFinalize(this);
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)

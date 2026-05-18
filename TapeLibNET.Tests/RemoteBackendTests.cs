@@ -1,4 +1,4 @@
-using TapeLibNET.Remote;
+ï»¿using TapeLibNET.Remote;
 using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
@@ -10,7 +10,7 @@ namespace TapeLibNET.Tests;
 /// <para>
 /// All tests share a single gRPC server via an <see cref="ITapeServiceFixture"/>
 /// (collection fixture). Each test creates its own <see cref="RemoteVirtualTapeFixture"/>
-/// for full isolation — the server replaces its backend on each <c>OpenVirtual</c> call.
+/// for full isolation â€” the server replaces its backend on each <c>OpenVirtual</c> call.
 /// </para>
 /// These tests mirror a curated subset of <see cref="VirtualDriveBasicTests"/>,
 /// <see cref="TapeBackupAgentTests"/>, and <see cref="TapeTOCRoundTripTests"/> to
@@ -316,14 +316,14 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
 
         var drives = backend.ProbeDrives();
 
-        // Result is always a valid list — empty when no physical drives are present.
+        // Result is always a valid list â€” empty when no physical drives are present.
         Assert.NotNull(drives);
     }
 
     [SkippableFact]
     public void ProbeDrives_MaxDriveZero_ProbesOnlyDriveZero()
     {
-        // When maxDrive = 0, only drive 0 is probed — result has 0 or 1 entries.
+        // When maxDrive = 0, only drive 0 is probed â€” result has 0 or 1 entries.
         EnsureServiceAvailable();
         using var backend = new RemoteTapeDriveBackend(_service.Channel,
             Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
@@ -576,7 +576,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
     [SkippableFact]
     public async Task OpenAsync_Win32Drive_OpensAndClosesCleanly()
     {
-        // Win32 drives may not be present — a "not found" error from the server is fine;
+        // Win32 drives may not be present â€” a "not found" error from the server is fine;
         // we only verify the async path completes without deadlock and without throwing
         // on connection-level problems.
         EnsureServiceAvailable();
@@ -585,8 +585,8 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
 
         bool ok = await backend.OpenAsync(0).ConfigureAwait(false);
         // On a machine with no physical tape drive the server returns false; that is
-        // acceptable — the goal is no hang / no exception.
-        Assert.False(backend.IsOpen == ok ? false : true,
+        // acceptable â€” the goal is no hang / no exception.
+        Assert.False(backend.IsOpen != ok,
             "IsOpen must match the return value of OpenAsync");
         if (ok)
             await backend.CloseAsync().ConfigureAwait(false);
@@ -614,7 +614,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
 
         await backend.CloseAsync().ConfigureAwait(false);
         // Note: IsOpen reflects cached server state; the Close response carries no State,
-        // so the cache is not updated — consistent with the sync Close behaviour.
+        // so the cache is not updated â€” consistent with the sync Close behaviour.
     }
 
     [SkippableFact]
@@ -751,6 +751,173 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
     //  TOC Round-Trip
     // ========================================================================
 
+    // ========================================================================
+    //  ListSessionVolumes
+    // ========================================================================
+
+    #region *** ListSessionVolumes Tests ***
+
+    [SkippableFact]
+    public void ListSessionVolumes_MemoryBacked_ReturnsEmpty()
+    {
+        // An in-memory virtual drive is never catalogued as a named volume.
+        EnsureServiceAvailable();
+        using var fixture = new RemoteVirtualTapeFixture(_service.Channel, DriveProfile.Setmarks);
+
+        var volumes = fixture.Backend.ListSessionVolumes();
+
+        Assert.Empty(volumes);
+    }
+
+    [SkippableFact]
+    public void ListSessionVolumes_AfterCreateTempVirtual_Named_ReturnsSingleEntry()
+    {
+        // A named (file-backed) temp volume must appear in the catalog immediately after creation.
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        bool ok = backend.CreateTempVirtual(capacityBytes: 20L * 1024 * 1024, name: "vol_single");
+        Assert.True(ok, "CreateTempVirtual failed");
+
+        var volumes = backend.ListSessionVolumes();
+
+        Assert.Single(volumes);
+        Assert.Equal("vol_single", volumes[0].Name);
+        Assert.True(volumes[0].IsCurrent, "The only volume should be current");
+        Assert.False(volumes[0].Media.InMemory);
+    }
+
+    [SkippableFact]
+    public void ListSessionVolumes_AfterCreateTempVirtual_Unnamed_ReturnsEmpty()
+    {
+        // An unnamed (memory-backed) CreateTempVirtual must NOT appear in the catalog.
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        bool ok = backend.CreateTempVirtual(capacityBytes: 20L * 1024 * 1024);
+        Assert.True(ok, "CreateTempVirtual (unnamed) failed");
+
+        var volumes = backend.ListSessionVolumes();
+
+        Assert.Empty(volumes);
+    }
+
+    [SkippableFact]
+    public async Task ListSessionVolumes_AfterInsertMedia_ReturnsMultipleEntries()
+    {
+        // After swapping to a second named volume via InsertMediaAsync the catalog
+        // must contain both entries, and only the second must be flagged IsCurrent.
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        // Volume 1 â”€ file-backed temp drive
+        bool ok1 = backend.CreateTempVirtual(capacityBytes: 10L * 1024 * 1024, name: "vol01");
+        Assert.True(ok1, "CreateTempVirtual vol01 failed");
+
+        // Write a block so BytesWritten is non-zero on vol01
+        var drive = new TapeDrive(
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance, backend);
+        Assert.True(drive.ReopenDrive(0));
+        Assert.True(drive.ReloadMedia());
+        Assert.True(drive.PrepareMedia());
+        var block = new byte[drive.BlockSize];
+        drive.WriteDirect(block, 0, block.Length, out _, out _);
+
+        // Volume 2 â”€ swap via InsertMediaAsync
+        bool ok2 = await backend.InsertMediaAsync(
+            contentFilePath: "vol02",
+            contentCapacity: 10L * 1024 * 1024,
+            mediaMode: System.IO.FileMode.Create);
+        Assert.True(ok2, "InsertMediaAsync vol02 failed");
+
+        var volumes = backend.ListSessionVolumes();
+
+        Assert.Equal(2, volumes.Count);
+
+        var v1 = volumes.First(v => v.Name == "vol01");
+        var v2 = volumes.First(v => v.Name == "vol02");
+
+        Assert.False(v1.IsCurrent, "vol01 should no longer be current after swap");
+        Assert.True(v2.IsCurrent,  "vol02 should be current after InsertMedia");
+        Assert.True(v1.BytesWritten > 0, "vol01 should have non-zero BytesWritten after write");
+    }
+
+    [SkippableFact]
+    public async Task ListSessionVolumes_Async_MatchesSyncResult()
+    {
+        // The async and sync overloads must return identical data.
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        bool ok = backend.CreateTempVirtual(capacityBytes: 10L * 1024 * 1024, name: "vol_async");
+        Assert.True(ok, "CreateTempVirtual failed");
+
+        var sync  = backend.ListSessionVolumes();
+        var async_ = await backend.ListSessionVolumesAsync();
+
+        Assert.Equal(sync.Count, async_.Count);
+        Assert.Equal(sync[0].Name,      async_[0].Name);
+        Assert.Equal(sync[0].IsCurrent, async_[0].IsCurrent);
+    }
+
+    [SkippableFact]
+    public void ListSessionVolumes_TwoIndependentSessions_AreIsolated()
+    {
+        // Two concurrently open sessions must each report only their own volumes.
+        EnsureServiceAvailable();
+        using var backendA = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+        using var backendB = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        Assert.True(backendA.CreateTempVirtual(capacityBytes: 10L * 1024 * 1024, name: "session_a_vol"),
+            "CreateTempVirtual A failed");
+        Assert.True(backendB.CreateTempVirtual(capacityBytes: 10L * 1024 * 1024, name: "session_b_vol"),
+            "CreateTempVirtual B failed");
+
+        var volsA = backendA.ListSessionVolumes();
+        var volsB = backendB.ListSessionVolumes();
+
+        Assert.Single(volsA);
+        Assert.Equal("session_a_vol", volsA[0].Name);
+        Assert.DoesNotContain(volsA, v => v.Name == "session_b_vol");
+
+        Assert.Single(volsB);
+        Assert.Equal("session_b_vol", volsB[0].Name);
+        Assert.DoesNotContain(volsB, v => v.Name == "session_a_vol");
+    }
+
+    [SkippableFact]
+    public void ListSessionVolumes_VolumeFields_ArePopulatedCorrectly()
+    {
+        // Volume metadata (CreatedUtc, BlockSize, media descriptor) must be populated.
+        EnsureServiceAvailable();
+        using var backend = new RemoteTapeDriveBackend(_service.Channel,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+
+        var before = DateTime.UtcNow.AddSeconds(-2);
+        bool ok = backend.CreateTempVirtual(capacityBytes: 15L * 1024 * 1024, name: "vol_meta");
+        Assert.True(ok, "CreateTempVirtual failed");
+        var after = DateTime.UtcNow.AddSeconds(2);
+
+        var volumes = backend.ListSessionVolumes();
+        Assert.Single(volumes);
+
+        var vol = volumes[0];
+        Assert.Equal("vol_meta", vol.Name);
+        Assert.InRange(vol.CreatedUtc, before, after);
+        Assert.True(vol.BlockSize > 0, "BlockSize should be non-zero");
+        Assert.False(string.IsNullOrEmpty(vol.Media.ContentPath),
+            "ContentPath should be populated for a file-backed volume");
+        Assert.True(vol.Media.ContentCapacity > 0, "ContentCapacity should be non-zero");
+    }
+
+    #endregion
+
     #region *** TOC Tests ***
 
     [SkippableTheory]
@@ -790,7 +957,7 @@ public class LocalHostBackendTests(LocalHostTapeServiceFixture service)
 /// <para>
 /// Resource-intensive: requires external gRPC server configuration.
 /// Excluded from routine runs via <c>FullyQualifiedName!~RemoteHostBackendTests</c> in
-/// <c>TapeNET.runsettings</c> — trait-based filtering does not work here because test
+/// <c>TapeNET.runsettings</c> â€” trait-based filtering does not work here because test
 /// methods are inherited from <see cref="RemoteBackendTestsBase"/>, and xUnit applies
 /// traits from the declaring (base) class, not the concrete subclass.
 /// </para>

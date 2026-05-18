@@ -1,6 +1,7 @@
 using System.IO;
 
 using TapeLibNET;
+using TapeLibNET.Remote;
 using TapeLibNET.Services;
 using TapeLibNET.Virtual;
 using TapeLibNET.Tests.Helpers; // TempFileTree, FileComparer, TempVirtualMedia, RemoteMultiVolumeServiceHost
@@ -350,6 +351,200 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
                     $"Case B: expected ≥1 volume swap to reach vol-1 data; got {restoreHost.VolumesInserted}");
             }
             // Byte-exact comparison omitted: source files were overwritten by ModifyFile.
+        }
+    }
+
+    /// <summary>
+    /// Capacity used for the catalog-driven test volumes: matches <see cref="MultiVolumeCapacity_Setmarks"/>
+    /// (20 MiB) so that the setmarks TOC overhead (16 MiB) leaves 4 MiB of usable data space, forcing
+    /// at least one volume swap when writing 16 × 350 KiB files (~5.6 MiB total).
+    /// No initiator partition — <c>CreateTempVirtual</c> does not support one.
+    /// </summary>
+    private const long CatalogDrivenVolumeCapacity = 20L * 1024 * 1024;
+
+    // ── 8.10: catalog-driven multi-volume backup + restore ────────────────────
+
+    /// <summary>
+    /// Verifies the production catalog-driven volume-swap path end-to-end:
+    /// <list type="bullet">
+    ///  <item><description>
+    ///   Volume 1 is opened with <see cref="TapeServiceBase.CreateRemoteVirtualDriveAsync"/>
+    ///    (named temp, the actual production entry point used by <c>OpenRemoteVirtualDriveAsync</c>).
+    ///  </description></item>
+    ///  <item><description>
+    ///   A <see cref="CatalogDrivenRemoteServiceHost"/> services backup volume swaps by calling
+    ///    <see cref="TapeServiceBase.InsertRemoteVirtualMedia"/> with a freshly-named VMD —
+    ///    no pre-injected <see cref="TempVirtualMedia"/> list.
+    ///  </description></item>
+    ///  <item><description>
+    ///   After backup, the session catalog (via <see cref="TapeServiceBase.ListRemoteSessionVolumesAsync"/>)
+    ///    is asserted to contain both volumes with the correct <c>IsCurrent</c> flag and non-zero
+    ///    <c>BytesWritten</c> on the completed first volume.
+    ///  </description></item>
+    ///  <item><description>
+    ///   Restore re-uses the catalog paths; the catalog-driven host resolves volume swaps
+    ///    by listing the catalog and picking by 1-based index — no pre-injected paths.
+    ///  </description></item>
+    /// </list>
+    /// This test validates that <see cref="RemoteMultiVolumeServiceHost"/>'s shortcut
+    /// (pre-injected volumes list) and the catalog-driven flow produce the same end state.
+    /// <para>
+    /// Uses setmarks only: <c>CreateTempVirtual</c> does not support initiator partitions.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Remote_MultiVolume_CatalogDriven_BackupAndRestore_RoundTrips()
+    {
+        long volumeCapacity = CatalogDrivenVolumeCapacity;
+
+        // Shared temp directory for the backup host's new-volume files (server runs in-process).
+        string tempDir = Path.Combine(Path.GetTempPath(), $"TapeNET_CatalogTest_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        // Setmarks only: CreateTempVirtual does not support initiator partitions.
+        var caps = VirtualTapeDriveCapabilities.WithSetmarks;
+
+        try
+        {
+            const string BaseVolumeName = "catalog_tape";
+
+            // Build the vol-01 VMD: pass only the bare name as ContentPath.
+            // CreateRemoteVirtualDriveAsync forwards this to CreateTempVirtualAsync(name: …),
+            //  which the server turns into a temp-folder path: tapenet_tmp_{name}_{guid}.vtape.
+            // The actual server-side path is read back from the catalog after backup.
+            string vol01Name = $"{BaseVolumeName}_vol01";
+            var vol01Vmd = new VirtualMediaDescriptor(
+                ContentPath:                vol01Name,
+                ContentCapacity:            volumeCapacity,
+                InitiatorPath:              null,
+                InitiatorPartitionCapacity: 0);
+
+            // ── Backup ────────────────────────────────────────────────────────
+            using var src = new TempFileTree();
+            AddMultiVolumeContent(src);
+
+            var backupHost = new CatalogDrivenRemoteServiceHost(
+                BaseVolumeName, caps, volumeCapacity, tempDir);
+            var backupSvc  = new TapeServiceBase(TestLoggerFactory.Default, backupHost);
+            backupHost.Service = backupSvc;
+
+            // Open vol-01 via the production CreateRemoteVirtualDriveAsync path
+            Assert.True(
+                await backupSvc.CreateRemoteVirtualDriveAsync(RemoteSettings, vol01Vmd, caps),
+                $"CreateRemoteVirtualDriveAsync (vol-01) failed: {backupSvc.LastError}");
+            Assert.True(
+                await backupSvc.LoadMediaAsync(),
+                $"LoadMediaAsync (vol-01) failed: {backupSvc.LastError}");
+
+            long initSize = -1L; // setmarks only — no initiator partition
+            Assert.True(
+                await backupSvc.FormatMediaAsync(initSize, MediaName),
+                $"FormatMediaAsync (vol-01) failed: {backupSvc.LastError}");
+
+            BackupResult backupResult;
+            IReadOnlyList<RemoteVirtualVolumeInfo> finalCatalog;
+            using (backupSvc)
+            {
+                var req = MakeBackupRequest(backupSvc, src.RootPath, "CatalogDriven-Set-1");
+                backupResult = await backupSvc.ExecuteBackupAsync(req);
+
+                // ── Assert catalog state right after backup ────────────────────
+                finalCatalog = await backupSvc.ListRemoteSessionVolumesAsync();
+
+                Assert.True(finalCatalog.Count >= 2,
+                    $"Expected ≥2 catalog entries after multi-volume backup; got {finalCatalog.Count}");
+
+                // The last entry must be current; the first must have non-zero BytesWritten.
+                Assert.True(finalCatalog[^1].IsCurrent,
+                    "Last catalog entry should be flagged as current after backup");
+                Assert.False(finalCatalog[0].IsCurrent,
+                    "First catalog entry should no longer be current after volume swap");
+                Assert.True(finalCatalog[0].BytesWritten > 0,
+                    "First volume should have non-zero BytesWritten after being swapped out");
+
+                // All catalog entries must carry the correct volume name prefix.
+                Assert.All(finalCatalog, v =>
+                    Assert.Contains(BaseVolumeName, v.Name, StringComparison.OrdinalIgnoreCase));
+            }
+
+            Assert.False(backupResult.WasAborted,  "Backup was unexpectedly aborted");
+            Assert.False(backupResult.HasFailed,   $"Backup reported failure");
+            Assert.True (backupResult.Success,     "Backup did not succeed");
+            Assert.Equal(0,                        backupResult.FilesFailed);
+            Assert.Equal(MultiVolumeFileCount,     backupResult.FilesSucceeded);
+            Assert.True (backupHost.VolumesInserted >= 1,
+                $"Expected ≥1 volume insertion during backup; got {backupHost.VolumesInserted}");
+
+            // ── Restore (catalog-driven, fresh session) ───────────────────────
+            // Re-open vol-01 (from catalog) and then swap to each subsequent volume to
+            //  re-populate the new session's catalog.  This mirrors the production flow
+            //  where the user picks a volume from the dialog and the service re-inserts it.
+            // The catalog-driven host resolves volume swaps by listing the catalog.
+            var restoreHost = new CatalogDrivenRemoteServiceHost(
+                BaseVolumeName, caps, volumeCapacity, tempDir);
+            var restoreSvc  = new TapeServiceBase(TestLoggerFactory.Default, restoreHost);
+            restoreHost.Service = restoreSvc;
+
+            // Open vol-01 from its actual server-side path (read from finalCatalog).
+            var seedVol01 = finalCatalog[0].Media;
+            Assert.True(
+                await restoreSvc.OpenRemoteVirtualFileAsync(RemoteSettings, seedVol01, caps),
+                $"OpenRemoteVirtualFileAsync (restore seed vol-01) failed: {restoreSvc.LastError}");
+
+            // Seed remaining volumes into the session catalog so the host can look them up.
+            for (int i = 1; i < finalCatalog.Count; i++)
+            {
+                var vol  = finalCatalog[i];
+                var mode = System.IO.FileMode.Open;
+                Assert.True(
+                    await restoreSvc.InsertRemoteVirtualMediaAsync(vol.Media, vol.Capabilities, mode),
+                    $"InsertRemoteVirtualMediaAsync (restore seed vol-{i + 1}) failed: {restoreSvc.LastError}");
+            }
+
+            Assert.True(
+                await restoreSvc.LoadMediaAsync(),
+                $"LoadMediaAsync (restore) failed: {restoreSvc.LastError}");
+            Assert.True(
+                await restoreSvc.RestoreTOCAsync(),
+                $"RestoreTOCAsync (restore) failed: {restoreSvc.LastError}");
+
+            var restoreRoot = Path.Combine(tempDir, "restore");
+            Directory.CreateDirectory(restoreRoot);
+
+            RestoreResult restoreResult;
+            using (restoreSvc)
+            {
+                var toc    = restoreSvc.TOC!;
+                int setIdx = toc.LastSetOnVolume;
+
+                var req = new RestoreRequest(
+                    Mode:                  RestoreMode.Restore,
+                    CheckedFilesBySet:     new Dictionary<int, IReadOnlyList<TapeFileInfo>?> { [setIdx] = null },
+                    Incremental:           false,
+                    TargetDirectory:       restoreRoot,
+                    RecurseSubdirectories: true,
+                    HandleExisting:        TapeHowToHandleExisting.Overwrite,
+                    SkipAllErrors:         false);
+
+                restoreResult = await restoreSvc.ExecuteRestoreAsync(req);
+            }
+
+            Assert.False(restoreResult.HasFailed,  $"Restore reported failure");
+            Assert.True (restoreResult.Success,    "Restore did not succeed");
+            Assert.Equal(0,                        restoreResult.FilesFailed);
+            Assert.Equal(MultiVolumeFileCount,     restoreResult.FilesSucceeded);
+            Assert.False(restoreHost.HasErrors,    "Restore host received unexpected error reports");
+            Assert.True (restoreHost.VolumesInserted >= 1,
+                $"Expected ≥1 catalog-driven volume swap during restore; got {restoreHost.VolumesInserted}");
+
+            // ── Byte-exact comparison ─────────────────────────────────────────
+            var restoredRoot = FindRestoredRoot(restoreRoot, src.RootPath);
+            FileComparer.AssertFilesMatch(src.RootPath, src.Files, restoredRoot);
+        }
+        finally
+        {
+            // Best-effort cleanup of temp files created by the server (in-process, same FS).
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* ignored */ }
         }
     }
 }

@@ -200,7 +200,10 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
 
     /// <inheritdoc/>
     /// <remarks>
-    /// For virtual drives, opens <see cref="OpenVirtualDriveWindow"/> so the user
+    /// For remote virtual drives, opens <see cref="OpenRemoteVirtualDriveWindow"/> forced to
+    ///  Open-existing mode; calls <see cref="TapeServiceBase.InsertRemoteVirtualMedia"/> via
+    ///  <see cref="ServiceRef"/>.
+    /// For local virtual drives, opens <see cref="OpenVirtualDriveWindow"/> so the user
     ///  can select the media file for the required volume; then calls
     ///  <see cref="TapeServiceBase.InsertVirtualMedia"/> via <see cref="ServiceRef"/>.
     /// For physical drives, shows the generic media-insertion dialog.
@@ -212,7 +215,46 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
 
         _dispatcher.Invoke(() =>
         {
-            if (svc?.IsVirtualDrive == true)
+            if (svc?.IsRemoteDrive == true)
+            {
+                // Remote virtual drive: show OpenRemoteVirtualDriveWindow forced to Open mode
+                var settings = _viewModel.RemoteHostSettings;
+                if (settings is null) return;
+
+                var currentCaps = new VirtualTapeDriveCapabilities
+                {
+                    MinBlockSize               = svc.MinimumBlockSize,
+                    MaxBlockSize               = svc.MaximumBlockSize,
+                    DefaultBlockSize           = svc.DefaultBlockSize,
+                    SupportsSetmarks           = svc.SupportsSetmarks,
+                    SupportsSeqFilemarks       = svc.SupportsSeqFilemarks,
+                    SupportsInitiatorPartition = svc.SupportsInitiatorPartition,
+                    SupportsCompression        = false,
+                };
+
+                // Load available volumes synchronously (we are already off the UI thread inside Invoke)
+                var volumes = svc.ListRemoteSessionVolumesAsync().GetAwaiter().GetResult();
+
+                var vm = new OpenRemoteVirtualDriveViewModel(settings);
+                foreach (var vol in volumes)
+                    vm.AvailableVolumes.Add(vol);
+
+                // Pre-select the volume matching the conventional name for volumeNeeded
+                var lastVmd = svc.LastVMD;
+                if (lastVmd != null)
+                {
+                    string expectedName = System.IO.Path.GetFileNameWithoutExtension(
+                        OpenVirtualDriveViewModel.BuildVolumeFilePath(lastVmd.ContentPath, volumeNeeded));
+                    vm.TryPreSelectVolume(expectedName);
+                }
+
+                vm.ForceOpenMode();
+
+                var window = new OpenRemoteVirtualDriveWindow(vm) { Owner = Application.Current.MainWindow };
+                if (window.ShowDialog() == true && vm.Result is { } request)
+                    mediaReady = svc.InsertRemoteVirtualMedia(request.Media, currentCaps, System.IO.FileMode.Open);
+            }
+            else if (svc?.IsVirtualDrive == true)
             {
                 // Virtual drive: show OpenVirtualDriveWindow to pick the media file
                 var currentCaps = new VirtualTapeDriveCapabilities
@@ -358,7 +400,10 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
 
     /// <inheritdoc/>
     /// <remarks>
-    /// For virtual drives, opens <see cref="OpenVirtualDriveWindow"/> in file-creation
+    /// For remote virtual drives, opens <see cref="OpenRemoteVirtualDriveWindow"/> forced to
+    ///  Create-new mode; calls <see cref="TapeServiceBase.InsertRemoteVirtualMedia"/> via
+    ///  <see cref="ServiceRef"/>.
+    /// For local virtual drives, opens <see cref="OpenVirtualDriveWindow"/> in file-creation
     ///  mode; calls <see cref="TapeServiceBase.InsertVirtualMedia"/> via
     ///  <see cref="ServiceRef"/>. For physical drives, shows the generic insert dialog.
     /// </remarks>
@@ -369,7 +414,41 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
 
         _dispatcher.Invoke(() =>
         {
-            if (svc?.IsVirtualDrive == true)
+            if (svc?.IsRemoteDrive == true)
+            {
+                // Remote virtual drive: show OpenRemoteVirtualDriveWindow forced to Create mode
+                var settings = _viewModel.RemoteHostSettings;
+                if (settings is null) return;
+
+                var currentCaps = new VirtualTapeDriveCapabilities
+                {
+                    MinBlockSize               = svc.MinimumBlockSize,
+                    MaxBlockSize               = svc.MaximumBlockSize,
+                    DefaultBlockSize           = svc.DefaultBlockSize,
+                    SupportsSetmarks           = svc.SupportsSetmarks,
+                    SupportsSeqFilemarks       = svc.SupportsSeqFilemarks,
+                    SupportsInitiatorPartition = svc.SupportsInitiatorPartition,
+                    SupportsCompression        = false,
+                };
+
+                var vm = new OpenRemoteVirtualDriveViewModel(settings);
+
+                // Pre-populate the content filename from the last VMD (vol01 → vol02 etc.)
+                var lastVmd = svc.LastVMD;
+                if (lastVmd != null)
+                {
+                    vm.IsNamed = true;
+                    vm.ContentFilePath = System.IO.Path.GetFileNameWithoutExtension(
+                        OpenVirtualDriveViewModel.BuildVolumeFilePath(lastVmd.ContentPath, nextVolume));
+                }
+
+                vm.ForceCreateMode();
+
+                var window = new OpenRemoteVirtualDriveWindow(vm) { Owner = Application.Current.MainWindow };
+                if (window.ShowDialog() == true && vm.Result is { } request)
+                    mediaReady = svc.InsertRemoteVirtualMedia(request.Media, currentCaps, System.IO.FileMode.Create);
+            }
+            else if (svc?.IsVirtualDrive == true)
             {
                 var currentCaps = new VirtualTapeDriveCapabilities
                 {

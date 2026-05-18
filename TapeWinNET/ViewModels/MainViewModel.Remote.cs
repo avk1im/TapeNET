@@ -24,6 +24,9 @@ public partial class MainViewModel
     private string?             _remoteServerVersion;    // from GetServerInfo
     private string?             _remoteServerHostName;   // from GetServerInfo
 
+    /// <summary>Current remote host settings; null when not connected. Used by <see cref="Services.WpfServiceHost"/>.</summary>
+    internal RemoteHostSettings? RemoteHostSettings => _remoteHostSettings;
+
     // ── Remote Commands ───────────────────────────────────────────────────────
 
     /// <summary>Opens the Connect to Remote Host dialog (or submenu when already connected).</summary>
@@ -35,8 +38,8 @@ public partial class MainViewModel
     /// <summary>Opens a physical tape drive on the remote host.</summary>
     public ICommand OpenRemoteDriveCommand { get; private set; } = null!;
 
-    /// <summary>Opens the "Create Remote Virtual Drive" dialog.</summary>
-    public ICommand CreateRemoteVirtualDriveCommand { get; private set; } = null!;
+    /// <summary>Opens the "Open Remote Virtual Drive" dialog (open existing or create new).</summary>
+    public ICommand OpenRemoteVirtualDriveCommand { get; private set; } = null!;
 
     // ── Remote submenu items ──────────────────────────────────────────────────
 
@@ -71,10 +74,10 @@ public partial class MainViewModel
 
     private void InitializeRemoteCommands()
     {
-        ConnectToRemoteHostCommand       = new AsyncRelayCommand(ConnectToRemoteHostAsync,          () => !IsBusy);
-        DisconnectRemoteHostCommand      = new AsyncRelayCommand(_ => DisconnectRemoteHostAsync(),   _ => IsRemoteConnected);
-        OpenRemoteDriveCommand           = new AsyncRelayCommand(OpenRemoteDriveAsync,              _ => !IsBusy && IsRemoteConnected);
-        CreateRemoteVirtualDriveCommand  = new AsyncRelayCommand(CreateRemoteVirtualDriveAsync,     () => !IsBusy && IsRemoteConnected);
+        ConnectToRemoteHostCommand      = new AsyncRelayCommand(ConnectToRemoteHostAsync,         () => !IsBusy);
+        DisconnectRemoteHostCommand     = new AsyncRelayCommand(_ => DisconnectRemoteHostAsync(),  _ => IsRemoteConnected);
+        OpenRemoteDriveCommand          = new AsyncRelayCommand(OpenRemoteDriveAsync,             _ => !IsBusy && IsRemoteConnected);
+        OpenRemoteVirtualDriveCommand   = new AsyncRelayCommand(OpenRemoteVirtualDriveAsync,      () => !IsBusy && IsRemoteConnected);
     }
 
     // ── Connect flow ──────────────────────────────────────────────────────────
@@ -151,7 +154,7 @@ public partial class MainViewModel
         RemoteDriveMenuItems.Add(new DriveMenuItem("Scanning drives…", RemoteScanningNumber, OpenRemoteDriveCommand));
         RemoteDriveMenuItems.Add(new DriveMenuItem("_Specify...",       RemoteSpecifyDriveNumber, OpenRemoteDriveCommand));
         RemoteDriveMenuItems.Add(new Separator());
-        RemoteDriveMenuItems.Add(new DriveMenuItem("_Create Remote Virtual Drive...", 0, CreateRemoteVirtualDriveCommand));
+        RemoteDriveMenuItems.Add(new DriveMenuItem("_Open Remote Virtual Drive...", 0, OpenRemoteVirtualDriveCommand));
         RemoteDriveMenuItems.Add(new Separator());
         RemoteDriveMenuItems.Add(new DriveMenuItem("_Disconnect",                     0, DisconnectRemoteHostCommand));
     }
@@ -266,18 +269,24 @@ public partial class MainViewModel
         NotifyIoSpeedChanged();
     }
 
-    // ── Create remote virtual drive ───────────────────────────────────────────
+    // ── Open remote virtual drive (open existing or create new) ─────────────
 
-    private async Task CreateRemoteVirtualDriveAsync()
+    private async Task OpenRemoteVirtualDriveAsync()
     {
         if (_remoteHostSettings is null)
             return;
 
         var settings = _remoteHostSettings;
 
+        // Load available named session volumes for the picker (Open existing mode)
+        var availableVolumes = await _tapeService.ListRemoteSessionVolumesAsync().ConfigureAwait(true);
+
         // Show dialog on the UI thread (AsyncRelayCommand already runs there)
-        var viewModel = new CreateRemoteVirtualDriveViewModel(settings);
-        var window = new CreateRemoteVirtualDriveWindow(viewModel)
+        var viewModel = new OpenRemoteVirtualDriveViewModel(settings);
+        foreach (var vol in availableVolumes)
+            viewModel.AvailableVolumes.Add(vol);
+
+        var window = new OpenRemoteVirtualDriveWindow(viewModel)
         {
             Owner = Application.Current.MainWindow
         };
@@ -287,38 +296,62 @@ public partial class MainViewModel
 
         var request = viewModel.Result;
 
-        if (!await RunBusyAsync($"Creating remote virtual drive on {settings.DisplayLabel}...",
-                () => _tapeService.CreateRemoteVirtualDriveAsync(settings, request.Media, request.Capabilities, request.MediaName)))
+        if (request.IsCreateNew)
         {
-            MessageBox.Show(
-                $"Failed to create remote virtual drive on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
-                "Create Remote Virtual Drive", MessageBoxButton.OK, MessageBoxImage.Error);
-            UpdateTreeForRemoteDriveOnly(0, settings);
-            return;
+            // Create new remote virtual drive
+            if (!await RunBusyAsync($"Creating remote virtual drive on {settings.DisplayLabel}...",
+                    () => _tapeService.CreateRemoteVirtualDriveAsync(settings, request.Media, request.Capabilities, request.MediaName)))
+            {
+                MessageBox.Show(
+                    $"Failed to create remote virtual drive on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
+                    "Create Remote Virtual Drive", MessageBoxButton.OK, MessageBoxImage.Error);
+                UpdateTreeForRemoteDriveOnly(0, settings);
+                return;
+            }
+
+            if (!await LoadMediaWithUIAsync())
+            {
+                UpdateTreeForRemoteDriveOnly(0, settings);
+                NotifyIoSpeedChanged();
+                return;
+            }
+
+            // Create the initial TOC on freshly created remote virtual media
+            //  (mirrors the local "Create new" path in MainViewModel)
+            string tocLabel = string.IsNullOrWhiteSpace(request.MediaName)
+                ? "Remote virtual tape"
+                : request.MediaName;
+            var tocCreated = await RunBusyAsync("Creating initial TOC...",
+                () => _tapeService.CreateInitialTOCAsync(tocLabel));
+            if (!tocCreated)
+                LogWarn("Could not create initial TOC on remote virtual drive");
+
+            if (!await ReadTOCWithUIAsync(offerFileImportOnFailure: false))
+            {
+                UpdateTreeForRemoteDriveOnly(0, settings);
+                NotifyIoSpeedChanged();
+                return;
+            }
         }
-
-        if (!await LoadMediaWithUIAsync())
+        else
         {
-            UpdateTreeForRemoteDriveOnly(0, settings);
-            NotifyIoSpeedChanged();
-            return;
-        }
+            // Open existing named remote volume
+            if (!await RunBusyAsync($"Opening remote virtual volume on {settings.DisplayLabel}...",
+                    () => _tapeService.OpenRemoteVirtualFileAsync(settings, request.Media, request.Capabilities, System.IO.FileMode.Open)))
+            {
+                MessageBox.Show(
+                    $"Failed to open remote virtual volume on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
+                    "Open Remote Virtual Drive", MessageBoxButton.OK, MessageBoxImage.Error);
+                UpdateTreeForRemoteDriveOnly(0, settings);
+                return;
+            }
 
-        // Create the initial TOC on freshly created remote virtual media
-        //  (mirrors the local "Create new" path in MainViewModel)
-        string tocLabel = string.IsNullOrWhiteSpace(request.MediaName)
-            ? "Remote virtual tape"
-            : request.MediaName;
-        var tocCreated = await RunBusyAsync("Creating initial TOC...",
-            () => _tapeService.CreateInitialTOCAsync(tocLabel));
-        if (!tocCreated)
-            LogWarn("Could not create initial TOC on remote virtual drive");
-
-        if (!await ReadTOCWithUIAsync(offerFileImportOnFailure: false))
-        {
-            UpdateTreeForRemoteDriveOnly(0, settings);
-            NotifyIoSpeedChanged();
-            return;
+            if (!await LoadMediaWithUIAsync() || !await ReadTOCWithUIAsync(offerFileImportOnFailure: false))
+            {
+                UpdateTreeForRemoteDriveOnly(0, settings);
+                NotifyIoSpeedChanged();
+                return;
+            }
         }
 
         UpdateTreeFromTOCRemote(0, settings);
@@ -330,8 +363,8 @@ public partial class MainViewModel
 
     /// <summary>
     /// Handles "Media | Format" when a remote virtual drive is open.
-    /// Shows <see cref="CreateRemoteVirtualDriveWindow"/> so the user can reconfigure
-    ///  the drive, then recreates it on the server via
+    /// Shows <see cref="OpenRemoteVirtualDriveWindow"/> forced to Create mode so the user
+    ///  can reconfigure the drive, then recreates it on the server via
     ///  <see cref="TapeLibNET.Services.TapeServiceBase.CreateRemoteVirtualDriveAsync"/>.
     /// Mirrors the local <c>FormatVirtualDriveAsync</c> flow in <c>MainViewModel.cs</c>.
     /// </summary>
@@ -342,14 +375,15 @@ public partial class MainViewModel
 
         var settings = _remoteHostSettings;
 
-        var viewModel = new CreateRemoteVirtualDriveViewModel(settings)
+        var viewModel = new OpenRemoteVirtualDriveViewModel(settings)
         {
             MediaName = formatViewModel.MediaName,
             EnableInitiatorPartition = formatViewModel.CreateInitiatorPartition,
-            //??? FIXME: InitiatorCapacityValue = formatViewModel.CreateInitiatorPartition
-                //? TapeNavigator.DefaultTOCCapacity : -1;
         };
-        var window = new CreateRemoteVirtualDriveWindow(viewModel)
+        // Format = recreate: force Create mode so the user cannot accidentally switch to Open
+        viewModel.ForceCreateMode();
+
+        var window = new OpenRemoteVirtualDriveWindow(viewModel)
         {
             Owner = Application.Current.MainWindow
         };
@@ -360,7 +394,8 @@ public partial class MainViewModel
         var request = viewModel.Result;
 
         if (!await RunBusyAsync($"Recreating remote virtual drive on {settings.DisplayLabel}...",
-                () => _tapeService.CreateRemoteVirtualDriveAsync(settings, request.Media, request.Capabilities, request.MediaName)))
+                () => _tapeService.CreateRemoteVirtualDriveAsync(settings, request.Media, request.Capabilities,
+                    string.IsNullOrWhiteSpace(request.MediaName) ? "Remote virtual tape" : request.MediaName)))
         {
             MessageBox.Show(
                 $"Failed to recreate remote virtual drive on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
@@ -470,10 +505,14 @@ public partial class MainViewModel
 
         var label = _remoteHostSettings.DisplayLabel;
 
-        // Close the drive (and its RemoteTapeDriveBackend / gRPC channel) gracefully.
+        // Close the drive first (releases the TapeDrive wrapper / non-owning backend).
         // TapeServiceBase.CloseAsync acquires the operation lock so it is safe to await
         //  from the UI thread via DisconnectRemoteHostCommand.
         await _tapeService.CloseAsync().ConfigureAwait(true); // back to UI thread
+
+        // Send the gRPC Close RPC, tear down the persistent channel, and clear the
+        //  server-side session + named-volume catalog.
+        await _tapeService.CloseRemoteConnectionAsync().ConfigureAwait(true);
 
         _remoteHostSettings   = null;
         _remoteServerVersion  = null;

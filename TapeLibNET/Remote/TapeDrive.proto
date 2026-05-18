@@ -80,6 +80,11 @@ service TapeDriveService {
   // Returns server version, protocol level and OS host name. Unauthenticated.
   // Call before any Open* to confirm the service is alive and detect version mismatches.
   rpc GetServerInfo(EmptyRequest)               returns (ServerInfoResponse);
+
+  // --- Session volume catalog ---
+  // Returns all named (file-backed) temp volumes that have been created or inserted
+  // in this session. Requires the x-tape-session-id header (session-scoped).
+  rpc ListSessionVolumes(EmptyRequest)          returns (ListSessionVolumesResponse);
 }
 
 // ============================================================================
@@ -258,6 +263,25 @@ message ServerInfoResponse {
   string server_version  = 1; // e.g. "1.2.0" — assembly version of TapeServiceNET
   uint32 protocol_level  = 2; // incremented on breaking proto changes; current = 1
   string host_name       = 3; // OS hostname of the server for display
+}
+
+// ============================================================================
+//  Session volume catalog
+// ============================================================================
+
+// One entry in the per-session named-volume catalog.
+message SessionVolumeEntry {
+  string            name             = 1; // e.g. "MyTemp_vol02"
+  VirtualFileConfig file_config      = 2; // content/initiator paths + capacities + caps
+  uint32            block_size       = 3; // effective block size at creation
+  int64             bytes_written    = 4; // approximate (updated on Close / InsertMedia)
+  int64             created_unix_utc = 5; // UTC Unix timestamp when the volume was created
+  bool              is_current       = 6; // true if this is the session's active backend
+}
+
+// Returned by ListSessionVolumes.
+message ListSessionVolumesResponse {
+  repeated SessionVolumeEntry volumes = 1;
 }
 
 // ============================================================================

@@ -119,6 +119,22 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
         };
     }
 
+    /// <summary>
+    /// Converts a <see cref="VirtualTapeDriveCapabilities"/> C# record to a
+    /// <see cref="VirtualCapabilities"/> proto message (reverse of <see cref="MapCapabilities"/>).
+    /// </summary>
+    private static VirtualCapabilities MapCapabilities(VirtualTapeDriveCapabilities caps) =>
+        new()
+        {
+            MinBlockSize               = caps.MinBlockSize,
+            MaxBlockSize               = caps.MaxBlockSize,
+            DefaultBlockSize           = caps.DefaultBlockSize,
+            SupportsSetmarks           = caps.SupportsSetmarks,
+            SupportsSeqFilemarks       = caps.SupportsSeqFilemarks,
+            SupportsInitiatorPartition = caps.SupportsInitiatorPartition,
+            SupportsCompression        = caps.SupportsCompression,
+        };
+
     #endregion
 
     #region *** Drive Lifecycle ***
@@ -487,6 +503,7 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
         long capacityBytes = request.CapacityBytes > 0 ? (long)request.CapacityBytes : 500L * 1024 * 1024;
 
         TapeDriveBackend backend;
+        string? basePath = null; // set only for named (file-backed) drives; used by the volume catalog
 
         if (string.IsNullOrEmpty(request.Name))
         {
@@ -502,7 +519,7 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
         else
         {
             // Named: file-backed in system temp folder, wrapped for automatic cleanup on dispose
-            string basePath = Path.Combine(Path.GetTempPath(),
+            basePath = Path.Combine(Path.GetTempPath(),
                 $"tapenet_tmp_{request.Name}_{Guid.NewGuid():N}.vtape");
 
             // No initiator partition for temp drives (keeps it simple)
@@ -530,6 +547,34 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
             registry.Add(sessionId, backend, context.Peer);
             await context.WriteResponseHeadersAsync(
                 new Metadata { { TapeSessionConstants.SessionIdHeader, sessionId } });
+
+            // Catalog: record named (file-backed) volumes so the client can list and re-open them.
+            if (!string.IsNullOrEmpty(request.Name))
+            {
+                if (registry.TryGet(sessionId, out var entry))
+                {
+                    uint effectiveBlockSize = request.BlockSize > 0
+                        ? request.BlockSize
+                        : (backend as VirtualTapeDriveBackend)?.BlockSize
+                          ?? (backend as TempVirtualTapeDriveBackend)?.BlockSize ?? 0;
+
+                    lock (entry!.Volumes)
+                    {
+                        entry.Volumes.Add(new RemoteVirtualVolumeEntry(
+                            request.Name,
+                            basePath!,
+                            capacityBytes,
+                            null,
+                            0,
+                            caps,
+                            effectiveBlockSize,
+                            DateTime.UtcNow)
+                        {
+                            IsCurrent = true,
+                        });
+                    }
+                }
+            }
         }
         else
         {
@@ -564,10 +609,50 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
                 Error   = new ErrorInfo { ErrorMessage = "InsertMedia requires a non-empty file_config.content_file_path" },
             };
 
-        logger.LogInformation("InsertMedia: swapping to '{Path}'", request.FileConfig.ContentFilePath);
+        string newPath = request.FileConfig.ContentFilePath;
+        logger.LogInformation("InsertMedia: swapping to '{Path}'", newPath);
+
+        // ── Same-path short-circuit (edge case §5.5 #1) ─────────────────────────────
+        // If the catalog already has this path flagged as current, the same file is already
+        // mounted — treat as a no-op to avoid closing and re-opening it unnecessarily.
+        if (registry.TryGet(sessionId: context.RequestHeaders.GetValue(TapeSessionConstants.SessionIdHeader)!, out var existingEntry))
+        {
+            lock (existingEntry!.Volumes)
+            {
+                if (existingEntry.Volumes.Any(v =>
+                        v.IsCurrent &&
+                        string.Equals(v.ContentFilePath, newPath, StringComparison.OrdinalIgnoreCase)))
+                {
+                    logger.LogDebug("InsertMedia: same-path no-op for '{Path}'", newPath);
+                    return MakeResponse(oldBackend, true);
+                }
+            }
+        }
+
+        // ── Catalog: update BytesWritten on outgoing volume ──────────────────────────
+        var sessionId = context.RequestHeaders.GetValue(TapeSessionConstants.SessionIdHeader)!;
+        if (registry.TryGet(sessionId, out var entry))
+        {
+            lock (entry!.Volumes)
+            {
+                var outgoing = entry.Volumes.FirstOrDefault(v => v.IsCurrent);
+                if (outgoing != null)
+                {
+                    // Approximate: capacity − remaining = bytes written
+                    outgoing.BytesWritten = oldBackend.Capacity - oldBackend.Remaining;
+                    outgoing.IsCurrent = false;
+                }
+            }
+        }
 
         // Close the current tape (flush, rewind) but keep the session alive.
-        oldBackend.Close();
+        // For named temp backends, use CloseWithoutDelete() so the backing file
+        //  survives in the session catalog and can be re-mounted later.
+        //  File cleanup is deferred to session close / idle reap via entry.Volumes.
+        if (oldBackend is TempVirtualTapeDriveBackend tempBackend)
+            tempBackend.CloseWithoutDelete();
+        else
+            oldBackend.Close();
 
         // Build and open the replacement backend.
         var newBackend = CreateFileBackend(request.FileConfig);
@@ -582,13 +667,96 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
             return new OperationResponse { Success = false, Error = err };
         }
 
-        // Swap the session's backend: replace in the registry and dispose old.
-        var id = context.RequestHeaders.GetValue(TapeSessionConstants.SessionIdHeader)!;
-        registry.Replace(id, newBackend);
-        oldBackend.Dispose();
+        // Swap the session's backend: replace in the registry.
+        // Do NOT dispose the old backend if it was a TempVirtualTapeDriveBackend —
+        //  CloseWithoutDelete() already released it without removing the files.
+        registry.Replace(sessionId, newBackend);
+        if (oldBackend is not TempVirtualTapeDriveBackend)
+            oldBackend.Dispose();
+
+        // ── Catalog: append new volume or flip IsCurrent on an existing entry ────────
+        if (registry.TryGet(sessionId, out entry))
+        {
+            lock (entry!.Volumes)
+            {
+                var existing = entry.Volumes.FirstOrDefault(v =>
+                    string.Equals(v.ContentFilePath, newPath, StringComparison.OrdinalIgnoreCase));
+
+                if (existing != null)
+                {
+                    existing.IsCurrent = true;
+                }
+                else
+                {
+                    var caps = request.FileConfig.Capabilities != null
+                        ? MapCapabilities(request.FileConfig.Capabilities)
+                        : VirtualTapeDriveCapabilities.WithFilemarksOnlyLargeBlocks;
+
+                    entry.Volumes.Add(new RemoteVirtualVolumeEntry(
+                        Path.GetFileNameWithoutExtension(newPath),
+                        newPath,
+                        request.FileConfig.ContentCapacity > 0
+                            ? request.FileConfig.ContentCapacity
+                            : newBackend.Capacity,
+                        string.IsNullOrEmpty(request.FileConfig.InitiatorFilePath)
+                            ? null : request.FileConfig.InitiatorFilePath,
+                        request.FileConfig.InitiatorCapacity,
+                        caps,
+                        BlockSize: newBackend.BlockSize,
+                        DateTime.UtcNow)
+                    {
+                        IsCurrent = true,
+                    });
+                }
+            }
+        }
 
         await Task.CompletedTask; // satisfy async signature
         return MakeResponse(newBackend, true);
+    }
+
+    /// <summary>
+    /// Returns all named (file-backed) volumes created during this session.
+    /// Session-scoped — requires the <c>x-tape-session-id</c> header.
+    /// In-memory drives are never catalogued and will not appear in the results.
+    /// </summary>
+    public override Task<ListSessionVolumesResponse> ListSessionVolumes(
+        EmptyRequest request, ServerCallContext context)
+    {
+        using var scope = GetScope(context);
+        var entry = scope.Entry;
+
+        var response = new ListSessionVolumesResponse();
+
+        lock (entry.Volumes)
+        {
+            foreach (var v in entry.Volumes)
+            {
+                var fileConfig = new VirtualFileConfig
+                {
+                    ContentFilePath = v.ContentFilePath,
+                    ContentCapacity = v.ContentCapacity,
+                    Capabilities    = MapCapabilities(v.Capabilities),
+                };
+                if (v.InitiatorFilePath != null)
+                {
+                    fileConfig.InitiatorFilePath = v.InitiatorFilePath;
+                    fileConfig.InitiatorCapacity = v.InitiatorCapacity;
+                }
+
+                response.Volumes.Add(new SessionVolumeEntry
+                {
+                    Name           = v.Name,
+                    FileConfig     = fileConfig,
+                    BlockSize      = v.BlockSize,
+                    BytesWritten   = v.BytesWritten,
+                    CreatedUnixUtc = new DateTimeOffset(v.CreatedUtc).ToUnixTimeSeconds(),
+                    IsCurrent      = v.IsCurrent,
+                });
+            }
+        }
+
+        return Task.FromResult(response);
     }
 
     /// <summary>
