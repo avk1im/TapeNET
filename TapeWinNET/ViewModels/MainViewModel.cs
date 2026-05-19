@@ -851,8 +851,10 @@ public partial class MainViewModel : ViewModelBase
     {
         int driveNumber = parameter as int? ?? 0;
 
-        // Disconnect any active remote session before opening a local drive (§2.8)
-        DisconnectRemoteHost();
+        // Disconnect any active remote session before opening a local drive (§2.8).
+        // Prompt when the remote catalog has volumes; bail if the user cancels.
+        if (!await ConfirmAndDisconnectRemoteHostAsync())
+            return;
 
         if (!await OpenPhysicalDriveWithUIAsync(driveNumber))
         {
@@ -1687,8 +1689,10 @@ public partial class MainViewModel : ViewModelBase
 
     private async Task OpenVirtualDriveAsync(VirtualDriveOpenRequest request)
     {
-        // Disconnect any active remote session before opening a local virtual drive (§2.8)
-        DisconnectRemoteHost();
+        // Disconnect any active remote session before opening a local virtual drive (§2.8).
+        // Prompt when the remote catalog has volumes; bail if the user cancels.
+        if (!await ConfirmAndDisconnectRemoteHostAsync())
+            return;
 
         // A — Open virtual drive. Custom failure UI: "open existing" re-shows the
         //  dialog so the user can switch to "create new"; "create new" just errors.

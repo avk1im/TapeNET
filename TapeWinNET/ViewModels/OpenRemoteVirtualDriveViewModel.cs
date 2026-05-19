@@ -25,9 +25,10 @@ public class OpenRemoteVirtualDriveViewModel : VirtualDriveConfigViewModelBase
 {
     // ── Fields ────────────────────────────────────────────────────────────────
 
-    private bool   _isCreateNewMode   = true;
-    private bool   _isNamed           = false;   // Create mode: false → in-memory
-    private string _contentFilePath   = string.Empty;
+    private bool   _isCreateNewMode      = true;
+    private bool   _isNamed               = false;   // Create mode: false → in-memory
+    private string _contentFilePath       = string.Empty;
+    private bool   _isCapabilitiesLocked  = false;    // true during volume-swap: capabilities are inherited from current drive
 
     private RemoteVirtualVolumeInfo? _selectedVolume;
 
@@ -78,6 +79,7 @@ public class OpenRemoteVirtualDriveViewModel : VirtualDriveConfigViewModelBase
             {
                 OnPropertyChanged(nameof(IsOpenExistingMode));
                 OnPropertyChanged(nameof(AreCreateFieldsEnabled));
+                OnPropertyChanged(nameof(AreCapabilityFieldsEnabled));
                 OnPropertyChanged(nameof(IsVolumePickerVisible));
                 OnPropertyChanged(nameof(IsNoVolumesMessageVisible));
                 OnPropertyChanged(nameof(CanExecute));
@@ -95,6 +97,12 @@ public class OpenRemoteVirtualDriveViewModel : VirtualDriveConfigViewModelBase
 
     /// <summary>Whether the create-mode configuration fields (preset, capacity, etc.) are enabled.</summary>
     public bool AreCreateFieldsEnabled => _isCreateNewMode;
+
+    /// <summary>
+    /// Whether the capability fields (block sizes, features, preset, initiator partition) are enabled.
+    /// False when capabilities are locked to the current drive's settings during a volume-swap.
+    /// </summary>
+    public bool AreCapabilityFieldsEnabled => _isCreateNewMode && !_isCapabilitiesLocked;
 
     /// <summary>Whether the volume picker ComboBox is visible (Open existing mode only).</summary>
     public bool IsVolumePickerVisible => !_isCreateNewMode;
@@ -221,6 +229,26 @@ public class OpenRemoteVirtualDriveViewModel : VirtualDriveConfigViewModelBase
 
     /// <summary>Whether the Open / Create radio buttons are enabled (false when forced by a swap prompt).</summary>
     public bool IsModeSwitchEnabled => !IsCreateModeForced && !IsOpenModeForced;
+
+    /// <summary>
+    /// Pre-fills all capability fields from <paramref name="caps"/> and locks them so the user
+    /// cannot change them.  Used during multi-volume backup swaps to ensure the next volume
+    /// inherits the same drive configuration as the previous one.
+    /// </summary>
+    public void LockCapabilitiesFrom(VirtualTapeDriveCapabilities caps)
+    {
+        // Pre-fill block sizes and features from the current drive
+        MinBlockSize     = BlockSizeOption.FromBytes(caps.MinBlockSize);
+        DefaultBlockSize = BlockSizeOption.FromBytes(caps.DefaultBlockSize);
+        MaxBlockSize     = BlockSizeOption.FromBytes(caps.MaxBlockSize);
+
+        SupportsSetmarks         = caps.SupportsSetmarks;
+        SupportsSeqFilemarks     = caps.SupportsSeqFilemarks;
+        EnableInitiatorPartition = caps.SupportsInitiatorPartition;
+
+        _isCapabilitiesLocked = true;
+        OnPropertyChanged(nameof(AreCapabilityFieldsEnabled));
+    }
 
     public bool IsCreateModeForced { get; private set; }
     public bool IsOpenModeForced   { get; private set; }

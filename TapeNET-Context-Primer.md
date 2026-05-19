@@ -223,7 +223,9 @@ Multiple files can share a single tape block, eliminating per-file alignment was
 
 | Type | Role |
 |------|------|
+| `RemoteHostSettings` | Record: `Host`, `Port` (default 50551), `UseTls`, `DangerousAcceptAnyServerCertificate`; `DisplayLabel` and `ChannelAddress` computed properties; `BuildChannelOptions()` constructs the `GrpcChannelOptions` (with `SocketsHttpHandler` for TLS) |
 | `RemoteTapeDriveBackend` | `TapeDriveBackend` subclass; owns the gRPC channel (or borrows one), stores `_sessionId`, forwards all operations |
+| `RemoteVirtualVolumeInfo` | Record in `TapeLibNET/Remote/`: `Name`, `VirtualMediaDescriptor Media`, `VirtualTapeDriveCapabilities Caps`, `uint BlockSize`, `long BytesWritten`, `DateTime CreatedUtc`, `bool IsCurrent` — mapped from the server catalog |
 | `OpenVirtualRequest` | Proto message passed to `OpenVirtual` — carries backend type (memory / memory-map / file) and capabilities |
 
 **Key implementation notes:**
@@ -231,6 +233,11 @@ Multiple files can share a single tape block, eliminating per-file alignment was
 - `Close()` sends the session header on the close call (so the server can remove the session entry) then clears `_sessionId`.
 - `_ownsChannel` controls whether `Dispose` shuts down the underlying `GrpcChannel` — borrowed channels (test fixtures) are left open.
 - **Keepalive timer:** after a successful `Open` / `OpenVirtual`, a `System.Threading.Timer` fires every `PingInterval` (default 9 minutes) and sends a `Ping` RPC (`SendPing`). Failures are logged non-fatally and do not close the session. The timer is stopped (and disposed) in `Close()` and `Dispose()`. This prevents the server-side idle reaper from evicting sessions that are open but momentarily idle.
+- **Sessionless helpers** — `ProbeDrives(maxDrive)`, `GetServerInfo()` require no `_sessionId` and can be called before any `Open*`. Used for host health-checks and remote drive-menu population.
+- **Async Open/Close** — `OpenAsync`, `OpenVirtualAsync`, `CreateTempVirtualAsync`, `CloseAsync` are `Task`-returning counterparts to the sync methods. All use `.ConfigureAwait(false)` to avoid capturing the WPF dispatcher context. A `WithSession(CancellationToken)` private overload keeps session-header construction in one place.
+- **`CreateTempVirtual` / `CreateTempVirtualAsync`** — `string? name = null` sentinel: `null` → in-memory drive; non-null → file-backed named temp drive on the server. Capacity is not reflected until after `ReloadMedia()`.
+- **`ListSessionVolumes` / `ListSessionVolumesAsync`** — retrieves the server's named-volume catalog for the current session; returns `IReadOnlyList<RemoteVirtualVolumeInfo>`. Used by TapeWinNET's `OpenRemoteVirtualDriveWindow` to populate the volume picker.
+- **`TapeServiceBase.Remote.cs`** — partial class in `TapeLibNET/Services/` that owns all remote session fields and lifecycle methods: `OpenRemoteDriveAsync`, `OpenRemoteVirtualFileAsync`, `CreateRemoteVirtualDriveAsync`, `InsertRemoteVirtualMediaAsync`, `InsertRemoteVirtualMedia` (sync, for use inside media-change callbacks that already hold `_operationLock`), `ListRemoteSessionVolumesAsync`, `FormatRpcError`. `IsRemoteDrive` property lets the WPF layer gate remote-only UI (IO speed controls, format path, media-insert prompts).
 
 ---
 
@@ -310,6 +317,32 @@ gRPC is stateless at the request level, so concurrent client support is built on
 **Session lifecycle / reaper:** Idle sessions are reaped by `TapeSessionReaperService`, a `BackgroundService` registered in `Program.cs`. It wakes on `ReaperInterval` (default 5 minutes) and removes any session whose `LastActivity` exceeds `IdleTimeout` (default 30 minutes), *unless* `ActiveRpcCount > 0` — sessions with an in-flight RPC are never evicted. `ActiveRpcCount` is managed by `TapeDriveSessionScope`, a disposable RAII guard acquired at the start of every RPC handler. Timeouts are configurable via `appsettings.json` under the `"TapeSession"` section (`TapeSessionSettings`). The `Ping` RPC (client-initiated keepalive) resets `LastActivity` without performing any drive I/O.
 
 **Security:** No authentication beyond the session token. Firewall-level access control is the recommended approach for restricting which hosts can reach port 50551.
+
+### RPCs
+
+All RPCs are defined in `TapeLibNET/Protos/TapeDrive.proto` and compiled into both client and server stubs. Sessionless RPCs (no `x-tape-session-id` required) are safe to call before any `Open*`:
+
+| RPC | Session? | Purpose |
+|-----|----------|---------|
+| `OpenWin32` / `OpenVirtual` / `CreateTempVirtual` | creates | Open a physical drive, file-backed virtual drive, or temporary in-memory / file-backed virtual drive; issues session ID in response headers |
+| `ProbeDrives` | none | Probe Win32 drive numbers 0..maxDrive without opening any; returns discovered numbers |
+| `GetServerInfo` | none | Return server version, protocol level, and OS hostname |
+| `ListSessionVolumes` | required | List named temp volumes created in this session (for multi-volume remote flows) |
+| `InsertMedia` | required | Swap the active virtual backend within a session (multi-volume) |
+| `Ping` | required | Client-initiated keepalive — resets `LastActivity` without drive I/O |
+| All other RPCs | required | Drive I/O, TOC, navigation, eject, etc. |
+
+### TLS / HTTPS
+
+TLS is opt-in. The base `appsettings.json` exposes only the plaintext `Grpc` endpoint on port 50551. An HTTPS endpoint on port 50552 is enabled by applying the `appsettings.Tls.json` overlay (see `appsettings.Tls.json.example` for inline certificate-generation instructions and the PowerShell single-quote password pitfall). Clients set `RemoteHostSettings.UseTls = true`; the channel uses `SocketsHttpHandler` with `SslOptions` — `HttpClientHandler` is incompatible with `GrpcChannel.ConnectAsync`. Full setup documented in `TapeServiceNET/README.md`.
+
+### Named-volume catalog
+
+Each session owns a `List<RemoteVirtualVolumeEntry> Volumes` on `TapeDriveSessionEntry`. Named (file-backed) temp drives are appended on `CreateTempVirtual`; `IsCurrent` is flipped on each `InsertMedia`; `BytesWritten` is updated on swap. Anonymous in-memory drives are never catalogued. `ListSessionVolumes` RPC exposes the catalog to the client so TapeWinNET can populate the volume picker in `OpenRemoteVirtualDriveWindow`.
+
+### TempVirtualTapeDriveBackend
+
+`TempVirtualTapeDriveBackend` (`TapeServiceNET/TempVirtualTapeDriveBackend.cs`) wraps a `VirtualTapeDriveBackend` for named temp drives: it creates a pair of temp files in the server's temp directory and deletes them (content + metadata + any initiator partition file) on `Dispose`. It forwards all `ITapeDriveBackend` members — including `LastError`, `LastErrorMessage`, `WentOK`, `WentBad` — to the inner backend so error-state delegation is transparent to callers.
 
 ---
 
@@ -536,9 +569,23 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 - **File output formats** — `.log`/`.txt` use `FormatLogLine` (`[HH:mm:ss] [LVL] message` with ASCII-safe tags), `.csv` uses `FormatLogCsv` (RFC 4180: `Timestamp,Level,Detail,Message`). Format shared by Save and Mirror.
 - **Persisted state** — `ShowTimestamps`, four filter bools, `LogFilterPaneWidth` saved in `AppSettings`.
 
+### Remote host integration
+
+`MainViewModel.Remote.cs` is a dedicated partial class that owns the entire remote-host session state and commands in TapeWinNET:
+
+- **Session state** — `_remoteHostSettings` (`RemoteHostSettings?`), `_remoteServerHostName`, `_remoteServerVersion`, `_remoteProtocolLevel`. `IsRemoteConnected`, `RemoteMenuHeader`, `RemoteStatusLabel`, and the individual `RemoteHost` / `RemoteServerVersion` / `RemoteTransportLabel` properties are derived from these and drive all menu, status-bar, and Drive Properties pane bindings.
+- **Commands** — `ConnectToRemoteHostCommand` (opens `ConnectToRemoteHostWindow`), `OpenRemoteVirtualDriveCommand` (opens `OpenRemoteVirtualDriveWindow`), `DisconnectRemoteHostCommand`, `FormatRemoteVirtualDriveAsync` (forced-Create path through the same dialog). `DisconnectRemoteHost()` closes any open remote drive, disposes the backend, nulls the three state fields, and raises `PropertyChanged` for all bindings. It is called at the top of every local drive open path and from the `Window.Closing` handler.
+- **`ConnectToRemoteHostWindow` / `ConnectToRemoteHostViewModel`** — two-field (host, port) dialog with TLS checkbox and inline error panel. `ConnectCommand` calls `GetServerInfo()` on a `Task.Run` thread; `IsConnecting` disables controls during the probe; on success `ConnectedSettings` / `ConnectedServerHostName` / `ConnectedServerVersion` are read by `MainViewModel.Remote.cs`. Checking `Use TLS` auto-switches the port between the plaintext (50551) and TLS (50552) defaults when the other default is still in effect.
+- **`OpenRemoteVirtualDriveWindow` / `OpenRemoteVirtualDriveViewModel`** — unified Open/Create dialog. Inherits `VirtualDriveConfigViewModelBase` (shared with `OpenVirtualDriveViewModel`). Two top-level radio-button modes: **Open existing** (volume picker `ComboBox` bound to `AvailableVolumes` / `SelectedVolume`; all configuration fields become read-only and are populated from the chosen `RemoteVirtualVolumeInfo`) and **Create new** (full preset / capacity / block-size / initiator-partition controls). `LoadVolumesAsync()` calls `TapeServiceBase.ListRemoteSessionVolumesAsync()` off the UI thread on dialog open; `PreSelectVolume(name)` pre-selects by name for restore prompts.
+- **Remote drive submenu** — `RemoteDriveMenuItems` (`ObservableCollection<object>`) holds `DriveMenuItem` records and native WPF `Separator` instances (rendered as clean separators via `IsItemItsOwnContainer`). `BuildInitialRemoteSubmenu()` populates Drive 0, "Scanning drives…", Specify…, Open Remote Virtual Drive…, and Disconnect immediately on connect; `ProbeRemoteDrivesAsync` inserts drives 1–9 and removes the placeholder after a single `ProbeDrives(9)` RPC.
+- **Tree-view remote indicator** — `TapeTreeItemViewModel.IsRemote` and `RemoteHost` flags. Remote drive items are displayed in `WarningFg.Completed` (green) via a last-priority `DataTrigger` in the `HierarchicalDataTemplate`. Tooltip shows host:port, server hostname, and version. The Drive Properties pane gains a collapsible **Remote Connection** section (host, server hostname, version, protocol level, transport) visible only when `IsRemote = true`.
+- **Status bar** — a `StackPanel` segment whose `Visibility` is bound to `RemoteStatusLabel` via `NullToVisibilityConverter`; shows `"Remote: host:port"` while connected.
+- **`WpfServiceHost` media-change prompts** — both `OnInsertMediaConfirm` (restore swap) and `OnInsertNewMediaConfirm` (backup overflow) branch on `svc.IsRemoteDrive`: they open `OpenRemoteVirtualDriveWindow` in the appropriate forced mode and call `svc.InsertRemoteVirtualMedia(vmd, caps, mode)` (synchronous overload, safe inside media-change callbacks that already hold `_operationLock`).
+- **Auto-disconnect** — opening any local drive silently calls `DisconnectRemoteHost()` first and logs "Disconnected from remote host — local drive opened." IO speed controls and the Format path are gated on `IsVirtualDrive && !IsRemoteDrive`.
+
 ### UI conventions
 
-- **App.xaml resources**: Centralized `WarningBg.*`, `WarningBr.*`, `WarningFg.*` brushes for all warning levels. `WarningPanelStyle` for dialog warning panels with `DataTrigger`s on `WarningLevel`.
+- **App.xaml resources**: Centralized `WarningBg.*`, `WarningBr.*`, `WarningFg.*` brushes for all warning levels.
 - **Log pane**: `ListBox` with Consolas 11pt, `SelectionMode="Extended"`, `DataTemplate` typed to `LogEntry`, `MultiDataTrigger` for level-based coloring (only non-sub entries), `DataTrigger` for sub-entry indent. Severity filter sub-pane with `GridSplitter`. Top-level "Log" menu + context menu with Copy, Auto-scroll, Timestamps, Filter, Save, Mirror, Clear.
 - **Tree view**: Drive → Tape → BackupSets, with `TapeTreeItemViewModel`. Sets listed newest-first.
 - **Content pane**: Switches between `DriveInfo`, `MediaInfo`, `BackupSetInfo` via `ContentPaneType` enum.
@@ -582,6 +629,7 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 - ✅ End-to-end dictionary-based restore selection: `Dictionary<int, IReadOnlyList<TapeFileInfo>?>` flows from MainWindow checkmarks → `TOCView.GetCheckedFilesBySet()` → `RestoreRequest` → `TapeService` → `TapeTOC.SelectFilesFromSets` → `RestoreFilesFromCurrentSetDown`. No intermediate `ITapeFileFilter` conversion.
 - ✅ TapeLibNET file selection infrastructure: `TapeTOC.SelectFilesFromSets`, `SelectFilesForOneSet`, `PickFilesByName` — side-effect-free, dictionary-based multi-set selection with incremental chain traversal
 - ✅ MainWindow restore/validate/verify: dynamic command text reflecting checked sets/files, tri-state set checkboxes propagating to `FilteredFileList`, per-file check changes pushing back to `BackupSetListItem` tri-state, `RestoreAllSetsCommand` for quick access
+- ✅ Remote tape drive integration: `TapeServiceNET` gRPC server (session registry, idle reaper, named-volume catalog, TLS overlay), `RemoteTapeDriveBackend` client (`TapeLibNET.Remote`), `TapeServiceBase.Remote.cs` service-layer partial, full TapeWinNET UX (Connect dialog, Open/Create remote virtual drive dialog with Open-existing volume picker, remote submenu with drive probing, tree indicator, status bar, auto-disconnect). Multi-volume remote backup/restore with `WpfServiceHost` media-swap prompts. 1,569+ tests including four-fixture remote backend suite and catalog-driven multi-volume round-trip.
 
 ## What's Next (Planned)
 

@@ -75,7 +75,7 @@ public partial class MainViewModel
     private void InitializeRemoteCommands()
     {
         ConnectToRemoteHostCommand      = new AsyncRelayCommand(ConnectToRemoteHostAsync,         () => !IsBusy);
-        DisconnectRemoteHostCommand     = new AsyncRelayCommand(_ => DisconnectRemoteHostAsync(),  _ => IsRemoteConnected);
+        DisconnectRemoteHostCommand     = new AsyncRelayCommand(_ => ConfirmAndDisconnectRemoteHostAsync(),  _ => IsRemoteConnected);
         OpenRemoteDriveCommand          = new AsyncRelayCommand(OpenRemoteDriveAsync,             _ => !IsBusy && IsRemoteConnected);
         OpenRemoteVirtualDriveCommand   = new AsyncRelayCommand(OpenRemoteVirtualDriveAsync,      () => !IsBusy && IsRemoteConnected);
     }
@@ -283,8 +283,34 @@ public partial class MainViewModel
 
         // Show dialog on the UI thread (AsyncRelayCommand already runs there)
         var viewModel = new OpenRemoteVirtualDriveViewModel(settings);
+
+        // ── Fixup catalog entries before populating the picker ────────────────
+        // When an in-memory drive is currently mounted, the named-volume session's last
+        //  entry may still be flagged IsCurrent by the server (no swap-out happened).
+        //  In that case strip IsCurrent and set IsLatest so the label reads "(latest)".
+        // Also determine which entry to pre-select (current or latest).
+        bool memoryDriveMounted = _tapeService.IsInMemoryDrive;
+
+        RemoteVirtualVolumeInfo? preSelect = null;
         foreach (var vol in availableVolumes)
-            viewModel.AvailableVolumes.Add(vol);
+        {
+            var adjusted = vol;
+
+            if (vol.IsCurrent && memoryDriveMounted)
+            {
+                // The in-memory drive is the real "current"; demote this entry to "latest".
+                adjusted = vol with { IsCurrent = false, IsLatest = true };
+            }
+
+            viewModel.AvailableVolumes.Add(adjusted);
+
+            // Pre-select the current/latest volume (prefer IsCurrent, fall back to IsLatest).
+            if (adjusted.IsCurrent || adjusted.IsLatest)
+                preSelect = adjusted;
+        }
+
+        if (preSelect != null)
+            viewModel.SelectedVolume = preSelect;
 
         var window = new OpenRemoteVirtualDriveWindow(viewModel)
         {
@@ -495,8 +521,40 @@ public partial class MainViewModel
     // ── Disconnect ────────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Checks the remote session catalog; if any named volumes exist, prompts the
+    ///  user to confirm that they will be discarded. Returns <see langword="true"/>
+    ///  if the disconnect may proceed (no volumes, or user confirmed), or
+    ///  <see langword="false"/> if the user cancelled.
+    /// </summary>
+    internal async Task<bool> ConfirmAndDisconnectRemoteHostAsync()
+    {
+        if (_remoteHostSettings == null)
+            return true; // Nothing to disconnect
+
+        // Query the live server catalog; if non-empty, warn the user.
+        var volumes = await _tapeService.ListRemoteSessionVolumesAsync().ConfigureAwait(true);
+        if (volumes.Count > 0)
+        {
+            var noun   = volumes.Count == 1 ? "volume" : "volumes";
+            var result = MessageBox.Show(
+                $"Disconnect from {_remoteHostSettings.DisplayLabel}?\n\n" +
+                $"This will delete {volumes.Count} temporary remote media {noun} from the server.",
+                "Disconnect from Remote Host",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);   // ← preselect “No”
+
+            if (result != MessageBoxResult.Yes)
+                return false;
+        }
+
+        await DisconnectRemoteHostAsync().ConfigureAwait(true);
+        return true;
+    }
+
+    /// <summary>
     /// Disconnects from the remote host: closes any open remote drive, disposes the
-    /// backend/channel, clears session state, and notifies all UI bindings.
+    ///  backend/channel, clears session state, and notifies all UI bindings.
     /// </summary>
     internal async Task DisconnectRemoteHostAsync()
     {

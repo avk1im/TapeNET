@@ -32,6 +32,14 @@ public sealed class RemoteVirtualVolumeEntry(
     public long BytesWritten { get; set; } = 0;
     public DateTime CreatedUtc { get; } = CreatedUtc;
     public bool IsCurrent { get; set; } = false;
+
+    /// <summary>
+    /// True when the backing file was created by the server (via <c>CreateTempVirtual</c>)
+    ///  and should be deleted when the session closes.
+    /// False for client-provided paths (via <c>InsertMedia</c> with an existing file) —
+    ///  those files are owned by the caller and must never be deleted by the server.
+    /// </summary>
+    public bool IsServerOwned { get; init; } = false;
 }
 
 /// <summary>
@@ -226,10 +234,12 @@ public sealed class TapeDriveSessionRegistry(
     // ── Temp file cleanup ─────────────────────────────────────────────────────
 
     /// <summary>
-    /// Deletes the backing files for all named volumes catalogued in <paramref name="entry"/>.
+    /// Deletes the backing files for server-owned volumes catalogued in <paramref name="entry"/>.
+    /// Only entries with <see cref="RemoteVirtualVolumeEntry.IsServerOwned"/> = true are deleted —
+    ///  those are files the server created in its temp folder via <c>CreateTempVirtual</c>.
+    /// Client-provided paths (added via <c>InsertMedia</c>) are left untouched.
     /// Called when the session is truly closed (explicit close or idle reap).
-    /// Files that have already been deleted (e.g. a prior <c>InsertMedia</c> that did dispose)
-    ///  are silently skipped.
+    /// Files that have already been deleted are silently skipped.
     /// </summary>
     private void DeleteSessionTempFiles(TapeDriveSessionEntry entry)
     {
@@ -239,6 +249,10 @@ public sealed class TapeDriveSessionRegistry(
 
         foreach (var vol in snapshot)
         {
+            // Only delete files the server itself created — never touch client-provided paths.
+            if (!vol.IsServerOwned)
+                continue;
+
             TryDeleteFile(vol.ContentFilePath);
             // Also delete the metadata sidecar (e.g. .vtape.meta)
             TryDeleteFile(vol.ContentFilePath + TapeLibNET.Virtual.VirtualTapeDriveBackend.MetadataExtension);

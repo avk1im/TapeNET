@@ -22,16 +22,34 @@ public sealed record RemoteVirtualVolumeInfo(
     /// <summary>UTC timestamp when the volume was created on the server.</summary>
     DateTime CreatedUtc,
     /// <summary>True when this is the session's currently active (mounted) volume.</summary>
-    bool IsCurrent)
+    bool IsCurrent,
+    /// <summary>
+    /// True when this is the most-recently-created volume in the session but the session's
+    /// active drive is currently in-memory (so the volume is not literally mounted).
+    /// Set by the caller when populating UI pickers; never stored server-side.
+    /// </summary>
+    bool IsLatest = false)
 {
-    /// <summary>Display text for UI pickers, e.g. "MyTemp_vol02 — 124 MB written (current)".</summary>
+    /// <summary>
+    /// Display text for UI pickers.
+    /// <list type="bullet">
+    ///  <item><c>IsCurrent</c>: name only with "(current)" — written size is omitted because
+    ///   it may be stale after subsequent backups were added.</item>
+    ///  <item><c>IsLatest</c>: name + written size + "(latest)" — accurate because the volume
+    ///   was measured when it was last swapped out.</item>
+    ///  <item>Otherwise: name + written size.</item>
+    /// </list>
+    /// </summary>
     public string DisplayText
     {
         get
         {
-            var mb = BytesWritten / (1024.0 * 1024.0);
-            var current = IsCurrent ? " (current)" : string.Empty;
-            return $"{Name} — {mb:N0} MB written{current}";
+            if (IsCurrent)
+                return $"{Name} (current)";
+
+            var mb     = BytesWritten / (1024.0 * 1024.0);
+            var suffix = IsLatest ? " (latest)" : string.Empty;
+            return $"{Name} — {mb:N0} MB written{suffix}";
         }
     }
 }

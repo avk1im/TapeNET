@@ -185,6 +185,37 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
             registry.Add(sessionId, backend, context.Peer);
             await context.WriteResponseHeadersAsync(
                 new Metadata { { TapeSessionConstants.SessionIdHeader, sessionId } });
+
+            // ── Catalog: register the initial file-backed volume so restore seeding can look it up ──
+            // Memory-backed and memory-map drives are never catalogued (no persistent file path).
+            if (request.ConfigCase == OpenVirtualRequest.ConfigOneofCase.FileConfig
+                && !string.IsNullOrEmpty(request.FileConfig.ContentFilePath))
+            {
+                if (registry.TryGet(sessionId, out var entry))
+                {
+                    var cfg  = request.FileConfig;
+                    var caps = cfg.Capabilities != null
+                        ? MapCapabilities(cfg.Capabilities)
+                        : VirtualTapeDriveCapabilities.WithFilemarksOnlyLargeBlocks;
+
+                    lock (entry!.Volumes)
+                    {
+                        entry.Volumes.Add(new RemoteVirtualVolumeEntry(
+                            Path.GetFileNameWithoutExtension(cfg.ContentFilePath),
+                            cfg.ContentFilePath,
+                            cfg.ContentCapacity > 0 ? cfg.ContentCapacity : backend.Capacity,
+                            string.IsNullOrEmpty(cfg.InitiatorFilePath) ? null : cfg.InitiatorFilePath,
+                            cfg.InitiatorCapacity,
+                            caps,
+                            BlockSize: backend.BlockSize,
+                            DateTime.UtcNow)
+                        {
+                            IsCurrent   = true,
+                            IsServerOwned = false, // caller provided this path; never auto-delete
+                        });
+                    }
+                }
+            }
         }
         else
         {
@@ -504,6 +535,7 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
 
         TapeDriveBackend backend;
         string? basePath = null; // set only for named (file-backed) drives; used by the volume catalog
+        bool isServerOwned = false; // true only for server-generated temp paths
 
         if (string.IsNullOrEmpty(request.Name))
         {
@@ -518,9 +550,22 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
         }
         else
         {
-            // Named: file-backed in system temp folder, wrapped for automatic cleanup on dispose
-            basePath = Path.Combine(Path.GetTempPath(),
-                $"tapenet_tmp_{request.Name}_{Guid.NewGuid():N}.vtape");
+            // Named: file-backed drive.
+            // If the caller supplies an absolute path, use it directly (client-owned, not deleted on close).
+            // If the caller supplies a bare name, construct a temp path in the system temp folder (server-owned).
+            bool callerProvidedPath = Path.IsPathRooted(request.Name);
+
+            if (callerProvidedPath)
+            {
+                basePath      = request.Name;
+                isServerOwned = false; // caller manages the file lifetime
+            }
+            else
+            {
+                basePath = Path.Combine(Path.GetTempPath(),
+                    $"tapenet_tmp_{request.Name}_{Guid.NewGuid():N}.vtape");
+                isServerOwned = true; // server created this file; deleted when session closes
+            }
 
             // No initiator partition for temp drives (keeps it simple)
             var fileBackend = VirtualTapeDriveBackend.CreateFileBacked(
@@ -534,7 +579,11 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
             if (request.BlockSize > 0)
                 fileBackend.SetBlockSize(request.BlockSize);
 
-            backend = new TempVirtualTapeDriveBackend(fileBackend, basePath, initiatorFilePath: null);
+            // Only wrap in TempVirtualTapeDriveBackend (auto-delete on dispose) when the server
+            //  owns the file.  Client-provided absolute paths must never be auto-deleted.
+            backend = isServerOwned
+                ? new TempVirtualTapeDriveBackend(fileBackend, basePath, initiatorFilePath: null)
+                : fileBackend;
         }
 
         // Use drive number 0 for all temp virtual drives (the number is cosmetic for virtual backends)
@@ -570,7 +619,8 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
                             effectiveBlockSize,
                             DateTime.UtcNow)
                         {
-                            IsCurrent = true,
+                            IsCurrent     = true,
+                            IsServerOwned = isServerOwned,
                         });
                     }
                 }
@@ -613,9 +663,14 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
         logger.LogInformation("InsertMedia: swapping to '{Path}'", newPath);
 
         // ── Same-path short-circuit (edge case §5.5 #1) ─────────────────────────────
-        // If the catalog already has this path flagged as current, the same file is already
-        // mounted — treat as a no-op to avoid closing and re-opening it unnecessarily.
-        if (registry.TryGet(sessionId: context.RequestHeaders.GetValue(TapeSessionConstants.SessionIdHeader)!, out var existingEntry))
+        // If the catalog already has this path flagged as current AND media is still loaded
+        // (i.e. the stream is alive), the file is already mounted — no-op.
+        // We must NOT short-circuit when the current backend has been unloaded (e.g. the
+        //  backup engine called UnloadMedia before the user cancelled new-volume creation):
+        //  in that case IsCurrent is still true in the catalog but the backing stream has
+        //  been disposed, and we need the full swap path to re-open it.
+        if (oldBackend.HasMedia &&
+            registry.TryGet(sessionId: context.RequestHeaders.GetValue(TapeSessionConstants.SessionIdHeader)!, out var existingEntry))
         {
             lock (existingEntry!.Volumes)
             {
@@ -630,6 +685,10 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
         }
 
         // ── Catalog: update BytesWritten on outgoing volume ──────────────────────────
+        // NOTE: the backup engine calls UnloadMedia() before the host callback, which
+        //  nulls m_currentMedia so Capacity and Remaining both return 0 at this point.
+        //  Instead, measure the actual file size on disk — after flush/unload the content
+        //  file exactly reflects what was written, and is far more reliable than in-memory counters.
         var sessionId = context.RequestHeaders.GetValue(TapeSessionConstants.SessionIdHeader)!;
         if (registry.TryGet(sessionId, out var entry))
         {
@@ -638,8 +697,14 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
                 var outgoing = entry.Volumes.FirstOrDefault(v => v.IsCurrent);
                 if (outgoing != null)
                 {
-                    // Approximate: capacity − remaining = bytes written
-                    outgoing.BytesWritten = oldBackend.Capacity - oldBackend.Remaining;
+                    // Prefer disk-file size: robust even after UnloadMedia resets in-memory counters.
+                    long writtenBytes = 0;
+                    if (!string.IsNullOrEmpty(outgoing.ContentFilePath))
+                    {
+                        try { writtenBytes = new FileInfo(outgoing.ContentFilePath).Length; }
+                        catch { /* fall back to 0 if file is inaccessible */ }
+                    }
+                    outgoing.BytesWritten = writtenBytes;
                     outgoing.IsCurrent = false;
                 }
             }

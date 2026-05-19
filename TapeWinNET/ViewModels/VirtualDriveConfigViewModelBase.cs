@@ -257,7 +257,7 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
     /// <summary>
     /// Converts a byte count to the most appropriate capacity value + unit pair.
     /// </summary>
-    protected static void SetCapacityFromBytes(long bytes, Action<string> setValue, Action<CapacityUnit> setUnit)
+    public static void SetCapacityFromBytes(long bytes, Action<string> setValue, Action<CapacityUnit> setUnit)
     {
         if (bytes >= 1024L * 1024 * 1024 && bytes % (1024L * 1024 * 1024) == 0)
         {

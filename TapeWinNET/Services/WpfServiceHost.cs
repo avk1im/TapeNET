@@ -443,6 +443,16 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                 }
 
                 vm.ForceCreateMode();
+                // Lock capabilities to the current drive's settings: the replacement volume must
+                //  be compatible with the volumes already written (same block sizes, features, etc.)
+                vm.LockCapabilitiesFrom(currentCaps);
+
+                // Pre-populate capacity from the previous volume (not locked — user may choose a
+                //  different size for the continuation volume, mirroring local virtual drive behaviour)
+                if (lastVmd != null && lastVmd.ContentCapacity > 0)
+                    VirtualDriveConfigViewModelBase.SetCapacityFromBytes(lastVmd.ContentCapacity,
+                        v => vm.ContentCapacityValue = v,
+                        u => vm.ContentCapacityUnit  = u);
 
                 var window = new OpenRemoteVirtualDriveWindow(vm) { Owner = Application.Current.MainWindow };
                 if (window.ShowDialog() == true && vm.Result is { } request)

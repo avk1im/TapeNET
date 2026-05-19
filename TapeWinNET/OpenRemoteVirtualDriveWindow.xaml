@@ -52,17 +52,15 @@
         </StackPanel>
 
         <!-- Open / Create mode selection -->
-        <GroupBox Grid.Row="1" Header="Mode" Margin="0,0,0,12">
-            <StackPanel Margin="8,6,8,4">
-                <RadioButton Content="Open _existing remote volume"
-                             IsChecked="{Binding IsOpenExistingMode}"
-                             IsEnabled="{Binding IsModeSwitchEnabled}"
-                             Margin="0,0,0,4"/>
-                <RadioButton Content="_Create new remote volume"
-                             IsChecked="{Binding IsCreateNewMode}"
-                             IsEnabled="{Binding IsModeSwitchEnabled}"/>
-            </StackPanel>
-        </GroupBox>
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,16">
+            <RadioButton Content="Open _existing remote volume"
+                         IsChecked="{Binding IsOpenExistingMode}"
+                         IsEnabled="{Binding IsModeSwitchEnabled}"
+                         Margin="0,0,24,0"/>
+            <RadioButton Content="_Create new remote volume"
+                         IsChecked="{Binding IsCreateNewMode}"
+                         IsEnabled="{Binding IsModeSwitchEnabled}"/>
+        </StackPanel>
 
         <!-- Volume picker (Open existing mode) -->
         <GroupBox Grid.Row="2" Header="Select Volume"
@@ -151,12 +149,12 @@
                 <ComboBox Grid.Column="0"
                           ItemsSource="{Binding Presets}"
                           SelectedItem="{Binding SelectedPreset}"
-                          IsEnabled="{Binding AreCreateFieldsEnabled}"
+                          IsEnabled="{Binding AreCapabilityFieldsEnabled}"
                           Margin="0,0,8,0"/>
                 <Button Grid.Column="1"
                         Content="Apply"
                         Command="{Binding ApplyPresetCommand}"
-                        IsEnabled="{Binding AreCreateFieldsEnabled}"
+                        IsEnabled="{Binding AreCapabilityFieldsEnabled}"
                         Padding="16,4"/>
             </Grid>
         </GroupBox>
@@ -257,11 +255,11 @@
                 <WrapPanel Margin="8" Orientation="Horizontal">
                     <CheckBox Content="Supports Setmarks"
                               IsChecked="{Binding SupportsSetmarks}"
-                              IsEnabled="{Binding AreCreateFieldsEnabled}"
+                              IsEnabled="{Binding AreCapabilityFieldsEnabled}"
                               Margin="0,0,24,4"/>
                     <CheckBox Content="Supports Seq. Filemarks"
                               IsChecked="{Binding SupportsSeqFilemarks}"
-                              IsEnabled="{Binding AreCreateFieldsEnabled}"
+                              IsEnabled="{Binding AreCapabilityFieldsEnabled}"
                               Margin="0,0,0,4"/>
                 </WrapPanel>
             </GroupBox>
@@ -269,7 +267,7 @@
             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                 <CheckBox Content="Initiator Partition"
                           IsChecked="{Binding EnableInitiatorPartition}"
-                          IsEnabled="{Binding AreCreateFieldsEnabled}"
+                          IsEnabled="{Binding AreCapabilityFieldsEnabled}"
                           ToolTip="Allocate a separate initiator (TOC) partition on the virtual tape"/>
             </StackPanel>
         </Grid>
@@ -294,17 +292,17 @@
                 <ComboBox Grid.Row="1" Grid.Column="0"
                           ItemsSource="{Binding BlockSizeOptions}"
                           SelectedItem="{Binding MinBlockSize}"
-                          IsEnabled="{Binding AreCreateFieldsEnabled}"
+                          IsEnabled="{Binding AreCapabilityFieldsEnabled}"
                           Margin="0,0,8,0"/>
                 <ComboBox Grid.Row="1" Grid.Column="1"
                           ItemsSource="{Binding BlockSizeOptions}"
                           SelectedItem="{Binding DefaultBlockSize}"
-                          IsEnabled="{Binding AreCreateFieldsEnabled}"
+                          IsEnabled="{Binding AreCapabilityFieldsEnabled}"
                           Margin="0,0,8,0"/>
                 <ComboBox Grid.Row="1" Grid.Column="2"
                           ItemsSource="{Binding BlockSizeOptions}"
                           SelectedItem="{Binding MaxBlockSize}"
-                          IsEnabled="{Binding AreCreateFieldsEnabled}"/>
+                          IsEnabled="{Binding AreCapabilityFieldsEnabled}"/>
             </Grid>
         </GroupBox>
 

@@ -408,13 +408,15 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
         {
             const string BaseVolumeName = "catalog_tape";
 
-            // Build the vol-01 VMD: pass only the bare name as ContentPath.
-            // CreateRemoteVirtualDriveAsync forwards this to CreateTempVirtualAsync(name: …),
-            //  which the server turns into a temp-folder path: tapenet_tmp_{name}_{guid}.vtape.
-            // The actual server-side path is read back from the catalog after backup.
+            // Build the vol-01 VMD: use a client-owned path in tempDir so the file survives
+            // after the backup session is closed and can be re-opened by the restore session.
+            // NOTE: We still call CreateRemoteVirtualDriveAsync (the production entry point)
+            //  but pass a full absolute path so the server opens it directly (no temp-folder prefix)
+            //  and the file is never server-owned, i.e. never deleted on session close.
             string vol01Name = $"{BaseVolumeName}_vol01";
+            string vol01Path = Path.Combine(tempDir, $"{vol01Name}.vtape");
             var vol01Vmd = new VirtualMediaDescriptor(
-                ContentPath:                vol01Name,
+                ContentPath:                vol01Path,
                 ContentCapacity:            volumeCapacity,
                 InitiatorPath:              null,
                 InitiatorPartitionCapacity: 0);
