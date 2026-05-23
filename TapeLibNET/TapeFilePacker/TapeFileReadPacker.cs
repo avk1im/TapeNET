@@ -14,7 +14,7 @@ namespace TapeLibNET.TapeFilePacker;
 /// Phase 2. At most one read slot may be open at a time.
 /// </para>
 /// </summary>
-internal sealed class TapeFileReadPacker : IDisposable
+internal sealed class TapeFileReadPacker : ITapeFileReader
 {
     private readonly ITapeReadBackend _backend;
     private readonly ILogger _logger;
@@ -181,44 +181,33 @@ internal sealed class TapeFileReadPacker : IDisposable
             _drivePositionBlock = block;
         }
 
-        // Read into a temp single-block buffer, then copy into the cache slot. The
-        //  backend contract requires a buffer starting at offset 0; renting a tiny
-        //  block-sized buffer per miss avoids changing the contract for Phase 2.
-        //  Optimization opportunity for Phase 3 (in-place reads into the ring).
-        byte[] tempBlock = ArrayPool<byte>.Shared.Rent(_blockSize);
-        try
+        // Read directly into the ring slot at its offset in the contiguous buffer,
+        //  avoiding a temporary ArrayPool allocation that the old ReadBlocks path required.
+        int slotOffset = victim * _blockSize;
+        ReadResult result = _backend.ReadOneBlock(_ringBuffer, slotOffset);
+        if (result.Exception is not null)
         {
-            ReadResult result = _backend.ReadBlocks(tempBlock, _blockSize);
-            if (result.Exception is not null)
-            {
-                _logger.LogWarning(result.Exception, "TapeFileReadPacker: ReadBlocks for block {Block} failed", block);
-                _drivePositionBlock = -1;
-                throw new IOException($"Tape read failed at block {block}.", result.Exception);
-            }
-
-            // Advance our notion of drive position to the next block, regardless of
-            //  partial-read amount, since the drive itself advances per-block.
-            _drivePositionBlock = block + 1;
-
-            if (result.BytesRead <= 0)
-            {
-                // Tapemark/EOM with zero bytes: do not populate the slot.
-                _slotBlock[victim] = -1;
-                _slotValid[victim] = 0;
-                return -1;
-            }
-
-            int copyBytes = Math.Min(result.BytesRead, _blockSize);
-            Buffer.BlockCopy(tempBlock, 0, _ringBuffer, victim * _blockSize, copyBytes);
-            _slotBlock[victim] = block;
-            _slotValid[victim] = copyBytes;
-            _slotTick[victim] = ++_tickCounter;
-            return victim;
+            _logger.LogWarning(result.Exception, "TapeFileReadPacker: ReadOneBlock for block {Block} failed", block);
+            _drivePositionBlock = -1;
+            throw new IOException($"Tape read failed at block {block}.", result.Exception);
         }
-        finally
+
+        // Advance our notion of drive position to the next block, regardless of
+        //  partial-read amount, since the drive itself advances per-block.
+        _drivePositionBlock = block + 1;
+
+        if (result.BytesRead <= 0)
         {
-            ArrayPool<byte>.Shared.Return(tempBlock);
+            // Tapemark/EOM with zero bytes: do not populate the slot.
+            _slotBlock[victim] = -1;
+            _slotValid[victim] = 0;
+            return -1;
         }
+
+        _slotBlock[victim] = block;
+        _slotValid[victim] = Math.Min(result.BytesRead, _blockSize);
+        _slotTick[victim] = ++_tickCounter;
+        return victim;
     }
 
     private int PickLruVictim()

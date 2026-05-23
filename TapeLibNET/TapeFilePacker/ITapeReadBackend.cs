@@ -29,15 +29,16 @@ internal readonly record struct ReadResult(
 }
 
 /// <summary>
-/// Synchronous block-read callback the backend invokes against the underlying drive.
+/// Synchronous single-block read callback the backend invokes against the underlying drive.
 /// Mirrors <see cref="TapeWriteSink"/> on the write side. The callback should perform
 /// a single <c>TapeDrive.ReadDirect</c> and translate its result into a
 /// <see cref="ReadResult"/>. Tapemarks and EOM should be reported via the result
 /// flags rather than as exceptions; reserve exceptions for hard errors.
 /// </summary>
-/// <param name="buffer">Caller-owned buffer to fill from offset 0.</param>
-/// <param name="bytesRequested">Block-aligned count of bytes to read (multiple of BlockSize).</param>
-internal delegate ReadResult TapeReadSink(byte[] buffer, int bytesRequested);
+/// <param name="buffer">Caller-owned buffer to fill.</param>
+/// <param name="offset">Byte offset within <paramref name="buffer"/> at which to begin writing
+///  the block data. The sink fills exactly <c>BlockSize</c> bytes starting here.</param>
+internal delegate ReadResult TapeReadSink(byte[] buffer, int offset);
 
 /// <summary>
 /// Block-positioning callback the backend invokes to seek the tape head
@@ -63,8 +64,10 @@ internal interface ITapeReadBackend : IDisposable
     bool MoveToBlock(long blockNumber);
 
     /// <summary>
-    ///  Read up to <paramref name="bytesRequested"/> bytes (block-aligned) into
-    ///  <paramref name="buffer"/> starting at offset 0. Returns the actual read result.
+    ///  Read exactly one block into <paramref name="buffer"/> starting at
+    ///  <paramref name="offset"/>. The number of bytes written equals <see cref="BlockSize"/>
+    ///  on a full read; less on a partial read (tapemark / EOM). Returns the read result;
+    ///  never throws for tape conditions.
     /// </summary>
-    ReadResult ReadBlocks(byte[] buffer, int bytesRequested);
-}
+        ReadResult ReadOneBlock(byte[] buffer, int offset);
+    }

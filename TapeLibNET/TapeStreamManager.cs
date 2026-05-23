@@ -1006,11 +1006,11 @@ namespace TapeLibNET
 
         // Sink that bridges the synchronous read backend to TapeDrive.ReadDirect.
         //  Captured once and passed to the backend; lives for the backend's lifetime.
-        private ReadResult PackerReadSink(byte[] buffer, int bytesRequested)
+        private ReadResult PackerReadSink(byte[] buffer, int offset)
         {
             try
             {
-                int read = Drive.ReadDirect(buffer, 0, bytesRequested, out bool tapemark, out bool eof);
+                int read = Drive.ReadDirect(buffer, offset, (int)Drive.BlockSize, out bool tapemark, out bool eof);
 
                 if (Drive.WentOK || tapemark || eof)
                     return new ReadResult(read, tapemark, eof, Exception: null);
@@ -1020,7 +1020,7 @@ namespace TapeLibNET
                     TapemarkEncountered: false,
                     EofEncountered: false,
                     Exception: new TapeIOException((uint)Drive.LastErrorWin32,
-                        $"ReadDirect failed for {bytesRequested} bytes"));
+                        $"ReadDirect failed for block at offset {offset}"));
             }
             catch (Exception ex)
             {

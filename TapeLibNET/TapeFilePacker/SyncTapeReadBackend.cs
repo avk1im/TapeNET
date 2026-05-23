@@ -36,21 +36,19 @@ internal sealed class SyncTapeReadBackend : ITapeReadBackend
         return _seekSink(blockNumber);
     }
 
-    public ReadResult ReadBlocks(byte[] buffer, int bytesRequested)
+    public ReadResult ReadOneBlock(byte[] buffer, int offset)
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(buffer);
-        ArgumentOutOfRangeException.ThrowIfNegative(bytesRequested);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(bytesRequested, buffer.Length);
-
-        // Round down defensively; the sink also enforces block alignment.
-        int aligned = (bytesRequested / (int)BlockSize) * (int)BlockSize;
-        if (aligned == 0)
-            return new ReadResult(0, false, false, null);
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        if (offset + (int)BlockSize > buffer.Length)
+            throw new ArgumentException(
+                $"Buffer too small: need offset {offset} + BlockSize {BlockSize} = {offset + BlockSize} bytes, " +
+                $"but buffer is only {buffer.Length} bytes.", nameof(buffer));
 
         try
         {
-            return _readSink(buffer, aligned);
+            return _readSink(buffer, offset);
         }
         catch (Exception ex)
         {
