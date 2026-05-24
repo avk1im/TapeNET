@@ -1,9 +1,8 @@
 namespace TapeLibNET.TapeFilePacker;
 
 /// <summary>
-/// Common surface shared by the synchronous <see cref="TapeFileReadPacker"/> and the
-///  future pipelined <see cref="TapeFilePipelinedReader"/>. <see cref="TapeStreamManager"/>
-///  holds this interface so the two implementations can be swapped without touching any
+/// Common surface implemented by <see cref="TapeFilePipelinedReader"/>. <see cref="TapeStreamManager"/>
+///  holds this interface so the implementation can be swapped without touching any
 ///  call site outside the packer subsystem.
 /// </summary>
 internal interface ITapeFileReader : IDisposable

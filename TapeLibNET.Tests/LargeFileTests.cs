@@ -4,7 +4,7 @@ namespace TapeLibNET.Tests;
 
 /// <summary>
 /// Tests for files exceeding 2 GB and 4 GB to verify 64-bit counter correctness
-/// throughout the backup ? restore ? verify pipeline.
+/// throughout the backup -> restore -> verify pipeline.
 /// <para>
 /// Resource-intensive: multi-GB virtual memory (memory-mapped) and disk I/O.
 /// Tagged with <c>[Trait("Category", "LargeFile")]</c> for selective execution.
@@ -12,7 +12,7 @@ namespace TapeLibNET.Tests;
 /// <para>
 /// <b>Exclude from routine runs:</b><br/>
 /// CLI: <c>dotnet test --filter "Category!=LargeFile"</c><br/>
-/// Visual Studio Test Explorer: filter by Trait ? Category ? LargeFile.
+/// Visual Studio Test Explorer: filter by Trait | Category | LargeFile.
 /// </para>
 /// </summary>
 [Trait("Category", "LargeFile")]

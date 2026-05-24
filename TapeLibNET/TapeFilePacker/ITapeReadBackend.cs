@@ -47,9 +47,8 @@ internal delegate ReadResult TapeReadSink(byte[] buffer, int offset);
 internal delegate bool TapeReadSeek(long blockNumber);
 
 /// <summary>
-/// Low-layer tape read abstraction shared by <see cref="SyncTapeReadBackend"/> (synchronous)
-///  and the forthcoming <c>WorkerThreadTapeReadBackend</c> (prefetching worker thread).
-/// The interface is shaped as a single-block transport so the high-layer packer/reader
+/// Low-layer tape read abstraction implemented by <c>WorkerThreadTapeReadBackend</c> (prefetching worker thread).
+/// The interface is shaped as a single-block transport so the high-layer pipelined reader
 ///  controls how many blocks to read and in what loop.
 /// </summary>
 internal interface ITapeReadBackend : IDisposable

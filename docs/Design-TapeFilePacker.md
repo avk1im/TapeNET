@@ -216,7 +216,7 @@ After EOM, the packer does **not** attempt to re-pack onto the last committed bl
 
 ## 6. Read Path
 
-The read path is structurally simpler than the write path: there is no commit decoupling, and the current implementation is fully synchronous (no worker thread, no prefetch). The interface is shaped to admit a prefetching/async backend later without reshaping the agents (see §12).
+The read path is structurally simpler than the write path in its agent-facing contract: there is no commit decoupling, and the implementation overlaps tape reads with agent consumption via a worker-thread prefetch ring. The interface is shaped to admit future enhancements (e.g. true OVERLAPPED I/O) without reshaping the agents.
 
 ### 6.1 Low layer — `ITapeReadBackend`
 
@@ -231,43 +231,42 @@ internal interface ITapeReadBackend : IDisposable
 {
     uint BlockSize { get; }
     bool MoveToBlock(long blockNumber);
-    ReadResult ReadBlocks(byte[] buffer, int bytesRequested);
+    ReadResult ReadOneBlock(byte[] buffer, int offset);
 }
 ```
 
-`SyncTapeReadBackend` (production) routes reads/seeks through the sinks supplied by `TapeStreamManager.PackerReadSink` and a `MoveToBlock` lambda. Like the write backend, it packages ordinary tape conditions (tapemark, EOF) in `ReadResult` rather than throwing; only true I/O exceptions surface as `Exception`.
+`WorkerThreadTapeReadBackend` (production) routes reads/seeks through the sinks supplied by `TapeStreamManager.PackerReadSink` and a `MoveToBlock` lambda, serializing all drive I/O on a dedicated background thread. Like the write backend, it packages ordinary tape conditions (tapemark, EOF) in `ReadResult` rather than throwing; only true I/O exceptions surface as `Exception`.
 
-### 6.2 High layer — `TapeFileReadPacker`
+### 6.2 High layer — `TapeFilePipelinedReader`
 
 Owns:
 
-- a contiguous ring buffer of `slotCount × BlockSize` (default 16 slots, matching the write packer's `blockMultiplier`),
-- per-slot metadata: `{ block, validBytes, lastAccessTick }`,
-- the single open-read slot's logical state: `{ currentAbsByte, endAbsByte }`,
-- `_drivePositionBlock` — the drive head's last known block, used to skip `MoveToBlock` on adjacent forward reads.
+- a ring buffer of `slotCount × BlockSize` bytes rented from `ArrayPool<byte>.Shared` (default `slotCount = 16`, matching the write packer's `blockMultiplier`),
+- per-slot metadata: `{ State, Block, ValidBytes, EndOfStream, Error }` where `State ∈ { Empty, Prefetching, Ready }`,
+- a dedicated background worker `Thread` that greedily prefetches into `Empty` slots up to `_prefetchEndBlockExcl`,
+- `_prefetchEndBlockExcl` — per-file exclusive upper block bound enforced by the worker to prevent consuming post-file setmarks on partitioned media.
 
 API:
 
 ```csharp
-internal sealed class TapeFileReadPacker : IDisposable
+internal sealed class TapeFilePipelinedReader : ITapeFileReader, ITapeReadStreamHost
 {
     public bool IsFileOpen { get; }
     public int  BlockSize  { get; }
 
     public TapeReadStreamFacade BeginRead(TapeAddress addr, long length);
-    public void                 EndRead();        // retains cache for the next caller
+    public void                 EndRead();        // retains ring cache for the next caller
 }
 ```
 
-Cache policy:
+Read strategy:
 
-- **Lookup is linear** across `slotCount` slots; `slotCount` is small (16), so the cost is negligible.
-- **Eviction is LRU.** Never evicts the slot currently being served.
-- **Sequential extension is free.** Crossing into `block + 1` checks the cache first; on miss, the next read happens without a `MoveToBlock` because the drive head is already there.
-- **No prefetch.** The cache fills strictly on demand.
-- **Backward / non-monotonic reads** (e.g. selective restore) are supported: `BeginRead` will seek backward when needed; cache hit/miss logic is identical.
+- **Seek-and-resume (cache hit).** If `addr.Block` is within the already-prefetched window, the consumer advances past intervening slots and re-arms the prefetch bound for the new file. No tape I/O.
+- **Seek-and-restart (cache miss).** Backward or non-monotonic address: the ring is flushed, the worker is given a seek request, and prefetch restarts from `addr.Block`.
+- **`_prefetchEndBlockExcl` bound.** `BeginRead` arms the worker with an exclusive upper block (`((startAbs + length - 1) / BlockSize) + 1`). The worker parks once the bound is reached, leaving any post-file setmarks intact for the navigator.
+- **Ring retention on `EndRead`.** The ring contents are retained (not flushed) so the next `BeginRead` for the immediately following packed file can hit cache without tape I/O.
 
-`TapeReadStreamFacade` forwards `Read(...)` to `TapeFileReadPacker.ReadIntoOpenFile`, tracks logical `Position`, ignores `Flush()`, and calls `EndRead()` on disposal.
+`TapeReadStreamFacade` forwards `Read(...)` to `TapeFilePipelinedReader.ReadIntoOpenFile`, tracks logical `Position`, ignores `Flush()`, and calls `EndRead()` on disposal.
 
 ---
 
@@ -293,9 +292,9 @@ Cache policy:
 
 ### 7.2 Read path lifecycle
 
-- `BeginReadContent()` transitions to `ReadingContent` and, when crossing a set boundary while already in that state, **disposes the read packer first** via `DisposeReadPacker()`. The cached blocks and `_drivePositionBlock` are tied to the prior set's position state; without this reset, the cache feeds stale data into the new set's reads.
-- `BeginPackedFileRead(addr, length)` calls `EnsureReadPackerCreated()` (lazy construction of `SyncTapeReadBackend` + `TapeFileReadPacker`), then delegates to `TapeFileReadPacker.BeginRead`.
-- `EndPackedFileRead()` calls `TapeFileReadPacker.EndRead()` (retains cache for the next caller).
+- `BeginReadContent()` transitions to `ReadingContent` and, when crossing a set boundary while already in that state, **disposes the read packer first** via `DisposeReadPacker()`. The prefetch ring and worker thread are tied to the prior set's position state; without this reset, stale prefetched blocks could feed into the new set's reads.
+- `BeginPackedFileRead(addr, length)` calls `EnsureReadPackerCreated()` (lazy construction of `WorkerThreadTapeReadBackend` + `TapeFilePipelinedReader`), then delegates to `TapeFilePipelinedReader.BeginRead`.
+- `EndPackedFileRead()` calls `TapeFilePipelinedReader.EndRead()` (retains ring cache for the next caller).
 - `EndReadContent()` calls `DisposeReadPacker()` before transitioning state.
 
 ---
@@ -391,14 +390,9 @@ Cross-path compatibility:
 
 ---
 
-## 9. Future-Work Hook: Read-Side Parallelization
+## 9. Future-Work Hook: Read-Side Parallelization *(realized — see §12)*
 
-The write path already overlaps source ingest with tape writes via the worker-thread backend. The read path is currently synchronous. The shape of `ITapeReadBackend` plus the `TapeFileReadPacker`'s LRU cache deliberately admits a prefetching backend without touching agents:
-
-- A prefetcher could read ahead by up to `slotCount - 1` blocks while the consumer reads, populating the LRU ring opportunistically.
-- The agent-facing contract (`BeginRead(addr, length)` → `Stream`) does not change.
-- Prefetch must be disabled when the agent enqueues non-monotonic addresses (e.g. selective restore with backward seeks); the existing `_drivePositionBlock` tracking is the natural decision input.
-- A further step would extract `ITapeReadBackend` into a worker-thread implementation analogous to `WorkerThreadTapeWriteBackend`, with a bounded prefetch queue. Cancellation would plumb through a `CancellationToken` on `BeginRead`.
+The write path already overlaps source ingest with tape writes via the worker-thread backend. The read path is now pipelined via `TapeFilePipelinedReader` (§12), which overlaps tape read-ahead with agent consumption through a worker-thread ring buffer. The agent-facing contract (`BeginRead(addr, length)` → `Stream`) is unchanged.
 
 Other deferred refinements:
 
@@ -428,9 +422,9 @@ These are the load-bearing constraints that have been confirmed by both code rev
 
 ---
 
-## 11. Notes on §9 Future-Work Hook
+## 11. Notes on §9 and §12
 
-Section §9 describes the *shape* of a prefetching backend at the interface level. §12 below is the concrete design that supersedes it with a full pipelined read architecture and an explicit implementation plan.
+Section §9 originally described the *shape* of a prefetching backend at the interface level. §12 below is the concrete design that supersedes it. The pipelined read path described in §12 has been fully implemented as of Step 8 of the implementation plan (§13); `TapeFilePipelinedReader` and `WorkerThreadTapeReadBackend` are the current production components on the packed restore path.
 
 ---
 
@@ -612,13 +606,9 @@ Internal changes only:
 - The agent's sequential-file loop naturally benefits from prefetch without any code change: by the time the agent finishes processing file *N*, the worker has already prefetched the first few blocks of file *N+1*.
 - The `[Obsolete]` private members `RestoreNextFileAligned`, `RestoreFilesFromCurrentSetAligned`, and `RestoreFileCoreAligned` are deleted in step 8 of §13 along with the legacy read backend they depend on.
 
-### 12.11 Legacy `TapeFileReadPacker` — removal preconditions
+### 12.11 Legacy `TapeFileReadPacker` — removed
 
-`TapeFileReadPacker` + `SyncTapeReadBackend` (old synchronous read path) are removed once:
-
-1. `TapeFilePipelinedReader` passes the full read-path test suite (all `TapeLibNET.Tests` read-path cases) and dedicated unit tests against `MemoryTapeReadBackend`.
-2. The aligned (TOC) read path is confirmed to use `ProduceReadTOCStream`, not `BeginPackedFileRead`, so it is unaffected.
-3. The obsolete `RestoreNextFileAligned` path is confirmed to have no non-test callers (it is `private` and `[Obsolete]` today).
+`TapeFileReadPacker` and `SyncTapeReadBackend` (old synchronous read path) have been removed from the active codebase (Step 8 of §13). Their source files are preserved in `TapeLibNET/Excluded Files/` as `TapeFileReadPacker.cs.txt` and `SyncTapeReadBackend.cs.txt`.
 
 The aligned path for TOC reads (`ProduceReadTOCStream`) is independent and goes through the legacy `TapeStream` provisioning, not through the packer or the pipelined reader. It is unaffected by this change.
 
@@ -748,13 +738,14 @@ Step 4's nuance about `_drivePositionBlock` needing an explicit `MoveToBlock` to
 **Implementation notes — coverage beyond the minimum plan:**
 The plan asked for backward-seek selective restore, cross-set restore in one session, and large-file back-pressure. The implementation parameterises each scenario across all four `DriveProfile` values so any profile-specific edge case (notably `Partitions`, which exposed the §12.6 `_prefetchEndBlockExcl` bug) is exercised end-to-end. This is the recommended git checkpoint before the Step 9 benchmark.
 
-### Step 8 — Remove the legacy non-pipelined packer path
+### Step 8 — Remove the legacy non-pipelined packer path ✅
 
-- Confirm by `find_symbol` that `TapeFileReadPacker`, `SyncTapeReadBackend`, `RestoreNextFileAligned`, `RestoreFilesFromCurrentSetAligned`, and `RestoreFileCoreAligned` have no non-test callers.
-- Delete `TapeLibNET/TapeFilePacker/TapeFileReadPacker.cs` and `TapeLibNET/TapeFilePacker/SyncTapeReadBackend.cs`.
-- For now, **keep** the `[Obsolete]` "Aligned" (non-packing) private members `RestoreNextFileAligned`, `RestoreFilesFromCurrentSetAligned`, `RestoreFileCoreAligned` from `TapeRestoreAgent.cs` - along with the corresponding tests.
-- Update §6 of this document to describe the pipelined reader as the current production read path; update §9 to note that the future-work hook has been realized; trim §11 / §12.11 cross-references that have become historical.
-- **Build:** green. **Tests:** the full suite passes; no test references the deleted types.
+- Confirmed by `find_symbol` / grep that `TapeFileReadPacker` and `SyncTapeReadBackend` have no non-test callers; test files also had zero references (already supplanted by Step 5/7 tests).
+- Moved `TapeLibNET/TapeFilePacker/TapeFileReadPacker.cs` and `TapeLibNET/TapeFilePacker/SyncTapeReadBackend.cs` to `TapeLibNET/Excluded Files/TapeFileReadPacker.cs.txt` and `SyncTapeReadBackend.cs.txt` — files preserved, not deleted.
+- Updated doc comments in `ITapeFileReader.cs`, `ITapeReadBackend.cs`, `TapeReadStreamFacade.cs`, and `TapeRestoreAgent.cs` to remove `<see cref>` references to the deleted classes.
+- Kept the `[Obsolete]` "Aligned" members (`RestoreNextFileAligned`, `RestoreFilesFromCurrentSetAligned`, `RestoreFileCoreAligned`) and their tests untouched.
+- Updated §6, §7.2, §9, §11, and §12.11 of this document to describe the pipelined reader as the current production path.
+- **Build:** green. **Tests:** full suite passes.
 
 ### Step 9 — Performance validation
 
@@ -780,6 +771,6 @@ The plan asked for backward-seek selective restore, cross-set restore in one ses
 | **Rollback (pending)** | Discard all pending-commit files; reposition drive to last committed block. Used on EOM. |
 | **Aligned path** | Legacy one-file-per-block write/read methods, suffixed `Aligned` and marked `[Obsolete]`. Still used for TOC I/O and side-by-side tests. |
 | **Packed path** | Default write/read methods routed through `TapeFileWritePacker` / `TapeFilePipelinedReader`. |
-| **Pipelined reader** | `TapeFilePipelinedReader` — the worker-thread prefetching read component that replaces `TapeFileReadPacker` on the packed restore path. |
+| **Pipelined reader** | `TapeFilePipelinedReader` — the worker-thread prefetching read component (current production path for packed restore). Replaced the legacy `TapeFileReadPacker`. |
 | **Ring slot** | One `BlockSize`-byte entry in the pipelined reader's prefetch ring buffer; transitions through Empty → Prefetching → Ready → Consumed. |
 | **Seek-and-restart** | When `BeginRead` is called with a backward or non-monotonic address, the worker cancels the current prefetch window, seeks, and restarts read-ahead from the new block. |

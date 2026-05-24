@@ -218,7 +218,7 @@ namespace TapeLibNET
         //  Packed (Phase 2 Step E) restore pendants
         //
         //  Mirror RestoreNextFile / RestoreFilesFromCurrentSetAligned but route content
-        //  reads through TapeFileReadPacker so files that share tape blocks (or
+        //  reads through TapeFilePipelinedReader so files that share tape blocks (or
         //  start at non-zero intra-block offsets) restore transparently. Unlike
         //  the packed BACKUP path, packed restore needs no commit decoupling --
         //  reads are synchronous and notifications fire in-line.

@@ -2,8 +2,8 @@ namespace TapeLibNET.TapeFilePacker;
 
 /// <summary>
 /// Minimal abstraction the <see cref="TapeReadStreamFacade"/> uses to push reads back to
-///  whichever reader owns the open per-file slot. Implemented by <see cref="TapeFileReadPacker"/>
-///  (synchronous, LRU cache) and <see cref="TapeFilePipelinedReader"/> (worker-thread prefetch).
+///  whichever reader owns the open per-file slot. Implemented by <see cref="TapeFilePipelinedReader"/>
+///  (worker-thread prefetch ring buffer).
 /// </summary>
 internal interface ITapeReadStreamHost
 {
