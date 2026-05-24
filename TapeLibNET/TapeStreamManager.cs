@@ -53,9 +53,11 @@ namespace TapeLibNET
 
         // Read-side packer: lazily constructed inside BeginPackedFileRead and torn down
         //  by EndReadContent. Both remain null while the manager is not in
-        //  TapeState.ReadingContent.
-        private SyncTapeReadBackend? m_readBackend;
-        private TapeFileReadPacker? m_readPacker;
+        //  TapeState.ReadingContent. Typed via interfaces so the concrete implementation
+        //  (synchronous legacy packer vs. worker-thread pipelined reader) can be swapped
+        //  without touching call sites.
+        private WorkerThreadTapeReadBackend? m_readBackend;
+        private TapeFilePipelinedReader? m_readPacker;
 
         /// <summary>
         /// Active write packer for the current content session, or <see langword="null"/>
@@ -1042,18 +1044,18 @@ namespace TapeLibNET
                 return;
             }
 
-            m_readBackend = new SyncTapeReadBackend(
+            m_readBackend = new WorkerThreadTapeReadBackend(
                 readSink: PackerReadSink,
                 seekSink: b => Drive.MoveToBlock(b),
                 blockSize: blockSize,
                 logger: m_logger);
 
-            m_readPacker = new TapeFileReadPacker(
+            m_readPacker = new TapeFilePipelinedReader(
                 backend: m_readBackend,
                 slotCount: PackerBlockMultiplier,
                 logger: m_logger);
 
-            m_logger.LogTrace("Drive #{Drive}: Read packer created (blockSize={Bs}, slots={Slots})",
+            m_logger.LogTrace("Drive #{Drive}: Pipelined read packer created (blockSize={Bs}, slots={Slots})",
                 DriveNumber, blockSize, PackerBlockMultiplier);
         }
 

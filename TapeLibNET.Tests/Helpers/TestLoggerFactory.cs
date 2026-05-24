@@ -28,11 +28,20 @@ internal static class TestLoggerFactory
     /// </summary>
     public static LogLevel MinLevel { get; } = ResolveMinLevel();
 
+    /// <summary>
+    ///  Optional file path captured from the <c>TAPENET_TEST_LOG_FILE</c> environment variable.
+    ///  When set, log output is additionally appended to this file — handy for capturing
+    ///  verbose traces from a failing test outside the IDE Debug window.
+    /// </summary>
+    public static string? FilePath { get; } = Environment.GetEnvironmentVariable("TAPENET_TEST_LOG_FILE");
+
     /// <summary>Singleton logger factory shared by all test fixtures.</summary>
     public static ILoggerFactory Default { get; } = LoggerFactory.Create(builder =>
     {
         builder.SetMinimumLevel(MinLevel);
         builder.AddDebug();
+        if (!string.IsNullOrWhiteSpace(FilePath))
+            builder.AddProvider(new FileLoggerProvider(FilePath!, MinLevel));
     });
 
     private static LogLevel ResolveMinLevel()
@@ -41,5 +50,43 @@ internal static class TestLoggerFactory
         if (!string.IsNullOrWhiteSpace(env) && Enum.TryParse<LogLevel>(env, ignoreCase: true, out var parsed))
             return parsed;
         return LogLevel.Trace;
+    }
+}
+
+/// <summary>
+///  Minimal thread-safe file logger provider used only when
+///  <c>TAPENET_TEST_LOG_FILE</c> is set. Appends one line per log entry.
+/// </summary>
+internal sealed class FileLoggerProvider(string path, LogLevel minLevel) : ILoggerProvider
+{
+    private readonly object _gate = new();
+    private readonly StreamWriter _writer = new(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read))
+    {
+        AutoFlush = true
+    };
+
+    public ILogger CreateLogger(string categoryName) => new FileLogger(categoryName, minLevel, _gate, _writer);
+
+    public void Dispose()
+    {
+        lock (_gate) _writer.Dispose();
+    }
+
+    private sealed class FileLogger(string category, LogLevel minLevel, object gate, StreamWriter writer) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= minLevel;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (!IsEnabled(logLevel)) return;
+            var msg = formatter(state, exception);
+            lock (gate)
+            {
+                writer.WriteLine($"{DateTime.Now:HH:mm:ss.fff} [{logLevel}] {category}: {msg}");
+                if (exception != null) writer.WriteLine(exception);
+            }
+        }
     }
 }

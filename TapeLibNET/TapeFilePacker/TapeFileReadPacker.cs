@@ -14,7 +14,7 @@ namespace TapeLibNET.TapeFilePacker;
 /// Phase 2. At most one read slot may be open at a time.
 /// </para>
 /// </summary>
-internal sealed class TapeFileReadPacker : ITapeFileReader
+internal sealed class TapeFileReadPacker : ITapeFileReader, ITapeReadStreamHost
 {
     private readonly ITapeReadBackend _backend;
     private readonly ILogger _logger;
@@ -105,7 +105,7 @@ internal sealed class TapeFileReadPacker : ITapeFileReader
     // -----------------------------------------------------------------------
 
     /// <summary>Called by <see cref="TapeReadStreamFacade"/> on each <c>Read</c> call.</summary>
-    internal int ReadIntoOpenFile(byte[] buffer, int offset, int count)
+    public int ReadIntoOpenFile(byte[] buffer, int offset, int count)
     {
         ThrowIfDisposed();
         if (!_readOpen)

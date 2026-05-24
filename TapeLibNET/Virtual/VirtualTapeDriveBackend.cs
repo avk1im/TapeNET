@@ -399,6 +399,10 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
 
     public override bool LoadMedia()
     {
+        // Reset any stale error from a prior operation (e.g. SpaceSetmarks hitting EOM)
+        //  so that SyncErrorFrom in TapeDrive.RefreshMediaParams sees a clean state.
+        ResetError();
+
         // Flush and cleanup existing media if any -- but NOT the streams!
         //  Notice: backend always owns the streams
         if (m_contentMedia != null)

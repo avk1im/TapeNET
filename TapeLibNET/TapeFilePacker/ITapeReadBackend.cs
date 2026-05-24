@@ -1,7 +1,7 @@
 namespace TapeLibNET.TapeFilePacker;
 
 /// <summary>
-/// Outcome of one read operation submitted to <see cref="ITapeReadBackend.ReadBlocks"/>.
+/// Outcome of one read operation submitted to <see cref="ITapeReadBackend.ReadOneBlock"/>.
 /// </summary>
 /// <param name="BytesRead">
 ///  Bytes actually read from tape. Always block-aligned (the backend reads whole blocks
@@ -47,10 +47,10 @@ internal delegate ReadResult TapeReadSink(byte[] buffer, int offset);
 internal delegate bool TapeReadSeek(long blockNumber);
 
 /// <summary>
-/// Low-layer tape read abstraction used by <c>TapeFileReadPacker</c>.
-/// <para>Phase 2 implementation is fully synchronous (no worker thread, no prefetch).
-/// The interface is shaped so a future async/read-ahead backend can slot in without
-/// reshaping callers.</para>
+/// Low-layer tape read abstraction shared by <see cref="SyncTapeReadBackend"/> (synchronous)
+///  and the forthcoming <c>WorkerThreadTapeReadBackend</c> (prefetching worker thread).
+/// The interface is shaped as a single-block transport so the high-layer packer/reader
+///  controls how many blocks to read and in what loop.
 /// </summary>
 internal interface ITapeReadBackend : IDisposable
 {
@@ -69,5 +69,5 @@ internal interface ITapeReadBackend : IDisposable
     ///  on a full read; less on a partial read (tapemark / EOM). Returns the read result;
     ///  never throws for tape conditions.
     /// </summary>
-        ReadResult ReadOneBlock(byte[] buffer, int offset);
-    }
+    ReadResult ReadOneBlock(byte[] buffer, int offset);
+}

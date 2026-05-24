@@ -1,20 +1,34 @@
 namespace TapeLibNET.TapeFilePacker;
 
 /// <summary>
-/// Thin <see cref="Stream"/> façade returned by <see cref="TapeFileReadPacker.BeginRead"/>.
-/// Forwards <see cref="Read(byte[], int, int)"/> calls to the packer; becomes inert after
-/// the corresponding <see cref="TapeFileReadPacker.EndRead"/> or packer disposal.
+/// Minimal abstraction the <see cref="TapeReadStreamFacade"/> uses to push reads back to
+///  whichever reader owns the open per-file slot. Implemented by <see cref="TapeFileReadPacker"/>
+///  (synchronous, LRU cache) and <see cref="TapeFilePipelinedReader"/> (worker-thread prefetch).
+/// </summary>
+internal interface ITapeReadStreamHost
+{
+    /// <summary>Read up to <paramref name="count"/> bytes from the open file into <paramref name="buffer"/>.</summary>
+    int ReadIntoOpenFile(byte[] buffer, int offset, int count);
+
+    /// <summary>Signals the host that the consumer is done with the open file.</summary>
+    void EndRead();
+}
+
+/// <summary>
+/// Thin <see cref="Stream"/> façade returned by <see cref="ITapeFileReader.BeginRead"/>.
+/// Forwards <see cref="Read(byte[], int, int)"/> calls to the owning host; becomes inert
+/// after the corresponding <see cref="ITapeReadStreamHost.EndRead"/> or host disposal.
 /// </summary>
 internal sealed class TapeReadStreamFacade : Stream
 {
-    private readonly TapeFileReadPacker _packer;
+    private readonly ITapeReadStreamHost _host;
     private readonly long _length;
     private long _position;
     private bool _closed;
 
-    internal TapeReadStreamFacade(TapeFileReadPacker packer, long length)
+    internal TapeReadStreamFacade(ITapeReadStreamHost host, long length)
     {
-        _packer = packer;
+        _host = host;
         _length = length;
     }
 
@@ -41,7 +55,7 @@ internal sealed class TapeReadStreamFacade : Stream
         if (count == 0)
             return 0;
 
-        int read = _packer.ReadIntoOpenFile(buffer, offset, count);
+        int read = _host.ReadIntoOpenFile(buffer, offset, count);
         _position += read;
         return read;
     }
@@ -59,8 +73,8 @@ internal sealed class TapeReadStreamFacade : Stream
     {
         if (disposing && !_closed)
         {
-            // Closing the stream signals end-of-read; tell the packer to release the slot.
-            _packer.EndRead();
+            // Closing the stream signals end-of-read; tell the host to release the slot.
+            _host.EndRead();
         }
         base.Dispose(disposing);
     }

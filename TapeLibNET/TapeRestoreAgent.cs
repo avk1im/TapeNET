@@ -388,6 +388,7 @@ namespace TapeLibNET
 
             NotifyBatchEnd(fileNotify);
 
+            m_logger.LogTrace("RestoreFilesFromCurrentSet(tfis) exiting: overallSuccess={Success}", overallSuccess);
             return overallSuccess;
         } // RestoreFilesFromCurrentSet(List<TapeFileInfo>?)
 
@@ -452,6 +453,7 @@ namespace TapeLibNET
 
             NotifyBatchEnd(fileNotify);
 
+            m_logger.LogTrace("RestoreAllFilesFromCurrentSetInt exiting: overallSuccess={Success}", overallSuccess);
             return overallSuccess;
         } // RestoreAllFilesFromCurrentSet()
 
@@ -760,6 +762,13 @@ namespace TapeLibNET
             TapeRestoreContext rc = CanResumeFromAnotherVolume ? MultiVolumeContext!.Value :
                 new(filesSelected!, TOC.CurrentSetIndex, ignoreFailures, fileNotify, packed);
 
+            m_logger.LogTrace("RestoreFilesFromCurrentSetDownInt: incoming rc.overallSuccess={Success}, filesSelectedIdx={Idx}, initialCurrSetIdx={Init}, isResume={Resume}",
+                rc.overallSuccess, rc.filesSelectedIdx, rc.initialCurrSetIdx, CanResumeFromAnotherVolume);
+
+            for (int s = 0; s < TOC.Count; s++)
+                m_logger.LogTrace("  TOC set #{Idx}: Volume={Vol}, ContFromPrev={CFP}, Count={Count}",
+                    s, TOC[s].Volume, TOC[s].ContinuedFromPrevVolume, TOC[s].Count);
+
             // start from the oldest set, so that we only move tape forward
             for (; rc.filesSelectedIdx >= 0; rc.filesSelectedIdx--)
             {
@@ -776,6 +785,10 @@ namespace TapeLibNET
                     VolumeToResumeFrom = TOC.CurrentSetTOC.Volume;
                     TOC.CurrentSetIndex = rc.initialCurrSetIdx; // restore the initial current set index
                     Debug.Assert(CanResumeFromAnotherVolume); // we're ready to continue with multi-volume restore
+                    // Tear down any active read session before yielding for volume swap.
+                    //  The pipelined read backend has a worker thread that would otherwise
+                    //  keep prefetching while the host unloads media, racing the drive teardown.
+                    Manager.EndReadWrite();
                     return false;
                 }
 
@@ -790,6 +803,8 @@ namespace TapeLibNET
 #pragma warning restore CS0618 // Type or member is obsolete
                 if (!result)
                 {
+                    m_logger.LogWarning("Inner restore returned false: filesSelectedIdx={Idx}, set #{Set}",
+                        rc.filesSelectedIdx, TOC.CurrentSetIndex);
                     rc.overallSuccess = false;
                     if (!ignoreFailures || IsAbortRequested)
                         break;
@@ -804,6 +819,8 @@ namespace TapeLibNET
 
             TOC.CurrentSetIndex = rc.initialCurrSetIdx; // restore the initial current set index
 
+            m_logger.LogTrace("RestoreFilesFromCurrentSetDownInt exiting: overallSuccess={Success}, filesSelectedIdx={Idx}, MultiVolumeContext set={Pending}",
+                rc.overallSuccess, rc.filesSelectedIdx, MultiVolumeContext != null);
             return rc.overallSuccess;
         } // RestoreFilesFromCurrentSetDownInt(List<string>)
 
