@@ -54,7 +54,7 @@ HelpNET therefore consumes content through an **abstract content provider** (`IH
 ### 2.1 Mission
 
 Be the single source of `IChatClient` and `IEmbeddingGenerator<string, Embedding<float>>` instances for the whole solution, with:
-- Pluggable providers (Ollama, LM Studio, OpenAI-compatible LAN, OpenAI, Azure OpenAI, GitHub Models — extensible).
+- Pluggable providers (Ollama, LM Studio, ONNX, OpenAI-compatible LAN, OpenAI, Azure OpenAI, GitHub Models — extensible).
 - Three logical **locations**: `Local`, `LocalNetwork`, `Cloud` (purely for UI grouping; the wire protocol differs only by URL and auth).
 - Discovery + interactive credential flow (mirrors the FclAiNET pattern, generalized).
 - Live provider replacement (`ReplaceProviderAsync`) so users can swap providers from Settings without restarting.
@@ -93,7 +93,7 @@ AiNET/
 ### 2.3 Public API (signatures)
 
 ```csharp
-public enum AiProviderKind { Ollama, LmStudio, OpenAiCompatible, OpenAi, AzureOpenAi, GitHubModels, Custom }
+public enum AiProviderKind { Ollama, LmStudio, Onnx, OpenAiCompatible, OpenAi, AzureOpenAi, GitHubModels, Custom }
 public enum AiProviderLocation { Local, LocalNetwork, Cloud }
 
 [Flags]
@@ -120,7 +120,7 @@ public sealed record AiProviderProbeResult(
 	Uri Endpoint,
 	bool IsHealthy,
 	IReadOnlyList<string> DiscoveredChatModels,
-	IReadOnlyList<string> DiscoveredEmbeddingModels,
+	IReadOnlyList<string> DiscoveredEmbeddingModels,	
 	TimeSpan Latency,
 	string? ErrorMessage);
 
@@ -187,6 +187,7 @@ public static class AiSessionFactory
 |---|---|---|---|---|
 | `OllamaProvider` | `http://localhost:11434` | `/api/chat` | `/api/embeddings` | Model list via `/api/tags` |
 | `LmStudioProvider` | `http://localhost:1234` | OpenAI-compat `/v1/chat/completions` | OpenAI-compat `/v1/embeddings` | Models via `/v1/models` |
+| `OnnxProvider` | ??? | ??? | ??? | ??? | Please fill in for ONNX as I'm unsure how to work with it -- yet we must offer it
 | `OpenAiCompatibleProvider` | user-supplied | OpenAI-compat | OpenAI-compat | Used for LAN gateways, vLLM, etc. |
 | `OpenAiProvider` | `https://api.openai.com` | yes | yes | API key required |
 | `AzureOpenAiProvider` | user-supplied | yes | yes | API key required; deployment name = model id |
@@ -904,7 +905,7 @@ Each phase lists deliverables and the tests we add for it.
 **Deliverables**
 - Create projects: `AiNET`, `AiNET.Tests`, `HelpNET`, `HelpNET.Tests`.
 - Wire them into `TapeNET.sln` with proper folder grouping.
-- Add NuGet refs: `Microsoft.Extensions.AI` (+ OpenAI), `Markdig`, `Microsoft.ML.OnnxRuntime`, `Microsoft.ML.Tokenizers`.
+- Add NuGet refs: for `AiNET`: `Microsoft.Extensions.AI` (+ OpenAI); for `HelpNET`: `Markdig`, `Microsoft.ML.OnnxRuntime`, `Microsoft.ML.Tokenizers`.
 - Smoke-build empty assemblies.
 
 **Tests** — none (build-only).

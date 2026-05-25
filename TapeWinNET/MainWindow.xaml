@@ -1,4 +1,5 @@
-﻿<Window x:Class="TapeWinNET.MainWindow"
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Window x:Class="TapeWinNET.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -118,14 +119,14 @@
                                 <DataTrigger Binding="{Binding ItemType}" Value="Tape">
                                     <Setter Property="FontWeight" Value="SemiBold" />
                                 </DataTrigger>
-                                <!-- In-memory info (blue) — listed before IsTOCFromFile so TOC warning takes precedence -->
+                                <!-- In-memory info (blue) - listed before IsTOCFromFile so TOC warning takes precedence -->
                                 <DataTrigger Binding="{Binding IsInMemory}" Value="True">
                                     <Setter Property="Foreground" Value="{StaticResource WarningFg.Info}" />
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding IsTOCFromFile}" Value="True">
                                     <Setter Property="Foreground" Value="{StaticResource WarningFg.Failed}" />
                                 </DataTrigger>
-                                <!-- Remote drive (green) — last so it overrides IsInMemory/IsTOCFromFile -->
+                                <!-- Remote drive (green) - last so it overrides IsInMemory/IsTOCFromFile -->
                                 <DataTrigger Binding="{Binding IsRemote}" Value="True">
                                     <Setter Property="Foreground" Value="{StaticResource WarningFg.Completed}" />
                                 </DataTrigger>
@@ -151,6 +152,47 @@
         <Style TargetType="ProgressBar">
             <Setter Property="Foreground" Value="Blue"/>
         </Style>
+
+        <!-- Toolbar without overflow chevrons - override control template to remove
+             the ToggleButton + Popup overflow mechanism entirely while keeping the
+             proper ToolBarPanel layout. -->
+        <Style TargetType="ToolBar">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToolBar">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="true">
+                            <DockPanel>
+                                <!-- Main toolbar panel - uses ToolBarPanel for proper layout -->
+                                <ToolBarPanel x:Name="PART_ToolBarPanel"
+                                              IsItemsHost="true"
+                                              Margin="0,1,2,2"/>
+                            </DockPanel>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Toolbar separator - vertical divider between button groups -->
+        <Style TargetType="{x:Type Separator}" x:Key="ToolbarSeparatorStyle">
+            <Setter Property="Width" Value="1"/>
+            <Setter Property="Background" Value="#D0D0D0"/>
+            <Setter Property="Margin" Value="6,4,6,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Separator">
+                        <Border Background="{TemplateBinding Background}"
+                                Width="{TemplateBinding Width}"
+                                SnapsToDevicePixels="True"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
     </Window.Resources>
     
     <Grid>
@@ -289,16 +331,15 @@
             </MenuItem>
         </Menu>
 
-        <!-- ═══════════════════════════════════════════════════════════════ -->
-        <!-- Toolbar (Row 1) — mirrors the major menu commands              -->
-        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- Toolbar (Row 1) - mirrors the major menu commands -->
+        
         <ToolBarTray Grid.Row="1">
 
             <!-- File group: open drive(s), virtual drive, remote host.
                  Local and remote sub-panels are swapped via IsRemoteConnected. -->
             <ToolBar Band="0" BandIndex="0">
 
-                <!-- ── Local panel (visible when NOT connected to a remote host) ── -->
+                <!-- Local panel (visible when NOT connected to a remote host) -->
                 <StackPanel Orientation="Horizontal"
                             Visibility="{Binding IsRemoteConnected,
                                                  Converter={StaticResource InverseBoolToVis}}">
@@ -328,7 +369,6 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                    <Separator/>
                     <Button Command="{Binding OpenVirtualDriveCommand}"
                             Style="{StaticResource ToolbarButtonStyle}"
                             ToolTip="Open Virtual Drive...">
@@ -338,7 +378,7 @@
                     </Button>
                 </StackPanel>
 
-                <!-- ── Remote panel (visible when connected to a remote host) ── -->
+                <!-- Remote panel (visible when connected to a remote host) -->
                 <StackPanel Orientation="Horizontal"
                             Visibility="{Binding IsRemoteConnected,
                                                  Converter={StaticResource BoolToVis}}">
@@ -368,7 +408,6 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                    <Separator/>
                     <!-- Open Virtual Drive on remote host.
                          Icon: open-file glyph with globe badge (ToolbarRemoteVirtualDriveIcon). -->
                     <Button Command="{Binding OpenRemoteVirtualDriveCommand}"
@@ -380,9 +419,8 @@
                                IsHitTestVisible="False"/>
                     </Button>
                 </StackPanel>
-
                 <Separator/>
-                <!-- Connect to / Open on remote host — always visible; tooltip is dynamic -->
+                <!-- Connect to / Open on remote host - always visible; tooltip is dynamic -->
                 <Button Command="{Binding ConnectToRemoteHostCommand}"
                         Style="{StaticResource ToolbarButtonStyle}"
                         ToolTip="{Binding RemoteMenuHeader}">
@@ -391,9 +429,9 @@
                                IsHitTestVisible="False"/>
                 </Button>
             </ToolBar>
-
             <!-- Media group: re-read TOC, eject -->
-            <ToolBar Band="0" BandIndex="1">
+            <ToolBar Band="0" BandIndex="1" Margin="12,0,0,0">
+                <Separator/>
                 <Button Command="{Binding RereadTOCCommand}"
                         Style="{StaticResource ToolbarButtonStyle}"
                         ToolTip="Re-read TOC">
@@ -409,9 +447,9 @@
                                IsHitTestVisible="False"/>
                 </Button>
             </ToolBar>
-
             <!-- Backup group: new backup -->
-            <ToolBar Band="0" BandIndex="2">
+            <ToolBar Band="0" BandIndex="2" Margin="12,0,0,0">
+                <Separator/>
                 <Button Command="{Binding NewBackupCommand}"
                         Style="{StaticResource ToolbarButtonStyle}"
                         ToolTip="New Backup...">
@@ -420,9 +458,9 @@
                                IsHitTestVisible="False"/>
                 </Button>
             </ToolBar>
-
             <!-- Restore group: restore, validate, verify -->
-            <ToolBar Band="0" BandIndex="3">
+            <ToolBar Band="0" BandIndex="3" Margin="12,0,0,0">
+                <Separator/>
                 <Button Command="{Binding RestoreCommand}"
                         Style="{StaticResource ToolbarButtonStyle}"
                         ToolTip="{Binding RestoreCommandText}">
@@ -445,9 +483,9 @@
                                IsHitTestVisible="False"/>
                 </Button>
             </ToolBar>
-
             <!-- View group: refresh, show incremental sets toggle -->
-            <ToolBar Band="0" BandIndex="4">
+            <ToolBar Band="0" BandIndex="4" Margin="12,0,0,0">
+                <Separator/>
                 <Button Command="{Binding RefreshCommand}"
                         Style="{StaticResource ToolbarButtonStyle}"
                         ToolTip="Refresh (F5)">
@@ -463,9 +501,9 @@
                                IsHitTestVisible="False"/>
                 </ToggleButton>
             </ToolBar>
-
             <!-- Help group -->
-            <ToolBar Band="0" BandIndex="5">
+            <ToolBar Band="0" BandIndex="5" Margin="12,0,0,0">
+                <Separator/>
                 <Button Command="{Binding AboutCommand}"
                         Style="{StaticResource ToolbarButtonStyle}"
                         ToolTip="About TapeWin">
@@ -517,7 +555,7 @@
                 <!-- Properties Subpane -->
                 <GroupBox Grid.Row="0" Header="{Binding PropertiesHeader}">
                     <DockPanel LastChildFill="True">
-                        <!-- Media usage bar — docked to bottom, visible only for media view when enabled -->
+                        <!-- Media usage bar - docked to bottom, visible only for media view when enabled -->
                         <controls:MediaUsageBarControl
                             DockPanel.Dock="Bottom"
                             Segments="{Binding UsageBar.Segments}"
@@ -651,7 +689,7 @@
                                 <controls:SnappingGridSplitter.SnapZones>
                                     <!-- Hidden: catches everything from 0 up to 14px -->
                                     <controls:SnapZone Value="0"  LowerRange="9999" UpperRange="12"/>
-                                    <!-- Compact (button row only): catches 14–36px range -->
+                                    <!-- Compact (button row only): catches 14…36px range -->
                                     <controls:SnapZone Value="26" LowerRange="16"   UpperRange="8"/>
                                     <!-- Full (natural size): catches 8px below measured height and above -->
                                     <controls:SnapZone IsAutoSize="True" LowerRange="8" UpperRange="9999"/>
@@ -913,7 +951,7 @@
                     </Border>
                 </Grid>
 
-                <!-- TOC Load Overlay — shown while reading TOC, cancellable for blank/new media -->
+                <!-- TOC Load Overlay - shown while reading TOC, cancellable for blank/new media -->
                 <Grid Grid.RowSpan="3"
                       Background="#80000000"
                       Visibility="{Binding IsTOCLoadInProgress, Converter={StaticResource BoolToVis}}">
@@ -1073,9 +1111,9 @@
                     <controls:SnappingGridSplitter.SnapZones>
                         <!-- Hidden: catches everything from 0 up to 12px -->
                         <controls:SnapZone Value="0"  LowerRange="9999" UpperRange="12"/>
-                        <!-- Checkboxes only: catches 12–42px range -->
+                        <!-- Checkboxes only: catches 12…42px range -->
                         <controls:SnapZone Value="24" LowerRange="12"   UpperRange="18"/>
-                        <!-- Free-range zone: 34–68px — no snap, user picks any width -->
+                        <!-- Free-range zone: 34…68px - no snap, user picks any width -->
                         <!-- Fully shown (natural width): catches 12px below measured width and above -->
                         <controls:SnapZone IsAutoSize="True" LowerRange="12" UpperRange="9999"/>
                     </controls:SnappingGridSplitter.SnapZones>
@@ -1085,7 +1123,7 @@
                 <StackPanel Grid.Column="2" Margin="4,2,2,2"
                             x:Name="LogFilterPanel">
                     <TextBlock Text="Log Filter" Margin="0,0,0,4"/>
-                    <!-- Info (covers None + Info) — blue checkbox -->
+                    <!-- Info (covers None + Info) - blue checkbox -->
                     <CheckBox IsChecked="{Binding ShowLogInfo}" Margin="0,1"
                               x:Name="LogFilterInfoCheckBox">
                         <CheckBox.Background>
@@ -1093,41 +1131,41 @@
                             <SolidColorBrush Color="#FFCCE5FF"/>
                         </CheckBox.Background>
                         <CheckBox.Content>
-                            <TextBlock Text="ℹ Info" FontSize="11"
+                            <TextBlock Text="? Info" FontSize="11"
                                        Foreground="{StaticResource WarningFg.Info}"/>
                         </CheckBox.Content>
                     </CheckBox>
-                    <!-- Completed — green checkbox -->
+                    <!-- Completed - green checkbox -->
                     <CheckBox IsChecked="{Binding ShowLogCompleted}" Margin="0,1">
                         <CheckBox.Background>
                             <SolidColorBrush Color="#FFCCFFCC"/>
                         </CheckBox.Background>
                         <CheckBox.Content>
-                            <TextBlock Text="✓ Completed" FontSize="11"
+                            <TextBlock Text="? Completed" FontSize="11"
                                        Foreground="{StaticResource WarningFg.Completed}"/>
                         </CheckBox.Content>
                     </CheckBox>
-                    <!-- Warning — orange checkbox -->
+                    <!-- Warning - orange checkbox -->
                     <CheckBox IsChecked="{Binding ShowLogWarning}" Margin="0,1">
                         <CheckBox.Background>
                             <SolidColorBrush Color="#FFFFF0CC"/>
                         </CheckBox.Background>
                         <CheckBox.Content>
-                            <TextBlock Text="⚠ Warning" FontSize="11"
+                            <TextBlock Text="? Warning" FontSize="11"
                                        Foreground="{StaticResource WarningFg.Warning}"/>
                         </CheckBox.Content>
                     </CheckBox>
-                    <!-- Error (covers Error + Failed) — red checkbox -->
+                    <!-- Error (covers Error + Failed) - red checkbox -->
                     <CheckBox IsChecked="{Binding ShowLogError}" Margin="0,1">
                         <CheckBox.Background>
                             <SolidColorBrush Color="#FFFFCCCC"/>
                         </CheckBox.Background>
                         <CheckBox.Content>
-                            <TextBlock Text="⚠ Error" FontSize="11"
+                            <TextBlock Text="? Error" FontSize="11"
                                        Foreground="{StaticResource WarningFg.Error}"/>
                         </CheckBox.Content>
                     </CheckBox>
-                    <!-- Sub-detail entries (IsSub) — no colored background -->
+                    <!-- Sub-detail entries (IsSub) - no colored background -->
                     <Separator Margin="0,3,0,2"/>
                     <CheckBox IsChecked="{Binding ShowLogDetails}" Margin="0,1"
                               Content="Details" FontSize="11"/>
