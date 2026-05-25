@@ -46,6 +46,34 @@
             <SolidColorBrush x:Key="WarningFg.Info"      Color="Blue"/>
             <SolidColorBrush x:Key="WarningFg.Completed" Color="Green"/>
 
+            <!-- ═══════════════════════════════════════════════════════════ -->
+            <!-- Toolbar button styles                                      -->
+            <!-- ═══════════════════════════════════════════════════════════ -->
+
+            <!-- Standard toolbar icon button — fixed size, tooltip shown even when disabled -->
+            <Style x:Key="ToolbarButtonStyle" TargetType="Button"
+                   BasedOn="{StaticResource {x:Static ToolBar.ButtonStyleKey}}">
+                <Setter Property="Width" Value="30"/>
+                <Setter Property="Height" Value="28"/>
+                <Setter Property="Padding" Value="4,2"/>
+                <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
+            </Style>
+
+            <!-- Toolbar toggle button — same sizing; highlighted background when active -->
+            <Style x:Key="ToolbarToggleButtonStyle" TargetType="ToggleButton"
+                   BasedOn="{StaticResource {x:Static ToolBar.ToggleButtonStyleKey}}">
+                <Setter Property="Width" Value="30"/>
+                <Setter Property="Height" Value="28"/>
+                <Setter Property="Padding" Value="4,2"/>
+                <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
+                <Style.Triggers>
+                    <Trigger Property="IsChecked" Value="True">
+                        <Setter Property="Background" Value="#FFB8D8F8"/>
+                        <Setter Property="BorderBrush" Value="#FF3399CC"/>
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+
             <!-- Shared warning panel style for dialog windows.
                  Bind the DataContext so that WarningLevel (enum) drives visibility + colors,
                  and use WarningLevelToIconConverter for the icon.

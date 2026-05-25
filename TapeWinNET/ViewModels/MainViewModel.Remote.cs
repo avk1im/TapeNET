@@ -52,6 +52,13 @@ public partial class MainViewModel
     /// </summary>
     public ObservableCollection<object> RemoteDriveMenuItems { get; } = [];
 
+    /// <summary>
+    /// Toolbar-only mirror of <see cref="RemoteDriveMenuItems"/>: contains only
+    ///  the physical drive items (DriveNumber ≥ 0, <see cref="OpenRemoteDriveCommand"/>),
+    ///  excluding "Scanning...", "Specify...", separators, virtual-drive, and disconnect.
+    /// </summary>
+    public ObservableCollection<DriveMenuItem> ToolbarRemoteDriveItems { get; } = [];
+
     // ── Remote Properties ─────────────────────────────────────────────────────
 
     /// <summary>True when a remote host is connected (drive may or may not be open).</summary>
@@ -149,8 +156,12 @@ public partial class MainViewModel
     private void BuildInitialRemoteSubmenu()
     {
         RemoteDriveMenuItems.Clear();
+        ToolbarRemoteDriveItems.Clear(); // toolbar mirrors physical drives only
 
-        RemoteDriveMenuItems.Add(new DriveMenuItem("Drive _0",                       0, OpenRemoteDriveCommand));
+        var drive0Item = new DriveMenuItem("Drive _0", 0, OpenRemoteDriveCommand);
+        RemoteDriveMenuItems.Add(drive0Item);
+        ToolbarRemoteDriveItems.Add(drive0Item); // mirrored to toolbar
+
         RemoteDriveMenuItems.Add(new DriveMenuItem("Scanning drives…", RemoteScanningNumber, OpenRemoteDriveCommand));
         RemoteDriveMenuItems.Add(new DriveMenuItem("_Specify...",       RemoteSpecifyDriveNumber, OpenRemoteDriveCommand));
         RemoteDriveMenuItems.Add(new Separator());
@@ -204,8 +215,9 @@ public partial class MainViewModel
         {
             if (driveItems.All(i => i.DriveNumber != (int)driveNum))
             {
-                RemoteDriveMenuItems.Insert(insertAt,
-                    new DriveMenuItem($"Drive _{driveNum}", (int)driveNum, OpenRemoteDriveCommand));
+                var driveItem = new DriveMenuItem($"Drive _{driveNum}", (int)driveNum, OpenRemoteDriveCommand);
+                RemoteDriveMenuItems.Insert(insertAt, driveItem);
+                ToolbarRemoteDriveItems.Add(driveItem); // mirror to toolbar
                 insertAt++;
             }
         }
@@ -576,6 +588,7 @@ public partial class MainViewModel
         _remoteServerVersion  = null;
         _remoteServerHostName = null;
         RemoteDriveMenuItems.Clear();
+        ToolbarRemoteDriveItems.Clear(); // keep toolbar in sync
 
         TreeItems.Clear();
         _tocView = null;

@@ -37,6 +37,8 @@ namespace TapeWinNET
             _viewModel = new MainViewModel();
             DataContext = _viewModel;
 
+            InitializeToolbarIcons();
+
             ApplySettings(_viewModel.Settings);
 
             // Wire filter pane to ViewModel via direct mode
@@ -352,6 +354,50 @@ namespace TapeWinNET
 
             if (!string.IsNullOrEmpty(text))
                 Clipboard.SetDataObject(text);
+        }
+
+        #endregion
+
+        #region Toolbar Icon Initialization
+
+        /// <summary>
+        /// Registers all toolbar icon resources once at startup.
+        ///  Icons are loaded from the system (tape-drive stock icon) or rendered from
+        ///  Segoe MDL2 Assets glyphs and composited with overlay badges as needed.
+        ///  Loaded here rather than per-item to avoid repeated P/Invoke calls and
+        ///  to keep the constructor lean.
+        /// </summary>
+        private void InitializeToolbarIcons()
+        {
+            // Tape-drive stock icon — base for local and remote drive buttons
+            var driveIcon = TapeIcons.GetTapeDriveIcon(large: false);
+            driveIcon?.Freeze();
+            Resources["ToolbarDriveIcon"] = driveIcon;
+
+            // Globe overlay badge — rendered at 4× the overlay display size so that
+            //  WPF's DrawImage downscale yields a crisp result at toolbar scale.
+            //  A white disc backdrop ensures legibility against any icon background.
+            var globeOverlay = IconComposer.RenderGlyph(
+                ToolbarIconHelper.GlyphConnectRemote, pixelSize: 32,
+                color: Color.FromRgb(0, 80, 160),
+                backgroundColor: Colors.White);
+            globeOverlay?.Freeze();
+
+            // Remote drive icon: tape-drive + globe badge
+            if (driveIcon != null)
+            {
+                // ComposeWithOverlay already freezes the result
+                Resources["ToolbarRemoteDriveIcon"] = IconComposer.ComposeWithOverlay(driveIcon, globeOverlay);
+            }
+
+            // Remote virtual-drive icon: open-file glyph rendered at 16px + globe badge
+            var openFileBase = IconComposer.RenderGlyph(
+                ToolbarIconHelper.GlyphOpenVirtualDrive, pixelSize: 16,
+                color: Colors.Black);
+            if (openFileBase != null)
+            {
+                Resources["ToolbarRemoteVirtualDriveIcon"] = IconComposer.ComposeWithOverlay(openFileBase, globeOverlay);
+            }
         }
 
         #endregion

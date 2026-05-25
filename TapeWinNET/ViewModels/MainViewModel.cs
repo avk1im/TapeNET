@@ -129,12 +129,14 @@ public partial class MainViewModel : ViewModelBase
     private void InitializeDriveMenu()
     {
         // Drive 0 is always available as the most common default
-        DriveMenuItems.Add(new DriveMenuItem(
+        var drive0Item = new DriveMenuItem(
             Header: "Drive _0",
             DriveNumber: 0,
-            Command: OpenDriveCommand));
+            Command: OpenDriveCommand);
+        DriveMenuItems.Add(drive0Item);
+        ToolbarDriveItems.Add(drive0Item); // mirrored — toolbar excludes "Specify..."
 
-        // "Specify..." lets the user enter a device name directly
+        // "Specify..." lets the user enter a device name directly (menu only, not toolbar)
         DriveMenuItems.Add(new DriveMenuItem(
             Header: "_Specify...",
             DriveNumber: -1,
@@ -152,10 +154,13 @@ public partial class MainViewModel : ViewModelBase
                     {
                         // Insert before the last item ("Specify...")
                         int insertIndex = DriveMenuItems.Count - 1;
-                        DriveMenuItems.Insert(insertIndex, new DriveMenuItem(
+                        var driveItem = new DriveMenuItem(
                             Header: $"Drive _{driveNum}",
                             DriveNumber: driveNum,
-                            Command: OpenDriveCommand));
+                            Command: OpenDriveCommand);
+                        DriveMenuItems.Insert(insertIndex, driveItem);
+                        // Mirror to toolbar: insert at end (all physical drives are appended)
+                        ToolbarDriveItems.Add(driveItem);
                     });
                 }
             }
@@ -403,6 +408,12 @@ public partial class MainViewModel : ViewModelBase
 
     /// <summary>Menu items for the Open Drive submenu.</summary>
     public ObservableCollection<DriveMenuItem> DriveMenuItems { get; } = [];
+
+    /// <summary>
+    /// Toolbar drive buttons — mirrors <see cref="DriveMenuItems"/> but excludes
+    ///  the "Specify..." entry (DriveNumber == -1) which has no place on the toolbar.
+    /// </summary>
+    public ObservableCollection<DriveMenuItem> ToolbarDriveItems { get; } = [];
 
     /// <summary>Available IO speed options for the virtual drive.</summary>
     public IoRateOption[] IoSpeedOptions { get; } = IoRateOption.All;

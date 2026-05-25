@@ -20,6 +20,7 @@
 
     <Window.Resources>
         <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVis" />
+        <converters:InverseBoolToVisibilityCollapsedConverter x:Key="InverseBoolToVis" />
         <converters:NullToVisibilityCollapsedConverter x:Key="NullToVis" />
         <converters:BoolToOpacityConverter x:Key="BoolToOpacityIcon" DimmedOpacity="0.4"/>
         <converters:BoolToOpacityConverter x:Key="BoolToOpacityText" DimmedOpacity="0.6"/>
@@ -154,11 +155,12 @@
     
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition x:Name="LogPaneRow" Height="150" />
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />  <!-- Row 0: Menu -->
+            <RowDefinition Height="Auto" />  <!-- Row 1: Toolbar -->
+            <RowDefinition Height="*" />     <!-- Row 2: Main content -->
+            <RowDefinition Height="Auto" />  <!-- Row 3: Log splitter -->
+            <RowDefinition x:Name="LogPaneRow" Height="150" />  <!-- Row 4: Log pane -->
+            <RowDefinition Height="Auto" />  <!-- Row 5: Status bar -->
         </Grid.RowDefinitions>
         
         <!-- Menu Bar -->
@@ -286,9 +288,197 @@
                 <MenuItem Header="_About" Command="{Binding AboutCommand}"/>
             </MenuItem>
         </Menu>
-        
+
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- Toolbar (Row 1) — mirrors the major menu commands              -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <ToolBarTray Grid.Row="1">
+
+            <!-- File group: open drive(s), virtual drive, remote host.
+                 Local and remote sub-panels are swapped via IsRemoteConnected. -->
+            <ToolBar Band="0" BandIndex="0">
+
+                <!-- ── Local panel (visible when NOT connected to a remote host) ── -->
+                <StackPanel Orientation="Horizontal"
+                            Visibility="{Binding IsRemoteConnected,
+                                                 Converter={StaticResource InverseBoolToVis}}">
+                    <!-- Dynamic per-drive buttons, one per physical drive found at startup.
+                         The Image source is a frozen BitmapSource registered as ToolbarDriveIcon
+                          in MainWindow.xaml.cs so it is loaded once via P/Invoke. -->
+                    <ItemsControl ItemsSource="{Binding ToolbarDriveItems}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Command="{Binding Command}"
+                                        CommandParameter="{Binding DriveNumber}"
+                                        ToolTip="{Binding Header, StringFormat='Open {0}'}"
+                                        ToolTipService.ShowOnDisabled="True"
+                                        Style="{DynamicResource {x:Static ToolBar.ButtonStyleKey}}"
+                                        Width="30" Height="28" Padding="4,2"
+                                        Margin="0,0,1,0">
+                                    <Image Source="{Binding RelativeSource={RelativeSource AncestorType=Window},
+                                                            Path=Resources[ToolbarDriveIcon]}"
+                                           Width="16" Height="16"
+                                           IsHitTestVisible="False"/>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Separator/>
+                    <Button Command="{Binding OpenVirtualDriveCommand}"
+                            Style="{StaticResource ToolbarButtonStyle}"
+                            ToolTip="Open Virtual Drive...">
+                        <TextBlock Text="&#xE8DA;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   IsHitTestVisible="False"/>
+                    </Button>
+                </StackPanel>
+
+                <!-- ── Remote panel (visible when connected to a remote host) ── -->
+                <StackPanel Orientation="Horizontal"
+                            Visibility="{Binding IsRemoteConnected,
+                                                 Converter={StaticResource BoolToVis}}">
+                    <!-- One button per probed remote physical drive (Drive 0 always present).
+                         Icon: tape-drive with globe badge (ToolbarRemoteDriveIcon). -->
+                    <ItemsControl ItemsSource="{Binding ToolbarRemoteDriveItems}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Command="{Binding Command}"
+                                        CommandParameter="{Binding DriveNumber}"
+                                        ToolTip="{Binding Header,
+                                                  StringFormat='Open {0} on Remote Host'}"
+                                        ToolTipService.ShowOnDisabled="True"
+                                        Style="{DynamicResource {x:Static ToolBar.ButtonStyleKey}}"
+                                        Width="30" Height="28" Padding="4,2"
+                                        Margin="0,0,1,0">
+                                    <Image Source="{Binding RelativeSource={RelativeSource AncestorType=Window},
+                                                            Path=Resources[ToolbarRemoteDriveIcon]}"
+                                           Width="16" Height="16"
+                                           IsHitTestVisible="False"/>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Separator/>
+                    <!-- Open Virtual Drive on remote host.
+                         Icon: open-file glyph with globe badge (ToolbarRemoteVirtualDriveIcon). -->
+                    <Button Command="{Binding OpenRemoteVirtualDriveCommand}"
+                            Style="{StaticResource ToolbarButtonStyle}"
+                            ToolTip="Open Virtual Drive on Remote Host...">
+                        <Image Source="{Binding RelativeSource={RelativeSource AncestorType=Window},
+                                                Path=Resources[ToolbarRemoteVirtualDriveIcon]}"
+                               Width="16" Height="16"
+                               IsHitTestVisible="False"/>
+                    </Button>
+                </StackPanel>
+
+                <Separator/>
+                <!-- Connect to / Open on remote host — always visible; tooltip is dynamic -->
+                <Button Command="{Binding ConnectToRemoteHostCommand}"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        ToolTip="{Binding RemoteMenuHeader}">
+                    <TextBlock Text="&#xE774;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </Button>
+            </ToolBar>
+
+            <!-- Media group: re-read TOC, eject -->
+            <ToolBar Band="0" BandIndex="1">
+                <Button Command="{Binding RereadTOCCommand}"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        ToolTip="Re-read TOC">
+                    <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </Button>
+                <Button Command="{Binding EjectCommand}"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        ToolTip="Eject">
+                    <TextBlock Text="&#xF413;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </Button>
+            </ToolBar>
+
+            <!-- Backup group: new backup -->
+            <ToolBar Band="0" BandIndex="2">
+                <Button Command="{Binding NewBackupCommand}"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        ToolTip="New Backup...">
+                    <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </Button>
+            </ToolBar>
+
+            <!-- Restore group: restore, validate, verify -->
+            <ToolBar Band="0" BandIndex="3">
+                <Button Command="{Binding RestoreCommand}"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        ToolTip="{Binding RestoreCommandText}">
+                    <TextBlock Text="&#xE896;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </Button>
+                <Button Command="{Binding ValidateCommand}"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        ToolTip="{Binding ValidateCommandText}">
+                    <TextBlock Text="&#xE9D5;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </Button>
+                <Button Command="{Binding VerifyCommand}"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        ToolTip="{Binding VerifyCommandText}">
+                    <TextBlock Text="&#xE8FB;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </Button>
+            </ToolBar>
+
+            <!-- View group: refresh, show incremental sets toggle -->
+            <ToolBar Band="0" BandIndex="4">
+                <Button Command="{Binding RefreshCommand}"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        ToolTip="Refresh (F5)">
+                    <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </Button>
+                <ToggleButton IsChecked="{Binding ShowIncrementalSets}"
+                              Style="{StaticResource ToolbarToggleButtonStyle}"
+                              ToolTip="Show Incremental Sets">
+                    <TextBlock Text="&#xE71C;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </ToggleButton>
+            </ToolBar>
+
+            <!-- Help group -->
+            <ToolBar Band="0" BandIndex="5">
+                <Button Command="{Binding AboutCommand}"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        ToolTip="About TapeWin">
+                    <TextBlock Text="&#xE897;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsHitTestVisible="False"/>
+                </Button>
+            </ToolBar>
+
+        </ToolBarTray>
+
         <!-- Main Content Area -->
-        <Grid Grid.Row="1">
+        <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="TreePaneColumn" Width="280" MinWidth="150" />
                 <ColumnDefinition Width="Auto" />
@@ -756,13 +946,13 @@
         </Grid>
         
         <!-- Splitter for Log Pane -->
-        <GridSplitter Grid.Row="2" Height="4" 
+        <GridSplitter Grid.Row="3" Height="4"
                       HorizontalAlignment="Stretch" 
                       VerticalAlignment="Center"
                       Background="LightGray" />
         
         <!-- Log/Message Pane -->
-        <GroupBox Grid.Row="3" Header="{Binding LogPaneHeader}" Margin="4">
+        <GroupBox Grid.Row="4" Header="{Binding LogPaneHeader}" Margin="4">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -946,7 +1136,7 @@
         </GroupBox>
         
         <!-- Status Bar -->
-        <StatusBar Grid.Row="4">
+        <StatusBar Grid.Row="5">
             <StatusBarItem>
                 <TextBlock Text="{Binding StatusMessage}" />
             </StatusBarItem>
@@ -975,7 +1165,7 @@
         </StatusBar>
         
         <!-- General Busy Overlay (only for non-backup operations) -->
-        <Grid Grid.RowSpan="5" 
+        <Grid Grid.RowSpan="6" 
               Background="#40000000"
               Visibility="{Binding IsGeneralBusy, Converter={StaticResource BoolToVis}}">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
