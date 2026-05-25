@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+	<TargetFramework>net8.0</TargetFramework>
+	<ImplicitUsings>enable</ImplicitUsings>
+	<Nullable>enable</Nullable>
+	<AssemblyName>help</AssemblyName>
+	<RootNamespace>HelpNET</RootNamespace>
+	<Version>1.0.0.$(BuildNumber)</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+	<InternalsVisibleTo Include="HelpNET.Tests" />
+  </ItemGroup>
+
+  <Import Project="..\Versioning.targets" />
+
+  <ItemGroup>
+	<PackageReference Include="Markdig" Version="0.37.*" />
+	<PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.20.*" />
+	<PackageReference Include="Microsoft.ML.Tokenizers" Version="0.22.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+	<ProjectReference Include="..\AiNET\AiNET.csproj" />
+  </ItemGroup>
+
+</Project>

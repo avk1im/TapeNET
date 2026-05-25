@@ -1,8 +1,8 @@
 # TapeWinNET Help System — Detailed Design
 
-> **Status:** Design document (no code yet).
+> **Status:** Implementation in progress — Phase 0 ✅ complete; Phase 1 next.
 > **Scope:** A modern, optionally AI-augmented help system for TapeWinNET, with reusable engines (`AiNET`, `HelpNET`) ready for TapeConNET and other future consumers.
-> **Authoring convention:** Markdown + YAML front-matter for all help content. Library API surfaces are described in C# pseudo-signatures; nothing here is implemented yet.
+> **Authoring convention:** Markdown + YAML front-matter for all help content. Library API surfaces are described in C# pseudo-signatures; sections marked **(not yet implemented)** are still design-only.
 
 ---
 
@@ -56,7 +56,7 @@ HelpNET therefore consumes content through an **abstract content provider** (`IH
 Be the single source of `IChatClient` and `IEmbeddingGenerator<string, Embedding<float>>` instances for the whole solution, with:
 - Pluggable providers (Ollama, LM Studio, ONNX, OpenAI-compatible LAN, OpenAI, Azure OpenAI, GitHub Models — extensible).
 - Three logical **locations**: `Local`, `LocalNetwork`, `Cloud` (purely for UI grouping; the wire protocol differs only by URL and auth).
-- Discovery + interactive credential flow (mirrors the FclAiNET pattern, generalized).
+- Discovery + interactive credential flow (builds upon the FclAiNET pattern, generalized).
 - Live provider replacement (`ReplaceProviderAsync`) so users can swap providers from Settings without restarting.
 
 ### 2.2 Folder layout
@@ -81,6 +81,7 @@ AiNET/
   Providers/
 	OllamaProvider.cs
 	LmStudioProvider.cs
+	OnnxProvider.cs
 	OpenAiCompatibleProvider.cs     (generic — used for LAN gateways)
 	OpenAiProvider.cs
 	AzureOpenAiProvider.cs
@@ -900,15 +901,24 @@ The phases below align with v1 of the system (no overlays). Overlays (`Reveal`, 
 
 Each phase lists deliverables and the tests we add for it.
 
-### Phase 0 — Solution scaffolding
+### Phase 0 — Solution scaffolding ✅ DONE
 
 **Deliverables**
-- Create projects: `AiNET`, `AiNET.Tests`, `HelpNET`, `HelpNET.Tests`.
-- Wire them into `TapeNET.sln` with proper folder grouping.
-- Add NuGet refs: for `AiNET`: `Microsoft.Extensions.AI` (+ OpenAI); for `HelpNET`: `Markdig`, `Microsoft.ML.OnnxRuntime`, `Microsoft.ML.Tokenizers`.
-- Smoke-build empty assemblies.
+- ✅ Created projects: `AiNET`, `AiNET.Tests`, `HelpNET`, `HelpNET.Tests`.
+- ✅ Wired into `TapeNET.sln` under a new **"Help System"** solution folder.
+- ✅ NuGet refs: `AiNET` → `Microsoft.Extensions.AI 9.*`, `Microsoft.Extensions.AI.OpenAI 9.*`, `Microsoft.Extensions.Http 8.*`; `HelpNET` → `Markdig 0.37.*`, `Microsoft.ML.OnnxRuntime 1.20.*`, `Microsoft.ML.Tokenizers 0.22.*`.
+- ✅ Placeholder `internal static class Placeholder` in each library; placeholder `[Fact]` smoke test in each test project.
+- ✅ Full solution restore + build green; both placeholder tests pass.
 
-**Tests** — none (build-only).
+**Decisions / deviations**
+- `System.Text.Json` is **not** pinned explicitly in `AiNET.csproj` — `Microsoft.Extensions.AI.OpenAI 9.*` pulls in `System.Text.Json 10.x`, and adding an explicit `8.*` constraint caused a `NU1605` downgrade error. Removed the pin; the transitive version is used.
+- Assembly names follow the existing short-name convention: `AiNET` → `ai.dll`, `HelpNET` → `help.dll`.
+- Both library projects include `<InternalsVisibleTo>` for their respective test projects, matching the pattern in `FclNET`.
+- Both library projects import `Versioning.targets` for consistent build numbering.
+
+**Tests** — none beyond infrastructure smoke tests (by design for Phase 0).
+
+> 📄 Full scaffolding notes: `docs/Help-Phase0-Complete.md`
 
 ---
 
@@ -918,12 +928,12 @@ Each phase lists deliverables and the tests we add for it.
 - Enums + records: `AiProviderKind`, `AiProviderLocation`, `AiCapabilities`, `AiProviderDescriptor`, `AiProviderConfig`, `AiProviderProbeResult`, `AiProviderPreferences`, `AiProviderDiscoveryOptions`.
 - Interfaces: `IAiProvider`, `IAiProviderCatalog`, `IAiProviderDiscovery`, `IAiInteraction`, `IAiSession`.
 - `AiSession` impl + `AiSessionFactory.BuildAsync`.
-- Adapters: `OllamaProvider`, `LmStudioProvider`, `OpenAiCompatibleProvider`, `OpenAiProvider`, `AzureOpenAiProvider`, `GitHubModelsProvider`.
+- Adapters: `OllamaProvider`, `LmStudioProvider`, `OnnxProvider`, `OpenAiCompatibleProvider`, `OpenAiProvider`, `AzureOpenAiProvider`, `GitHubModelsProvider`.
 - `LanHostsRegistry`.
 
 **Tests**
 - `DescriptorRoundTripTests` — JSON serialization.
-- `OllamaProviderTests`, `LmStudioProviderTests`, `OpenAiCompatibleProviderTests` — fake `HttpMessageHandler`.
+- `OllamaProviderTests`, `LmStudioProviderTests`, `OnnxProviderTests`, `OpenAiCompatibleProviderTests` — fake `HttpMessageHandler`.
 - `EnvVarProviderTests` — env-var discovery.
 - `DiscoveryTests` — mixed catalog, latency, failure handling.
 - `InteractionFlowTests` — `ChooseProvider → PromptApiKey → smoke-test` order.
