@@ -1,7 +1,8 @@
+using AiNET;
+
 using FclAiNET;
 using FclAiNET.Test;
 
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 
 // ─────────────────────────────────────────────────────
@@ -24,17 +25,23 @@ using var loggerFactory = LoggerFactory.Create(builder =>
 
 var interaction = new ConsoleAiInteraction();
 
-// ── Provider discovery ──────────────────────────────
+// ── Provider discovery via AiNET ─────────────────────
 Console.WriteLine("Discovering AI providers...");
 Console.WriteLine();
 
-var factory = new FclAiProviderFactory(interaction,
-    loggerFactory.CreateLogger<FclAiProviderFactory>());
+// AutoUseIfSingle = true mimics the old factory's behaviour:
+//  if only one healthy provider is found (e.g. a local Ollama),
+//  use it automatically without prompting the user.
+var preferences = new AiProviderPreferences { AutoUseIfSingle = true };
 
-IChatClient? client;
+IAiSession? session;
 try
 {
-    client = await factory.CreateAsync();
+    session = await AiSessionFactory.BuildAsync(
+        interaction,
+        preferences,
+        CancellationToken.None,
+        loggerFactory.CreateLogger("AiSession"));
 }
 catch (Exception ex)
 {
@@ -42,34 +49,34 @@ catch (Exception ex)
     return 1;
 }
 
-if (client is null)
+if (session is null)
 {
     ConsoleAiInteraction.WriteColored("No AI provider available. Exiting.", ConsoleColor.Yellow);
     return 1;
 }
 
-ConsoleAiInteraction.WriteColored("AI provider ready.", ConsoleColor.Green);
+if (session.ChatClient is null)
+{
+    ConsoleAiInteraction.WriteColored(
+        $"Provider '{session.Config.Descriptor.DisplayName}' has no chat capability. Exiting.",
+        ConsoleColor.Yellow);
+    await session.DisposeAsync();
+    return 1;
+}
+
+ConsoleAiInteraction.WriteColored(
+    $"AI provider ready: {session.Config.Descriptor.DisplayName}" +
+    (session.Config.ChatModelId is { Length: > 0 } m ? $" ({m})" : ""),
+    ConsoleColor.Green);
 Console.WriteLine();
 
-// ── Smoke test (with model fallback) ────────────────
+// ── Smoke test ───────────────────────────────────────
 Console.WriteLine("Running smoke test...");
-var translator = new FclAiTranslator(client,
+var translator = new FclAiTranslator(
+    session.ChatClient,
     loggerFactory.CreateLogger<FclAiTranslator>());
 
 var smokeResult = await translator.TestAsync();
-
-// If the first model fails, try remaining local models.
-while (!smokeResult.Success)
-{
-    var nextClient = factory.TryNextLocalModel();
-    if (nextClient is null)
-        break;
-
-    client = nextClient;
-    translator = new FclAiTranslator(client,
-        loggerFactory.CreateLogger<FclAiTranslator>());
-    smokeResult = await translator.TestAsync();
-}
 
 if (smokeResult.Success)
 {
@@ -82,10 +89,13 @@ else
     Console.WriteLine("The provider may not generate reliable FCL. Continue anyway? [y/N]");
     var answer = Console.ReadLine()?.Trim();
     if (!string.Equals(answer, "y", StringComparison.OrdinalIgnoreCase))
+    {
+        await session.DisposeAsync();
         return 1;
+    }
 }
 
-// ── Interactive REPL ────────────────────────────────
+// ── Interactive REPL ─────────────────────────────────
 Console.WriteLine();
 Console.WriteLine("Enter a natural language file filter description.");
 Console.WriteLine("Type 'quit' or 'exit' to stop. Type 'help' for example inputs.");
@@ -144,10 +154,11 @@ while (true)
 
 Console.WriteLine();
 Console.WriteLine("Bye!");
+await session.DisposeAsync();
 return 0;
 
 
-// ── Help ────────────────────────────────────────────
+// ── Help ─────────────────────────────────────────────
 static void PrintHelp()
 {
     Console.WriteLine();

@@ -1,6 +1,6 @@
 # TapeWinNET Help System — Detailed Design
 
-> **Status:** Implementation in progress — Phase 0 ✅ complete; Phase 1 next.
+> **Status:** Implementation in progress — Phases 0 ✅ 1 ✅ 2 ✅ complete; Phase 3 next.
 > **Scope:** A modern, optionally AI-augmented help system for TapeWinNET, with reusable engines (`AiNET`, `HelpNET`) ready for TapeConNET and other future consumers.
 > **Authoring convention:** Markdown + YAML front-matter for all help content. Library API surfaces are described in C# pseudo-signatures; sections marked **(not yet implemented)** are still design-only.
 
@@ -29,9 +29,9 @@
 
 | Project | Type | TFM | Depends on |
 |---|---|---|---|
-| `AiNET` | Class library | `net8.0` | `Microsoft.Extensions.AI`, `Microsoft.Extensions.AI.OpenAI`, `Microsoft.Extensions.Http`, `System.Text.Json` |
-| `AiNET.Tests` | xUnit | `net8.0` | `AiNET`, `Microsoft.AspNetCore.TestHost` (or fake `HttpMessageHandler`) |
-| `HelpNET` | Class library | `net8.0` | `AiNET`, `Markdig`, `Microsoft.ML.OnnxRuntime`, `Microsoft.ML.Tokenizers` |
+| `AiNET` | Class library | `net8.0` | `Microsoft.Extensions.AI 9.*`, `Microsoft.Extensions.AI.OpenAI 9.*`, `Microsoft.Extensions.Http 8.*`, `Microsoft.ML.OnnxRuntime 1.20.*`, `Microsoft.ML.Tokenizers 0.22.*` |
+| `AiNET.Tests` | xUnit | `net8.0` | `AiNET`, fake `HttpMessageHandler` |
+| `HelpNET` | Class library | `net8.0` | `AiNET`, `Markdig` (ONNX runtime comes transitively via `AiNET`) |
 | `HelpNET.Tests` | xUnit | `net8.0` | `HelpNET` (plus a small fixture content set) |
 
 ### 1.2 Refactored projects
@@ -188,7 +188,7 @@ public static class AiSessionFactory
 |---|---|---|---|---|
 | `OllamaProvider` | `http://localhost:11434` | `/api/chat` | `/api/embeddings` | Model list via `/api/tags` |
 | `LmStudioProvider` | `http://localhost:1234` | OpenAI-compat `/v1/chat/completions` | OpenAI-compat `/v1/embeddings` | Models via `/v1/models` |
-| `OnnxProvider` | ??? | ??? | ??? | ??? | Please fill in for ONNX as I'm unsure how to work with it -- yet we must offer it
+| `OnnxProvider` | `file:///<path/to/model.onnx>` | — (no chat) | ✓ in-process | Embeddings-only; no HTTP. Model loaded via `Microsoft.ML.OnnxRuntime`; tokenized with `Microsoft.ML.Tokenizers` (`BertTokenizer`). Probe verifies the `.onnx` file exists and the `InferenceSession` can be created. `Options["ModelPath"]` overrides the URI path; `Options["VocabPath"]` overrides vocab discovery (default: `vocab.txt` alongside the model file). Supports 2-D `[batch, dim]` and 3-D `[batch, seq, dim]` output shapes — 3-D tensors are mean-pooled over the sequence dimension before L2 normalisation. `CreateChatClient` always returns `null`.|
 | `OpenAiCompatibleProvider` | user-supplied | OpenAI-compat | OpenAI-compat | Used for LAN gateways, vLLM, etc. |
 | `OpenAiProvider` | `https://api.openai.com` | yes | yes | API key required |
 | `AzureOpenAiProvider` | user-supplied | yes | yes | API key required; deployment name = model id |
@@ -204,35 +204,43 @@ LAN endpoints are added by the user through the Settings dialog and persisted in
 	 - probe localhost (Ollama 11434, LM Studio 1234)
 	 - probe each LAN endpoint from LanHostsRegistry
 	 - check env vars: GITHUB_TOKEN / OPENAI_API_KEY / AZURE_OPENAI_API_KEY
-3. if probes contain exactly one healthy + preferences.AutoUseIfSingle → use it
+3. if probes contain exactly one healthy + preferences.AutoUseIfSingle → use it (no prompt)
    else interaction.ChooseProviderAsync(probes) → user picks
 4. if RequiresApiKey && ApiKey is null → interaction.PromptApiKeyAsync
-5. smoke-test (single short chat completion or model-list call)
-6. construct AiSession, persist preferences, return
+5. construct AiSession, return
 ```
+
+> **Implementation note:** Step 5 was simplified — `AiSessionFactory` does **not** run a smoke test. The smoke test is the caller's responsibility (e.g. `FclAiTranslator.TestAsync` in `FclAiNET.Test`). This keeps the factory fast and lets callers decide whether/how to handle a failing smoke test.
 
 Returning `null` from `ChooseProviderAsync` is legitimate: it means "no AI for now". Callers (HelpNET, FclAiNET) must cope (lexical fallback / disabled features).
 
 ### 2.6 `IAiSession` lifetime model
 
 - **One `IAiSession` per application process** (singleton, owned by the host app).
-- Shared between FclAiNET and HelpNET — the user configures the provider once.
+- Will be shared between FclAiNET and HelpNET once both are wired into TapeWinNET's `AppAiSessionHost` (Phase 5+). As of Phase 2, FclAiNET is the first consumer.
 - `ReplaceProviderAsync` raises `ProviderChanged`; consumers re-bind `ChatClient` / `EmbeddingGenerator` references.
 - Disposing the session disposes the underlying chat/embedding clients.
 
 ### 2.7 Tests (`AiNET.Tests`)
 
-| Suite | Coverage |
-|---|---|
-| `DescriptorRoundTripTests` | JSON serialization of `AiProviderConfig` / `AiProviderPreferences`. |
-| `OllamaProviderTests` | Fake `HttpMessageHandler` returning canned `/api/tags` + `/api/chat` payloads. |
-| `LmStudioProviderTests` | Same for `/v1/models` + `/v1/chat/completions`. |
-| `OpenAiCompatibleProviderTests` | LAN-style base URL, OpenAI-compat payloads. |
-| `EnvVarProviderTests` | Env-var-driven discovery for GitHub Models / OpenAI / Azure. |
-| `DiscoveryTests` | End-to-end DiscoverAsync across a mixed catalog of fakes; latency & failure handling. |
-| `InteractionFlowTests` | Order of calls: ChooseProvider → PromptApiKey → smoke-test → success. |
-| `SessionLifecycleTests` | `ReplaceProviderAsync` swaps clients and raises `ProviderChanged`; dispose semantics. |
-| `LanHostsRegistryTests` | JSON file round-trip; concurrent add/remove. |
+| Suite | Status | Coverage |
+|---|---|---|
+| `DescriptorRoundTripTests` | ✅ | JSON serialization of `AiProviderConfig` / `AiProviderPreferences`. |
+| `OllamaProviderTests` | ✅ | Fake `HttpMessageHandler` for `/api/tags` probe (healthy + unhealthy), descriptor metadata, `CreateChatClient` / `CreateEmbeddingGenerator` shape, `SetTestHandler` hook. |
+| `OllamaIntegrationTests` | ✅ | Live Ollama tests (auto-skipped if service unavailable); probe, model list, chat completion, embedding vector, semantic similarity. Probe result cached via `SemaphoreSlim`. |
+| `OnnxProviderTests` | ✅ | Fake unit tests: descriptor metadata, probe healthy/unhealthy (file present/absent), missing vocab, explicit vocab override, `CreateChatClient` always null, `CreateEmbeddingGenerator` null on invalid file, `FileUriToPath` round-trip. |
+| `OnnxIntegrationTests` | ✅ | Real ONNX tests (auto-skipped unless `ONNX_MODEL_PATH` env var set); probe health, generator creation, non-zero vectors, distinct embeddings, semantic similarity ordering, empty input. |
+| `OpenAiCompatibleIntegrationTests` | ✅ | Live LAN tests against an OpenAI-compatible server (OpenVINO Model Server etc.); settings via `AiNET.Tests/remote-test-settings.json` or `AINET_REMOTE_*` env vars; auto-skipped when not configured. |
+| `LmStudioProviderTests` | *(planned)* | Fake handler for `/v1/models` + `/v1/chat/completions`. |
+| `EnvVarProviderTests` | *(planned)* | Env-var-driven discovery for GitHub Models / OpenAI / Azure. |
+| `DiscoveryTests` | *(planned)* | End-to-end `DiscoverAsync` across a mixed catalog of fakes; latency & failure handling. |
+| `InteractionFlowTests` | *(planned)* | Order of calls: `ChooseProvider → PromptApiKey → session build`. |
+| `SessionLifecycleTests` | *(planned)* | `ReplaceProviderAsync` swaps clients and raises `ProviderChanged`; dispose semantics. |
+| `LanHostsRegistryTests` | *(planned)* | JSON file round-trip; concurrent add/remove. |
+
+**Infrastructure additions (Phase 1):**
+- `AiNET.Tests/remote-test-settings.json` (gitignored) + `remote-test-settings.template.json` — mirrors the TapeLibNET remote-settings pattern for LAN integration tests.
+- `Helpers/OpenAiRemoteTestSettings.cs` — reads endpoint/model from JSON or `AINET_REMOTE_*` env vars, strips `//` line comments before parsing.
 
 ---
 
@@ -500,9 +508,11 @@ A shared `TestContentFixture` provides a tiny in-memory corpus (~10 topics) used
 | Type | Before | After |
 |---|---|---|
 | `FclAiProviderFactory` | owned discovery + IChatClient construction | **deleted**; replaced by `AiSessionFactory` |
-| `IFclAiInteraction` | provider-discovery callback | becomes a thin adapter implementing `IAiInteraction` (or merged into it) |
-| `FclAiTranslator` | took raw `IChatClient` | takes `IAiSession` and reads `session.ChatClient` |
-| `FclAiNET.Test` console | implemented `IFclAiInteraction` | implements `IAiInteraction` |
+| `IFclAiInteraction` | provider-discovery callback + `FclTranslationResult` | **deleted**; `FclTranslationResult` moved to `FclTranslationResult.cs` |
+| `FclAiTranslator` | took raw `IChatClient` | **unchanged** — still takes raw `IChatClient` (see deviation note in Phase 2) |
+| `FclAiNET.csproj` | direct `Microsoft.Extensions.AI` package refs | project ref to `AiNET`; AI packages now transitive |
+| `FclAiNET.Test/ConsoleAiInteraction` | implemented `IFclAiInteraction` | implements `AiNET.IAiInteraction` |
+| `FclAiNET.Test/Program.cs` | used `FclAiProviderFactory`, bespoke `TryNextLocalModel` loop | uses `AiSessionFactory.BuildAsync`; extracts `session.ChatClient` for the translator |
 
 The FCL-specific bits (`FclAiSystemPrompt`, `FclAiTools`, `FclAiTranslator`'s retry loop) are unchanged.
 
@@ -922,38 +932,50 @@ Each phase lists deliverables and the tests we add for it.
 
 ---
 
-### Phase 1 — `AiNET` core
+### Phase 1 — `AiNET` core ✅ DONE
 
 **Deliverables**
-- Enums + records: `AiProviderKind`, `AiProviderLocation`, `AiCapabilities`, `AiProviderDescriptor`, `AiProviderConfig`, `AiProviderProbeResult`, `AiProviderPreferences`, `AiProviderDiscoveryOptions`.
-- Interfaces: `IAiProvider`, `IAiProviderCatalog`, `IAiProviderDiscovery`, `IAiInteraction`, `IAiSession`.
-- `AiSession` impl + `AiSessionFactory.BuildAsync`.
-- Adapters: `OllamaProvider`, `LmStudioProvider`, `OnnxProvider`, `OpenAiCompatibleProvider`, `OpenAiProvider`, `AzureOpenAiProvider`, `GitHubModelsProvider`.
-- `LanHostsRegistry`.
+- ✅ Enums + records: `AiProviderKind`, `AiProviderLocation`, `AiCapabilities`, `AiProviderDescriptor`, `AiProviderConfig`, `AiProviderProbeResult`, `AiProviderPreferences`, `AiProviderDiscoveryOptions`.
+- ✅ Interfaces: `IAiProvider`, `IAiProviderCatalog`, `IAiProviderDiscovery`, `IAiInteraction`, `IAiSession`.
+- ✅ `AiSession` impl + `AiSessionFactory.BuildAsync` (with convenience overload that builds the default catalog).
+- ✅ Adapters: `OllamaProvider` (fully functional), `OnnxProvider` (fully functional — embeddings only), `OpenAiCompatibleProvider` (fully functional), `LmStudioProvider`, `OpenAiProvider`, `AzureOpenAiProvider`, `GitHubModelsProvider` (structural stubs, wired into catalog).
+- ✅ `LanHostsRegistry`.
+- ✅ `OnnxEmbeddingGenerator` — in-process embedding computation: `BertTokenizer`, ONNX `InferenceSession`, shape-adaptive output (2-D / 3-D), mean-pool, L2-normalise. Lives in `AiNET/Providers/OnnxEmbeddingGenerator.cs`.
+- ✅ `AiProviderCatalog.CreateDefault()` — registers all built-in providers.
 
-**Tests**
-- `DescriptorRoundTripTests` — JSON serialization.
-- `OllamaProviderTests`, `LmStudioProviderTests`, `OnnxProviderTests`, `OpenAiCompatibleProviderTests` — fake `HttpMessageHandler`.
-- `EnvVarProviderTests` — env-var discovery.
-- `DiscoveryTests` — mixed catalog, latency, failure handling.
-- `InteractionFlowTests` — `ChooseProvider → PromptApiKey → smoke-test` order.
-- `SessionLifecycleTests` — `ReplaceProviderAsync`, `ProviderChanged`, dispose.
-- `LanHostsRegistryTests` — file round-trip, concurrent add/remove.
+**Tests** (see §2.7 for full status table)
+- ✅ `DescriptorRoundTripTests` — JSON serialization.
+- ✅ `OllamaProviderTests` + `OllamaIntegrationTests` (live, skip-on-unavailable).
+- ✅ `OnnxProviderTests` + `OnnxIntegrationTests` (live, skip unless `ONNX_MODEL_PATH` set).
+- ✅ `OpenAiCompatibleIntegrationTests` (live LAN, skip unless `remote-test-settings.json` configured).
+- *(planned)* `LmStudioProviderTests`, `EnvVarProviderTests`, `DiscoveryTests`, `InteractionFlowTests`, `SessionLifecycleTests`, `LanHostsRegistryTests`.
+
+**Decisions / deviations**
+- `OnnxProvider` is **embeddings-only** — `CreateChatClient` returns `null`. ONNX models served locally (sentence-transformers family) are not LLMs; chat capability requires a different provider.
+- ONNX packages (`Microsoft.ML.OnnxRuntime`, `Microsoft.ML.Tokenizers`) were added to **`AiNET.csproj`** (not just HelpNET), because `OnnxProvider` lives in `AiNET`. Section 1.1 updated accordingly.
+- `AiSessionFactory.BuildAsync` does **not** run a smoke test — callers are responsible (see §2.5). Removing the factory-level smoke test keeps the factory fast and non-opinionated.
+- Live integration tests use a cached-probe pattern (single `SemaphoreSlim`-guarded `ProbeAsync` per test class) and skip cleanly when the service is unavailable — same pattern as TapeLibNET remote tests.
+- Remote OpenAI-compatible tests use a `remote-test-settings.json` + env-var fallback, mirroring `TapeLibNET.Tests/remote-test-settings.json`. The template is committed; the filled-in file is gitignored.
 
 ---
 
-### Phase 2 — Refactor `FclAiNET` onto `AiNET`
+### Phase 2 — Refactor `FclAiNET` onto `AiNET` ✅ DONE
 
 **Deliverables**
-- Delete `FclAiProviderFactory`; route through `AiSessionFactory`.
-- Refactor `IFclAiInteraction` → thin adapter over `IAiInteraction` (or merge).
-- Update `FclAiTranslator` constructor to take `IAiSession`.
-- Update `FclAiNET.Test` console host to implement `IAiInteraction`.
+- ✅ `FclAiProviderFactory.cs` **deleted** — all provider discovery routed through `AiSessionFactory.BuildAsync`.
+- ✅ `IFclAiInteraction.cs` **deleted** — provider-specific types (`FclAiProviderType`, `FclAiProviderChoice`, `IFclAiInteraction`) removed entirely. `FclTranslationResult` (FCL output type, unrelated to provider plumbing) moved to its own `FclTranslationResult.cs`.
+- ✅ `FclAiNET.csproj` — added `AiNET` project reference; removed direct `Microsoft.Extensions.AI` / `Microsoft.Extensions.AI.OpenAI` package refs (now transitive via `AiNET`).
+- ✅ `ConsoleAiInteraction.cs` — fully rewritten to implement `AiNET.IAiInteraction` (`ShowStatusAsync`, `ChooseProviderAsync`, `PromptApiKeyAsync`, `PromptEndpointAsync`). Well-known env vars (`GITHUB_TOKEN`, `OPENAI_API_KEY`, `AZURE_OPENAI_API_KEY`) checked automatically during `PromptApiKeyAsync`.
+- ✅ `FclAiNET.Test/Program.cs` — rewritten to use `AiSessionFactory.BuildAsync` + `IAiSession`; `AutoUseIfSingle = true` preserves the old behaviour of auto-selecting a single healthy provider (e.g. Ollama).
+- ✅ `FclAiNET.Test.csproj` — `Microsoft.Extensions.Logging` bumped to `8.0.1` to satisfy transitive constraint from `AiNET → Microsoft.Extensions.Http 8.0.1`.
 
 **Tests**
-- All existing FclAiNET tests must continue to pass.
-- New: `FclAiTranslator_UsesInjectedSessionChatClient`.
-- New: `FclAiTranslator_PicksUpNewClient_AfterProviderChanged`.
+- ✅ All existing `FclAiNET` and `FclNET.Tests` tests continue to pass.
+
+**Decisions / deviations**
+- **`FclAiTranslator` was NOT changed to take `IAiSession`.** It still takes a bare `IChatClient`. The session's `ChatClient` is extracted in `Program.cs` before being passed to the translator. Rationale: the translator is a pure FCL ↔ AI translation unit; coupling it to `AiNET` types would create an unnecessary transitive dependency in `FclAiNET` on ONNX runtime packages. Callers that want live provider-switching can re-construct the translator when `IAiSession.ProviderChanged` fires.
+- The two planned new unit tests (`FclAiTranslator_UsesInjectedSessionChatClient`, `FclAiTranslator_PicksUpNewClient_AfterProviderChanged`) were **not added** — they presuppose `IAiSession` injection into `FclAiTranslator`, which was rejected above. The observable behaviour (translator uses the new client after provider change) is tested manually via `FclAiNET.Test`.
+- The `TryNextLocalModel` retry loop in the old `Program.cs` was **dropped** — AiNET's `AiProviderDiscovery` selects the best available model during the discovery phase.
 
 ---
 

@@ -1,0 +1,22 @@
+{
+  // Copy this file to remote-test-settings.json and fill in your values.
+  // remote-test-settings.json is gitignored — it will not be committed.
+  //
+  // Endpoint: the full base URL of an OpenAI-compatible server on your LAN.
+  //   Examples:
+  //     OpenVINO Model Server:  "http://192.168.178.42:8080"
+  //     LM Studio:              "http://192.168.178.42:1234"
+  //     vLLM:                   "http://192.168.178.42:8000"
+  //
+  // ChatModel / EmbeddingModel: model identifiers as reported by GET /v1/models.
+  //   Leave as null to skip tests that require that capability.
+  //
+  // Environment-variable equivalents (override the file):
+  //   AINET_REMOTE_ENDPOINT          e.g. http://192.168.178.42:8080
+  //   AINET_REMOTE_CHAT_MODEL        e.g. meta-llama/Llama-3.2-1B-Instruct
+  //   AINET_REMOTE_EMBEDDING_MODEL   e.g. BAAI/bge-small-en-v1.5
+
+  //"Endpoint":       "http://192.168.178.42:8080",
+  //"ChatModel":      null,
+  //"EmbeddingModel": "BAAI/bge-small-en-v1.5"
+}
