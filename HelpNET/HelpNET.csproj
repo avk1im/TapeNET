@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
 	<TargetFramework>net8.0</TargetFramework>
@@ -14,6 +14,10 @@
   </ItemGroup>
 
   <Import Project="..\Versioning.targets" />
+
+  <ItemGroup>
+    <None Include="Tools\HelpIndexBuilder\HelpIndexBuilder.csproj" />
+  </ItemGroup>
 
   <ItemGroup>
 	<PackageReference Include="Markdig" Version="0.37.*" />
