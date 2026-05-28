@@ -1,0 +1,7 @@
+﻿{
+  "modelId": "all-MiniLM-L6-v2",
+  "dimension": 384,
+  "modelHash": "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452",
+  "chunkCount": 11,
+  "builtAt": "2026-05-28T18:25:16.7834531\u002B00:00"
+}

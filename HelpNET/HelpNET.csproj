@@ -11,13 +11,19 @@
 
   <ItemGroup>
 	<InternalsVisibleTo Include="HelpNET.Tests" />
+	<InternalsVisibleTo Include="HelpIndexBuilder" />
+  </ItemGroup>
+
+  <!-- Exclude the build-time tool subtree from HelpNET's own compilation.
+	The SDK glob would otherwise pull in Tools\HelpIndexBuilder\**\*.cs and its
+	generated obj files, causing duplicate assembly attributes and access errors. -->
+  <ItemGroup>
+	<Compile Remove="Tools\HelpIndexBuilder\**\*.cs" />
+	<EmbeddedResource Remove="Tools\HelpIndexBuilder\**" />
+	<None Remove="Tools\HelpIndexBuilder\**" />
   </ItemGroup>
 
   <Import Project="..\Versioning.targets" />
-
-  <ItemGroup>
-    <None Include="Tools\HelpIndexBuilder\HelpIndexBuilder.csproj" />
-  </ItemGroup>
 
   <ItemGroup>
 	<PackageReference Include="Markdig" Version="0.37.*" />

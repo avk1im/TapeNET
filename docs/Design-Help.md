@@ -1,6 +1,6 @@
 # TapeWinNET Help System — Detailed Design
 
-> **Status:** Implementation in progress — Phases 0 ✅ 1 ✅ 2 ✅ complete; Phase 3 next.
+> **Status:** Phases 0 ✅ 1 ✅ 2 ✅ 3 ✅ 4 ✅ complete — `HelpNET` library fully implemented. Phase 5 (TapeWinNET HelpPane) is next.
 > **Scope:** A modern, optionally AI-augmented help system for TapeWinNET, with reusable engines (`AiNET`, `HelpNET`) ready for TapeConNET and other future consumers.
 > **Authoring convention:** Markdown + YAML front-matter for all help content. Library API surfaces are described in C# pseudo-signatures; sections marked **(not yet implemented)** are still design-only.
 
@@ -280,11 +280,11 @@ HelpNET/
 	HelpChunk.cs                    record (TopicId, Heading, Text, Index)
   Embeddings/
 	IHelpEmbeddingIndex.cs
-	OnnxEmbeddingGenerator.cs       wraps Microsoft.ML.OnnxRuntime + Microsoft.ML.Tokenizers
-	OnnxEmbeddingOptions.cs         model path, tokenizer path, dimension, max tokens
-	PrecomputedEmbeddingStore.cs    loads embeddings.bin + meta
-	CosineSearch.cs
-	HelpEmbeddingIndex.cs
+	HelpOnnxEmbeddingGenerator.cs   wraps Microsoft.ML.OnnxRuntime + Microsoft.ML.Tokenizers (internal)
+	OnnxEmbeddingOptions.cs         model stream, vocab stream, model-id, dimension, max tokens
+	PrecomputedEmbeddingStore.cs    loads embeddings.bin + chunk-index JSON (internal)
+	CosineSearch.cs                 (internal)
+	HelpEmbeddingIndex.cs           public; Build() factory + SearchAsync
   Retrieval/
 	IHelpRetriever.cs
 	HybridRetriever.cs              weighted blend lexical + semantic
@@ -302,11 +302,21 @@ HelpNET/
   Session/
 	IHelpSession.cs
 	HelpSession.cs
+	HelpSessionOptions.cs           TopK, HomeTopicId, MaxConversationTurns
 	ConversationTurn.cs
   HelpSessionFactory.cs             picks assistant mode from capabilities
   Tools/
-	HelpIndexBuilder/               (separate console tool project under Tools/)
-	  Program.cs                    build-time tool: produces embeddings.bin + meta.json
+	SampleContent/                  sample Markdown corpus (11 topics) for end-to-end testing
+	  home.md
+	  quickstart/ backup-first-tape.md, restore-files.md
+	  concepts/   backup-sets.md, incremental-backup.md, fcl-filters.md, restore-validate-verify.md
+	  dialog/     backup-dialog.md, restore-dialog.md
+	  cli/        overview.md, backup-command.md
+	  Embeddings/ embeddings.bin, embeddings.meta.json, embeddings.index.json (generated; gitignored)
+	Build-SampleEmbeddings.ps1      PowerShell script to regenerate SampleContent/Embeddings/
+	HelpIndexBuilder/               (separate console tool project — added to TapeNET.sln)
+	  Program.cs                    build-time tool: produces embeddings.bin + meta.json + index.json
+	  DirectoryHelpContentSource.cs IHelpContentSource over a local directory tree (tool-internal)
 ```
 
 ### 3.3 The `IHelpContentSource` contract
@@ -433,7 +443,7 @@ When `AiSession.ProviderChanged` fires, the session re-evaluates and switches mo
 
 ### 3.7 ONNX-based embeddings
 
-We **do not** depend on Ollama for embeddings. HelpNET ships an `OnnxEmbeddingGenerator` built on:
+We **do not** depend on Ollama for embeddings. HelpNET ships a `HelpOnnxEmbeddingGenerator` (internal) built on:
 - `Microsoft.ML.OnnxRuntime` — runs the model in-process.
 - `Microsoft.ML.Tokenizers` — for the model-specific tokenizer (BERT WordPiece for MiniLM, etc.).
 
@@ -454,14 +464,18 @@ A console tool **`HelpIndexBuilder`** lives in `HelpNET/Tools/HelpIndexBuilder/`
 
 ```
 Inputs:
-  --content <dir>           e.g. TapeWinNET/Resources/Help
-  --model   <onnx file>     same model that ships with TapeWinNET
-  --tokenizer <vocab file>
-  --output  <dir>           e.g. TapeWinNET/Resources/Help/_index
+  --content   <dir>         e.g. TapeWinNET/Resources/Help  (or SampleContent for testing)
+  --model     <onnx file>   path to model.onnx (e.g. all-MiniLM-L6-v2)
+  --vocab     <vocab file>  path to vocab.txt (WordPiece tokenizer)
+  --model-id  <string>      stable model identifier stored in metadata
+  --dim       <int>         embedding dimension (e.g. 384)
+  --output    <dir>         e.g. TapeWinNET/Resources/Help/_index
+  [--max-tokens <int>]      token sequence limit (default 512)
+  [--dry-run]               parse and embed but write nothing
 Outputs:
-  embeddings.bin            packed float[] blob (chunk-major)
-  embeddings.meta.json      model id, hash, dimension, chunk catalog
-  index.json                topic catalog (for verification & fast cold-start)
+  embeddings.bin            packed float32 blob (little-endian, chunk-major)
+  embeddings.meta.json      model id, hash, dimension, chunk count, build timestamp
+  embeddings.index.json     chunk catalog: (topicId, heading, chunkIndex) per row
 ```
 
 These outputs are then embedded as resources by TapeWinNET. At runtime `EmbeddedResourceHelpContentSource.TryLoadEmbeddingBundleAsync` returns them.
@@ -480,24 +494,28 @@ Retrieved excerpts are passed as numbered blocks with their topic-id headers. Th
 
 ### 3.10 Tests (`HelpNET.Tests`)
 
-| Suite | Coverage |
-|---|---|
-| `FrontMatterParserTests` | All `kind` values; missing optional fields; malformed YAML; walkthrough block parsing. |
-| `HelpContentStoreTests` | Loads from `InMemoryHelpContentSource`; `GetByHost` filters correctly; duplicate-id detection. |
-| `HelpUriTests` | `help://topic/…`, `help://glossary/…`, `help://action/…`, malformed inputs. |
-| `BM25HelpIndexTests` | Known-corpus top-k expectations (table-driven `[Theory]`). |
-| `IntentMatcherTests` | Phrase normalization; synonym table; multi-intent scoring. |
-| `ChunkerTests` | Overlap; code-block boundary preservation; max-token clamping. |
-| `OnnxEmbeddingGeneratorTests` | Cosine sanity on known phrase pairs (skipped if `MINIONNX_TEST_MODEL` env var is missing). |
-| `PrecomputedEmbeddingStoreTests` | Bundle load + dimension/hash mismatch rejection. |
-| `HybridRetrieverTests` | Weight effects; monotonicity; deterministic ordering for ties. |
-| `LexicalHelpAssistantTests` | AskAsync with no AI returns top excerpts as Markdown. |
-| `SemanticHelpAssistantTests` | Mode 2 returns excerpts ranked by cosine. |
-| `RagHelpAssistantTests` | Fake `IChatClient` returning canned answers; assert prompt contains retrieved excerpts and citations are parsed. |
-| `HelpSessionTests` | Navigation history (Back / Forward / Home / new-branch pruning); conversation persistence per session lifetime. |
-| `HelpSessionFactoryTests` | Mode selection across the capability matrix. |
+| Suite | Status | Coverage |
+|---|---|---|
+| `FrontMatterParserTests` | ✅ | All `kind` values; missing optional fields; boolean fields; quoted/flow/block sequences. |
+| `HelpContentStoreTests` | ✅ | Loads from `InMemoryHelpContentSource`; `GetByHost` filters correctly; duplicate-id detection; reverse-link resolution; `ai_excerpt` flag. |
+| `HelpUriTests` | ✅ | `help://topic/…`, `help://glossary/…`, `help://action/…`, malformed inputs; case-insensitivity. |
+| `BM25HelpIndexTests` | ✅ | Known-corpus top-k expectations (table-driven `[Theory]`); keyword boosting; stop-word exclusion. |
+| `IntentMatcherTests` | ✅ | Phrase normalisation; stop-word filtering; multi-intent scoring; threshold cut-off. |
+| `ChunkerTests` | ✅ | Overlap tokens repeated across boundaries; code-fence not split; max-token clamping; sequential chunk indices. |
+| `LexicalHelpAssistantTests` | ✅ | `AskAsync` returns top excerpts as Markdown; citations match top topics; no duplicate suggestions. |
+| `HelpSessionTests` | ✅ | Navigation history (Back / Forward / Home / new-branch pruning); conversation lifetime; `CurrentTopicChanged` / `AnswerReceived` events; walkthrough + control-topic lookup. |
+| `HelpSessionFactoryTests` | ✅ | Mode selection across the capability matrix (null session, Lexical, Semantic, Rag, missing bundle). |
+| `PrecomputedEmbeddingStoreTests` | ✅ | Bundle load; dimension/model-id mismatch rejection; blob-length validation; vector access round-trip. |
+| `HelpEmbeddingIndexTests` | ✅ | Empty/whitespace queries; zero `topK`; `topK` respected; scores in `[-1, 1]`; identical queries → same top result; non-empty snippets; cancelled token. |
+| `HybridRetrieverTests` | ✅ | Weight effects (0 / 0.5 / 1); empty query → empty result; `topK` respected; scores descending; no duplicate topics; constructor guards. |
+| `HelpSessionFactoryPhase4Tests` | ✅ | Full Phase 4 mode matrix: bundle+ONNX → Semantic; bundle+chat → Rag; no bundle+chat → Rag(lexical); provider-prefer flag; model-id mismatch fallback. |
+| `SampleEmbeddingsIntegrationTests` | ✅ | End-to-end integration against the real precomputed `SampleContent/Embeddings/` bundle (skipped gracefully when bundle not yet generated); verifies content load, bundle metadata, cosine search, topK, empty query, result-topic integrity. |
+| `OnnxEmbeddingGeneratorTests` | *(planned — Phase 5)* | Real ONNX cosine sanity on known phrase pairs; skipped if `ONNX_MODEL_PATH` env var absent. |
+| `SemanticHelpAssistantTests` | *(planned — Phase 5)* | Mode 2 returns excerpts ranked by cosine. |
+| `RagHelpAssistantTests` | *(planned — Phase 5)* | Fake `IChatClient` returning canned answer; assert prompt includes retrieved excerpts and citations parse correctly. |
 
-A shared `TestContentFixture` provides a tiny in-memory corpus (~10 topics) used by most suites.
+A shared `TestContentFixture` provides a 10-topic in-memory corpus used by most suites.  
+Phase 4 tests use `FakeEmbeddingGenerator` (deterministic hash-to-unit-vector) and `BundleBuilder` helpers in `EmbeddingTestHelpers.cs`.
 
 ---
 
@@ -979,47 +997,64 @@ Each phase lists deliverables and the tests we add for it.
 
 ---
 
-### Phase 3 — `HelpNET` content + lexical engine
+### Phase 3 — `HelpNET` content + lexical engine ✅ DONE
 
 **Deliverables**
-- `HelpRawDocument`, `HelpTopic`, `WalkthroughScript`, `HelpCitation`, `HelpTopicRef`, `HelpActionRef`, `HelpUri`, `HelpNavigationRequest`, `HelpSearchHit`.
-- `IHelpContentSource` + `InMemoryHelpContentSource` (test fixture).
-- `HelpContentStore` (Markdig front-matter parser, dedupe by id, related-topic resolution).
-- `BM25HelpIndex` + `IntentMatcher`.
-- `Chunker` (used by both lexical and semantic paths).
-- `LexicalHelpAssistant`.
-- `HelpSession` + `HelpSessionFactory.CreateAsync` (Lexical mode only at this stage).
+- ✅ `HelpRawDocument`, `HelpTopic`, `WalkthroughScript`, `HelpCitation`, `HelpTopicRef`, `HelpActionRef`, `HelpUri`, `HelpNavigationRequest`, `HelpSearchHit`.
+- ✅ `IHelpContentSource` + `InMemoryHelpContentSource` (test fixture).
+- ✅ `HelpContentStore` — Markdig front-matter parser, dedupe by id, reverse-link resolution, `ai_excerpt` flag, plain-text extraction.
+- ✅ `BM25HelpIndex` + `IntentMatcher`.
+- ✅ `Chunker` (used by both lexical and semantic paths; ~400-token chunks with configurable overlap).
+- ✅ `LexicalHelpAssistant`.
+- ✅ `HelpSession` + `HelpSessionFactory.CreateAsync` (Lexical mode; full Phase 4 mode selection deferred to Phase 4).
+- ✅ `HelpSessionOptions` record (`TopK`, `HomeTopicId`, `MaxConversationTurns`).
 
-**Tests**
-- `FrontMatterParserTests`, `HelpContentStoreTests`, `HelpUriTests`.
-- `BM25HelpIndexTests`, `IntentMatcherTests`, `ChunkerTests`.
-- `LexicalHelpAssistantTests` — AskAsync returns top excerpts.
-- `HelpSessionTests` — navigation history state machine; conversation lifetime.
-- `HelpSessionFactoryTests` (partial — Lexical only).
+**Tests** — 120+ tests, all passing.
+- ✅ `FrontMatterParserTests`, `HelpContentStoreTests`, `HelpUriTests`.
+- ✅ `BM25HelpIndexTests`, `IntentMatcherTests`, `ChunkerTests`.
+- ✅ `LexicalHelpAssistantTests` — `AskAsync` returns top excerpts; citations match; no duplicate suggestions.
+- ✅ `HelpSessionTests` — navigation history state machine; conversation lifetime; events.
+- ✅ `HelpSessionFactoryTests` (partial — Lexical-only cases; Phase 4 cases added in Phase 4).
+
+**Decisions / deviations**
+- `HelpSearchHit` and `HelpCitation` were **consolidated** — both carried a topic + snippet; `HelpCitation` is the term used in `HelpAssistantResponse`. `HelpSearchHit` (used by `IHelpSession.SearchAsync`) carries score + snippet; they are distinct types but share the topic reference pattern.
+- `FrontMatterParser` is a **bespoke line-by-line YAML parser** rather than a full YAML library, keeping the HelpNET dependency footprint minimal. It handles all required field types (strings, bool, string lists — flow and block sequences).
+- `GetRelated` on `HelpContentStore` **automatically adds reverse links** — if topic A lists B as related, B also lists A. This avoids manual duplication in content authoring.
+- `HelpSession.MaxConversationTurns` defaults to 20; oldest turns are silently dropped when exceeded.
+- `AssistantModeChanged` event was **not implemented** in Phase 3 (no provider to change). Added in Phase 4 along with the full session-factory mode matrix.
 
 ---
 
-### Phase 4 — `HelpNET` embeddings + RAG
+### Phase 4 — `HelpNET` embeddings + RAG ✅ DONE
 
 **Deliverables**
-- `OnnxEmbeddingGenerator` + `OnnxEmbeddingOptions`.
-- `PrecomputedEmbeddingStore` + `HelpEmbeddingBundle`.
-- `HelpEmbeddingIndex` + `CosineSearch`.
-- `HybridRetriever`.
-- `SemanticHelpAssistant`, `RagHelpAssistant`.
-- `HelpRagSystemPrompt`.
-- `HelpSessionFactory` — full mode-selection matrix.
-- `HelpIndexBuilder` console tool (lives under `HelpNET/Tools/`).
-- MSBuild target `BuildHelpEmbeddings` (opt-in via property).
+- ✅ `HelpOnnxEmbeddingGenerator` (internal) + `OnnxEmbeddingOptions` — in-process ONNX embeddings via `Microsoft.ML.OnnxRuntime` + `Microsoft.ML.Tokenizers`; accepts `Stream` inputs (model + vocab) rather than file paths; mean-pool + L2-normalise; handles 2-D and 3-D output tensors.
+- ✅ `PrecomputedEmbeddingStore` (internal) + `HelpEmbeddingBundle` — loads the three-file bundle (`.bin` + `.meta.json` + `.index.json`); validates model-id and dimension; exposes `GetVector(int row)` span.
+- ✅ `HelpEmbeddingIndex` (public, `Build()` static factory) + `CosineSearch` (internal brute-force, sufficient for small corpora).
+- ✅ `HybridRetriever` — weighted blend of `BM25HelpIndex` (lexical) and `HelpEmbeddingIndex` (semantic); configurable `LexicalWeight` in `[0, 1]`.
+- ✅ `SemanticHelpAssistant`, `RagHelpAssistant` + `HelpRagSystemPrompt`.
+- ✅ `HelpSessionFactory` — full mode-selection matrix (see §3.6 and Appendix §10).
+- ✅ `HelpIndexBuilder` console tool added to `TapeNET.sln` (under the **Help System** solution folder). Accepts `--content`, `--model`, `--vocab`, `--model-id`, `--dim`, `--output`, `--max-tokens`, `--dry-run`.
+- ✅ `SampleContent/` — 11 sample Markdown topics (home, quickstart ×2, concepts ×4, dialog ×2, cli ×2) for end-to-end testing.
+- ✅ `Build-SampleEmbeddings.ps1` — PowerShell script (UTF-8 BOM; runs `HelpIndexBuilder` against `SampleContent/` using the local `all-MiniLM-L6-v2` model).
+- ⚠️ MSBuild `BuildHelpEmbeddings` target — **deferred to Phase 5** (not yet wired into TapeWinNET's build).
 
-**Tests**
-- `OnnxEmbeddingGeneratorTests` — known-pair cosine sanity; skipped if no test model on disk.
-- `PrecomputedEmbeddingStoreTests` — bundle load; dimension/hash mismatch rejection.
-- `HybridRetrieverTests` — weight effects, tie ordering.
-- `SemanticHelpAssistantTests` — ranked excerpts.
-- `RagHelpAssistantTests` — fake `IChatClient` returning canned answer; assert prompt includes retrieved excerpts and citations parse correctly.
-- `HelpSessionFactoryTests` — full capability matrix → mode mapping.
-- `HelpIndexBuilderTests` — round-trip on a small fixture corpus (uses the same ONNX model).
+**Tests** — 177 tests total, all passing.
+- ✅ `PrecomputedEmbeddingStoreTests` — bundle load; dimension/model-id mismatch; blob-length guard; vector access.
+- ✅ `HelpEmbeddingIndexTests` — structural correctness with `FakeEmbeddingGenerator`; all edge cases.
+- ✅ `HybridRetrieverTests` — weight effects; empty query; `topK`; score order; no duplicate topics.
+- ✅ `HelpSessionFactoryPhase4Tests` — full capability matrix; provider-prefer flag; model-id mismatch fallback.
+- ✅ `SampleEmbeddingsIntegrationTests` — end-to-end against the real precomputed bundle; 6 tests; skip-guard when `Embeddings/` absent.
+- *(planned — Phase 5)* `OnnxEmbeddingGeneratorTests`, `SemanticHelpAssistantTests`, `RagHelpAssistantTests`.
+
+**Decisions / deviations**
+- **`HelpOnnxEmbeddingGenerator` is `internal`**, not public. The public surface for embeddings is `HelpEmbeddingIndex.Build(...)` which takes any `IEmbeddingGenerator<string, Embedding<float>>`. This keeps the ONNX dependency hidden and makes the index testable with `FakeEmbeddingGenerator` without loading a real model. `HelpIndexBuilder` accesses it via `InternalsVisibleTo`.
+- **`OnnxEmbeddingOptions` takes `Stream` objects**, not file paths. This matches the intended runtime usage in TapeWinNET (streams from embedded resources) and makes the tool pass file streams explicitly.
+- **Three output files instead of two.** The original design listed `embeddings.bin` + `embeddings.meta.json`. A third file `embeddings.index.json` was added as the chunk catalog (previously described as being embedded inside `meta.json`). This keeps the metadata file human-readable and the catalog independently loadable.
+- **`HelpEmbeddingBundle.ChunkIndexJson`** carries the raw JSON string (not a parsed list) to keep the record allocation-free at the `IHelpContentSource` boundary. `PrecomputedEmbeddingStore.Load` parses it internally.
+- **`SemanticHelpAssistant` and `RagHelpAssistant` were scaffolded** but their dedicated tests (`SemanticHelpAssistantTests`, `RagHelpAssistantTests`) are deferred to Phase 5 when a real ONNX model will be available in the test environment. The `HelpSessionFactoryPhase4Tests` suite validates the mode-routing logic that selects these assistants.
+- **MSBuild `BuildHelpEmbeddings` target deferred** — the build-time wiring depends on the TapeWinNET resource layout (Phase 5). `HelpIndexBuilder` is a standalone runnable tool in the solution; `Build-SampleEmbeddings.ps1` serves as the manual equivalent for development.
+- **`HelpNET.csproj` excludes `Tools/HelpIndexBuilder/**`** from its SDK `**/*.cs` compile glob. Without this exclusion the SDK glob pulled in the tool's source files and generated `obj/` assembly-info, causing duplicate-attribute build errors. The exclusion is explicit via `<Compile Remove="...">` in the project file.
 
 ---
 
