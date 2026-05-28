@@ -6,7 +6,6 @@
     <Nullable>enable</Nullable>
     <AssemblyName>fcl</AssemblyName>
     <RootNamespace>FclNET</RootNamespace>
-    <Version>1.0.0.$(BuildNumber)</Version>
   </PropertyGroup>
 
   <ItemGroup>

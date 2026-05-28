@@ -1,22 +1,36 @@
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
 
-  <!--Versioning and build number support-->
+  <!--Versioning: build number derived from git commit count ("git rev-list -count HEAD").
+   Each project sets VersionBase before importing this file to declare its major.minor.patch
+   baseline (defaults to 1.2.0). The fourth component is filled in at build time from git.-->
   <PropertyGroup>
-    <BuildNumber>0</BuildNumber>
-    <BuildNumberFile>$(MSBuildProjectDirectory)\BuildNumber.txt</BuildNumberFile>
-    <BuildNumber Condition="Exists('$(BuildNumberFile)')">$([System.IO.File]::ReadAllText($(BuildNumberFile)).Trim())</BuildNumber>
-    <BuildNumber Condition="!Exists('$(BuildNumberFile)')">0</BuildNumber>
-    <Version>1.2.0.$(BuildNumber)</Version>
-    <AssemblyVersion>1.2.0.$(BuildNumber)</AssemblyVersion>
-    <FileVersion>1.2.0.$(BuildNumber)</FileVersion>
+    <!-- Default version base; individual projects may override before importing this file -->
+    <VersionBase Condition="'$(VersionBase)' == ''">1.2.0</VersionBase>
+    <!-- Fallback commit count used when git is unavailable (e.g. CI without git, shallow clones) -->
+    <GitCommitCount>0</GitCommitCount>
   </PropertyGroup>
 
-  <Target Name="IncrementBuildNumber" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+  <Target Name="SetVersionFromGit" BeforeTargets="BeforeBuild"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <!-- Run git rev-list to count commits reachable from HEAD.
+     Uses PowerShell to locate git: first checks PATH, then falls back to the copy
+     bundled with Visual Studio, so this works even when git is not on the system PATH. -->
+    <Exec Command="powershell -NoProfile -NonInteractive -Command &quot;$git = try { (Get-Command git -EA Stop).Source } catch { $null }; if (-not $git) { $git = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio' -Recurse -Filter git.exe -EA SilentlyContinue | Where-Object { $_.DirectoryName -like '*\cmd' } | Select-Object -ExpandProperty FullName -First 1 }; if ($git) { &amp; $git rev-list --count HEAD } else { 0 }&quot;"
+          ConsoleToMSBuild="true"
+          IgnoreExitCode="true"
+          EchoOff="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitCount" />
+    </Exec>
     <PropertyGroup>
-      <BuildNumber>$([MSBuild]::Add($(BuildNumber), 1))</BuildNumber>
+      <!-- Trim any whitespace/newlines from the output -->
+      <GitCommitCount>$(GitCommitCount.Trim())</GitCommitCount>
+      <!-- Guard: fall back to 0 if output is empty or non-numeric (e.g. not a git repo) -->
+      <GitCommitCount Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch($(GitCommitCount), '^\d+$'))">0</GitCommitCount>
+      <Version>$(VersionBase).$(GitCommitCount)</Version>
+      <AssemblyVersion>$(VersionBase).$(GitCommitCount)</AssemblyVersion>
+      <FileVersion>$(VersionBase).$(GitCommitCount)</FileVersion>
     </PropertyGroup>
-    <WriteLinesToFile File="$(BuildNumberFile)" Lines="$(BuildNumber)" Overwrite="true" />
   </Target>
-  <!-- End versioning and build number support -->
+  <!-- End versioning support -->
 
 </Project>

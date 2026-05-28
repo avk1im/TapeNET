@@ -6,7 +6,6 @@
 	<Nullable>enable</Nullable>
 	<AssemblyName>ai</AssemblyName>
 	<RootNamespace>AiNET</RootNamespace>
-	<Version>1.0.0.$(BuildNumber)</Version>
   </PropertyGroup>
 
   <ItemGroup>

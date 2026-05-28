@@ -6,7 +6,6 @@
     <Nullable>enable</Nullable>
     <AssemblyName>fclai</AssemblyName>
     <RootNamespace>FclAiNET</RootNamespace>
-    <Version>1.0.0.$(BuildNumber)</Version>
   </PropertyGroup>
 
   <Import Project="..\Versioning.targets" />

@@ -5,7 +5,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>tapesvc</AssemblyName>
-    <Version>1.2.0.$(BuildNumber)</Version>
   </PropertyGroup>
 
   <Import Project="..\Versioning.targets" />
