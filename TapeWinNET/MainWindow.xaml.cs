@@ -7,6 +7,8 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using Microsoft.Win32;
+using TapeWinNET.Help;
+using TapeWinNET.Services;
 using TapeWinNET.Utils;
 using TapeWinNET.ViewModels;
 using TapeWinNET.Models;
@@ -16,7 +18,7 @@ namespace TapeWinNET
     /// <summary>
     /// Interaction logic for MainWindow.xaml
     /// </summary>
-    public partial class MainWindow : Window
+    public partial class MainWindow : Window, IHelpPaneHost
     {
         private readonly MainViewModel _viewModel;
         private GridViewColumnHeader? _lastHeaderClicked;
@@ -29,6 +31,10 @@ namespace TapeWinNET
         // True while a programmatic ScrollIntoView is in progress, so that
         //  the ScrollChanged handler ignores the resulting scroll event.
         private bool _suppressScrollCheck;
+
+        // Help pane state
+        private HelpPaneViewModel? _helpPaneVm;
+        private const double DefaultHelpPaneWidth = 360;
 
         public MainWindow()
         {
@@ -117,7 +123,12 @@ namespace TapeWinNET
             Loaded += MainWindow_Loaded;
             Closing += MainWindow_Closing;
 
-            // Accept file/folder drops on the main window — opens BackupWindow
+            // Wire ShowHelp / ConfigureAi commands (routed through the ViewModel or directly)
+            _viewModel.ShowHelpCommand   = new RelayCommand(() => OpenHelpPane());
+            _viewModel.ConfigureAiCommand = new AsyncRelayCommand(async _ =>
+                await AppAiSessionHost.ReconfigureAndNotifyAsync());
+
+            // Accept file/folder drops
             //  with the dropped items pre-populated (only when New Backup is available).
             //  The canDrop predicate toggles DragAcceptFiles dynamically so the shell
             //  shows a "no drop" cursor when the command is unavailable.
@@ -553,6 +564,98 @@ namespace TapeWinNET
                 source = VisualTreeHelper.GetParent(source);
             }
             return false;
+        }
+
+        #endregion
+
+        #region Help Pane — IHelpPaneHost
+
+        // ── IHelpPaneHost ─────────────────────────────────────────────────────
+
+        public string HostName => "MainWindow";
+        public HelpPaneHostMode HostMode => HelpPaneHostMode.Embedded;
+
+        public void OnPaneOpening(double desiredWidth)
+        {
+            // Expand the help column to the desired width
+            HelpPaneColumn.Width = new GridLength(desiredWidth, GridUnitType.Pixel);
+            HelpPaneColumn.MinWidth = 200;
+            HelpPaneSplitter.Visibility = Visibility.Visible;
+        }
+
+        public void OnPaneClosed()
+        {
+            // Persist pane width
+            _viewModel.Settings.HelpPaneWidth = HelpPaneColumn.ActualWidth;
+
+            // Persist the last-viewed topic id so it is restored on next open
+            if (_helpPaneVm is not null)
+            {
+                var topicId = _helpPaneVm.CurrentTopicId;
+                if (topicId is not null)
+                {
+                    _viewModel.Settings.HelpPaneLastTopicPerHost ??= [];
+                    _viewModel.Settings.HelpPaneLastTopicPerHost[HostName] = topicId;
+                }
+            }
+
+            HelpPaneColumn.Width    = new GridLength(0);
+            HelpPaneColumn.MinWidth = 0;
+            HelpPaneSplitter.Visibility = Visibility.Collapsed;
+            HelpPaneControl.Visibility  = Visibility.Collapsed;
+        }
+
+        public FrameworkElement? ResolveControlByName(string name)
+            => FindName(name) as FrameworkElement;
+
+        // ── Open / toggle ─────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Opens the help pane (or navigates it to <paramref name="topicId"/> if already open).
+        /// Builds the session on first call.
+        /// </summary>
+        public async void OpenHelpPane(string? topicId = null)
+        {
+            if (_helpPaneVm == null)
+            {
+                // First open — build the session and wire the VM
+                var session  = await AppHelpSessionFactory.CreateAsync(this);
+                var actions  = BuildHelpActions();
+                _helpPaneVm  = new HelpPaneViewModel(session, this, actions);
+                HelpPaneControl.DataContext = _helpPaneVm;
+            }
+
+            // Show the pane
+            var width = _viewModel.Settings.HelpPaneWidth ?? DefaultHelpPaneWidth;
+            OnPaneOpening(width);
+            HelpPaneControl.Visibility = Visibility.Visible;
+            _helpPaneVm.IsPaneOpen = true;
+
+            // Navigate to requested topic (or restore last-viewed / home)
+            if (topicId != null)
+            {
+                await _helpPaneVm.NavigateToAsync(topicId);
+            }
+            else
+            {
+                var lastTopic = _viewModel.Settings.HelpPaneLastTopicPerHost?.GetValueOrDefault(HostName);
+                if (lastTopic != null)
+                    await _helpPaneVm.NavigateToAsync(lastTopic);
+                else
+                    await _helpPaneVm.GoHomeAsync();
+            }
+        }
+
+        /// <summary>Builds the <see cref="HelpActionRouter"/> with MainWindow-level commands.</summary>
+        private HelpActionRouter BuildHelpActions()
+        {
+            var router = new HelpActionRouter();
+            router.Register("new-backup",    _viewModel.NewBackupCommand);
+            router.Register("restore",       _viewModel.RestoreCommand);
+            router.Register("open-drive",    _viewModel.OpenVirtualDriveCommand);
+            router.Register("format-media",  _viewModel.FormatMediaCommand);
+            router.Register("delete-sets",   _viewModel.DeleteBackupSetsCommand);
+            return router;
         }
 
         #endregion

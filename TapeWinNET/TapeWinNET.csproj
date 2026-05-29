@@ -20,15 +20,23 @@
   <ItemGroup>
     <None Remove="4nxbxwuu.xfh~" />
   </ItemGroup>
+
+  <!-- Help content embedded into the assembly for EmbeddedResourceHelpContentSource -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\Help\**\*.md" />
+  </ItemGroup>
 	
   <ItemGroup>
+	<ProjectReference Include="..\AiNET\AiNET.csproj" />
 	<ProjectReference Include="..\FclNET\FclNET.csproj" />
+	<ProjectReference Include="..\HelpNET\HelpNET.csproj" />
 	<ProjectReference Include="..\TapeLibNET\TapeLibNET.csproj" />
   </ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="8.0.0" />
+		<PackageReference Include="Markdig.Wpf" Version="0.5.0.1" />
+		<PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.1" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="8.0.1" />
 		<PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.269">
 		  <PrivateAssets>all</PrivateAssets>
 		  <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

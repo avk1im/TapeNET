@@ -128,6 +128,53 @@ public class BoolToOpacityConverter : IValueConverter
 }
 
 /// <summary>
+/// Converts an integer count: 0 → Collapsed, >0 → Visible.
+/// </summary>
+public class CountToVisibilityConverter : IValueConverter
+{
+    public static CountToVisibilityConverter Instance { get; } = new();
+
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        => value is int i && i > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
+/// <summary>
+/// Converts an integer count: 0 → false, >0 → true.
+/// </summary>
+public class CountToBoolConverter : IValueConverter
+{
+    public static CountToBoolConverter Instance { get; } = new();
+
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        => value is int i && i > 0;
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
+/// <summary>
+/// Converts a <see cref="ConversationItemRole"/> enum value to Visibility.
+/// ConverterParameter is the role name to match (e.g. "User" or "Assistant");
+/// matching → Visible, non-matching → Collapsed.
+/// </summary>
+public class ConversationRoleToVisibilityConverter : IValueConverter
+{
+    public static ConversationRoleToVisibilityConverter Instance { get; } = new();
+
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        if (value is null || parameter is null) return Visibility.Collapsed;
+        return value.ToString() == parameter.ToString() ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
+}
+
+/// <summary>
 /// Multi-value converter: returns true if the first two values are equal (reference or Equals).
 /// Used for radio-check menu items bound to a SelectedItem property.
 /// </summary>

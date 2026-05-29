@@ -80,6 +80,22 @@ public class AppSettings
 
     #endregion
 
+    #region Help Pane
+
+    /// <summary>Width of the HelpPane column in MainWindow.</summary>
+    public double? HelpPaneWidth { get; set; }
+
+    /// <summary>Ratio (0–1) of the content subpane height vs. the combined content+chat height.</summary>
+    public double? HelpPaneContentSplitterRatio { get; set; }
+
+    /// <summary>
+    /// Last-open topic id per host window name, keyed by host name (e.g. "MainWindow").
+    /// Enables restoring the last-viewed topic when the pane is reopened.
+    /// </summary>
+    public Dictionary<string, string>? HelpPaneLastTopicPerHost { get; set; }
+
+    #endregion
+
     #region Stream-level API
 
     public void Save(Stream stream)

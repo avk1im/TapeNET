@@ -630,6 +630,11 @@ public partial class MainViewModel : ViewModelBase
     public ICommand ExitCommand { get; }
     public ICommand AboutCommand { get; }
 
+    // Help pane commands — set by MainWindow after construction so the
+    //  ViewModel doesn't need a reference back to the view layer.
+    public ICommand ShowHelpCommand    { get; set; } = new RelayCommand(() => { });
+    public ICommand ConfigureAiCommand { get; set; } = new RelayCommand(() => { });
+
     #endregion
 
     #region Public Methods
