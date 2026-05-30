@@ -206,9 +206,16 @@
             <RowDefinition x:Name="LogPaneRow" Height="150" />  <!-- Row 4: Log pane -->
             <RowDefinition Height="Auto" />  <!-- Row 5: Status bar -->
         </Grid.RowDefinitions>
+        <!-- Help pane spans rows 2-4 (main content + log splitter + log pane) via outer grid columns.
+             Column 0 holds all normal content; columns 1-2 hold the help splitter and help pane. -->
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>   <!-- Help splitter (collapsed when pane is closed) -->
+            <ColumnDefinition x:Name="HelpPaneColumn" Width="0" MinWidth="0"/>  <!-- Help pane -->
+        </Grid.ColumnDefinitions>
         
         <!-- Menu Bar -->
-        <Menu Grid.Row="0">
+        <Menu Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="3">
             <MenuItem x:Name="FileMenu" Header="_File">
                 <MenuItem Header="Open _Drive" ItemsSource="{Binding DriveMenuItems}">
                     <MenuItem.ItemContainerStyle>
@@ -331,7 +338,7 @@
             <MenuItem Header="_Help">
                 <MenuItem Header="_Help Topics" Command="{Binding ShowHelpCommand}" InputGestureText="F1"/>
                 <Separator/>
-                <MenuItem Header="AI _Provider Settings…" Command="{Binding ConfigureAiCommand}"/>
+                <MenuItem Header="{Binding AiProviderMenuHeader}" Command="{Binding ConfigureAiCommand}"/>
                 <Separator/>
                 <MenuItem Header="_About" Command="{Binding AboutCommand}"/>
             </MenuItem>
@@ -339,7 +346,7 @@
 
         <!-- Toolbar (Row 1) - mirrors the major menu commands -->
         
-        <ToolBarTray Grid.Row="1">
+        <ToolBarTray Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3">
 
             <!-- File group: open drive(s), virtual drive, remote host.
                  Local and remote sub-panels are swapped via IsRemoteConnected. -->
@@ -522,14 +529,11 @@
         </ToolBarTray>
 
         <!-- Main Content Area -->
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="2" Grid.Column="0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="TreePaneColumn" Width="280" MinWidth="150" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" MinWidth="300" />
-                <!-- Help pane outer splitter and column (collapsed when not open) -->
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition x:Name="HelpPaneColumn" Width="0" MinWidth="0" />
             </Grid.ColumnDefinitions>
             
             <!-- Tree View Pane -->
@@ -550,26 +554,6 @@
                           VerticalAlignment="Stretch"
                           Background="LightGray" />
             
-            <!-- Help pane outer splitter (visible when pane is open) -->
-            <controls:SnappingGridSplitter x:Name="HelpPaneSplitter"
-                                           Grid.Column="3" Width="4"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Stretch"
-                                           Background="LightGray"
-                                           TargetIndex="4"
-                                           Visibility="Collapsed">
-                <controls:SnappingGridSplitter.SnapZones>
-                    <controls:SnapZone Value="0"    LowerRange="9999" UpperRange="100"/>
-                    <controls:SnapZone Value="320"  LowerRange="100"  UpperRange="80"/>
-                    <controls:SnapZone IsAutoSize="True" LowerRange="80" UpperRange="9999"/>
-                </controls:SnappingGridSplitter.SnapZones>
-            </controls:SnappingGridSplitter>
-
-            <!-- Help Pane (right column, visible when open) -->
-            <controls:HelpPane x:Name="HelpPaneControl"
-                               Grid.Column="4"
-                               Visibility="Collapsed"/>
-
             <!-- Content Pane (Properties + Table) -->
             <Grid Grid.Column="2" Margin="4">
                 <Grid.RowDefinitions>
@@ -1013,13 +997,13 @@
         </Grid>
         
         <!-- Splitter for Log Pane -->
-        <GridSplitter Grid.Row="3" Height="4"
+        <GridSplitter Grid.Row="3" Grid.Column="0" Height="4"
                       HorizontalAlignment="Stretch" 
                       VerticalAlignment="Center"
                       Background="LightGray" />
         
         <!-- Log/Message Pane -->
-        <GroupBox Grid.Row="4" Header="{Binding LogPaneHeader}" Margin="4">
+        <GroupBox Grid.Row="4" Grid.Column="0" Header="{Binding LogPaneHeader}" Margin="4">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -1203,7 +1187,7 @@
         </GroupBox>
         
         <!-- Status Bar -->
-        <StatusBar Grid.Row="5">
+        <StatusBar Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="3">
             <StatusBarItem>
                 <TextBlock Text="{Binding StatusMessage}" />
             </StatusBarItem>
@@ -1232,7 +1216,7 @@
         </StatusBar>
         
         <!-- General Busy Overlay (only for non-backup operations) -->
-        <Grid Grid.RowSpan="6" 
+        <Grid Grid.RowSpan="6" Grid.ColumnSpan="3"
               Background="#40000000"
               Visibility="{Binding IsGeneralBusy, Converter={StaticResource BoolToVis}}">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -1245,5 +1229,19 @@
                            Margin="0,10,0,0" />
             </StackPanel>
         </Grid>
+
+        <!-- Help pane splitter and pane — placed in the outer grid so they span rows 2–4
+             (main content + log splitter + log pane), giving the help pane full window height. -->
+        <GridSplitter x:Name="HelpPaneSplitter"
+                      Grid.Row="2" Grid.RowSpan="3" Grid.Column="1"
+                      Width="4"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Stretch"
+                      Background="LightGray"
+                      Visibility="Collapsed"/>
+
+        <controls:HelpPane x:Name="HelpPaneControl"
+                           Grid.Row="2" Grid.RowSpan="3" Grid.Column="2"
+                           Visibility="Collapsed"/>
     </Grid>
 </Window>

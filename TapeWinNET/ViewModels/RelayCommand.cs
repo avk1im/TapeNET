@@ -57,7 +57,15 @@ public class AsyncRelayCommand : ICommand
         remove => CommandManager.RequerySuggested -= value;
     }
 
-    public bool CanExecute(object? parameter) => !_isExecuting && (_canExecute?.Invoke(parameter) ?? true);
+    public bool CanExecute(object? parameter)
+    {
+        // When a predicate is supplied it fully controls availability — this allows
+        // commands like Ask/Abort to stay enabled while the async operation is running.
+        // Without a predicate, fall back to the !_isExecuting guard to prevent re-entry.
+        if (_canExecute is not null)
+            return _canExecute(parameter);
+        return !_isExecuting;
+    }
 
     public async void Execute(object? parameter)
     {

@@ -17,11 +17,11 @@ namespace AiNET.Providers;
 /// </remarks>
 public sealed class GitHubModelsProvider : IAiProvider
 {
-    // The OpenAI SDK appends "/chat/completions" to the base URI; we include
-    // "/inference" so the final path is correct:
-    //   https://models.inference.ai.azure.com/inference/chat/completions
+    // The OpenAI SDK constructs request paths relative to the base URI,
+    // appending e.g. "/chat/completions" itself.  The correct GitHub Models
+    // base is simply the root of models.inference.ai.azure.com.
     private static readonly Uri DefaultEndpoint =
-        new("https://models.inference.ai.azure.com/inference");
+        new("https://models.inference.ai.azure.com");
 
     private static readonly AiProviderDescriptor _descriptor = new(
         Kind:            AiProviderKind.GitHubModels,

@@ -42,7 +42,7 @@ public static class AiSessionFactory
         // ── 1. Report status ────────────────────────────────────────────────
         await interaction.ShowStatusAsync("Discovering AI providers…", ct);
 
-        // ── 2. Run discovery ────────────────────────────────────────────────
+        // ── 2. Run discovery (parallel, with per-provider progress) ─────────
         var registry = new LanHostsRegistry();
         var lanHosts = registry.GetAll();
 
@@ -52,7 +52,10 @@ public static class AiSessionFactory
             CheckEnvironmentVariables: true);
 
         var discovery = new AiProviderDiscovery(catalog, logger);
-        var probes = await discovery.DiscoverAsync(options, ct);
+        var probes = await discovery.DiscoverAsync(
+            options, ct,
+            onProviderDiscovering: (name, token) =>
+                interaction.ShowProviderDiscoveryAsync(name, token));
 
         logger.LogDebug("Discovery completed: {Total} probe(s), {Healthy} healthy.",
             probes.Count, probes.Count(p => p.IsHealthy));
@@ -90,19 +93,7 @@ public static class AiSessionFactory
             }
         }
 
-        // ── 4. Prompt for API key if required and not yet present ───────────
-        if (config.Descriptor.RequiresApiKey && string.IsNullOrEmpty(config.ApiKey))
-        {
-            var key = await interaction.PromptApiKeyAsync(config.Descriptor, ct);
-            if (key is null)
-            {
-                logger.LogInformation("User cancelled API key prompt — AI unavailable.");
-                return null;
-            }
-            config = config with { ApiKey = key };
-        }
-
-        // ── 5. Build the session ────────────────────────────────────────────
+        // ── 4. Resolve the provider adapter ────────────────────────────────
         var provider = catalog.Find(config.Descriptor.Kind);
         if (provider is null)
         {
@@ -110,6 +101,48 @@ public static class AiSessionFactory
             return null;
         }
 
+        // ── 5. Prompt for credentials and verify — retry until valid or cancelled ──
+        //  We loop here so that a failed API-key / bad-endpoint can be corrected
+        //  without restarting the whole selection flow.
+        while (true)
+        {
+            // Prompt for API key if required and not yet present
+            if (config.Descriptor.RequiresApiKey && string.IsNullOrEmpty(config.ApiKey))
+            {
+                var key = await interaction.PromptApiKeyAsync(config.Descriptor, ct);
+                if (key is null)
+                {
+                    logger.LogInformation("User cancelled API key prompt — AI unavailable.");
+                    return null;
+                }
+                config = config with { ApiKey = key };
+            }
+
+            // Verify the credentials with a lightweight probe
+            await interaction.ShowStatusAsync($"Verifying {config.Descriptor.DisplayName}…", ct);
+            var verify = await provider.ProbeAsync(config.Endpoint, config.ApiKey, ct);
+
+            if (verify.IsHealthy)
+                break;   // credentials accepted — fall through to session creation
+
+            // Probe failed — report and decide whether to retry
+            var errDetail = verify.ErrorMessage ?? "connection failed";
+            logger.LogWarning("Credential verification failed for '{Provider}': {Error}",
+                config.Descriptor.DisplayName, errDetail);
+            await interaction.ShowWarningAsync(
+                $"Could not connect to {config.Descriptor.DisplayName}: {errDetail}", ct);
+
+            // If the provider requires an API key, clear it and re-prompt.
+            // Otherwise (wrong endpoint / server down) there is nothing to retry — bail out.
+            if (!config.Descriptor.RequiresApiKey)
+            {
+                logger.LogInformation("No credentials to retry — AI unavailable.");
+                return null;
+            }
+            config = config with { ApiKey = null };   // force re-prompt on next iteration
+        }
+
+        // ── 6. Build the session ────────────────────────────────────────────
         var chatClient = provider.CreateChatClient(config);
         var embeddingGenerator = provider.CreateEmbeddingGenerator(config);
 

@@ -1,5 +1,7 @@
 using AiNET;
 
+using Microsoft.Extensions.Logging;
+
 namespace TapeWinNET.Services;
 
 /// <summary>
@@ -14,6 +16,10 @@ public sealed class AppAiSessionHost : IAsyncDisposable
     private bool _disposed;
     private bool _userDeclinedSetup;   // set when user chose "no AI for now"
 
+    // UI-context objects injected by MainWindow after construction
+    // (set before any EnsureAsync call that prompts the user).
+    private AiInteractionWpf? _interaction;
+
     // ── Public API ─────────────────────────────────────────────────────────
 
     /// <summary>
@@ -21,8 +27,21 @@ public sealed class AppAiSessionHost : IAsyncDisposable
     /// </summary>
     public IAiSession? Current => _current;
 
+    /// <summary>
+    /// The provider configuration of the current session, or <c>null</c> if none is active.
+    /// Consumers use this to build human-readable label strings.
+    /// </summary>
+    public AiProviderConfig? CurrentConfig => _current?.Config;
+
     /// <summary>Raised when the session is replaced (provider swap or first build).</summary>
     public event EventHandler? SessionChanged;
+
+    /// <summary>
+    /// Provides the <see cref="AiInteractionWpf"/> instance used for UI prompts and log feedback.
+    /// Must be called once from <c>MainWindow</c> before any interactive <c>EnsureAsync</c>.
+    /// </summary>
+    public void SetInteraction(AiInteractionWpf interaction)
+        => _interaction = interaction;
 
     /// <summary>
     /// Returns the current session, building it on first call.
@@ -32,6 +51,10 @@ public sealed class AppAiSessionHost : IAsyncDisposable
     /// </summary>
     public async Task<IAiSession?> EnsureAsync(
         bool promptUser = true, CancellationToken ct = default)
+        => await EnsureAsync(promptUser, raiseChanged: true, ct);
+
+    private async Task<IAiSession?> EnsureAsync(
+        bool promptUser, bool raiseChanged, CancellationToken ct)
     {
         if (_disposed) return null;
         if (_current != null) return _current;
@@ -42,18 +65,22 @@ public sealed class AppAiSessionHost : IAsyncDisposable
         {
             if (_current != null) return _current;
 
-            var interaction = new AiInteractionWpf();
+            // Use the injected interaction context if available; fall back to a plain
+            //  instance (without VM logging) when called before MainWindow is ready.
+            var interaction = _interaction ?? new AiInteractionWpf();
             var catalog     = AiProviderCatalog.CreateDefault();
             var prefs       = new AiProviderPreferences
             {
                 AutoUseIfSingle = true,
             };
 
-            _current = await AiSessionFactory.BuildAsync(catalog, interaction, prefs, ct);
+            var logger = App.LoggerFactory.CreateLogger<AppAiSessionHost>();
+
+            _current = await AiSessionFactory.BuildAsync(catalog, interaction, prefs, ct, logger);
 
             if (_current == null)
                 _userDeclinedSetup = true;
-            else
+            else if (raiseChanged)
                 SessionChanged?.Invoke(this, EventArgs.Empty);
 
             return _current;
@@ -86,8 +113,13 @@ public sealed class AppAiSessionHost : IAsyncDisposable
             _lock.Release();
         }
 
-        // Now re-build with full UI prompt
-        await EnsureAsync(promptUser: true, ct);
+        // Re-build with full UI prompt — suppress the EnsureAsync-internal raise
+        //  so we fire SessionChanged exactly once below, regardless of outcome.
+        await EnsureAsync(promptUser: true, raiseChanged: false, ct);
+
+        // Always notify consumers — even if the user chose "None" — so they
+        //  can update their state (e.g. rebuild the help session without AI).
+        SessionChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>

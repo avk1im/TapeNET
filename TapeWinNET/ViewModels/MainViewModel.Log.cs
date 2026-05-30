@@ -231,10 +231,12 @@ public partial class MainViewModel
     /// </summary>
     public void AddLog(LogEntry entry) => _logBuffer.Enqueue(entry);
 
-    public void LogInfo(string msg)  => AddLog(new LogEntry(WarningLevel.Info, msg, false, DateTime.Now));
+    public void LogInfo(string msg)  => AddLog(new LogEntry(WarningLevel.Info,      msg, false, DateTime.Now));
     public void LogOk(string msg)    => AddLog(new LogEntry(WarningLevel.Completed, msg, false, DateTime.Now));
-    public void LogWarn(string msg)  => AddLog(new LogEntry(WarningLevel.Warning, msg, false, DateTime.Now));
-    public void LogErr(string msg)   => AddLog(new LogEntry(WarningLevel.Error, msg, false, DateTime.Now));
+    public void LogWarn(string msg)  => AddLog(new LogEntry(WarningLevel.Warning,   msg, false, DateTime.Now));
+    public void LogErr(string msg)   => AddLog(new LogEntry(WarningLevel.Error,     msg, false, DateTime.Now));
+    /// <summary>Logs a subordinate/detail entry (indented, no icon, filtered by "Show details").</summary>
+    public void LogSub(string msg)   => AddLog(new LogEntry(WarningLevel.None,      msg, true,  DateTime.Now));
 
     // ── Event handlers ──────────────────────────────────────────────────────
 

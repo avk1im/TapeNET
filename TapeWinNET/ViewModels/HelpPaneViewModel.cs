@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Threading;
 
 using HelpNET.Assistants;
 using HelpNET.Content;
@@ -52,13 +53,27 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     private readonly HelpActionRouter _actions;
     private readonly MarkdownRenderer _renderer;
 
+    /// <summary>Exposes the renderer so the host control can delegate hyperlink clicks.</summary>
+    internal MarkdownRenderer Renderer => _renderer;
+
     private FlowDocument? _currentDocument;
     private string?       _currentTopicTitle;
     private string        _searchText   = string.Empty;
     private string        _pendingQuery = string.Empty;
     private bool          _isBusy;
     private bool          _isPaneOpen;
+    private bool          _isAsking;
+    private string        _thinkingAnimationText = string.Empty;
     private HelpAssistantMode _assistantMode;
+
+    // Pulsing-star animation shown below the chat input while the AI is thinking
+    private readonly DispatcherTimer    _thinkTimer;
+    private int                         _thinkFrame;
+    private CancellationTokenSource?    _askCts;
+    private static readonly string[] ThinkFrames = ["★", "✦", "✧", "✶"];
+    // Stop icon (solid square) shown on the Ask button while thinking
+    private const string StopLabel  = "\u25A0";
+    private const string AskLabel   = "Ask";
 
     // ── Construction ─────────────────────────────────────────────────────────
 
@@ -75,6 +90,17 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
         ConversationItems   = [];
         SearchSuggestions   = [];
 
+        // Pulsing-star timer — ticks only while IsAsking; updates the animation strip below the input
+        _thinkTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(350),
+        };
+        _thinkTimer.Tick += (_, _) =>
+        {
+            _thinkFrame = (_thinkFrame + 1) % ThinkFrames.Length;
+            ThinkingAnimationText = ThinkFrames[_thinkFrame];
+        };
+
         // Initialise assistant mode badge
         _assistantMode = session.AssistantMode;
 
@@ -87,7 +113,7 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
         BackCommand    = new RelayCommand(async () => await ExecuteBack(),    () => _session.BackHistory.Count > 0);
         ForwardCommand = new RelayCommand(async () => await ExecuteForward(), () => _session.ForwardHistory.Count > 0);
         HomeCommand    = new AsyncRelayCommand(async _ => await ExecuteHome());
-        AskCommand     = new AsyncRelayCommand(async _ => await ExecuteAsk(), _ => !string.IsNullOrWhiteSpace(_pendingQuery) && !_isBusy);
+        AskCommand     = new AsyncRelayCommand(async _ => await ExecuteAsk(), _ => (!string.IsNullOrWhiteSpace(_pendingQuery) && !_isBusy) || _isAsking);
         ClearChatCommand   = new RelayCommand(ExecuteClearChat);
         CloseCommand       = new RelayCommand(ExecuteClose);
         NavigateCommand    = new AsyncRelayCommand(async p => await ExecuteNavigate(p as string));
@@ -103,6 +129,19 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     /// <see cref="Controls.HelpPaneWindow"/>) close itself.
     /// </summary>
     public event EventHandler? PaneCloseRequested;
+
+    /// <summary>
+    /// Raised when a session operation fails unexpectedly.
+    /// The <see cref="string"/> argument is a human-readable error description.
+    /// The host (MainWindow) subscribes to forward the message to the log pane.
+    /// </summary>
+    public event EventHandler<string>? SessionError;
+
+    /// <summary>
+    /// Raised with transient informational messages (e.g. "AI is preparing an answer…").
+    /// The host (MainWindow) subscribes to forward the message to the log pane as a sub entry.
+    /// </summary>
+    public event EventHandler<string>? SessionInfo;
 
     // ── Bindable properties ───────────────────────────────────────────────────
 
@@ -173,6 +212,44 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     /// <summary>Navigation history availability — drives Back/Forward button state.</summary>
     public bool CanGoBack    => _session.BackHistory.Count > 0;
     public bool CanGoForward => _session.ForwardHistory.Count > 0;
+
+    /// <summary>
+    /// <c>true</c> while the AI assistant is preparing an answer.
+    /// Drives the thinking animation strip and the Ask/Abort button state.
+    /// </summary>
+    public bool IsAsking
+    {
+        get => _isAsking;
+        private set
+        {
+            if (SetProperty(ref _isAsking, value))
+            {
+                // Refresh the Ask button content and tooltip when thinking state changes
+                OnPropertyChanged(nameof(AskButtonContent));
+                OnPropertyChanged(nameof(AskButtonTooltip));
+                // Re-evaluate canExecute so the button becomes enabled as an abort control
+                //  even when the query text box is empty.
+                AsyncRelayCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Content of the Ask button: <c>"Ask"</c> normally, stop icon (■) while thinking.
+    /// </summary>
+    public string AskButtonContent => _isAsking ? StopLabel : AskLabel;
+
+    /// <summary>Tooltip for the Ask button, context-sensitive to thinking state.</summary>
+    public string AskButtonTooltip => _isAsking ? "Abort thinking" : "Ask";
+
+    /// <summary>
+    /// Pulsing multi-star text displayed below the chat input while the AI is thinking.
+    /// </summary>
+    public string ThinkingAnimationText
+    {
+        get => _thinkingAnimationText;
+        private set => SetProperty(ref _thinkingAnimationText, value);
+    }
 
     // ── Collections ───────────────────────────────────────────────────────────
 
@@ -260,35 +337,42 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
 
     private async Task ExecuteBack()
     {
-        IsBusy = true;
-        try   { await _session.BackAsync(CancellationToken.None); }
-        finally { IsBusy = false; }
+        await TrySessionAsync(
+            () => _session.BackAsync(CancellationToken.None),
+            "Help: navigation back failed.");
     }
 
     private async Task ExecuteForward()
     {
-        IsBusy = true;
-        try   { await _session.ForwardAsync(CancellationToken.None); }
-        finally { IsBusy = false; }
+        await TrySessionAsync(
+            () => _session.ForwardAsync(CancellationToken.None),
+            "Help: navigation forward failed.");
     }
 
     private async Task ExecuteHome(CancellationToken ct = default)
     {
-        IsBusy = true;
-        try   { await _session.HomeAsync(ct); }
-        finally { IsBusy = false; }
+        await TrySessionAsync(
+            () => _session.HomeAsync(ct),
+            "Help: could not navigate to home topic. Check that help content is embedded correctly.");
     }
 
     private async Task ExecuteNavigate(string? topicId, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(topicId)) return;
-        IsBusy = true;
-        try   { await _session.NavigateAsync(new HelpNavigationRequest(topicId), ct); }
-        finally { IsBusy = false; }
+        await TrySessionAsync(
+            () => _session.NavigateAsync(new HelpNavigationRequest(topicId), ct),
+            $"Help: could not navigate to topic '{topicId}'.");
     }
 
     private async Task ExecuteAsk()
     {
+        // If already thinking, the button acts as abort
+        if (_isAsking)
+        {
+            _askCts?.Cancel();
+            return;
+        }
+
         var query = _pendingQuery.Trim();
         if (string.IsNullOrEmpty(query)) return;
 
@@ -300,9 +384,36 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
         });
         PendingQuery = string.Empty;
 
-        IsBusy = true;
-        try   { await _session.AskAsync(query, CancellationToken.None); }
-        finally { IsBusy = false; }
+        // Signal that the AI is thinking — starts the button animation
+        IsAsking = true;
+        _thinkFrame = 0;
+        ThinkingAnimationText = ThinkFrames[0];
+        _thinkTimer.Start();
+        _askCts = new CancellationTokenSource();
+
+        // Notify the log pane (sub-level) which provider is preparing the answer
+        var providerLabel = _session.AssistantMode != HelpAssistantMode.Lexical
+            ? (App.AiSessionHost.CurrentConfig is { } cfg
+                ? $"{cfg.Descriptor.DisplayName} / {cfg.ChatModelId}"
+                : "AI assistant")
+            : null;
+        if (providerLabel is not null)
+            SessionInfo?.Invoke(this, $"{providerLabel} is preparing an answer…");
+
+        try
+        {
+            await TrySessionAsync(
+                () => _session.AskAsync(query, _askCts.Token),
+                "Help: the AI assistant did not respond. Check your AI provider settings.");
+        }
+        finally
+        {
+            _thinkTimer.Stop();
+            _askCts?.Dispose();
+            _askCts = null;
+            IsAsking = false;
+            ThinkingAnimationText = string.Empty;
+        }
     }
 
     private void ExecuteClearChat()
@@ -339,6 +450,7 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _thinkTimer.Stop();
         _session.CurrentTopicChanged  -= OnCurrentTopicChanged;
         _session.AnswerReceived       -= OnAnswerReceived;
         _session.AssistantModeChanged -= OnAssistantModeChanged;
@@ -346,6 +458,51 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Executes a session operation, setting <see cref="IsBusy"/> around it and catching
+    /// any exception. On failure, raises <see cref="SessionError"/> with a human-readable
+    /// message and renders a brief error notice into <see cref="CurrentDocument"/> so the
+    /// pane doesn't go blank.
+    /// </summary>
+    private async Task TrySessionAsync(Func<Task> operation, string friendlyMessage)
+    {
+        IsBusy = true;
+        try
+        {
+            await operation();
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation is intentional — no error to surface.
+        }
+        catch (Exception ex)
+        {
+            var detail = $"{friendlyMessage} ({ex.GetType().Name}: {ex.Message})";
+            SessionError?.Invoke(this, detail);
+            Dispatch(() => CurrentDocument = RenderErrorDocument(friendlyMessage));
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// Builds a minimal <see cref="FlowDocument"/> error notice for the content subpane.
+    /// </summary>
+    private static FlowDocument RenderErrorDocument(string message)
+    {
+        var doc = new FlowDocument();
+        var para = new Paragraph(new Run($"⚠ {message}"))
+        {
+            Foreground = System.Windows.Media.Brushes.OrangeRed,
+            FontStyle  = System.Windows.FontStyles.Italic,
+            Margin     = new Thickness(8),
+        };
+        doc.Blocks.Add(para);
+        return doc;
+    }
 
     private static void Dispatch(Action action)
     {

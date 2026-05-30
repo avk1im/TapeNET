@@ -10,7 +10,7 @@ namespace TapeWinNET.Help;
 /// <summary>
 /// <see cref="IHelpContentSource"/> that reads help documents from embedded
 /// resources in the TapeWinNET assembly under the logical path prefix
-/// <c>TapeWinNET.Resources.Help.</c>.
+/// <c>*.Resources.Help.</c> (auto-detected from the manifest at construction time).
 /// </summary>
 /// <remarks>
 /// Topics must be declared as <c>&lt;EmbeddedResource&gt;</c> in the .csproj.
@@ -20,16 +20,37 @@ namespace TapeWinNET.Help;
 /// </remarks>
 public sealed class EmbeddedResourceHelpContentSource : IHelpContentSource
 {
-    private const string ResourcePrefix  = "TapeWin.Resources.Help.";
-    private const string BundleBin       = ResourcePrefix + "_index.embeddings.bin";
-    private const string BundleMeta      = ResourcePrefix + "_index.embeddings.meta.json";
-    private const string BundleIndex     = ResourcePrefix + "_index.embeddings.index.json";
+    private const string HelpFolder = ".Resources.Help.";
 
     private readonly Assembly _assembly;
+    private readonly string   _resourcePrefix;
+    private readonly string   _bundleBin;
+    private readonly string   _bundleMeta;
+    private readonly string   _bundleIndex;
 
     public EmbeddedResourceHelpContentSource()
     {
         _assembly = Assembly.GetExecutingAssembly();
+
+        // Auto-detect the prefix by finding the first manifest resource that
+        //  contains ".Resources.Help.", so renaming the assembly or moving the
+        //  class to another namespace never breaks discovery.
+        var marker = _assembly.GetManifestResourceNames()
+            .Select(n => n.IndexOf(HelpFolder, StringComparison.Ordinal))
+            .FirstOrDefault(i => i >= 0, -1);
+
+        _resourcePrefix = marker >= 0
+            ? _assembly.GetManifestResourceNames()
+                .First(n => n.IndexOf(HelpFolder, StringComparison.Ordinal) == marker)
+                [..(marker + HelpFolder.Length)]
+            : throw new InvalidOperationException(
+                $"No embedded resources matching '*{HelpFolder}' were found in "
+                + $"{_assembly.GetName().Name}. "
+                + "Ensure help Markdown files are declared as EmbeddedResource.");
+
+        _bundleBin   = _resourcePrefix + "_index.embeddings.bin";
+        _bundleMeta  = _resourcePrefix + "_index.embeddings.meta.json";
+        _bundleIndex = _resourcePrefix + "_index.embeddings.index.json";
     }
 
     /// <inheritdoc/>
@@ -41,7 +62,7 @@ public sealed class EmbeddedResourceHelpContentSource : IHelpContentSource
     {
         foreach (var name in _assembly.GetManifestResourceNames())
         {
-            if (!name.StartsWith(ResourcePrefix, StringComparison.Ordinal))
+            if (!name.StartsWith(_resourcePrefix, StringComparison.Ordinal))
                 continue;
             if (!name.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
                 continue;
@@ -51,20 +72,9 @@ public sealed class EmbeddedResourceHelpContentSource : IHelpContentSource
 
             ct.ThrowIfCancellationRequested();
 
-            // Convert resource name back to a logical path:
-            //  TapeWin.Resources.Help.concepts.backup_sets.md  →  concepts/backup-sets.md
-            var logicalPath = name[ResourcePrefix.Length..]
-                .Replace('.', '/')
-                // Restore the last segment's extension (the final '/' before .md should be '.')
-                .Replace("/md", ".md");
-
-            // Fix: the extension dot got converted — last occurrence of '/md' should be '.md'
-            //  The simpler approach: just strip the prefix and replace underscores.
-            //  Resource names use dots as path separators, so:
-            //   TapeWin.Resources.Help.concepts.backup-sets.md is impossible (hyphens aren't valid
-            //   in identifiers) — so file names use underscores in the resource but hyphens on disk.
-            //  We keep whatever name the resource has; the id comes from front-matter.
-            logicalPath = ToLogicalPath(name[ResourcePrefix.Length..]);
+            // Convert resource name back to a logical path, e.g.:
+            //  TapeWinNET.Resources.Help.concepts.backup_sets.md  →  concepts/backup-sets.md
+            var logicalPath = ToLogicalPath(name[_resourcePrefix.Length..]);
 
             await using var stream = _assembly.GetManifestResourceStream(name)!;
             using var reader = new StreamReader(stream);
@@ -78,9 +88,9 @@ public sealed class EmbeddedResourceHelpContentSource : IHelpContentSource
     public async Task<HelpEmbeddingBundle?> TryLoadEmbeddingBundleAsync(CancellationToken ct)
     {
         // All three files must be present
-        var binStream   = _assembly.GetManifestResourceStream(BundleBin);
-        var metaStream  = _assembly.GetManifestResourceStream(BundleMeta);
-        var indexStream = _assembly.GetManifestResourceStream(BundleIndex);
+        var binStream   = _assembly.GetManifestResourceStream(_bundleBin);
+        var metaStream  = _assembly.GetManifestResourceStream(_bundleMeta);
+        var indexStream = _assembly.GetManifestResourceStream(_bundleIndex);
 
         if (binStream is null || metaStream is null || indexStream is null)
             return null;

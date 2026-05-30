@@ -102,7 +102,7 @@ public static class HelpSessionFactory
         IAiSession?           aiSession,
         OnnxEmbeddingOptions? onnxOptions,
         HelpSessionOptions    options,
-        CancellationToken     ct)
+        CancellationToken     _)
     {
         bool hasChat    = aiSession?.Capabilities.HasFlag(AiCapabilities.Chat)       == true;
         var  chatClient = aiSession?.ChatClient;

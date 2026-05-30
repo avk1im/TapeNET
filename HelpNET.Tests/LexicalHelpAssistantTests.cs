@@ -27,14 +27,25 @@ public class LexicalHelpAssistantTests
         => new(query, null, null, []);
 
     // ── Mode ──────────────────────────────────────────────────────────────────
-
+    /*
+        [Fact]
+        public void Mode_IsLexical()
+        {
+            var asst = new LexicalHelpAssistant(
+                BM25HelpIndex.Build([]), new IntentMatcher([]),
+                HelpContentStore.LoadAsync(
+                    new InMemoryHelpContentSource("t", Array.Empty<HelpRawDocument>())).GetAwaiter().GetResult(),
+                5);
+            Assert.Equal(HelpAssistantMode.Lexical, asst.Mode);
+        }
+    */
     [Fact]
-    public void Mode_IsLexical()
+    public async Task Mode_IsLexical()
     {
         var asst = new LexicalHelpAssistant(
             BM25HelpIndex.Build([]), new IntentMatcher([]),
-            HelpContentStore.LoadAsync(
-                new InMemoryHelpContentSource("t", Array.Empty<HelpRawDocument>())).GetAwaiter().GetResult(),
+            await HelpContentStore.LoadAsync(
+                new InMemoryHelpContentSource("t", Array.Empty<HelpRawDocument>())),
             5);
         Assert.Equal(HelpAssistantMode.Lexical, asst.Mode);
     }

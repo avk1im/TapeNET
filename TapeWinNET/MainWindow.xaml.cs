@@ -6,6 +6,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using AiNET;
 using Microsoft.Win32;
 using TapeWinNET.Help;
 using TapeWinNET.Services;
@@ -128,6 +129,15 @@ namespace TapeWinNET
             _viewModel.ConfigureAiCommand = new AsyncRelayCommand(async _ =>
                 await AppAiSessionHost.ReconfigureAndNotifyAsync());
 
+            // Inject UI context into the AI interaction layer and subscribe to session changes
+            //  so the menu header and log pane are updated whenever the provider changes.
+            var aiInteraction = new AiInteractionWpf();
+            aiInteraction.SetContext(System.Windows.Threading.Dispatcher.CurrentDispatcher, _viewModel);
+            App.AiSessionHost.SetInteraction(aiInteraction);
+            App.AiSessionHost.SessionChanged += OnAiSessionChanged;
+            // Reflect any session that was already built before MainWindow was shown
+            UpdateAiProviderMenuHeader();
+
             // Accept file/folder drops
             //  with the dropped items pre-populated (only when New Backup is available).
             //  The canDrop predicate toggles DragAcceptFiles dynamically so the shell
@@ -165,8 +175,91 @@ namespace TapeWinNET
 
         private void MainWindow_Closing(object? sender, CancelEventArgs e)
         {
+            App.AiSessionHost.SessionChanged -= OnAiSessionChanged;
             SaveSettings();
             _viewModel.Cleanup();
+        }
+
+        // ── AI session helpers ──────────────────────────────────────────────────
+
+        private void OnAiSessionChanged(object? sender, EventArgs e)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                UpdateAiProviderMenuHeader();
+                var cfg = App.AiSessionHost.CurrentConfig;
+                if (cfg is not null)
+                {
+                    string label = BuildProviderLabel(cfg);
+                    _viewModel.LogOk($"AI provider configured: {label}");
+                }
+                else
+                {
+                    _viewModel.LogWarn("AI provider removed — Help will use local-search mode.");
+                }
+
+                // If the help pane was already open, rebuild its session so it picks
+                //  up the new (or removed) AI provider without requiring a restart.
+                if (_helpPaneVm is not null)
+                    _ = RebuildHelpSessionAsync();
+            });
+        }
+
+        /// <summary>
+        /// Disposes the current help-pane VM and session, then creates a new one
+        /// using the updated AI session. Restores the previously viewed topic.
+        /// Called after an AI provider change while the pane is open.
+        /// </summary>
+        private async Task RebuildHelpSessionAsync()
+        {
+            var previousTopicId = _helpPaneVm?.CurrentTopicId;
+            var wasOpen         = _helpPaneVm?.IsPaneOpen == true;
+
+            // Tear down the old VM
+            if (_helpPaneVm is not null)
+            {
+                _helpPaneVm.SessionError -= OnHelpSessionError;
+                _helpPaneVm.SessionInfo  -= OnHelpSessionInfo;
+                await _helpPaneVm.DisposeAsync();
+                _helpPaneVm = null;
+                HelpPaneControl.DataContext = null;
+            }
+
+            if (!wasOpen) return;   // pane was not visible — rebuild lazily on next open
+
+                // Rebuild with the new AI session
+                var session = await AppHelpSessionFactory.CreateAsync(this);
+                var actions = BuildHelpActions();
+                _helpPaneVm = new HelpPaneViewModel(session, this, actions);
+                _helpPaneVm.SessionError += OnHelpSessionError;
+                _helpPaneVm.SessionInfo  += OnHelpSessionInfo;
+                HelpPaneControl.DataContext = _helpPaneVm;
+            _helpPaneVm.IsPaneOpen = true;
+
+            // Restore the previously viewed topic (or home)
+            if (previousTopicId is not null)
+                await _helpPaneVm.NavigateToAsync(previousTopicId);
+            else
+                await _helpPaneVm.GoHomeAsync();
+        }
+
+        private void OnHelpSessionError(object? sender, string msg) => _viewModel.LogErr(msg);
+        private void OnHelpSessionInfo(object? sender, string msg)  => _viewModel.LogSub(msg);
+
+        private void UpdateAiProviderMenuHeader()
+        {
+            var cfg = App.AiSessionHost.CurrentConfig;
+            _viewModel.AiProviderMenuHeader = cfg is not null
+                ? $"AI _Provider Settings (current: {BuildProviderLabel(cfg)})\u2026"
+                : "AI _Provider Settings\u2026";
+        }
+
+        private static string BuildProviderLabel(AiProviderConfig cfg)
+        {
+            // e.g. "Ollama / phi3.mini" or just "OpenAI" when no model is selected
+            return cfg.ChatModelId is { Length: > 0 } model
+                ? $"{cfg.Descriptor.DisplayName} / {model}"
+                : cfg.Descriptor.DisplayName;
         }
 
         private async void TreeView_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
@@ -622,6 +715,9 @@ namespace TapeWinNET
                 var session  = await AppHelpSessionFactory.CreateAsync(this);
                 var actions  = BuildHelpActions();
                 _helpPaneVm  = new HelpPaneViewModel(session, this, actions);
+                // Forward session errors and info messages to the main log pane
+                _helpPaneVm.SessionError += OnHelpSessionError;
+                _helpPaneVm.SessionInfo  += OnHelpSessionInfo;
                 HelpPaneControl.DataContext = _helpPaneVm;
             }
 

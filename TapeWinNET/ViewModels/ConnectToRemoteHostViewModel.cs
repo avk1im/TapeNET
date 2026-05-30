@@ -1,6 +1,5 @@
 using System.Windows.Input;
 
-using Microsoft.Extensions.Logging.Abstractions;
 
 using TapeLibNET.Remote;
 using TapeWinNET.Converters;
@@ -195,7 +194,7 @@ public class ConnectToRemoteHostViewModel : ViewModelBase
             // Call GetServerInfo off the UI thread to avoid blocking the dispatcher
             var info = await Task.Run(() =>
             {
-                using var probe = new RemoteTapeDriveBackend(settings, NullLoggerFactory.Instance);
+                using var probe = new RemoteTapeDriveBackend(settings, App.LoggerFactory);
                 return probe.GetServerInfo();
             }).ConfigureAwait(true); // ConfigureAwait(true) so we land back on the UI thread
 

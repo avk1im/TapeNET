@@ -1,7 +1,7 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Documents;
-using System.Windows.Navigation;
 
 using Markdig;
 
@@ -15,47 +15,49 @@ namespace TapeWinNET.Help;
 /// and intercepts <c>help://</c> navigation URIs, routing them to the appropriate
 /// <see cref="IHelpSession"/> method.
 /// </summary>
-public sealed class MarkdownRenderer
+public sealed partial class MarkdownRenderer(IHelpSession session, HelpActionRouter actions)
 {
     // ── Markdig pipeline (shared; pipelines are thread-safe after construction) ──
     private static readonly MarkdownPipeline _pipeline = new MarkdownPipelineBuilder()
         .UseAdvancedExtensions()
         .Build();
 
-    private readonly IHelpSession _session;
-    private readonly HelpActionRouter _actions;
+    // Matches bare topic-id citations the AI places in answers, e.g. [concepts.backup-sets]
+    // or [dialog.restore].  Specifically: [<word chars, dots, hyphens with at least one dot
+    // or hyphen>] NOT already followed by '(' (which would make it a proper markdown link).
+    // Group 1 captures the id; we rewrite it to [id](help://topic/id).
+    private static readonly Regex _topicRefPattern =
+        MyRegex();
 
-    public MarkdownRenderer(IHelpSession session, HelpActionRouter actions)
-    {
-        _session = session;
-        _actions = actions;
-    }
+    private readonly IHelpSession _session = session;
+    private readonly HelpActionRouter _actions = actions;
 
     // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Renders a Markdown string to a <see cref="FlowDocument"/> and wires up
-    /// <c>help://</c> hyperlink handlers.
+    /// Renders a Markdown string to a <see cref="FlowDocument"/>.
+    /// Bare topic-id citations emitted by the AI assistant (e.g. <c>[concepts.backup-sets]</c>)
+    /// are rewritten to proper markdown links before Markdig processes the text, so they
+    /// appear as clickable hyperlinks in the chat pane.
+    /// Hyperlink clicks are handled in <c>HelpPane.xaml.cs</c> via
+    /// <c>PreviewMouseLeftButtonDown</c> + <see cref="HandleNavigate"/>.
     /// </summary>
     public FlowDocument Render(string markdown)
     {
-        var document = Markdig.Wpf.Markdown.ToFlowDocument(markdown, _pipeline);
-
-        // Walk all hyperlinks in the document and attach our handler
-        foreach (var hyperlink in EnumerateHyperlinks(document))
+        // Rewrite bare [topic.id] citations → [Display Title](help://topic/topic.id)
+        // Fall back to the raw id as link text when the topic is not found in the store.
+        var linked = _topicRefPattern.Replace(markdown, m =>
         {
-            // Capture the NavigateUri at the time of wiring
-            var uri = hyperlink.NavigateUri;
-            if (uri is null) continue;
+            var id    = m.Groups[1].Value;
+            var title = _session.TryGetTopicTitle(id) ?? id;
+            return $"[{title}](help://topic/{id})";
+        });
 
-            hyperlink.RequestNavigate += (_, e) =>
-            {
-                e.Handled = true;
-                HandleNavigate(e.Uri ?? uri);
-            };
-        }
-
-        return document;
+        var doc = Markdig.Wpf.Markdown.ToFlowDocument(linked, _pipeline);
+        // Markdig.Wpf bakes in a fixed PageWidth; clear it so the document reflows
+        //  to the host control's actual width (works for both RichTextBox panes).
+        doc.PageWidth = double.NaN;
+        return doc;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -69,7 +71,7 @@ public sealed class MarkdownRenderer
     ///   <item><c>http(s)://…</c> — opens in the default browser.</item>
     /// </list>
     /// </summary>
-    private void HandleNavigate(Uri uri)
+    internal void HandleNavigate(Uri uri)
     {
         if (uri.Scheme.Equals("help", StringComparison.OrdinalIgnoreCase))
         {
@@ -108,51 +110,6 @@ public sealed class MarkdownRenderer
         }
     }
 
-    /// <summary>Enumerates all <see cref="Hyperlink"/> inlines in a <see cref="FlowDocument"/>.</summary>
-    private static IEnumerable<Hyperlink> EnumerateHyperlinks(FlowDocument document)
-    {
-        foreach (var block in document.Blocks)
-        foreach (var inline in EnumerateInlines(block))
-            if (inline is Hyperlink hl)
-                yield return hl;
-    }
-
-    private static IEnumerable<Inline> EnumerateInlines(TextElement element)
-    {
-        switch (element)
-        {
-            case Paragraph p:
-                foreach (var i in p.Inlines)
-                {
-                    yield return i;
-                    if (i is Span span)
-                        foreach (var sub in EnumerateInlines(span))
-                            yield return sub;
-                }
-                break;
-
-            case Span s:
-                foreach (var i in s.Inlines)
-                {
-                    yield return i;
-                    if (i is Span sub)
-                        foreach (var subsub in EnumerateInlines(sub))
-                            yield return subsub;
-                }
-                break;
-
-            case List list:
-                foreach (var item in list.ListItems)
-                    foreach (var block in item.Blocks)
-                        foreach (var i in EnumerateInlines(block))
-                            yield return i;
-                break;
-
-            case Section section:
-                foreach (var block in section.Blocks)
-                    foreach (var i in EnumerateInlines(block))
-                        yield return i;
-                break;
-        }
-    }
+    [GeneratedRegex(@"\[([a-z][a-z0-9]*(?:[.\-][a-z0-9]+)+)\](?!\()", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex MyRegex();
 }

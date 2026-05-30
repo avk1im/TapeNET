@@ -47,11 +47,11 @@ public sealed class HelpSession : IHelpSession
 
     /// <inheritdoc/>
     public IReadOnlyList<HelpTopic> BackHistory
-        => _backStack.ToArray();   // copy; most-recent is the head
+        => [.. _backStack];   // copy; most-recent is the head
 
     /// <inheritdoc/>
     public IReadOnlyList<HelpTopic> ForwardHistory
-        => _forwardStack.ToArray();
+        => [.. _forwardStack];   // copy; most-recent is the head
 
     /// <inheritdoc/>
     public IReadOnlyList<ConversationTurn> Conversation
@@ -119,14 +119,11 @@ public sealed class HelpSession : IHelpSession
         ct.ThrowIfCancellationRequested();
 
         var home = _store.GetById(_options.HomeTopicId);
-        if (home is null)
-        {
-            // Fall back to the first topic in the store.
-            home = _store.All.Count > 0
-                ? _store.All[0]
-                : throw new InvalidOperationException(
-                    "No help topics are loaded. Cannot navigate home.");
-        }
+        // Fall back to the first topic in the store.
+        home ??= _store.All.Count > 0
+            ? _store.All[0]
+            : throw new InvalidOperationException(
+                "No help topics are loaded. Cannot navigate home.");
 
         NavigateTo(home);
         return home;
@@ -191,6 +188,10 @@ public sealed class HelpSession : IHelpSession
     /// <inheritdoc/>
     public void ClearConversation()
         => _conversation.Clear();
+
+    /// <inheritdoc/>
+    public string? TryGetTopicTitle(string id)
+        => _store.GetById(id)?.Title;
 
     // ── Events ────────────────────────────────────────────────────────────────
 

@@ -4,9 +4,6 @@ using System.Windows.Threading;
 using Windows.Win32.System.SystemServices; // for Helpers
 
 using Microsoft.Extensions.Logging;
-#if !DEBUG
-using Microsoft.Extensions.Logging.Abstractions; // for NullLoggerFactory
-#endif
 
 using TapeLibNET;
 using TapeLibNET.Virtual;
@@ -56,25 +53,12 @@ public partial class TapeService : TapeServiceBase
     ///  ViewModel whose <c>AddLog</c> sink receives all service log entries.
     /// </param>
     public TapeService(Dispatcher dispatcher, MainViewModel viewModel)
-        : base(BuildLoggerFactory(), new WpfServiceHost(dispatcher, viewModel))
+        : base(App.LoggerFactory, new WpfServiceHost(dispatcher, viewModel))
     {
         // Inject back-reference so WpfServiceHost prompt methods can call
         //  InsertVirtualMedia and query drive capabilities without a circular
         //  type dependency. Safe: base ctor has completed before this runs.
         ((WpfServiceHost)_host).ServiceRef = this;
-    }
-
-    private static ILoggerFactory BuildLoggerFactory()
-    {
-#if DEBUG
-        return LoggerFactory.Create(builder =>
-            builder.AddDebug().SetMinimumLevel(LogLevel.Trace));
-#else
-        return Debugger.IsAttached
-            ? LoggerFactory.Create(builder =>
-                builder.AddDebug().SetMinimumLevel(LogLevel.Information))
-            : NullLoggerFactory.Instance;
-#endif
     }
 
 

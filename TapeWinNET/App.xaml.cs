@@ -1,5 +1,9 @@
-﻿using System.Windows;
+﻿using System.Diagnostics;
+using System.Windows;
 using System.Windows.Media;
+
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 using TapeWinNET.Services;
 
@@ -17,6 +21,31 @@ public partial class App : Application
 
     /// <summary>Cached application icon for all windows.</summary>
     public static ImageSource? ApplicationIcon { get; private set; }
+
+    /// <summary>
+    /// Process-wide logger factory writing to the Visual Studio debug output pane.
+    /// <list type="bullet">
+    ///  <item>DEBUG builds: Trace level — all messages from all libraries.</item>
+    ///  <item>RELEASE with debugger attached: Information level.</item>
+    ///  <item>RELEASE without debugger: null logger (zero overhead).</item>
+    /// </list>
+    /// Shared by <see cref="Services.TapeService"/>, <see cref="AppAiSessionHost"/>,
+    ///  and any other library that accepts an <see cref="ILogger"/> or
+    ///  <see cref="ILoggerFactory"/>.
+    /// </summary>
+    public static ILoggerFactory LoggerFactory { get; } = BuildLoggerFactory();
+
+#if DEBUG
+    private static ILoggerFactory BuildLoggerFactory() =>
+        Microsoft.Extensions.Logging.LoggerFactory.Create(builder =>
+            builder.AddDebug().SetMinimumLevel(LogLevel.Trace));
+#else
+    private static ILoggerFactory BuildLoggerFactory() =>
+        Debugger.IsAttached
+            ? Microsoft.Extensions.Logging.LoggerFactory.Create(builder =>
+                builder.AddDebug().SetMinimumLevel(LogLevel.Information))
+            : NullLoggerFactory.Instance;
+#endif
 
     /// <summary>
     /// Process-wide AI session host (lazy — session built on first <c>EnsureAsync</c> call).

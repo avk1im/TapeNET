@@ -23,13 +23,31 @@ internal sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? l
 
     /// <inheritdoc/>
     public async Task<IReadOnlyList<AiProviderProbeResult>> DiscoverAsync(
-        AiProviderDiscoveryOptions options, CancellationToken ct)
+        AiProviderDiscoveryOptions options, CancellationToken ct,
+        Func<string, CancellationToken, Task>? onProviderDiscovering = null)
     {
         var timeout = options.PerProbeTimeout == TimeSpan.Zero
             ? DefaultPerProbeTimeout
             : options.PerProbeTimeout;
 
         var tasks = new List<Task<AiProviderProbeResult?>>();
+
+        // Local helper: reports progress then starts the probe task.
+        Task<AiProviderProbeResult?> Probe(IAiProvider provider, Uri ep, string? apiKey,
+                                           string? epLabel = null)
+        {
+            // Fire-and-forget the progress notification (best-effort; never blocks discovery).
+            if (onProviderDiscovering is not null)
+            {
+                // For LAN probes include the host so each entry is distinguishable.
+                var label = epLabel is not null
+                    ? $"{provider.Descriptor.DisplayName} @ {epLabel}"
+                    : provider.Descriptor.DisplayName;
+                _ = onProviderDiscovering(label, ct);
+            }
+
+            return ProbeWithTimeoutAsync(provider, ep, apiKey, timeout, ct);
+        }
 
         // ── Localhost probes ─────────────────────────────────────────────────
         if (options.ProbeLocalhost)
@@ -40,7 +58,7 @@ internal sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? l
                 if (ep is null || provider.Descriptor.Location != AiProviderLocation.Local)
                     continue;
 
-                tasks.Add(ProbeWithTimeoutAsync(provider, ep, apiKey: null, timeout, ct));
+                tasks.Add(Probe(provider, ep, apiKey: null));
             }
         }
 
@@ -55,8 +73,10 @@ internal sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? l
 
             foreach (var ep in options.LanEndpoints)
             {
+                // Use host:port as the label so each LAN entry is distinguishable in logs.
+                var epLabel = ep.IsDefaultPort ? ep.Host : $"{ep.Host}:{ep.Port}";
                 foreach (var provider in lanProviders)
-                    tasks.Add(ProbeWithTimeoutAsync(provider, ep, apiKey: null, timeout, ct));
+                    tasks.Add(Probe(provider, ep, apiKey: null, epLabel));
             }
         }
 
@@ -69,7 +89,7 @@ internal sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? l
             {
                 var provider = catalog.Find(AiProviderKind.GitHubModels);
                 if (provider?.Descriptor.DefaultEndpoint is { } ep)
-                    tasks.Add(ProbeWithTimeoutAsync(provider, ep, githubToken, timeout, ct));
+                    tasks.Add(Probe(provider, ep, githubToken));
             }
 
             // OpenAI
@@ -78,7 +98,7 @@ internal sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? l
             {
                 var provider = catalog.Find(AiProviderKind.OpenAi);
                 if (provider?.Descriptor.DefaultEndpoint is { } ep)
-                    tasks.Add(ProbeWithTimeoutAsync(provider, ep, openAiKey, timeout, ct));
+                    tasks.Add(Probe(provider, ep, openAiKey));
             }
 
             // Azure OpenAI
@@ -89,7 +109,7 @@ internal sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? l
             {
                 var provider = catalog.Find(AiProviderKind.AzureOpenAi);
                 if (provider is not null)
-                    tasks.Add(ProbeWithTimeoutAsync(provider, azureEp, azureKey, timeout, ct));
+                    tasks.Add(Probe(provider, azureEp, azureKey));
             }
         }
 

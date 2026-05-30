@@ -63,6 +63,14 @@ public interface IHelpSession : IAsyncDisposable
     /// <summary>Clears all conversation turns.</summary>
     void ClearConversation();
 
+    /// <summary>
+    /// Returns the display title for the topic with the given <paramref name="id"/>,
+    /// or <c>null</c> when the topic is not found in the content store.
+    /// Used by <c>MarkdownRenderer</c> to substitute human-readable link text
+    /// for bare topic-id citations emitted by the AI assistant.
+    /// </summary>
+    string? TryGetTopicTitle(string id);
+
     // ── Events ────────────────────────────────────────────────────────────────
 
     /// <summary>Raised when <see cref="CurrentTopic"/> changes.</summary>

@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Logging.Abstractions;
 using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
@@ -184,7 +183,7 @@ public partial class MainViewModel
             // Session-less probe backend: constructed only for ProbeDrives, disposed immediately.
             probedDrives = await Task.Run(() =>
             {
-                using var probe = new RemoteTapeDriveBackend(settings, NullLoggerFactory.Instance);
+                using var probe = new RemoteTapeDriveBackend(settings, App.LoggerFactory);
                 return probe.ProbeDrives(9);
             }).ConfigureAwait(true); // back to UI thread
         }
