@@ -119,7 +119,7 @@ public static class AiSessionFactory
             }
 
             // Verify the credentials with a lightweight probe
-            await interaction.ShowStatusAsync($"Verifying {config.Descriptor.DisplayName}…", ct);
+            await interaction.ShowStatusAsync($"Verifying {config.DisplayLabel}…", ct);
             var verify = await provider.ProbeAsync(config.Endpoint, config.ApiKey, ct);
 
             if (verify.IsHealthy)
@@ -128,9 +128,9 @@ public static class AiSessionFactory
             // Probe failed — report and decide whether to retry
             var errDetail = verify.ErrorMessage ?? "connection failed";
             logger.LogWarning("Credential verification failed for '{Provider}': {Error}",
-                config.Descriptor.DisplayName, errDetail);
+                config.DisplayLabel, errDetail);
             await interaction.ShowWarningAsync(
-                $"Could not connect to {config.Descriptor.DisplayName}: {errDetail}", ct);
+                $"Could not connect to {config.DisplayLabel}: {errDetail}", ct);
 
             // If the provider requires an API key, clear it and re-prompt.
             // Otherwise (wrong endpoint / server down) there is nothing to retry — bail out.

@@ -77,14 +77,17 @@ public sealed class RagHelpAssistant : IHelpAssistant
         // 2. Build the chat messages.
         var messages = BuildMessages(request, excerpts);
 
-        // 3. Call the LLM.
-        var completion = await _chatClient.GetResponseAsync(messages, null, ct)
-                                             .ConfigureAwait(false);
+        // 3. Call the LLM — using streaming so that cancellation (abort) takes effect
+        //    immediately rather than waiting for the full response to be buffered.
+        var sb = new StringBuilder();
+        await foreach (var update in _chatClient.GetStreamingResponseAsync(messages, null, ct)
+                                                .ConfigureAwait(false))
+        {
+            ct.ThrowIfCancellationRequested();
+            sb.Append(update.Text);
+        }
 
-        // Extract the last message text from the response.
-        string answerMarkdown = completion.Messages.Count > 0
-            ? completion.Messages[^1].Text ?? string.Empty
-            : string.Empty;
+        string answerMarkdown = sb.ToString();
 
         // 4. Parse [topic-id] citation tags from the LLM response.
         var citations  = ParseCitations(answerMarkdown, excerpts);

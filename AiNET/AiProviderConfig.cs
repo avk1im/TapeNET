@@ -23,4 +23,14 @@ public sealed record AiProviderConfig(
     string? ApiKey,
     string? ChatModelId,
     string? EmbeddingModelId,
-    IReadOnlyDictionary<string, string>? Options = null);
+    IReadOnlyDictionary<string, string>? Options = null)
+{
+    /// <summary>
+    /// Human-readable label in "Provider / Model" format, e.g. "Ollama / phi3:mini".
+    /// Falls back to the provider's <see cref="AiProviderDescriptor.DisplayName"/> alone
+    /// when no chat model has been selected yet.
+    /// </summary>
+    public string DisplayLabel => ChatModelId is { Length: > 0 } model
+        ? $"{Descriptor.DisplayName} / {model}"
+        : Descriptor.DisplayName;
+}

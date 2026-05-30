@@ -19,18 +19,32 @@ public static class HelpPaneLayoutCoordinator
     /// <summary>
     /// Adjusts <paramref name="window"/>'s position and size so that
     /// <paramref name="desiredWidth"/> extra pixels fit to its right.
+    /// Uses <see cref="SystemParameters.WorkArea"/> as the available screen area.
     /// </summary>
     /// <returns>
     /// The actual width that was accommodated (may be less than
     /// <paramref name="desiredWidth"/> when screen space is tight).
     /// </returns>
     public static double OpenAdjacent(Window window, double desiredWidth)
+        => OpenAdjacent(window, desiredWidth, SystemParameters.WorkArea);
+
+    /// <summary>
+    /// Adjusts <paramref name="window"/>'s position and size so that
+    /// <paramref name="desiredWidth"/> extra pixels fit to its right,
+    /// constraining movement to <paramref name="workArea"/>.
+    /// </summary>
+    /// <remarks>
+    /// This overload is the testable core; the single-argument public overload
+    /// delegates here supplying <see cref="SystemParameters.WorkArea"/>.
+    /// </remarks>
+    /// <returns>
+    /// The actual width that was accommodated (may be less than
+    /// <paramref name="desiredWidth"/> when screen space is tight).
+    /// </returns>
+    internal static double OpenAdjacent(Window window, double desiredWidth, Rect workArea)
     {
         // Clamp minimum pane width to something usable
         const double MinPaneWidth = 200;
-
-        // Work area of the monitor on which the window currently lives
-        var workArea = SystemParameters.WorkArea;
 
         double windowRight = window.Left + window.Width;
         double available   = workArea.Right - windowRight;

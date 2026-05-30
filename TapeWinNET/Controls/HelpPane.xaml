@@ -297,6 +297,8 @@
                                    Text="{Binding ThinkingAnimationText}"
                                    VerticalAlignment="Center"
                                    FontSize="14"
+                                   Width="20"
+                                   TextAlignment="Center"
                                    Margin="0,0,4,0"
                                    Visibility="{Binding IsAsking, Converter={StaticResource BoolToVis}}"/>
                         <TextBox Text="{Binding PendingQuery, UpdateSourceTrigger=PropertyChanged}"

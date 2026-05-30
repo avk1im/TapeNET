@@ -69,9 +69,10 @@ public class AsyncRelayCommand : ICommand
 
     public async void Execute(object? parameter)
     {
-        if (_isExecuting)
-            return;
-
+        // Note: no _isExecuting guard here — CanExecute controls availability.
+        // For predicate-less commands, CanExecute returns !_isExecuting (button disabled
+        // during execution). For predicate commands (e.g. Ask/Abort), the predicate
+        // deliberately allows re-entry so the abort path in the execute delegate can run.
         _isExecuting = true;
         RaiseCanExecuteChanged();
 

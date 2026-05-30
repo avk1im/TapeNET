@@ -138,6 +138,12 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     public event EventHandler<string>? SessionError;
 
     /// <summary>
+    /// Raised for user-noticeable but non-error conditions (e.g. thinking aborted by user).
+    /// The host (MainWindow) subscribes to forward the message to the log pane as a warning.
+    /// </summary>
+    public event EventHandler<string>? SessionWarning;
+
+    /// <summary>
     /// Raised with transient informational messages (e.g. "AI is preparing an answer…").
     /// The host (MainWindow) subscribes to forward the message to the log pane as a sub entry.
     /// </summary>
@@ -394,12 +400,13 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
         // Notify the log pane (sub-level) which provider is preparing the answer
         var providerLabel = _session.AssistantMode != HelpAssistantMode.Lexical
             ? (App.AiSessionHost.CurrentConfig is { } cfg
-                ? $"{cfg.Descriptor.DisplayName} / {cfg.ChatModelId}"
+                ? cfg.DisplayLabel
                 : "AI assistant")
             : null;
         if (providerLabel is not null)
             SessionInfo?.Invoke(this, $"{providerLabel} is preparing an answer…");
 
+        bool aborted = false;
         try
         {
             await TrySessionAsync(
@@ -408,11 +415,15 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
         }
         finally
         {
+            // Check cancellation before disposing the source
+            aborted = _askCts?.IsCancellationRequested ?? false;
             _thinkTimer.Stop();
             _askCts?.Dispose();
             _askCts = null;
             IsAsking = false;
             ThinkingAnimationText = string.Empty;
+            if (aborted)
+                SessionWarning?.Invoke(this, "Answering aborted by the user.");
         }
     }
 

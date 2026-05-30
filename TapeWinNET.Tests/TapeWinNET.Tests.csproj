@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+	<TargetFramework>net8.0-windows</TargetFramework>
+	<UseWPF>true</UseWPF>
+	<ImplicitUsings>enable</ImplicitUsings>
+	<Nullable>enable</Nullable>
+	<IsPackable>false</IsPackable>
+	<IsTestProject>true</IsTestProject>
+	<RootNamespace>TapeWinNET.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Embed a small set of fake help .md resources for EmbeddedResourceHelpContentSource tests -->
+  <ItemGroup>
+	<EmbeddedResource Include="Resources\Help\**\*.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+	<PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+	<PackageReference Include="xunit" Version="2.*" />
+	<PackageReference Include="xunit.runner.visualstudio" Version="2.*">
+	  <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+	  <PrivateAssets>all</PrivateAssets>
+	</PackageReference>
+	<PackageReference Include="Xunit.StaFact" Version="1.1.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+	<ProjectReference Include="..\TapeWinNET\TapeWinNET.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -22,10 +22,10 @@ public sealed partial class MarkdownRenderer(IHelpSession session, HelpActionRou
         .UseAdvancedExtensions()
         .Build();
 
-    // Matches bare topic-id citations the AI places in answers, e.g. [concepts.backup-sets]
-    // or [dialog.restore].  Specifically: [<word chars, dots, hyphens with at least one dot
-    // or hyphen>] NOT already followed by '(' (which would make it a proper markdown link).
-    // Group 1 captures the id; we rewrite it to [id](help://topic/id).
+    // Matches bare topic-id citations the AI places in answers, e.g. [concepts.backup-sets],
+    // [dialog.restore], or single-word ids like [home] and [backup].
+    // NOT already followed by '(' (which would make it a proper markdown link).
+    // Group 1 captures the id; we rewrite it to [Display Title](help://topic/id).
     private static readonly Regex _topicRefPattern =
         MyRegex();
 
@@ -110,6 +110,8 @@ public sealed partial class MarkdownRenderer(IHelpSession session, HelpActionRou
         }
     }
 
-    [GeneratedRegex(@"\[([a-z][a-z0-9]*(?:[.\-][a-z0-9]+)+)\](?!\()", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    // Single-word ids like [home] are valid (no dot/hyphen required); the pattern
+    //  also continues to match compound ids like [concepts.backup-sets].
+    [GeneratedRegex(@"\[([a-z][a-z0-9]*(?:[.\-][a-z0-9]+)*)\](?!\()", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex MyRegex();
 }

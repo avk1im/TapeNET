@@ -1144,7 +1144,7 @@
                             <SolidColorBrush Color="#FFCCE5FF"/>
                         </CheckBox.Background>
                         <CheckBox.Content>
-                            <TextBlock Text="? Info" FontSize="11"
+                            <TextBlock Text="ℹ Info" FontSize="11"
                                        Foreground="{StaticResource WarningFg.Info}"/>
                         </CheckBox.Content>
                     </CheckBox>
@@ -1154,7 +1154,7 @@
                             <SolidColorBrush Color="#FFCCFFCC"/>
                         </CheckBox.Background>
                         <CheckBox.Content>
-                            <TextBlock Text="? Completed" FontSize="11"
+                            <TextBlock Text="✓ Completed" FontSize="11"
                                        Foreground="{StaticResource WarningFg.Completed}"/>
                         </CheckBox.Content>
                     </CheckBox>
@@ -1164,7 +1164,7 @@
                             <SolidColorBrush Color="#FFFFF0CC"/>
                         </CheckBox.Background>
                         <CheckBox.Content>
-                            <TextBlock Text="? Warning" FontSize="11"
+                            <TextBlock Text="⚠ Warning" FontSize="11"
                                        Foreground="{StaticResource WarningFg.Warning}"/>
                         </CheckBox.Content>
                     </CheckBox>
@@ -1174,7 +1174,7 @@
                             <SolidColorBrush Color="#FFFFCCCC"/>
                         </CheckBox.Background>
                         <CheckBox.Content>
-                            <TextBlock Text="? Error" FontSize="11"
+                            <TextBlock Text="✗ Error" FontSize="11"
                                        Foreground="{StaticResource WarningFg.Error}"/>
                         </CheckBox.Content>
                     </CheckBox>

@@ -159,6 +159,18 @@ public sealed class BM25HelpIndex : IHelpIndex
             bestPos = 0; // no hit — start from the beginning
 
         int start = Math.Max(0, bestPos - 40);
+
+        // If we're not at the very beginning, advance to the next word boundary
+        //  so the excerpt never starts mid-word (leading truncation is jarring to read).
+        if (start > 0)
+        {
+            int ws = start;
+            while (ws < text.Length && !char.IsWhiteSpace(text[ws]))
+                ws++;
+            // Skip the whitespace itself; if we ran off the end just use original start.
+            start = ws < text.Length ? ws + 1 : start;
+        }
+
         int len   = Math.Min(ExcerptMaxChars, text.Length - start);
         var excerpt = text.Substring(start, len).Trim();
 

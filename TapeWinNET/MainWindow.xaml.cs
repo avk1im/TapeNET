@@ -7,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using AiNET;
+using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
 using TapeWinNET.Help;
 using TapeWinNET.Services;
@@ -22,6 +23,8 @@ namespace TapeWinNET
     public partial class MainWindow : Window, IHelpPaneHost
     {
         private readonly MainViewModel _viewModel;
+        private static readonly ILogger s_logger =
+            App.LoggerFactory.CreateLogger(typeof(MainWindow).FullName!);
         private GridViewColumnHeader? _lastHeaderClicked;
         private ListSortDirection _lastDirection = ListSortDirection.Ascending;
 
@@ -195,7 +198,9 @@ namespace TapeWinNET
                 }
                 else
                 {
-                    _viewModel.LogWarn("AI provider removed — Help will use local-search mode.");
+                    // The user-facing log message was already emitted by AiInteractionWpf
+                    //  ("No AI provider selected / removed") before the session was cleared.
+                    s_logger.LogInformation("AI session cleared — Help will use local-search mode.");
                 }
 
                 // If the help pane was already open, rebuild its session so it picks
@@ -218,8 +223,9 @@ namespace TapeWinNET
             // Tear down the old VM
             if (_helpPaneVm is not null)
             {
-                _helpPaneVm.SessionError -= OnHelpSessionError;
-                _helpPaneVm.SessionInfo  -= OnHelpSessionInfo;
+                _helpPaneVm.SessionError   -= OnHelpSessionError;
+                _helpPaneVm.SessionInfo    -= OnHelpSessionInfo;
+                _helpPaneVm.SessionWarning -= OnHelpSessionWarning;
                 await _helpPaneVm.DisposeAsync();
                 _helpPaneVm = null;
                 HelpPaneControl.DataContext = null;
@@ -243,8 +249,9 @@ namespace TapeWinNET
                 await _helpPaneVm.GoHomeAsync();
         }
 
-        private void OnHelpSessionError(object? sender, string msg) => _viewModel.LogErr(msg);
-        private void OnHelpSessionInfo(object? sender, string msg)  => _viewModel.LogSub(msg);
+        private void OnHelpSessionError  (object? sender, string msg) => _viewModel.LogErr(msg);
+        private void OnHelpSessionInfo   (object? sender, string msg) => _viewModel.LogSub(msg);
+        private void OnHelpSessionWarning(object? sender, string msg) => _viewModel.LogWarn(msg);
 
         private void UpdateAiProviderMenuHeader()
         {
@@ -254,13 +261,7 @@ namespace TapeWinNET
                 : "AI _Provider Settings\u2026";
         }
 
-        private static string BuildProviderLabel(AiProviderConfig cfg)
-        {
-            // e.g. "Ollama / phi3.mini" or just "OpenAI" when no model is selected
-            return cfg.ChatModelId is { Length: > 0 } model
-                ? $"{cfg.Descriptor.DisplayName} / {model}"
-                : cfg.Descriptor.DisplayName;
-        }
+        private static string BuildProviderLabel(AiProviderConfig cfg) => cfg.DisplayLabel;
 
         private async void TreeView_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
         {
@@ -715,9 +716,10 @@ namespace TapeWinNET
                 var session  = await AppHelpSessionFactory.CreateAsync(this);
                 var actions  = BuildHelpActions();
                 _helpPaneVm  = new HelpPaneViewModel(session, this, actions);
-                // Forward session errors and info messages to the main log pane
-                _helpPaneVm.SessionError += OnHelpSessionError;
-                _helpPaneVm.SessionInfo  += OnHelpSessionInfo;
+                // Forward session errors, warnings, and info messages to the main log pane
+                _helpPaneVm.SessionError   += OnHelpSessionError;
+                _helpPaneVm.SessionInfo    += OnHelpSessionInfo;
+                _helpPaneVm.SessionWarning += OnHelpSessionWarning;
                 HelpPaneControl.DataContext = _helpPaneVm;
             }
 

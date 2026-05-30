@@ -29,24 +29,41 @@ public sealed class EmbeddedResourceHelpContentSource : IHelpContentSource
     private readonly string   _bundleIndex;
 
     public EmbeddedResourceHelpContentSource()
+        : this(Assembly.GetExecutingAssembly(), null) { }
+
+    /// <summary>
+    /// Test-only constructor — lets unit tests inject an arbitrary assembly
+    /// (e.g. the test assembly itself) together with an explicit resource prefix,
+    /// without touching TapeWinNET embedded resources.
+    /// </summary>
+    /// <param name="assembly">The assembly whose manifest resources are scanned.</param>
+    /// <param name="resourcePrefix">
+    /// Explicit resource prefix (including the trailing dot), or <c>null</c> to
+    /// auto-detect via the <c>*.Resources.Help.</c> marker heuristic.
+    /// </param>
+    internal EmbeddedResourceHelpContentSource(Assembly assembly, string? resourcePrefix)
     {
-        _assembly = Assembly.GetExecutingAssembly();
+        _assembly = assembly;
 
-        // Auto-detect the prefix by finding the first manifest resource that
-        //  contains ".Resources.Help.", so renaming the assembly or moving the
-        //  class to another namespace never breaks discovery.
-        var marker = _assembly.GetManifestResourceNames()
-            .Select(n => n.IndexOf(HelpFolder, StringComparison.Ordinal))
-            .FirstOrDefault(i => i >= 0, -1);
+        if (resourcePrefix is not null)
+        {
+            _resourcePrefix = resourcePrefix;
+        }
+        else
+        {
+            var marker = _assembly.GetManifestResourceNames()
+                .Select(n => n.IndexOf(HelpFolder, StringComparison.Ordinal))
+                .FirstOrDefault(i => i >= 0, -1);
 
-        _resourcePrefix = marker >= 0
-            ? _assembly.GetManifestResourceNames()
-                .First(n => n.IndexOf(HelpFolder, StringComparison.Ordinal) == marker)
-                [..(marker + HelpFolder.Length)]
-            : throw new InvalidOperationException(
-                $"No embedded resources matching '*{HelpFolder}' were found in "
-                + $"{_assembly.GetName().Name}. "
-                + "Ensure help Markdown files are declared as EmbeddedResource.");
+            _resourcePrefix = marker >= 0
+                ? _assembly.GetManifestResourceNames()
+                    .First(n => n.IndexOf(HelpFolder, StringComparison.Ordinal) == marker)
+                    [..(marker + HelpFolder.Length)]
+                : throw new InvalidOperationException(
+                    $"No embedded resources matching '*{HelpFolder}' were found in "
+                    + $"{_assembly.GetName().Name}. "
+                    + "Ensure help Markdown files are declared as EmbeddedResource.");
+        }
 
         _bundleBin   = _resourcePrefix + "_index.embeddings.bin";
         _bundleMeta  = _resourcePrefix + "_index.embeddings.meta.json";

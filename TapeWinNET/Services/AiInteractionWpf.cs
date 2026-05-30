@@ -110,7 +110,10 @@ public sealed class AiInteractionWpf : IAiInteraction
 
             // Index 0 = "None" → explicitly disable AI
             if (providerDialog.SelectedIndex == 0)
+            {
+                LogWarn("No AI provider selected — Help will use local-search mode.");
                 return;   // result stays null — caller interprets as "no provider"
+            }
 
             var selected = healthy[providerDialog.SelectedIndex - 1];  // -1 for the None entry
 

@@ -1,6 +1,6 @@
 # TapeWinNET Help System — Detailed Design
 
-> **Status:** Phases 0 ✅ 1 ✅ 2 ✅ 3 ✅ 4 ✅ complete — `HelpNET` library fully implemented. Phase 5 (TapeWinNET HelpPane) is next.
+> **Status:** Phases 0 ✅ 1 ✅ 2 ✅ 3 ✅ 4 ✅ 5 ✅ complete — `HelpNET` fully implemented; TapeWinNET HelpPane integrated and working. Phase 6 in progress: §6.1 ✅ done.
 > **Scope:** A modern, optionally AI-augmented help system for TapeWinNET, with reusable engines (`AiNET`, `HelpNET`) ready for TapeConNET and other future consumers.
 > **Authoring convention:** Markdown + YAML front-matter for all help content. Library API surfaces are described in C# pseudo-signatures; sections marked **(not yet implemented)** are still design-only.
 
@@ -217,7 +217,7 @@ Returning `null` from `ChooseProviderAsync` is legitimate: it means "no AI for n
 ### 2.6 `IAiSession` lifetime model
 
 - **One `IAiSession` per application process** (singleton, owned by the host app).
-- Will be shared between FclAiNET and HelpNET once both are wired into TapeWinNET's `AppAiSessionHost` (Phase 5+). As of Phase 2, FclAiNET is the first consumer.
+- Shared between FclAiNET and HelpNET via `AppAiSessionHost` (wired in Phase 5). Both consumers re-bind `ChatClient` / `EmbeddingGenerator` on `ProviderChanged`.
 - `ReplaceProviderAsync` raises `ProviderChanged`; consumers re-bind `ChatClient` / `EmbeddingGenerator` references.
 - Disposing the session disposes the underlying chat/embedding clients.
 
@@ -510,9 +510,9 @@ Retrieved excerpts are passed as numbered blocks with their topic-id headers. Th
 | `HybridRetrieverTests` | ✅ | Weight effects (0 / 0.5 / 1); empty query → empty result; `topK` respected; scores descending; no duplicate topics; constructor guards. |
 | `HelpSessionFactoryPhase4Tests` | ✅ | Full Phase 4 mode matrix: bundle+ONNX → Semantic; bundle+chat → Rag; no bundle+chat → Rag(lexical); provider-prefer flag; model-id mismatch fallback. |
 | `SampleEmbeddingsIntegrationTests` | ✅ | End-to-end integration against the real precomputed `SampleContent/Embeddings/` bundle (skipped gracefully when bundle not yet generated); verifies content load, bundle metadata, cosine search, topK, empty query, result-topic integrity. |
-| `OnnxEmbeddingGeneratorTests` | *(planned — Phase 5)* | Real ONNX cosine sanity on known phrase pairs; skipped if `ONNX_MODEL_PATH` env var absent. |
-| `SemanticHelpAssistantTests` | *(planned — Phase 5)* | Mode 2 returns excerpts ranked by cosine. |
-| `RagHelpAssistantTests` | *(planned — Phase 5)* | Fake `IChatClient` returning canned answer; assert prompt includes retrieved excerpts and citations parse correctly. |
+| `OnnxEmbeddingGeneratorTests` | *(planned — Phase 6)* | Real ONNX cosine sanity on known phrase pairs; skipped if `ONNX_MODEL_PATH` env var absent. |
+| `SemanticHelpAssistantTests` | *(planned — Phase 6)* | Mode 2 returns excerpts ranked by cosine. |
+| `RagHelpAssistantTests` | *(planned — Phase 6)* | Fake `IChatClient` returning canned answer; assert prompt includes retrieved excerpts and citations parse correctly. |
 
 A shared `TestContentFixture` provides a 10-topic in-memory corpus used by most suites.  
 Phase 4 tests use `FakeEmbeddingGenerator` (deterministic hash-to-unit-vector) and `BundleBuilder` helpers in `EmbeddingTestHelpers.cs`.
@@ -1058,49 +1058,148 @@ Each phase lists deliverables and the tests we add for it.
 
 ---
 
-### Phase 5 — TapeWinNET HelpPane (no overlays)
+### Phase 5 — TapeWinNET HelpPane (no overlays) ✅ DONE
 
 **Deliverables**
-- `EmbeddedResourceHelpContentSource`.
-- `OnnxModelResources` (provides streams for `minilm-l6-v2.onnx` + tokenizer).
-- `MarkdownRenderer` (Markdig.Wpf wrapper, `help://` interception, glossary popover).
-- `HelpActionRouter` + `Help.TopicId` attached property + `GlobalF1HelpBehavior`.
-- `IHelpPaneHost` + `HelpPaneLayoutCoordinator`.
-- `HelpPane` UserControl + `HelpPaneViewModel`.
-- MainWindow integration (Embedded mode; right column with outer SnappingGridSplitter).
-- One representative dialog integration (`RestoreWindow`, Adjacent mode).
-- `AppAiSessionHost`, `AppHelpSessionFactory`, `AiInteractionWpf`.
-- Authoring of the first wave of content: Home, Quick Start (×3), key Concepts (×5), UI MainWindow, Dialog Restore.
-- Persistence of pane widths + splitter ratio + last-open topic.
+- ✅ `EmbeddedResourceHelpContentSource` — enumerates `TapeWinNET.Resources.Help.*` embedded resources, returns `HelpRawDocument`s; `TryLoadEmbeddingBundleAsync` loads the `_index/` bundle when present.
+- ✅ `OnnxModelResources` — provides `Stream` objects for `minilm-l6-v2.onnx` and the tokenizer from embedded resources.
+- ✅ `MarkdownRenderer` — Markdig.Wpf-based rendering to `FlowDocument`; intercepts `help://` links via `PreviewMouseLeftButtonDown` on the `FlowDocumentScrollViewer` (not `RequestNavigate`); rewrites bare topic-id citation references to friendly titles so chat answers read naturally.
+- ✅ `HelpActionRouter` — `help://action/<id>` → `ICommand` dispatch; registered actions keyed by string id.
+- ✅ `Help.TopicId` attached property — `DependencyProperty` on the static `Help` class, used by F1 routing.
+- ✅ `GlobalF1HelpBehavior` — app-level `KeyBinding` walks the visual tree upward from the focused element to find the nearest `Help.TopicId`, then resolves the nearest `IHelpPaneHost` ancestor to open the pane to the right topic.
+- ✅ `IHelpPaneHost` + `HelpPaneHostMode` (Embedded | Adjacent).
+- ✅ `HelpPaneLayoutCoordinator` — Adjacent-mode geometry logic: expand window right within the work area, else shift left, else clamp width.
+- ✅ `HelpPane` UserControl — Content subpane (`FlowDocumentScrollViewer`), horizontal `SnappingGridSplitter`, Chat subpane (assistant Q&A items with `ConversationItem` bubbles), header strip with Back / Forward / Home and search-as-you-type, button strip with Close + provider-mode badge.
+- ✅ `HelpPaneViewModel` — full command set (`BackCommand`, `ForwardCommand`, `HomeCommand`, `AskCommand`, `AbortCommand`, `ClearChatCommand`, `CloseCommand`, `OpenAiSetupCommand`); real-time `IsAsking` flag; per-query streaming cancellation so abort is immediate; thinking-animation text while the assistant is working; `SessionWarning` for no-provider and other transient states.
+- ✅ MainWindow integration — Embedded mode; right `GridSplitter` column; `OpenHelpPane` / `CloseHelpPane` lifecycle; `RebuildHelpSessionAsync` re-creates the session when the AI provider changes.
+- ✅ `AppAiSessionHost` — process-wide singleton, lazy `IAiSession` owner; `EnsureAsync` (silent), `ReconfigureAsync`, `SignOutAsync`; raises `SessionChanged` so MainWindow and HelpPane VMs rebind.
+- ✅ `AppHelpSessionFactory` — creates one `IHelpSession` per HelpPane; reuses the shared content source singleton; uses `AppAiSessionHost.EnsureAsync(silent: true)`.
+- ✅ `AiInteractionWpf` — WPF implementation of `IAiInteraction`; drives the provider-selection dialog; emits the single user-facing "No AI provider selected — Help will use local-search mode" warning when the user selects "None", covering both first-time selection and reconfiguration.
+- ✅ `AiProviderConfig.DisplayLabel` — computed "provider / model" label surfaced on the record; all log and UI output uses this property for consistent formatting (e.g. "GitHub Models / gpt-4o-mini", "Ollama / phi3:mini").
+- ✅ Local-search no-provider path — when `IAiSession` is null, HelpNET falls back to Lexical mode; `AiInteractionWpf` emits the single unified warning; `MainWindow.OnAiSessionChanged` logs an internal informational trace only, eliminating duplicate warnings.
+- ✅ `BM25HelpIndex.BuildExcerpt` word-boundary fix — when the computed excerpt start is past the beginning of the text, the slicer advances to the next whitespace boundary before taking the snippet, preventing mid-word leading truncation in local-search result previews.
+- ✅ Initial help content — small in-memory corpus using the existing `SampleContent/` set from HelpNET; sufficient for end-to-end smoke-testing. Full TapeWinNET-specific content authoring intentionally deferred.
+- ⚠️ Adjacent mode (RestoreWindow) — not yet implemented; HelpPane currently works in MainWindow Embedded mode only.
+- ⚠️ `AiProviderSetupWindow` — deferred to Phase 6; `OpenAiSetupCommand` exists on the VM but navigates to a placeholder.
+- ⚠️ Persistence of pane widths, splitter ratio, and last-open topic — deferred to Phase 6.
+- ⚠️ MSBuild `BuildHelpEmbeddings` target wiring into TapeWinNET — still deferred (tool is a standalone `HelpIndexBuilder`).
 
 **Tests**
-- `HelpPaneViewModelTests` — navigation commands, AskCommand wiring (against fake `IHelpSession`).
-- `MarkdownRendererTests` — `help://topic/...` routing produces correct `NavigateCommand` payloads; glossary popover triggers.
-- `HelpPaneLayoutCoordinatorTests` — expand-right / shift-left / clamp logic (pure unit tests against a fake screen geometry).
-- `EmbeddedResourceHelpContentSourceTests` — enumerates expected ids; bundle load when present.
-- `GlobalF1HelpBehaviorTests` — STA-thread test: focused element with `Help.TopicId` ascendant resolves correctly.
-- (Manual) visual smoke tests for Embedded vs. Adjacent modes.
+- *(deferred — Phase 6)* `EmbeddedResourceHelpContentSourceTests`, `HelpPaneLayoutCoordinatorTests`, `MarkdownRendererTests` — first recommended investments; see Phase 6.
+- *(deferred)* `HelpPaneViewModelTests`, `GlobalF1HelpBehaviorTests` — depend on STA threading; lower immediate priority.
+- (Manual) visual smoke tests confirmed for Embedded mode.
+
+**Decisions / deviations**
+- **Hyperlink dispatch uses `PreviewMouseLeftButtonDown`**, not `RequestNavigate`. WPF `FlowDocumentScrollViewer` does not reliably fire `RequestNavigate` on embedded `Hyperlink` elements at runtime; the preview event on the scroll-viewer is the robust solution and also works for chat-bubble links without additional wiring.
+- **Citation titles are rewritten at render time** in `MarkdownRenderer`, not in the assistant. The assistant returns bare `[topic-id]` tags; the renderer rewrites them to linked friendly titles (e.g. `[dialog.restore]` → `[Restore files](help://topic/dialog.restore)`). This keeps citation logic out of HelpNET and allows UI-layer localisation.
+- **Abort is immediate via streaming cancellation.** `HelpPaneViewModel` holds a per-Ask `CancellationTokenSource`; `AbortCommand` cancels it. Incomplete streaming responses are discarded; the thinking animation clears immediately. The original design did not specify streaming cancellation.
+- **`DisplayLabel` added to `AiProviderConfig`** for uniform provider/model label formatting across the log pane, the mode badge, and the provider-discovery status messages.
+- **One user-facing warning per "no-provider" transition.** The warning lives in `AiInteractionWpf.ChooseProviderAsync`; `MainWindow.OnAiSessionChanged` was changed to an internal-only trace to prevent the duplicate log message that appeared in earlier iterations.
+- **Adjacent mode deferred.** Only MainWindow Embedded mode was completed. RestoreWindow Adjacent mode was planned but not built; it is the first dialog candidate in Phase 6.
+- **Content authoring narrowed.** The user explicitly confirmed that the existing small content set is sufficient for now. Authoring the full `TapeWinNET/Resources/Help/**` tree is out of scope until the UX layer is stable.
 
 ---
 
-### Phase 6 — AI provider setup UX
+### Phase 6 — Ruggedize & Advance UX for Help and Provider Setup
+
+This phase hardens the Phase 5 implementation with targeted tests, completes the provider-setup and persistence layer, adds LAN-host management, and extends the help pane to the first dialog (Adjacent mode).
+
+#### 6.1 Tests — highest-value first ✅ DONE
 
 **Deliverables**
-- `AiProviderSetupWindow` + `AiProviderSetupViewModel` (3-step flow: where → which → smoke-test).
-- `Help → AI Provider settings…` menu item.
-- First-run prompt orchestrated by `AppAiSessionHost`.
-- DPAPI-protected blob for API keys; `AiProviderPreferences` for everything else.
+- ✅ New project **`TapeWinNET.Tests`** — xUnit / `net8.0-windows` / `UseWPF`, added to the solution under the **Help System** solution folder. Uses `Xunit.StaFact` 1.1.11 for STA-threaded WPF tests.
+- ✅ Two fake `.md` embedded resources in the test project (`home.md`, `concepts/backup-sets.md`) serve as the lightweight fixture corpus for `EmbeddedResourceHelpContentSource` tests.
+- ✅ `EmbeddedResourceHelpContentSource` — added `internal` constructor `(Assembly, string?)` so tests can point at any assembly; public constructor delegates to it.
+- ✅ `HelpPaneLayoutCoordinator` — added `internal` overload `OpenAdjacent(Window, double, Rect)` accepting an explicit work-area rect; public overload delegates to it, eliminating the `SystemParameters.WorkArea` dependency in tests.
+- ✅ `TapeWinNET/AssemblyInfo.cs` — added `[assembly: InternalsVisibleTo("TapeWinNET.Tests")]`.
+
+**Tests** — 22 tests, all passing.
+
+| Suite | Tests | Coverage |
+|---|---|---|
+| `EmbeddedResourceHelpContentSourceTests` | 7 `[Fact]` | `SourceId` stability across instances; `EnumerateAsync` doc count, non-empty content, `.md` extension, expected name substrings; `TryLoadEmbeddingBundleAsync` returns `null` when `_index/` absent. |
+| `HelpPaneLayoutCoordinatorTests` | 6 `[StaFact]` | Expand-right (fits without shift); exact-fit after shift-left; shift-left mutates `Window.Left`; shift-left returns desired width; clamp to `MinPaneWidth` (200) floor when screen is full; never inflates beyond desired. |
+| `MarkdownRendererTests` | 10 `[StaFact]` | `Render` returns non-null `FlowDocument` for valid and empty input; explicit `help://topic/` links survive as `Hyperlink`s; bare `[topic.id]` citations rewritten to `help://` hyperlinks with known title, and with id-as-text fallback when topic is unknown; proper `[id](url)` links are not double-rewritten; `https://` links preserved; `HandleNavigate` with malformed `help://` URI and with empty target both do not throw. |
+
+**Decisions / deviations**
+- **`Xunit.StaFact` 1.1.11 used** (not 3.x). Upgrading to 3.0.13 pulled in `xunit.v3.core`, causing `CS0433` ambiguity with the existing `xunit` 2.x reference. The `netstandard2.0` lib in 1.1.11 is fully compatible with `net8.0-windows` — the original error was simply missing `using Xunit;` directives in two test files.
+- **`HelpPaneLayoutCoordinatorTests` uses `[StaFact]`**, not `[Fact]`, because `Window` is a `DispatcherObject` and setting `window.Left` requires STA. The geometry logic itself is pure math; the STA requirement is the only overhead.
+- **`MarkdownRendererTests` uses `[StaFact]`** throughout — `FlowDocument` and all `TextElement` subtypes require STA.
+- **`HelpPaneViewModelTests` and `GlobalF1HelpBehaviorTests` deferred** — depend on STA threading and a more complex fixture; lower immediate priority relative to the value delivered.
+
+#### 6.2 Persistence layer
+
+- Persist and restore per-host **HelpPane outer width** in `AppSettings` (keyed by window type name: `"MainWindow"`, `"RestoreWindow"`, etc.).
+- Persist **Content/Chat splitter ratio** (one shared value across all panes).
+- Persist **last-open topic** per host, so reopening the pane returns to the same article.
+- These three settings are already listed in §8; Phase 6 implements them.
+
+#### 6.3 `AiProviderSetupWindow` and provider preferences
+
+The UI for configuring an AI assistant is a top-level modal window with a 3-step flow:
+
+1. **Where?** — Local / Local Network / Cloud (maps to `AiProviderLocation`).
+2. **Which?** — list of providers filtered to the selected location; includes probe health badge and discovered model list.
+3. **Confirm** — show `DisplayLabel`, smoke-test button (optional), Save / Cancel.
+
+- Wire `OpenAiSetupCommand` in `HelpPaneViewModel` (and in MainWindow's `Help` menu) to open this window.
+- `AiProviderPreferences` persistence: `%LocalAppData%\TapeWinNET\ai-prefs.json` stores last config (endpoint, model ids) but **not** secret keys.
+- API key persistence: DPAPI-protected blob — `ProtectedData.Protect(Encoding.UTF8.GetBytes(key), null, DataProtectionScope.CurrentUser)` stored alongside `ai-prefs.json`; loaded / decrypted on demand. This is Windows-only and appropriate for a WPF desktop app.
+- First-run one-shot prompt: on first use of either the Help pane or the FCL AI assistant, if `HasBeenAskedOnce == false`, display a non-modal banner ("Set up an AI assistant for smarter help?") with `Set up now`, `Maybe later`, `Don't ask again`. Persist the choice.
 
 **Tests**
-- `AiProviderSetupViewModelTests` — step transitions; validation rules.
-- `AiProviderPreferencesTests` — round-trip with and without secret blob; first-run flag handling.
+- `AiProviderPreferencesTests` — JSON round-trip with and without API-key blob; `HasBeenAskedOnce` flag; DPAPI protect/unprotect mock.
+- `AiProviderSetupViewModelTests` — step transitions (Where → Which → Confirm); back navigation; validation (endpoint required for LAN/Cloud; model required); cancel resets state.
+
+#### 6.4 LAN-host management UX
+
+Users can run OpenAI-compatible servers (OpenVINO Model Server, vLLM, llama.cpp, etc.) on any machine in the local network. These must be added manually because they cannot be auto-discovered.
+
+- **`LanHostsWindow`** (or a tab in `AiProviderSetupWindow`) — shows the current contents of `%LocalAppData%\AiNET\lan-hosts.json` as a list: URI | protocol (Ollama / LM Studio / OpenAI-compatible) | last-probe status.
+- Controls: `Add…` (prompts for host:port + protocol), `Remove selected`, `Probe now` (re-runs `IAiProviderDiscovery.DiscoverAsync` for the selected entry and refreshes the status badge).
+- Accessible from `Help → AI Provider settings… → Manage LAN hosts…` and from the **Which?** step of `AiProviderSetupWindow` (a small `Manage…` link next to the Local Network section).
+- `LanHostsRegistry.AddAsync` / `RemoveAsync` persist changes immediately; discovery re-runs on the next `AiSessionFactory.BuildAsync` or manual probe.
+
+**Tests**
+- `LanHostsRegistryTests` (AiNET.Tests, previously planned) — JSON file round-trip; concurrent add/remove; duplicate prevention.
+
+#### 6.5 Complete remaining planned `AiNET.Tests` suites
+
+The following suites have been planned since Phase 1 and should ship in Phase 6:
+
+| Suite | Coverage |
+|---|---|
+| `LmStudioProviderTests` | Fake handler for `/v1/models` + `/v1/chat/completions`; descriptor metadata. |
+| `EnvVarProviderTests` | `GITHUB_TOKEN` / `OPENAI_API_KEY` / `AZURE_OPENAI_API_KEY` present → healthy probe results; absent → skipped. |
+| `DiscoveryTests` | End-to-end `DiscoverAsync` across a mixed fake catalog; LAN endpoints probed; latency and per-probe failure handling. |
+| `InteractionFlowTests` | Call-order assertions: `ShowStatus → ChooseProvider → PromptApiKey → session built`. |
+| `SessionLifecycleTests` | `ReplaceProviderAsync` swaps clients and fires `ProviderChanged`; dispose tears down both clients. |
+| `LanHostsRegistryTests` | (moved here from Phase 1 deferred list — see §6.4 above). |
+
+#### 6.6 Complete HelpNET assistant tests deferred from Phase 4
+
+| Suite | Coverage |
+|---|---|
+| `OnnxEmbeddingGeneratorTests` | Real ONNX cosine sanity on known phrase pairs; skipped if `ONNX_MODEL_PATH` env var absent. |
+| `SemanticHelpAssistantTests` | Mode 2 returns excerpts ranked by cosine; no LLM call. |
+| `RagHelpAssistantTests` | Fake `IChatClient` returning canned answer; assert prompt includes retrieved excerpts; citations parse correctly. |
+
+#### 6.7 Adjacent mode for first dialog (RestoreWindow)
+
+- Implement `IHelpPaneHost` on `RestoreWindow`.
+- `OnPaneOpening` delegates to `HelpPaneLayoutCoordinator.OpenAdjacent(window, desiredWidth)`.
+- Add `[Help]` button to `RestoreWindow`; tag key controls with `help:Help.TopicId`.
+- Navigate the pane to `"dialog.restore"` on open.
+- Persist pane width under key `"RestoreWindow"`.
+
+This serves as the validated pattern for all remaining dialogs (Phase 7).
 
 ---
 
 ### Phase 7 — Roll out HelpPane to all dialogs
 
 **Deliverables**
-- Add `[Help]` button + `IHelpPaneHost` impl to each dialog: `NewBackupSetWindow`, `RestoreWindow` (done in P5), `OpenVirtualDriveWindow`, `OpenRemoteVirtualDriveWindow`, `ConnectToRemoteHostWindow`, `FclFilterWindow`, format-media confirmation, delete-set confirmation.
+- Add `[Help]` button + `IHelpPaneHost` impl to each dialog: `NewBackupSetWindow`, `RestoreWindow` (done in P6), `OpenVirtualDriveWindow`, `OpenRemoteVirtualDriveWindow`, `ConnectToRemoteHostWindow`, `FclFilterWindow`, format-media confirmation, delete-set confirmation.
 - Author the corresponding `dialogs/*.md` (one per dialog).
 - Tag every meaningful control with `help:Help.TopicId`.
 - Author remaining content waves: Features, UI (rest), Reference, Glossary.
