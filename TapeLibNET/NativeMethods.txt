@@ -14,6 +14,11 @@ EraseTape
 WriteFile
 ReadFile
 
+// Backup/restore APIs for system-fidelity file I/O (ACL, ADS, EA, reparse, sparse)
+BackupRead
+BackupWrite
+BackupSeek
+
 // Used in TempFileTree (test helper) for FSCTL_SET_SPARSE on NTFS sparse files
 DeviceIoControl
 
@@ -36,3 +41,26 @@ GENERIC_ACCESS_RIGHTS
 //GENERIC_READ
 //GENERIC_WRITE
 
+// File flags for backup semantics
+FILE_FLAGS_AND_ATTRIBUTES
+// Constants contained in FILE_FLAGS_AND_ATTRIBUTES:
+//FILE_FLAG_BACKUP_SEMANTICS
+
+// Security access rights for BackupRead/BackupWrite
+ACCESS_SYSTEM_SECURITY
+FILE_ACCESS_RIGHTS
+// Constants contained in enum FILE_ACCESS_RIGHTS:
+//READ_CONTROL
+//WRITE_DAC
+//WRITE_OWNER
+
+// WIN32_STREAM_ID structure and stream type constants
+WIN32_STREAM_ID
+// Constants contained in enum WIN32_STREAM_ID:
+//BACKUP_DATA
+//BACKUP_SECURITY_DATA
+//BACKUP_ALTERNATE_DATA
+//BACKUP_EA_DATA
+//BACKUP_OBJECT_ID
+//BACKUP_REPARSE_DATA
+//BACKUP_SPARSE_BLOCK

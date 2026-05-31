@@ -75,7 +75,8 @@ internal sealed class PackedCommitTracker(TapeSetTOC setTOC, ILogger logger)
 
             var tfi = new TapeFileInfo(entry.Template.UID, cf.StartAddress, entry.Template.FileDescr)
             {
-                Hash = entry.Hash
+                Hash = entry.Hash,
+                SizeOnTape = cf.Length
             };
 
             _setTOC.Append(tfi);

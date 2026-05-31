@@ -143,6 +143,13 @@ namespace TapeLibNET
         public long Block => Address.Block;
         public TapeFileDescriptor FileDescr { get; } = fileDescr;
         internal byte[]? Hash { get; set; } = null;
+        /// <summary>
+        /// Actual on-tape size (header + blob body) in bytes, excluding block-alignment padding.
+        ///  Set post-construction on packed-path commit; zero for legacy aligned files or when
+        ///  not yet committed. Required for packed-set restore read-window sizing since files
+        ///  are packed back-to-back with no per-file delimiters.
+        /// </summary>
+        internal long SizeOnTape { get; set; } = 0L;
 
         /// <summary>Convenience constructor for transition: wraps a bare block number in a <see cref="TapeAddress"/> with zero offset.</summary>
         [Obsolete("Use TapeAddress address instead of long block")]
@@ -171,6 +178,7 @@ namespace TapeLibNET
             serializer.Serialize(Address);
             serializer.Serialize(FileDescr);
             serializer.SerializeNullableWithLength(Hash);
+            serializer.Serialize(SizeOnTape);
         }
         public static ITapeSerializable? ConstructFrom(TapeDeserializer deserializer)
         {
@@ -183,7 +191,8 @@ namespace TapeLibNET
 
             return new TapeFileInfo(UID, address, fileDescr)
             {
-                Hash = deserializer.DeserializeNullableBytesWithLength()
+                Hash = deserializer.DeserializeNullableBytesWithLength(),
+                SizeOnTape = deserializer.DeserializeInt64()
             };
         }
         // } ITapeSerializable
@@ -200,6 +209,8 @@ namespace TapeLibNET
             size += FileDescr.EstimateSerializedSize();
             // Hash: length prefix (4 bytes) + optional bytes
             size += sizeof(int) + (Hash?.Length ?? 0);
+            // SizeOnTape: 8 bytes (long)
+            size += sizeof(long);
 
             return size;
         }
@@ -541,7 +552,11 @@ namespace TapeLibNET
             bool packed       = false;
             foreach (var tfi in this)
             {
-                long raw = tfi.FileDescr.Length + TapeFileInfo.EstimateSerializedHeaderSize();
+                // Use SizeOnTape when available (packed files with committed size);
+                //  fall back to estimated size for legacy/aligned or uncommitted files.
+                long raw = (tfi.SizeOnTape > 0)
+                    ? tfi.SizeOnTape
+                    : tfi.FileDescr.Length + TapeFileInfo.EstimateSerializedHeaderSize();
                 rawTotal += raw;
                 if (!packed && tfi.Address.Offset != 0)
                     packed = true;
@@ -556,7 +571,13 @@ namespace TapeLibNET
             {
                 long sum = 0L;
                 foreach (var tfi in this)
-                    sum += tfi.FileDescr.Length + TapeFileInfo.EstimateSerializedHeaderSize();
+                {
+                    // Use SizeOnTape when available (packed files with committed size);
+                    //  fall back to estimated size for legacy/aligned or uncommitted files.
+                    sum += (tfi.SizeOnTape > 0)
+                        ? tfi.SizeOnTape
+                        : tfi.FileDescr.Length + TapeFileInfo.EstimateSerializedHeaderSize();
+                }
                 return sum;
             }
 

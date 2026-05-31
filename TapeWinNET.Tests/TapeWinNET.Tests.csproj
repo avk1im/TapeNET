@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
 	<TargetFramework>net8.0-windows</TargetFramework>
@@ -8,6 +8,7 @@
 	<IsPackable>false</IsPackable>
 	<IsTestProject>true</IsTestProject>
 	<RootNamespace>TapeWinNET.Tests</RootNamespace>
+	<PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
 
   <!-- Embed a small set of fake help .md resources for EmbeddedResourceHelpContentSource tests -->

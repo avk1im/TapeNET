@@ -107,19 +107,21 @@ namespace TapeLibNET
                 }
 #endif
 
-                // Double-buffer file data to overlap file reads with tape writes
+                // Double-buffer file data to overlap file reads with tape writes.
+                // Use TapeBackupSourceStream to capture all NTFS streams (DACL, ADS, EA, etc.)
+                //  via BackupRead as an opaque blob, consistent with the packed backup path.
                 var fileInfo = tfi.FileDescr.CreateFileInfo();
                 using (var buffered = new BufferedTapeWriteStream(wstream, Drive.BlockSize))
                 {
                     if (hasher == null)
                     {
-                        using var srcFileStream = fileInfo.OpenRead();
+                        using var srcFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
                         srcFileStream.CopyTo(buffered);
                     }
                     else
                     {
                         // Note we apply hasher to the file stream since we need to keep tape stream around
-                        var srcFileStream = fileInfo.OpenRead();
+                        var srcFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
                         using var hashingStream = new HashingStream(srcFileStream, hasher, ownInner: true);
                         hashingStream.CopyTo(buffered);
                     }
@@ -129,6 +131,8 @@ namespace TapeLibNET
                 if (hasher != null)
                     tfi.Hash = hasher.GetCurrentHash();
 
+                // wstream was opened fresh for this file, so its Length covers header + blob = full on-tape footprint
+                tfi.SizeOnTape = wstream.Length;
                 BytesBackedup += wstream.Length;
 
                 m_logger.LogTrace("File >{File}< backed up ok", tfi.FileDescr.FullName);
@@ -141,7 +145,7 @@ namespace TapeLibNET
                 throw;
             }
 
-        } // BackupFile()
+        } // BackupFileAligned()
 
 
         /// <summary>Returns <see langword="true"/> if <paramref name="pattern"/> contains <c>*</c> or <c>?</c> wildcards.</summary>
@@ -585,15 +589,17 @@ namespace TapeLibNET
 
                 // No BufferedTapeWriteStream needed: the packer's worker-thread backend
                 //  already overlaps reads and writes.
+                // Use TapeBackupSourceStream to capture all NTFS streams (ACL, ADS, EA, etc.)
+                //  via BackupRead as an opaque blob.
                 var fileInfo = template.FileDescr.CreateFileInfo();
                 if (hasher == null)
                 {
-                    using var srcFileStream = fileInfo.OpenRead();
+                    using var srcFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
                     srcFileStream.CopyTo(wstream);
                 }
                 else
                 {
-                    var srcFileStream = fileInfo.OpenRead();
+                    var srcFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
                     using var hashingStream = new HashingStream(srcFileStream, hasher, ownInner: true);
                     hashingStream.CopyTo(wstream);
                     hash = hasher.GetCurrentHash();

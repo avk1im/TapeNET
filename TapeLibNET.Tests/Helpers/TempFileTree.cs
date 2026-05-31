@@ -136,6 +136,56 @@ public sealed class TempFileTree : IDisposable
         return fullPath;
     }
 
+    /// <summary>
+    /// Creates a file at the specified relative path with a repeating byte pattern,
+    ///  and attaches one or more NTFS Alternate Data Streams.
+    /// The main file is tracked in <see cref="Files"/>; ADS streams are not individually listed
+    ///  but are accessible via <see cref="AdsHelper.AdsPath"/>.
+    /// <para>
+    /// The call is silently skipped (no file created) when the target path is not on an NTFS volume.
+    /// Callers that require the file to exist on non-NTFS should call <see cref="AddFile(string,long)"/>
+    /// and skip the ADS assertions.
+    /// </para>
+    /// </summary>
+    /// <param name="relativePath">Path relative to <see cref="RootPath"/>.</param>
+    /// <param name="size">Main stream size in bytes.</param>
+    /// <param name="adsStreams">
+    ///  Dictionary of stream name → content (byte arrays).
+    ///  String values are accepted via the overload below.
+    /// </param>
+    /// <returns>Full path of the created file, or <c>null</c> when NTFS is not available.</returns>
+    public string? AddFileWithAds(string relativePath, long size, IReadOnlyDictionary<string, byte[]> adsStreams)
+    {
+        // Ensure the directory exists so IsNtfs can resolve the root
+        string fullPath = Path.Combine(RootPath, relativePath);
+        string? dir = Path.GetDirectoryName(fullPath);
+        if (dir != null && !Directory.Exists(dir))
+            Directory.CreateDirectory(dir);
+
+        if (!AdsHelper.IsNtfs(fullPath))
+            return null;
+
+        WritePatternFile(fullPath, size);
+
+        foreach (var (streamName, content) in adsStreams)
+            AdsHelper.WriteAds(fullPath, streamName, content);
+
+        Files.Add(fullPath);
+        TotalSize += size;
+        return fullPath;
+    }
+
+    /// <summary>
+    /// Overload that accepts UTF-8 string values for each ADS stream.
+    /// </summary>
+    public string? AddFileWithAds(string relativePath, long size, IReadOnlyDictionary<string, string> adsStreams)
+    {
+        var bytes = adsStreams.ToDictionary(
+            kvp => kvp.Key,
+            kvp => System.Text.Encoding.UTF8.GetBytes(kvp.Value));
+        return AddFileWithAds(relativePath, size, bytes);
+    }
+
     #endregion
 
     #region *** Batch Generation ***

@@ -27,6 +27,9 @@
     <Compile Include="..\TapeLibNET.Tests\Helpers\TempFileTree.cs">
       <Link>Shared\TempFileTree.cs</Link>
     </Compile>
+    <Compile Include="..\TapeLibNET.Tests\Helpers\AdsHelper.cs">
+      <Link>Shared\AdsHelper.cs</Link>
+    </Compile>
     <Compile Include="..\TapeLibNET.Tests\Helpers\FileComparer.cs">
       <Link>Shared\FileComparer.cs</Link>
     </Compile>

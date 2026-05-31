@@ -239,8 +239,11 @@ namespace TapeLibNET
                 }
 
                 // The packer needs the file's exact tape position and length to bound its
-                //  read window. Header + body are read through the same façade in one shot.
-                long totalBytes = TapeFileInfo.EstimateSerializedHeaderSize() + tfi.FileDescr.Length;
+                //  read window. Use SizeOnTape (set during packed backup) when available;
+                //  fall back to estimated size for legacy/aligned files.
+                long totalBytes = (tfi.SizeOnTape > 0)
+                    ? tfi.SizeOnTape
+                    : TapeFileInfo.EstimateSerializedHeaderSize() + tfi.FileDescr.Length;
                 using var rstream = Manager.BeginPackedFileRead(tfi.Address, totalBytes);
                 if (rstream == null)
                 {
@@ -1057,14 +1060,16 @@ namespace TapeLibNET
         protected override bool RestoreFileCore(FileInfo fileInfo, Stream rstream, NonCryptographicHashAlgorithm? hasher)
         {
             // Packer-backed reads come from a small ring cache; no extra buffering needed.
+            // Use TapeBackupTargetStream so BackupWrite restores all NTFS streams (ACL, ADS, EA, etc.)
+            //  in addition to the default data stream.
             if (hasher == null)
             {
-                using var dstFileStream = fileInfo.Create();
+                using var dstFileStream = TapeBackupTargetStream.Create(fileInfo, m_logger);
                 rstream.CopyTo(dstFileStream);
             }
             else
             {
-                var dstFileStream = fileInfo.Create();
+                var dstFileStream = TapeBackupTargetStream.Create(fileInfo, m_logger);
                 using var hashingStream = new HashingStream(dstFileStream, hasher, ownInner: true);
                 rstream.CopyTo(hashingStream);
             }
@@ -1074,6 +1079,8 @@ namespace TapeLibNET
 
         protected override bool PostProcessFileInternal(TapeFileDescriptor fileDescr, FileInfo fileInfo)
         {
+            // Apply timestamps and attributes explicitly; these complement BackupWrite's
+            //  security-descriptor restoration with reliable TOC-sourced values.
             return fileDescr.ApplyToFileInfo(fileInfo);
         }
 
@@ -1155,15 +1162,17 @@ namespace TapeLibNET
 
         protected override bool RestoreFileCore(FileInfo fileInfo, Stream rstream, NonCryptographicHashAlgorithm? hasher)
         {
+            // Open the disk file via TapeBackupSourceStream so BackupRead produces the same
+            //  opaque blob format as was written during backup — enabling accurate byte comparison.
             if (hasher == null)
             {
-                using var dstFileStream = fileInfo.OpenRead();
+                using var dstFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
                 if (!rstream.CompareTo(dstFileStream))
                     return false;
             }
             else
             {
-                using var dstFileStream = fileInfo.OpenRead();
+                using var dstFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
                 using var hashingStream = new HashingStream(rstream, hasher, ownInner: false);
                 if (!dstFileStream.CompareTo(hashingStream))
                     return false;
