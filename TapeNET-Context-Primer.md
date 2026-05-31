@@ -215,6 +215,42 @@ Multiple files can share a single tape block, eliminating per-file alignment was
 - **`TapeStreamManager` integration** — owns packer/backend lifecycle: `EnsurePackerCreated()` / `EnsureReadPackerCreated()` construct the respective stacks; `FlushAndDisposePacker()` / `DisposeReadPacker()` tear them down. `BeginPackedFile()` / `EndPackedFile()` and `BeginPackedFileRead()` / `EndPackedFileRead()` are the agent-facing entry points. `Manager.FilesCommitted` re-exposes the inner packer's event. The read-packer field is typed `ITapeFileReader?` so the pipelined reader and any future implementation are interchangeable without touching call sites.
 - **Agent integration** — `TapeFileBackupAgent` packed methods sit alongside the legacy aligned methods (retained with `[Obsolete]` for TOC I/O and side-by-side testing). `TapeFileRestoreBaseAgent` restore agents (`TapeFileRestoreAgent`, `TapeFileValidateAgent`, `TapeFileVerifyAgent`) operate unchanged against the generic `Stream` returned by `BeginPackedFileRead` — the pipelined prefetch is fully transparent. The legacy `[Obsolete]` aligned restore methods (`RestoreNextFileAligned`, etc.) are retained in source for TOC-path testing; `TapeFileReadPacker` and `SyncTapeReadBackend` have been removed from the active build and preserved under `TapeLibNET/Excluded Files/`. Cross-path compatibility: legacy (aligned) backup output restores correctly through the packed path; packed backup output requires the packed restore path.
 
+### Win32 BackupRead / BackupWrite file I/O (`TapeBackupStream`)
+
+Complete design specification: `docs/Design-BackupRead-BackupWrite.md`.
+
+All file reads (backup) and writes (restore/verify) go through Win32 `BackupRead` /
+`BackupWrite` rather than plain `FileStream`, capturing all NTFS streams of a file as
+an opaque blob: main data, ACLs/security descriptors (`BACKUP_SECURITY_DATA`), Alternate
+Data Streams (`BACKUP_ALTERNATE_DATA`), Extended Attributes, reparse points, and sparse
+block maps.
+
+Key design points:
+
+- **Pure pass-through wrappers** — `TapeBackupSourceStream` (`BackupRead`) and
+  `TapeBackupTargetStream` (`BackupWrite`) are `Stream`-derived wrappers that forward
+  bytes directly; Win32 owns all `WIN32_STREAM_ID` framing via its internal `lpContext`
+  pointer. No framing parsing or state machine is implemented in the wrappers.
+- **`bProcessSecurity = false` consistently** — security processing is disabled on every
+  call to the same context handle. Mixing `true`/`false` on the same handle corrupts
+  internal Win32 state (causes hangs). SACLs are omitted; DACLs are preserved via
+  `READ_CONTROL` / `WRITE_DAC`.
+- **Reduced access rights** — `ACCESS_SYSTEM_SECURITY` and `WRITE_OWNER` are intentionally
+  omitted so the wrappers operate without `SeSecurityPrivilege` / `SeRestorePrivilege`.
+- **`SizeOnTape` on `TapeFileInfo`** — the exact on-tape blob byte count (header +
+  `BackupRead` body) is persisted in the TOC. For the packed path it is sourced from
+  `CommittedFile.Length` in `PackedCommitTracker.OnCommitted`; for the legacy aligned
+  path it is set from `wstream.Length` after the buffered copy. The packed restore path
+  uses `SizeOnTape` to size its per-file read window.
+- **Both backup paths covered** — the packed (`BackupFile`) and legacy aligned
+  (`BackupFileAligned`, `[Obsolete]`) paths both use `TapeBackupSourceStream`, so
+  sets written by either path restore correctly through the packed restore path.
+- **`PostProcessFileInternal` still runs** — timestamps and file attributes are applied
+  after `TapeBackupTargetStream` is closed; these are complementary to `BackupWrite`
+  (which restores stream content and security descriptors only).
+- **Empty-file edge case** — `BackupRead` may return 0 bytes for a zero-byte file with no
+  additional NTFS streams; this is a legitimate end-of-backup signal, not an error.
+
 ### Remote backend (`TapeLibNET.Remote`)
 
 `RemoteTapeDriveBackend` is a `TapeDriveBackend` subclass that forwards every operation to a remote `TapeDriveGrpcService` via gRPC, making a network-attached tape drive a transparent drop-in for `TapeDrive`. All backend properties are served from a cached `BackendState` snapshot piggybacked on every RPC response.

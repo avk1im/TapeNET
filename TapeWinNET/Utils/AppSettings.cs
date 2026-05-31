@@ -82,16 +82,25 @@ public class AppSettings
 
     #region Help Pane
 
-    /// <summary>Width of the HelpPane column in MainWindow.</summary>
-    public double? HelpPaneWidth { get; set; }
+    /// <summary>
+    /// Width (pixels) of the HelpPane column, keyed by host window name (e.g. "MainWindow").
+    /// Enables each host to remember its own preferred pane width independently.
+    /// </summary>
+    [JsonPropertyName("helpPaneWidthPerHost")]
+    public Dictionary<string, double>? HelpPaneWidthPerHost { get; set; }
 
-    /// <summary>Ratio (0–1) of the content subpane height vs. the combined content+chat height.</summary>
-    public double? HelpPaneContentSplitterRatio { get; set; }
+    /// <summary>
+    /// Height (pixels) of the chat sub-pane inside the HelpPane.
+    /// Shared across all host windows (one splitter position for the whole app).
+    /// </summary>
+    [JsonPropertyName("helpPaneChatHeight")]
+    public double? HelpPaneChatHeight { get; set; }
 
     /// <summary>
     /// Last-open topic id per host window name, keyed by host name (e.g. "MainWindow").
     /// Enables restoring the last-viewed topic when the pane is reopened.
     /// </summary>
+    [JsonPropertyName("helpPaneLastTopicPerHost")]
     public Dictionary<string, string>? HelpPaneLastTopicPerHost { get; set; }
 
     #endregion

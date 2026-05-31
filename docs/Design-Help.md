@@ -1,6 +1,6 @@
 # TapeWinNET Help System — Detailed Design
 
-> **Status:** Phases 0 ✅ 1 ✅ 2 ✅ 3 ✅ 4 ✅ 5 ✅ complete — `HelpNET` fully implemented; TapeWinNET HelpPane integrated and working. Phase 6 in progress: §6.1 ✅ done.
+> **Status:** Phases 0 ✅ 1 ✅ 2 ✅ 3 ✅ 4 ✅ 5 ✅ complete — `HelpNET` fully implemented; TapeWinNET HelpPane integrated and working. Phase 6 in progress: §6.1 ✅ §6.2 ✅ done.
 > **Scope:** A modern, optionally AI-augmented help system for TapeWinNET, with reusable engines (`AiNET`, `HelpNET`) ready for TapeConNET and other future consumers.
 > **Authoring convention:** Markdown + YAML front-matter for all help content. Library API surfaces are described in C# pseudo-signatures; sections marked **(not yet implemented)** are still design-only.
 
@@ -1127,12 +1127,25 @@ This phase hardens the Phase 5 implementation with targeted tests, completes the
 - **`MarkdownRendererTests` uses `[StaFact]`** throughout — `FlowDocument` and all `TextElement` subtypes require STA.
 - **`HelpPaneViewModelTests` and `GlobalF1HelpBehaviorTests` deferred** — depend on STA threading and a more complex fixture; lower immediate priority relative to the value delivered.
 
-#### 6.2 Persistence layer
+#### 6.2 Persistence layer ✅ DONE
 
-- Persist and restore per-host **HelpPane outer width** in `AppSettings` (keyed by window type name: `"MainWindow"`, `"RestoreWindow"`, etc.).
-- Persist **Content/Chat splitter ratio** (one shared value across all panes).
-- Persist **last-open topic** per host, so reopening the pane returns to the same article.
-- These three settings are already listed in §8; Phase 6 implements them.
+**Deliverables**
+- ✅ `AppSettings` updated — three new Help Pane fields (all with explicit `[JsonPropertyName]`):
+  - `HelpPaneWidthPerHost` (`Dictionary<string, double>?`) — per-host outer column width, keyed by window type name (`"MainWindow"`, `"RestoreWindow"`, etc.).
+  - `HelpPaneChatHeight` (`double?`) — shared inner chat area height in pixels (previously a content/chat ratio placeholder; replaced by a pixel value).
+  - `HelpPaneLastTopicPerHost` (`Dictionary<string, string>?`) — per-host last-open topic id.
+- ✅ `HelpPaneViewModel.ChatPaneHeight` — new bindable property backed by `_chatPaneHeight` (default 200 px), clamped to a minimum of 80 px.
+- ✅ `HelpPane.xaml` — inner `GridSplitter` between the content and chat areas named `ChatSplitter`; wired with `DragCompleted="ChatSplitter_DragCompleted"`.
+- ✅ `HelpPane.xaml.cs` — `ApplyChatHeight(HelpPaneViewModel)` updates `ChatRow.Height` from the VM; `ChatSplitter_DragCompleted` pushes the actual row height back to `ChatPaneHeight`; `Vm_PropertyChanged` propagates `ChatPaneHeight` changes to the grid row.
+- ✅ `MainWindow.OpenHelpPane()` — restores per-host outer width from `HelpPaneWidthPerHost`, initializes `HelpPaneViewModel.ChatPaneHeight` from `HelpPaneChatHeight`, and navigates the session to `HelpPaneLastTopicPerHost[host]` if present.
+- ✅ `MainWindow.OnPaneClosed()` — persists the live values of all three settings back to `AppSettings` when the pane is explicitly closed.
+- ✅ `MainWindow.SaveSettings()` — also persists live Help pane state (width, chat height, last topic) when the app closes while the pane is still open, so shutdown never loses the user's layout.
+
+**Decisions / deviations**
+- **Pixel height instead of a ratio.** `AppSettings` previously held `HelpPaneContentSplitterRatio` (a 0–1 `double?`). This was replaced by `HelpPaneChatHeight` in absolute pixels. Pixels are consistent with how all other pane heights are stored in `AppSettings`, and they survive window resizes without unexpected rescaling.
+- **Single shared chat height across hosts.** Chat pane height is shared by all HelpPane instances (one `double?`). Per-host chat height would add complexity for no tangible user benefit; the chat area is content-agnostic and the same height feels natural everywhere.
+- **Width per host, topic per host.** By contrast, the outer pane width and last-open topic are host-specific: a dialog pane is typically narrower than the MainWindow pane, and each dialog has its own relevant topic. The `Dictionary<string, …>` pattern matches the existing `LogPaneHeightPerHost` and similar per-host storage in `AppSettings`.
+- **`SaveSettings()` as the safety net.** Persisting Help pane state only in `OnPaneClosed()` proved insufficient — closing the app with the pane still open bypassed that hook. `MainWindow.SaveSettings()` (called from `MainWindow_Closing`) was updated to save the live Help pane state, mirroring `OnPaneClosed()`. This two-path approach ensures settings are never lost regardless of how the window is dismissed.
 
 #### 6.3 `AiProviderSetupWindow` and provider preferences
 

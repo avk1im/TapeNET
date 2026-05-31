@@ -151,6 +151,8 @@ public partial class HelpPane : UserControl
             newVm.ConversationItems.CollectionChanged += ConversationItems_Changed;
             newVm.PropertyChanged += Vm_PropertyChanged;
             PushDocument(newVm.CurrentDocument);
+            // Restore the persisted chat row height for this VM
+            ApplyChatHeight(newVm);
         }
         else
         {
@@ -159,19 +161,42 @@ public partial class HelpPane : UserControl
         }
     }
 
-    /// <summary>Pushes <see cref="HelpPaneViewModel.CurrentDocument"/> changes into the RichTextBox.</summary>
+    /// <summary>Pushes <see cref="HelpPaneViewModel.CurrentDocument"/> changes into the RichTextBox,
+    ///  and keeps <c>ChatRow.Height</c> in sync when <see cref="HelpPaneViewModel.ChatPaneHeight"/>
+    ///  is changed externally (e.g. on first open when AppSettings restores the saved height).</summary>
     private void Vm_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(HelpPaneViewModel.CurrentDocument)
-            && sender is HelpPaneViewModel vm)
-        {
+        if (sender is not HelpPaneViewModel vm) return;
+
+        if (e.PropertyName == nameof(HelpPaneViewModel.CurrentDocument))
             PushDocument(vm.CurrentDocument);
-        }
+        else if (e.PropertyName == nameof(HelpPaneViewModel.ChatPaneHeight))
+            ChatRow.Height = new GridLength(vm.ChatPaneHeight, GridUnitType.Pixel);
     }
 
     /// <summary>Assigns <paramref name="document"/> to the content <see cref="RichTextBox"/>.</summary>
     private void PushDocument(FlowDocument? document)
     {
         ContentViewer.Document = document ?? new FlowDocument();
+    }
+
+    // ── Chat splitter / pane-height persistence ───────────────────────────────
+
+    /// <summary>
+    /// Applies <see cref="HelpPaneViewModel.ChatPaneHeight"/> to <c>ChatRow</c>.
+    /// Called when a new VM is bound so the row starts at the persisted height.
+    /// </summary>
+    private void ApplyChatHeight(HelpPaneViewModel vm)
+        => ChatRow.Height = new GridLength(vm.ChatPaneHeight, GridUnitType.Pixel);
+
+    /// <summary>
+    /// After the user finishes dragging the chat splitter, read the actual row height
+    /// and push it back to the VM so it can be persisted.
+    /// </summary>
+    private void ChatSplitter_DragCompleted(object sender,
+        System.Windows.Controls.Primitives.DragCompletedEventArgs e)
+    {
+        if (DataContext is HelpPaneViewModel vm)
+            vm.ChatPaneHeight = ChatRow.ActualHeight;
     }
 }

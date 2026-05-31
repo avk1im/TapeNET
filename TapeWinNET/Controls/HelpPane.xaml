@@ -263,10 +263,12 @@
                          MouseLeave="RichTextBox_MouseLeave"/>
 
             <!-- Splitter between content and chat -->
-            <GridSplitter Grid.Row="1" Height="4"
+            <GridSplitter x:Name="ChatSplitter"
+                          Grid.Row="1" Height="4"
                           HorizontalAlignment="Stretch"
                           VerticalAlignment="Center"
-                          Background="LightGray"/>
+                          Background="LightGray"
+                          DragCompleted="ChatSplitter_DragCompleted"/>
 
             <!-- Chat subpane -->
             <Grid Grid.Row="2">

@@ -612,6 +612,30 @@ namespace TapeWinNET
             // Save view options
             settings.ShowUsageBar = _viewModel.ShowUsageBar;
 
+            // Save help pane state (if pane has been opened at least once).
+            // This covers the case where the window is closed while the pane is still visible —
+            //  OnPaneClosed() is only called when the user explicitly closes the pane.
+            if (_helpPaneVm is not null)
+            {
+                // Outer column width (per-host)
+                if (HelpPaneColumn.ActualWidth > 0)
+                {
+                    settings.HelpPaneWidthPerHost ??= [];
+                    settings.HelpPaneWidthPerHost[HostName] = HelpPaneColumn.ActualWidth;
+                }
+
+                // Chat sub-pane height
+                settings.HelpPaneChatHeight = _helpPaneVm.ChatPaneHeight;
+
+                // Last-viewed topic
+                var topicId = _helpPaneVm.CurrentTopicId;
+                if (topicId is not null)
+                {
+                    settings.HelpPaneLastTopicPerHost ??= [];
+                    settings.HelpPaneLastTopicPerHost[HostName] = topicId;
+                }
+            }
+
             // Let the ViewModel save its own state (last drive info)
             _viewModel.SaveSettings();
 
@@ -679,8 +703,12 @@ namespace TapeWinNET
 
         public void OnPaneClosed()
         {
-            // Persist pane width
-            _viewModel.Settings.HelpPaneWidth = HelpPaneColumn.ActualWidth;
+            // Persist pane width (per-host) and chat sub-pane height
+            _viewModel.Settings.HelpPaneWidthPerHost ??= [];
+            _viewModel.Settings.HelpPaneWidthPerHost[HostName] = HelpPaneColumn.ActualWidth;
+
+            if (_helpPaneVm is not null)
+                _viewModel.Settings.HelpPaneChatHeight = _helpPaneVm.ChatPaneHeight;
 
             // Persist the last-viewed topic id so it is restored on next open
             if (_helpPaneVm is not null)
@@ -715,7 +743,13 @@ namespace TapeWinNET
                 // First open — build the session and wire the VM
                 var session  = await AppHelpSessionFactory.CreateAsync(this);
                 var actions  = BuildHelpActions();
-                _helpPaneVm  = new HelpPaneViewModel(session, this, actions);
+                _helpPaneVm  = new HelpPaneViewModel(session, this, actions)
+                {
+                    // Restore persisted chat sub-pane height before binding so the
+                    //  DataContextChanged handler in HelpPane.xaml.cs applies it immediately.
+                    ChatPaneHeight =
+                        _viewModel.Settings.HelpPaneChatHeight ?? 200.0
+                };
                 // Forward session errors, warnings, and info messages to the main log pane
                 _helpPaneVm.SessionError   += OnHelpSessionError;
                 _helpPaneVm.SessionInfo    += OnHelpSessionInfo;
@@ -723,8 +757,9 @@ namespace TapeWinNET
                 HelpPaneControl.DataContext = _helpPaneVm;
             }
 
-            // Show the pane
-            var width = _viewModel.Settings.HelpPaneWidth ?? DefaultHelpPaneWidth;
+            // Show the pane — restore per-host width
+            var width = _viewModel.Settings.HelpPaneWidthPerHost?.GetValueOrDefault(HostName)
+                        ?? DefaultHelpPaneWidth;
             OnPaneOpening(width);
             HelpPaneControl.Visibility = Visibility.Visible;
             _helpPaneVm.IsPaneOpen = true;

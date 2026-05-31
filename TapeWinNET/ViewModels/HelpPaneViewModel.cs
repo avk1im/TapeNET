@@ -63,6 +63,7 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     private bool          _isBusy;
     private bool          _isPaneOpen;
     private bool          _isAsking;
+    private double        _chatPaneHeight = 200.0;
     private string        _thinkingAnimationText = string.Empty;
     private HelpAssistantMode _assistantMode;
 
@@ -198,6 +199,18 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     {
         get => _isPaneOpen;
         set => SetProperty(ref _isPaneOpen, value);
+    }
+
+    /// <summary>
+    /// Height (pixels) of the chat sub-pane.
+    /// Set from <c>AppSettings.HelpPaneChatHeight</c> on pane open; updated live by the
+    ///  <c>ChatSplitter_DragCompleted</c> handler in <see cref="Controls.HelpPane"/>; persisted
+    ///  back to <c>AppSettings</c> when the pane closes or the window is saved.
+    /// </summary>
+    public double ChatPaneHeight
+    {
+        get => _chatPaneHeight;
+        set => SetProperty(ref _chatPaneHeight, Math.Max(80.0, value));
     }
 
     /// <summary>Current retrieval/synthesis mode — shown in the header badge.</summary>
