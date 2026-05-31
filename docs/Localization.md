@@ -230,9 +230,9 @@ Located at `tools\TapeLoc\loc-rules.json`. Common tweaks:
 
 | Setting | Purpose |
 |---------|---------|
-| `provider.model` / `provider.endpoint` | Switch AI model or provider. |
+| `provider.model` / `provider.endpoint` | Switch AI model or provider. TapeLoc auto-tries both `/v1` and `/v3` paths, so OpenAI (`/v1`) and OpenVINO Model Server (`/v3`) both work. |
+| `provider.requiresApiKey` | Set `false` for keyless local/LAN providers (Ollama, LM Studio, OpenVINO Model Server, vLLM). No env var or `Authorization` header is used. |
 | `provider.temperature` | Lower = more deterministic (default `0.1`). |
-| `translateAttributes` | Add/remove XAML attributes whose values get translated. |
 | `translateXmlDocs` | Set `true` to also translate XML doc comments (default `false`). |
 | `invariants.neverTranslateLiterals` | Tokens that must never change anywhere. |
 | `invariants.logErrorCodePatterns` | Regexes identifying stable codes to preserve. |
@@ -244,7 +244,8 @@ Located at `tools\TapeLoc\loc-rules.json`. Common tweaks:
 
 | Symptom | Cause / Fix |
 |---------|-------------|
-| `provider error: API key not found` (exit 3) | Set `TAPELOC_API_KEY` (see §2). |
+| `provider error: API key not found` (exit 3) | Set `TAPELOC_API_KEY` (see §2), or set `provider.requiresApiKey=false` for a keyless local provider. |
+| `No working endpoint found` (exit 3) | Neither `/v1` nor `/v3` answered at `provider.endpoint`. Check the host/port and that the model server is running. |
 | A file keeps appearing as `[FAILED]` | Open its `*.reject`; add a `loc:ignore` guard or fix wording, then re-run with `--force`. |
 | Nothing re-translates after edits | Cache hit — use `--force`, or bump `rulesVersion`. |
 | Translation looks stale | The cache is keyed on `(file, culture, rulesVersion)`; bump `rulesVersion` or `--force`. |
