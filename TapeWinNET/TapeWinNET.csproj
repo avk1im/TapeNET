@@ -44,4 +44,27 @@
 		<PackageReference Include="System.Memory" Version="4.6.3" />
 	</ItemGroup>
 
+  <!--
+	Localization build-time source swap (see docs/Design-TapeLoc.md §11).
+	 When LocSourceDir is set (e.g. by tools/publish-loc.ps1), the canonical
+	 English .cs/.xaml sources are replaced by the AI-generated translated
+	 variant under that directory. When LocSourceDir is empty (the default),
+	 this ItemGroup is inert and the normal English build is unaffected.
+  -->
+  <ItemGroup Condition="'$(LocSourceDir)' != ''">
+	<!-- Drop the default-globbed canonical sources. -->
+	<Compile Remove="**\*.cs" />
+	<Page Remove="**\*.xaml" />
+	<!-- Re-include from the translated variant, preserving link paths so output
+		 structure and XAML code-behind pairing stay identical. -->
+	<Compile Include="$(LocSourceDir)\**\*.cs" Exclude="$(LocSourceDir)\**\bin\**;$(LocSourceDir)\**\obj\**">
+	  <Link>%(RecursiveDir)%(Filename)%(Extension)</Link>
+	</Compile>
+	<Page Include="$(LocSourceDir)\**\*.xaml" Exclude="$(LocSourceDir)\**\bin\**;$(LocSourceDir)\**\obj\**">
+	  <Link>%(RecursiveDir)%(Filename)%(Extension)</Link>
+	</Page>
+	<!-- Re-apply the canonical exclusion that the default ItemGroup carried. -->
+	<Compile Remove="$(LocSourceDir)\Services\BackupProgressHandler.cs" />
+  </ItemGroup>
+
 </Project>

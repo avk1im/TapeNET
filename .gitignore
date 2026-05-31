@@ -364,6 +364,11 @@ FodyWeavers.xsd
 
 # Remote tape service test settings (contains host/port — user-specific)
 remote-test-settings.json
+
 # TapeNET packaging output (publish staging + built installers)
 packaging/dist/
 packaging/installers/
+
+# TapeLoc localization (generated variants, caches, reports, and packaged output)
+loc/
+dist/
