@@ -113,6 +113,7 @@ style, but is **otherwise independent** of it.
 	"model": "gpt-4o",
 	"temperature": 0.1,                    // low ⇒ more deterministic
 	"apiKeyEnvVar": "TAPELOC_API_KEY",     // key read from env; NEVER committed
+	"requiresApiKey": true,                // false ⇒ keyless local/LAN provider
 	"maxRetries": 3,
 	"timeoutSeconds": 120
   },
@@ -167,6 +168,20 @@ style, but is **otherwise independent** of it.
 
 **Secrets:** the API key is read from the env var named by `provider.apiKeyEnvVar`
 (`TAPELOC_API_KEY` by default). The key is **never** stored in config or committed.
+
+**Keyless providers:** set `provider.requiresApiKey: false` for local/LAN servers
+(Ollama, LM Studio, OpenVINO Model Server, vLLM, …) that accept requests without a
+bearer token. When false, no env var is required and no `Authorization` header is
+sent. When true (the default), a missing key fails fast with exit code `3`.
+
+**API-version fallback:** `HttpAiTranslator` automatically probes both the `/v1`
+and `/v3` chat-completions paths. It tries the configured `provider.endpoint`
+first; if that path returns **404 Not Found**, it retries the same URL with the
+version segment swapped (`/v1/` ⇄ `/v3/`). This lets the same config reach
+OpenAI-style servers (`/v1`) and OpenVINO Model Server (`/v3`) without edits. The
+first path that responds is cached for the remainder of the run, so probing
+happens at most once. URLs without a slash-bounded `/v1/` or `/v3/` segment are
+used as-is.
 
 ---
 

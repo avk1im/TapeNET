@@ -62,8 +62,9 @@ internal sealed class LocRules
 
     private void Validate(string path)
     {
-        if (string.IsNullOrWhiteSpace(Provider.ApiKeyEnvVar))
-            throw new LocRulesException($"provider.apiKeyEnvVar must be set in '{path}'.");
+        if (Provider.RequiresApiKey && string.IsNullOrWhiteSpace(Provider.ApiKeyEnvVar))
+            throw new LocRulesException(
+                $"provider.apiKeyEnvVar must be set in '{path}' (or set provider.requiresApiKey=false).");
         if (string.IsNullOrWhiteSpace(Provider.Endpoint))
             throw new LocRulesException($"provider.endpoint must be set in '{path}'.");
         if (string.IsNullOrWhiteSpace(Provider.Model))
@@ -84,6 +85,9 @@ internal sealed class ProviderOptions
     public string Model { get; init; } = "gpt-4o";
     public double Temperature { get; init; } = 0.1;
     public string ApiKeyEnvVar { get; init; } = "TAPELOC_API_KEY";
+    // Set false for keyless local/LAN providers (Ollama, LM Studio, OpenVINO
+    //  Model Server, vLLM, …) that accept requests without a bearer token.
+    public bool RequiresApiKey { get; init; } = true;
     public int MaxRetries { get; init; } = 3;
     public int TimeoutSeconds { get; init; } = 120;
 }
