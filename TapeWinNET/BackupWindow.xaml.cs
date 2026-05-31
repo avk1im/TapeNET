@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 
+using TapeWinNET.Help;
 using TapeWinNET.Models;
 using TapeWinNET.Utils;
 using TapeWinNET.ViewModels;
@@ -12,15 +13,23 @@ namespace TapeWinNET;
 /// Handles source selection → file resolution, checkbox events,
 ///  drag-drop, and FileFilterPane wiring.
 /// </summary>
-public partial class BackupWindow : Window
+public partial class BackupWindow : Window, IHelpPaneHost
 {
     private BackupViewModel ViewModel { get; }
+
+    // All embedded help-pane boilerplate (window expansion, F1 resolution,
+    //  session lifecycle, and AppSettings persistence) lives in this controller.
+    private readonly DialogHelpPaneController _help;
 
     public BackupWindow(BackupViewModel viewModel, string[]? paths = null)
     {
         InitializeComponent();
         ViewModel = viewModel;
         DataContext = viewModel;
+
+        _help = new DialogHelpPaneController(
+            this, this, HelpPaneColumn, HelpPaneSplitter, HelpPaneControl,
+            defaultTopicId: "dialog.backup", helpButton: HelpButton);
 
         // Set window icon
         var icon = TapeIcons.GetBackupSetIcon(large: true);
@@ -160,4 +169,33 @@ public partial class BackupWindow : Window
                 UpdateFilterPaneCounts(setView);
         }
     }
+
+    // ─────────────────────────────────────────────────
+    //  Help pane (embedded, adjacent mode)
+    // ─────────────────────────────────────────────────
+
+    private void HelpButton_Click(object sender, RoutedEventArgs e)
+        => _help.ToggleHelpPane();
+
+    private void Window_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        => _help.HandleF1(e);
+
+    #region IHelpPaneHost
+
+    public string HostName => "BackupWindow";
+
+    // Adjacent: the window expands to the right; the HelpPane is a column inside
+    //  the same window, not a separate floating window.
+    public HelpPaneHostMode HostMode => HelpPaneHostMode.Adjacent;
+
+    public void OnPaneOpening(double desiredWidth) => _help.OnPaneOpening(desiredWidth);
+
+    public void OnPaneClosed() => _help.OnPaneClosed();
+
+    public FrameworkElement? ResolveControlByName(string name)
+        => FindName(name) as FrameworkElement;
+
+    public void OpenHelpPane(string? topicId = null) => _help.OpenHelpPane(topicId);
+
+    #endregion
 }

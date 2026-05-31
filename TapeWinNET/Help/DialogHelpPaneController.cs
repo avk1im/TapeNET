@@ -30,6 +30,12 @@ public sealed class DialogHelpPaneController
 {
     private const double SplitterWidth = 4.0;
 
+    // Help-button labels for each state. The Help/Close labels carry the access
+    //  key on "Help"; the Loading label needs none since the button is disabled.
+    private const string IdleLabel    = "_Help";
+    private const string LoadingLabel = "Loading\u2026";
+    private const string OpenLabel    = "Close _Help";
+
     private readonly IHelpPaneHost      _host;
     private readonly Window             _window;
     private readonly ColumnDefinition   _paneColumn;
@@ -37,6 +43,9 @@ public sealed class DialogHelpPaneController
     private readonly Controls.HelpPane  _paneControl;
     private readonly string             _defaultTopicId;
     private readonly double             _defaultWidth;
+
+    // Optional toggle button this controller drives (label + enabled state).
+    private readonly Button?            _helpButton;
 
     // Width of the dialog content area alone (without the help pane), captured at
     //  construction so the pane can shrink the window back to exactly this value.
@@ -53,6 +62,12 @@ public sealed class DialogHelpPaneController
     /// <param name="splitter">The <c>GridSplitter</c> between content and pane.</param>
     /// <param name="paneControl">The embedded <see cref="Controls.HelpPane"/> control.</param>
     /// <param name="defaultTopicId">Topic shown when no contextual or persisted topic applies.</param>
+    /// <param name="helpButton">
+    /// Optional Help toggle button. When supplied, the controller manages its label and
+    /// enabled state: <c>Help</c> when closed, <c>Loading…</c> (disabled) while the session
+    /// builds, and <c>Close Help</c> once the pane is open. Wire the button's <c>Click</c>
+    /// to <see cref="ToggleHelpPane"/>.
+    /// </param>
     /// <param name="defaultWidth">Default pane width used when none is persisted.</param>
     public DialogHelpPaneController(
         IHelpPaneHost host,
@@ -61,6 +76,7 @@ public sealed class DialogHelpPaneController
         FrameworkElement splitter,
         Controls.HelpPane paneControl,
         string defaultTopicId,
+        Button? helpButton = null,
         double defaultWidth = 340)
     {
         _host           = host;
@@ -69,6 +85,7 @@ public sealed class DialogHelpPaneController
         _splitter       = splitter;
         _paneControl    = paneControl;
         _defaultTopicId = defaultTopicId;
+        _helpButton     = helpButton;
         _defaultWidth   = defaultWidth;
 
         // Snapshot the initial (no-pane) window width
@@ -112,6 +129,22 @@ public sealed class DialogHelpPaneController
         _paneColumn.MinWidth = 0;
         _splitter.Visibility    = Visibility.Collapsed;
         _paneControl.Visibility = Visibility.Collapsed;
+
+        // Reset the Help button to its idle state (also covers the in-pane close button,
+        //  since that path routes through OnPaneClosed as well)
+        SetButtonState(IdleLabel, enabled: true);
+    }
+
+    /// <summary>
+    /// Toggles the help pane: opens it if closed, or closes it if already open.
+    /// Wire the dialog's Help button <c>Click</c> to this method.
+    /// </summary>
+    public void ToggleHelpPane()
+    {
+        if (_paneControl.Visibility == Visibility.Visible)
+            OnPaneClosed();
+        else
+            OpenHelpPane();
     }
 
     /// <summary>
@@ -125,6 +158,10 @@ public sealed class DialogHelpPaneController
 
         if (_vm == null)
         {
+            // First open — building the session loads AI providers and can take a
+            //  moment; show a disabled "Loading…" button until the pane is ready.
+            SetButtonState(LoadingLabel, enabled: false);
+
             // First open — build the session and wire the VM
             var session = await AppHelpSessionFactory.CreateAsync(_host);
             _vm = new HelpPaneViewModel(session, _host, new HelpActionRouter())
@@ -148,6 +185,9 @@ public sealed class DialogHelpPaneController
         }
 
         _vm.IsPaneOpen = true;
+
+        // Pane is now open — let the button close it on the next click
+        SetButtonState(OpenLabel, enabled: true);
 
         // Navigate to requested topic, persisted last topic, or dialog default
         if (topicId != null)
@@ -181,6 +221,19 @@ public sealed class DialogHelpPaneController
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Updates the optional Help toggle button's label and enabled state.
+    /// No-ops when the dialog did not supply a button.
+    /// </summary>
+    private void SetButtonState(string label, bool enabled)
+    {
+        if (_helpButton is null)
+            return;
+
+        _helpButton.Content   = label;
+        _helpButton.IsEnabled = enabled;
+    }
 
     /// <summary>
     /// Persists current HelpPane layout state (pane width, chat height, last topic)

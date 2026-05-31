@@ -274,9 +274,10 @@
                         Width="120"
                         ToolTip="Remove all unchecked backup sets from the list"
                         Margin="0,0,8,0"/>
-                <Button Content="_Help"
+                <Button x:Name="HelpButton"
+                        Content="_Help"
                         Click="HelpButton_Click"
-                        Width="60"
+                        MinWidth="60" Padding="10,1"
                         ToolTip="Open help for this dialog (F1)"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">

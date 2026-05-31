@@ -23,7 +23,7 @@ public partial class RestoreWindow : Window, IHelpPaneHost
 
         _help = new DialogHelpPaneController(
             this, this, HelpPaneColumn, HelpPaneSplitter, HelpPaneControl,
-            defaultTopicId: "dialog.restore");
+            defaultTopicId: "dialog.restore", helpButton: HelpButton);
     }
 
     private void ItemCheckBox_Changed(object sender, RoutedEventArgs e)
@@ -34,7 +34,7 @@ public partial class RestoreWindow : Window, IHelpPaneHost
     }
 
     private void HelpButton_Click(object sender, RoutedEventArgs e)
-        => _help.OpenHelpPane();
+        => _help.ToggleHelpPane();
 
     private void Window_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
         => _help.HandleF1(e);

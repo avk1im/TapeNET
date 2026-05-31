@@ -9,7 +9,7 @@ namespace HelpNET.Retrieval;
 /// <param name="Heading">
 /// Nearest heading within the topic that scopes this excerpt.
 /// </param>
-/// <param name="Snippet">Short plain-text snippet (≤200 chars) from the chunk.</param>
+/// <param name="Snippet">Short plain-text snippet from the chunk (≤400 chars).</param>
 /// <param name="Score">Retrieval score in the range 0–1 (higher is better).</param>
 public sealed record HelpExcerpt(
     HelpTopic Topic,

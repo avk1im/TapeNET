@@ -140,7 +140,12 @@ public sealed class BM25HelpIndex : IHelpIndex
     /// </summary>
     private static string BuildExcerpt(HelpTopic topic, string[] queryTerms)
     {
-        const int ExcerptMaxChars = 200;
+        // Window sized for RAG: the excerpt is fed to the LLM, so it must carry
+        //  enough surrounding context for the model to actually answer — a 200-char
+        //  window frequently clipped the relevant sentence. The lead is kept
+        //  proportional so the matched term sits comfortably inside the window.
+        const int ExcerptMaxChars = 400;
+        const int ExcerptLeadChars = 80;
 
         var text  = topic.PlainText;
         if (text.Length == 0)
@@ -158,7 +163,7 @@ public sealed class BM25HelpIndex : IHelpIndex
         if (bestPos == text.Length)
             bestPos = 0; // no hit — start from the beginning
 
-        int start = Math.Max(0, bestPos - 40);
+        int start = Math.Max(0, bestPos - ExcerptLeadChars);
 
         // If we're not at the very beginning, advance to the next word boundary
         //  so the excerpt never starts mid-word (leading truncation is jarring to read).
