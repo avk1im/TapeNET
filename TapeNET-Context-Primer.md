@@ -251,6 +251,45 @@ Key design points:
 - **Empty-file edge case** — `BackupRead` may return 0 bytes for a zero-byte file with no
   additional NTFS streams; this is a legitimate end-of-backup signal, not an error.
 
+### Per-file software compression (ZSTD)
+
+Complete design specification: `docs/Design-Compression.md`.
+
+Software compression is a per-set option (`TapeCompression { None, Hardware, Software }`)
+that sits alongside `HashAlgorithm` and `BlockSize` in `TapeSetTOC`. When `Software` is
+selected, file bodies are compressed individually using ZSTD (via **ZstdNet**) as they flow
+through the backup pipeline. Restore is fully transparent — the per-file codec flag
+(`TapeFileCodec { Stored, Zstd }`) in `TapeFileInfo` tells the restore agent whether to
+decompress, with no user action required.
+
+Key design points:
+
+- **Body-only, per-file** — file headers are always written raw; only the body is
+  compressed. This preserves the packer's `TapeAddress(Block, Offset)` + `SizeOnTape`
+  random-access model and keeps selective restore working unchanged.
+- **Hash over uncompressed bytes** — `HashingStream` wraps the source *before* the
+  compressor on backup, so `tfi.Hash` is codec-independent. On restore, decompression
+  wraps `rstream` *before* the `HashingStream`, so the same hash validates all three
+  compression modes without any algorithm changes.
+- **`ProbingCompressionStream`** — avoids full-file buffering by compressing a 128 KiB
+  probe window (one ZSTD block) first. If the probe compresses well the stream switches to
+  a live ZSTD frame for the remainder; otherwise it falls back to storing the file
+  uncompressed (`TapeFileCodec.Stored`). A session-scoped `Session` object (reusable
+  `MemoryStream` buffers sized via `Compressor.GetCompressBound`) is reused across all
+  files in a set to eliminate per-file heap allocation.
+- **Hardware compression interlock** — `TapeDrive.SetHardwareCompression(bool)` is called
+  at the start of each set's backup and restore to disable the drive's hardware compressor
+  for `Software`/`None` sets and re-enable it for `Hardware` sets, preventing
+  double-compression.
+- **`CompressionPreset` helper** — translates between human-readable specifiers
+  (`off`, `none`, `hardware`, `low`/`medium`/`high`, `1`–`19`) and the
+  `(TapeCompression, level)` pair stored in the TOC. Shared by both the WPF app and the
+  CLI to avoid duplication.
+- **Multi-volume** — `TapeSetTOCParams` carries `Compression` + `CompressionLevel`;
+  `CopyFrom` propagates both to continuation sets automatically.
+- **Forward-compatible serialization** — the codec byte is appended after existing
+  `TapeFileInfo` fields; older tapes without it are read back as `Stored` by default.
+
 ### Remote backend (`TapeLibNET.Remote`)
 
 `RemoteTapeDriveBackend` is a `TapeDriveBackend` subclass that forwards every operation to a remote `TapeDriveGrpcService` via gRPC, making a network-attached tape drive a transparent drop-in for `TapeDrive`. All backend properties are served from a cached `BackendState` snapshot piggybacked on every RPC response.
@@ -666,6 +705,7 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 - ✅ TapeLibNET file selection infrastructure: `TapeTOC.SelectFilesFromSets`, `SelectFilesForOneSet`, `PickFilesByName` — side-effect-free, dictionary-based multi-set selection with incremental chain traversal
 - ✅ MainWindow restore/validate/verify: dynamic command text reflecting checked sets/files, tri-state set checkboxes propagating to `FilteredFileList`, per-file check changes pushing back to `BackupSetListItem` tri-state, `RestoreAllSetsCommand` for quick access
 - ✅ Remote tape drive integration: `TapeServiceNET` gRPC server (session registry, idle reaper, named-volume catalog, TLS overlay), `RemoteTapeDriveBackend` client (`TapeLibNET.Remote`), `TapeServiceBase.Remote.cs` service-layer partial, full TapeWinNET UX (Connect dialog, Open/Create remote virtual drive dialog with Open-existing volume picker, remote submenu with drive probing, tree indicator, status bar, auto-disconnect). Multi-volume remote backup/restore with `WpfServiceHost` media-swap prompts. 1,569+ tests including four-fixture remote backend suite and catalog-driven multi-volume round-trip.
+- ✅ Per-file software compression (ZSTD): `TapeCompression { None, Hardware, Software }` per-set mode + level stored in `TapeSetTOC`; per-file `TapeFileCodec { Stored, Zstd }` flag in `TapeFileInfo`; `ProbingCompressionStream` with 128 KiB probe window and auto store-fallback for incompressible data; hardware compression interlock via `TapeDrive.SetHardwareCompression`; hash always over uncompressed bytes; `CompressionPreset` parse/display helper shared by WPF and CLI; 20 targeted round-trip tests + large-file theories. Full design: `docs/Design-Compression.md`. UI exposure (WPF BackupWindow, CLI `--compression`) is pending.
 
 ## What's Next (Planned)
 

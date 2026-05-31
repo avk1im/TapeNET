@@ -222,7 +222,51 @@ public sealed class TempFileTree : IDisposable
     }
 
     /// <summary>
-    /// Adds a pre-built set of edge-case files that stress known boundaries:
+    /// Generates multiple files with pseudo-random sizes and <em>cryptographically random</em>
+    ///  byte content in a subdirectory.
+    /// <para>
+    /// Random-byte content is effectively incompressible (entropy ≈ 8 bits/byte), so these
+    ///  files are ideal for testing that <see cref="ProbingCompressionStream"/> correctly
+    ///  detects the "store wins" case and falls back to <see cref="TapeFileCodec.Stored"/>.
+    /// </para>
+    /// </summary>
+    /// <param name="subDir">Subdirectory name relative to root.</param>
+    /// <param name="count">Number of files to generate.</param>
+    /// <param name="minSize">Minimum file size in bytes.</param>
+    /// <param name="maxSize">Maximum file size in bytes (exclusive).</param>
+    /// <returns>Full paths of the created files.</returns>
+    public List<string> AddRandomFiles(
+        string subDir,
+        int count,
+        long minSize = 1024,
+        long maxSize = 64 * 1024)
+    {
+        var rng = new Random(Seed + Files.Count);
+        var created = new List<string>(count);
+
+        for (int i = 0; i < count; i++)
+        {
+            long size = rng.NextInt64(minSize, maxSize);
+            string name = $"rand_{i:D4}.bin";
+            string fullPath = Path.Combine(RootPath, subDir, name);
+            string? dir = Path.GetDirectoryName(fullPath);
+            if (dir != null && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+
+            // Use RandomNumberGenerator for high-entropy content
+            byte[] bytes = new byte[(int)size];
+            System.Security.Cryptography.RandomNumberGenerator.Fill(bytes);
+            File.WriteAllBytes(fullPath, bytes);
+
+            Files.Add(fullPath);
+            TotalSize += size;
+            created.Add(fullPath);
+        }
+
+        return created;
+    }
+
+
     /// zero-byte, exact block size, block+1, large, special characters,
     /// and various file attributes.
     /// </summary>

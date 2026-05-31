@@ -19,6 +19,27 @@ namespace TapeLibNET
         // payload bytes backed up so far in the current set (since the last marker)
         private long BytesBackedupInCurrentSet => BytesBackedup - BytesBackedupMarker;
 
+        // ── Software-compression session state ───────────────────────────────
+        //  Allocated lazily on first use of the Software compression path and
+        //  reused across every file in the session to avoid per-file GC pressure.
+        private ProbingCompressionStream.Session? _compressionSession;
+
+        /// <summary>
+        /// Returns (and lazily creates) the session-scoped compression helper.
+        /// </summary>
+        private ProbingCompressionStream.Session GetOrCreateCompressionSession()
+            => _compressionSession ??= new ProbingCompressionStream.Session();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (!IsDisposed && disposing)
+            {
+                _compressionSession?.Dispose();
+                _compressionSession = null;
+            }
+            base.Dispose(disposing);
+        }
+
         private bool BeginWriteContentForCurrentSet(bool newSet)
         {
             // If we were reading or writing, end it first - before setting the new set's parameters
@@ -51,6 +72,10 @@ namespace TapeLibNET
                 m_logger.LogWarning("Failed to set block size to {Size0} in {Method}; proceeding with {Size1}",
                     TOC.CurrentSetTOC.BlockSize, nameof(BeginWriteContentForCurrentSet), Drive.BlockSize);
             TOC.CurrentSetTOC.BlockSize = Drive.BlockSize; // in any case, ensure the set has what the manager has
+
+            // Hardware compression interlock: disable HW compression for Software/None sets so the
+            //  drive doesn't double-compress or interfere; leave it enabled for Hardware sets.
+            Drive.SetHardwareCompression(TOC.CurrentSetTOC.Compression == TapeCompression.Hardware);
 
             if (!Manager.BeginWriteContent(remainingCapacity))
             {
@@ -558,7 +583,7 @@ namespace TapeLibNET
         // Writes the file (header + hashed body) via the packer's per-file façade.
         //  Returns the CommitToken so the caller can register the pending entry.
         //  Throws on any failure -- the caller catches and decides recovery.
-        private CommitToken BackupFile(TapeFileInfo template, out byte[]? hash)
+        private CommitToken BackupFile(TapeFileInfo template, out byte[]? hash, out TapeFileCodec codec)
         {
             m_logger.LogTrace("Backing up (packed) file >{File}< in {Method}",
                 template.FileDescr.FullName, nameof(BackupFile));
@@ -567,7 +592,8 @@ namespace TapeLibNET
                 throw new TapeIOException(this, this, $"failed to open packed write stream for >{template.FileDescr.FullName}<");
 
             CommitToken token = wstream.CommitToken;
-            hash = null;
+            hash  = null;
+            codec = TapeFileCodec.Stored;
 
             try
             {
@@ -592,17 +618,51 @@ namespace TapeLibNET
                 // Use TapeBackupSourceStream to capture all NTFS streams (ACL, ADS, EA, etc.)
                 //  via BackupRead as an opaque blob.
                 var fileInfo = template.FileDescr.CreateFileInfo();
-                if (hasher == null)
+                var setTOC   = TOC.CurrentSetTOC;
+
+                if (setTOC.Compression == TapeCompression.Software)
                 {
+                    // Software-ZSTD path via ProbingCompressionStream:
+                    //  - Probes the first 128 KiB (one ZSTD block) to decide compress vs store.
+                    //  - Remainder is piped directly to wstream without any intermediate buffer.
+                    //  - Session (codec + probe buffers) is created once and reused across files.
+                    //  - Hashing always covers the uncompressed bytes (codec-independent hash).
+                    var session = GetOrCreateCompressionSession();
+                    using var probing = new ProbingCompressionStream(wstream, session, setTOC.CompressionLevel);
                     using var srcFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
-                    srcFileStream.CopyTo(wstream);
+
+                    if (hasher == null)
+                    {
+                        srcFileStream.CopyTo(probing);
+                    }
+                    else
+                    {
+                        using var hashingStream = new HashingStream(srcFileStream, hasher);
+                        hashingStream.CopyTo(probing);
+                        hash = hasher.GetCurrentHash();
+                    }
+                    // Explicitly dispose here so that Commit() runs (sealing the ZSTD frame and
+                    //  setting FinalCodec) before we read it. The using-var Dispose() below is a no-op
+                    //  because ProbingCompressionStream guards against double-disposal via _disposed.
+                    probing.Dispose();
+                    codec = probing.FinalCodec;
                 }
                 else
                 {
-                    var srcFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
-                    using var hashingStream = new HashingStream(srcFileStream, hasher, ownInner: true);
-                    hashingStream.CopyTo(wstream);
-                    hash = hasher.GetCurrentHash();
+                    // None / Hardware path — no software compression; Codec stays Stored
+                    codec = TapeFileCodec.Stored;
+                    if (hasher == null)
+                    {
+                        using var srcFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
+                        srcFileStream.CopyTo(wstream);
+                    }
+                    else
+                    {
+                        var srcFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
+                        using var hashingStream = new HashingStream(srcFileStream, hasher, ownInner: true);
+                        hashingStream.CopyTo(wstream);
+                        hash = hasher.GetCurrentHash();
+                    }
                 }
 
                 BytesBackedup += wstream.Length;
@@ -784,8 +844,8 @@ namespace TapeLibNET
                             continue;
                         }
 
-                        var token = BackupFile(template, out var hash);
-                        tracker.Register(token, template, bc.fileIndex, hash);
+                        var token = BackupFile(template, out var hash, out var codec);
+                        tracker.Register(token, template, bc.fileIndex, hash, codec);
                     }
                     catch (TapeAbortRequestedException)
                     {

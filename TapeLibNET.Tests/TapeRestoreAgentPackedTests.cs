@@ -64,12 +64,16 @@ public class TapeRestoreAgentPackedTests
         List<string> fileList,
         string description,
         TapeHashAlgorithm hash = TapeHashAlgorithm.Crc64,
-        ITapeFileNotifiable? notifiable = null)
+        ITapeFileNotifiable? notifiable = null,
+        TapeCompression compression = TapeCompression.None,
+        int level = ZstdLevel.Default)
     {
         fixture.TOC.AddNewSetTOC(0, incremental: false);
         fixture.TOC.CurrentSetTOC.Description = description;
         fixture.TOC.CurrentSetTOC.HashAlgorithm = hash;
         fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
+        fixture.TOC.CurrentSetTOC.Compression = compression;
+        fixture.TOC.CurrentSetTOC.CompressionLevel = level;
 
         using var backupAgent = fixture.CreateBackupAgent();
         bool success = backupAgent.BackupFileListToCurrentSet(

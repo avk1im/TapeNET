@@ -55,6 +55,11 @@ namespace TapeLibNET
             // set the block size from the set to the manager
             Drive.SetBlockSize(TOC.CurrentSetTOC.BlockSize);
 
+            // Hardware compression interlock: match the drive's HW compression state to what was
+            //  used when this set was written. HW sets need compression on; SW/None sets must have
+            //  it off so the drive doesn't attempt to decompress already-decompressed bytes.
+            Drive.SetHardwareCompression(TOC.CurrentSetTOC.Compression == TapeCompression.Hardware);
+
             // Success
             ResetError();
 
@@ -288,10 +293,23 @@ namespace TapeLibNET
                 }
                 FileInfo fileInfo = fileDescr.CreateFileInfo();
 
-                if (!RestoreFileCore(fileInfo, rstream, hasher))
+                // Wrap rstream with a decompressor when the file was ZSTD-compressed at backup time.
+                //  The hasher inside RestoreFileCore always sees decompressed bytes (codec-independent hash).
+                //  For Stored files, bodyStream == rstream (no allocation, no copy).
+                ZstdCodec? zstdCodec = tfi.Codec == TapeFileCodec.Zstd ? new ZstdCodec() : null;
+                using (zstdCodec)
                 {
-                    throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
-                        $"Processing failed for file >{tfi.FileDescr.FullName}<");
+                    Stream bodyStream = zstdCodec != null
+                        ? new DecompressionFilterStream(rstream)
+                        : rstream;
+                    using (zstdCodec != null ? bodyStream : null) // only dispose when we own it
+                    {
+                        if (!RestoreFileCore(fileInfo, bodyStream, hasher))
+                        {
+                            throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                                $"Processing failed for file >{tfi.FileDescr.FullName}<");
+                        }
+                    }
                 }
 
                 if (hasher != null)

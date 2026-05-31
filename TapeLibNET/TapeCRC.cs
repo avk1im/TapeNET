@@ -15,7 +15,7 @@ namespace TapeLibNET
     /// </summary>
     /// <param name="inner">Inner stream to wrap.</param>
     /// <param name="ownInner">If <see langword="true"/>, disposes <paramref name="inner"/> on <see cref="Dispose(bool)"/>.</param>
-    public abstract class FilterStream(Stream inner, bool ownInner = false) : Stream
+    public abstract class ObserverStream(Stream inner, bool ownInner = false) : Stream
     {
         /// <summary>Called after data is read from the inner stream. <paramref name="count"/> reflects actual bytes read.</summary>
         protected abstract void OnRead(byte[] buffer, int offset, int count);
@@ -61,14 +61,14 @@ namespace TapeLibNET
     } // class FliterStream
 
     /// <summary>
-    /// <see cref="FilterStream"/> that feeds every read/written byte span into a
+    /// <see cref="ObserverStream"/> that feeds every read/written byte span into a
     ///  <see cref="NonCryptographicHashAlgorithm"/> for incremental hash computation.
     /// </summary>
     /// <param name="inner">Inner stream to wrap.</param>
     /// <param name="hasher">Hash algorithm instance that accumulates data via <see cref="NonCryptographicHashAlgorithm.Append"/>.</param>
     /// <param name="ownInner">If <see langword="true"/>, disposes <paramref name="inner"/> on dispose.</param>
     public class HashingStream(Stream inner, NonCryptographicHashAlgorithm hasher,
-        bool ownInner = false) : FilterStream(inner, ownInner)
+        bool ownInner = false) : ObserverStream(inner, ownInner)
     {
 
         #region *** Abstract method implementations ***

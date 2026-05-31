@@ -61,7 +61,9 @@ public class TapeBackupAgentPackedTests
         uint blockSize = 0,
         bool incremental = false,
         bool ignoreFailures = true,
-        ITapeFileNotifiable? notifiable = null)
+        ITapeFileNotifiable? notifiable = null,
+        TapeCompression compression = TapeCompression.None,
+        int level = ZstdLevel.Default)
     {
         toc.AddNewSetTOC(0, incremental);
         toc.CurrentSetTOC.Description = description;
@@ -69,6 +71,8 @@ public class TapeBackupAgentPackedTests
         toc.CurrentSetTOC.BlockSize = blockSize == 0
             ? agent.Manager.Navigator.Drive.DefaultBlockSize
             : blockSize;
+        toc.CurrentSetTOC.Compression = compression;
+        toc.CurrentSetTOC.CompressionLevel = level;
 
         return agent.BackupFileListToCurrentSet(
             newSet: newSet,
