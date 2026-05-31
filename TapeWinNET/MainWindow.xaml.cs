@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -127,10 +128,12 @@ namespace TapeWinNET
             Loaded += MainWindow_Loaded;
             Closing += MainWindow_Closing;
 
-            // Wire ShowHelp / ConfigureAi commands (routed through the ViewModel or directly)
+            // Wire ShowHelp / ConfigureAi / ResetAiProviders commands
             _viewModel.ShowHelpCommand   = new RelayCommand(() => OpenHelpPane());
             _viewModel.ConfigureAiCommand = new AsyncRelayCommand(async _ =>
                 await AppAiSessionHost.ReconfigureAndNotifyAsync());
+            _viewModel.ResetAiProvidersCommand = new AsyncRelayCommand(async _ =>
+                await ResetAiProvidersAsync());
 
             // Inject UI context into the AI interaction layer and subscribe to session changes
             //  so the menu header and log pane are updated whenever the provider changes.
@@ -262,6 +265,42 @@ namespace TapeWinNET
         }
 
         private static string BuildProviderLabel(AiProviderConfig cfg) => cfg.DisplayLabel;
+
+        /// <summary>
+        /// Implements "Help → Reset AI Providers": asks for confirmation, disposes
+        ///  the current session, and deletes both preference files so the next
+        ///  interaction triggers a fresh discovery.
+        /// </summary>
+        private async Task ResetAiProvidersAsync()
+        {
+            var answer = MessageBox.Show(
+                "This will clear your saved AI provider settings and all LAN hosts.\n\nContinue?",
+                "Reset AI Providers",
+                MessageBoxButton.YesNo, MessageBoxImage.Question);
+
+            if (answer != MessageBoxResult.Yes)
+                return;
+
+            await App.AiSessionHost.SignOutAsync();
+
+            // Delete the two persistence files (best-effort; ignore if absent).
+            TryDeleteFile(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "TapeWinNET", "ai-prefs.json"));
+
+            TryDeleteFile(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "AiNET", "lan-hosts.json"));
+
+            UpdateAiProviderMenuHeader();
+            _viewModel.LogOk("AI provider settings reset.");
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try { if (File.Exists(path)) File.Delete(path); }
+            catch (IOException) { /* best-effort */ }
+        }
 
         private async void TreeView_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
         {

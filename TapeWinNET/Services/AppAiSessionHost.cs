@@ -41,7 +41,15 @@ public sealed class AppAiSessionHost : IAsyncDisposable
     /// Must be called once from <c>MainWindow</c> before any interactive <c>EnsureAsync</c>.
     /// </summary>
     public void SetInteraction(AiInteractionWpf interaction)
-        => _interaction = interaction;
+    {
+        _interaction = interaction;
+
+        // Give the interaction layer access to the catalog and LAN registry so it
+        //  can re-probe after the user adds an OpenAI-compatible LAN host.
+        var catalog  = AiProviderCatalog.CreateDefault();
+        var registry = new LanHostsRegistry();
+        interaction.SetDiscoveryContext(catalog, registry);
+    }
 
     /// <summary>
     /// Returns the current session, building it on first call.
@@ -51,10 +59,10 @@ public sealed class AppAiSessionHost : IAsyncDisposable
     /// </summary>
     public async Task<IAiSession?> EnsureAsync(
         bool promptUser = true, CancellationToken ct = default)
-        => await EnsureAsync(promptUser, raiseChanged: true, ct);
+        => await EnsureAsync(promptUser, autoUseIfSingle: true, raiseChanged: true, ct);
 
     private async Task<IAiSession?> EnsureAsync(
-        bool promptUser, bool raiseChanged, CancellationToken ct)
+        bool promptUser, bool autoUseIfSingle, bool raiseChanged, CancellationToken ct)
     {
         if (_disposed) return null;
         if (_current != null) return _current;
@@ -71,7 +79,7 @@ public sealed class AppAiSessionHost : IAsyncDisposable
             var catalog     = AiProviderCatalog.CreateDefault();
             var prefs       = new AiProviderPreferences
             {
-                AutoUseIfSingle = true,
+                AutoUseIfSingle = autoUseIfSingle,
             };
 
             var logger = App.LoggerFactory.CreateLogger<AppAiSessionHost>();
@@ -113,9 +121,11 @@ public sealed class AppAiSessionHost : IAsyncDisposable
             _lock.Release();
         }
 
-        // Re-build with full UI prompt — suppress the EnsureAsync-internal raise
-        //  so we fire SessionChanged exactly once below, regardless of outcome.
-        await EnsureAsync(promptUser: true, raiseChanged: false, ct);
+        // Re-build with full UI prompt and always show the selection dialog
+        //  (autoUseIfSingle: false) — the user explicitly asked to reconfigure.
+        //  Suppress the EnsureAsync-internal raise so we fire SessionChanged
+        //  exactly once below, regardless of outcome.
+        await EnsureAsync(promptUser: true, autoUseIfSingle: false, raiseChanged: false, ct);
 
         // Always notify consumers — even if the user chose "None" — so they
         //  can update their state (e.g. rebuild the help session without AI).
@@ -128,6 +138,33 @@ public sealed class AppAiSessionHost : IAsyncDisposable
     /// </summary>
     public static Task ReconfigureAndNotifyAsync(CancellationToken ct = default)
         => App.AiSessionHost.ReconfigureAsync(ct);
+
+    /// <summary>
+    /// Disposes the current session and resets all state without triggering
+    /// re-discovery. Used by "Help → Reset AI Providers" to clear persisted
+    /// settings and start fresh.
+    /// Raises <see cref="SessionChanged"/> so consumers (HelpPane, etc.) rebind.
+    /// </summary>
+    public async Task SignOutAsync(CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
+            if (_current != null)
+            {
+                await _current.DisposeAsync();
+                _current = null;
+            }
+            _userDeclinedSetup = false;   // allow future EnsureAsync calls to prompt again
+        }
+        finally
+        {
+            _lock.Release();
+        }
+
+        // Notify consumers so they drop their AI references immediately.
+        SessionChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()

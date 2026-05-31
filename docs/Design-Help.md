@@ -1,6 +1,6 @@
 # TapeWinNET Help System — Detailed Design
 
-> **Status:** Phases 0 ✅ 1 ✅ 2 ✅ 3 ✅ 4 ✅ 5 ✅ complete — `HelpNET` fully implemented; TapeWinNET HelpPane integrated and working. Phase 6 in progress: §6.1 ✅ §6.2 ✅ done.
+> **Status:** Phases 0 ✅ 1 ✅ 2 ✅ 3 ✅ 4 ✅ 5 ✅ complete — `HelpNET` fully implemented; TapeWinNET HelpPane integrated and working. Phase 6 in progress: §6.1 ✅ §6.2 ✅ §6.3 ✅ §6.4 ✅ done.
 > **Scope:** A modern, optionally AI-augmented help system for TapeWinNET, with reusable engines (`AiNET`, `HelpNET`) ready for TapeConNET and other future consumers.
 > **Authoring convention:** Markdown + YAML front-matter for all help content. Library API surfaces are described in C# pseudo-signatures; sections marked **(not yet implemented)** are still design-only.
 
@@ -1147,34 +1147,56 @@ This phase hardens the Phase 5 implementation with targeted tests, completes the
 - **Width per host, topic per host.** By contrast, the outer pane width and last-open topic are host-specific: a dialog pane is typically narrower than the MainWindow pane, and each dialog has its own relevant topic. The `Dictionary<string, …>` pattern matches the existing `LogPaneHeightPerHost` and similar per-host storage in `AppSettings`.
 - **`SaveSettings()` as the safety net.** Persisting Help pane state only in `OnPaneClosed()` proved insufficient — closing the app with the pane still open bypassed that hook. `MainWindow.SaveSettings()` (called from `MainWindow_Closing`) was updated to save the live Help pane state, mirroring `OnPaneClosed()`. This two-path approach ensures settings are never lost regardless of how the window is dismissed.
 
-#### 6.3 `AiProviderSetupWindow` and provider preferences
+#### 6.3 `AiProviderSetupWindow` and provider preferences ✅ DONE
 
-The UI for configuring an AI assistant is a top-level modal window with a 3-step flow:
+The original design called for a dedicated 3-step `AiProviderSetupWindow` modal. The actual implementation took a **lighter-weight approach** using the existing `SelectDialog` and `AskDialog` primitives already present in TapeWinNET, avoiding a new window altogether.
 
-1. **Where?** — Local / Local Network / Cloud (maps to `AiProviderLocation`).
-2. **Which?** — list of providers filtered to the selected location; includes probe health badge and discovered model list.
-3. **Confirm** — show `DisplayLabel`, smoke-test button (optional), Save / Cancel.
+**Deliverables**
+- ✅ `AiInteractionWpf` — implements `IAiInteraction` with a `SelectDialog`-based provider chooser. The list is built from probe results and appends a sentinel `"➕  Add OpenAI-compatible provider…"` entry as the last item.
+- ✅ `AppAiSessionHost.EnsureAsync` / `ReconfigureAsync` — two distinct paths: silent first-use (auto-selects when only one healthy provider is present) vs. explicit reconfigure (always presents the chooser dialog regardless of provider count). Threaded via an `autoUseIfSingle` parameter.
+- ✅ `AppAiSessionHost.SignOutAsync` — disposes the current session and clears state without re-discovery, used by the Reset command.
+- ✅ `AiProviderPreferences` persistence — `%LocalAppData%\TapeWinNET\ai-prefs.json` stores last selected endpoint and model ids; loaded on startup and saved after every successful `BuildAsync`.
+- ✅ Help menu items wired in `MainWindow.xaml` and `MainWindow.xaml.cs`:
+  - `Help → AI Provider Settings…` — calls `AppAiSessionHost.ReconfigureAsync` (forces dialog).
+  - `Help → Reset AI Providers…` — asks for confirmation, calls `SignOutAsync`, then deletes `ai-prefs.json` and `lan-hosts.json`, and refreshes the menu header.
+- ✅ Model selection — after a provider is chosen, a second `SelectDialog` appears when the probe returned more than one chat model; single-model providers skip this step.
+- ✅ `AiProviderConfig.DisplayLabel` — uniform `"Provider / Model"` label used throughout the log pane, the mode badge, and status messages.
 
-- Wire `OpenAiSetupCommand` in `HelpPaneViewModel` (and in MainWindow's `Help` menu) to open this window.
-- `AiProviderPreferences` persistence: `%LocalAppData%\TapeWinNET\ai-prefs.json` stores last config (endpoint, model ids) but **not** secret keys.
-- API key persistence: DPAPI-protected blob — `ProtectedData.Protect(Encoding.UTF8.GetBytes(key), null, DataProtectionScope.CurrentUser)` stored alongside `ai-prefs.json`; loaded / decrypted on demand. This is Windows-only and appropriate for a WPF desktop app.
-- First-run one-shot prompt: on first use of either the Help pane or the FCL AI assistant, if `HasBeenAskedOnce == false`, display a non-modal banner ("Set up an AI assistant for smarter help?") with `Set up now`, `Maybe later`, `Don't ask again`. Persist the choice.
-
-**Tests**
-- `AiProviderPreferencesTests` — JSON round-trip with and without API-key blob; `HasBeenAskedOnce` flag; DPAPI protect/unprotect mock.
-- `AiProviderSetupViewModelTests` — step transitions (Where → Which → Confirm); back navigation; validation (endpoint required for LAN/Cloud; model required); cancel resets state.
-
-#### 6.4 LAN-host management UX
-
-Users can run OpenAI-compatible servers (OpenVINO Model Server, vLLM, llama.cpp, etc.) on any machine in the local network. These must be added manually because they cannot be auto-discovered.
-
-- **`LanHostsWindow`** (or a tab in `AiProviderSetupWindow`) — shows the current contents of `%LocalAppData%\AiNET\lan-hosts.json` as a list: URI | protocol (Ollama / LM Studio / OpenAI-compatible) | last-probe status.
-- Controls: `Add…` (prompts for host:port + protocol), `Remove selected`, `Probe now` (re-runs `IAiProviderDiscovery.DiscoverAsync` for the selected entry and refreshes the status badge).
-- Accessible from `Help → AI Provider settings… → Manage LAN hosts…` and from the **Which?** step of `AiProviderSetupWindow` (a small `Manage…` link next to the Local Network section).
-- `LanHostsRegistry.AddAsync` / `RemoveAsync` persist changes immediately; discovery re-runs on the next `AiSessionFactory.BuildAsync` or manual probe.
+**Design decisions / deviations**
+- **No `AiProviderSetupWindow`** was created. The `SelectDialog` / `AskDialog` combination already gave the necessary UX at zero maintenance cost. A dedicated window would have duplicated the probe-display logic with no tangible user benefit at this stage.
+- **No DPAPI key persistence** was implemented. None of the providers in active use (Ollama, OVMS, LM Studio) require API keys in a local deployment; DPAPI-backed storage can be added when a cloud provider is first onboarded.
+- **No first-run banner.** The existing "no AI provider" log warning in the Help pane is sufficient as a nudge; a modal banner added friction without adding clarity.
+- **`autoUseIfSingle` flag** threads through `AppAiSessionHost` private `EnsureAsync` to keep silent first-use smooth while ensuring the explicit settings menu always shows the chooser — even when exactly one provider is available.
 
 **Tests**
-- `LanHostsRegistryTests` (AiNET.Tests, previously planned) — JSON file round-trip; concurrent add/remove; duplicate prevention.
+- Covered by manual smoke-testing and the existing `AiNET.Tests` suites. Dedicated `AiProviderSetupViewModelTests` deferred (no separate ViewModel was created).
+
+#### 6.4 LAN-host management UX ✅ DONE
+
+The original design called for a `LanHostsWindow` (or tab). The actual implementation folded LAN-host addition directly into the provider-chooser dialog as a single extra sentinel entry, keeping the UX minimal and the code surface tiny.
+
+**Deliverables**
+- ✅ `"➕  Add OpenAI-compatible provider…"` sentinel entry at the bottom of the `SelectDialog` provider list. Selecting it opens an `AskDialog` prompting for a URL (e.g. `http://192.168.1.50:8000`).
+- ✅ URI normalisation — `http://` is prepended when the user omits a scheme; trailing slashes are normalised.
+- ✅ `LanHostsRegistry.Add(Uri)` is called **immediately** on user confirmation, before probing. This ensures the host is persisted even if the probe times out or the server is temporarily offline.
+- ✅ Re-probe via `ReprobeWithNewLanHostAsync` — runs `AiProviderDiscovery.DiscoverAsync` off the dispatcher after adding the host, then merges the fresh results back into the existing probe list via `MergeProbes`.
+- ✅ `MergeProbes` — origin-based deduplication (scheme + host + port) rather than exact-URI matching. This correctly handles the case where a previous probe stored a bare host URI (`http://host/`) and the fresh probe returns a versioned endpoint (`http://host/v3`).
+- ✅ Synthetic "not responding" fallback — if the newly added host returns no result from the fresh probe, a synthetic unhealthy `AiProviderProbeResult` is injected so the user can still select and save it for later (deferred connection).
+- ✅ `OpenAiCompatibleProvider` multi-path probe — tries `/v1/models` (standard OpenAI / Ollama / LM Studio) then `/v3/models` (OpenVINO Model Server) in order; the first `2xx` response wins.
+- ✅ Versioned endpoint embedding — `ProbeAsync` embeds the winning version base (e.g. `/v3`) into the returned `AiProviderProbeResult.Endpoint` (e.g. `http://localhost:8000/v3`). `CreateChatClient` passes this verbatim to `OpenAIClientOptions.Endpoint`, so the SDK appends `/chat/completions` to the correct path without any additional configuration.
+- ✅ Duplicate-endpoint tolerance in `MergeProbes` — when the same endpoint surfaces from both the localhost Ollama probe and the LAN OpenAI-compatible probe, the healthy entry wins; the `ArgumentException` from `ToDictionary` on duplicate keys is eliminated.
+
+**Design decisions / deviations**
+- **No separate `LanHostsWindow`** was built. The sentinel-in-chooser pattern is simpler, requires one fewer window, and fits the lightweight UX goal established in §6.3.
+- **Protocol is always `OpenAiCompatible`** for manually added hosts. The user is prompted for a URL only; the provider adapter is fixed. Ollama and LM Studio have well-known default ports and are auto-discovered on localhost, so explicit LAN-host addition in practice targets generic OpenAI-compatible servers (vLLM, OVMS, llama.cpp, etc.).
+- **Persist-before-probe** ordering was a deliberate choice: a slow or currently-offline server should still survive a restart and be available in the chooser list on next launch.
+- **`AiProviderDiscovery` made `public`** (previously `internal`) so `AiInteractionWpf` can instantiate it directly for the re-probe step without going through `AiSessionFactory`.
+- **`ChooseProviderAsync` is fully async** (dispatcher-free inner loop) to avoid the deadlock that would occur if the re-probe `Task` were awaited synchronously inside a `Dispatcher.Invoke` call.
+
+**Tests**
+- Covered by manual smoke-testing against Ollama (localhost:11434) and OpenVINO Model Server (localhost:8000). `LanHostsRegistryTests` remain planned for §6.5.
+
+
 
 #### 6.5 Complete remaining planned `AiNET.Tests` suites
 

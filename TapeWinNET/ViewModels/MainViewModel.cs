@@ -632,8 +632,9 @@ public partial class MainViewModel : ViewModelBase
 
     // Help pane commands — set by MainWindow after construction so the
     //  ViewModel doesn't need a reference back to the view layer.
-    public ICommand ShowHelpCommand    { get; set; } = new RelayCommand(() => { });
-    public ICommand ConfigureAiCommand { get; set; } = new RelayCommand(() => { });
+    public ICommand ShowHelpCommand       { get; set; } = new RelayCommand(() => { });
+    public ICommand ConfigureAiCommand    { get; set; } = new RelayCommand(() => { });
+    public ICommand ResetAiProvidersCommand { get; set; } = new RelayCommand(() => { });
 
     /// <summary>
     /// Header text for the "AI Provider Settings" menu item.

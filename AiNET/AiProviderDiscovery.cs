@@ -8,7 +8,7 @@ namespace AiNET;
 /// Probes each endpoint concurrently (one task per endpoint/provider
 /// combination) and collects the results.
 /// </summary>
-internal sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? logger = null)
+public sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? logger = null)
     : IAiProviderDiscovery
 {
     // ── Well-known environment variable names ────────────────────────────────

@@ -339,6 +339,7 @@
                 <MenuItem Header="_Help Topics" Command="{Binding ShowHelpCommand}" InputGestureText="F1"/>
                 <Separator/>
                 <MenuItem Header="{Binding AiProviderMenuHeader}" Command="{Binding ConfigureAiCommand}"/>
+                <MenuItem Header="_Reset AI Providers…"          Command="{Binding ResetAiProvidersCommand}"/>
                 <Separator/>
                 <MenuItem Header="_About" Command="{Binding AboutCommand}"/>
             </MenuItem>

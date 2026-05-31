@@ -67,12 +67,37 @@ public sealed class HelpSession : IHelpSession
     {
         ct.ThrowIfCancellationRequested();
 
+        // Exact match first; otherwise treat the trailing dot-segments as an
+        //  in-page anchor and fall back to the nearest parent topic. This lets a
+        //  control request a sub-section id (e.g. "dialog.restore.options") that
+        //  is authored as a heading within the single parent page ("dialog.restore").
         var topic = _store.GetById(request.TopicId)
+            ?? ResolveParentTopic(request.TopicId)
             ?? throw new KeyNotFoundException(
                 $"Help topic '{request.TopicId}' not found in the content store.");
 
         NavigateTo(topic);
         return Task.FromResult(topic);
+    }
+
+    /// <summary>
+    /// Resolves a sub-anchor topic id (e.g. <c>dialog.restore.options</c>) to the
+    /// nearest existing parent topic (e.g. <c>dialog.restore</c>) by trimming the
+    /// trailing dot-separated segments one at a time. Returns <c>null</c> if no
+    /// parent topic exists.
+    /// </summary>
+    private HelpTopic? ResolveParentTopic(string topicId)
+    {
+        var id = topicId;
+        int dot;
+        while ((dot = id.LastIndexOf('.')) > 0)
+        {
+            id = id[..dot];
+            var parent = _store.GetById(id);
+            if (parent is not null)
+                return parent;
+        }
+        return null;
     }
 
     /// <inheritdoc/>
@@ -179,7 +204,7 @@ public sealed class HelpSession : IHelpSession
     /// <inheritdoc/>
     public HelpTopic? GetTopicForControl(string hostName, string topicId)
     {
-        var topic = _store.GetById(topicId);
+        var topic = _store.GetById(topicId) ?? ResolveParentTopic(topicId);
         if (topic is null) return null;
         if (topic.Host is null) return null;
         return topic.Host.Equals(hostName, StringComparison.OrdinalIgnoreCase) ? topic : null;
