@@ -40,7 +40,9 @@ public record BackupFormData(
     bool IncludeSubdirectories,
     bool SkipAllErrors,
     bool NoMultivolume,
-    string? MediaName = null);
+    string? MediaName = null,
+    TapeCompression Compression = TapeCompression.None,
+    int CompressionLevel = ZstdLevel.Default);
 
 /// <summary>
 /// ViewModel for the BackupWindow (Option B: Source-Drill-Down).
@@ -90,6 +92,8 @@ public class BackupViewModel : ViewModelBase
     private bool _noMultivolume;
     private int _selectedBlockSizeIndex;
     private int _selectedHashIndex = 1;        // Default CRC32
+    private int _selectedCompressionIndex;     // Default None; overridden in constructor
+    private int _compressionLevel = ZstdLevel.Default;
     private bool _appendToSet = true;
     private AppendAfterOption? _selectedAppendOption;
 
@@ -158,6 +162,15 @@ public class BackupViewModel : ViewModelBase
         // Commands — action buttons
         StartBackupCommand = new RelayCommand(ExecuteStart, _ => CanStart);
         CancelCommand = new RelayCommand(_ => _onCancel());
+
+        // Default to Hardware compression when the drive supports it
+        if (tapeService.SupportsCompression)
+            _selectedCompressionIndex = Array.IndexOf(CompressionModeValues, TapeCompression.Hardware);
+
+        // Commands — compression level presets
+        SetCompressionFastCommand     = new RelayCommand(_ => CompressionLevel = ZstdLevel.Fast);
+        SetCompressionBalancedCommand = new RelayCommand(_ => CompressionLevel = ZstdLevel.Balanced);
+        SetCompressionHighCommand     = new RelayCommand(_ => CompressionLevel = ZstdLevel.High);
     }
 
     // ═════════════════════════════════════════════════
@@ -432,7 +445,7 @@ public class BackupViewModel : ViewModelBase
         }
     }
 
-    // Block size / hash options (block sizes generated dynamically from drive capabilities)
+    // Block size / hash / compression options (block sizes generated dynamically from drive capabilities)
     public string[] BlockSizeOptions { get; }
     public uint[] BlockSizeValues { get; }
 
@@ -449,11 +462,64 @@ public class BackupViewModel : ViewModelBase
         TapeHashAlgorithm.XxHash128
     ];
 
+    /// <summary>True when the connected drive supports hardware compression.</summary>
+    public bool SupportsHardwareCompression => _tapeService.SupportsCompression;
+
+    /// <summary>
+    /// Compression mode display names. Includes "Hardware" only when the drive supports it.
+    /// </summary>
+    public string[] CompressionModeOptions => _tapeService.SupportsCompression
+        ? ["None", "Hardware", "Software"]
+        : ["None", "Software"];
+
+    /// <summary>Corresponding <see cref="TapeCompression"/> values for each option.</summary>
+    public TapeCompression[] CompressionModeValues => _tapeService.SupportsCompression
+        ? [TapeCompression.None, TapeCompression.Hardware, TapeCompression.Software]
+        : [TapeCompression.None, TapeCompression.Software];
+
     /// <summary>Selected block size in bytes.</summary>
     public uint SelectedBlockSize => BlockSizeValues[SelectedBlockSizeIndex];
 
     /// <summary>Selected hash algorithm.</summary>
     public TapeHashAlgorithm SelectedHashAlgorithm => HashValues[SelectedHashIndex];
+
+    /// <summary>Index into <see cref="CompressionModeOptions"/> / <see cref="CompressionModeValues"/>.</summary>
+    public int SelectedCompressionIndex
+    {
+        get => _selectedCompressionIndex;
+        set
+        {
+            if (SetProperty(ref _selectedCompressionIndex, value))
+            {
+                OnPropertyChanged(nameof(SelectedCompression));
+                OnPropertyChanged(nameof(IsSoftwareCompression));
+            }
+        }
+    }
+
+    /// <summary>Selected compression mode.</summary>
+    public TapeCompression SelectedCompression => CompressionModeValues[_selectedCompressionIndex];
+
+    /// <summary>
+    /// ZSTD compression level (1–19). Only meaningful when
+    ///  <see cref="SelectedCompression"/> is <see cref="TapeCompression.Software"/>.
+    /// </summary>
+    public int CompressionLevel
+    {
+        get => _compressionLevel;
+        set => SetProperty(ref _compressionLevel, ZstdLevel.Clamp(value));
+    }
+
+    /// <summary>
+    /// True when Software compression is selected; drives the visibility of the
+    ///  level slider and preset buttons in BackupWindow.
+    /// </summary>
+    public bool IsSoftwareCompression => SelectedCompression == TapeCompression.Software;
+
+    // ── Compression preset commands ───────────────────────────────────────────
+    public ICommand SetCompressionFastCommand     { get; }
+    public ICommand SetCompressionBalancedCommand { get; }
+    public ICommand SetCompressionHighCommand     { get; }
 
     // ═════════════════════════════════════════════════
     //  Scan state
@@ -1045,7 +1111,9 @@ public class BackupViewModel : ViewModelBase
             IncludeSubdirectories: _sourceView.IncludeSubdirectories,
             SkipAllErrors: _skipAllErrors,
             NoMultivolume: _noMultivolume,
-            MediaName: OverwriteMedia ? _mediaName : null);
+            MediaName: OverwriteMedia ? _mediaName : null,
+            Compression: SelectedCompression,
+            CompressionLevel: _compressionLevel);
 
         _onStartBackup(request);
     }

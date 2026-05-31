@@ -63,16 +63,12 @@ The **TapeNET** solution (`D:\Documents.DEV\Projects\TapeNET`) targets **.NET 8 
 - **Filter state persistence:** `CaptureRestoreAction(reapply)` captures the pane's full state into a restore delegate. Stored on `BackupSetView.SavedFilterState` for both applied and disabled filters, so the definition survives navigation.
 
 ## For WPF App: Structured logging — LogEntry + WarningLevel
-
-```csharp
 public enum WarningLevel { None, Completed, Info, Warning, Failed, Error }
 
 public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime Timestamp)
 {
     public string DisplayText { get; }  // "[HH:mm:ss] ⚠ Message" or "[HH:mm:ss] Message" (sub/None)
 }
-```
-
 - Icons come from `WarningLevelHelper.GetIcon(Level)`: ✓ ℹ ⚠ ✗ ⚠ (per level)
 - Non-sub entries show icon + level-based foreground color
 - Sub entries show no icon, default color, 16px left margin indent
@@ -89,3 +85,7 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 - **Content pane**: Switches between `DriveInfo`, `MediaInfo`, `BackupSetInfo` via `ContentPaneType` enum.
 - **Progress**: Backup/Restore each have their own progress panel with percent bar, text, current-file display, abort button.
 - **Set indexes**: Dual display format `#{standard} | {alt}` where standard counts up from oldest (1-based) and alt counts down from newest (0, -1, -2...).
+
+## For Stream Handling
+
+- **ObserverStream**: The `FilterStream` has been renamed to `ObserverStream` for better semantic clarity. The `ObserverStream` abstract class in `TapeCRC.cs` intercepts Read/Write via `OnRead/OnWrite` hooks without transforming bytes.

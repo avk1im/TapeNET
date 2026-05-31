@@ -47,7 +47,9 @@ public sealed record BackupRequest(
     bool SkipAllErrors,
     string? EmergencyTocFolder = null,
     ITapeFileFilter? Filter = null,
-    string? MediaName = null) : ServiceOperationRequest;
+    string? MediaName = null,
+    TapeCompression Compression = TapeCompression.None,
+    int CompressionLevel = ZstdLevel.Default) : ServiceOperationRequest;
 
 // ── Restore ──────────────────────────────────────────────────────────────────
 

@@ -812,6 +812,14 @@
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>
                                     </GridViewColumn>
+                                    <GridViewColumn Header="on Tape" Width="70">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding SizeOnTapeFormatted}"
+                                                           Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
                                     <GridViewColumn Header="Created" Width="130">
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
@@ -840,6 +848,14 @@
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock Text="{Binding HashAlgorithm}"
+                                                           Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Compression" Width="90">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Compression}"
                                                            Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>

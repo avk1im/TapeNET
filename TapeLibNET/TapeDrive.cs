@@ -136,6 +136,8 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     public uint MaximumBlockSize => m_driveParams?.MaximumBlockSize ?? 0U;
     /// <summary>Drive's default block size, in bytes.</summary>
     public uint DefaultBlockSize => m_driveParams?.DefaultBlockSize ?? 0U;
+    /// <summary>Drive supports hardware compression</summary>
+    public bool SupportsCompression => m_driveParams?.SupportsCompression ?? false;
 
     /// <summary>Current block size for read/write operations, in bytes.</summary>
     public uint BlockSize => m_mediaParams?.BlockSize ?? 0U;
@@ -846,6 +848,32 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         {
             SyncErrorFrom(m_backend);
             ResetError(); // Ignore failure
+        }
+    }
+
+    /// <summary>
+    /// Overrides the drive's hardware compression flag for the duration of a backup/restore set.
+    /// <para>Call with <see langword="false"/> before writing/reading a set whose compression mode is
+    ///  <see cref="TapeCompression.Software"/> or <see cref="TapeCompression.None"/>; call with
+    ///  <see langword="true"/> (or don't call at all) for <see cref="TapeCompression.Hardware"/>.</para>
+    /// <para>This method is idempotent and failure-tolerant — a drive that does not support the toggle
+    ///  is silently ignored, matching the pattern of <c>SetOptimalDriveParams</c>.</para>
+    /// </summary>
+    /// <param name="enabled"><see langword="true"/> to enable, <see langword="false"/> to disable HW compression.</param>
+    internal void SetHardwareCompression(bool enabled)
+    {
+        if (!IsDriveOpen || m_driveParams == null)
+            return;
+
+        bool ecc           = m_driveParams.Value.SupportsEcc;
+        bool padding       = m_driveParams.Value.SupportsPadding;
+        bool reportSetmarks = m_driveParams.Value.SupportsSetmarks;
+        uint eotZone       = padding ? m_driveParams.Value.DefaultBlockSize * 4 : 0;
+
+        if (!m_backend.SetDriveParameters(enabled, ecc, padding, reportSetmarks, eotZone))
+        {
+            SyncErrorFrom(m_backend);
+            ResetError(); // Ignore failure — drive may not support dynamic toggle
         }
     }
 

@@ -42,6 +42,7 @@
 	</PackageReference>
 	<PackageReference Include="System.IO.Hashing" Version="10.0.2" />
 	<PackageReference Include="System.Memory" Version="4.6.3" />
+	<PackageReference Include="ZstdNet" Version="1.5.7" />
   </ItemGroup>
 
   <ItemGroup>

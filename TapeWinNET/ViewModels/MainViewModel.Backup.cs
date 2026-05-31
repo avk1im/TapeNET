@@ -150,7 +150,9 @@ public partial class MainViewModel
                     SkipAllErrors: request.SkipAllErrors,
                     MediaName: request.MediaName)
                 {
-                    NoMultivolume = request.NoMultivolume,
+                    NoMultivolume    = request.NoMultivolume,
+                    Compression      = request.Compression,
+                    CompressionLevel = request.CompressionLevel,
                 });
 
             // Refresh tree after backup to keep TOCView in sync with the (possibly modified) TOC.

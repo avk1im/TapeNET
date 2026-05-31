@@ -199,6 +199,8 @@ public sealed class VirtualTapeFixture : IDisposable
     /// <param name="hashAlgorithm">Hash algorithm for integrity checking.</param>
     /// <param name="blockSize">Block size (0 = drive default).</param>
     /// <param name="notifiable">Optional callback handler.</param>
+    /// <param name="compression">Software compression mode (default <see cref="TapeCompression.None"/>).</param>
+    /// <param name="compressionLevel">ZSTD level; only used when <paramref name="compression"/> is <see cref="TapeCompression.Software"/>.</param>
     /// <returns>Statistics snapshot after backup completes.</returns>
     public TapeFileStatistics BackupFiles(
         List<string> fileList,
@@ -207,13 +209,17 @@ public sealed class VirtualTapeFixture : IDisposable
         TapeHashAlgorithm hashAlgorithm = TapeHashAlgorithm.Crc64,
         uint blockSize = 0,
         ITapeFileNotifiable? notifiable = null,
-        bool useAligned = false)
+        bool useAligned = false,
+        TapeCompression compression = TapeCompression.None,
+        int compressionLevel = ZstdLevel.Default)
     {
         // Configure the set
         TOC.AddNewSetTOC(0, incremental);
         TOC.CurrentSetTOC.Description = description;
         TOC.CurrentSetTOC.HashAlgorithm = hashAlgorithm;
         TOC.CurrentSetTOC.BlockSize = blockSize == 0 ? Drive.DefaultBlockSize : blockSize;
+        TOC.CurrentSetTOC.Compression = compression;
+        TOC.CurrentSetTOC.CompressionLevel = compressionLevel;
 
         using var agent = CreateBackupAgent();
 

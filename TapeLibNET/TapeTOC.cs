@@ -151,6 +151,14 @@ namespace TapeLibNET
         /// </summary>
         internal long SizeOnTape { get; set; } = 0L;
 
+        /// <summary>
+        /// Per-file codec used to compress this file's body on tape.
+        ///  <see cref="TapeFileCodec.Stored"/> means the body is uncompressed (passthrough or
+        ///  auto-store fallback); <see cref="TapeFileCodec.Zstd"/> means ZSTD-compressed.
+        ///  Restore reads this flag to decide whether to wrap the read stream with a decompressor.
+        /// </summary>
+        internal TapeFileCodec Codec { get; set; } = TapeFileCodec.Stored;
+
         /// <summary>Convenience constructor for transition: wraps a bare block number in a <see cref="TapeAddress"/> with zero offset.</summary>
         [Obsolete("Use TapeAddress address instead of long block")]
         public TapeFileInfo(TypeUID UID, long block, TapeFileDescriptor fileDescr)
@@ -179,6 +187,7 @@ namespace TapeLibNET
             serializer.Serialize(FileDescr);
             serializer.SerializeNullableWithLength(Hash);
             serializer.Serialize(SizeOnTape);
+            serializer.Serialize((byte)Codec);
         }
         public static ITapeSerializable? ConstructFrom(TapeDeserializer deserializer)
         {
@@ -189,10 +198,17 @@ namespace TapeLibNET
             var address = deserializer.DeserializeTapeAddress();
             var fileDescr = deserializer.DeserializeFileDescriptor();
 
+            var hash       = deserializer.DeserializeNullableBytesWithLength();
+            var sizeOnTape = deserializer.DeserializeInt64();
+            // Codec byte was added in v2 (compression support); default to Stored for older tapes.
+            var codecBytes = deserializer.DeserializeBytes(1);
+            var codec      = (codecBytes != null) ? (TapeFileCodec)codecBytes[0] : TapeFileCodec.Stored;
+
             return new TapeFileInfo(UID, address, fileDescr)
             {
-                Hash = deserializer.DeserializeNullableBytesWithLength(),
-                SizeOnTape = deserializer.DeserializeInt64()
+                Hash       = hash,
+                SizeOnTape = sizeOnTape,
+                Codec      = codec,
             };
         }
         // } ITapeSerializable
@@ -211,6 +227,8 @@ namespace TapeLibNET
             size += sizeof(int) + (Hash?.Length ?? 0);
             // SizeOnTape: 8 bytes (long)
             size += sizeof(long);
+            // Codec: 1 byte
+            size += sizeof(byte);
 
             return size;
         }
@@ -253,7 +271,9 @@ namespace TapeLibNET
         TapeHashAlgorithm HashAlgorithm,
         uint BlockSize,
         bool Incremental,
-        int Capacity = 0);
+        int Capacity = 0,
+        TapeCompression Compression = TapeCompression.None,
+        int CompressionLevel = ZstdLevel.Default);
 
     /// <summary>
     /// Table of contents for a single backup set — an <see cref="IReadOnlyList{TapeFileInfo}"/>
@@ -281,6 +301,10 @@ namespace TapeLibNET
         public uint BlockSize { get; set; } = 0;
         public DateTime LastSaveTime { get; internal set; } = DateTime.Now;
         public TapeHashAlgorithm HashAlgorithm { get; set; } = TapeHashAlgorithm.Crc32;
+        /// <summary>Per-set compression mode. Mirrors <see cref="HashAlgorithm"/> in lifecycle and UI placement.</summary>
+        public TapeCompression Compression { get; set; } = TapeCompression.None;
+        /// <summary>ZSTD compression level (1–19). Only used when <see cref="Compression"/> is <see cref="TapeCompression.Software"/>.</summary>
+        public int CompressionLevel { get; set; } = ZstdLevel.Default;
         public bool Incremental { get; internal set; } = false;
         internal bool MarkIncremental(bool incremental = true) // can only change Incremental if the set is empty
         {
@@ -297,7 +321,7 @@ namespace TapeLibNET
         ///  set on the next volume via <see cref="TapeTOC.AddContinuationSetTOC"/>.
         /// </summary>
         public TapeSetTOCParams ToParams() =>
-            new(Description, HashAlgorithm, BlockSize, Incremental, Capacity);
+            new(Description, HashAlgorithm, BlockSize, Incremental, Capacity, Compression, CompressionLevel);
 
         // deserialization constructor
         private TapeSetTOC(List<TapeFileInfo> fileInfos) => m_tapeFileInfos = fileInfos;
@@ -316,6 +340,8 @@ namespace TapeLibNET
             serializer.Serialize(Incremental);
             serializer.Serialize(Volume);
             serializer.Serialize(ContinuedFromPrevVolume);
+            serializer.Serialize((int)Compression);
+            serializer.Serialize(CompressionLevel);
         }
 
         public static ITapeSerializable? ConstructFrom(TapeDeserializer deserializer)
@@ -337,6 +363,8 @@ namespace TapeLibNET
                 Incremental = deserializer.DeserializeBoolean(),
                 Volume = deserializer.DeserializeInt32(),
                 ContinuedFromPrevVolume = deserializer.DeserializeBoolean(),
+                Compression = (TapeCompression)deserializer.DeserializeInt32(),
+                CompressionLevel = deserializer.DeserializeInt32(),
             };
         }
         #endregion // } ITapeSerializable
@@ -374,6 +402,8 @@ namespace TapeLibNET
             HashAlgorithm = toc.HashAlgorithm;
             Incremental = toc.Incremental;
             Volume = toc.Volume;
+            Compression = toc.Compression;
+            CompressionLevel = toc.CompressionLevel;
             // ContinuedFromPrevVolume = toc.ContinuedFromPrevVolume; // set only during construction
             m_isPackedLayout = toc.m_isPackedLayout;
         }
@@ -806,6 +836,8 @@ namespace TapeLibNET
                     HashAlgorithm = setParams.HashAlgorithm,
                     Description = setParams.Description,
                     BlockSize = setParams.BlockSize,
+                    Compression = setParams.Compression,
+                    CompressionLevel = setParams.CompressionLevel,
                     ContinuedFromPrevVolume = contFromPrevVolume && (m_setTOCs.Count > 0), // the very first set may not be continued
                 }
             );

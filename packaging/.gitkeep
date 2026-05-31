@@ -1,0 +1,2 @@
+# This folder holds the deployment packaging scripts (Inno Setup) and build orchestration.
+# The dist/ (publish staging) and installers/ (final setup.exe output) subfolders are git-ignored.

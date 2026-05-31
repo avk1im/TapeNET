@@ -1,10 +1,12 @@
-using TapeLibNET.Tests.Helpers;
+ï»¿using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
 
 /// <summary>
 /// Tests for files exceeding 2 GB and 4 GB to verify 64-bit counter correctness
-/// throughout the backup -> restore -> verify pipeline.
+/// throughout the backup -&gt; restore -&gt; verify pipeline, including with software
+/// compression enabled (sparse/zero files compress aggressively, exercising the
+/// probe-then-live-ZSTD multi-frame path for &gt;128 KiB files).
 /// <para>
 /// Resource-intensive: multi-GB virtual memory (memory-mapped) and disk I/O.
 /// Tagged with <c>[Trait("Category", "LargeFile")]</c> for selective execution.
@@ -20,10 +22,10 @@ public class LargeFileTests
 {
     #region *** Constants ***
 
-    /// <summary>2 GB + 1 MB — just past <c>int.MaxValue</c> (2,147,483,647).</summary>
+    /// <summary>2 GB + 1 MB â€” just past <c>int.MaxValue</c> (2,147,483,647).</summary>
     private const long Size2GBPlus = 2L * 1024 * 1024 * 1024 + 1024 * 1024;
 
-    /// <summary>4 GB + 1 MB — just past <c>uint.MaxValue</c> (4,294,967,295).</summary>
+    /// <summary>4 GB + 1 MB â€” just past <c>uint.MaxValue</c> (4,294,967,295).</summary>
     private const long Size4GBPlus = 4L * 1024 * 1024 * 1024 + 1024 * 1024;
 
     #endregion
@@ -31,16 +33,20 @@ public class LargeFileTests
     #region *** Single Large File Tests ***
 
     /// <summary>
-    /// Backs up and restores a file just over 2 GB, verifying that <c>long</c>
-    /// byte counters and TOC file sizes survive the <c>int.MaxValue</c> boundary.
+    /// Backs up and restores a file just over 2 GB, verifying that <c>long</c> byte
+    /// counters and TOC file sizes survive the <c>int.MaxValue</c> boundary.
+    /// When <paramref name="compress"/> is <see langword="true"/>, also verifies that the
+    ///  on-tape size is smaller than the logical size (sparse/zero files compress aggressively).
     /// </summary>
-    [Fact]
-    public void FileOver2GB_BackupRestoreCompare_RoundTrips()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void FileOver2GB_BackupRestoreCompare_RoundTrips(bool compress)
     {
         using var tree = new TempFileTree();
         tree.AddSparseFile("large_2gb.dat", Size2GBPlus);
 
-        // 3 GB tape capacity — enough for the file plus TOC overhead
+        // 3 GB tape capacity â€” enough for the file plus TOC overhead
         using var fixture = new VirtualTapeFixture(
             DriveProfile.Setmarks,
             contentCapacity: 3L * 1024 * 1024 * 1024,
@@ -51,20 +57,25 @@ public class LargeFileTests
             tree.Files,
             description: ">2 GB file",
             hashAlgorithm: TapeHashAlgorithm.Crc64,
-            notifiable: notifiable);
+            notifiable: notifiable,
+            compression: compress ? TapeCompression.Software : TapeCompression.None);
 
         notifiable.AssertAllSucceeded(1);
 
-        // BytesProcessed tracks cumulative logical bytes — should exceed int.MaxValue
+        // BytesProcessed tracks cumulative logical bytes â€” should exceed int.MaxValue
         Assert.True(stats.BytesProcessed > int.MaxValue,
             $"BytesProcessed ({stats.BytesProcessed}) should exceed int.MaxValue " +
             $"after backing up a {Size2GBPlus}-byte file");
 
-        // TOC must store the correct long file size
+        // TOC must store the correct long logical size
         fixture.LoadTOC();
         var setToc = fixture.TOC[fixture.TOC.Count];
         Assert.Single(setToc);
         Assert.Equal(Size2GBPlus, setToc[0].FileDescr.Length);
+        if (compress)
+            Assert.True(setToc[0].SizeOnTape < Size2GBPlus,
+                $"SizeOnTape ({setToc[0].SizeOnTape}) should be smaller than logical size " +
+                $"({Size2GBPlus}) for a compressed sparse file");
 
         // Restore and byte-for-byte comparison
         string restoreDir = CreateRestoreDir();
@@ -89,16 +100,20 @@ public class LargeFileTests
     }
 
     /// <summary>
-    /// Backs up and restores a file just over 4 GB, verifying that counters
-    /// and TOC sizes survive the <c>uint.MaxValue</c> boundary.
+    /// Backs up and restores a file just over 4 GB, verifying that counters and TOC
+    /// sizes survive the <c>uint.MaxValue</c> boundary.
+    /// When <paramref name="compress"/> is <see langword="true"/>, also verifies that the
+    ///  on-tape size is smaller than the logical size.
     /// </summary>
-    [Fact]
-    public void FileOver4GB_BackupRestoreCompare_RoundTrips()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void FileOver4GB_BackupRestoreCompare_RoundTrips(bool compress)
     {
         using var tree = new TempFileTree();
         tree.AddSparseFile("large_4gb.dat", Size4GBPlus);
 
-        // 5 GB tape capacity
+        // 5 GB tape capacity â€” with compression the sparse file uses far less tape
         using var fixture = new VirtualTapeFixture(
             DriveProfile.Setmarks,
             contentCapacity: 5L * 1024 * 1024 * 1024,
@@ -109,7 +124,8 @@ public class LargeFileTests
             tree.Files,
             description: ">4 GB file",
             hashAlgorithm: TapeHashAlgorithm.Crc64,
-            notifiable: notifiable);
+            notifiable: notifiable,
+            compression: compress ? TapeCompression.Software : TapeCompression.None);
 
         notifiable.AssertAllSucceeded(1);
 
@@ -118,11 +134,15 @@ public class LargeFileTests
             $"BytesProcessed ({stats.BytesProcessed}) should exceed uint.MaxValue " +
             $"after backing up a {Size4GBPlus}-byte file");
 
-        // TOC must store the correct long file size
+        // TOC must store the correct long logical size
         fixture.LoadTOC();
         var setToc = fixture.TOC[fixture.TOC.Count];
         Assert.Single(setToc);
         Assert.Equal(Size4GBPlus, setToc[0].FileDescr.Length);
+        if (compress)
+            Assert.True(setToc[0].SizeOnTape < Size4GBPlus,
+                $"SizeOnTape ({setToc[0].SizeOnTape}) should be smaller than logical size " +
+                $"({Size4GBPlus}) for a compressed sparse file");
 
         // Restore and byte-for-byte comparison
         string restoreDir = CreateRestoreDir();
@@ -151,18 +171,22 @@ public class LargeFileTests
     #region *** Multiple Large Files ***
 
     /// <summary>
-    /// Backs up two files that individually exceed 2 GB, verifying cumulative
-    /// byte counters cross the <c>uint.MaxValue</c> boundary and the TOC records
-    /// correct sizes for both entries.
+    /// Backs up two files that individually exceed 2 GB, verifying cumulative byte
+    /// counters cross the <c>uint.MaxValue</c> boundary and the TOC records correct
+    /// logical sizes for both entries.
+    /// When <paramref name="compress"/> is <see langword="true"/>, software compression
+    ///  is applied (sparse/zero files compress aggressively, exercising session reuse).
     /// </summary>
-    [Fact]
-    public void MultipleLargeFiles_CumulativeCounters_RoundTrips()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void MultipleLargeFiles_CumulativeCounters_RoundTrips(bool compress)
     {
         using var tree = new TempFileTree();
         tree.AddSparseFile("batch/file_a.dat", Size2GBPlus);
         tree.AddSparseFile("batch/file_b.dat", Size2GBPlus);
 
-        // Two files × 2.1 GB ˜ 4.2 GB total ? 5 GB tape capacity
+        // Two files â‰ˆ 2.1 GB â†’ 4.2 GB total; with compression sparse files use far less tape
         using var fixture = new VirtualTapeFixture(
             DriveProfile.Setmarks,
             contentCapacity: 5L * 1024 * 1024 * 1024,
@@ -173,11 +197,12 @@ public class LargeFileTests
             tree.Files,
             description: "Multiple >2 GB files",
             hashAlgorithm: TapeHashAlgorithm.Crc64,
-            notifiable: notifiable);
+            notifiable: notifiable,
+            compression: compress ? TapeCompression.Software : TapeCompression.None);
 
         notifiable.AssertAllSucceeded(2);
 
-        // Cumulative BytesProcessed should exceed uint.MaxValue (2 × 2.1 GB ˜ 4.2 GB)
+        // Cumulative BytesProcessed should exceed uint.MaxValue (2 Ã— 2.1 GB â‰ˆ 4.2 GB)
         Assert.True(stats.BytesProcessed > uint.MaxValue,
             $"BytesProcessed ({stats.BytesProcessed}) should exceed uint.MaxValue " +
             $"after backing up {Size2GBPlus * 2} bytes across 2 files");
@@ -216,11 +241,14 @@ public class LargeFileTests
     #region *** Validate Agent on Large Files ***
 
     /// <summary>
-    /// CRC-only validation of a file exceeding 2 GB — no disk writes, just
-    /// verifies the tape data integrity via hash check.
+    /// CRC-only validation of a file exceeding 2 GB â€” no disk writes, just verifies
+    /// tape data integrity via hash check. When <paramref name="compress"/> is
+    ///  <see langword="true"/>, the backup uses software compression.
     /// </summary>
-    [Fact]
-    public void Validate_FileOver2GB_PassesCrc()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Validate_FileOver2GB_PassesCrc(bool compress)
     {
         using var tree = new TempFileTree();
         tree.AddSparseFile("validate_2gb.dat", Size2GBPlus);
@@ -233,9 +261,10 @@ public class LargeFileTests
         fixture.BackupFiles(
             tree.Files,
             description: ">2 GB validate",
-            hashAlgorithm: TapeHashAlgorithm.Crc64);
+            hashAlgorithm: TapeHashAlgorithm.Crc64,
+            compression: compress ? TapeCompression.Software : TapeCompression.None);
 
-        // CRC-only validation — no disk writes
+        // CRC-only validation â€” no disk writes
         var notifiable = new TestNotifiable();
         using var validateAgent = fixture.CreateValidateAgent();
         fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
@@ -287,7 +316,7 @@ public class LargeFileTests
         }
         catch
         {
-            // Best effort — temp directories may be locked
+            // Best effort â€” temp directories may be locked
         }
     }
 

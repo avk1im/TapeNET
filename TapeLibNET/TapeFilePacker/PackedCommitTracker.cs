@@ -28,6 +28,7 @@ internal sealed class PackedCommitTracker(TapeSetTOC setTOC, ILogger logger)
         public required TapeFileInfo Template;   // UID + FileDescr only -- Address is provisional
         public required int FileIndex;           // index in the agent's fileList
         public byte[]? Hash;                     // hash captured after writing the body
+        public TapeFileCodec Codec;              // per-file codec (Stored or Zstd) decided at write time
     }
 
     private readonly Dictionary<CommitToken, PendingEntry> _pending = [];
@@ -46,13 +47,15 @@ internal sealed class PackedCommitTracker(TapeSetTOC setTOC, ILogger logger)
     /// <see cref="OnCommitted"/> call (driven by <c>Manager.FilesCommitted</c>) will
     /// promote it to the TOC and the post-process queue.
     /// </summary>
-    public void Register(CommitToken token, TapeFileInfo template, int fileIndex, byte[]? hash)
+    public void Register(CommitToken token, TapeFileInfo template, int fileIndex, byte[]? hash,
+        TapeFileCodec codec = TapeFileCodec.Stored)
     {
         _pending[token] = new PendingEntry
         {
-            Template = template,
+            Template  = template,
             FileIndex = fileIndex,
-            Hash = hash,
+            Hash      = hash,
+            Codec     = codec,
         };
     }
 
@@ -75,8 +78,9 @@ internal sealed class PackedCommitTracker(TapeSetTOC setTOC, ILogger logger)
 
             var tfi = new TapeFileInfo(entry.Template.UID, cf.StartAddress, entry.Template.FileDescr)
             {
-                Hash = entry.Hash,
-                SizeOnTape = cf.Length
+                Hash       = entry.Hash,
+                SizeOnTape = cf.Length,
+                Codec      = entry.Codec,
             };
 
             _setTOC.Append(tfi);
