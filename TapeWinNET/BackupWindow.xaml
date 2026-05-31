@@ -101,7 +101,7 @@
                 <!-- Sources (Folders) pane -->
                 <GroupBox Grid.Row="1" Header="Sources">
                     <Grid>
-                    <ListView x:Name="SourceList"
+                        <ListView x:Name="SourceList"
                               ItemsSource="{Binding SourceItems}"
                               SelectedItem="{Binding SelectedSource}"
                               CheckBox.Checked="SourceCheckBox_Changed"
@@ -111,46 +111,46 @@
                               VirtualizingPanel.VirtualizationMode="Recycling"
                               Margin="4"
                               SelectionChanged="SourceList_SelectionChanged">
-                        <ListView.View>
-                            <GridView>
-                                <!-- Checkbox column -->
-                                <GridViewColumn Width="28">
-                                    <GridViewColumn.HeaderTemplate>
-                                        <DataTemplate>
-                                            <CheckBox IsChecked="{Binding DataContext.AreAllSourcesChecked,
+                            <ListView.View>
+                                <GridView>
+                                    <!-- Checkbox column -->
+                                    <GridViewColumn Width="28">
+                                        <GridViewColumn.HeaderTemplate>
+                                            <DataTemplate>
+                                                <CheckBox IsChecked="{Binding DataContext.AreAllSourcesChecked,
                                                                   RelativeSource={RelativeSource AncestorType=Window}}"
                                                       IsThreeState="True"
                                                       HorizontalAlignment="Center" VerticalAlignment="Center"
                                                       ToolTip="Select / deselect all sources"/>
-                                        </DataTemplate>
-                                    </GridViewColumn.HeaderTemplate>
-                                    <GridViewColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <CheckBox IsChecked="{Binding IsCheckedForBackup, Mode=TwoWay}"
+                                            </DataTemplate>
+                                        </GridViewColumn.HeaderTemplate>
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox IsChecked="{Binding IsCheckedForBackup, Mode=TwoWay}"
                                                       IsThreeState="{Binding CanBeThreeState}"
                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                        </DataTemplate>
-                                    </GridViewColumn.CellTemplate>
-                                </GridViewColumn>
-                                <!-- Icon column -->
-                                <GridViewColumn Width="28">
-                                    <GridViewColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <Image Width="16" Height="16" Source="{Binding Icon}"/>
-                                        </DataTemplate>
-                                    </GridViewColumn.CellTemplate>
-                                </GridViewColumn>
-                                <GridViewColumn Header="Source" Width="200"
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <!-- Icon column -->
+                                    <GridViewColumn Width="28">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Image Width="16" Height="16" Source="{Binding Icon}"/>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Source" Width="200"
                                                 DisplayMemberBinding="{Binding Pattern}"/>
-                                <GridViewColumn Header="Selected" Width="60"
+                                    <GridViewColumn Header="Selected" Width="60"
                                                 DisplayMemberBinding="{Binding SelectedFileCountFormatted}"/>
-                                <GridViewColumn Header="Files" Width="55"
+                                    <GridViewColumn Header="Files" Width="55"
                                                 DisplayMemberBinding="{Binding FileCountFormatted}"/>
-                                <GridViewColumn Header="Size" Width="65"
+                                    <GridViewColumn Header="Size" Width="65"
                                                 DisplayMemberBinding="{Binding SelectedSizeFormatted}"/>
-                            </GridView>
-                        </ListView.View>
-                    </ListView>
+                                </GridView>
+                            </ListView.View>
+                        </ListView>
                         <!-- Drop hint overlay -->
                         <TextBlock Text="Drop Files and Folders here"
                                    FontSize="16" Foreground="LightGray"
@@ -301,6 +301,141 @@
                             <ComboBox ItemsSource="{Binding HashOptions}"
                                       SelectedIndex="{Binding SelectedHashIndex}"
                                       Margin="0,0,0,8"/>
+
+                            <!-- Compression mode -->
+                            <TextBlock Text="Compression:" Margin="0,0,0,4"/>
+                            <ComboBox ItemsSource="{Binding CompressionModeOptions}"
+                                      SelectedIndex="{Binding SelectedCompressionIndex}"
+                                      Margin="0,0,0,4"/>
+
+                            <!-- Level controls — only shown when Software is selected -->
+                            <StackPanel Visibility="{Binding IsSoftwareCompression,
+                                                    Converter={StaticResource BoolToVis}}"
+                                        Margin="0,0,0,8">
+
+                                <!-- Label row: "Compression level:  5" -->
+                                <DockPanel Margin="0,0,0,4">
+                                    <TextBlock Text="Compression level:" DockPanel.Dock="Left"/>
+                                    <TextBlock Text="{Binding CompressionLevel}"
+                                               FontWeight="SemiBold"
+                                               Margin="6,0,0,0"
+                                               DockPanel.Dock="Left"/>
+                                </DockPanel>
+
+                                <Slider Minimum="1" Maximum="19"
+                                        Value="{Binding CompressionLevel}"
+                                        TickFrequency="1"
+                                        IsSnapToTickEnabled="True"
+                                        TickPlacement="BottomRight"
+                                        Margin="0,0,0,4">
+
+                                    <Slider.Resources>
+
+                                        <!-- Gradient track with hard color transitions -->
+                                        <LinearGradientBrush x:Key="RangeBrush" StartPoint="0,0" EndPoint="1,0">
+
+                                            <!-- Blue: 1..3 -->
+                                            <GradientStop Color="Blue" Offset="0.000"/>
+                                            <GradientStop Color="Blue" Offset="0.111"/>
+
+                                            <!-- Green: 4..6 -->
+                                            <GradientStop Color="Green" Offset="0.111"/>
+                                            <GradientStop Color="Green" Offset="0.278"/>
+
+                                            <!-- Yellow: 7..9 -->
+                                            <GradientStop Color="Yellow" Offset="0.278"/>
+                                            <GradientStop Color="Yellow" Offset="0.444"/>
+
+                                            <!-- Orange: 10..14 -->
+                                            <GradientStop Color="Orange" Offset="0.444"/>
+                                            <GradientStop Color="Orange" Offset="0.722"/>
+
+                                            <!-- Red: 15..19 -->
+                                            <GradientStop Color="Red" Offset="0.722"/>
+                                            <GradientStop Color="Red" Offset="1.000"/>
+
+                                        </LinearGradientBrush>
+
+                                        <!-- Tick color -->
+                                        <Style x:Key="TickBarStyle" TargetType="TickBar">
+                                            <Setter Property="Fill" Value="Black"/>
+                                        </Style>
+
+                                    </Slider.Resources>
+
+                                    <Slider.Template>
+                                        <ControlTemplate TargetType="Slider">
+                                            <!--
+                                              Three rows: top padding | track+thumb area | ticks.
+                                              PART_Track is the required named part WPF uses to
+                                               map Value → thumb position.
+                                            -->
+                                            <Grid>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>  <!-- top spacer -->
+                                                    <RowDefinition Height="Auto"/>  <!-- track + thumb -->
+                                                    <RowDefinition Height="Auto"/>  <!-- ticks -->
+                                                </Grid.RowDefinitions>
+
+                                                <!-- Gradient track drawn behind PART_Track -->
+                                                <Rectangle Grid.Row="1"
+                                                           Height="4" Margin="5,0"
+                                                           VerticalAlignment="Center"
+                                                           Fill="{StaticResource RangeBrush}"/>
+
+                                                <!-- PART_Track: required named element; positions the Thumb -->
+                                                <Track x:Name="PART_Track" Grid.Row="1" Margin="5,0">
+                                                    <Track.Thumb>
+                                                        <Thumb x:Name="Thumb" VerticalAlignment="Center">
+                                                            <Thumb.Template>
+                                                                <ControlTemplate TargetType="Thumb">
+                                                                    <Border Width="10" Height="18"
+                                                                            Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
+                                                                            BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                                                                            BorderThickness="1"/>
+                                                                </ControlTemplate>
+                                                            </Thumb.Template>
+                                                        </Thumb>
+                                                    </Track.Thumb>
+                                                </Track>
+
+                                                <!-- Ticks below the track -->
+                                                <TickBar x:Name="TopTick"
+                                                         Grid.Row="2"
+                                                         Fill="DarkGray"
+                                                         Height="8" Margin="5,0"
+                                                         Placement="Bottom"
+                                                         Visibility="Visible"
+                                                         Minimum="{TemplateBinding Minimum}"
+                                                         Maximum="{TemplateBinding Maximum}"
+                                                         TickFrequency="{TemplateBinding TickFrequency}"/>
+
+                                            </Grid>
+
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsEnabled" Value="False">
+                                                    <Setter TargetName="Thumb" Property="Opacity" Value="0.4"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+
+                                        </ControlTemplate>
+                                    </Slider.Template>
+
+                                </Slider>
+
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <Button Content="Fast"
+                                            Command="{Binding SetCompressionFastCommand}"
+                                            Width="54" Margin="0,0,4,0" Foreground="Blue"/>
+                                    <Button Content="Balanced"
+                                            Command="{Binding SetCompressionBalancedCommand}"
+                                            Width="60" Margin="0,0,4,0" Foreground="Green"/>
+                                    <Button Content="High"
+                                            Command="{Binding SetCompressionHighCommand}"
+                                            Width="54" Margin="0,0,4,0" Foreground="#FFD88B00"/>
+                                </StackPanel>
+
+                            </StackPanel>
 
                             <CheckBox Content="Skip all errors"
                                       IsChecked="{Binding SkipAllErrors}"

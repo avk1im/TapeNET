@@ -1508,12 +1508,16 @@ public partial class MainViewModel : ViewModelBase
             PropertyList.Add(new PropertyItem("Description", setTOC.Description ?? "(unnamed)"));
             PropertyList.Add(new PropertyItem("Set Index", $"#{setIndex} | {altIndex}"));
             PropertyList.Add(new PropertyItem("Files", setTOC.Count.ToString("N0")));
+            PropertyList.Add(new PropertyItem("Total File Size",
+                Helpers.BytesToStringLong(setTOC.Sum(tfi => tfi.FileDescr.Length))));
             PropertyList.Add(new PropertyItem("Total File Size on Tape",
                 Helpers.BytesToStringLong(setTOC.ComputeTotalFileSizeOnTape(_tapeService.DefaultBlockSize))));
             PropertyList.Add(new PropertyItem("Created On", setTOC.CreationTime.ToString("G")));
             PropertyList.Add(new PropertyItem("Last Saved", setTOC.LastSaveTime.ToString("G")));
             PropertyList.Add(new PropertyItem("Block Size", Helpers.BytesToStringLong(setTOC.BlockSize)));
             PropertyList.Add(new PropertyItem("Hash Algorithm", setTOC.HashAlgorithm.ToString()));
+            PropertyList.Add(new PropertyItem("Compression",
+                CompressionPreset.DisplayName(setTOC.Compression, setTOC.CompressionLevel)));
             PropertyList.Add(new PropertyItem("Incremental", setTOC.Incremental ? "Yes" : "No"));
             PropertyList.Add(new PropertyItem("Volume", $"#{setTOC.Volume}"));
             PropertyList.Add(new PropertyItem("Continued from Previous Volume", 

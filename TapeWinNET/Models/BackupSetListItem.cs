@@ -146,6 +146,10 @@ public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bo
 
     public string HashAlgorithm => _setTOC.HashAlgorithm.ToString();
 
+    /// <summary>Human-readable compression mode and level for this set.</summary>
+    public string Compression =>
+        CompressionPreset.DisplayName(_setTOC.Compression, _setTOC.CompressionLevel);
+
     public int Volume => _setTOC.Volume;
 
     public bool ContinuedFromPrevVolume => _setTOC.ContinuedFromPrevVolume;
@@ -159,6 +163,16 @@ public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bo
     /// Total logical file size for this backup set, formatted.
     /// </summary>
     public string TotalSizeFormatted => Helpers.BytesToString(TotalSize);
+
+    /// <summary>
+    /// Total size occupied on tape (accounting for block alignment and compression).
+    /// </summary>
+    public long SizeOnTape => _setTOC.ComputeTotalFileSizeOnTape(_setTOC.BlockSize);
+
+    /// <summary>
+    /// Total size occupied on tape for this backup set, formatted.
+    /// </summary>
+    public string SizeOnTapeFormatted => Helpers.BytesToString(SizeOnTape);
 
     public TapeSetTOC SetTOC => _setTOC;
 

@@ -143,6 +143,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// <summary>Total capacity of the content partition in bytes.</summary>
     public long Capacity => _drive?.ContentCapacity ?? 0;
 
+    ///<summary>Whether the drive supports hardware compression</summary>
+    public bool SupportsCompression => _drive?.SupportsCompression ?? false;
+
     /// <summary>Estimated used bytes, accounting for TOC-in-set mode.</summary>
     public long Used
     {

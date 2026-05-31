@@ -166,13 +166,16 @@ public partial class TapeServiceBase
             }
 
             // Configure the new backup set
-            toc.CurrentSetTOC.Description  = request.Description;
-            toc.CurrentSetTOC.HashAlgorithm = request.HashAlgorithm;
-            toc.CurrentSetTOC.BlockSize     = request.BlockSize;
+            toc.CurrentSetTOC.Description       = request.Description;
+            toc.CurrentSetTOC.HashAlgorithm     = request.HashAlgorithm;
+            toc.CurrentSetTOC.BlockSize         = request.BlockSize;
+            toc.CurrentSetTOC.Compression       = request.Compression;
+            toc.CurrentSetTOC.CompressionLevel  = request.CompressionLevel;
 
             LogInfo($"Backup set: >{request.Description}<");
             LogInfoSub($"Block size: {Helpers.BytesToString(request.BlockSize)}");
             LogInfoSub($"Hash algorithm: {request.HashAlgorithm}");
+            LogInfoSub($"Compression: {CompressionPreset.DisplayName(request.Compression, request.CompressionLevel)}");
             LogInfoSub($"Incremental: {(request.Incremental ? "Yes" : "No")}");
             if (request.ListContainsPatterns)
                 LogInfoSub($"Patterns / folders to backup: {request.FileList.Count:N0}");

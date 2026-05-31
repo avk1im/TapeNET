@@ -136,6 +136,8 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     public uint MaximumBlockSize => m_driveParams?.MaximumBlockSize ?? 0U;
     /// <summary>Drive's default block size, in bytes.</summary>
     public uint DefaultBlockSize => m_driveParams?.DefaultBlockSize ?? 0U;
+    /// <summary>Drive supports hardware compression</summary>
+    public bool SupportsCompression => m_driveParams?.SupportsCompression ?? false;
 
     /// <summary>Current block size for read/write operations, in bytes.</summary>
     public uint BlockSize => m_mediaParams?.BlockSize ?? 0U;

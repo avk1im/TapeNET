@@ -87,6 +87,8 @@ namespace TapeLibNET
 
             return true;
         }
+
+        // currently used only by the obsolete <cref="BackupFileAligned"/>
         private TapeWriteStream? OpenWriteContentStream(long length)
         {
             // Estimate actual tape footprint via the shared block-alignment formula.
