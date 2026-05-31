@@ -3,13 +3,14 @@ id: dialog.backup
 title: New Backup
 kind: dialog
 host: BackupWindow
-keywords: [backup, new backup, sources, add files, add folder, incremental, append, overwrite, media description]
+keywords: [backup, new backup, sources, add files, add folder, incremental, append, overwrite, media description, compression, software compression, hardware compression, compression level]
 intents:
   - "how do I create a backup"
   - "how do I start a new backup"
   - "add files to a backup"
   - "back up a folder to tape"
   - "make an incremental backup"
+  - "compress my backup"
 related:
   - concepts.backup-sets
   - concepts.incremental-backup
@@ -69,6 +70,28 @@ the tree and in restore dialogs.
 | **Hash algorithm** | The checksum stored per file, used later by **Validate** and **Verify**. |
 | **Skip all errors** | Silently ignores file-level read errors instead of prompting. |
 | **No multivolume** | Stops the backup at end-of-media instead of prompting for another volume. |
+
+### Compression
+
+The **Compression** drop-down selects how data is compressed before it is
+written to tape:
+
+- **None** — data is written uncompressed (fastest, largest).
+- **Hardware** — the tape drive performs compression itself, with no CPU cost
+  on the host.
+- **Software** — TapeWin compresses data before writing, which usually achieves
+  a higher ratio than hardware compression at the cost of host CPU time.
+
+When **Software** is selected, a **Compression level** slider appears, ranging
+from **1** (fastest, lowest ratio) to **19** (slowest, highest ratio).  The
+colored bands give a quick sense of the trade-off, and the preset buttons jump
+to representative levels:
+
+| Preset | Trade-off |
+|--------|-----------|
+| **Fast** | Minimal CPU, modest size reduction. |
+| **Balanced** | A good compromise for everyday backups. |
+| **High** | Smallest output, noticeably more CPU and time. |
 
 ## Media
 

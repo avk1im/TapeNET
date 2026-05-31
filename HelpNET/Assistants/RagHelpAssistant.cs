@@ -71,7 +71,18 @@ public sealed class RagHelpAssistant : IHelpAssistant
 
         float retrievalConfidence = excerpts.Count > 0 ? excerpts[0].Score : 0f;
 
-        if (excerpts.Count == 0 || retrievalConfidence < LowConfidenceThreshold)
+        // 1a. Context bias — when the caller is viewing a specific topic (e.g. a
+        //     dialog asking about its own controls), ensure that topic's *full*
+        //     body is available to the LLM as a top-priority excerpt. Snippet-only
+        //     retrieval often omits the exact section the user is asking about, so
+        //     the question the user is most likely to ask cannot otherwise be
+        //     answered from the snippets alone.
+        excerpts = PrependCurrentTopic(request.CurrentTopicId, excerpts);
+
+        // Only bail out when retrieval found nothing *and* there is no current-topic
+        //  context to fall back on.
+        if (excerpts.Count == 0 ||
+            (retrievalConfidence < LowConfidenceThreshold && request.CurrentTopicId is null))
             return NoMatch(request.Query);
 
         // 2. Build the chat messages.
@@ -94,12 +105,18 @@ public sealed class RagHelpAssistant : IHelpAssistant
         var cited      = new HashSet<string>(citations.Select(c => c.TopicId));
         var suggested  = BuildSuggested(cited);
 
+        // When we injected the current topic as authoritative context, treat the
+        //  answer as fully confident even if plain retrieval scored low.
+        float confidence = request.CurrentTopicId is not null
+            ? 1f
+            : Math.Min(retrievalConfidence, 1f);
+
         return new HelpAssistantResponse(
             answerMarkdown,
             citations,
             suggested,
             [],
-            Math.Min(retrievalConfidence, 1f),
+            confidence,
             HelpAssistantMode.Rag);
     }
 
@@ -113,6 +130,35 @@ public sealed class RagHelpAssistant : IHelpAssistant
             [],
             0f,
             HelpAssistantMode.Rag);
+
+    /// <summary>
+    /// Ensures the topic the user is currently viewing (<paramref name="currentTopicId"/>)
+    /// is present at the front of the excerpt list with its <b>full</b> body, not just a
+    /// retrieval snippet. This biases the LLM toward the active context — essential for
+    /// dialogs that ask about their own controls, where the relevant section may not
+    /// surface (or may be truncated) in plain query-based retrieval.
+    /// </summary>
+    private IReadOnlyList<HelpExcerpt> PrependCurrentTopic(
+        string?                    currentTopicId,
+        IReadOnlyList<HelpExcerpt> excerpts)
+    {
+        if (string.IsNullOrWhiteSpace(currentTopicId))
+            return excerpts;
+
+        var topic = _store.GetById(currentTopicId);
+        if (topic is null || !topic.IncludeInAiCorpus)
+            return excerpts;
+
+        // Use the full plain text so the entire topic is available to the model.
+        var contextExcerpt = new HelpExcerpt(topic, topic.Title, topic.PlainText, 1f);
+
+        // Drop any snippet-only excerpt for the same topic to avoid duplication.
+        var ordered = new List<HelpExcerpt>(excerpts.Count + 1) { contextExcerpt };
+        ordered.AddRange(excerpts.Where(e =>
+            !e.Topic.Id.Equals(topic.Id, StringComparison.OrdinalIgnoreCase)));
+
+        return ordered;
+    }
 
     /// <summary>
     /// Builds the <see cref="ChatMessage"/> list for the LLM call.

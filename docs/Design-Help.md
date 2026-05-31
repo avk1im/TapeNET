@@ -1,6 +1,6 @@
 # TapeWinNET Help System — Detailed Design
 
-> **Status:** Phases 0 ✅ 1 ✅ 2 ✅ 3 ✅ 4 ✅ 5 ✅ complete — `HelpNET` fully implemented; TapeWinNET HelpPane integrated and working. Phase 6 in progress: §6.1 ✅ §6.2 ✅ §6.3 ✅ §6.4 ✅ done.
+> **Status:** Phases 0 ✅ 1 ✅ 2 ✅ 3 ✅ 4 ✅ 5 ✅ complete — `HelpNET` fully implemented; TapeWinNET HelpPane integrated and working. Phase 6 in progress: §6.1 ✅ §6.2 ✅ §6.3 ✅ §6.4 ✅ done; §6.6 `RagHelpAssistantTests` ✅ + RAG current-topic context-bias fix.
 > **Scope:** A modern, optionally AI-augmented help system for TapeWinNET, with reusable engines (`AiNET`, `HelpNET`) ready for TapeConNET and other future consumers.
 > **Authoring convention:** Markdown + YAML front-matter for all help content. Library API surfaces are described in C# pseudo-signatures; sections marked **(not yet implemented)** are still design-only.
 
@@ -1215,9 +1215,13 @@ The following suites have been planned since Phase 1 and should ship in Phase 6:
 
 | Suite | Coverage |
 |---|---|
-| `OnnxEmbeddingGeneratorTests` | Real ONNX cosine sanity on known phrase pairs; skipped if `ONNX_MODEL_PATH` env var absent. |
-| `SemanticHelpAssistantTests` | Mode 2 returns excerpts ranked by cosine; no LLM call. |
-| `RagHelpAssistantTests` | Fake `IChatClient` returning canned answer; assert prompt includes retrieved excerpts; citations parse correctly. |
+| `OnnxEmbeddingGeneratorTests` ✅ | Real-ONNX integration for the HelpNET-internal `HelpOnnxEmbeddingGenerator`, constructed from on-disk model + `vocab.txt` **streams** (matching the embedded-resource host path). Asserts metadata (model id + dimension), a single L2-normalised vector of the expected dimension, empty-input → empty result, determinism for repeated text, cosine sanity on known phrase pairs (related > unrelated), distinct vectors for unrelated sentences, and cancellation. All 7 tests skip automatically when `ONNX_MODEL_PATH` (with `vocab.txt` alongside) is absent, so CI never fails. Requires `Xunit.SkippableFact` (added to `HelpNET.Tests`). |
+| `SemanticHelpAssistantTests` ✅ | Mode 2 over a fake precomputed bundle (`BundleBuilder` + deterministic `FakeEmbeddingGenerator`), so no real model is needed and rankings are reproducible. Asserts `Mode`/response mode is `Semantic`, citations resolve in the store, the Markdown answer surfaces retrieved excerpts verbatim (links + `Semantic results for:` header) with **no LLM synthesis**, every citation is linked, `topK` bounds the citation count, confidence tracks the top cosine score within `[0, 1]`, identical queries produce identical rankings, the low-confidence/empty-index path returns `NoMatch` with zero confidence, suggested topics never duplicate citations, suggested actions stay empty, and cancellation throws. 12 tests, all passing. |
+| `RagHelpAssistantTests` ✅ | Fake `IChatClient` (recording + streaming) returning a canned answer; asserts the prompt includes retrieved excerpts and the system prompt, prior conversation turns are forwarded, `[topic-id]` citations parse correctly, hallucinated citations are dropped, the no-match path returns without calling the LLM, and the **current-topic context bias** (see below) injects the viewed topic's full body, answers even when retrieval is weak, de-duplicates the current topic, and ignores an unknown current-topic id. 12 tests, all passing. |
+
+**Context-bias fix (RAG dialog answering).** Investigation of "the assistant can't answer dialog questions" revealed two root causes in the RAG path, now fixed:
+- `RagHelpAssistant` ignored the `HelpAssistantRequest.CurrentTopicId` it was given. When a user asks a question from inside a dialog (e.g. "how do I set the compression options?" in the Backup dialog), the one topic they are actually viewing (`dialog.backup`) was only fed to the LLM if BM25 happened to rank it, and then only as a clipped snippet that often omitted the relevant section. The assistant now **prepends the current topic's full body** as a top-priority excerpt (`PrependCurrentTopic`), de-duplicating any snippet-only copy, and treats the answer as fully confident when current-topic context is present. Bail-out to `NoMatch` is suppressed whenever a current topic is available.
+- `BM25HelpIndex.BuildExcerpt` widened from a **200-char** window (40-char lead) to a **400-char** window (80-char lead). The excerpt is fed verbatim to the LLM, so the old window frequently clipped the sentence containing the answer. The wider window gives the model enough surrounding context while ellipsis still keeps search-as-you-type previews readable.
 
 #### 6.7 Adjacent mode for first dialog (RestoreWindow)
 

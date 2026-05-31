@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
         xmlns:converters="clr-namespace:TapeWinNET.Converters"
+        xmlns:help="clr-namespace:TapeWinNET.Help"
         xmlns:controls="clr-namespace:TapeWinNET.Controls"
         d:DataContext="{d:DesignInstance Type=vm:BackupViewModel}"
         mc:Ignorable="d"
@@ -13,7 +14,8 @@
         MinWidth="700" MinHeight="480"
         WindowStartupLocation="CenterOwner"
         ResizeMode="CanResizeWithGrip"
-        ShowInTaskbar="False">
+        ShowInTaskbar="False"
+        PreviewKeyDown="Window_PreviewKeyDown">
 
     <Window.Resources>
         <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVis"/>
@@ -29,7 +31,17 @@
         <KeyBinding Key="Escape" Command="{Binding CancelCommand}"/>
     </Window.InputBindings>
 
-    <Grid Margin="12">
+    <!-- Outer grid: column 0 = dialog content, column 1 = splitter, column 2 = help pane.
+         The window Width is expanded when the help pane opens so dialog content is undisturbed. -->
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>                                       <!-- help splitter -->
+            <ColumnDefinition x:Name="HelpPaneColumn" Width="0" MinWidth="0"/>    <!-- help pane    -->
+        </Grid.ColumnDefinitions>
+
+        <!-- Dialog content fills column 0 -->
+        <Grid Grid.Column="0" Margin="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
@@ -99,7 +111,8 @@
                 </Grid>
 
                 <!-- Sources (Folders) pane -->
-                <GroupBox Grid.Row="1" Header="Sources">
+                <GroupBox Grid.Row="1" Header="Sources"
+                          help:HelpTopicIdAttachedProperty.TopicId="dialog.backup.sources">
                     <Grid>
                         <ListView x:Name="SourceList"
                               ItemsSource="{Binding SourceItems}"
@@ -281,7 +294,8 @@
                     </GroupBox>
 
                     <!-- Write Options -->
-                    <GroupBox Header="Options" Margin="0,0,0,8">
+                    <GroupBox Header="Options" Margin="0,0,0,8"
+                              help:HelpTopicIdAttachedProperty.TopicId="dialog.backup.options">
                         <StackPanel Margin="8">
                             <CheckBox Content="Include subfolders"
                                       IsChecked="{Binding IncludeSubdirectories}"
@@ -450,7 +464,8 @@
                     </GroupBox>
 
                     <!-- Append / Overwrite -->
-                    <GroupBox Header="Media" Margin="0,0,0,8">
+                    <GroupBox Header="Media" Margin="0,0,0,8"
+                              help:HelpTopicIdAttachedProperty.TopicId="dialog.backup.media">
                         <StackPanel Margin="8">
                             <!-- Radio buttons: only shown when a TOC is present -->
                             <StackPanel Visibility="{Binding IsNoToc,
@@ -536,6 +551,13 @@
 
         <!-- Button bar -->
         <Grid Grid.Row="1" Margin="0,12,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                <Button x:Name="HelpButton"
+                        Content="_Help"
+                        Click="HelpButton_Click"
+                        MinWidth="60" Padding="10,1"
+                        ToolTip="Open help for this dialog (F1)"/>
+            </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="Cancel"
                         Command="{Binding CancelCommand}"
@@ -548,5 +570,21 @@
                         Width="100"/>
             </StackPanel>
         </Grid>
+        </Grid><!-- end dialog-content Grid (column 0) -->
+
+        <!-- Help splitter — visible only when the help pane is open -->
+        <GridSplitter x:Name="HelpPaneSplitter"
+                      Grid.Column="1"
+                      Width="4"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Stretch"
+                      Background="LightGray"
+                      Visibility="Collapsed"/>
+
+        <!-- Help pane — width driven by HelpPaneColumn; starts at 0 (hidden) -->
+        <controls:HelpPane x:Name="HelpPaneControl"
+                           Grid.Column="2"
+                           Visibility="Collapsed"/>
+
     </Grid>
 </Window>
