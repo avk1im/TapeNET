@@ -2,8 +2,12 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 
+using FclAiNET;
+
 using FclNET;
 using FclNET.Ast;
+
+using Microsoft.Extensions.Logging;
 
 using TapeWinNET.Utils;
 using TapeWinNET.ViewModels;
@@ -447,7 +451,8 @@ public partial class FileFilterPane : UserControl
                 // Cancel callback
                 Window.GetWindow(this)?.OwnedWindows
                     .OfType<FclFilterWindow>().FirstOrDefault()?.Close();
-            });
+            },
+            CreateFclAiTranslatorAsync);
 
         // Initialize from current state
         if (_advancedExpression is not null)
@@ -511,6 +516,22 @@ public partial class FileFilterPane : UserControl
             _ = ApplyFilterAsync();
         }
         // else: cancelled — no changes
+    }
+
+    /// <summary>
+    /// Lazily builds an <see cref="FclAiTranslator"/> bound to the app-wide
+    /// shared AI session — the same provider the Help system uses. Returns
+    /// <c>null</c> when no AI provider is configured or the user declines setup.
+    /// </summary>
+    private static async Task<FclAiTranslator?> CreateFclAiTranslatorAsync(CancellationToken ct)
+    {
+        // Reuse the process-wide AI session (prompts for provider setup if needed).
+        var session = await App.AiSessionHost.EnsureAsync(promptUser: true, ct);
+        if (session?.ChatClient is not { } chatClient)
+            return null;
+
+        var logger = App.LoggerFactory.CreateLogger<FclAiTranslator>();
+        return new FclAiTranslator(chatClient, logger);
     }
 
     /// <summary>

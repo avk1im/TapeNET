@@ -26,6 +26,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>     <!-- Main content area -->
             <RowDefinition Height="Auto"/>  <!-- Sync buttons -->
+            <RowDefinition Height="Auto"/>  <!-- AI input panel -->
             <RowDefinition Height="Auto"/>  <!-- Bottom bar -->
         </Grid.RowDefinitions>
 
@@ -223,9 +224,82 @@
         </StackPanel>
 
         <!-- ═══════════════════════════════════════════════ -->
+        <!--  AI input panel (collapsible)                   -->
+        <!-- ═══════════════════════════════════════════════ -->
+        <Border Grid.Row="2" Margin="0,8,0,0"
+                Padding="8"
+                Background="#FFF6F8FC"
+                BorderBrush="#FFB9C4D6" BorderThickness="1"
+                CornerRadius="4"
+                Visibility="{Binding IsAiPanelOpen, Converter={StaticResource BoolToVis}}">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0"
+                           Text="Describe the files to filter in plain language:"
+                           FontSize="11" Foreground="#FF40506B"
+                           Margin="0,0,0,4"/>
+
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBox Grid.Column="0"
+                             Text="{Binding AiPromptText, UpdateSourceTrigger=PropertyChanged}"
+                             VerticalContentAlignment="Center"
+                             Padding="4,3"
+                             ToolTip="e.g. 'photos from the last week but not RAW files'">
+                        <TextBox.InputBindings>
+                            <KeyBinding Key="Enter" Command="{Binding SubmitAiPromptCommand}"/>
+                        </TextBox.InputBindings>
+                    </TextBox>
+
+                    <Button Grid.Column="1"
+                            Content="Generate"
+                            Command="{Binding SubmitAiPromptCommand}"
+                            Width="80" Margin="8,0,0,0"
+                            ToolTip="Translate the description into FCL using AI"/>
+                </Grid>
+
+                <TextBlock Grid.Row="2"
+                           Text="{Binding AiStatusMessage}"
+                           TextWrapping="Wrap"
+                           FontSize="11"
+                           Margin="0,4,0,0"
+                           Visibility="{Binding HasAiStatus, Converter={StaticResource BoolToVis}}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="#FF40506B"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding AiStatusLevel}" Value="Error">
+                                    <Setter Property="Foreground" Value="{StaticResource WarningFg.Error}"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding AiStatusLevel}" Value="Failed">
+                                    <Setter Property="Foreground" Value="{StaticResource WarningFg.Failed}"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding AiStatusLevel}" Value="Warning">
+                                    <Setter Property="Foreground" Value="{StaticResource WarningFg.Warning}"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding AiStatusLevel}" Value="Completed">
+                                    <Setter Property="Foreground" Value="{StaticResource WarningFg.Completed}"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </Grid>
+        </Border>
+
+        <!-- ═══════════════════════════════════════════════ -->
         <!--  Bottom bar                                     -->
         <!-- ═══════════════════════════════════════════════ -->
-        <Grid Grid.Row="2" Margin="0,12,0,0">
+        <Grid Grid.Row="3" Margin="0,12,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
@@ -242,10 +316,10 @@
                     Command="{Binding ToggleProgramPaneCommand}"
                     Margin="0,0,8,0"/>
 
-            <!-- AI placeholder -->
+            <!-- AI-assisted generation toggle -->
             <Button Grid.Column="1"
                     Command="{Binding GenerateWithAiCommand}"
-                    ToolTip="AI-assisted FCL generation (coming soon)">
+                    ToolTip="Describe the filter in plain language and let AI generate the FCL">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="✦" FontSize="14" Margin="0,0,4,0"/>
                     <TextBlock Text="AI Generate…"/>

@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
 
+using FclAiNET;
+
 using FclNET;
 using FclNET.Ast;
 
@@ -16,6 +18,15 @@ public class FclFilterWindowVM : ViewModelBase
     private readonly Action<FclExpression?> _onApply;
     private readonly Action _onCancel;
 
+    /// <summary>
+    /// Factory that lazily provides an <see cref="FclAiTranslator"/> bound to the
+    /// app-wide shared AI session — the same provider the Help system uses.
+    /// Returns <c>null</c> if no AI provider is configured / the user declined setup.
+    /// Injected by the host (<see cref="Controls.FileFilterPane"/>) so the VM stays
+    /// decoupled from <c>App</c>.
+    /// </summary>
+    private readonly Func<CancellationToken, Task<FclAiTranslator?>>? _translatorFactory;
+
     private string _fclText = string.Empty;
     private string? _appliedFclText;
     private bool _isProgramPaneOpen;
@@ -26,6 +37,13 @@ public class FclFilterWindowVM : ViewModelBase
     private string? _nonDnfMessage;
     private bool _applyToAll;
     private bool _hasMultipleSets;
+
+    // ── AI-assisted generation state ──
+    private bool _isAiPanelOpen;
+    private bool _isAiBusy;
+    private string _aiPromptText = string.Empty;
+    private string? _aiStatusMessage;
+    private WarningLevel _aiStatusLevel = WarningLevel.None;
 
     // ─────────────────────────────────────────────────────
     //  Construction
@@ -59,7 +77,29 @@ public class FclFilterWindowVM : ViewModelBase
         ApplyFilterCommand = new RelayCommand(_ => ExecuteApply(), _ => CanApply);
         ClearFilterCommand = new RelayCommand(_ => _onApply(null));
         CancelCommand = new RelayCommand(_ => _onCancel());
-        GenerateWithAiCommand = new RelayCommand(_ => { }, _ => false); // placeholder
+        GenerateWithAiCommand = new RelayCommand(_ => ToggleAiPanel());
+        SubmitAiPromptCommand = new AsyncRelayCommand(
+            _ => GenerateFromPromptAsync(),
+            _ => !IsAiBusy && !string.IsNullOrWhiteSpace(AiPromptText));
+    }
+
+    /// <summary>
+    /// Creates the filter window VM with AI-assisted FCL generation enabled.
+    /// </summary>
+    /// <param name="onApply">See <see cref="FclFilterWindowVM(Action{FclExpression?}, Action)"/>.</param>
+    /// <param name="onCancel">See <see cref="FclFilterWindowVM(Action{FclExpression?}, Action)"/>.</param>
+    /// <param name="translatorFactory">
+    /// Lazily provides an <see cref="FclAiTranslator"/> bound to the shared AI
+    /// session (the same provider the Help system uses). Returns <c>null</c>
+    /// when no AI provider is available.
+    /// </param>
+    public FclFilterWindowVM(
+        Action<FclExpression?> onApply,
+        Action onCancel,
+        Func<CancellationToken, Task<FclAiTranslator?>> translatorFactory)
+        : this(onApply, onCancel)
+    {
+        _translatorFactory = translatorFactory;
     }
 
     // ─────────────────────────────────────────────────────
@@ -258,6 +298,150 @@ public class FclFilterWindowVM : ViewModelBase
 
     /// <summary>Placeholder for AI-assisted FCL generation.</summary>
     public ICommand GenerateWithAiCommand { get; }
+
+    /// <summary>Submits the natural-language prompt for AI translation.</summary>
+    public ICommand SubmitAiPromptCommand { get; }
+
+    // ─────────────────────────────────────────────────────
+    //  AI-assisted generation
+    // ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Whether the natural-language input panel is shown. Toggled by the
+    /// "AI Generate…" button. Hidden when no AI provider is available.
+    /// </summary>
+    public bool IsAiPanelOpen
+    {
+        get => _isAiPanelOpen;
+        set => SetProperty(ref _isAiPanelOpen, value);
+    }
+
+    /// <summary>Whether an AI translation request is currently in flight.</summary>
+    public bool IsAiBusy
+    {
+        get => _isAiBusy;
+        private set
+        {
+            if (SetProperty(ref _isAiBusy, value))
+                CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
+    /// <summary>The natural-language filter description entered by the user.</summary>
+    public string AiPromptText
+    {
+        get => _aiPromptText;
+        set
+        {
+            if (SetProperty(ref _aiPromptText, value))
+                CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
+    /// <summary>
+    /// Status / result message shown beneath the AI input
+    /// (e.g. "Generating…", an error explanation, or a success note).
+    /// </summary>
+    public string? AiStatusMessage
+    {
+        get => _aiStatusMessage;
+        private set
+        {
+            if (SetProperty(ref _aiStatusMessage, value))
+                OnPropertyChanged(nameof(HasAiStatus));
+        }
+    }
+
+    /// <summary>Severity of <see cref="AiStatusMessage"/>, for colouring.</summary>
+    public WarningLevel AiStatusLevel
+    {
+        get => _aiStatusLevel;
+        private set => SetProperty(ref _aiStatusLevel, value);
+    }
+
+    /// <summary>Whether a status message is present.</summary>
+    public bool HasAiStatus => !string.IsNullOrEmpty(AiStatusMessage);
+
+    /// <summary>Toggles the AI input panel; auto-opens the program pane to show the result.</summary>
+    private void ToggleAiPanel()
+    {
+        IsAiPanelOpen = !IsAiPanelOpen;
+        if (!IsAiPanelOpen)
+        {
+            AiStatusMessage = null;
+            AiStatusLevel = WarningLevel.None;
+        }
+    }
+
+    /// <summary>
+    /// Translates <see cref="AiPromptText"/> into FCL via the shared AI provider
+    /// and loads the result into the program pane (and visual editor when DNF-compatible).
+    /// </summary>
+    private async Task GenerateFromPromptAsync()
+    {
+        var prompt = AiPromptText?.Trim();
+        if (string.IsNullOrWhiteSpace(prompt))
+            return;
+
+        if (_translatorFactory is null)
+        {
+            AiStatusLevel = WarningLevel.Error;
+            AiStatusMessage = "AI generation is not available.";
+            return;
+        }
+
+        IsAiBusy = true;
+        AiStatusLevel = WarningLevel.Info;
+        AiStatusMessage = "Generating FCL…";
+
+        try
+        {
+            var translator = await _translatorFactory(CancellationToken.None);
+            if (translator is null)
+            {
+                AiStatusLevel = WarningLevel.Warning;
+                AiStatusMessage = "No AI provider is configured. "
+                    + "Set one up via Help → AI Provider settings.";
+                return;
+            }
+
+            var result = await translator.TranslateAsync(prompt);
+
+            if (!result.Success || string.IsNullOrWhiteSpace(result.Fcl))
+            {
+                AiStatusLevel = WarningLevel.Failed;
+                AiStatusMessage = result.Explanation
+                    ?? "Could not generate FCL from that description. Try rephrasing.";
+                return;
+            }
+
+            // Load the generated FCL into the program pane.
+            IsProgramPaneOpen = true;
+            FclText = result.Fcl;          // setter marks IsFclTextModified = true
+            ClearDiagnostics();
+
+            // Best-effort: also populate the visual editor when DNF-compatible.
+            SyncTextToVisual();
+
+            AiStatusLevel = WarningLevel.Completed;
+            AiStatusMessage = $"Generated in {result.Attempts} attempt"
+                + (result.Attempts != 1 ? "s" : "") + ".";
+        }
+        catch (OperationCanceledException)
+        {
+            AiStatusLevel = WarningLevel.Warning;
+            AiStatusMessage = "Generation cancelled.";
+        }
+        catch (Exception ex)
+        {
+            AiStatusLevel = WarningLevel.Error;
+            AiStatusMessage = $"AI request failed: {ex.Message}";
+        }
+        finally
+        {
+            IsAiBusy = false;
+        }
+    }
 
     // ─────────────────────────────────────────────────────
     //  Initialization entry points
