@@ -117,13 +117,26 @@ public class OllamaIntegrationTests
 
         Assert.NotNull(generator);
 
-        var embeddings = await generator.GenerateAsync(["hello world"]);
+        try
+        {
+            var embeddings = await generator.GenerateAsync(["hello world"]);
 
-        Assert.Single(embeddings);
-        var vector = embeddings[0].Vector.ToArray();
-        Assert.NotEmpty(vector);
-        // Vector must not be all-zeros
-        Assert.Contains(vector, v => v != 0f);
+            Assert.Single(embeddings);
+            var vector = embeddings[0].Vector.ToArray();
+            Assert.NotEmpty(vector);
+            // Vector must not be all-zeros
+            Assert.Contains(vector, v => v != 0f);
+        }
+        catch (System.ClientModel.ClientResultException ex)
+        {
+            Skip.If(ex.Status == 501 /*api_error*/,
+                $"Ollama model {embeddingModel} does not support embeddings — skipping integration test.");
+            Assert.Fail("Exception thrown while generating embeddings: " + ex);
+        }
+        catch (Exception ex)
+        {
+            Assert.Fail($"Exception thrown while generating embeddings with Ollama model {embeddingModel}: " + ex);
+        }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

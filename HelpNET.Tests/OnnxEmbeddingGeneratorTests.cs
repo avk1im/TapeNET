@@ -1,5 +1,5 @@
 using HelpNET.Embeddings;
-
+using System.Xml.XPath;
 using Xunit;
 
 namespace HelpNET.Tests;
@@ -31,10 +31,28 @@ public class OnnxEmbeddingGeneratorTests
 
     // Known parameters for all-MiniLM-L6-v2 — the reference sentence encoder.
     private const string ModelId   = "all-MiniLM-L6-v2";
+    private const string DefaultModelFileName = "model.onnx";
     private const int    Dimension = 384;
 
-    private static readonly string? ModelPath =
+    private static readonly string? ModelPathRaw =
         Environment.GetEnvironmentVariable(EnvModelPath);
+
+    private static string? ModelPath
+    {
+        get
+        {
+            var pathName = ModelPathRaw;
+
+            if (pathName is null) return null;
+
+            // ModelPathRaw might contain either the directory for the file model.onnx
+            //  or the full path to the model file. Handle both cases.
+            if (!Path.HasExtension(pathName) || pathName[^1] == Path.DirectorySeparatorChar) // assume it's the directory
+                pathName = Path.Combine(pathName, DefaultModelFileName);
+
+            return pathName;
+        }
+    }
 
     private static string? VocabPath =>
         ModelPath is null

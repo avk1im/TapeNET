@@ -28,9 +28,26 @@ public class OnnxIntegrationTests
     /// Name of the environment variable that points to the <c>.onnx</c> file.
     /// </summary>
     private const string EnvModelPath = "ONNX_MODEL_PATH";
+    private const string DefaultModelFileName = "model.onnx";
 
-    private static readonly string? ModelPath =
+    private static readonly string? ModelPathRaw =
         Environment.GetEnvironmentVariable(EnvModelPath);
+    private static string? ModelPath
+    {
+        get
+        {
+            var pathName = ModelPathRaw;
+
+            if (pathName is null) return null;
+
+            // ModelPathRaw might contain either the directory for the file model.onnx
+            //  or the full path to the model file. Handle both cases.
+            if (!Path.HasExtension(pathName) || pathName[^1] == Path.DirectorySeparatorChar) // assume it's the directory
+                pathName = Path.Combine(pathName, DefaultModelFileName);
+
+            return pathName;
+        }
+    }
 
     private static readonly Uri? ModelUri =
         ModelPath is not null ? new Uri(ModelPath) : null;

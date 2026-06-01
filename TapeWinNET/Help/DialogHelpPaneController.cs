@@ -32,9 +32,9 @@ public sealed class DialogHelpPaneController
 
     // Help-button labels for each state. The Help/Close labels carry the access
     //  key on "Help"; the Loading label needs none since the button is disabled.
-    private const string IdleLabel    = "_Help";
+    private const string IdleLabel    = "_Help ▶";
     private const string LoadingLabel = "Loading\u2026";
-    private const string OpenLabel    = "Close _Help";
+    private const string OpenLabel    = "◀ Close _Help";
 
     private readonly IHelpPaneHost      _host;
     private readonly Window             _window;

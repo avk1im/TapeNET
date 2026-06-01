@@ -1,6 +1,6 @@
 # TapeWinNET Help System — Detailed Design
 
-> **Status:** Phases 0 ✅ 1 ✅ 2 ✅ 3 ✅ 4 ✅ 5 ✅ complete — `HelpNET` fully implemented; TapeWinNET HelpPane integrated and working. Phase 6 in progress: §6.1 ✅ §6.2 ✅ §6.3 ✅ §6.4 ✅ done; §6.6 `RagHelpAssistantTests` ✅ + RAG current-topic context-bias fix.
+> **Status:** Phases 0 ✅ 1 ✅ 2 ✅ 3 ✅ 4 ✅ 5 ✅ complete — `HelpNET` fully implemented; TapeWinNET HelpPane integrated and working. Phase 6 in progress: §6.1 ✅ §6.2 ✅ §6.3 ✅ §6.4 ✅ §6.6 ✅ §6.7 ✅ done. Phase 7 in progress: `BackupWindow` ✅ `RestoreWindow` ✅ remaining dialogs pending.
 > **Scope:** A modern, optionally AI-augmented help system for TapeWinNET, with reusable engines (`AiNET`, `HelpNET`) ready for TapeConNET and other future consumers.
 > **Authoring convention:** Markdown + YAML front-matter for all help content. Library API surfaces are described in C# pseudo-signatures; sections marked **(not yet implemented)** are still design-only.
 
@@ -666,6 +666,7 @@ TapeWinNET/
 	IHelpPaneHost.cs
 	HelpPaneHostMode.cs               Embedded | Adjacent
 	HelpPaneLayoutCoordinator.cs      handles dialog shift-left logic
+	DialogHelpPaneController.cs       all Adjacent-mode boilerplate in one reusable class
 	Overlays/                         (v2)
 	  IHelpOverlayController.cs
 	  HelpOverlayHost.cs              AdornerLayer wrapper
@@ -698,7 +699,6 @@ public interface IHelpPaneHost
 {
 	string HostName { get; }                              // matches HelpTopic.Host
 	HelpPaneHostMode HostMode { get; }                    // Embedded | Adjacent
-	IHelpOverlayController? OverlayController { get; }    // v2; may be null in v1
 
 	/// Called by HelpPane before opening, to negotiate width / shift the window.
 	void OnPaneOpening(double desiredWidth);
@@ -706,14 +706,109 @@ public interface IHelpPaneHost
 
 	/// Used by Reveal & Guide Me to map walkthrough targets → live controls.
 	FrameworkElement? ResolveControlByName(string name);
+
+	/// Opens the pane (first call builds the session) and navigates to topicId.
+	void OpenHelpPane(string? topicId = null);
 }
 ```
 
 - **MainWindow** implements with `HostMode = Embedded`. `OnPaneOpening` just sets the right column width.
-- **Dialogs** implement with `HostMode = Adjacent`. `OnPaneOpening` calls into `HelpPaneLayoutCoordinator` which:
-  - Tries to expand the window to the right by `desiredWidth`.
-  - If that runs off the work area, shifts the window left.
-  - If still no room, clamps `desiredWidth` to whatever fits.
+- **Dialogs** implement with `HostMode = Adjacent`. `OnPaneOpening` calls into `DialogHelpPaneController`
+  which handles window expansion and shift-left geometry.
+
+### 6.3a `DialogHelpPaneController` — the Adjacent-mode helper
+
+All the boilerplate for hosting a `HelpPane` inside a dialog window is centralized in
+`DialogHelpPaneController`. Dialogs do **not** need to re-implement any of this logic themselves.
+
+#### What the controller owns
+
+- **Window-expansion geometry** (`OnPaneOpening`) — adds `desiredWidth + 4 px (splitter)` to the window
+  width, then shifts the window left if it would protrude beyond the right edge of the work area.
+- **Collapse geometry** (`OnPaneClosed`) — shrinks the window back to the exact content-only width that
+  was snapshotted at construction time (`_dialogContentWidth = window.Width`). This snapshot is the key
+  reason the controller must be constructed **after** `InitializeComponent()` and with the window at its
+  design-time width (before any pane is ever opened).
+- **Session lifecycle** — calls `AppHelpSessionFactory.CreateAsync(_host)` on the first `OpenHelpPane`
+  call and caches the `HelpPaneViewModel`. Subsequent opens reuse the same VM and session (conversation
+  history survives closing and reopening the pane within the same dialog instance).
+- **Help-button state management** — drives a single optional `Button` through three states:
+  `"_Help ▶"` (idle), `"Loading…"` (disabled, during session build), `"◀ Close _Help"` (pane open).
+- **F1 dispatch** — `HandleF1(KeyEventArgs e)` resolves `GlobalF1HelpBehavior.ResolveTopicId` on the
+  focused element and calls `OpenHelpPane(topicId)`.
+- **Settings persistence** — on `window.Closing` (and on every `OnPaneClosed`) serialises the
+  per-host pane width, shared chat-subpane height, and per-host last-open topic to `AppSettings`.
+
+#### XAML requirements for a dialog
+
+Add a three-column outer grid inside the window's root, with the third column initially `Width="0"`:
+
+```xml
+<Grid.ColumnDefinitions>
+	<ColumnDefinition Width="*" MinWidth="400"/>    <!-- dialog content -->
+	<ColumnDefinition Width="Auto"/>                <!-- splitter -->
+	<ColumnDefinition x:Name="HelpPaneColumn" Width="0" MinWidth="0"/>  <!-- help pane -->
+</Grid.ColumnDefinitions>
+
+<!-- existing dialog content in Grid.Column="0" -->
+
+<GridSplitter x:Name="HelpPaneSplitter"
+			  Grid.Column="1"
+			  Width="4" HorizontalAlignment="Stretch"
+			  Visibility="Collapsed"/>
+
+<controls:HelpPane x:Name="HelpPaneControl"
+				   Grid.Column="2"
+				   Visibility="Collapsed"/>
+```
+
+And a `Help` toggle button somewhere in the dialog's action bar:
+
+```xml
+<Button x:Name="HelpButton" Content="_Help ▶" Click="HelpButton_Click" .../>
+```
+
+#### Code-behind requirements for a dialog
+
+```csharp
+public partial class MyDialog : Window, IHelpPaneHost
+{
+	private readonly DialogHelpPaneController _help;
+
+	public MyDialog(MyDialogViewModel viewModel)
+	{
+		InitializeComponent();
+		DataContext = viewModel;
+
+		_help = new DialogHelpPaneController(
+			this, this, HelpPaneColumn, HelpPaneSplitter, HelpPaneControl,
+			defaultTopicId: "dialog.my-dialog", helpButton: HelpButton);
+	}
+
+	private void HelpButton_Click(object sender, RoutedEventArgs e)
+		=> _help.ToggleHelpPane();
+
+	private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+		=> _help.HandleF1(e);
+
+	#region IHelpPaneHost
+	public string HostName => "MyDialog";
+	public HelpPaneHostMode HostMode => HelpPaneHostMode.Adjacent;
+	public void OnPaneOpening(double desiredWidth) => _help.OnPaneOpening(desiredWidth);
+	public void OnPaneClosed() => _help.OnPaneClosed();
+	public FrameworkElement? ResolveControlByName(string name) => FindName(name) as FrameworkElement;
+	public void OpenHelpPane(string? topicId = null) => _help.OpenHelpPane(topicId);
+	#endregion
+}
+```
+
+Also add `PreviewKeyDown="Window_PreviewKeyDown"` to the `<Window>` element in XAML for F1 to work.
+
+#### `HostName` convention
+
+`HostName` must exactly match the `host:` field in the dialog's `dialogs/my-dialog.md` front-matter, and
+is also used as the key in `AppSettings.HelpPaneWidthPerHost` and `HelpPaneLastTopicPerHost`. Use the
+class name without namespace: `"BackupWindow"`, `"RestoreWindow"`, `"OpenVirtualDriveWindow"`, etc.
 
 ### 6.4 `HelpPaneViewModel`
 
@@ -1102,7 +1197,7 @@ Each phase lists deliverables and the tests we add for it.
 
 ### Phase 6 — Ruggedize & Advance UX for Help and Provider Setup
 
-This phase hardens the Phase 5 implementation with targeted tests, completes the provider-setup and persistence layer, adds LAN-host management, and extends the help pane to the first dialog (Adjacent mode).
+This phase hardens the Phase 5 implementation with targeted tests, completes the provider-setup and persistence layer, adds LAN-host management, and extends the help pane to the first two dialogs (`BackupWindow`, `RestoreWindow`) using the new `DialogHelpPaneController` helper.
 
 #### 6.1 Tests — highest-value first ✅ DONE
 
@@ -1223,25 +1318,128 @@ The following suites have been planned since Phase 1 and should ship in Phase 6:
 - `RagHelpAssistant` ignored the `HelpAssistantRequest.CurrentTopicId` it was given. When a user asks a question from inside a dialog (e.g. "how do I set the compression options?" in the Backup dialog), the one topic they are actually viewing (`dialog.backup`) was only fed to the LLM if BM25 happened to rank it, and then only as a clipped snippet that often omitted the relevant section. The assistant now **prepends the current topic's full body** as a top-priority excerpt (`PrependCurrentTopic`), de-duplicating any snippet-only copy, and treats the answer as fully confident when current-topic context is present. Bail-out to `NoMatch` is suppressed whenever a current topic is available.
 - `BM25HelpIndex.BuildExcerpt` widened from a **200-char** window (40-char lead) to a **400-char** window (80-char lead). The excerpt is fed verbatim to the LLM, so the old window frequently clipped the sentence containing the answer. The wider window gives the model enough surrounding context while ellipsis still keeps search-as-you-type previews readable.
 
-#### 6.7 Adjacent mode for first dialog (RestoreWindow)
+#### 6.7 Adjacent mode rolled out to first dialogs ✅ DONE
 
-- Implement `IHelpPaneHost` on `RestoreWindow`.
-- `OnPaneOpening` delegates to `HelpPaneLayoutCoordinator.OpenAdjacent(window, desiredWidth)`.
-- Add `[Help]` button to `RestoreWindow`; tag key controls with `help:Help.TopicId`.
-- Navigate the pane to `"dialog.restore"` on open.
-- Persist pane width under key `"RestoreWindow"`.
+The `DialogHelpPaneController` (§6.3a) was built and validated against the two largest dialogs:
+`BackupWindow` and `RestoreWindow`. Both were implemented in parallel as the first real-world test
+of the controller, replacing the original plan of doing `RestoreWindow` alone.
 
-This serves as the validated pattern for all remaining dialogs (Phase 7).
+**Deliverables**
+- ✅ `DialogHelpPaneController` — the reusable controller class that encapsulates all Adjacent-mode
+  boilerplate (see §6.3a for the full specification).
+- ✅ `RestoreWindow` — `IHelpPaneHost` + `_help = new DialogHelpPaneController(…, "dialog.restore", …)`.
+  Three-column outer grid, `HelpPaneSplitter`, `HelpPaneControl`, `HelpButton` added to XAML.
+  `PreviewKeyDown` → `_help.HandleF1(e)`. `HostName = "RestoreWindow"`.
+- ✅ `BackupWindow` — same pattern, `defaultTopicId: "dialog.backup"`, `HostName = "BackupWindow"`.
+  The existing `FileFilterPane` wiring and drag-drop setup was preserved unchanged in the constructor;
+  the `DialogHelpPaneController` construction was appended as the final setup step.
+
+**Key design decisions**
+
+- **`DialogHelpPaneController` instead of per-dialog boilerplate.** The Phase 5 plan said "implement
+  `IHelpPaneHost` on `RestoreWindow` and delegate to `HelpPaneLayoutCoordinator`." In practice the
+  repetition across dialogs was large enough (session lifecycle, button state, F1 routing, settings
+  persistence) that it warranted a dedicated controller class. The controller is `sealed`, owns the
+  `HelpPaneViewModel`, and the dialog's `IHelpPaneHost` members are pure one-liners that forward to it.
+
+- **`_dialogContentWidth` snapshot at construction, not at first open.** The controller captures
+  `window.Width` in its constructor. This means the constructor must be called **after**
+  `InitializeComponent()` (when the window is at its natural design-time width) and the window must
+  **not** be resized before the first `OpenHelpPane`. If the pane is opened and closed, the window
+  always shrinks back to this saved value, not to some stale measured width.
+
+- **Single `HelpPaneViewModel` per dialog instance, not per open.** The session (and its conversation
+  history) survives the user closing and reopening the pane within the same dialog lifetime. The VM is
+  created lazily on the first `OpenHelpPane` and re-used on all subsequent opens. This is the same
+  pattern as MainWindow — consistent behavior everywhere.
+
+- **Help button drives its own state.** Rather than having the dialog track "is the pane open?",
+  the controller manages the button label through `SetButtonState(…)`: idle → loading (disabled) →
+  open. Dialogs do not need any `IsHelpPaneOpen` property or data-binding for the button label.
+
+- **`OpenHelpPane(string? topicId)` is part of `IHelpPaneHost`.** Keeping this on the interface
+  means `GlobalF1HelpBehavior` and `help://action/<id>` links can open a contextual topic on any
+  host without knowing whether it is `MainWindow` (Embedded) or a dialog (Adjacent). The
+  implementation is always a one-line forward to `_help.OpenHelpPane(topicId)`.
+
+- **`OverlayController` removed from `IHelpPaneHost` (v2 deferred).** The interface specified in
+  §6.3 included `IHelpOverlayController? OverlayController { get; }`. This property was dropped
+  from the actual interface to keep v1 dialogs simple; it will be added back when overlays ship
+  (Phase 8).
+
+**Tests**
+- Covered by visual smoke-testing of both dialogs. `BackupWindow` and `RestoreWindow` persist and
+  restore pane width, chat height, and last topic correctly. F1 opens the contextual topic. The Help
+  button cycles through all three label states.
 
 ---
 
-### Phase 7 — Roll out HelpPane to all dialogs
+### Phase 7 — Roll out HelpPane to all remaining dialogs *(in progress)*
 
-**Deliverables**
-- Add `[Help]` button + `IHelpPaneHost` impl to each dialog: `NewBackupSetWindow`, `RestoreWindow` (done in P6), `OpenVirtualDriveWindow`, `OpenRemoteVirtualDriveWindow`, `ConnectToRemoteHostWindow`, `FclFilterWindow`, format-media confirmation, delete-set confirmation.
-- Author the corresponding `dialogs/*.md` (one per dialog).
-- Tag every meaningful control with `help:Help.TopicId`.
-- Author remaining content waves: Features, UI (rest), Reference, Glossary.
+`BackupWindow` and `RestoreWindow` are done (§6.7). The following dialogs are still pending.
+Apply the `DialogHelpPaneController` pattern from §6.3a to each one.
+
+**Remaining dialogs and their topic IDs**
+
+| Dialog class | `HostName` | `defaultTopicId` | Content file |
+|---|---|---|---|
+| `OpenVirtualDriveWindow` | `"OpenVirtualDriveWindow"` | `"dialog.open-virtual-drive"` | `dialogs/open-virtual-drive.md` |
+| `OpenRemoteVirtualDriveWindow` | `"OpenRemoteVirtualDriveWindow"` | `"dialog.open-remote-virtual-drive"` | `dialogs/open-remote-virtual-drive.md` |
+| `ConnectToRemoteHostWindow` | `"ConnectToRemoteHostWindow"` | `"dialog.connect-to-remote-host"` | `dialogs/connect-to-remote-host.md` |
+| `FormatMediaWindow` | `"FormatMediaWindow"` | `"dialog.format-media"` | `dialogs/format-media.md` |
+| `DeleteBackupSetsWindow` | `"DeleteBackupSetsWindow"` | `"dialog.delete-backup-sets"` | `dialogs/delete-backup-sets.md` |
+| `FclFilterWindow` | `"FclFilterWindow"` | `"dialog.fcl-filter-window"` | `dialogs/fcl-filter-window.md` |
+
+**Step-by-step checklist for each dialog**
+
+1. **XAML** — add the outer three-column `Grid.ColumnDefinitions`, place all existing content in
+   `Grid.Column="0"`, add `GridSplitter x:Name="HelpPaneSplitter"` in column 1, and
+   `controls:HelpPane x:Name="HelpPaneControl"` in column 2 (both initially `Visibility="Collapsed"`).
+   Add `<Button x:Name="HelpButton" Content="_Help ▶" Click="HelpButton_Click" …/>` to the action bar.
+   Add `PreviewKeyDown="Window_PreviewKeyDown"` to the root `<Window>` element.
+
+2. **Code-behind** — add `IHelpPaneHost` to the class declaration; add `private readonly
+   DialogHelpPaneController _help;`; construct it at the end of the constructor (after
+   `InitializeComponent()`) with the correct `defaultTopicId` and `helpButton: HelpButton`. Forward
+   all five `IHelpPaneHost` members as one-liners (copy from `BackupWindow` or `RestoreWindow`).
+   Add `HelpButton_Click` and `Window_PreviewKeyDown` handlers.
+
+3. **Content** — author the corresponding `dialogs/*.md` with correct `id:`, `title:`, `kind: dialog`,
+   `host:` (matching `HostName`), `keywords:`, `intents:`, and `related:` fields.  Include enough body
+   text that the lexical assistant can answer basic "what does this do?" questions without a live LLM.
+
+4. **F1 tagging** — add `help:Help.TopicId="<sub-topic-id>"` to key controls (text boxes, list boxes,
+   important buttons) so F1 navigates to a more specific section rather than the dialog home topic.
+
+5. **Smoke-test** — open the dialog, click Help, confirm the pane expands, navigates to the right
+   topic, and that the window shifts left when near the right screen edge. Confirm F1 on a tagged
+   control navigates correctly. Close and reopen the pane; confirm width and last topic are restored.
+
+**`FclFilterWindow` note:** this dialog is non-standard — it is a modeless-style dialog created from
+`FileFilterPane` and does not follow the standard dialog pattern. The outer grid already has two panes
+(visual editor + program pane) separated by a `GridSplitter`. Adding a third help column on the right
+follows the same XAML pattern but requires careful attention to the existing `ProgramColumn` naming and
+the `OnProgramPaneToggled` window-resize logic in the code-behind.
+
+**Tests**
+- Per-dialog visual smoke test: open pane → correct topic; F1 on a tagged control → sub-topic;
+  close and reopen → width + last topic restored; window stays within work area at right-edge.
+- Add each completed dialog to the Phase 7 deliverables table below as ✅.
+
+**Deliverables tracking**
+
+| Dialog | Status |
+|---|---|
+| `BackupWindow` | ✅ (done in §6.7) |
+| `RestoreWindow` | ✅ (done in §6.7) |
+| `OpenVirtualDriveWindow` | *(pending)* |
+| `OpenRemoteVirtualDriveWindow` | *(pending)* |
+| `ConnectToRemoteHostWindow` | *(pending)* |
+| `FormatMediaWindow` | *(pending)* |
+| `DeleteBackupSetsWindow` | *(pending)* |
+| `FclFilterWindow` | *(pending — see note above)* |
+
+Also author remaining content waves: Features, UI (rest), Reference, Glossary.
 
 **Tests**
 - Per-dialog STA smoke test: opening the pane navigates to the right topic; F1 on a tagged control navigates to its sub-topic.
