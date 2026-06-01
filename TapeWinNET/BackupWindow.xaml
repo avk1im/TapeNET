@@ -332,6 +332,7 @@
                                     <TextBlock Text="Compression level:" DockPanel.Dock="Left"/>
                                     <TextBlock Text="{Binding CompressionLevel}"
                                                FontWeight="SemiBold"
+                                               Foreground="{Binding CompressionLevelColor}"
                                                Margin="6,0,0,0"
                                                DockPanel.Dock="Left"/>
                                 </DockPanel>

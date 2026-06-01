@@ -507,8 +507,25 @@ public class BackupViewModel : ViewModelBase
     public int CompressionLevel
     {
         get => _compressionLevel;
-        set => SetProperty(ref _compressionLevel, ZstdLevel.Clamp(value));
+        set
+        {
+            if (SetProperty(ref _compressionLevel, ZstdLevel.Clamp(value)))
+                OnPropertyChanged(nameof(CompressionLevelColor));
+        }
     }
+
+    /// <summary>
+    /// Foreground color for the level indicator, matching the slider gradient zones.
+    ///  Yellow and orange are darkened for readability on a light background.
+    /// </summary>
+    public string CompressionLevelColor => _compressionLevel switch
+    {
+        <= 3  => "Blue",
+        <= 6  => "Green",
+        <= 9  => "#CC9900",          // dark yellow
+        <= 14 => "#FFD88B00",        // dark orange — same as High button
+        _     => "Red"
+    };
 
     /// <summary>
     /// True when Software compression is selected; drives the visibility of the
