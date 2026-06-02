@@ -10,7 +10,7 @@
         mc:Ignorable="d"
         Title="Delete Backup Sets"
         Height="350" Width="450"
-        ResizeMode="NoResize"
+        ResizeMode="CanResizeWithGrip"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False">
 

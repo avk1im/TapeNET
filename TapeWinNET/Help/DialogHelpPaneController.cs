@@ -154,7 +154,7 @@ public sealed class DialogHelpPaneController
     /// </summary>
     public async void OpenHelpPane(string? topicId = null)
     {
-        var settings = AppSettings.LoadFromFile();
+        var settings = App.Settings;
 
         if (_vm == null)
         {
@@ -179,7 +179,9 @@ public sealed class DialogHelpPaneController
         {
             // Expand the window and reveal the column
             var desiredWidth = settings.HelpPaneWidthPerHost?.GetValueOrDefault(_host.HostName)
-                               ?? _defaultWidth;
+                               ?? _defaultWidth; // notice: default double value is 0.0, therefore...
+            if (desiredWidth <= 0.0) // check for it here! and also for invalid negavtive values
+                desiredWidth = _defaultWidth;
             OnPaneOpening(desiredWidth);
             _paneControl.Visibility = Visibility.Visible;
         }
@@ -243,10 +245,10 @@ public sealed class DialogHelpPaneController
     {
         if (_vm is null) return;
 
-        var settings = AppSettings.LoadFromFile();
+        var settings = App.Settings;
 
         // Per-host pane width (only when the column is actually visible)
-        if (_paneColumn.ActualWidth > 0)
+        if (_paneColumn.ActualWidth > 0.0)
         {
             settings.HelpPaneWidthPerHost ??= [];
             settings.HelpPaneWidthPerHost[_host.HostName] = _paneColumn.ActualWidth;
@@ -263,7 +265,7 @@ public sealed class DialogHelpPaneController
             settings.HelpPaneLastTopicPerHost[_host.HostName] = topicId;
         }
 
-        settings.SaveToFile();
+        // settings.SaveToFile(); -- not needed, the app will save on exit
     }
 
     private static void OnSessionWarning(object? sender, string msg)

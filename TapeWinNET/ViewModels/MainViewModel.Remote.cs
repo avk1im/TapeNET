@@ -91,10 +91,10 @@ public partial class MainViewModel
     private void ConnectToRemoteHostAsync_ShowDialog()
     {
         var viewModel = new ConnectToRemoteHostViewModel(
-            _settings.LastRemoteHost,
-            _settings.LastRemotePort,
-            _settings.LastRemoteUseTls,
-            _settings.LastRemoteUseLocalHost);
+            Settings.LastRemoteHost,
+            Settings.LastRemotePort,
+            Settings.LastRemoteUseTls,
+            Settings.LastRemoteUseLocalHost);
 
         var window = new ConnectToRemoteHostWindow(viewModel)
         {
@@ -614,10 +614,10 @@ public partial class MainViewModel
     /// </summary>
     internal void SaveRemoteSettings(RemoteHostSettings settings, bool useLocalHost)
     {
-        _settings.LastRemoteHost         = settings.Host;
-        _settings.LastRemotePort         = settings.Port;
-        _settings.LastRemoteUseTls       = settings.UseTls;
-        _settings.LastRemoteUseLocalHost = useLocalHost;
+        Settings.LastRemoteHost         = settings.Host;
+        Settings.LastRemotePort         = settings.Port;
+        Settings.LastRemoteUseTls       = settings.UseTls;
+        Settings.LastRemoteUseLocalHost = useLocalHost;
     }
 
     // ── Remote drive info for the properties pane ─────────────────────────────

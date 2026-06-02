@@ -45,7 +45,6 @@ public partial class MainViewModel : ViewModelBase
 
     private readonly TapeService _tapeService;
     private readonly MruFileList _virtualDriveMru = new("VirtualDriveMru.json", MruMaxCount);
-    private readonly AppSettings _settings = AppSettings.LoadFromFile();
     private string _windowTitle = "TapeWin - Tape Backup Manager";
     private string _statusMessage = "Ready";
     private string _busyMessage = string.Empty;
@@ -123,7 +122,7 @@ public partial class MainViewModel : ViewModelBase
         RefreshRecentVirtualDriveMenu();
 
         // Restore view options from settings
-        _showUsageBar = _settings.ShowUsageBar;
+        _showUsageBar = Settings.ShowUsageBar;
     }
 
     private void InitializeDriveMenu()
@@ -690,17 +689,17 @@ public partial class MainViewModel : ViewModelBase
         _tapeService.Dispose();
     }
 
-    /// <summary>The loaded settings instance — View layer reads this to restore window layout.</summary>
-    public AppSettings Settings => _settings;
+    /// <summary>The loaded settings instance of the app — View layer reads this to restore window layout.</summary>
+    public static AppSettings Settings => App.Settings;
 
     /// <summary>
     /// If the last session used a physical drive, this holds the drive number.
     /// The View layer should prompt the user before reopening.
     /// Null if last session was virtual or no previous session.
     /// </summary>
-    public int? StartupPhysicalDriveNumber =>
-        _settings.LastDriveNumber.HasValue && !_settings.LastDriveWasVirtual
-            ? _settings.LastDriveNumber
+    public static int? StartupPhysicalDriveNumber =>
+        Settings.LastDriveNumber.HasValue && !Settings.LastDriveWasVirtual
+            ? Settings.LastDriveNumber
             : null;
 
     /// <summary>
@@ -711,13 +710,13 @@ public partial class MainViewModel : ViewModelBase
     {
         if (_tapeService.IsDriveOpen)
         {
-            _settings.LastDriveNumber = _tapeService.DriveNumber;
-            _settings.LastDriveWasVirtual = _tapeService.IsVirtualDrive;
+            Settings.LastDriveNumber = _tapeService.DriveNumber;
+            Settings.LastDriveWasVirtual = _tapeService.IsVirtualDrive;
         }
         else
         {
-            _settings.LastDriveNumber = null;
-            _settings.LastDriveWasVirtual = false;
+            Settings.LastDriveNumber = null;
+            Settings.LastDriveWasVirtual = false;
         }
     }
 

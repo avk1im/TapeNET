@@ -4,17 +4,18 @@
         xmlns:local="clr-namespace:TapeWinNET"
         xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
         xmlns:converters="clr-namespace:TapeWinNET.Converters"
+        xmlns:help="clr-namespace:TapeWinNET.Help"
+        xmlns:controls="clr-namespace:TapeWinNET.Controls"
         d:DataContext="{d:DesignInstance Type=vm:OpenVirtualDriveViewModel}"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="{Binding DialogTitle}"
-        Width="540"
-        SizeToContent="Height"
-        MaxHeight="850"
+        Width="540" Height="680"
         WindowStartupLocation="CenterOwner"
-        ResizeMode="NoResize"
-        ShowInTaskbar="False">
+        ResizeMode="CanResizeWithGrip"
+        ShowInTaskbar="False"
+        PreviewKeyDown="Window_PreviewKeyDown">
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis"/>
@@ -44,338 +45,370 @@
         </Style>
     </Window.Resources>
 
-    <Grid Margin="16">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
+    <!-- Outer grid: column 0 = dialog content, column 1 = splitter, column 2 = help pane. -->
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>                                       <!-- help splitter -->
+            <ColumnDefinition x:Name="HelpPaneColumn" Width="0" MinWidth="0"/>    <!-- help pane    -->
+        </Grid.ColumnDefinitions>
 
-        <!-- Mode Selection -->
-        <Grid Grid.Row="0" Margin="0,0,0,16">
-            <StackPanel Orientation="Horizontal">
-                <RadioButton Content="Open existing virtual media" 
-                             IsChecked="{Binding IsOpenExistingMode}"
-                             IsEnabled="{Binding IsOpenExistingEnabled}"
-                             Margin="0,0,24,0"/>
-                <RadioButton Content="Create new virtual media" 
-                             IsChecked="{Binding IsCreateNewMode}"/>
-            </StackPanel>
-            <CheckBox Content="In-memory" 
-                      IsChecked="{Binding IsInMemory}"
-                      Visibility="{Binding IsInMemoryAvailable, Converter={StaticResource BoolToVisConverter}}"
-                      HorizontalAlignment="Right"
-                      ToolTip="Create virtual media backed by memory streams instead of files"/>
-        </Grid>
+        <!-- Dialog content fills column 0 -->
+        <Grid Grid.Column="0" Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
 
-        <!-- File Paths - Fixed height to prevent layout shift -->
-        <GroupBox Grid.Row="1" Header="File Paths" Margin="0,0,0,12">
-            <Grid Margin="8">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
+            <!-- Scrollable content area -->
+            <ScrollViewer Grid.Row="0"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+            <StackPanel>
 
-                <TextBlock Grid.Row="0" Text="Content Partition File: *" Margin="0,0,0,4"
-                           IsEnabled="{Binding IsFilePathsEnabled}"/>
-                <Grid Grid.Row="1" Margin="0,0,0,4"
-                      IsEnabled="{Binding IsFilePathsEnabled}">
+            <!-- Mode Selection -->
+            <Grid Margin="0,0,0,16">
+                <StackPanel Orientation="Horizontal">
+                    <RadioButton Content="Open existing virtual media" 
+                                 IsChecked="{Binding IsOpenExistingMode}"
+                                 IsEnabled="{Binding IsOpenExistingEnabled}"
+                                 Margin="0,0,24,0"/>
+                    <RadioButton Content="Create new virtual media" 
+                                 IsChecked="{Binding IsCreateNewMode}"/>
+                </StackPanel>
+                <CheckBox Content="In-memory" 
+                          IsChecked="{Binding IsInMemory}"
+                          Visibility="{Binding IsInMemoryAvailable, Converter={StaticResource BoolToVisConverter}}"
+                          HorizontalAlignment="Right"
+                          ToolTip="Create virtual media backed by memory streams instead of files"/>
+            </Grid>
+
+            <!-- File Paths - Fixed height to prevent layout shift -->
+            <GroupBox Header="File Paths" Margin="0,0,0,12">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="Content Partition File: *" Margin="0,0,0,4"
+                               IsEnabled="{Binding IsFilePathsEnabled}"/>
+                    <Grid Grid.Row="1" Margin="0,0,0,4"
+                          IsEnabled="{Binding IsFilePathsEnabled}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" 
+                                 Text="{Binding ContentFilePath, UpdateSourceTrigger=PropertyChanged, Delay=300}"
+                                 Margin="0,0,8,0">
+                            <TextBox.Style>
+                                <Style TargetType="TextBox">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ContentFilePath}" Value="">
+                                            <Setter Property="Background" Value="#FFFFFFCC"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBox.Style>
+                        </TextBox>
+                        <Button Grid.Column="1" 
+                                Content="..." 
+                                Command="{Binding BrowseContentFileCommand}"
+                                Width="30"/>
+                    </Grid>
+
+                    <!-- Probe Status Indicator -->
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8"
+                                IsEnabled="{Binding IsFilePathsEnabled}">
+                        <TextBlock Text="{Binding ProbeStatusIcon}" 
+                                   FontFamily="Segoe UI Symbol"
+                                   Margin="0,0,4,0"
+                                   Style="{StaticResource StatusTextStyle}"/>
+                        <TextBlock Text="{Binding ProbeStatusText}" 
+                                   Style="{StaticResource StatusTextStyle}"/>
+                        <ProgressBar Width="60" Height="12" Margin="8,0,0,0"
+                                     IsIndeterminate="True"
+                                     Visibility="{Binding IsProbing, Converter={StaticResource BoolToVis}}"/>
+                    </StackPanel>
+
+                    <CheckBox Grid.Row="3" 
+                              Content="Enable Initiator Partition" 
+                              IsChecked="{Binding EnableInitiatorPartition}"
+                              Margin="0,0,0,4"/>
+
+                    <!-- Initiator path label - always visible but text grayed when disabled -->
+                    <TextBlock Grid.Row="4" 
+                               Text="Initiator Partition File (auto-computed):" 
+                               Margin="0,0,0,4"
+                               IsEnabled="{Binding IsFilePathsEnabled}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="LightGray"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding EnableInitiatorPartition}" Value="True">
+                                        <Setter Property="Foreground" Value="Gray"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- Initiator path display - always present, content conditional -->
+                    <TextBlock Grid.Row="5" 
+                               Margin="20,0,0,0"
+                               FontStyle="Italic"
+                               TextTrimming="CharacterEllipsis"
+                               ToolTip="{Binding InitiatorFilePathDisplay}"
+                               IsEnabled="{Binding IsFilePathsEnabled}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="LightGray"/>
+                                <Setter Property="Text" Value="(not enabled)"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding EnableInitiatorPartition}" Value="True">
+                                        <Setter Property="Foreground" Value="Gray"/>
+                                        <Setter Property="Text" Value="{Binding InitiatorFilePathDisplay}"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Grid>
+            </GroupBox>
+
+            <!-- ═══════════════════════════════════════════════════════════════ -->
+            <!-- Parameters below - disabled when "Open existing" is selected   -->
+            <!-- ═══════════════════════════════════════════════════════════════ -->
+
+            <!-- Preset Configuration -->
+            <GroupBox Header="Preset Configuration" Margin="0,0,0,12"
+                      IsEnabled="{Binding IsPresetsEnabled}">
+                <Grid Margin="8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBox Grid.Column="0" 
-                             Text="{Binding ContentFilePath, UpdateSourceTrigger=PropertyChanged, Delay=300}"
-                             Margin="0,0,8,0">
+                    <ComboBox Grid.Column="0" 
+                              ItemsSource="{Binding Presets}"
+                              SelectedItem="{Binding SelectedPreset}"
+                              Margin="0,0,8,0"/>
+                    <Button Grid.Column="1" 
+                            Content="Apply" 
+                            Command="{Binding ApplyPresetCommand}"
+                            Padding="16,4"/>
+                </Grid>
+            </GroupBox>
+
+            <!-- Media Name -->
+            <GroupBox Header="Media Description" Margin="0,0,0,12"
+                      IsEnabled="{Binding IsCreateNewMode}">
+                <TextBox Text="{Binding MediaName, UpdateSourceTrigger=PropertyChanged}" 
+                         Margin="8"/>
+            </GroupBox>
+
+            <!-- Capacity -->
+            <GroupBox Header="Capacity" Margin="0,0,0,12"
+                      IsEnabled="{Binding IsCreateNewMode}">
+                <Grid Margin="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="80"/>
+                        <ColumnDefinition Width="70"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Content Row -->
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Content:" VerticalAlignment="Center" Margin="0,0,8,8"/>
+                    <TextBox Grid.Row="0" Grid.Column="1" 
+                             Text="{Binding ContentCapacityValue, UpdateSourceTrigger=PropertyChanged}"
+                             TextAlignment="Right"
+                             Margin="0,0,4,8">
                         <TextBox.Style>
                             <Style TargetType="TextBox">
                                 <Style.Triggers>
-                                    <DataTrigger Binding="{Binding ContentFilePath}" Value="">
-                                        <Setter Property="Background" Value="#FFFFFFCC"/>
+                                    <DataTrigger Binding="{Binding IsContentCapacityValid}" Value="False">
+                                        <Setter Property="Background" Value="#FFFFCCCC"/>
+                                        <Setter Property="ToolTip" Value="Enter a valid positive number"/>
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
                         </TextBox.Style>
                     </TextBox>
-                    <Button Grid.Column="1" 
-                            Content="..." 
-                            Command="{Binding BrowseContentFileCommand}"
-                            Width="30"/>
+                    <ComboBox Grid.Row="0" Grid.Column="2" 
+                              ItemsSource="{Binding CapacityUnits}"
+                              SelectedItem="{Binding ContentCapacityUnit}"
+                              Margin="0,0,8,8"/>
+                    <TextBlock Grid.Row="0" Grid.Column="3" 
+                               Text="{Binding ContentCapacityBytesDisplay}" 
+                               VerticalAlignment="Center"
+                               Foreground="Gray"
+                               Margin="0,0,0,8"/>
+
+                    <!-- Initiator Row - always present, just grayed out -->
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Initiator:" VerticalAlignment="Center" Margin="0,0,8,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsInitiatorCapacityEnabled}" Value="False">
+                                        <Setter Property="Foreground" Value="Gray"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBox Grid.Row="1" Grid.Column="1" 
+                             Text="{Binding InitiatorCapacityValue, UpdateSourceTrigger=PropertyChanged}"
+                             TextAlignment="Right"
+                             IsEnabled="{Binding IsInitiatorCapacityEnabled}"
+                             Margin="0,0,4,0">
+                        <TextBox.Style>
+                            <Style TargetType="TextBox">
+                                <Style.Triggers>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding IsInitiatorCapacityEnabled}" Value="True"/>
+                                            <Condition Binding="{Binding IsInitiatorCapacityValid}" Value="False"/>
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="Background" Value="#FFFFCCCC"/>
+                                        <Setter Property="ToolTip" Value="Enter a valid positive number"/>
+                                    </MultiDataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBox.Style>
+                    </TextBox>
+                    <ComboBox Grid.Row="1" Grid.Column="2" 
+                              ItemsSource="{Binding CapacityUnits}"
+                              SelectedItem="{Binding InitiatorCapacityUnit}"
+                              IsEnabled="{Binding IsInitiatorCapacityEnabled}"
+                              Margin="0,0,8,0"/>
+                    <TextBlock Grid.Row="1" Grid.Column="3" 
+                               Text="{Binding InitiatorCapacityBytesDisplay}" 
+                               VerticalAlignment="Center"
+                               Foreground="Gray"/>
                 </Grid>
-
-                <!-- Probe Status Indicator -->
-                <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8"
-                            IsEnabled="{Binding IsFilePathsEnabled}">
-                    <TextBlock Text="{Binding ProbeStatusIcon}" 
-                               FontFamily="Segoe UI Symbol"
-                               Margin="0,0,4,0"
-                               Style="{StaticResource StatusTextStyle}"/>
-                    <TextBlock Text="{Binding ProbeStatusText}" 
-                               Style="{StaticResource StatusTextStyle}"/>
-                    <ProgressBar Width="60" Height="12" Margin="8,0,0,0"
-                                 IsIndeterminate="True"
-                                 Visibility="{Binding IsProbing, Converter={StaticResource BoolToVis}}"/>
-                </StackPanel>
-
-                <CheckBox Grid.Row="3" 
-                          Content="Enable Initiator Partition" 
-                          IsChecked="{Binding EnableInitiatorPartition}"
-                          Margin="0,0,0,4"/>
-
-                <!-- Initiator path label - always visible but text grayed when disabled -->
-                <TextBlock Grid.Row="4" 
-                           Text="Initiator Partition File (auto-computed):" 
-                           Margin="0,0,0,4"
-                           IsEnabled="{Binding IsFilePathsEnabled}">
-                    <TextBlock.Style>
-                        <Style TargetType="TextBlock">
-                            <Setter Property="Foreground" Value="LightGray"/>
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding EnableInitiatorPartition}" Value="True">
-                                    <Setter Property="Foreground" Value="Gray"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </TextBlock.Style>
-                </TextBlock>
-
-                <!-- Initiator path display - always present, content conditional -->
-                <TextBlock Grid.Row="5" 
-                           Margin="20,0,0,0"
-                           FontStyle="Italic"
-                           TextTrimming="CharacterEllipsis"
-                           ToolTip="{Binding InitiatorFilePathDisplay}"
-                           IsEnabled="{Binding IsFilePathsEnabled}">
-                    <TextBlock.Style>
-                        <Style TargetType="TextBlock">
-                            <Setter Property="Foreground" Value="LightGray"/>
-                            <Setter Property="Text" Value="(not enabled)"/>
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding EnableInitiatorPartition}" Value="True">
-                                    <Setter Property="Foreground" Value="Gray"/>
-                                    <Setter Property="Text" Value="{Binding InitiatorFilePathDisplay}"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </TextBlock.Style>
-                </TextBlock>
-            </Grid>
-        </GroupBox>
-
-        <!-- ═══════════════════════════════════════════════════════════════ -->
-        <!-- Parameters below - disabled when "Open existing" is selected   -->
-        <!-- ═══════════════════════════════════════════════════════════════ -->
-
-        <!-- Preset Configuration -->
-        <GroupBox Grid.Row="2" Header="Preset Configuration" Margin="0,0,0,12"
-                  IsEnabled="{Binding IsPresetsEnabled}">
-            <Grid Margin="8">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <ComboBox Grid.Column="0" 
-                          ItemsSource="{Binding Presets}"
-                          SelectedItem="{Binding SelectedPreset}"
-                          Margin="0,0,8,0"/>
-                <Button Grid.Column="1" 
-                        Content="Apply" 
-                        Command="{Binding ApplyPresetCommand}"
-                        Padding="16,4"/>
-            </Grid>
-        </GroupBox>
-
-        <!-- Media Name -->
-        <GroupBox Grid.Row="3" Header="Media Description" Margin="0,0,0,12"
-                  IsEnabled="{Binding IsCreateNewMode}">
-            <TextBox Text="{Binding MediaName, UpdateSourceTrigger=PropertyChanged}" 
-                     Margin="8"/>
-        </GroupBox>
-
-        <!-- Capacity -->
-        <GroupBox Grid.Row="4" Header="Capacity" Margin="0,0,0,12"
-                  IsEnabled="{Binding IsCreateNewMode}">
-            <Grid Margin="8">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="80"/>
-                    <ColumnDefinition Width="70"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-
-                <!-- Content Row -->
-                <TextBlock Grid.Row="0" Grid.Column="0" Text="Content:" VerticalAlignment="Center" Margin="0,0,8,8"/>
-                <TextBox Grid.Row="0" Grid.Column="1" 
-                         Text="{Binding ContentCapacityValue, UpdateSourceTrigger=PropertyChanged}"
-                         TextAlignment="Right"
-                         Margin="0,0,4,8">
-                    <TextBox.Style>
-                        <Style TargetType="TextBox">
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsContentCapacityValid}" Value="False">
-                                    <Setter Property="Background" Value="#FFFFCCCC"/>
-                                    <Setter Property="ToolTip" Value="Enter a valid positive number"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </TextBox.Style>
-                </TextBox>
-                <ComboBox Grid.Row="0" Grid.Column="2" 
-                          ItemsSource="{Binding CapacityUnits}"
-                          SelectedItem="{Binding ContentCapacityUnit}"
-                          Margin="0,0,8,8"/>
-                <TextBlock Grid.Row="0" Grid.Column="3" 
-                           Text="{Binding ContentCapacityBytesDisplay}" 
-                           VerticalAlignment="Center"
-                           Foreground="Gray"
-                           Margin="0,0,0,8"/>
-
-                <!-- Initiator Row - always present, just grayed out -->
-                <TextBlock Grid.Row="1" Grid.Column="0" Text="Initiator:" VerticalAlignment="Center" Margin="0,0,8,0">
-                    <TextBlock.Style>
-                        <Style TargetType="TextBlock">
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsInitiatorCapacityEnabled}" Value="False">
-                                    <Setter Property="Foreground" Value="Gray"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </TextBlock.Style>
-                </TextBlock>
-                <TextBox Grid.Row="1" Grid.Column="1" 
-                         Text="{Binding InitiatorCapacityValue, UpdateSourceTrigger=PropertyChanged}"
-                         TextAlignment="Right"
-                         IsEnabled="{Binding IsInitiatorCapacityEnabled}"
-                         Margin="0,0,4,0">
-                    <TextBox.Style>
-                        <Style TargetType="TextBox">
-                            <Style.Triggers>
-                                <MultiDataTrigger>
-                                    <MultiDataTrigger.Conditions>
-                                        <Condition Binding="{Binding IsInitiatorCapacityEnabled}" Value="True"/>
-                                        <Condition Binding="{Binding IsInitiatorCapacityValid}" Value="False"/>
-                                    </MultiDataTrigger.Conditions>
-                                    <Setter Property="Background" Value="#FFFFCCCC"/>
-                                    <Setter Property="ToolTip" Value="Enter a valid positive number"/>
-                                </MultiDataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </TextBox.Style>
-                </TextBox>
-                <ComboBox Grid.Row="1" Grid.Column="2" 
-                          ItemsSource="{Binding CapacityUnits}"
-                          SelectedItem="{Binding InitiatorCapacityUnit}"
-                          IsEnabled="{Binding IsInitiatorCapacityEnabled}"
-                          Margin="0,0,8,0"/>
-                <TextBlock Grid.Row="1" Grid.Column="3" 
-                           Text="{Binding InitiatorCapacityBytesDisplay}" 
-                           VerticalAlignment="Center"
-                           Foreground="Gray"/>
-            </Grid>
-        </GroupBox>
-
-        <!-- Features + IO Speed -->
-        <Grid Grid.Row="5" Margin="0,0,0,12">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-
-            <!-- Features (left) -->
-            <GroupBox Grid.Column="0" Header="Features" Margin="0,0,12,0"
-                      IsEnabled="{Binding IsFeaturesEnabled}">
-                <WrapPanel Margin="8" Orientation="Horizontal">
-                    <CheckBox Content="Supports Setmarks" 
-                              IsChecked="{Binding SupportsSetmarks}"
-                              Margin="0,0,24,4"/>
-                    <CheckBox Content="Supports Seq. Filemarks" 
-                              IsChecked="{Binding SupportsSeqFilemarks}"
-                              Margin="0,0,0,4"/>
-                </WrapPanel>
             </GroupBox>
 
-            <!-- IO Speed (right) -->
-            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                <TextBlock Text="IO Speed:" Margin="0,0,0,4"/>
-                <ComboBox ItemsSource="{Binding IoRateOptions}"
-                          SelectedItem="{Binding SelectedIoRate}"
-                          IsEnabled="{Binding IsIoRateEnabled}"
-                          Width="180"/>
-            </StackPanel>
-        </Grid>
-
-        <!-- Block Sizes -->
-        <GroupBox Grid.Row="6" Header="Block Sizes" Margin="0,0,0,12"
-                  IsEnabled="{Binding IsBlockSizesEnabled}">
-            <Grid Margin="8">
+            <!-- Features + IO Speed -->
+            <Grid Margin="0,0,0,12">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
 
-                <TextBlock Grid.Column="0" Text="Minimum" HorizontalAlignment="Center" Margin="0,0,0,4"/>
-                <TextBlock Grid.Column="1" Text="Default" HorizontalAlignment="Center" Margin="0,0,0,4"/>
-                <TextBlock Grid.Column="2" Text="Maximum" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                <!-- Features (left) -->
+                <GroupBox Grid.Column="0" Header="Features" Margin="0,0,12,0"
+                          IsEnabled="{Binding IsFeaturesEnabled}">
+                    <WrapPanel Margin="8" Orientation="Horizontal">
+                        <CheckBox Content="Supports Setmarks" 
+                                  IsChecked="{Binding SupportsSetmarks}"
+                                  Margin="0,0,24,4"/>
+                        <CheckBox Content="Supports Seq. Filemarks" 
+                                  IsChecked="{Binding SupportsSeqFilemarks}"
+                                  Margin="0,0,0,4"/>
+                    </WrapPanel>
+                </GroupBox>
 
-                <ComboBox Grid.Row="1" Grid.Column="0" 
-                          ItemsSource="{Binding BlockSizeOptions}"
-                          SelectedItem="{Binding MinBlockSize}"
-                          Margin="0,0,8,0"/>
-                <ComboBox Grid.Row="1" Grid.Column="1" 
-                          ItemsSource="{Binding BlockSizeOptions}"
-                          SelectedItem="{Binding DefaultBlockSize}"
-                          Margin="0,0,8,0"/>
-                <ComboBox Grid.Row="1" Grid.Column="2" 
-                          ItemsSource="{Binding BlockSizeOptions}"
-                          SelectedItem="{Binding MaxBlockSize}"/>
+                <!-- IO Speed (right) -->
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="IO Speed:" Margin="0,0,0,4"/>
+                    <ComboBox ItemsSource="{Binding IoRateOptions}"
+                              SelectedItem="{Binding SelectedIoRate}"
+                              IsEnabled="{Binding IsIoRateEnabled}"
+                              Width="180"/>
+                </StackPanel>
             </Grid>
-        </GroupBox>
 
-        <!-- Overwrite Warning -->
-        <Border Grid.Row="7" Style="{StaticResource WarningPanelStyle}" Margin="0,0,0,12">
-            <StackPanel Orientation="Horizontal">
-                <TextBlock Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
-                           FontSize="14" Margin="0,0,8,0"/>
-                <TextBlock Text="{Binding WarningMessage}" 
-                           VerticalAlignment="Center"
-                           TextWrapping="Wrap"/>
+            <!-- Block Sizes -->
+            <GroupBox Header="Block Sizes" Margin="0,0,0,12"
+                      IsEnabled="{Binding IsBlockSizesEnabled}">
+                <Grid Margin="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Column="0" Text="Minimum" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                    <TextBlock Grid.Column="1" Text="Default" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                    <TextBlock Grid.Column="2" Text="Maximum" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+
+                    <ComboBox Grid.Row="1" Grid.Column="0" 
+                              ItemsSource="{Binding BlockSizeOptions}"
+                              SelectedItem="{Binding MinBlockSize}"
+                              Margin="0,0,8,0"/>
+                    <ComboBox Grid.Row="1" Grid.Column="1" 
+                              ItemsSource="{Binding BlockSizeOptions}"
+                              SelectedItem="{Binding DefaultBlockSize}"
+                              Margin="0,0,8,0"/>
+                    <ComboBox Grid.Row="1" Grid.Column="2" 
+                              ItemsSource="{Binding BlockSizeOptions}"
+                              SelectedItem="{Binding MaxBlockSize}"/>
+                </Grid>
+            </GroupBox>
+
+            <!-- Overwrite Warning -->
+            <Border Style="{StaticResource WarningPanelStyle}" Margin="0,0,0,12">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
+                               FontSize="14" Margin="0,0,8,0"/>
+                    <TextBlock Text="{Binding WarningMessage}" 
+                               VerticalAlignment="Center"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
             </StackPanel>
-        </Border>
+            </ScrollViewer>
 
-        <!-- Buttons - Cancel left of Action, Action rightmost (consistent with other dialogs) -->
-        <StackPanel Grid.Row="9" 
-                    Orientation="Horizontal" 
-                    HorizontalAlignment="Right"
-                    Margin="0,16,0,0">
-            <Button Content="Cancel" 
-                    Command="{Binding CancelCommand}"
-                    IsCancel="True"
-                    Width="80"
-                    Margin="0,0,8,0"/>
-            <Button Content="{Binding ActionButtonText}" 
-                    Command="{Binding OpenCommand}"
-                    IsDefault="True"
-                    Width="80"/>
-        </StackPanel>
+            <!-- Buttons - Cancel left of Action, Action rightmost (consistent with other dialogs) -->
+            <Grid Grid.Row="1" Margin="0,12,0,0">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                    <Button x:Name="HelpButton"
+                            Content="_Help ▶"
+                            Click="HelpButton_Click"
+                            MinWidth="60" Padding="10,1"
+                            ToolTip="Open help for this dialog (F1)"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Cancel" 
+                            Command="{Binding CancelCommand}"
+                            IsCancel="True"
+                            Width="80"
+                            Margin="0,0,8,0"/>
+                    <Button Content="{Binding ActionButtonText}" 
+                            Command="{Binding OpenCommand}"
+                            IsDefault="True"
+                            Width="80"/>
+                </StackPanel>
+            </Grid>
+            </Grid><!-- end dialog-content Grid (column 0) -->
+
+            <!-- Help splitter — visible only when the help pane is open -->
+            <GridSplitter x:Name="HelpPaneSplitter"
+                          Grid.Column="1"
+                          Width="4"
+                          HorizontalAlignment="Center"
+                          VerticalAlignment="Stretch"
+                          Background="LightGray"
+                          Visibility="Collapsed"
+                          ResizeBehavior="PreviousAndNext"/>
+
+            <!-- Help pane — revealed by expanding column 2 -->
+            <controls:HelpPane x:Name="HelpPaneControl"
+                               Grid.Column="2"
+                               Visibility="Collapsed"/>
     </Grid>
 </Window>

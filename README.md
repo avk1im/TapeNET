@@ -1,6 +1,6 @@
 **TapeNET README**
 
-Copyright (c) 2023-2025 by [avk1im](https://github.com/avk1im)
+Copyright (c) 2023-2026 by [avk1im](https://github.com/avk1im)
 
 *All third-party brand names, trademarks, and registered trademarks are the property of their respective owners. Their use here does not imply any endorsement, affiliation, or sponsorship by the owners.*
 
@@ -10,13 +10,12 @@ Copyright (c) 2023-2025 by [avk1im](https://github.com/avk1im)
 TapeNET is a free, open-source software package for backing up files to -- and
 restoring them from -- tape drives on Microsoft* Windows* and .NET*. It spans
 the whole spectrum of tape hardware: from the charmingly inexpensive
-USB-connectable drives on a hobbyist's desk to the cutting-edge LTO* libraries
-humming in a data center.
+USB-connectable drives to the cutting-edge SAS-connected LTO* devices.
 
 TapeNET features include:
 
 * Support for popular USB-connectable tape drives -- including Sony* AIT*,
-  DAT 320 (DDS7), and DLT* VS1 -- as well as modern LTO drives
+  DAT 160/320 (DDS6/DDS7), and DLT* VS1 -- as well as modern LTO drives
 * Flexible file selection: directly or with wildcards, from multiple
   directories, optionally including subfolders
 * A powerful filtering language (**FCL** -- File Conditions Language) for
@@ -37,22 +36,26 @@ TapeNET features include:
 
 TapeNET currently includes:
 
+* **TapeConNET** (`tapecon`) -- a full-featured command-line backup utility for
+  Windows 10 and 11
+* **TapeWinNET** (`TapeWin`) -- a GUI tape backup manager for Windows: tree-based
+  navigation, a structured log pane, FCL filtering, and an integrated help
+  system
+* **TapeServiceNET** (`tapesvc`) -- a Windows Service / console host that exposes
+  a tape drive over the network via gRPC, enabling remote backups
 * **TapeLibNET** -- the core tape I/O library: drives, agents, table of
   contents, streams, and serialization
 * **FclNET** -- the File Conditions Language for flexible file filtering
 * **FclAiNET** -- AI-assisted natural-language to FCL translation
-* **TapeConNET** (`tapecon`) -- a full-featured command-line backup utility for
-  Windows 10 and 11
-* **TapeWinNET** -- a GUI tape backup manager for Windows: tree-based
-  navigation, a structured log pane, FCL filtering, and an integrated help
-  system
-* **TapeServiceNET** -- a Windows Service / console host that exposes a tape
-  drive over the network via gRPC, enabling remote backups
+* **HelpNET** -- AI-assisted interactive help system
+* **AiNET** -- the underlying AI assistant library, with support for multiple
+  AI providers and models
 
-Both `tapecon` and `TapeWinNET` are full-featured backup utilities that also
+
+Both `tapecon` and `TapeWin` are full-featured backup utilities that also
 illustrate the usage of the underlying libraries. For more information on using
-`tapecon`, refer to the tapecon.pdf User Guide; for `TapeWinNET`, press **F1**
-anywhere in the app to open its built-in help.
+`tapecon`, start it with --help command line option; for `TapeWin`, press **F1**
+anywhere in the app to open its built-in interactive help.
 
 **CAUTION**: When backing up important data, it's advisable to follow best
 backup practices -- employing multiple backup methods, not relying solely on any
@@ -108,7 +111,8 @@ The popular USB-connectable drives are fully supported by Windows 10 and
 Windows 11, including drivers through the standard Windows distribution and/or
 Windows Update. Yet the selection of backup software that can actually use them
 has been modest: most contemporary applications either ignore tape entirely or
-only speak to expensive professional LTO* systems. **TapeNET closes that gap**
+only speak to expensive professional LTO* systems. The software that can work
+with LTO drives in turn tends to be highly expensive. **TapeNET closes that gap**
 -- a free, open-source backup application that drives both the inexpensive
 USB-connectable drives *and* modern LTO hardware.
 

@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using TapeWinNET.Services;
+using TapeWinNET.Utils;
 
 namespace TapeWinNET;
 
@@ -52,6 +53,14 @@ public partial class App : Application
     /// </summary>
     public static AppAiSessionHost AiSessionHost { get; } = new();
 
+    /// <summary>
+    /// Process-wide settings singleton. Loaded once at startup; all consumers read and
+    /// write this instance directly, then call <see cref="AppSettings.SaveToFile"/> when
+    /// they want to persist. This avoids the race where separate load/save cycles in
+    /// different windows overwrite each other's changes.
+    /// </summary>
+    public static AppSettings Settings { get; } = AppSettings.LoadFromFile();
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -89,6 +98,7 @@ public partial class App : Application
     protected override async void OnExit(ExitEventArgs e)
     {
         await AiSessionHost.DisposeAsync();
+        Settings.SaveToFile();
         base.OnExit(e);
     }
 

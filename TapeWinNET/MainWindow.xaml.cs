@@ -50,7 +50,7 @@ namespace TapeWinNET
 
             InitializeToolbarIcons();
 
-            ApplySettings(_viewModel.Settings);
+            ApplySettings();
 
             // Wire filter pane to ViewModel via direct mode
             FileFilterPaneControl.FilterStateChanged = _viewModel.OnFilterStateChanged;
@@ -156,7 +156,7 @@ namespace TapeWinNET
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             // If the last session used a physical drive, ask before reopening
-            var lastDrive = _viewModel.StartupPhysicalDriveNumber;
+            var lastDrive = MainViewModel.StartupPhysicalDriveNumber;
             if (lastDrive.HasValue)
             {
                 var result = MessageBox.Show(
@@ -548,8 +548,10 @@ namespace TapeWinNET
 
         #region Window State Persistence
 
-        private void ApplySettings(AppSettings settings)
+        private void ApplySettings()
         {
+            var settings = MainViewModel.Settings;
+
             // Restore window size
             if (settings.WindowWidth.HasValue && settings.WindowHeight.HasValue)
             {
@@ -614,7 +616,7 @@ namespace TapeWinNET
 
         private void SaveSettings()
         {
-            var settings = _viewModel.Settings;
+            var settings = MainViewModel.Settings;
 
             // Save window position/size (use RestoreBounds when maximized to remember normal size)
             if (WindowState == WindowState.Maximized)
@@ -678,7 +680,7 @@ namespace TapeWinNET
             // Let the ViewModel save its own state (last drive info)
             _viewModel.SaveSettings();
 
-            settings.SaveToFile();
+            // settings.SaveToFile(); -- not needed, the app will save the settings on shutdown
         }
 
         #endregion
@@ -742,12 +744,14 @@ namespace TapeWinNET
 
         public void OnPaneClosed()
         {
+            var setting = MainViewModel.Settings;
+
             // Persist pane width (per-host) and chat sub-pane height
-            _viewModel.Settings.HelpPaneWidthPerHost ??= [];
-            _viewModel.Settings.HelpPaneWidthPerHost[HostName] = HelpPaneColumn.ActualWidth;
+            setting.HelpPaneWidthPerHost ??= [];
+            setting.HelpPaneWidthPerHost[HostName] = HelpPaneColumn.ActualWidth;
 
             if (_helpPaneVm is not null)
-                _viewModel.Settings.HelpPaneChatHeight = _helpPaneVm.ChatPaneHeight;
+                setting.HelpPaneChatHeight = _helpPaneVm.ChatPaneHeight;
 
             // Persist the last-viewed topic id so it is restored on next open
             if (_helpPaneVm is not null)
@@ -755,8 +759,8 @@ namespace TapeWinNET
                 var topicId = _helpPaneVm.CurrentTopicId;
                 if (topicId is not null)
                 {
-                    _viewModel.Settings.HelpPaneLastTopicPerHost ??= [];
-                    _viewModel.Settings.HelpPaneLastTopicPerHost[HostName] = topicId;
+                    setting.HelpPaneLastTopicPerHost ??= [];
+                    setting.HelpPaneLastTopicPerHost[HostName] = topicId;
                 }
             }
 
@@ -777,6 +781,8 @@ namespace TapeWinNET
         /// </summary>
         public async void OpenHelpPane(string? topicId = null)
         {
+            var setting = MainViewModel.Settings;
+
             if (_helpPaneVm == null)
             {
                 // First open — build the session and wire the VM
@@ -787,7 +793,7 @@ namespace TapeWinNET
                     // Restore persisted chat sub-pane height before binding so the
                     //  DataContextChanged handler in HelpPane.xaml.cs applies it immediately.
                     ChatPaneHeight =
-                        _viewModel.Settings.HelpPaneChatHeight ?? 200.0
+                        setting.HelpPaneChatHeight ?? 200.0
                 };
                 // Forward session errors, warnings, and info messages to the main log pane
                 _helpPaneVm.SessionError   += OnHelpSessionError;
@@ -797,7 +803,7 @@ namespace TapeWinNET
             }
 
             // Show the pane — restore per-host width
-            var width = _viewModel.Settings.HelpPaneWidthPerHost?.GetValueOrDefault(HostName)
+            var width = setting.HelpPaneWidthPerHost?.GetValueOrDefault(HostName)
                         ?? DefaultHelpPaneWidth;
             OnPaneOpening(width);
             HelpPaneControl.Visibility = Visibility.Visible;
@@ -810,7 +816,7 @@ namespace TapeWinNET
             }
             else
             {
-                var lastTopic = _viewModel.Settings.HelpPaneLastTopicPerHost?.GetValueOrDefault(HostName);
+                var lastTopic = setting.HelpPaneLastTopicPerHost?.GetValueOrDefault(HostName);
                 if (lastTopic != null)
                     await _helpPaneVm.NavigateToAsync(lastTopic);
                 else

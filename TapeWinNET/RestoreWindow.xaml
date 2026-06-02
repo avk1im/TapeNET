@@ -275,7 +275,7 @@
                         ToolTip="Remove all unchecked backup sets from the list"
                         Margin="0,0,8,0"/>
                 <Button x:Name="HelpButton"
-                        Content="_Help"
+                        Content="_Help ▶"
                         Click="HelpButton_Click"
                         MinWidth="60" Padding="10,1"
                         ToolTip="Open help for this dialog (F1)"/>

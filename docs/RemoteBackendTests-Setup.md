@@ -20,6 +20,8 @@ under this class are the baseline that proves the remote backend plumbing is cor
 a separately deployed `TapeServiceNET` process. When no host is configured, or when the service
 is unreachable, every test in the class skips gracefully — no failures, no crashes.
 
+S. below on how to generate the development-time certificate.
+
 > **Note on `TapeNET.runsettings`:** The solution-level runsettings file excludes
 > `LargeFileTests` from routine runs, but remote tests are **not** excluded by default (the
 > filter line is commented out). This means remote tests always run when you click
@@ -212,3 +214,61 @@ sc.exe start tapesvc
 sc.exe stop tapesvc
 sc.exe delete tapesvc
 ```
+
+## How to Generate the Development HTTPS Certificate (tapesvc.pfx)
+
+You only need one command to create and export the certificate, and optionally one more to trust it on the machine.
+
+Below is the canonical sequence.
+
+1. Create & Export the Developer Certificate
+Run this on the machine hosting TapeServiceNET (or run locally and copy the file):
+powershell
+dotnet dev-certs https -ep D:\TapeService\certs\tapesvc.pfx -p "YourPasswordHere"
+Important notes
+•	The directory must exist (D:\TapeService\certs\).
+•	If your password contains $, &, (, ), etc., quote it:
+powershell
+-p "MySecretPassword$001"
+•	If you prefer escaping instead of quoting:
+powershell
+-p MySecretPassword`$001
+This produces:
+Code
+D:\TapeService\certs\tapesvc.pfx
+
+2. Trust the certificate (optional but recommended for local dev)
+powershell
+dotnet dev-certs https --trust
+This adds the dev certificate to the Windows trust store so Kestrel can serve HTTPS without browser warnings.
+
+3. (Optional) Clean and regenerate everything
+If you want a completely fresh certificate:
+powershell
+dotnet dev-certs https --clean
+dotnet dev-certs https --trust
+dotnet dev-certs https -ep D:\TapeService\certs\tapesvc.pfx -p "YourPasswordHere"
+
+4. Configure TapeServiceNET to use the certificate
+In appsettings.json:
+json
+"Kestrel": {
+  "Endpoints": {
+    "Grpc": {
+      "Url": "https://0.0.0.0:50551",
+      "Protocols": "Http2",
+      "Certificate": {
+        "Path": "certs/tapesvc.pfx",
+        "Password": "YourPasswordHere"
+      }
+    }
+  }
+}
+Or keep HTTP for now and only use the certificate later — your earlier setup used plain HTTP (UseTls: false), so this step is optional unless you want encrypted transport.
+5. Verify the certificate exists
+powershell
+Test-Path D:\TapeService\certs\tapesvc.pfx
+Should return:
+True
+
+
