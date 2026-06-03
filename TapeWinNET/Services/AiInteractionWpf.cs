@@ -95,9 +95,8 @@ public sealed class AiInteractionWpf : IAiInteraction
         const string AddLanPrompt =
             "Specify the address and port of an OpenAI-compatible provider.\n\n" +
             "Examples:\n" +
-            "  http://192.168.1.42:11434  — Ollama on a LAN machine\n" +
-            "  http://localhost:8000       — OpenVINO Model Server\n" +
-            "  http://localhost:1234       — LM Studio";
+            "  http://192.168.1.42:11434 — Ollama on a LAN machine\n" +
+            "  http://localhost:8000     — OpenVINO Model Server running locally";
 
         // Keep re-showing the dialog after a successful LAN-host add + re-probe.
         // allProbes includes both healthy and unreachable entries; the latter are
@@ -133,6 +132,7 @@ public sealed class AiInteractionWpf : IAiInteraction
                         ? "No AI providers were found. Add an OpenAI-compatible LAN host, or select None:"
                         : "The following AI providers were discovered. Select one to use for Help:";
 
+                SELECT_PROVIDER:
                     var providerDialog = new SelectDialog(
                         "Choose AI Provider",
                         prompt,
@@ -156,6 +156,7 @@ public sealed class AiInteractionWpf : IAiInteraction
                     if (idx == 0)
                     {
                         LogWarn("No AI provider selected — Help will use local-search mode.");
+                        result = AiProviderConfig.NoAiProvider;
                         return;
                     }
 
@@ -180,7 +181,7 @@ public sealed class AiInteractionWpf : IAiInteraction
                             };
 
                             if (modelDialog.ShowDialog() != true)
-                                return;
+                                goto SELECT_PROVIDER; // user cancelled — go back to provider selection
 
                             chatModel = selected.DiscoveredChatModels[modelDialog.SelectedIndex];
                         }

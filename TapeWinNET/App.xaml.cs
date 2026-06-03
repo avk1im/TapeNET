@@ -16,6 +16,14 @@ namespace TapeWinNET;
 public partial class App : Application
 {
     /// <summary>
+    /// Process-wide settings singleton. Loaded once at startup; all consumers read and
+    /// write this instance directly, then call <see cref="AppSettings.SaveToFile"/> when
+    /// they want to persist. This avoids the race where separate load/save cycles in
+    /// different windows overwrite each other's changes.
+    /// </summary>
+    public static AppSettings Settings { get; } = AppSettings.LoadFromFile();
+    
+    /// <summary>
     /// Drive number to open on startup (can be set via command line).
     /// </summary>
     public static int StartupDriveNumber { get; private set; } = 0;
@@ -53,13 +61,6 @@ public partial class App : Application
     /// </summary>
     public static AppAiSessionHost AiSessionHost { get; } = new();
 
-    /// <summary>
-    /// Process-wide settings singleton. Loaded once at startup; all consumers read and
-    /// write this instance directly, then call <see cref="AppSettings.SaveToFile"/> when
-    /// they want to persist. This avoids the race where separate load/save cycles in
-    /// different windows overwrite each other's changes.
-    /// </summary>
-    public static AppSettings Settings { get; } = AppSettings.LoadFromFile();
 
     protected override void OnStartup(StartupEventArgs e)
     {

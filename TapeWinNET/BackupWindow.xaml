@@ -285,7 +285,8 @@
                  ═══════════════════════════════════════ -->
             <ScrollViewer Grid.Column="2" Margin="4,0,0,0"
                           VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled">
+                          HorizontalScrollBarVisibility="Disabled"
+                          Padding="0,0,8,0">
                 <StackPanel>
                     <!-- Description -->
                     <GroupBox Header="Description" Margin="0,0,0,8">

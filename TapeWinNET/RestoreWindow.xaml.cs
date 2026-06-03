@@ -3,6 +3,7 @@ using System.Windows.Controls;
 
 using TapeWinNET.Help;
 using TapeWinNET.Models;
+using TapeWinNET.Utils;
 using TapeWinNET.ViewModels;
 
 namespace TapeWinNET;
@@ -20,6 +21,8 @@ public partial class RestoreWindow : Window, IHelpPaneHost
     {
         InitializeComponent();
         DataContext = viewModel;
+
+        WindowPlacementApplicator.Attach(this);
 
         _help = new DialogHelpPaneController(
             this, this, HelpPaneColumn, HelpPaneSplitter, HelpPaneControl,
@@ -41,7 +44,7 @@ public partial class RestoreWindow : Window, IHelpPaneHost
 
     #region IHelpPaneHost
 
-    public string HostName => "RestoreWindow";
+    public string HostName => nameof(RestoreWindow);
 
     // Adjacent: the window expands to the right; the HelpPane is a column inside
     //  the same window, not a separate floating window.

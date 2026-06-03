@@ -319,6 +319,9 @@
                 <MenuItem Header="Show _Usage Bar" 
                           IsCheckable="True" 
                           IsChecked="{Binding ShowUsageBar}"/>
+                <Separator/>
+                <MenuItem Header="Reset _Window Positions" 
+                          Command="{Binding ResetWindowPositionsCommand}"/>
             </MenuItem>
             <MenuItem Header="_Log">
                 <MenuItem Header="_Auto-scroll" 
@@ -518,7 +521,7 @@
             <!-- Help group -->
             <ToolBar Band="0" BandIndex="5" Margin="12,0,0,0">
                 <Separator/>
-                <Button Command="{Binding AboutCommand}"
+                <Button Command="{Binding ShowHelpCommand}"
                         Style="{StaticResource ToolbarButtonStyle}"
                         ToolTip="About TapeWin">
                     <TextBlock Text="&#xE897;" FontFamily="Segoe MDL2 Assets" FontSize="14"
@@ -1259,6 +1262,7 @@
 
         <controls:HelpPane x:Name="HelpPaneControl"
                            Grid.Row="2" Grid.RowSpan="3" Grid.Column="2"
+                           DataContext="{x:Null}"
                            Visibility="Collapsed"/>
     </Grid>
 </Window>

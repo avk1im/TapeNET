@@ -70,7 +70,7 @@ public partial class MainViewModel
     /// </summary>
     private void InitializeBackupCommands()
     {
-        NewBackupCommand = new RelayCommand(ShowNewBackupWindow, _ => !IsBusy && _tapeService.IsMediaLoaded && !_tapeService.IsTOCFromFile);
+        NewBackupCommand = new RelayCommand(ShowBackupWindow, _ => !IsBusy && _tapeService.IsMediaLoaded && !_tapeService.IsTOCFromFile);
         AbortBackupCommand = new RelayCommand(AbortBackup, _ => IsBackupInProgress);
     }
 
@@ -78,16 +78,16 @@ public partial class MainViewModel
 
     #region Private Methods - Backup Operations
 
-    private void ShowNewBackupWindow(object? parameter)
+    private void ShowBackupWindow(object? parameter)
     {
-        ShowNewBackupWindow(paths: null);
+        ShowBackupWindow(paths: null);
     }
 
     /// <summary>
     /// Opens the BackupWindow, optionally pre-populated with the given paths
     ///  (e.g. from a drag-drop onto the MainWindow).
     /// </summary>
-    internal void ShowNewBackupWindow(string[]? paths)
+    internal void ShowBackupWindow(string[]? paths)
     {
         var viewModel = new BackupViewModel(
             _tapeService,

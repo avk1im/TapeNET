@@ -14,7 +14,7 @@ namespace AiNET;
 /// </remarks>
 public sealed class LanHostsRegistry
 {
-    private static readonly string DefaultStoragePath =
+    public static readonly string DefaultStoragePath =
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "AiNET",

@@ -78,17 +78,17 @@ public partial class MainViewModel
     /// Dynamic menu text for the Restore command, reflecting the current selection.
     /// Examples: "Restore 53 files selected...", "Restore set #3 | -1...", "Restore..."
     /// </summary>
-    public string RestoreCommandText => GetCommandText("Restore");
+    public string RestoreCommandText => GetCommandText("_Restore");
 
     /// <summary>
     /// Dynamic menu text for the Validate command, reflecting the current selection.
     /// </summary>
-    public string ValidateCommandText => GetCommandText("Validate");
+    public string ValidateCommandText => GetCommandText("_Validate");
 
     /// <summary>
     /// Dynamic menu text for the Verify command, reflecting the current selection.
     /// </summary>
-    public string VerifyCommandText => GetCommandText("Verify");
+    public string VerifyCommandText => GetCommandText("Verif_y");
 
     /// <summary>
     /// Builds the command menu text for a given mode verb. Appends a selection summary

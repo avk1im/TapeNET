@@ -77,19 +77,33 @@ public sealed class AppAiSessionHost : IAsyncDisposable
             //  instance (without VM logging) when called before MainWindow is ready.
             var interaction = _interaction ?? new AiInteractionWpf();
             var catalog     = AiProviderCatalog.CreateDefault();
-            var prefs       = new AiProviderPreferences
+            var prefs       = App.Settings.AIProviderPrefs ?? new AiProviderPreferences
             {
                 AutoUseIfSingle = autoUseIfSingle,
             };
 
             var logger = App.LoggerFactory.CreateLogger<AppAiSessionHost>();
 
-            _current = await AiSessionFactory.BuildAsync(catalog, interaction, prefs, ct, logger);
+            _current = await AiSessionFactory.BuildAsync(autouseLast: !promptUser, catalog, interaction, prefs, ct, logger);
 
             if (_current == null)
                 _userDeclinedSetup = true;
-            else if (raiseChanged)
-                SessionChanged?.Invoke(this, EventArgs.Empty);
+            else // success
+            {
+                if (raiseChanged)
+                    SessionChanged?.Invoke(this, EventArgs.Empty);
+
+                // Persist the successful config for next time
+                App.Settings.AIProviderPrefs = new AiProviderPreferences
+                {
+                    HasBeenAskedOnce = true,
+                    AutoUseIfSingle = autoUseIfSingle,
+                    LastProviderKind = _current.Config.Descriptor.Kind,
+                    LastEndpoint = _current.Config.Endpoint,
+                    LastChatModelId = _current.Config.ChatModelId,
+                    LastEmbeddingModelId = _current.Config.EmbeddingModelId,
+                };
+            }
 
             return _current;
         }

@@ -437,6 +437,8 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
             ThinkingAnimationText = string.Empty;
             if (aborted)
                 SessionWarning?.Invoke(this, "Answering aborted by the user.");
+            else
+                SessionInfo?.Invoke(this, "Answering completed");
         }
     }
 

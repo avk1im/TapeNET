@@ -43,7 +43,8 @@
             <!-- Scrollable content area -->
             <ScrollViewer Grid.Row="0"
                           VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled">
+                          HorizontalScrollBarVisibility="Disabled"
+                          Padding="0,0,8,0">
             <StackPanel>
 
             <!-- Host label + info text -->

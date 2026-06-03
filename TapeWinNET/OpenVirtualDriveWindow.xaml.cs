@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Windows;
 using TapeWinNET.ViewModels;
 using TapeWinNET.Help;
+using TapeWinNET.Utils;
 
 namespace TapeWinNET;
 
@@ -18,6 +19,8 @@ public partial class OpenVirtualDriveWindow : Window, IHelpPaneHost
         InitializeComponent();
         _viewModel = viewModel;
         DataContext = viewModel;
+
+        WindowPlacementApplicator.Attach(this);
 
         _help = new DialogHelpPaneController(
             this, this, HelpPaneColumn, HelpPaneSplitter, HelpPaneControl,
@@ -41,7 +44,7 @@ public partial class OpenVirtualDriveWindow : Window, IHelpPaneHost
 
     #region IHelpPaneHost
 
-    public string HostName => "OpenVirtualDriveWindow";
+    public string HostName => nameof(OpenVirtualDriveWindow);
 
     // Adjacent: the window expands to the right; the HelpPane is a column inside
     //  the same window, not a separate floating window.

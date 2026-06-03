@@ -148,7 +148,8 @@
             <!-- Right: Options panel -->
             <ScrollViewer Grid.Column="2" Margin="4,0,0,0"
                           VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled">
+                          HorizontalScrollBarVisibility="Disabled"
+                          Padding="0,0,4,0">
             <StackPanel>
                 <!-- Operation Selection -->
                 <GroupBox Header="Operation" Margin="0,0,0,8"

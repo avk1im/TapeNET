@@ -27,6 +27,8 @@ public partial class BackupWindow : Window, IHelpPaneHost
         ViewModel = viewModel;
         DataContext = viewModel;
 
+        WindowPlacementApplicator.Attach(this);
+
         _help = new DialogHelpPaneController(
             this, this, HelpPaneColumn, HelpPaneSplitter, HelpPaneControl,
             defaultTopicId: "dialog.backup", helpButton: HelpButton);
@@ -182,7 +184,7 @@ public partial class BackupWindow : Window, IHelpPaneHost
 
     #region IHelpPaneHost
 
-    public string HostName => "BackupWindow";
+    public string HostName => nameof(BackupWindow);
 
     // Adjacent: the window expands to the right; the HelpPane is a column inside
     //  the same window, not a separate floating window.

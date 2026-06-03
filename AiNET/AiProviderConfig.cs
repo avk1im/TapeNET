@@ -9,7 +9,7 @@ namespace AiNET;
 /// <param name="ApiKey">API key or token; <c>null</c> for local providers.</param>
 /// <param name="ChatModelId">
 /// Model identifier for chat completions; <c>null</c> if the provider has no
-///  chat capability or the user has not chosen a model yet.
+/// chat capability or the user has not chosen a model yet.
 /// </param>
 /// <param name="EmbeddingModelId">
 /// Model identifier for embeddings; <c>null</c> if not applicable.
@@ -33,4 +33,22 @@ public sealed record AiProviderConfig(
     public string DisplayLabel => ChatModelId is { Length: > 0 } model
         ? $"{Descriptor.DisplayName} / {model}"
         : Descriptor.DisplayName;
+
+    /// <summary>
+    /// A sentinel config representing "No provider selected" — used when the user
+    /// chooses to disable AI assistance.
+    /// </summary>
+    public static readonly AiProviderConfig NoAiProvider =
+        new(
+            Descriptor: AiProviderDescriptor.None,
+            Endpoint: new Uri("http://localhost"),
+            ApiKey: null,
+            ChatModelId: null,
+            EmbeddingModelId: null,
+            Options: null
+        );
+    /// <summary>
+    /// Convenience property for quick checks against the "None" sentinel
+    /// </summary>
+    public bool IsNone => Descriptor.Kind == AiProviderKind.None;
 }

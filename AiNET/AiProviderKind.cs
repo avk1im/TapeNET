@@ -5,6 +5,9 @@ namespace AiNET;
 /// </summary>
 public enum AiProviderKind
 {
+    /// <summary>Do not use AI</summary>
+    None,
+
     /// <summary>Local Ollama instance (<c>http://localhost:11434</c>).</summary>
     Ollama,
 

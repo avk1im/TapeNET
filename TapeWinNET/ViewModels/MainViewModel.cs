@@ -98,6 +98,7 @@ public partial class MainViewModel : ViewModelBase
         UsageBar = new MediaUsageBarPresenter(_tapeService, SelectBackupSetByIndex);
         RenameSelectedCommand = new AsyncRelayCommand(RenameSelectedAsync, () => CanRenameSelected);
         RenameMediaCommand = new AsyncRelayCommand(RenameMediaAsync, () => CanRenameMedia);
+        ResetWindowPositionsCommand = new RelayCommand(ResetWindowPositions);
         ExitCommand = new RelayCommand(Exit);
         AboutCommand = new RelayCommand(ShowAbout);
 
@@ -626,6 +627,9 @@ public partial class MainViewModel : ViewModelBase
 
     public ICommand RenameSelectedCommand { get; }
     public ICommand RenameMediaCommand { get; }
+
+    public ICommand ResetWindowPositionsCommand { get; }
+
     public ICommand ExitCommand { get; }
     public ICommand AboutCommand { get; }
 
@@ -1124,6 +1128,17 @@ public partial class MainViewModel : ViewModelBase
     {
         if (parameter is IoRateOption option)
             SelectedIoSpeed = option;
+    }
+
+    private void ResetWindowPositions(object? parameter)
+    {
+        // Clear saved window positions so all windows reset to default positions on next open
+        Settings.ResetWindowPlacements(mainWindowToo: true);
+        Settings.ResetMainWindowLayout();
+        Settings.ResetHelpPaneLayout();
+
+        MessageBox.Show("Window positions have been reset to defaults.",
+            "Reset Window Positions", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void Exit(object? parameter)

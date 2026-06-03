@@ -15,7 +15,7 @@ public sealed class AiProviderPreferences
     /// launches.
     /// </summary>
     [JsonPropertyName("hasBeenAskedOnce")]
-    public bool HasBeenAskedOnce { get; set; }
+    public bool HasBeenAskedOnce { get; set; } = false;
 
     /// <summary>
     /// When exactly one healthy provider is found during discovery, skip the

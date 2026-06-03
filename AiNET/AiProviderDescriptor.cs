@@ -24,4 +24,18 @@ public sealed record AiProviderDescriptor(
     string DisplayName,
     Uri? DefaultEndpoint,
     bool RequiresApiKey,
-    AiCapabilities Capabilities);
+    AiCapabilities Capabilities)
+{
+    /// <summary>
+    /// A sentinel descriptor representing "Do not use any AI provider"
+    /// </summary>
+    public static readonly AiProviderDescriptor None =
+        new(
+            Kind: AiProviderKind.None,
+            Location: AiProviderLocation.Local,
+            DisplayName: "None",
+            DefaultEndpoint: null,
+            RequiresApiKey: false,
+            Capabilities: AiCapabilities.None
+        );
+}

@@ -149,7 +149,7 @@ namespace TapeWinNET
             //  The canDrop predicate toggles DragAcceptFiles dynamically so the shell
             //  shows a "no drop" cursor when the command is unavailable.
             Loaded += (_, _) => DragDropHelper.EnableFileDrop(this,
-                paths => _viewModel.ShowNewBackupWindow(paths),
+                paths => _viewModel.ShowBackupWindow(paths),
                 () => _viewModel.NewBackupCommand.CanExecute(null));
         }
 
@@ -283,14 +283,10 @@ namespace TapeWinNET
 
             await App.AiSessionHost.SignOutAsync();
 
-            // Delete the two persistence files (best-effort; ignore if absent).
-            TryDeleteFile(Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "TapeWinNET", "ai-prefs.json"));
+            App.Settings.AIProviderPrefs = null;
 
-            TryDeleteFile(Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "AiNET", "lan-hosts.json"));
+            // Delete AiNET persistence file (best-effort; ignore if absent).
+            TryDeleteFile(AiNET.LanHostsRegistry.DefaultStoragePath); // AI provider hosts for AiNET's LAN discovery
 
             UpdateAiProviderMenuHeader();
             _viewModel.LogOk("AI provider settings reset.");
@@ -551,39 +547,9 @@ namespace TapeWinNET
         private void ApplySettings()
         {
             var settings = MainViewModel.Settings;
-
-            // Restore window size
-            if (settings.WindowWidth.HasValue && settings.WindowHeight.HasValue)
-            {
-                Width = settings.WindowWidth.Value;
-                Height = settings.WindowHeight.Value;
-            }
-
-            // Restore window position (with screen-bounds validation)
-            if (settings.WindowLeft.HasValue && settings.WindowTop.HasValue)
-            {
-                var left = settings.WindowLeft.Value;
-                var top = settings.WindowTop.Value;
-
-                // Ensure at least 100px of the window is visible on some screen
-                const double minVisible = 100;
-                var screenLeft = SystemParameters.VirtualScreenLeft;
-                var screenTop = SystemParameters.VirtualScreenTop;
-                var screenRight = screenLeft + SystemParameters.VirtualScreenWidth;
-                var screenBottom = screenTop + SystemParameters.VirtualScreenHeight;
-
-                if (left + minVisible > screenLeft && left < screenRight - minVisible &&
-                    top + minVisible > screenTop && top < screenBottom - minVisible)
-                {
-                    WindowStartupLocation = WindowStartupLocation.Manual;
-                    Left = left;
-                    Top = top;
-                }
-            }
-
-            // Restore maximized state (after position, so normal bounds are set first)
-            if (settings.IsMaximized)
-                WindowState = WindowState.Maximized;
+            
+            var placementManager = new WindowPlacementManager(settings);
+            placementManager.Restore(this, enforceMain: true);
 
             // Restore splitter positions
             if (settings.TreePaneWidth.HasValue && settings.TreePaneWidth.Value >= TreePaneColumn.MinWidth)
@@ -618,23 +584,8 @@ namespace TapeWinNET
         {
             var settings = MainViewModel.Settings;
 
-            // Save window position/size (use RestoreBounds when maximized to remember normal size)
-            if (WindowState == WindowState.Maximized)
-            {
-                settings.IsMaximized = true;
-                settings.WindowLeft = RestoreBounds.Left;
-                settings.WindowTop = RestoreBounds.Top;
-                settings.WindowWidth = RestoreBounds.Width;
-                settings.WindowHeight = RestoreBounds.Height;
-            }
-            else
-            {
-                settings.IsMaximized = false;
-                settings.WindowLeft = Left;
-                settings.WindowTop = Top;
-                settings.WindowWidth = Width;
-                settings.WindowHeight = Height;
-            }
+            var placementManager = new WindowPlacementManager(settings);
+            placementManager.Capture(this, enforceMain: true);
 
             // Save splitter positions
             settings.TreePaneWidth = TreePaneColumn.ActualWidth;
@@ -731,7 +682,7 @@ namespace TapeWinNET
 
         // ── IHelpPaneHost ─────────────────────────────────────────────────────
 
-        public string HostName => "MainWindow";
+        public string HostName => nameof(MainWindow);
         public HelpPaneHostMode HostMode => HelpPaneHostMode.Embedded;
 
         public void OnPaneOpening(double desiredWidth)

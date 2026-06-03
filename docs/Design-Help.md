@@ -792,7 +792,7 @@ public partial class MyDialog : Window, IHelpPaneHost
 		=> _help.HandleF1(e);
 
 	#region IHelpPaneHost
-	public string HostName => "MyDialog";
+	public string HostName => nameof(MyDialog); // or, to account for polymorphism: GetType().Name
 	public HelpPaneHostMode HostMode => HelpPaneHostMode.Adjacent;
 	public void OnPaneOpening(double desiredWidth) => _help.OnPaneOpening(desiredWidth);
 	public void OnPaneClosed() => _help.OnPaneClosed();
@@ -1009,7 +1009,7 @@ User: Help → AI Provider settings…
 
 | Setting | Where | Notes |
 |---|---|---|
-| `AiProviderPreferences` | `%LocalAppData%\TapeWinNET\ai-prefs.json` | Includes `HasBeenAskedOnce`, last config (without API keys; keys go to DPAPI-protected blob) |
+| `AiProviderPreferences` | `AppSettings` | Includes `HasBeenAskedOnce`, last config (without API keys; keys go to DPAPI-protected blob) |
 | `LanHostsRegistry` | `%LocalAppData%\AiNET\lan-hosts.json` | Shared across apps using `AiNET` |
 | HelpPane outer width (MainWindow) | `AppSettings` | Per-window |
 | HelpPane outer width (per dialog) | `AppSettings` | Keyed by dialog type name |
@@ -1250,10 +1250,10 @@ The original design called for a dedicated 3-step `AiProviderSetupWindow` modal.
 - ✅ `AiInteractionWpf` — implements `IAiInteraction` with a `SelectDialog`-based provider chooser. The list is built from probe results and appends a sentinel `"➕  Add OpenAI-compatible provider…"` entry as the last item.
 - ✅ `AppAiSessionHost.EnsureAsync` / `ReconfigureAsync` — two distinct paths: silent first-use (auto-selects when only one healthy provider is present) vs. explicit reconfigure (always presents the chooser dialog regardless of provider count). Threaded via an `autoUseIfSingle` parameter.
 - ✅ `AppAiSessionHost.SignOutAsync` — disposes the current session and clears state without re-discovery, used by the Reset command.
-- ✅ `AiProviderPreferences` persistence — `%LocalAppData%\TapeWinNET\ai-prefs.json` stores last selected endpoint and model ids; loaded on startup and saved after every successful `BuildAsync`.
+- ✅ `AiProviderPreferences` persistence — `AppSettings` stores last selected endpoint and model ids; loaded by the `App` on startup and saved after every successful `BuildAsync`.
 - ✅ Help menu items wired in `MainWindow.xaml` and `MainWindow.xaml.cs`:
   - `Help → AI Provider Settings…` — calls `AppAiSessionHost.ReconfigureAsync` (forces dialog).
-  - `Help → Reset AI Providers…` — asks for confirmation, calls `SignOutAsync`, then deletes `ai-prefs.json` and `lan-hosts.json`, and refreshes the menu header.
+  - `Help → Reset AI Providers…` — asks for confirmation, calls `SignOutAsync`, then deletes `AiProviderPreferences` from `AppSettings`, deletes the file `lan-hosts.json`, and refreshes the menu header.
 - ✅ Model selection — after a provider is chosen, a second `SelectDialog` appears when the probe returned more than one chat model; single-model providers skip this step.
 - ✅ `AiProviderConfig.DisplayLabel` — uniform `"Provider / Model"` label used throughout the log pane, the mode badge, and status messages.
 
