@@ -242,6 +242,7 @@ namespace TapeWinNET
                 _helpPaneVm = new HelpPaneViewModel(session, this, actions);
                 _helpPaneVm.SessionError += OnHelpSessionError;
                 _helpPaneVm.SessionInfo  += OnHelpSessionInfo;
+                _helpPaneVm.SessionWarning += OnHelpSessionWarning;
                 HelpPaneControl.DataContext = _helpPaneVm;
             _helpPaneVm.IsPaneOpen = true;
 
@@ -252,9 +253,10 @@ namespace TapeWinNET
                 await _helpPaneVm.GoHomeAsync();
         }
 
-        private void OnHelpSessionError  (object? sender, string msg) => _viewModel.LogErr(msg);
-        private void OnHelpSessionInfo   (object? sender, string msg) => _viewModel.LogSub(msg);
-        private void OnHelpSessionWarning(object? sender, string msg) => _viewModel.LogWarn(msg);
+        // The events are also raised by <cref name="DialogHelpPaneController"/>
+        internal void OnHelpSessionError  (object? sender, string msg) => _viewModel.LogErr(msg);
+        internal void OnHelpSessionInfo   (object? sender, string msg) => _viewModel.LogSub(msg);
+        internal void OnHelpSessionWarning(object? sender, string msg) => _viewModel.LogWarn(msg);
 
         private void UpdateAiProviderMenuHeader()
         {

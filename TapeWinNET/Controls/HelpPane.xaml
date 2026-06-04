@@ -295,14 +295,12 @@
                                 ToolTip="{Binding AskButtonTooltip}"
                                 Content="{Binding AskButtonContent}"/>
                         <!-- Pulsing star animation shown in front of the input while thinking -->
-                        <TextBlock DockPanel.Dock="Left"
-                                   Text="{Binding ThinkingAnimationText}"
-                                   VerticalAlignment="Center"
-                                   FontSize="14"
-                                   Width="20"
-                                   TextAlignment="Center"
-                                   Margin="0,0,4,0"
-                                   Visibility="{Binding IsAsking, Converter={StaticResource BoolToVis}}"/>
+                        <controls:TwinkleControl DockPanel.Dock="Left"
+                                  FontSize="16"
+                                  Width="20"
+                                  Mode="Crossfade"
+                                  Margin="0,0,4,0"
+                                  Visibility="{Binding IsAsking, Converter={StaticResource BoolToVis}}"/>
                         <TextBox Text="{Binding PendingQuery, UpdateSourceTrigger=PropertyChanged}"
                                  VerticalAlignment="Center"
                                  ToolTip="Ask a question about TapeWin…"

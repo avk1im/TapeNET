@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 
+using TapeWinNET.Help;
 using TapeWinNET.ViewModels;
 
 namespace TapeWinNET;
@@ -10,13 +11,20 @@ namespace TapeWinNET;
 /// Advanced FCL filter editor dialog.
 /// Provides a visual DNF condition editor (left pane) and an expandable
 /// FCL program text editor (right pane) with bidirectional sync.
+/// The dialog also hosts an adjacent <see cref="Controls.HelpPane"/> in a
+/// third outer column; the existing <c>ProgramColumn</c> lives inside the
+/// inner grid and is unaffected.
 /// </summary>
-public partial class FclFilterWindow : Window
+public partial class FclFilterWindow : Window, IHelpPaneHost
 {
     /// <summary>Width added when the program pane opens via toggle.</summary>
     private const double DefaultProgramPaneWidth = 340;
 
     private readonly FclFilterWindowVM _viewModel;
+
+    // All embedded help-pane boilerplate (window expansion, F1 resolution,
+    //  session lifecycle, and AppSettings persistence) lives in this controller.
+    private readonly DialogHelpPaneController _help;
 
     /// <summary>
     /// Suppresses the <see cref="OnProgramPaneToggled"/> window resize
@@ -32,6 +40,10 @@ public partial class FclFilterWindow : Window
 
         // Listen for program pane toggle to resize the window
         viewModel.PropertyChanged += ViewModel_PropertyChanged;
+
+        _help = new DialogHelpPaneController(
+            this, this, HelpPaneColumn, HelpPaneSplitter, HelpPaneControl,
+            defaultTopicId: "dialog.fcl-filter", helpButton: HelpButton);
     }
 
     /// <summary>
@@ -70,6 +82,8 @@ public partial class FclFilterWindow : Window
 
     /// <summary>
     /// Expands or collapses the program pane by adjusting the window width.
+    /// Only the inner <c>ProgramColumn</c> is affected — the outer help pane
+    /// column is managed independently by <see cref="DialogHelpPaneController"/>.
     /// </summary>
     private void OnProgramPaneToggled()
     {
@@ -120,4 +134,33 @@ public partial class FclFilterWindow : Window
         _viewModel.PropertyChanged -= ViewModel_PropertyChanged;
         base.OnClosed(e);
     }
+
+    // ─────────────────────────────────────────────────
+    //  Help pane (embedded, adjacent mode)
+    // ─────────────────────────────────────────────────
+
+    private void HelpButton_Click(object sender, RoutedEventArgs e)
+        => _help.ToggleHelpPane();
+
+    private void Window_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        => _help.HandleF1(e);
+
+    #region IHelpPaneHost
+
+    public string HostName => nameof(FclFilterWindow);
+
+    // Adjacent: the window expands to the right; the HelpPane is a column inside
+    //  the same window, not a separate floating window.
+    public HelpPaneHostMode HostMode => HelpPaneHostMode.Adjacent;
+
+    public void OnPaneOpening(double desiredWidth) => _help.OnPaneOpening(desiredWidth);
+
+    public void OnPaneClosed() => _help.OnPaneClosed();
+
+    public FrameworkElement? ResolveControlByName(string name)
+        => FindName(name) as FrameworkElement;
+
+    public void OpenHelpPane(string? topicId = null) => _help.OpenHelpPane(topicId);
+
+    #endregion
 }

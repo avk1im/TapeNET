@@ -1,0 +1,38 @@
+﻿<UserControl x:Class="TapeWinNET.Controls.TwinkleControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             xmlns:local="clr-namespace:TapeWinNET.Controls"
+             mc:Ignorable="d" 
+             d:DesignHeight="20" d:DesignWidth="20">
+    <Grid>
+        <!-- Crossfade mode: two stacked TextBlocks -->
+        <Grid x:Name="CrossfadeHost">
+            <TextBlock x:Name="StarA"
+                       FontSize="{Binding FontSize, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       Opacity="1"/>
+
+            <TextBlock x:Name="StarB"
+                       FontSize="{Binding FontSize, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       Opacity="0"/>
+        </Grid>
+
+        <!-- Breathe mode: single TextBlock with ScaleTransform -->
+        <Grid x:Name="BreatheHost" Visibility="Collapsed">
+            <TextBlock x:Name="BreatheStar"
+                       FontSize="{Binding FontSize, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       RenderTransformOrigin="0.5,0.5">
+                <TextBlock.RenderTransform>
+                    <ScaleTransform x:Name="BreatheScale" ScaleX="1" ScaleY="1"/>
+                </TextBlock.RenderTransform>
+            </TextBlock>
+        </Grid>            
+    </Grid>
+</UserControl>

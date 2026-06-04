@@ -288,16 +288,34 @@ public static class WindowPlacementApplicator
 
         Attached.Add(window);
 
+        window.SourceInitialized += OnSourceInitialized;
         window.Loaded += OnLoaded;
         window.Closing += OnClosing;
+    }
+
+    private static void OnSourceInitialized(object? sender, EventArgs e)
+    {
+        if (sender is not Window window) return;
+
+        var visibility = window.Visibility;
+        window.Visibility = Visibility.Hidden;
+        
+        var manager = new WindowPlacementManager(App.Settings);
+        manager.Restore(window);
+        
+        window.Visibility = visibility;
     }
 
     private static void OnLoaded(object? sender, RoutedEventArgs e)
     {
         if (sender is not Window window) return;
 
-        var manager = new WindowPlacementManager(App.Settings);
-        manager.Restore(window);
+        // Ensure that our OnClosing handler is last, to capture the
+        //  very last placement of the dialog, e.g. when the Help pane
+        //  has been closed already.
+        //  By now all the other handlers must've been installed...
+        window.Closing -= OnClosing; // ...so remove us first, then...
+        window.Closing += OnClosing; // ...re-add -- now we're the last!
     }
 
     private static void OnClosing(object? sender, CancelEventArgs e)

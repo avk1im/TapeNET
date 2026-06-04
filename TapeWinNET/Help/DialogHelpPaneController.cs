@@ -43,6 +43,9 @@ public sealed class DialogHelpPaneController
     private readonly Controls.HelpPane  _paneControl;
     private readonly string             _defaultTopicId;
     private readonly double             _defaultWidth;
+    private readonly double             _mininimalHeight;
+
+    private double _originalHeight = -1.0; // captured on first pane open, used to restore window height when the pane closes
 
     // Optional toggle button this controller drives (label + enabled state).
     private readonly Button?            _helpButton;
@@ -69,6 +72,7 @@ public sealed class DialogHelpPaneController
     /// to <see cref="ToggleHelpPane"/>.
     /// </param>
     /// <param name="defaultWidth">Default pane width used when none is persisted.</param>
+    /// <param name="minimalHeight">Minimal height of the dialog when Help pane opens.</param>
     public DialogHelpPaneController(
         IHelpPaneHost host,
         Window window,
@@ -77,7 +81,8 @@ public sealed class DialogHelpPaneController
         Controls.HelpPane paneControl,
         string defaultTopicId,
         Button? helpButton = null,
-        double defaultWidth = 340)
+        double defaultWidth = 340,
+        double minimalHeight = 300)
     {
         _host           = host;
         _window         = window;
@@ -87,12 +92,13 @@ public sealed class DialogHelpPaneController
         _defaultTopicId = defaultTopicId;
         _helpButton     = helpButton;
         _defaultWidth   = defaultWidth;
+        _mininimalHeight = minimalHeight;
 
         // Snapshot the initial (no-pane) window width
         _dialogContentWidth = window.Width;
 
         // Persist state whenever the dialog closes (the pane may still be visible)
-        window.Closing += (_, _) => { if (_vm is not null) PersistState(); };
+        window.Closing += (_, _) => OnPaneClosed();
     }
 
     // ── IHelpPaneHost forwarding ───────────────────────────────────────────────
@@ -110,6 +116,19 @@ public sealed class DialogHelpPaneController
         if (overhang > 0)
             _window.Left = Math.Max(workArea.Left, _window.Left - overhang);
 
+        // Check if the dialog height is at least _minimalHeight, expand downwards otehrwise
+        if (_window.Height < _mininimalHeight)
+        {
+            _originalHeight = _window.Height; // capture the original height on first open
+            _window.Height = _mininimalHeight;
+
+            // If the window now protrudes beyond the bottom edge of the work area,
+            // shift it up until it fits
+            overhang = (_window.Top + _window.Height) - workArea.Bottom;
+            if (overhang > 0)
+                _window.Top = Math.Max(workArea.Top, _window.Top - overhang);
+        }
+
         // Reveal the new column and splitter
         _paneColumn.Width    = new GridLength(desiredWidth, GridUnitType.Pixel);
         _paneColumn.MinWidth = 200;
@@ -121,14 +140,27 @@ public sealed class DialogHelpPaneController
     {
         PersistState();
 
-        // Shrink the window back to the dialog-content-only width
+        // Shrink the window back to the dialog-content-only width...
         var removedWidth = _paneColumn.ActualWidth + SplitterWidth; // pane + splitter
         _window.Width = Math.Max(_dialogContentWidth, _window.Width - removedWidth);
+        //  ...and original height
+        if (_originalHeight > 0.0)
+        {
+            _window.Height = _originalHeight;
+            _originalHeight = -1.0; // reset
+        }
 
         _paneColumn.Width    = new GridLength(0);
         _paneColumn.MinWidth = 0;
         _splitter.Visibility    = Visibility.Collapsed;
         _paneControl.Visibility = Visibility.Collapsed;
+
+        if (_vm is not null)
+        {   
+            _vm.SessionInfo -= OnSessionInfo;
+            _vm.SessionWarning -= OnSessionWarning;
+            _vm.SessionError -= OnSessionError;
+        }
 
         // Reset the Help button to its idle state (also covers the in-pane close button,
         //  since that path routes through OnPaneClosed as well)
@@ -170,8 +202,7 @@ public sealed class DialogHelpPaneController
                 //  DataContextChanged handler in HelpPane.xaml.cs applies it immediately
                 ChatPaneHeight = settings.HelpPaneChatHeight ?? 200.0
             };
-            // Dialogs have no log pane — surface warnings via a MessageBox
-            _vm.SessionWarning += OnSessionWarning;
+
             _paneControl.DataContext = _vm;
         }
 
@@ -188,6 +219,11 @@ public sealed class DialogHelpPaneController
 
         _vm.IsPaneOpen = true;
 
+        // Dialogs have no log pane — surface warnings via MainWindow
+        _vm.SessionInfo += OnSessionInfo;
+        _vm.SessionWarning += OnSessionWarning;
+        _vm.SessionError += OnSessionError;
+        
         // Pane is now open — let the button close it on the next click
         SetButtonState(OpenLabel, enabled: true);
 
@@ -268,6 +304,20 @@ public sealed class DialogHelpPaneController
         // settings.SaveToFile(); -- not needed, the app will save on exit
     }
 
+    private static void OnSessionInfo(object? sender, string msg)
+    {
+        if (Application.Current.MainWindow is MainWindow mw)
+            mw.Dispatcher.Invoke(() => mw.OnHelpSessionInfo(sender, msg));
+    }
     private static void OnSessionWarning(object? sender, string msg)
-        => MessageBox.Show(msg, "Help", MessageBoxButton.OK, MessageBoxImage.Information);
+    {
+        if (Application.Current.MainWindow is MainWindow mw)
+            mw.Dispatcher.Invoke(() => mw.OnHelpSessionWarning(sender, msg));
+    }
+    private static void OnSessionError(object? sender, string msg)
+    {
+        if (Application.Current.MainWindow is MainWindow mw)
+            mw.Dispatcher.Invoke(() => mw.OnHelpSessionError(sender, msg));
+    }
+
 }

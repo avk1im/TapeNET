@@ -724,7 +724,10 @@ All the boilerplate for hosting a `HelpPane` inside a dialog window is centraliz
 #### What the controller owns
 
 - **Window-expansion geometry** (`OnPaneOpening`) — adds `desiredWidth + 4 px (splitter)` to the window
-  width, then shifts the window left if it would protrude beyond the right edge of the work area.
+  width, then shifts the window left if it would protrude beyond the right edge of the work area. It
+  also checks that the height of the dialog window is at least the specified minimal height (default 300 px)
+  and if not, expands the height and shifts the window up to fit on screen. The controller tracks the
+  geometry deltas so it can reverse them in `OnPaneClosed`.
 - **Collapse geometry** (`OnPaneClosed`) — shrinks the window back to the exact content-only width that
   was snapshotted at construction time (`_dialogContentWidth = window.Width`). This snapshot is the key
   reason the controller must be constructed **after** `InitializeComponent()` and with the window at its
@@ -759,6 +762,7 @@ Add a three-column outer grid inside the window's root, with the third column in
 
 <controls:HelpPane x:Name="HelpPaneControl"
 				   Grid.Column="2"
+				   DataContext="{x:Null}"
 				   Visibility="Collapsed"/>
 ```
 
@@ -1394,7 +1398,10 @@ Apply the `DialogHelpPaneController` pattern from §6.3a to each one.
 
 1. **XAML** — add the outer three-column `Grid.ColumnDefinitions`, place all existing content in
    `Grid.Column="0"`, add `GridSplitter x:Name="HelpPaneSplitter"` in column 1, and
-   `controls:HelpPane x:Name="HelpPaneControl"` in column 2 (both initially `Visibility="Collapsed"`).
+   `controls:HelpPane x:Name="HelpPaneControl" DataContext="{x:Null}"` in column 2 (both initially `Visibility="Collapsed"`).
+   Notice: We must set `HelpPaneControl.DataContext="{x:Null}"` in XAML to prevent the pane from inheriting
+   the dialog's `DataContext`, which causes XAML binding errors at the load time. The controller will set
+   the DataContext to the correct `HelpPaneViewModel` instance at runtime.
    Add `<Button x:Name="HelpButton" Content="_Help ▶" Click="HelpButton_Click" …/>` to the action bar.
    Add `PreviewKeyDown="Window_PreviewKeyDown"` to the root `<Window>` element.
 
@@ -1432,14 +1439,14 @@ the `OnProgramPaneToggled` window-resize logic in the code-behind.
 |---|---|
 | `BackupWindow` | ✅ (done in §6.7) |
 | `RestoreWindow` | ✅ (done in §6.7) |
-| `OpenVirtualDriveWindow` | *(pending)* |
-| `OpenRemoteVirtualDriveWindow` | *(pending)* |
-| `ConnectToRemoteHostWindow` | *(pending)* |
-| `FormatMediaWindow` | *(pending)* |
-| `DeleteBackupSetsWindow` | *(pending)* |
-| `FclFilterWindow` | *(pending — see note above)* |
+| `OpenVirtualDriveWindow` | ✅ |
+| `OpenRemoteVirtualDriveWindow` | ✅ |
+| `ConnectToRemoteHostWindow` | ✅ |
+| `FormatMediaWindow` | ✅ |
+| `DeleteBackupSetsWindow` | ✅ |
+| `FclFilterWindow` | ✅ |
 
-Also author remaining content waves: Features, UI (rest), Reference, Glossary.
+✅ Done: Author remaining content waves: Features, UI (rest), Reference, Glossary
 
 **Tests**
 - Per-dialog STA smoke test: opening the pane navigates to the right topic; F1 on a tagged control navigates to its sub-topic.

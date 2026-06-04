@@ -410,6 +410,7 @@
             <!-- Help pane — revealed by expanding column 2 -->
             <controls:HelpPane x:Name="HelpPaneControl"
                                Grid.Column="2"
+                               DataContext="{x:Null}"
                                Visibility="Collapsed"/>
     </Grid>
 </Window>

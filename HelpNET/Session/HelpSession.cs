@@ -72,9 +72,13 @@ public sealed class HelpSession : IHelpSession
         //  control request a sub-section id (e.g. "dialog.restore.options") that
         //  is authored as a heading within the single parent page ("dialog.restore").
         var topic = _store.GetById(request.TopicId)
-            ?? ResolveParentTopic(request.TopicId)
-            ?? throw new KeyNotFoundException(
-                $"Help topic '{request.TopicId}' not found in the content store.");
+            ?? ResolveParentTopic(request.TopicId);
+        //?? throw new KeyNotFoundException(
+        //    $"Help topic '{request.TopicId}' not found in the content store.");
+
+        // We aren't throwing on non-found topics since AI might hallucinate non-existent topic ids.
+        if (topic is null)
+            return HomeAsync(ct);   // Fall back to home if topic not found.
 
         NavigateTo(topic);
         return Task.FromResult(topic);

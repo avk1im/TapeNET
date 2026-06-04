@@ -5,19 +5,31 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
         xmlns:converters="clr-namespace:TapeWinNET.Converters"
+        xmlns:help="clr-namespace:TapeWinNET.Help"
+        xmlns:controls="clr-namespace:TapeWinNET.Controls"
         d:DataContext="{d:DesignInstance Type=vm:FormatMediaViewModel}"
         mc:Ignorable="d"
         Title="Format Media"
         Height="300" Width="450"
         ResizeMode="CanResizeWithGrip"
         WindowStartupLocation="CenterOwner"
-        ShowInTaskbar="False">
+        ShowInTaskbar="False"
+        PreviewKeyDown="Window_PreviewKeyDown">
 
     <Window.InputBindings>
         <KeyBinding Key="Escape" Command="{Binding CancelCommand}"/>
     </Window.InputBindings>
 
-    <Grid Margin="16">
+    <!-- Outer grid: column 0 = dialog content, column 1 = splitter, column 2 = help pane. -->
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>                                       <!-- help splitter -->
+            <ColumnDefinition x:Name="HelpPaneColumn" Width="0" MinWidth="0"/>    <!-- help pane    -->
+        </Grid.ColumnDefinitions>
+
+        <!-- Dialog content fills column 0 -->
+        <Grid Grid.Column="0" Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -54,11 +66,35 @@
         </Border>
 
         <!-- Buttons -->
-        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
-            <Button Content="Cancel" Command="{Binding CancelCommand}"
-                    Width="80" Margin="0,0,8,0" IsCancel="True"/>
-            <Button Content="Format" Command="{Binding FormatCommand}"
-                    Width="80"/>
-        </StackPanel>
+        <Grid Grid.Row="3" Margin="0,16,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                <Button x:Name="HelpButton" Content="_Help ▶" Click="HelpButton_Click"
+                        MinWidth="60" Padding="10,1"
+                        ToolTip="Open help for this dialog (F1)"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Cancel" Command="{Binding CancelCommand}"
+                        Width="80" Margin="0,0,8,0" IsCancel="True" IsDefault="True"/>
+                <Button Content="Format" Command="{Binding FormatCommand}"
+                        Width="80" Foreground="{DynamicResource WarningFg.Error}"/>
+            </StackPanel>
+        </Grid>
+        </Grid><!-- end dialog-content Grid (column 0) -->
+
+        <!-- Help splitter — visible only when the help pane is open -->
+        <GridSplitter x:Name="HelpPaneSplitter"
+                      Grid.Column="1"
+                      Width="4"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Stretch"
+                      Background="LightGray"
+                      Visibility="Collapsed"/>
+
+        <!-- Help pane — width driven by HelpPaneColumn; starts at 0 (hidden) -->
+        <controls:HelpPane x:Name="HelpPaneControl"
+                           Grid.Column="2"
+                           DataContext="{x:Null}"
+                           Visibility="Collapsed"/>
+
     </Grid>
 </Window>
