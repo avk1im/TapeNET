@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace TapeWinNET.Utils;
 
@@ -10,7 +11,8 @@ namespace TapeWinNET.Utils;
 /// </summary>
 public class MruFileList
 {
-    private readonly string _filePath;
+    private readonly string _pathOrKey;
+    private readonly AppSettings? _settings;
     private readonly int _maxCount;
     private readonly object _lock = new();
     private readonly List<string> _items = [];
@@ -27,7 +29,26 @@ public class MruFileList
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "TapeWinNET");
         Directory.CreateDirectory(folder);
-        _filePath = Path.Combine(folder, fileName);
+        _pathOrKey = Path.Combine(folder, fileName);
+        // check if there's .json extension, if not add it
+        if (!Path.HasExtension(_pathOrKey))
+            _pathOrKey += ".json";
+        _settings = null;
+
+        Load();
+    }
+
+    /// <summary>
+    /// Creates an MRU list backed by AppSettings
+    /// </summary>
+    /// <param name="setting">The AppSettings instance.</param>
+    /// <param name="appSettingsKey">The key in AppSettings to store the MRU list.</param>
+    /// <param name="maxCount">Maximum number of entries to keep.</param>
+    public MruFileList(AppSettings settings, string settingsKey, int maxCount = 4)
+    {
+        _maxCount = maxCount;
+        _settings = settings;
+        _pathOrKey = settingsKey;
 
         Load();
     }
@@ -120,16 +141,24 @@ public class MruFileList
 
     private void Load()
     {
+        if (_settings != null)
+            LoadFromSettings();
+        else
+            LoadFromFile();
+    }
+
+    private void LoadFromFile()
+    {
         lock (_lock)
         {
             _items.Clear();
 
             try
             {
-                if (!File.Exists(_filePath))
+                if (!File.Exists(_pathOrKey))
                     return;
 
-                var json = File.ReadAllText(_filePath);
+                var json = File.ReadAllText(_pathOrKey);
                 var list = JsonSerializer.Deserialize<List<string>>(json);
                 if (list != null)
                 {
@@ -147,19 +176,53 @@ public class MruFileList
         }
     }
 
+    private void LoadFromSettings()
+    {
+        lock (_lock)
+        {
+            _items.Clear();
+            var items = _settings?.GetStringList(_pathOrKey);
+            if (items != null)
+                _items.AddRange(items);
+        }
+    }
+
     private void Save()
+    {
+        if (_settings != null)
+            SaveToSettings();
+        else
+            SaveToFile();
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+    
+    private void SaveToFile()
     {
         lock (_lock)
         {
             try
             {
-                var json = JsonSerializer.Serialize(_items, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(_filePath, json);
+                var json = JsonSerializer.Serialize(_items, JsonOptions);
+                File.WriteAllText(_pathOrKey, json);
             }
             catch
             {
                 // Best effort — e.g. folder permissions
             }
+        }
+    }
+
+    private void SaveToSettings()
+    {
+        lock (_lock)
+        {
+            _settings?.SetStringList(_pathOrKey, _items);
+            // _settings?.SaveToFile(); -- the App will do this on closing
         }
     }
 }

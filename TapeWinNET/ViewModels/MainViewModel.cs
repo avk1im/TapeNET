@@ -44,7 +44,7 @@ public partial class MainViewModel : ViewModelBase
     private const int MruMaxCount = 4;
 
     private readonly TapeService _tapeService;
-    private readonly MruFileList _virtualDriveMru = new("VirtualDriveMru.json", MruMaxCount);
+    private readonly MruFileList _virtualDriveMru;
     private string _windowTitle = "TapeWin - Tape Backup Manager";
     private string _statusMessage = "Ready";
     private string _busyMessage = string.Empty;
@@ -119,7 +119,9 @@ public partial class MainViewModel : ViewModelBase
         // Initialize drive menu items
         InitializeDriveMenu();
 
-        // Initialize MRU virtual drive menu items
+        // Set the MRU virtual drive list to the one backed by AppSettings...
+        _virtualDriveMru = new(Settings, "VirtualDriveMru", MruMaxCount);
+        // ...and initialize MRU virtual drive menu items
         RefreshRecentVirtualDriveMenu();
 
         // Restore view options from settings
