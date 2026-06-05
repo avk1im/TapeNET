@@ -1,7 +1,10 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
 
 using HelpNET.Content;
 using HelpNET.Indexing;
@@ -130,7 +133,7 @@ public partial class HelpPane : UserControl
             Dispatcher.BeginInvoke(() =>
             {
                 ConversationScroller.ScrollToEnd();
-            }, System.Windows.Threading.DispatcherPriority.Background);
+            }, DispatcherPriority.Background);
         }
     }
 
@@ -142,6 +145,7 @@ public partial class HelpPane : UserControl
         {
             oldVm.ConversationItems.CollectionChanged -= ConversationItems_Changed;
             oldVm.PropertyChanged -= Vm_PropertyChanged;
+            oldVm.Renderer.GlossaryLinkClicked -= Renderer_GlossaryLinkClicked;
         }
 
         // Subscribe to new VM and push the current document immediately.
@@ -150,6 +154,7 @@ public partial class HelpPane : UserControl
         {
             newVm.ConversationItems.CollectionChanged += ConversationItems_Changed;
             newVm.PropertyChanged += Vm_PropertyChanged;
+            newVm.Renderer.GlossaryLinkClicked += Renderer_GlossaryLinkClicked;
             PushDocument(newVm.CurrentDocument);
             // Restore the persisted chat row height for this VM
             ApplyChatHeight(newVm);
@@ -178,6 +183,125 @@ public partial class HelpPane : UserControl
     private void PushDocument(FlowDocument? document)
     {
         ContentViewer.Document = document ?? new FlowDocument();
+    }
+
+    // ── Glossary popup (built entirely in code-behind) ────────────────────────
+    // The Popup is not declared in XAML. Putting a Popup inside a UserControl in
+    // XAML triggers MC3089 ("already has a child") from the XAML compiler because
+    // WPF's logical-child rules treat Popup as a second root even inside a panel.
+    // Building it here eliminates the warning with no functional change.
+    //
+    // UX: the popup is opened via Dispatcher.BeginInvoke(DispatcherPriority.Input)
+    // so it becomes visible only AFTER the mouse-button-up event that follows the
+    // click has been processed. Without this delay, StaysOpen=False would
+    // immediately see that MouseUp and treat it as an "outside click", closing the
+    // popup before the user ever sees it.
+
+    private Popup?     _glossaryPopup;
+    private TextBlock? _glossaryPopupText;
+
+    /// <summary>
+    /// Lazily constructs the glossary <see cref="Popup"/> and returns it.
+    /// The popup is created once, reused on every subsequent click.
+    /// </summary>
+    private Popup EnsureGlossaryPopup()
+    {
+        if (_glossaryPopup is not null)
+            return _glossaryPopup;
+
+        // "View full glossary…" link inside the popup footer
+        var fullPageLink = new System.Windows.Documents.Hyperlink(
+            new Run("View full glossary…"))
+        {
+            Foreground = new SolidColorBrush(Color.FromRgb(0x33, 0x66, 0x99)),
+        };
+        fullPageLink.Click += GlossaryFullPageLink_Click;
+
+        _glossaryPopupText = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            FontSize     = 12,
+            FontFamily   = new FontFamily("Segoe UI"),
+            Foreground   = new SolidColorBrush(Color.FromRgb(0x00, 0x33, 0x66)),
+        };
+
+        var footerBlock = new TextBlock
+        {
+            Margin      = new Thickness(0, 5, 0, 0),
+            FontSize    = 11,
+            FontStyle   = FontStyles.Italic,
+            Foreground  = new SolidColorBrush(Color.FromRgb(0x33, 0x66, 0x99)),
+        };
+        footerBlock.Inlines.Add(fullPageLink);
+
+        var content = new Border
+        {
+            Background      = new SolidColorBrush(Color.FromRgb(0xCC, 0xE5, 0xFF)),
+            BorderBrush     = new SolidColorBrush(Color.FromRgb(0x33, 0x99, 0xCC)),
+            BorderThickness = new Thickness(1),
+            CornerRadius    = new CornerRadius(4),
+            Padding         = new Thickness(10, 7, 10, 7),
+            MaxWidth        = 300,
+            Child           = new StackPanel
+            {
+                MaxWidth  = 300,
+                Children  = { _glossaryPopupText, footerBlock },
+            },
+        };
+
+        _glossaryPopup = new Popup
+        {
+            Child             = content,
+            Placement         = PlacementMode.Mouse,
+            StaysOpen         = false,
+            AllowsTransparency = true,
+            MaxWidth          = 320,
+            // Anchor to this UserControl so the popup is positioned relative to it
+            PlacementTarget   = this,
+        };
+
+        return _glossaryPopup;
+    }
+
+    /// <summary>
+    /// Handles <see cref="MarkdownRenderer.GlossaryLinkClicked"/>: shows the
+    /// glossary popup with the term's definition near the mouse cursor.
+    /// <para>
+    /// Opening is deferred to <see cref="DispatcherPriority.Input"/> so the popup
+    /// becomes visible only after the MouseUp that closes the current click chain
+    /// has been processed — otherwise <c>StaysOpen=False</c> would treat that
+    /// MouseUp as an outside-click and immediately dismiss the popup.
+    /// </para>
+    /// </summary>
+    private void Renderer_GlossaryLinkClicked(object? sender, string termSlug)
+    {
+        if (DataContext is not HelpPaneViewModel vm) return;
+
+        var def = vm.Session.TryGetGlossaryDefinition(termSlug);
+
+        // Strip markdown bold markers for plain display.
+        var displayText = (def ?? $"({termSlug})").Replace("**", string.Empty);
+
+        var popup = EnsureGlossaryPopup();
+        _glossaryPopupText!.Text = displayText;
+
+        // Close any currently-open glossary popup first (e.g. rapid successive clicks).
+        popup.IsOpen = false;
+
+        // Defer the open past the current mouse-event chain so StaysOpen=False does
+        //  not immediately re-close the popup on the MouseUp of this same click.
+        Dispatcher.BeginInvoke(() => popup.IsOpen = true, DispatcherPriority.Input);
+    }
+
+    /// <summary>
+    /// Clicking "View full glossary…" inside the popup navigates to the full glossary topic.
+    /// </summary>
+    private void GlossaryFullPageLink_Click(object sender, RoutedEventArgs e)
+    {
+        if (_glossaryPopup is not null)
+            _glossaryPopup.IsOpen = false;
+        if (DataContext is HelpPaneViewModel vm)
+            vm.NavigateCommand.Execute("reference.glossary");
     }
 
     // ── Chat splitter / pane-height persistence ───────────────────────────────

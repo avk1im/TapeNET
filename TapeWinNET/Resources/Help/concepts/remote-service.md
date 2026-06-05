@@ -12,8 +12,8 @@ intents:
 
 # Remote Service
 
-The **TapeNET remote service** lets a tape drive (or virtual tape) attached to
-one machine be used from TapeWin running on another.  TapeWin connects to the
+The [remote service](help://glossary/remote-service) lets a tape drive (or [virtual drive](help://glossary/virtual-drive)) attached to
+one machine be used from TapeWin running on another.
 service over the network and then operates the remote drive as if it were
 local.
 

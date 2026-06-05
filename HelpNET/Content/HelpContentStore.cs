@@ -107,6 +107,75 @@ public sealed class HelpContentStore
         return t?.Kind == HelpTopicKind.Glossary ? t : null;
     }
 
+    // Lazily-built cache of glossary definitions parsed from the reference.glossary topic body.
+    // Key: slug (term lowercased, spaces replaced by hyphens). Value: definition text (plain).
+    private Dictionary<string, string>? _glossaryCache;
+
+    /// <summary>
+    /// Returns the plain-text definition for the given glossary term slug, or <c>null</c>
+    /// when not found.
+    /// <para>
+    /// Terms are extracted from the <c>reference.glossary</c> topic body, where each entry
+    /// is a paragraph of the form <c>**Term name** — definition text.</c>
+    /// The <paramref name="termSlug"/> is the term's display name lowercased with spaces and
+    /// slashes replaced by hyphens (e.g. <c>"backup-set"</c>, <c>"toc"</c>, <c>"fcl"</c>).
+    /// </para>
+    /// </summary>
+    public string? GetGlossaryDefinition(string termSlug)
+    {
+        _glossaryCache ??= BuildGlossaryCache();
+        return _glossaryCache.TryGetValue(
+            termSlug.Trim().ToLowerInvariant(), out var def) ? def : null;
+    }
+
+    /// <summary>Parses the <c>reference.glossary</c> topic body into a slug → definition map.</summary>
+    private Dictionary<string, string> BuildGlossaryCache()
+    {
+        var cache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var glossaryTopic = GetById("reference.glossary");
+        if (glossaryTopic is null)
+            return cache;
+
+        // Each entry is a paragraph starting with **Term** — definition.
+        // We scan lines looking for lines that start with "**".
+        foreach (var line in glossaryTopic.MarkdownBody.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            // Expected pattern: **Term name** — definition text.
+            if (!trimmed.StartsWith("**", StringComparison.Ordinal))
+                continue;
+
+            var closeStars = trimmed.IndexOf("**", 2, StringComparison.Ordinal);
+            if (closeStars < 0)
+                continue;
+
+            var term = trimmed[2..closeStars].Trim();
+            if (string.IsNullOrEmpty(term))
+                continue;
+
+            // Everything after the closing ** and optional " — " is the definition.
+            var rest = trimmed[(closeStars + 2)..].TrimStart();
+            if (rest.StartsWith("—", StringComparison.Ordinal))
+                rest = rest[1..].TrimStart();
+            else if (rest.StartsWith("--", StringComparison.Ordinal))
+                rest = rest[2..].TrimStart();
+
+            // Strip any trailing help:// links from the plain-text definition
+            //  (links like "See [Foo](help://...)" become "See [Foo]").
+            rest = System.Text.RegularExpressions.Regex.Replace(
+                rest, @"\[([^\]]+)\]\(help://[^\)]+\)", "$1");
+
+            // Build a slug from the term: lowercase, collapse whitespace/slashes to hyphens.
+            var slug = System.Text.RegularExpressions.Regex.Replace(
+                term.ToLowerInvariant(), @"[\s/()]+", "-").Trim('-');
+
+            if (!string.IsNullOrEmpty(slug) && !string.IsNullOrEmpty(rest))
+                cache[slug] = $"**{term}** — {rest}";
+        }
+
+        return cache;
+    }
+
     /// <summary>
     /// Returns all topics that include the given topic id in their
     /// <c>RelatedTopicIds</c> list, plus the topic's own related list — a

@@ -71,6 +71,14 @@ public interface IHelpSession : IAsyncDisposable
     /// </summary>
     string? TryGetTopicTitle(string id);
 
+    /// <summary>
+    /// Returns the plain-text definition for the given glossary term slug, or <c>null</c>
+    /// when not found.  Used by <c>MarkdownRenderer</c> to populate glossary popups.
+    /// The slug is the term lowercased with spaces replaced by hyphens
+    /// (e.g. <c>"backup-set"</c>, <c>"toc"</c>, <c>"fcl"</c>).
+    /// </summary>
+    string? TryGetGlossaryDefinition(string termSlug);
+
     // ── Events ────────────────────────────────────────────────────────────────
 
     /// <summary>Raised when <see cref="CurrentTopic"/> changes.</summary>

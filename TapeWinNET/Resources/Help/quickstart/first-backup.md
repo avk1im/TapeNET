@@ -27,7 +27,7 @@ This walkthrough takes you from a blank tape to a completed backup in a few step
 
 1. Click **Backup → New Backup…** (or the toolbar **New Backup** button).
 2. In the [New Backup dialog](help://topic/dialog.backup), add the folders or files you want to back up.
-3. Optionally set a [file filter](help://topic/concepts.fcl-filters) to include or exclude files by name, size, or date.
+3. Optionally set an [FCL](help://glossary/fcl) [file filter](help://topic/concepts.fcl-filters) to include or exclude files by name, size, or date.
 4. Click **Start Backup**.
 
 ## Step 3 — Monitor Progress

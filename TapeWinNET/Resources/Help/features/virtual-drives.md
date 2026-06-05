@@ -13,8 +13,8 @@ related:
 
 # Virtual Drives
 
-Don't have tape hardware?  TapeWin can emulate a drive using a **file on disk**
-or a **block of RAM**, so every workflow — format, backup, restore, validate —
+TapeWin can emulate a drive — a [virtual drive](help://glossary/virtual-drive) — using a **file on disk**
+or a **block of RAM**
 works just the same.  Great for testing, demos, and disk-based archives.
 
 Open one from the [Open Virtual Drive dialog](help://topic/dialog.open-virtual-drive),

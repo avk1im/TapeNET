@@ -11,7 +11,7 @@ intents:
 
 # Incremental Backup
 
-An **incremental backup** records only files that have changed since the
+An [incremental backup](help://glossary/incremental-backup) records only files that have changed since the
 previous backup, making it faster and using less tape than a full backup.
 
 ## How It Works
@@ -26,7 +26,8 @@ created or modified) to identify changed files:
 ## Restoring from Incrementals
 
 To restore to the most recent state you may need to apply multiple sets:
-the last full backup **plus** every incremental set taken after it, in order.
+the last full backup **plus** every incremental set taken after it, in order —
+this sequence is called an [incremental chain](help://glossary/incremental-chain).
 TapeWin's Restore dialog handles this automatically when you select a set.
 
 ## Full vs Incremental in TapeWin

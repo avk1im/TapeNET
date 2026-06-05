@@ -17,8 +17,7 @@ ai_excerpt: true
 
 # Delete Backup Sets
 
-Removes one or more of the **most recent** backup sets from the tape's Table of
-Contents.  Useful when the last backup was accidental or corrupt, or to make
+Removes one or more of the **most recent** [backup sets](help://glossary/backup-set) from the tape's [Table of Contents](help://glossary/toc).
 room for new data.
 
 ## Delete from set

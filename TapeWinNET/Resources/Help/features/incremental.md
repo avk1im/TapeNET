@@ -14,7 +14,7 @@ related:
 
 Incremental backups capture **only the files that changed** since the previous
 backup, saving time and tape.  TapeWin tracks change state per file and links
-incremental sets into a **chain** so a restore can reconstruct the latest
+incremental sets into an [incremental chain](help://glossary/incremental-chain) so a restore can reconstruct the latest
 version of every file.
 
 - Enable it with **Incremental backup** in the

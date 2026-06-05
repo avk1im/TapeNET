@@ -24,14 +24,23 @@ public sealed class MarkdownRendererTests
     /// <summary>
     /// Minimal stub of <see cref="IHelpSession"/> used to satisfy
     /// <see cref="MarkdownRenderer"/>'s constructor without a real session.
-    /// Only <see cref="TryGetTopicTitle"/> is exercised.
+    /// Supports optional topic-title lookup, glossary-definition lookup, and
+    /// an <paramref name="onNavigate"/> callback for asserting navigation was (not) called.
     /// </summary>
-    private sealed class StubSession(Dictionary<string, string>? titles = null) : IHelpSession
+    private sealed class StubSession(
+        Dictionary<string, string>? titles        = null,
+        Dictionary<string, string>? glossaryDefs  = null,
+        Action?                     onNavigate    = null) : IHelpSession
     {
-        private readonly Dictionary<string, string> _titles = titles ?? [];
+        private readonly Dictionary<string, string> _titles      = titles       ?? [];
+        private readonly Dictionary<string, string> _glossaryDefs = glossaryDefs ?? [];
+        private readonly Action?                    _onNavigate  = onNavigate;
 
         public string? TryGetTopicTitle(string id)
             => _titles.TryGetValue(id, out var t) ? t : null;
+
+        public string? TryGetGlossaryDefinition(string termSlug)
+            => _glossaryDefs.TryGetValue(termSlug, out var d) ? d : null;
 
         // ── Unused interface members ───────────────────────────────────────────
         public HelpTopic?                     CurrentTopic   => null;
@@ -40,7 +49,11 @@ public sealed class MarkdownRendererTests
         public IReadOnlyList<ConversationTurn> Conversation  => [];
         public HelpAssistantMode              AssistantMode  => HelpAssistantMode.Lexical;
 
-        public Task<HelpTopic>  NavigateAsync(HelpNavigationRequest request, CancellationToken ct) => Task.FromResult<HelpTopic>(null!);
+        public Task<HelpTopic> NavigateAsync(HelpNavigationRequest request, CancellationToken ct)
+        {
+            _onNavigate?.Invoke();
+            return Task.FromResult<HelpTopic>(null!);
+        }
         public Task<HelpTopic?> BackAsync(CancellationToken ct)    => Task.FromResult<HelpTopic?>(null);
         public Task<HelpTopic?> ForwardAsync(CancellationToken ct) => Task.FromResult<HelpTopic?>(null);
         public Task<HelpTopic>  HomeAsync(CancellationToken ct)    => Task.FromResult<HelpTopic>(null!);
@@ -159,6 +172,67 @@ public sealed class MarkdownRendererTests
         Assert.True(found, "Standard https:// links should be preserved in the FlowDocument.");
     }
 
+    // ── Glossary link styling ─────────────────────────────────────────────────
+
+    [StaFact]
+    public void Render_GlossaryLink_HasDashedUnderlineAndTooltip()
+    {
+        // Provide a glossary definition so the tooltip can be populated.
+        var session = new StubSession(glossaryDefs: new Dictionary<string, string>
+        {
+            ["backup-set"] = "**Backup set** \u2014 a single snapshot of files.",
+        });
+        var renderer = new MarkdownRenderer(session, new HelpActionRouter());
+
+        var doc = renderer.Render("[backup set](help://glossary/backup-set)");
+
+        // The rendered FlowDocument must contain a hyperlink with the glossary URI.
+        bool hasLink = ContainsHelpUri(doc, "help://glossary/backup-set");
+        Assert.True(hasLink, "Expected a help://glossary/ hyperlink in the rendered document.");
+
+        // The hyperlink must also carry a tooltip (the definition text).
+        bool hasTooltip = ContainsGlossaryTooltip(doc, "backup-set");
+        Assert.True(hasTooltip, "Glossary link should have a tooltip carrying the definition.");
+    }
+
+    [StaFact]
+    public void Render_GlossaryLink_WithoutDefinition_StillRendersLink()
+    {
+        // Session returns null for the definition — link must still appear.
+        var renderer = new MarkdownRenderer(new StubSession(), new HelpActionRouter());
+
+        var doc = renderer.Render("[virtual drive](help://glossary/virtual-drive)");
+
+        bool hasLink = ContainsHelpUri(doc, "help://glossary/virtual-drive");
+        Assert.True(hasLink, "Glossary link without a known definition should still produce a hyperlink.");
+    }
+
+    [StaFact]
+    public void HandleNavigate_GlossaryUri_RaisesGlossaryLinkClickedEvent()
+    {
+        var renderer = new MarkdownRenderer(new StubSession(), new HelpActionRouter());
+
+        string? receivedSlug = null;
+        renderer.GlossaryLinkClicked += (_, slug) => receivedSlug = slug;
+
+        renderer.HandleNavigate(new Uri("help://glossary/incremental-backup"));
+
+        Assert.Equal("incremental-backup", receivedSlug);
+    }
+
+    [StaFact]
+    public void HandleNavigate_GlossaryUri_DoesNotNavigateSession()
+    {
+        // Ensure the glossary path no longer falls through to NavigateAsync.
+        bool navigateCalled = false;
+        var session = new StubSession(onNavigate: () => navigateCalled = true);
+        var renderer = new MarkdownRenderer(session, new HelpActionRouter());
+
+        renderer.HandleNavigate(new Uri("help://glossary/toc"));
+
+        Assert.False(navigateCalled, "Glossary click must NOT trigger session navigation.");
+    }
+
     // ── Malformed help:// URIs do not throw ───────────────────────────────────
 
     [StaFact]
@@ -193,6 +267,43 @@ public sealed class MarkdownRendererTests
     /// </summary>
     private static bool ContainsHelpUri(FlowDocument doc, string uri)
         => ContainsUri(doc, uri);
+
+    /// <summary>
+    /// Returns <c>true</c> when there is a glossary <see cref="Hyperlink"/> for
+    /// <paramref name="slug"/> that also has a non-null <see cref="FrameworkContentElement.ToolTip"/>.
+    /// </summary>
+    private static bool ContainsGlossaryTooltip(FlowDocument doc, string slug)
+    {
+        var glossaryUri = $"help://glossary/{slug}";
+        return EnumerateHyperlinks(doc).Any(hl =>
+            hl.NavigateUri?.ToString()
+              .StartsWith(glossaryUri, StringComparison.OrdinalIgnoreCase) == true
+            && hl.ToolTip is not null);
+    }
+
+    /// <summary>Yields all <see cref="Hyperlink"/> elements in the document.</summary>
+    private static IEnumerable<Hyperlink> EnumerateHyperlinks(FlowDocument doc)
+    {
+        var stack = new Stack<TextElement>();
+        foreach (var b in doc.Blocks)
+            if (b is TextElement te) stack.Push(te);
+        while (stack.Count > 0)
+        {
+            var el = stack.Pop();
+            if (el is Hyperlink hl) yield return hl;
+            var children = el switch
+            {
+                Paragraph p  => p.Inlines.OfType<TextElement>(),
+                Section   s  => s.Blocks.OfType<TextElement>(),
+                List      l  => l.ListItems.OfType<TextElement>(),
+                ListItem  li => li.Blocks.OfType<TextElement>(),
+                Hyperlink h  => h.Inlines.OfType<TextElement>(),
+                Span      sp => sp.Inlines.OfType<TextElement>(),
+                _            => [],
+            };
+            foreach (var c in children) stack.Push(c);
+        }
+    }
 
     private static bool ContainsUri(FlowDocument doc, string uri)
     {

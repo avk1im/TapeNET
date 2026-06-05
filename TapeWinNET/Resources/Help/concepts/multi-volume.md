@@ -13,7 +13,7 @@ intents:
 # Multi-Volume Backups
 
 When a backup is larger than the tape it is being written to, TapeWin spans the
-operation across **multiple volumes** (cartridges).
+operation across [multiple volumes](help://glossary/multi-volume) (cartridges).
 
 ## How a backup continues
 

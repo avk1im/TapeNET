@@ -25,7 +25,7 @@ this pane.
 
 - [Why tape backup](help://topic/concepts.why-tape-backup) — what tape still does best, from DAT to LTO.
 - [Tape vs disk](help://topic/concepts.tape-vs-disk) — why tape behaves differently.
-- [Backup sets](help://topic/concepts.backup-sets) — how TapeWin organises data on tape.
+- [Backup sets](help://topic/concepts.backup-sets) — how TapeWin organises data on tape ([backup set](help://glossary/backup-set), [TOC](help://glossary/toc)).
 - [Partitions and the TOC](help://topic/concepts.partitions-and-toc) — how TapeWin finds your data.
 - [Incremental backup](help://topic/concepts.incremental-backup) — back up only what changed.
 - [Multi-volume backups](help://topic/concepts.multi-volume) — span backups across tapes.

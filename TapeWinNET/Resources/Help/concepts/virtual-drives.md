@@ -11,8 +11,8 @@ intents:
 
 # Virtual Drives
 
-A **virtual drive** emulates a tape drive using ordinary storage — a file on
-disk or a block of RAM — instead of physical tape hardware.  To TapeWin it
+A [virtual drive](help://glossary/virtual-drive) emulates a tape drive using ordinary storage — a file on
+disk or a block of RAM — instead of physical tape hardware.
 behaves exactly like a real drive: you format it, write backup sets, and
 restore from it.
 

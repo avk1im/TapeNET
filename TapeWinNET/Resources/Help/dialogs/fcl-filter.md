@@ -19,7 +19,7 @@ ai_excerpt: true
 # Advanced Filter (FCL)
 
 The advanced filter editor builds a full
-[FCL file filter](help://topic/concepts.fcl-filters) two ways at once — a
+[FCL](help://glossary/fcl) [file filter](help://topic/concepts.fcl-filters) two ways at once
 visual condition builder and a text editor — kept in sync.
 
 ## Conditions (visual editor, left)

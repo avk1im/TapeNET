@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Documents;
+using System.Windows.Media;
 
 using Markdig;
 
@@ -29,8 +30,21 @@ public sealed partial class MarkdownRenderer(IHelpSession session, HelpActionRou
     private static readonly Regex _topicRefPattern =
         MyRegex();
 
+    // Info-blue brush matching WarningFg.Info / WarningBr.Info from App.xaml.
+    // Used to tint glossary hyperlinks so they are visually distinct from topic links.
+    private static readonly SolidColorBrush _glossaryFg =
+        new(Color.FromRgb(0x00, 0x78, 0xD4));   // #0078D4 — Windows accent blue
+
     private readonly IHelpSession _session = session;
     private readonly HelpActionRouter _actions = actions;
+
+    // ── Events ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Raised when the user clicks a <c>help://glossary/&lt;slug&gt;</c> link.
+    /// The event argument is the slug string.  The host (HelpPane) handles display.
+    /// </summary>
+    public event EventHandler<string>? GlossaryLinkClicked;
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -41,6 +55,8 @@ public sealed partial class MarkdownRenderer(IHelpSession session, HelpActionRou
     /// appear as clickable hyperlinks in the chat pane.
     /// Hyperlink clicks are handled in <c>HelpPane.xaml.cs</c> via
     /// <c>PreviewMouseLeftButtonDown</c> + <see cref="HandleNavigate"/>.
+    /// Glossary hyperlinks (<c>help://glossary/…</c>) receive a distinctive dashed underline
+    /// and info-blue foreground so users can tell them apart from topic navigation links.
     /// </summary>
     public FlowDocument Render(string markdown)
     {
@@ -57,7 +73,84 @@ public sealed partial class MarkdownRenderer(IHelpSession session, HelpActionRou
         // Markdig.Wpf bakes in a fixed PageWidth; clear it so the document reflows
         //  to the host control's actual width (works for both RichTextBox panes).
         doc.PageWidth = double.NaN;
+
+        // Post-process: style every help://glossary/ hyperlink distinctly.
+        StyleGlossaryLinks(doc);
+
         return doc;
+    }
+
+    // ── Glossary link styling ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Walks all <see cref="Hyperlink"/>s in <paramref name="doc"/> and, for those whose
+    /// <see cref="Hyperlink.NavigateUri"/> points to <c>help://glossary/…</c>:
+    /// <list type="bullet">
+    ///   <item>Sets foreground to info-blue.</item>
+    ///   <item>Sets text decoration to dashed underline (visually distinct from topic links).</item>
+    ///   <item>Attaches a <see cref="System.Windows.Controls.ToolTip"/> with the definition text,
+    ///    so hover reveals the definition without a click.</item>
+    /// </list>
+    /// </summary>
+    private void StyleGlossaryLinks(FlowDocument doc)
+    {
+        foreach (var hl in CollectHyperlinks(doc))
+        {
+            var uri = hl.NavigateUri?.OriginalString;
+            if (uri is null || !uri.StartsWith("help://glossary/", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // Dashed underline
+            var decoration = new TextDecoration
+            {
+                Location   = TextDecorationLocation.Underline,
+                Pen        = new Pen(new SolidColorBrush(Color.FromRgb(0x00, 0x78, 0xD4)), 1)
+                {
+                    DashStyle = DashStyles.Dash,
+                },
+                PenOffset  = 1.5,
+            };
+            hl.TextDecorations = [decoration];
+            hl.Foreground = _glossaryFg;
+
+            // Tooltip: resolve the definition eagerly; fall back to the slug itself.
+            var slug = uri["help://glossary/".Length..];
+            var def  = _session.TryGetGlossaryDefinition(slug);
+            if (def is not null)
+            {
+                // Strip remaining markdown bold markers from the definition for tooltip text.
+                var tooltipText = def.Replace("**", string.Empty);
+                hl.ToolTip = tooltipText;
+            }
+        }
+    }
+
+    /// <summary>Yields every <see cref="Hyperlink"/> in the document, depth-first.</summary>
+    private static IEnumerable<Hyperlink> CollectHyperlinks(FlowDocument doc)
+    {
+        var stack = new Stack<TextElement>();
+        foreach (var b in doc.Blocks)
+            if (b is TextElement te) stack.Push(te);
+
+        while (stack.Count > 0)
+        {
+            var el = stack.Pop();
+            if (el is Hyperlink hl)
+                yield return hl;
+
+            IEnumerable<TextElement> children = el switch
+            {
+                Paragraph p   => p.Inlines.OfType<TextElement>(),
+                Section   s   => s.Blocks.OfType<TextElement>(),
+                List      l   => l.ListItems.OfType<TextElement>(),
+                ListItem  li  => li.Blocks.OfType<TextElement>(),
+                Hyperlink h   => h.Inlines.OfType<TextElement>(),
+                Span      sp  => sp.Inlines.OfType<TextElement>(),
+                _             => [],
+            };
+            foreach (var c in children)
+                stack.Push(c);
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -66,7 +159,8 @@ public sealed partial class MarkdownRenderer(IHelpSession session, HelpActionRou
     /// Dispatches a navigation URI:
     /// <list type="bullet">
     ///   <item><c>help://topic/&lt;id&gt;</c> — navigates the help session.</item>
-    ///   <item><c>help://glossary/&lt;term&gt;</c> — shows a tooltip (Phase 5 fallback; full popover in Phase 7).</item>
+    ///   <item><c>help://glossary/&lt;slug&gt;</c> — raises <see cref="GlossaryLinkClicked"/>
+    ///    so the host (HelpPane) can show an inline popup.</item>
     ///   <item><c>help://action/&lt;id&gt;</c> — invokes a registered <see cref="HelpActionRouter"/> command.</item>
     ///   <item><c>http(s)://…</c> — opens in the default browser.</item>
     /// </list>
@@ -89,11 +183,8 @@ public sealed partial class MarkdownRenderer(IHelpSession session, HelpActionRou
                     break;
 
                 case HelpUriKind.Glossary:
-                    // consider showing a tooltip here instead of navigating to a topic page
-                    //  (Phase 5 fallback; full popover in Phase 7)
-                    _ = _session.NavigateAsync(
-                        new HelpNavigationRequest("reference.glossary", parsed.Target),
-                        CancellationToken.None);
+                    // Raise the event; HelpPane shows an inline Popup with the definition.
+                    GlossaryLinkClicked?.Invoke(this, parsed.Target);
                     break;
 
                 case HelpUriKind.Action:

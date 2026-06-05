@@ -21,7 +21,7 @@ ai_excerpt: true
 
 # New Backup
 
-This dialog builds a new **backup set** and writes it to the loaded tape.  You
+This dialog builds a new [backup set](help://glossary/backup-set) and writes it to the loaded tape.
 choose the source files and folders, optionally filter them, set a few options,
 and click **Start Backup**.
 
@@ -65,7 +65,7 @@ the tree and in restore dialogs.
 | Option | Effect |
 |--------|--------|
 | **Include subfolders** | Recurses into sub-directories of every folder source. |
-| **Incremental backup** | Backs up only files changed since the last backup — see [Incremental backup](help://topic/concepts.incremental-backup). |
+| **Incremental backup** | Backs up only files that changed since the last backup, extending the [incremental chain](help://glossary/incremental-chain) — see [Incremental backup](help://topic/concepts.incremental-backup). |
 | **Block size** | The tape block size used for this set.  Larger blocks can improve throughput. |
 | **Hash algorithm** | The checksum stored per file, used later by **Validate** and **Verify**. |
 | **Skip all errors** | Silently ignores file-level read errors instead of prompting. |

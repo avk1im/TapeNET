@@ -28,7 +28,7 @@ throughout TapeWin (tree, status bar, restore dialogs).
 ## Create initiator partition for TOC
 
 When ticked (and supported by the drive), TapeWin creates a small dedicated
-**initiator partition** to hold the Table of Contents separately from the data.
+[initiator partition](help://glossary/initiator-partition) to hold the [Table of Contents](help://glossary/toc) separately from the data.
 This can make TOC reads faster and more robust.  Leave it unticked to keep a
 single-partition layout.
 

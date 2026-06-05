@@ -222,6 +222,10 @@ public sealed class HelpSession : IHelpSession
     public string? TryGetTopicTitle(string id)
         => _store.GetById(id)?.Title;
 
+    /// <inheritdoc/>
+    public string? TryGetGlossaryDefinition(string termSlug)
+        => _store.GetGlossaryDefinition(termSlug);
+
     // ── Events ────────────────────────────────────────────────────────────────
 
     /// <inheritdoc/>

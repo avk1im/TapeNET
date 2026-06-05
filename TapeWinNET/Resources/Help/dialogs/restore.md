@@ -40,8 +40,8 @@ Use the checkboxes to choose which sets to include.
 | Choice | What it does |
 |--------|-------------|
 | **Restore** | Reads files from tape and writes them to disk. |
-| **Validate** | Reads tape data and compares checksums against the stored catalog — no files are written. |
-| **Verify** | Reads files already restored to disk and compares them byte-for-byte to tape — confirms a restore succeeded. |
+| [**Validate**](help://glossary/validate) | Reads tape data and compares checksums against the stored catalog — no files are written. |
+| [**Verify**](help://glossary/verify) | Reads files already restored to disk and compares them byte-for-byte to tape — confirms a restore succeeded. |
 
 See [Restore, Validate, Verify concepts](help://topic/concepts.restore-validate-verify) for
 a detailed comparison.
@@ -61,7 +61,7 @@ a detailed comparison.
 
 | Option | Effect |
 |--------|--------|
-| **Include incremental chain** | Automatically processes the full incremental chain leading up to the selected set(s), so you get the most up-to-date version of every file. |
+| **Include incremental chain** | Automatically processes the full [incremental chain](help://glossary/incremental-chain) leading up to the selected set(s)
 | **This volume only** | Confines the operation to sets on the currently loaded tape.  Useful for a quick partial restore when you do not have all volumes to hand. |
 | **Uncheck processed files** | After a successful restore / validate / verify, unchecks each file so you can see at a glance what still needs attention. |
 | **Handle existing** | Controls what happens when a file already exists at the destination: *Ask*, *Overwrite*, *Skip*, or *Rename*. |

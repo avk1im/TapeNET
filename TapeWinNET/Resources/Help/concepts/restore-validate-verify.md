@@ -23,7 +23,7 @@ Use Restore when you actually need the files back.
 ## Validate
 
 Reads each block from tape and verifies the **checksums** stored in the tape
-catalog, without writing anything to disk.  Use Validate to confirm the tape
+catalog, without writing anything to disk.  Use [Validate](help://glossary/validate) to confirm the tape
 is readable and the data has not been corrupted.
 
 - Faster than Restore (no disk I/O).
@@ -32,7 +32,7 @@ is readable and the data has not been corrupted.
 ## Verify
 
 Reads files from tape and **compares them byte-for-byte** with the original
-source files (which must still be accessible on disk).  Use Verify immediately
+source files (which must still be accessible on disk).  Use [Verify](help://glossary/verify) immediately
 after a backup to confirm that what was written matches what is on disk.
 
 | Operation | Reads tape | Writes disk | Compares to source |

@@ -12,8 +12,7 @@ related:
 
 # Multi-Volume
 
-When a backup outgrows a single tape, TapeWin spans it across **multiple
-volumes**, prompting you to load the next cartridge at end-of-media and
+When a backup outgrows a single tape, TapeWin spans it across [multiple volumes](help://glossary/multi-volume), prompting you to load the next cartridge at end-of-media and
 resuming automatically.  Restore follows the same flow when a needed set lives
 on another volume.
 

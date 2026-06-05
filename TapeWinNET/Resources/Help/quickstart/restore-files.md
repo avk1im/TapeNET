@@ -36,5 +36,5 @@ file and shows a summary when complete.
 
 ## Validate vs Verify
 
-After restoring you can run [Validate or Verify](help://topic/concepts.restore-validate-verify)
+After restoring you can run [Validate](help://glossary/validate) or [Verify](help://glossary/verify) — see [Restore, Validate, Verify](help://topic/concepts.restore-validate-verify) —
 to confirm data integrity.

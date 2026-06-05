@@ -11,7 +11,7 @@ intents:
 
 # Partitions and the TOC
 
-Every tape TapeWin manages carries a **Table of Contents (TOC)** — a catalog of
+Every tape TapeWin manages carries a [Table of Contents (TOC)](help://glossary/toc) — a catalog of
 the media description, the [backup sets](help://topic/concepts.backup-sets) it
 holds, and the files within each set, along with their positions on the tape.
 
@@ -23,14 +23,14 @@ begins.  It is updated whenever you write, rename, or delete sets.
 
 ## Partitions
 
-Some drives support multiple **partitions** on one tape.  TapeWin can use an
-**initiator partition** — a small dedicated partition that stores the TOC
-separately from the data partition.  Benefits:
+TapeWin can use an
+[initiator partition](help://glossary/initiator-partition) — a small dedicated partition that stores the TOC
+separately from the data partition.
 
 - Faster, more robust TOC access.
 - The catalog is less likely to be disturbed by data operations.
 
 You enable this when [formatting](help://topic/dialog.format-media) or creating
 [virtual media](help://topic/dialog.open-virtual-drive), via the **initiator
-partition** option.  When partitions are not used, the TOC lives alongside the
-data in a single-partition layout delimited by setmarks or filemarks.
+the TOC lives alongside the
+data in a single-partition layout delimited by [setmarks or filemarks](help://glossary/setmark-filemark).

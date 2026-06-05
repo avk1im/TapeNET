@@ -56,6 +56,9 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     /// <summary>Exposes the renderer so the host control can delegate hyperlink clicks.</summary>
     internal MarkdownRenderer Renderer => _renderer;
 
+    /// <summary>Exposes the session so the host control can call glossary lookups.</summary>
+    internal IHelpSession Session => _session;
+
     private FlowDocument? _currentDocument;
     private string?       _currentTopicTitle;
     private string        _searchText   = string.Empty;

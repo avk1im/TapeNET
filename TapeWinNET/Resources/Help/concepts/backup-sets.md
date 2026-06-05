@@ -11,9 +11,9 @@ intents:
 
 # Backup Sets
 
-A **backup set** is a single snapshot of the files you chose to back up at a
+A [backup set](help://glossary/backup-set) is a single snapshot of the files you chose to back up at a
 given point in time.  Each set is written sequentially to tape and recorded in
-the tape's **Table of Contents (TOC)**.
+the tape's [Table of Contents (TOC)](help://glossary/toc).
 
 ## Set Indexes
 
@@ -31,7 +31,7 @@ always yesterday's backup regardless of how many sets exist).
 
 TapeWin supports [incremental backups](help://topic/concepts.incremental-backup):
 only files changed since the last backup are included.  Multiple incremental
-sets together reconstruct the full state.
+sets together form an [incremental chain](help://glossary/incremental-chain) that reconstructs the full state.
 
 ## Deleting Sets
 
