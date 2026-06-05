@@ -121,7 +121,7 @@ public partial class MainViewModel
 
         if (fileList.Count == 0)
         {
-            MessageBox.Show("No files to backup.", "Backup", MessageBoxButton.OK, MessageBoxImage.Information);
+            SimpleBox.Show("No files to backup.", "Backup", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -163,23 +163,23 @@ public partial class MainViewModel
             if (operationResult is { HasFailed: true })
             {
                 LogErr("Backup failed");
-                MessageBox.Show("Backup failed. See log for details.", "Backup Failed",
+                SimpleBox.Show("Backup failed. See log for details.", "Backup Failed",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
             else if (operationResult is { WasAborted: true })
             {
                 LogErr("Backup aborted by user");
-                MessageBox.Show("Backup was aborted.", "Backup Aborted",
+                SimpleBox.Show("Backup was aborted.", "Backup Aborted",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
             }
             else if (operationResult is { IsFullSuccess: false })
             {
-                MessageBox.Show("Backup completed with some errors. See log for details.", "Backup Complete",
+                SimpleBox.Show("Backup completed with some errors. See log for details.", "Backup Complete",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
             }
             else
             {
-                MessageBox.Show("Backup completed successfully!", "Backup Complete",
+                SimpleBox.Show("Backup completed successfully!", "Backup Complete",
                     MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
@@ -191,7 +191,7 @@ public partial class MainViewModel
             // Refresh might throw if TOC has been spoiled.
             try { await RefreshAsync(); } catch { /* ignore */ }
             LogErr($"Backup failed: {ex.Message}");
-            MessageBox.Show($"Backup failed.\n\n{ex.Message}", "Backup Error",
+            SimpleBox.Show($"Backup failed.\n\n{ex.Message}", "Backup Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
@@ -209,7 +209,7 @@ public partial class MainViewModel
         var agent = _tapeService.Agent;
         if (agent != null)
         {
-            var result = MessageBox.Show(
+            var result = SimpleBox.Show(
                 "Are you sure you want to abort the backup?\n\nFiles already backed up will remain on the media.",
                 "Abort Backup",
                 MessageBoxButton.YesNo,

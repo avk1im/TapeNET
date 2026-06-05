@@ -821,7 +821,7 @@ public partial class MainViewModel : ViewModelBase
         var success = await OpenPhysicalDriveCoreAsync(driveNumber);
         if (!success)
         {
-            MessageBox.Show($"Failed to open drive {driveNumber}.\n\n{_tapeService.LastError}",
+            SimpleBox.Show($"Failed to open drive {driveNumber}.\n\n{_tapeService.LastError}",
                 "Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         return success;
@@ -834,7 +834,7 @@ public partial class MainViewModel : ViewModelBase
         var success = await LoadMediaCoreAsync(busyMessage);
         if (!success)
         {
-            MessageBox.Show($"Failed to load {failureSubject}.\n\n{_tapeService.LastError}",
+            SimpleBox.Show($"Failed to load {failureSubject}.\n\n{_tapeService.LastError}",
                 "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         return success;
@@ -860,7 +860,7 @@ public partial class MainViewModel : ViewModelBase
         if (!offerFileImportOnFailure)
             return false;
 
-        var result = MessageBox.Show(
+        var result = SimpleBox.Show(
             $"Failed to read TOC from media.\n\n{_tapeService.LastError}\n\n" +
             "If you have a saved TOC file (.tapetoc), you can load it to access the media content.\n\n" +
             "Would you like to load a TOC from file?",
@@ -936,7 +936,7 @@ public partial class MainViewModel : ViewModelBase
         }
         else
         {
-            MessageBox.Show(
+            SimpleBox.Show(
                 $"Invalid device name: {name}\n\nExpected format: \\\\.\\TAPE0",
                 "Open Drive", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
@@ -949,7 +949,7 @@ public partial class MainViewModel : ViewModelBase
 
         if (!_tapeService.Reset())
         {
-            MessageBox.Show("Cannot reload while an operation is in progress.",
+            SimpleBox.Show("Cannot reload while an operation is in progress.",
                 "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -988,7 +988,7 @@ public partial class MainViewModel : ViewModelBase
             var success = await _tapeService.EjectMediaAsync();
             if (!success)
             {
-                MessageBox.Show($"Failed to eject media.\n\n{_tapeService.LastError}",
+                SimpleBox.Show($"Failed to eject media.\n\n{_tapeService.LastError}",
                     "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             else
@@ -1032,12 +1032,12 @@ public partial class MainViewModel : ViewModelBase
             var success = await _tapeService.ExportTOCToFileAsync(dialog.FileName);
             if (success)
             {
-                MessageBox.Show($"TOC exported successfully to:\n{dialog.FileName}",
+                SimpleBox.Show($"TOC exported successfully to:\n{dialog.FileName}",
                     "Export TOC", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             else
             {
-                MessageBox.Show($"Failed to export TOC.\n\n{_tapeService.LastError}",
+                SimpleBox.Show($"Failed to export TOC.\n\n{_tapeService.LastError}",
                     "Export TOC", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -1052,7 +1052,7 @@ public partial class MainViewModel : ViewModelBase
     {
         if (_tapeService.TOC != null)
         {
-            var result = MessageBox.Show(
+            var result = SimpleBox.Show(
                 "This media already has a valid TOC loaded.\n\n" +
                 "Are you sure you want to replace it with a TOC from file?",
                 "Import TOC", MessageBoxButton.YesNo, MessageBoxImage.Warning);
@@ -1092,7 +1092,7 @@ public partial class MainViewModel : ViewModelBase
             var success = await _tapeService.ImportTOCFromFileAsync(dialog.FileName);
             if (!success)
             {
-                MessageBox.Show($"Failed to import TOC from file.\n\n{_tapeService.LastError}",
+                SimpleBox.Show($"Failed to import TOC from file.\n\n{_tapeService.LastError}",
                     "Import TOC", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             return success;
@@ -1139,7 +1139,7 @@ public partial class MainViewModel : ViewModelBase
         Settings.ResetMainWindowLayout();
         Settings.ResetHelpPaneLayout();
 
-        MessageBox.Show("Window positions have been reset to defaults.",
+        SimpleBox.Show("Window positions have been reset to defaults.",
             "Reset Window Positions", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
@@ -1147,7 +1147,7 @@ public partial class MainViewModel : ViewModelBase
     {
         if (IsOperationInProgress)
         {
-            var result = MessageBox.Show(
+            var result = SimpleBox.Show(
                 "An operation is in progress. Are you sure you want to exit?\n\nThe operation will be aborted.",
                 "Exit",
                 MessageBoxButton.YesNo,
@@ -1316,7 +1316,7 @@ public partial class MainViewModel : ViewModelBase
             }
             else if (_tapeService.LastError is not null)
             {
-                MessageBox.Show($"Failed to rename media.\n\n{_tapeService.LastError}",
+                SimpleBox.Show($"Failed to rename media.\n\n{_tapeService.LastError}",
                     "Rename Failed", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -1379,7 +1379,7 @@ public partial class MainViewModel : ViewModelBase
             }
             else if (_tapeService.LastError is not null)
             {
-                MessageBox.Show($"Failed to rename backup set.\n\n{_tapeService.LastError}",
+                SimpleBox.Show($"Failed to rename backup set.\n\n{_tapeService.LastError}",
                     "Rename Failed", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -1750,7 +1750,7 @@ public partial class MainViewModel : ViewModelBase
         {
             if (!request.IsCreateNew)
             {
-                MessageBox.Show(
+                SimpleBox.Show(
                     $"Failed to open existing virtual media.\n\n{_tapeService.LastError}\n\n" +
                     "Please check the file path or select 'Create new virtual media'.",
                     "Open Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -1762,7 +1762,7 @@ public partial class MainViewModel : ViewModelBase
             }
             else
             {
-                MessageBox.Show(
+                SimpleBox.Show(
                     $"Failed to create virtual drive.\n\n{_tapeService.LastError}",
                     "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 UpdateTreeForDriveOnly(0);
@@ -1848,7 +1848,7 @@ public partial class MainViewModel : ViewModelBase
 
         if (!File.Exists(contentPath))
         {
-            var result = MessageBox.Show(
+            var result = SimpleBox.Show(
                 $"The file no longer exists:\n\n{contentPath}\n\nRemove from recent list?",
                 "File Not Found", MessageBoxButton.YesNo, MessageBoxImage.Warning);
 
@@ -1888,7 +1888,7 @@ public partial class MainViewModel : ViewModelBase
     {
         Application.Current.Windows.OfType<FormatMediaWindow>().FirstOrDefault()?.Close();
 
-        var result = MessageBox.Show(
+        var result = SimpleBox.Show(
             "Are you sure you want to format the media?\n\nAll data will be permanently erased. This cannot be undone.",
             "Confirm Format",
             MessageBoxButton.YesNo,
@@ -1921,16 +1921,16 @@ public partial class MainViewModel : ViewModelBase
             SelectMostRecentSet();
 
             if (success)
-                MessageBox.Show("Media formatted successfully!", "Format Complete",
+                SimpleBox.Show("Media formatted successfully!", "Format Complete",
                     MessageBoxButton.OK, MessageBoxImage.Information);
             else
-                MessageBox.Show($"Failed to format media.\n\n{_tapeService.LastError}",
+                SimpleBox.Show($"Failed to format media.\n\n{_tapeService.LastError}",
                     "Format Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         catch (Exception ex)
         {
             LogErr($"Format failed: {ex.Message}");
-            MessageBox.Show($"Format failed.\n\n{ex.Message}", "Format Error",
+            SimpleBox.Show($"Format failed.\n\n{ex.Message}", "Format Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
@@ -1975,7 +1975,7 @@ public partial class MainViewModel : ViewModelBase
 
             if (!success)
             {
-                MessageBox.Show($"Failed to delete backup sets.\n\n{_tapeService.LastError}",
+                SimpleBox.Show($"Failed to delete backup sets.\n\n{_tapeService.LastError}",
                     "Delete Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
@@ -1986,7 +1986,7 @@ public partial class MainViewModel : ViewModelBase
         catch (Exception ex)
         {
             LogErr($"Delete backup sets failed: {ex.Message}");
-            MessageBox.Show($"Delete failed.\n\n{ex.Message}", "Delete Error",
+            SimpleBox.Show($"Delete failed.\n\n{ex.Message}", "Delete Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
@@ -2050,7 +2050,7 @@ public partial class MainViewModel : ViewModelBase
         {
             if (!_tapeService.InsertVirtualMedia(newVmd, FileMode.Create))
             {
-                MessageBox.Show($"Failed to create virtual media files.\n\n{_tapeService.LastError}",
+                SimpleBox.Show($"Failed to create virtual media files.\n\n{_tapeService.LastError}",
                     "Format Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
@@ -2064,7 +2064,7 @@ public partial class MainViewModel : ViewModelBase
 
             if (!await _tapeService.FormatMediaAsync(initiatorPartitionSize, formatViewModel.MediaName))
             {
-                MessageBox.Show($"Failed to format media.\n\n{_tapeService.LastError}",
+                SimpleBox.Show($"Failed to format media.\n\n{_tapeService.LastError}",
                     "Format Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
@@ -2076,13 +2076,13 @@ public partial class MainViewModel : ViewModelBase
             if (!_tapeService.IsInMemoryDrive)
                 AddToVirtualDriveMru(newVmd.ContentPath);
 
-            MessageBox.Show("Virtual media formatted successfully!", "Format Complete",
+            SimpleBox.Show("Virtual media formatted successfully!", "Format Complete",
                 MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
             LogErr($"Format failed: {ex.Message}");
-            MessageBox.Show($"Format failed.\n\n{ex.Message}", "Format Error",
+            SimpleBox.Show($"Format failed.\n\n{ex.Message}", "Format Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally

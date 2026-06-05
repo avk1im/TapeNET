@@ -251,7 +251,7 @@ public partial class MainViewModel
 
             if (!int.TryParse(dialog.Answer, out driveNumber) || driveNumber < 0)
             {
-                MessageBox.Show("Invalid drive number.", "Open Remote Drive",
+                SimpleBox.Show("Invalid drive number.", "Open Remote Drive",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -261,7 +261,7 @@ public partial class MainViewModel
 
         if (!await OpenRemoteDriveCoreAsync(settings, (uint)driveNumber))
         {
-            MessageBox.Show(
+            SimpleBox.Show(
                 $"Failed to open remote drive {driveNumber} on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
                 "Open Remote Drive", MessageBoxButton.OK, MessageBoxImage.Error);
             UpdateTreeForRemoteDriveOnly(driveNumber, settings);
@@ -339,7 +339,7 @@ public partial class MainViewModel
             if (!await RunBusyAsync($"Creating remote virtual drive on {settings.DisplayLabel}...",
                     () => _tapeService.CreateRemoteVirtualDriveAsync(settings, request.Media, request.Capabilities, request.MediaName)))
             {
-                MessageBox.Show(
+                SimpleBox.Show(
                     $"Failed to create remote virtual drive on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
                     "Create Remote Virtual Drive", MessageBoxButton.OK, MessageBoxImage.Error);
                 UpdateTreeForRemoteDriveOnly(0, settings);
@@ -376,7 +376,7 @@ public partial class MainViewModel
             if (!await RunBusyAsync($"Opening remote virtual volume on {settings.DisplayLabel}...",
                     () => _tapeService.OpenRemoteVirtualFileAsync(settings, request.Media, request.Capabilities, System.IO.FileMode.Open)))
             {
-                MessageBox.Show(
+                SimpleBox.Show(
                     $"Failed to open remote virtual volume on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
                     "Open Remote Virtual Drive", MessageBoxButton.OK, MessageBoxImage.Error);
                 UpdateTreeForRemoteDriveOnly(0, settings);
@@ -434,7 +434,7 @@ public partial class MainViewModel
                 () => _tapeService.CreateRemoteVirtualDriveAsync(settings, request.Media, request.Capabilities,
                     string.IsNullOrWhiteSpace(request.MediaName) ? "Remote virtual tape" : request.MediaName)))
         {
-            MessageBox.Show(
+            SimpleBox.Show(
                 $"Failed to recreate remote virtual drive on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
                 "Format Remote Drive", MessageBoxButton.OK, MessageBoxImage.Error);
             UpdateTreeForRemoteDriveOnly(0, settings);
@@ -464,7 +464,7 @@ public partial class MainViewModel
         UpdateTreeFromTOCRemote(0, settings);
         SelectMostRecentSet();
 
-        MessageBox.Show("Remote virtual media formatted successfully!", "Format Complete",
+        SimpleBox.Show("Remote virtual media formatted successfully!", "Format Complete",
             MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
@@ -547,7 +547,7 @@ public partial class MainViewModel
         if (volumes.Count > 0)
         {
             var noun   = volumes.Count == 1 ? "volume" : "volumes";
-            var result = MessageBox.Show(
+            var result = SimpleBox.Show(
                 $"Disconnect from {_remoteHostSettings.DisplayLabel}?\n\n" +
                 $"This will delete {volumes.Count} temporary remote media {noun} from the server.",
                 "Disconnect from Remote Host",
@@ -612,7 +612,7 @@ public partial class MainViewModel
     /// Persists the current remote connection parameters into <see cref="AppSettings"/>
     /// so the connect dialog can pre-populate next time.
     /// </summary>
-    internal void SaveRemoteSettings(RemoteHostSettings settings, bool useLocalHost)
+    internal static void SaveRemoteSettings(RemoteHostSettings settings, bool useLocalHost)
     {
         Settings.LastRemoteHost         = settings.Host;
         Settings.LastRemotePort         = settings.Port;

@@ -1159,42 +1159,49 @@ namespace TapeLibNET
         {
             // Double-buffer tape reads to overlap with file reads and comparison
             using var buffered = new BufferedTapeReadStream(rstream, Drive.BlockSize);
+            bool match;
 
             if (hasher == null)
             {
                 using var dstFileStream = fileInfo.OpenRead();
-                if (!buffered.CompareTo(dstFileStream))
-                    return false;
+                match = buffered.CompareTo(dstFileStream);
             }
             else
             {
                 using var dstFileStream = fileInfo.OpenRead();
                 // Since we're checking the tape stream, attach the hasher to the buffered tape read
                 using var hashingStream = new HashingStream(buffered, hasher, ownInner: false); // do NOT dispose buffered!
-                if (!dstFileStream.CompareTo(hashingStream))
-                    return false;
+                match = dstFileStream.CompareTo(hashingStream);
             }
+
+            if (!match)
+                throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                    $"Data mismatch vs. source file >{fileInfo.FullName}<");
 
             return base.RestoreFileCoreAligned(fileInfo, rstream, hasher);
         }
 
         protected override bool RestoreFileCore(FileInfo fileInfo, Stream rstream, NonCryptographicHashAlgorithm? hasher)
         {
+            bool match;
             // Open the disk file via TapeBackupSourceStream so BackupRead produces the same
             //  opaque blob format as was written during backup — enabling accurate byte comparison.
             if (hasher == null)
             {
                 using var dstFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
-                if (!rstream.CompareTo(dstFileStream))
-                    return false;
+                match = rstream.CompareTo(dstFileStream);
+
             }
             else
             {
                 using var dstFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
                 using var hashingStream = new HashingStream(rstream, hasher, ownInner: false);
-                if (!dstFileStream.CompareTo(hashingStream))
-                    return false;
+                match = dstFileStream.CompareTo(hashingStream);
             }
+
+            if (!match)
+                throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                    $"Data mismatch vs. source file >{fileInfo.FullName}<");
 
             return base.RestoreFileCore(fileInfo, rstream, hasher);
         }

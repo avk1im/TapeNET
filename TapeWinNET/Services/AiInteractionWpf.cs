@@ -354,7 +354,7 @@ public sealed class AiInteractionWpf : IAiInteraction
                 }
 
                 // Invalid — warn and loop back to the AskDialog.
-                MessageBox.Show(
+                SimpleBox.Show(
                     $"'{dlg.Answer.Trim()}' is not a valid URL.\n" +
                     "Please enter a full address, e.g. http://192.168.1.42:11434",
                     "Invalid Address",

@@ -1112,7 +1112,7 @@ public class BackupViewModel : ViewModelBase
 
         if (checkedFiles.Count == 0)
         {
-            MessageBox.Show("No files are checked for backup.",
+            SimpleBox.Show("No files are checked for backup.",
                 "Backup", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }

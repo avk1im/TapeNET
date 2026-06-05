@@ -1,0 +1,46 @@
+﻿<Window x:Class="TapeWinNET.SimpleBox"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:TapeWinNET"
+        mc:Ignorable="d"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Width="420" Height="220"
+        Title="{Binding Title}">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Icon + Title -->
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+            <TextBlock x:Name="IconText"
+                       FontSize="26"
+                       Margin="0,0,12,0"
+                       VerticalAlignment="Center"/>
+            <TextBlock x:Name="TitleText"
+                       FontSize="16"
+                       FontWeight="Bold"
+                       VerticalAlignment="Center"/>
+        </StackPanel>
+
+        <!-- Message -->
+        <TextBlock x:Name="MessageText"
+                   Grid.Row="1"
+                   TextWrapping="Wrap"
+                   VerticalAlignment="Top"/>
+
+        <!-- Buttons -->
+        <StackPanel x:Name="ButtonPanel"
+                    Grid.Row="2"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,16,0,0"
+                    />
+    </Grid>
+</Window>

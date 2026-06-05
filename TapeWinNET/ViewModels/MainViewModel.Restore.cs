@@ -646,13 +646,13 @@ public partial class MainViewModel
             if (operationResult is { HasFailed: true })
             {
                 LogErr($"{modeName} failed");
-                MessageBox.Show($"{modeName} failed. See log for details.", $"{modeName} Failed",
+                SimpleBox.Show($"{modeName} failed. See log for details.", $"{modeName} Failed",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
             else if (operationResult is { WasAborted: true })
             {
                 LogErr($"{modeName} aborted by user");
-                MessageBox.Show($"{modeName} was aborted.", $"{modeName} Aborted",
+                SimpleBox.Show($"{modeName} was aborted.", $"{modeName} Aborted",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
             }
             else
@@ -661,12 +661,12 @@ public partial class MainViewModel
 
                 if (hasErrors)
                 {
-                    MessageBox.Show($"{modeName} completed with issues. See log for details.",
+                    SimpleBox.Show($"{modeName} completed with issues. See log for details.",
                         $"{modeName} Complete", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
                 else
                 {
-                    MessageBox.Show($"{modeName} completed successfully!",
+                    SimpleBox.Show($"{modeName} completed successfully!",
                         $"{modeName} Complete", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
@@ -676,7 +676,7 @@ public partial class MainViewModel
             // Refresh even on failure — TOC state may have changed
             await RefreshAsync();
             LogErr($"{modeName} failed: {ex.Message}");
-            MessageBox.Show($"{modeName} failed.\n\n{ex.Message}", $"{modeName} Error",
+            SimpleBox.Show($"{modeName} failed.\n\n{ex.Message}", $"{modeName} Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
@@ -695,7 +695,7 @@ public partial class MainViewModel
         var agent = _tapeService.Agent;
         if (agent != null)
         {
-            var result = MessageBox.Show(
+            var result = SimpleBox.Show(
                 "Are you sure you want to abort the current operation?",
                 "Abort Operation",
                 MessageBoxButton.YesNo,

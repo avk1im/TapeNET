@@ -159,7 +159,7 @@ namespace TapeWinNET
             var lastDrive = MainViewModel.StartupPhysicalDriveNumber;
             if (lastDrive.HasValue)
             {
-                var result = MessageBox.Show(
+                var result = SimpleBox.Show(
                     $"Reopen tape drive {lastDrive.Value} from the previous session?",
                     "Reopen Drive",
                     MessageBoxButton.YesNo,
@@ -275,7 +275,7 @@ namespace TapeWinNET
         /// </summary>
         private async Task ResetAiProvidersAsync()
         {
-            var answer = MessageBox.Show(
+            var answer = SimpleBox.Show(
                 "This will clear your saved AI provider settings and all LAN hosts.\n\nContinue?",
                 "Reset AI Providers",
                 MessageBoxButton.YesNo, MessageBoxImage.Question);

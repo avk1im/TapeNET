@@ -89,11 +89,11 @@ public sealed partial class MarkdownRenderer(IHelpSession session, HelpActionRou
                     break;
 
                 case HelpUriKind.Glossary:
-                    // Phase 5: simple MessageBox fallback; Phase 7 will show an inline popover.
-                    MessageBox.Show(
-                        $"Glossary term: {parsed.Target}\n\n(Full glossary popovers available in a future update.)",
-                        "Glossary",
-                        MessageBoxButton.OK, MessageBoxImage.Information);
+                    // consider showing a tooltip here instead of navigating to a topic page
+                    //  (Phase 5 fallback; full popover in Phase 7)
+                    _ = _session.NavigateAsync(
+                        new HelpNavigationRequest("reference.glossary", parsed.Target),
+                        CancellationToken.None);
                     break;
 
                 case HelpUriKind.Action:

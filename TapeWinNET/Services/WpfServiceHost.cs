@@ -109,7 +109,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
         bool result = defaultAnswer;
         _dispatcher.Invoke(() =>
         {
-            var answer = MessageBox.Show(
+            var answer = SimpleBox.Show(
                 question,
                 "Confirm",
                 MessageBoxButton.YesNo,
@@ -134,12 +134,12 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
         {
             if (choices.Count == 2)
             {
-                var answer = MessageBox.Show(
+                var answer = SimpleBox.Show(
                     $"{question}\n\n[Yes] {choices[0]}   [No] {choices[1]}",
                     topic,
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question,
-                    MessageBoxResult.Yes);
+                    defaultIndex == 0 ? MessageBoxResult.Yes : MessageBoxResult.No);
                 result = answer == MessageBoxResult.Yes ? 0 : 1;
             }
             else
@@ -332,7 +332,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                 : $"Loading media failed again.\n\nError: {errorMessage}\n\n" +
                   "Try re-seating the media. Retry?";
 
-            var answer = MessageBox.Show(
+            var answer = SimpleBox.Show(
                 info,
                 "Media Load Failed",
                 MessageBoxButton.YesNo,
@@ -541,7 +541,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                   "Do you want to choose a save location now?"
                 : "Exporting TOC failed. Try a different location?";
 
-            var answer = MessageBox.Show(info, "Emergency TOC Export",
+            var answer = SimpleBox.Show(info, "Emergency TOC Export",
                 MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.Yes);
             if (answer != MessageBoxResult.Yes) return;
 
