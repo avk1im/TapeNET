@@ -42,5 +42,4 @@ need before continuing.
 
 Click **Format** to erase and initialise the media, or **Cancel** to back out.
 
-> You can reach this dialog from
-> [Format the loaded media](help://action/format-media).
+> Shortcut: [Format media](help://action/format-media).

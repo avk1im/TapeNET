@@ -194,8 +194,10 @@ public sealed class DialogHelpPaneController
             //  moment; show a disabled "Loading…" button until the pane is ready.
             SetButtonState(LoadingLabel, enabled: false);
 
-            // First open — build the session and wire the VM
-            var session = await AppHelpSessionFactory.CreateAsync(_host);
+            // First open — build the session and wire the VM.
+            // Pass _defaultTopicId as the home topic so the Home button returns to
+            //  this dialog's own topic rather than the application-wide home page.
+            var session = await AppHelpSessionFactory.CreateAsync(_host, homeTopicId: _defaultTopicId);
 
             // Build a dialog-aware action router: borrows the full set of registered
             //  actions from MainWindow but wraps them so that clicking an action link:

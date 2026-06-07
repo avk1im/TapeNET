@@ -25,14 +25,14 @@ this pane.
 
 - [Why tape backup](help://topic/concepts.why-tape-backup) — what tape still does best, from DAT to LTO.
 - [Tape vs disk](help://topic/concepts.tape-vs-disk) — why tape behaves differently.
-- [Backup sets](help://topic/concepts.backup-sets) — how TapeWin organises data on tape ([backup set](help://glossary/backup-set), [TOC](help://glossary/toc)).
-- [Partitions and the TOC](help://topic/concepts.partitions-and-toc) — how TapeWin finds your data.
-- [Incremental backup](help://topic/concepts.incremental-backup) — back up only what changed.
-- [Multi-volume backups](help://topic/concepts.multi-volume) — span backups across tapes.
-- [Restore, Validate, Verify](help://topic/concepts.restore-validate-verify) — three ways to check your backups.
-- [FCL file filters](help://topic/concepts.fcl-filters) — powerful file-selection language.
-- [Virtual drives](help://topic/concepts.virtual-drives) — work without hardware.
-- [Remote service](help://topic/concepts.remote-service) — use a tape drive on another machine.
+- [Backup sets](help://topic/concepts.backup-sets) — how TapeWin organises data on tape ([backup set](help://glossary/backup-set)).
+- [Partitions and the TOC](help://topic/concepts.partitions-and-toc) — how TapeWin finds your data ([TOC](help://glossary/toc)).
+- [Incremental backup](help://topic/concepts.incremental-backup) — back up only what changed ([incremental backup](help://glossary/incremental-backup)).
+- [Multi-volume backups](help://topic/concepts.multi-volume) — span backups across tapes ([multi-volume](help://glossary/multi-volume-backup)).
+- [Restore, Validate, Verify](help://topic/concepts.restore-validate-verify) — three ways to check your backups ([restore](help://glossary/restore), [validate](help://glossary/validate), [verify](help://glossary/verify)).
+- [FCL file filters](help://topic/concepts.fcl-filters) — powerful file-selection language ([FCL](help://glossary/fcl)).
+- [Virtual drives](help://topic/concepts.virtual-drives) — work without hardware ([virtual drive](help://glossary/virtual-drive)).
+- [Remote service](help://topic/concepts.remote-service) — use a tape drive on another machine ([remote service](help://glossary/remote-service)).
 
 ## Features
 

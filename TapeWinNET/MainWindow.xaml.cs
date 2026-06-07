@@ -784,12 +784,26 @@ namespace TapeWinNET
         /// dialog-hosted help panes can suppress same-dialog re-opens and ask for
         /// confirmation before switching to a different dialog.
         /// </summary>
+        /*
+| Dialog | Action | Command | Status |
+|---|---|---|---|
+| `BackupWindow` | new-backup | _viewModel.NewBackupCommand | ✅ |
+| `RestoreWindow` | restore | _viewModel.RestoreCommand | ✅ |
+| `OpenVirtualDriveWindow` | open-virtual-drive | _viewModel.OpenVirtualDriveCommand | ✅ |
+| `OpenRemoteVirtualDriveWindow` | open-remote-virtual-drive | _viewModel.OpenRemoteVirtualDriveCommand | ✅ |
+| `ConnectToRemoteHostWindow` | connect-to-remote-host | _viewModel.ConnectToRemoteHostCommand | ✅ |
+| `FormatMediaWindow` | format-media | _viewModel.FormatMediaCommand | ✅ |
+| `DeleteBackupSetsWindow` | delete-sets | _viewModel.DeleteBackupSetsCommand | ✅ |
+| `FclFilterWindow` | fcl-filter | _viewModel.FclFilterCommand | [?] opens by FclFilterPane |
+        */
         internal HelpActionRouter BuildHelpActions()
         {
             var router = new HelpActionRouter();
-            router.Register("new-backup",   _viewModel.NewBackupCommand,          opensTopicId: "dialog.backup");
+            router.Register("new-backup",   _viewModel.NewBackupCommand,           opensTopicId: "dialog.backup");
             router.Register("restore",      _viewModel.RestoreCommand,             opensTopicId: "dialog.restore");
-            router.Register("open-drive",   _viewModel.OpenVirtualDriveCommand,   opensTopicId: "dialog.open-virtual-drive");
+            router.Register("open-virtual-drive", _viewModel.OpenVirtualDriveCommand, opensTopicId: "dialog.open-virtual-drive");
+            router.Register("open-remote-virtual-drive", _viewModel.OpenRemoteVirtualDriveCommand, opensTopicId: "dialog.open-remote-virtual-drive");
+            router.Register("connect-to-remote-host", _viewModel.ConnectToRemoteHostCommand, opensTopicId: "dialog.connect-to-remote-host");
             router.Register("format-media", _viewModel.FormatMediaCommand,         opensTopicId: "dialog.format-media");
             router.Register("delete-sets",  _viewModel.DeleteBackupSetsCommand,    opensTopicId: "dialog.delete-backup-sets");
             return router;

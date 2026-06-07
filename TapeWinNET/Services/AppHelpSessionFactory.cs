@@ -26,16 +26,22 @@ public static class AppHelpSessionFactory
     /// and conversation; the underlying indexes and content store are shared.
     /// </summary>
     /// <param name="host">The window requesting a help session.</param>
+    /// <param name="homeTopicId">
+    /// The topic navigated to when the user clicks the Home button.
+    /// Defaults to <c>"home"</c> (the application-wide landing page).
+    /// Dialogs pass their own <c>defaultTopicId</c> so Home returns to the
+    /// dialog-specific topic rather than the application home page.
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     public static async Task<IHelpSession> CreateAsync(
-        IHelpPaneHost host, CancellationToken ct = default)
+        IHelpPaneHost host, string homeTopicId = "home", CancellationToken ct = default)
     {
         // Obtain the AI session silently — if not yet configured, returns null
         //  and the session falls back to Lexical mode.
         var aiSession = await App.AiSessionHost.EnsureAsync(promptUser: false, ct);
 
         var options = new HelpSessionOptions(
-            HomeTopicId:          "home",
+            HomeTopicId:          homeTopicId,
             DefaultTopK:          6,
             MaxConversationTurns: 20);
 

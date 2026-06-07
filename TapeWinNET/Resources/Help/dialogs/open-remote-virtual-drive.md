@@ -57,3 +57,5 @@ Initiator Partition) and block sizes, which you can then adjust.
 
 Click the confirm button (its label reflects **Open** or **Create**) to mount
 the remote volume, or **Cancel** to abort.
+
+> Shortcut: [Open a remote virtual drive](help://action/open-remote-virtual-drive).

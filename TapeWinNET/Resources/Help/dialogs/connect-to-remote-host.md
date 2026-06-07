@@ -45,3 +45,5 @@ dialog closes and the remote host appears in the tree, status bar, and the
 Once connected, use
 [Open Remote Virtual Drive](help://topic/dialog.open-remote-virtual-drive) or
 the remote drive submenu to mount a drive.
+
+> Shortcut: [Connect to remote host](help://action/connect-to-remote-host).

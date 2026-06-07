@@ -69,4 +69,4 @@ The minimum / maximum block sizes the virtual drive reports.
 Click the action button (its label reflects **Open** or **Create**) to mount
 the virtual drive, or **Cancel** to abort.
 
-> Shortcut: [Open a virtual drive](help://action/open-drive).
+> Shortcut: [Open a virtual drive](help://action/open-virtual-drive).
