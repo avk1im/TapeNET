@@ -28,14 +28,14 @@ throughout TapeWin (tree, status bar, restore dialogs).
 ## Create initiator partition for TOC
 
 When ticked (and supported by the drive), TapeWin creates a small dedicated
-[initiator partition](help://glossary/initiator-partition) to hold the [Table of Contents](help://glossary/toc) separately from the data.
+[initiator partition](help://glossary/initiator-partition) to hold the [Table of Contents (TOC)](help://glossary/toc) separately from the data.
 This can make TOC reads faster and more robust.  Leave it unticked to keep a
 single-partition layout.
 
 ## Warning panel
 
 A warning is shown reminding you that formatting is **destructive** — every
-backup set currently on the tape will be lost.  Make sure you have what you
+[backup set](help://glossary/backup-set) currently on the tape will be lost.  Make sure you have what you
 need before continuing.
 
 ## Formatting

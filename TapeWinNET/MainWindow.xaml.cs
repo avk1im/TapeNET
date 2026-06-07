@@ -777,15 +777,21 @@ namespace TapeWinNET
             }
         }
 
-        /// <summary>Builds the <see cref="HelpActionRouter"/> with MainWindow-level commands.</summary>
-        private HelpActionRouter BuildHelpActions()
+        /// <summary>
+        /// Builds the <see cref="HelpActionRouter"/> with MainWindow-level commands.
+        /// The <c>opensTopicId</c> for each registration tells
+        /// <see cref="DialogHelpActionRouter"/> which dialog the command leads to, so
+        /// dialog-hosted help panes can suppress same-dialog re-opens and ask for
+        /// confirmation before switching to a different dialog.
+        /// </summary>
+        internal HelpActionRouter BuildHelpActions()
         {
             var router = new HelpActionRouter();
-            router.Register("new-backup",    _viewModel.NewBackupCommand);
-            router.Register("restore",       _viewModel.RestoreCommand);
-            router.Register("open-drive",    _viewModel.OpenVirtualDriveCommand);
-            router.Register("format-media",  _viewModel.FormatMediaCommand);
-            router.Register("delete-sets",   _viewModel.DeleteBackupSetsCommand);
+            router.Register("new-backup",   _viewModel.NewBackupCommand,          opensTopicId: "dialog.backup");
+            router.Register("restore",      _viewModel.RestoreCommand,             opensTopicId: "dialog.restore");
+            router.Register("open-drive",   _viewModel.OpenVirtualDriveCommand,   opensTopicId: "dialog.open-virtual-drive");
+            router.Register("format-media", _viewModel.FormatMediaCommand,         opensTopicId: "dialog.format-media");
+            router.Register("delete-sets",  _viewModel.DeleteBackupSetsCommand,    opensTopicId: "dialog.delete-backup-sets");
             return router;
         }
 

@@ -48,10 +48,10 @@ public sealed class ConversationItem
 /// </summary>
 public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
 {
-    private readonly IHelpSession   _session;
-    private readonly IHelpPaneHost  _host;
-    private readonly HelpActionRouter _actions;
-    private readonly MarkdownRenderer _renderer;
+    private readonly IHelpSession    _session;
+    private readonly IHelpPaneHost   _host;
+    private readonly IHelpActionRouter _actions;
+    private readonly MarkdownRenderer  _renderer;
 
     /// <summary>Exposes the renderer so the host control can delegate hyperlink clicks.</summary>
     internal MarkdownRenderer Renderer => _renderer;
@@ -82,9 +82,9 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     // ── Construction ─────────────────────────────────────────────────────────
 
     public HelpPaneViewModel(
-        IHelpSession    session,
-        IHelpPaneHost   host,
-        HelpActionRouter actions)
+        IHelpSession      session,
+        IHelpPaneHost     host,
+        IHelpActionRouter actions)
     {
         _session  = session;
         _host     = host;

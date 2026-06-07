@@ -196,7 +196,19 @@ public sealed class DialogHelpPaneController
 
             // First open — build the session and wire the VM
             var session = await AppHelpSessionFactory.CreateAsync(_host);
-            _vm = new HelpPaneViewModel(session, _host, new HelpActionRouter())
+
+            // Build a dialog-aware action router: borrows the full set of registered
+            //  actions from MainWindow but wraps them so that clicking an action link:
+            //  - does nothing (and activates this window) if the action would reopen
+            //    this same dialog, or
+            //  - asks for confirmation, closes this dialog, then runs the command.
+            IHelpActionRouter router;
+            if (Application.Current.MainWindow is MainWindow mw)
+                router = new DialogHelpActionRouter(mw.BuildHelpActions(), _defaultTopicId, _window);
+            else
+                router = new HelpActionRouter(); // fallback: no actions registered
+
+            _vm = new HelpPaneViewModel(session, _host, router)
             {
                 // Restore persisted chat sub-pane height before binding so the
                 //  DataContextChanged handler in HelpPane.xaml.cs applies it immediately

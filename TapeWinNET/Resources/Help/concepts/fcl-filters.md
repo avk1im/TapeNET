@@ -12,7 +12,7 @@ intents:
 
 # FCL File Filters
 
-[FCL](help://glossary/fcl) (File Conditions Language) is TapeWin's built-in DSL for selecting
+[FCL](help://glossary/fcl) (File Conditions Language) is TapeWin's built-in language for selecting
 which files to include in a backup or restore operation.
 
 ## Basic Syntax

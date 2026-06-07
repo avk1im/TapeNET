@@ -17,7 +17,7 @@ related:
 **Backup set** — a single snapshot of files written to tape at one point in
 time.  See [Backup sets](help://topic/concepts.backup-sets).
 
-**TOC (Table of Contents)** — the on-tape catalog of media description, sets,
+**TOC** (Table of Contents) — the on-tape catalog of media description, sets,
 and files.  See [Partitions and the TOC](help://topic/concepts.partitions-and-toc).
 
 **Initiator partition** — a small dedicated partition that stores the TOC
@@ -27,7 +27,7 @@ separately from the data.
 previous backup.  See [Incremental backup](help://topic/concepts.incremental-backup).
 
 **Incremental chain** — a sequence of incremental sets that together reconstruct
-the latest version of every file.
+the latest version of every file in the backup set.  See [Incremental backup](help://topic/concepts.incremental-backup).
 
 **Multi-volume** — a backup or restore that spans more than one tape.  See
 [Multi-volume backups](help://topic/concepts.multi-volume).
@@ -35,7 +35,7 @@ the latest version of every file.
 **Virtual drive** — a tape drive emulated using a file or RAM.  See
 [Virtual drives](help://topic/concepts.virtual-drives).
 
-**FCL (File Conditions Language)** — the language used to filter files.  See
+**FCL** (File Conditions Language) — the language used to filter files.  See
 [FCL file filters](help://topic/concepts.fcl-filters).
 
 **Validate** — read tape data and compare checksums, without writing files.

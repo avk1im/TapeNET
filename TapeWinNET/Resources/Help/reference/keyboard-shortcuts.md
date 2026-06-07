@@ -21,4 +21,4 @@ related:
 | **Alt+F4** | Exit TapeWin |
 
 Menu items also expose access keys (the underlined letters) — press **Alt**
-followed by the letter to open a menu or invoke a command.
+followed by the underlined letter to open a menu or invoke a command.

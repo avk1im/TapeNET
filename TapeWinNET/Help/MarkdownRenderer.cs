@@ -16,7 +16,7 @@ namespace TapeWinNET.Help;
 /// and intercepts <c>help://</c> navigation URIs, routing them to the appropriate
 /// <see cref="IHelpSession"/> method.
 /// </summary>
-public sealed partial class MarkdownRenderer(IHelpSession session, HelpActionRouter actions)
+public sealed partial class MarkdownRenderer(IHelpSession session, IHelpActionRouter actions)
 {
     // ── Markdig pipeline (shared; pipelines are thread-safe after construction) ──
     private static readonly MarkdownPipeline _pipeline = new MarkdownPipelineBuilder()
@@ -35,8 +35,8 @@ public sealed partial class MarkdownRenderer(IHelpSession session, HelpActionRou
     private static readonly SolidColorBrush _glossaryFg =
         new(Color.FromRgb(0x00, 0x78, 0xD4));   // #0078D4 — Windows accent blue
 
-    private readonly IHelpSession _session = session;
-    private readonly HelpActionRouter _actions = actions;
+    private readonly IHelpSession     _session = session;
+    private readonly IHelpActionRouter _actions = actions;
 
     // ── Events ────────────────────────────────────────────────────────────────
 
@@ -161,7 +161,7 @@ public sealed partial class MarkdownRenderer(IHelpSession session, HelpActionRou
     ///   <item><c>help://topic/&lt;id&gt;</c> — navigates the help session.</item>
     ///   <item><c>help://glossary/&lt;slug&gt;</c> — raises <see cref="GlossaryLinkClicked"/>
     ///    so the host (HelpPane) can show an inline popup.</item>
-    ///   <item><c>help://action/&lt;id&gt;</c> — invokes a registered <see cref="HelpActionRouter"/> command.</item>
+    ///   <item><c>help://action/&lt;id&gt;</c> — invokes a registered <see cref="IHelpActionRouter"/> command.</item>
     ///   <item><c>http(s)://…</c> — opens in the default browser.</item>
     /// </list>
     /// </summary>

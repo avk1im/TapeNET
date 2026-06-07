@@ -34,7 +34,7 @@ open the [Restore dialog](help://topic/dialog.restore).
 Click **Start Restore** and monitor progress.  TapeWin reports each restored
 file and shows a summary when complete.
 
-## Validate vs Verify
+## Validate or Verify
 
 After restoring you can run [Validate](help://glossary/validate) or [Verify](help://glossary/verify) — see [Restore, Validate, Verify](help://topic/concepts.restore-validate-verify) —
 to confirm data integrity.

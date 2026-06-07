@@ -14,8 +14,7 @@ related:
 # Virtual Drives
 
 TapeWin can emulate a drive — a [virtual drive](help://glossary/virtual-drive) — using a **file on disk**
-or a **block of RAM**
-works just the same.  Great for testing, demos, and disk-based archives.
+or a **block of RAM**.  The virtual drive works just the same as a physical drive. Great for testing, demos, and disk-based archives.
 
 Open one from the [Open Virtual Drive dialog](help://topic/dialog.open-virtual-drive),
 or read [Virtual drives](help://topic/concepts.virtual-drives) for the concept.

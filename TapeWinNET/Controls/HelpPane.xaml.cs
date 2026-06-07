@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -191,18 +192,19 @@ public partial class HelpPane : UserControl
     // WPF's logical-child rules treat Popup as a second root even inside a panel.
     // Building it here eliminates the warning with no functional change.
     //
-    // UX: the popup is opened via Dispatcher.BeginInvoke(DispatcherPriority.Input)
-    // so it becomes visible only AFTER the mouse-button-up event that follows the
-    // click has been processed. Without this delay, StaysOpen=False would
-    // immediately see that MouseUp and treat it as an "outside click", closing the
-    // popup before the user ever sees it.
+    // We employ a 1-shot timer to temporarily set popup.StaysOpen to true to
+    // prevent the popup from immediately closing on the same click that opens it.
 
     private Popup?     _glossaryPopup;
     private TextBlock? _glossaryPopupText;
+    private Border?    _glossaryPopupBorder;
+    private DispatcherTimer? _glossaryPopupTimer;
 
     /// <summary>
     /// Lazily constructs the glossary <see cref="Popup"/> and returns it.
     /// The popup is created once, reused on every subsequent click.
+    /// <para>Likewise we lazily create the timer used to prevent immediate auto-close
+    /// of the popup.</para>
     /// </summary>
     private Popup EnsureGlossaryPopup()
     {
@@ -234,7 +236,7 @@ public partial class HelpPane : UserControl
         };
         footerBlock.Inlines.Add(fullPageLink);
 
-        var content = new Border
+        _glossaryPopupBorder = new Border
         {
             Background      = new SolidColorBrush(Color.FromRgb(0xCC, 0xE5, 0xFF)),
             BorderBrush     = new SolidColorBrush(Color.FromRgb(0x33, 0x99, 0xCC)),
@@ -251,15 +253,27 @@ public partial class HelpPane : UserControl
 
         _glossaryPopup = new Popup
         {
-            Child             = content,
+            Child             = _glossaryPopupBorder,
             Placement         = PlacementMode.Mouse,
-            StaysOpen         = false,
+            StaysOpen         = false, // auto-close when clicking outside
             AllowsTransparency = true,
             MaxWidth          = 320,
             // Anchor to this UserControl so the popup is positioned relative to it
             PlacementTarget   = this,
         };
 
+        _glossaryPopupTimer = new()
+        {
+            Interval = TimeSpan.FromMilliseconds(500),
+            IsEnabled = false
+        };
+        _glossaryPopupTimer.Tick += (_, _) =>
+        {
+            if (_glossaryPopup is not null)
+                _glossaryPopup!.StaysOpen = false;
+            _glossaryPopupTimer.IsEnabled = false; // single-shot
+        };
+        
         return _glossaryPopup;
     }
 
@@ -283,14 +297,31 @@ public partial class HelpPane : UserControl
         var displayText = (def ?? $"({termSlug})").Replace("**", string.Empty);
 
         var popup = EnsureGlossaryPopup();
-        _glossaryPopupText!.Text = displayText;
+        // The following have been created in EnsureGlossaryPopup()
+        Debug.Assert(_glossaryPopupText is not null);
+        Debug.Assert(_glossaryPopupBorder is not null);
+        Debug.Assert(_glossaryPopupTimer is not null);
 
-        // Close any currently-open glossary popup first (e.g. rapid successive clicks).
+        // Close any currently-open glossary popup first
         popup.IsOpen = false;
 
-        // Defer the open past the current mouse-event chain so StaysOpen=False does
-        //  not immediately re-close the popup on the MouseUp of this same click.
-        Dispatcher.BeginInvoke(() => popup.IsOpen = true, DispatcherPriority.Input);
+        _glossaryPopupText!.Text = displayText;
+
+        // Force layout so the popup resizes to fit the text
+        _glossaryPopupBorder!.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        _glossaryPopupBorder.Arrange(new Rect(_glossaryPopupBorder.DesiredSize));
+
+        // Prevent immediate auto-close
+        popup.StaysOpen = true;
+
+        // Open
+        popup.IsOpen = true;
+
+        // Ensure final layout is correct
+        popup.Child.UpdateLayout();
+
+        // Arm the single-shot timer
+        _glossaryPopupTimer!.IsEnabled = true;
     }
 
     /// <summary>
