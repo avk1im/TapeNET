@@ -39,4 +39,32 @@ public interface IHelpPaneHost
     /// the last viewed topic or navigates home.
     /// </summary>
     void OpenHelpPane(string? topicId = null);
+
+    // ── Phase 8a: Reveal overlay hooks ───────────────────────────────────────
+
+    /// <summary>
+    /// Returns the element whose <see cref="System.Windows.Documents.AdornerLayer"/>
+    /// hosts help overlays (Reveal / Walkthrough).
+    /// <para>
+    /// The default implementation looks for a child named <c>"HelpOverlayRoot"</c>
+    /// (the host's Column-0 content grid).  Hosts opt in simply by naming that element;
+    /// no code-behind override is required.
+    /// </para>
+    /// </summary>
+    FrameworkElement? GetOverlayRoot()
+        => this is FrameworkElement fe
+            ? fe.FindName("HelpOverlayRoot") as FrameworkElement
+            : null;
+
+    /// <summary>
+    /// Returns the topic id that represents <em>this</em> host's primary help page —
+    /// used by the Reveal overlay to look up the <c>## Controls</c> chapter when the
+    /// content pane is showing an unrelated topic.
+    /// <para>
+    /// The default returns <c>null</c>; hosts that support Reveal should override
+    /// (dialogs return their dialog topic id; MainWindow returns <c>"ui.main-window"</c>).
+    /// </para>
+    /// </summary>
+    string? GetDefaultTopicId() => null;
 }
+

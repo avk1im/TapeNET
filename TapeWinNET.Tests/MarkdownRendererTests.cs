@@ -67,6 +67,7 @@ public sealed class MarkdownRendererTests
         public IReadOnlyList<WalkthroughScript> GetWalkthroughsForHost(string hostName) => [];
         public HelpTopic? GetTopicForControl(string hostName, string topicId) => null;
         public void ClearConversation() { }
+        public string? TryGetControlHelp(string topicId, string controlName) => null;
 
         public event EventHandler? CurrentTopicChanged  { add { } remove { } }
         public event EventHandler<HelpAssistantResponse>? AnswerReceived { add { } remove { } }

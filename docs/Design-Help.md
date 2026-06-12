@@ -1,6 +1,6 @@
 # TapeWinNET Help System — Detailed Design
 
-> **Status:** Phases 0 ✅ 1 ✅ 2 ✅ 3 ✅ 4 ✅ 5 ✅ complete — `HelpNET` fully implemented; TapeWinNET HelpPane integrated and working. Phase 6 in progress: §6.1 ✅ §6.2 ✅ §6.3 ✅ §6.4 ✅ §6.6 ✅ §6.7 ✅ done. Phase 7 in progress: `BackupWindow` ✅ `RestoreWindow` ✅ remaining dialogs pending.
+> **Status:** Phases 0 ✅ 1 ✅ 2 ✅ 3 ✅ 4 ✅ 5 ✅ complete — `HelpNET` fully implemented; TapeWinNET HelpPane integrated and working. Phase 6 in progress: §6.1 ✅ §6.2 ✅ §6.3 ✅ §6.4 ✅ §6.6 ✅ §6.7 ✅ §6.8a ✅ done. Phase 7 done: `BackupWindow` ✅ `RestoreWindow` ✅ remaining dialogs pending. Phase 8 (Overlays): **Reveal** detailed design (§11) + implementation plan (§9 → Phase 8) authored — 📝 ready to implement; **Guide Me** (Walkthrough) deferred with forward-looking design notes (§11.9).
 > **Scope:** A modern, optionally AI-augmented help system for TapeWinNET, with reusable engines (`AiNET`, `HelpNET`) ready for TapeConNET and other future consumers.
 > **Authoring convention:** Markdown + YAML front-matter for all help content. Library API surfaces are described in C# pseudo-signatures; sections marked **(not yet implemented)** are still design-only.
 
@@ -644,7 +644,7 @@ Markdig supports standard hyperlinks; the renderer (`MarkdownRenderer` in TapeWi
 | URI | Behavior |
 |---|---|
 | `help://topic/<id>` | `HelpSession.NavigateAsync(<id>)` |
-| `help://glossary/<term>` | Show inline popover with the glossary entry |
+| `help://glossary/<slug>` | Show inline popup with the glossary entry (see §6.8a) |
 | `help://action/<actionId>` | Invoke a host action via `IHelpActionRouter.Invoke(actionId)` (TapeWinNET-provided) |
 | `https://…` / `http://…` | Open in default browser |
 
@@ -1453,19 +1453,192 @@ the `OnProgramPaneToggled` window-resize logic in the code-behind.
 
 ---
 
+### §6.8a — Glossary Popups ✅ DONE
+
+Glossary terms referenced in content via `help://glossary/<slug>` now show an inline popup with the
+term's definition when clicked. Hovering over a glossary link shows the definition as a tooltip
+without requiring a click.
+
+#### Architecture
+
+The feature spans three layers:
+
+**`HelpNET` — content store** (`HelpContentStore.GetGlossaryDefinition`)
+
+`HelpContentStore` lazily parses the `reference.glossary` topic body on first call, building a
+`Dictionary<string, string>` keyed by term slug. The glossary file uses `**Term name** — definition`
+paragraph format; the parser extracts the bold term and the text after the em-dash, strips embedded
+`help://` link syntax to produce clean plain text, and slugifies the term key (lowercase, whitespace
+and slashes → hyphens). The method is exposed on `IHelpSession` as `TryGetGlossaryDefinition(string
+termSlug)` so callers need no direct reference to `HelpContentStore`.
+
+**`MarkdownRenderer` — rendering + event** (`TapeWinNET/Help/MarkdownRenderer.cs`)
+
+After Markdig converts the Markdown body to a `FlowDocument`, `MarkdownRenderer.Render()` walks all
+hyperlinks in the document. Any link whose `NavigateUri` begins with `help://glossary/` receives:
+- A **dashed underline** in info-blue (`#0078D4`) — visually distinct from solid-underline topic links.
+- A **foreground** of the same blue so the term stands out from surrounding body text.
+- A **tooltip** (`FrameworkContentElement.ToolTip`) pre-populated with the plain-text definition,
+  so the user can read it on hover without clicking.
+
+When `HandleNavigate` receives a `help://glossary/<slug>` URI (from a user click), it **raises the
+`GlossaryLinkClicked` event** (type `EventHandler<string>`, argument = the slug) instead of calling
+`session.NavigateAsync`. This keeps the display concern in the view layer and away from the
+session/navigation model.
+
+**`HelpPane` — popup lifecycle** (`TapeWinNET/Controls/HelpPane.xaml.cs`)
+
+The `Popup` is **built entirely in code-behind** (`EnsureGlossaryPopup()`, lazy singleton). It is
+not declared in XAML because placing a `<Popup>` inside a `UserControl`'s content tree triggers
+MC3089 ("already has a child") from the XAML compiler — the WPF logical-child rules treat `Popup`
+as a second root even when it is placed inside a wrapping `<Grid>`.
+
+The popup is styled with info-blue border/background (`#CCE5FF` / `#3399CC`), a `TextBlock` for the
+definition, and a "View full glossary…" hyperlink footer that navigates to `reference.glossary`.
+
+#### The `StaysOpen` timing problem and its solution
+
+`Popup.StaysOpen = false` makes the popup auto-close when the user clicks anywhere outside it.
+However, the click that *opens* the popup also fires `MouseUp` a few milliseconds later. WPF
+processes that `MouseUp` as an outside-click and closes the popup immediately — before the user
+ever sees it.
+
+Two approaches were attempted:
+
+1. **`Dispatcher.BeginInvoke(DispatcherPriority.Input, …)`** — open the popup after all pending
+   input events. This worked in isolation but proved unreliable under varying system load: the
+   `MouseUp` sometimes slipped past the priority boundary and still closed the popup.
+
+2. **Timer-based `StaysOpen` deferral** ✅ (final solution) — open the popup with
+   `StaysOpen = true`, then arm a single-shot `DispatcherTimer` (500 ms) that flips
+   `StaysOpen` back to `false`. The sequence in `Renderer_GlossaryLinkClicked`:
+
+   ```csharp
+   popup.IsOpen  = false;               // close any previous instance
+   popup.StaysOpen = true;              // prevent immediate re-close
+   popup.IsOpen  = true;                // open at current mouse position
+   popup.Child.UpdateLayout();          // force layout to correct size
+   _glossaryPopupTimer.IsEnabled = true; // arm single-shot: sets StaysOpen=false after 500 ms
+   ```
+
+   After 500 ms the timer fires, sets `StaysOpen = false`, and disables itself. From that point
+   the standard WPF outside-click-closes-popup behavior takes over. The 500 ms window is long
+   enough that the `MouseUp` of the opening click has already been processed and ignored.
+
+   The timer is created once in `EnsureGlossaryPopup()` as a `DispatcherTimer`:
+
+   ```csharp
+   _glossaryPopupTimer = new()
+   {
+       Interval  = TimeSpan.FromMilliseconds(500),
+       IsEnabled = false
+   };
+   _glossaryPopupTimer.Tick += (_, _) =>
+   {
+       if (_glossaryPopup is not null)
+           _glossaryPopup.StaysOpen = false;
+       _glossaryPopupTimer.IsEnabled = false; // single-shot
+   };
+   ```
+
+   The timer is re-armed on every glossary-link click (`IsEnabled = true`) and self-disables in its
+   `Tick` handler — it fires exactly once per click.
+
+#### Content — `help://glossary/<slug>` links
+
+All glossary term slugs are derived from the display names in `reference.glossary` via the same
+lowercasing + hyphenation rule used by `BuildGlossaryCache`. The following slugs are in active use
+and appear throughout the help content:
+
+| Slug | Term |
+|---|---|
+| `backup-set` | Backup set |
+| `toc` | TOC (Table of Contents) |
+| `initiator-partition` | Initiator partition |
+| `incremental-backup` | Incremental backup |
+| `incremental-chain` | Incremental chain |
+| `multi-volume` | Multi-volume |
+| `virtual-drive` | Virtual drive |
+| `fcl` | FCL (File Conditions Language) |
+| `validate` | Validate |
+| `verify` | Verify |
+| `setmark-filemark` | Setmark / Filemark |
+| `remote-service` | Remote service |
+
+Glossary links are inserted on the **first meaningful use** of each term in each content file
+(`concepts/`, `dialogs/`, `features/`, `quickstart/`, `home.md`). Subsequent occurrences in the
+same file are left as plain text to avoid visual clutter.
+
+#### Tests (`TapeWinNET.Tests`)
+
+Four new `[StaFact]` tests in `MarkdownRendererTests.cs`:
+
+| Test | Asserts |
+|---|---|
+| `Render_GlossaryLink_HasDashedUnderlineAndTooltip` | Glossary link has a tooltip populated from the definition; dashed underline + blue foreground applied. |
+| `Render_GlossaryLink_WithoutDefinition_StillRendersLink` | When session returns `null` for a definition, the hyperlink is still emitted (no crash). |
+| `HandleNavigate_GlossaryUri_RaisesGlossaryLinkClickedEvent` | Clicking a glossary URI raises `GlossaryLinkClicked` with the correct slug. |
+| `HandleNavigate_GlossaryUri_DoesNotNavigateSession` | Glossary click must NOT call `session.NavigateAsync` (no page-navigation side-effect). |
+
+`StubSession` in the test file was extended with an optional `glossaryDefs` dictionary and an
+`onNavigate` callback so the last two tests can assert presence/absence of navigation.
+
+**Decisions / deviations**
+- **No per-term topic pages.** The original design left the `help://glossary/<term>` behavior
+  open-ended. The final decision is a single shared `reference.glossary` Markdown page whose body
+  is parsed at runtime. This avoids creating and maintaining dozens of stub topics while still giving
+  users a searchable, authorable glossary page accessible from the popup's footer link.
+- **`HelpPaneViewModel.Session` exposed as `internal`** so `HelpPane.xaml.cs` can reach it without
+  adding a dedicated glossary-lookup command or property on the VM. The popup is a pure view concern
+  and does not need to participate in the ViewModel command pattern.
+- **`Measure/Arrange` before open.** Calling `_glossaryPopupBorder.Measure` + `Arrange` before
+  `popup.IsOpen = true` ensures the popup renders at the correct size on first show, avoiding a
+  flicker where it briefly appears at zero or minimum size.
+
+---
+
 ### Phase 8 — Overlays (v2: `Reveal` + `Guide Me`)
 
+> **Detailed design:** see §11 (Help Overlays — Reveal & Walkthrough). This phase is split into
+> **8a (Reveal)** — fully designed and ready to implement — and **8b (Guide Me / Walkthrough)** —
+> designed at the architecture level (§11.9) and scheduled after Reveal ships.
+
+#### Phase 8a — Reveal overlay 📝 READY
+
 **Deliverables**
-- `IHelpOverlayController` + `HelpOverlayHost` (adorner-based).
-- `RevealOverlay` — badge enumeration, popups, Esc handling.
-- `WalkthroughOverlay` — step engine, cut-out backdrop, callout balloon.
-- Authoring of `walkthroughs/*.md` for: MainWindow tour, first backup, first restore, format media, incremental chain, FCL filter, delete sets, connect remote.
-- Wire `[Reveal]` and `[Guide Me]` buttons.
+- `HelpNET` — generalize `HelpContentStore.BuildGlossaryCache` into a shared
+  `ParseDefinitionEntries(body, into, sectionHeading)` helper; add
+  `GetControlDefinitions(topicId)` / `IHelpSession.TryGetControlHelp(topicId, controlName)`.
+- `TapeWinNET/Help/` — `HelpControlNameAttachedProperty` (`help:Help.ControlName`),
+  `IHelpOverlay` + `HelpOverlayBase` (adorner-based), `RevealOverlay`, and the overlay
+  glue in `HelpPane` (own + drive the overlay).
+- `TapeWinNET/Controls/` — lift the glossary popup into a reusable `HelpPopup` control; reuse it
+  for Reveal control-info popups.
+- `IHelpPaneHost.GetOverlayRoot()` (default interface method) + `x:Name="HelpOverlayRoot"` on each
+  host's content root.
+- Enable the existing **`Reveal`** button (idle ⇄ **`Exit Reveal`**); wire `RevealCommand`.
+- Content: add a `## Controls` chapter to `ui/main-window.md` and to each `dialogs/*.md`; tag the
+  relevant controls with `help:Help.ControlName`.
+
+**Tests**
+- `ParseDefinitionEntriesTests` / `ControlHelpCacheTests` — `## Controls` parsing; slug round-trip;
+  glossary parsing unchanged (regression).
+- `RevealOverlayTests` (`[StaFact]`) — adorned-element enumeration from tagged controls; Esc / outside-click
+  exit; popup shown on tagged-control click; overlay is non-hit-test-visible.
+- `HelpPopupTests` (`[StaFact]`) — glossary + reveal content render; `StaysOpen` deferral; placement.
+- (Manual) visual smoke tests per host.
+
+#### Phase 8b — Guide Me / Walkthrough overlay *(deferred — design in §11.9)*
+
+**Deliverables**
+- `WalkthroughOverlay : HelpOverlayBase` — step engine, cut-out backdrop, callout balloon, Next/Back/Skip.
+- Authoring of `walkthroughs/*.md` for: MainWindow tour, first backup, first restore, format media,
+  incremental chain, FCL filter, delete sets, connect remote.
+- Enable the existing **`Guide Me`** button; wire `GuideMeCommand`.
 
 **Tests**
 - `WalkthroughScriptParserTests` — front-matter walkthrough block; missing/extra fields.
 - `WalkthroughStepMachineTests` — Next/Back/Skip; target-not-found handling.
-- `RevealOverlayTests` — badge enumeration honours `IsTopLevelControl` marker; skips data-bound item containers.
 - (Manual) visual smoke tests.
 
 ---
@@ -1498,3 +1671,497 @@ the `OnProgramPaneToggled` window-resize logic in the code-behind.
 | Chat + Embeddings | no or mismatch | yes | **Rag** (lexical-only retrieval; fresh embeddings unused) |
 
 The mode is re-evaluated whenever `IAiSession.ProviderChanged` fires, so the user can switch from "no AI" to a local Ollama to a cloud provider mid-session without restarting.
+
+---
+
+## 11. Help Overlays — Reveal & Walkthrough (v2)
+
+> **Status:** **Reveal** (this section) is fully designed and ready to implement (Phase 8a).
+> **Walkthrough / Guide Me** is architected here (§11.9) and scheduled for Phase 8b.
+> Both build on a shared, reusable overlay foundation so the engine is written once.
+
+### 11.0 Goals & decisions
+
+| Topic | Decision |
+|---|---|
+| **What Reveal does** | Highlights every control on the active window/dialog that carries help, lets the user click any of them to see a short info popup, and exits on outside-click, `Esc`, or the toggle button. |
+| **Visual surface** | A WPF **`Adorner` on the host's `AdornerLayer`** draws the highlight rectangles. The adorner is **purely visual** (`IsHitTestVisible = false`); all input is handled by the overlay controller via tunneling (`Preview*`) events on the host content root. |
+| **Reusability** | A generic `HelpOverlayBase` (adorner + lifecycle + input capture) is shared by `RevealOverlay` (now) and `WalkthroughOverlay` (later). |
+| **Ownership** | **`HelpPane` owns the overlay.** The pane already owns the `HelpPaneViewModel`, the `IHelpSession`, and the glossary popup — Reveal uses all three, so the pane is the natural owner. The host window only supplies an overlay root element. |
+| **Popup reuse** | The glossary `Popup` logic is lifted into a reusable **`HelpPopup`** control and reused verbatim for Reveal control-info popups (they are never shown simultaneously). |
+| **Identifying controls** | A new attached property **`help:Help.ControlName`** tags a control with the *control's help name* (mirrors `help:Help.TopicId`). |
+| **Control help content** | Reuses the glossary authoring pattern: each `dialogs/*.md` (and `ui/main-window.md`) gains a final **`## Controls`** chapter listing `**Control name** — explanation`. Parsed by a generalized `HelpContentStore` helper. No new MD files (except none — `ui/main-window.md` already exists). |
+| **Reveal scope** | The **host that opened the pane** (MainWindow in Embedded mode, or the dialog in Adjacent mode). The help pane and its buttons remain fully interactive while Reveal is active. |
+| **Button label** | Toggle: **`Reveal`** ⇄ **`Exit Reveal`** (active state visually tinted/pressed). Considered "Hide Hints", "Done", "Stop" — `Exit Reveal` reads clearest and pairs with `Reveal`. Trivially changed (single VM property). |
+| **Main-window landing** | **Help menu → "Show Help"** opens `home`; **F1** (no more-specific control topic) opens **`ui.main-window`** — the contextual UI-map that also hosts the main-window `## Controls` chapter. See §11.7. |
+
+### 11.1 Component overview
+
+```
+HelpNET (content-agnostic)
+  Content/
+    HelpContentStore.cs
+      + ParseDefinitionEntries(body, into, sectionHeading?)   ← generalized from BuildGlossaryCache
+      + GetControlDefinitions(topicId) : IReadOnlyDictionary<string,string>   (cached per topic)
+  Session/
+    IHelpSession.cs / HelpSession.cs
+      + TryGetControlHelp(topicId, controlName) : string?     ← façade over the store
+
+TapeWinNET (WPF host)
+  Help/
+    HelpControlNameAttachedProperty.cs   help:Help.ControlName="…"      (NEW)
+    Overlays/
+      IHelpOverlay.cs                    overlay contract               (NEW)
+      HelpOverlayBase.cs                 adorner + input + lifecycle     (NEW, reusable)
+      HelpHighlightAdorner.cs            the visual adorner               (NEW)
+      RevealOverlay.cs                   Reveal-specific behavior         (NEW)
+      RevealTarget.cs                    record(FrameworkElement, ControlName)  (NEW)
+    IHelpPaneHost.cs
+      + GetOverlayRoot() : FrameworkElement?   default impl → FindName("HelpOverlayRoot")  (NEW default member)
+  Controls/
+    HelpPopup.cs                         reusable popup (lifted from HelpPane glossary code)  (NEW)
+    HelpPane.xaml(.cs)                   owns RevealOverlay + HelpPopup; reveal/glossary glue  (MODIFIED)
+  ViewModels/
+    HelpPaneViewModel.cs
+      RevealCommand (enabled), IsRevealActive, RevealButtonLabel        (MODIFIED)
+```
+
+### 11.2 `help:Help.ControlName` attached property
+
+Mirrors `HelpTopicIdAttachedProperty`. Tags a control with the *help name* used both to (a) enumerate
+it during Reveal and (b) look up its explanation in the topic's `## Controls` chapter.
+
+```csharp
+namespace TapeWinNET.Help;
+
+/// <summary>
+/// Attached property <c>help:Help.ControlName</c> tagging a control with its
+/// Reveal/Walkthrough help name.  The value is matched (slugified) against the
+/// <c>## Controls</c> chapter of the host's help topic.
+/// </summary>
+public static class HelpControlNameAttachedProperty
+{
+    public static readonly DependencyProperty ControlNameProperty =
+        DependencyProperty.RegisterAttached(
+            "ControlName", typeof(string),
+            typeof(HelpControlNameAttachedProperty), new PropertyMetadata(null));
+
+    public static string? GetControlName(DependencyObject e) => (string?)e.GetValue(ControlNameProperty);
+    public static void    SetControlName(DependencyObject e, string? v) => e.SetValue(ControlNameProperty, v);
+}
+```
+
+> **Authoring note.** A control may carry **both** `help:Help.TopicId` (for F1 deep-link) and
+> `help:Help.ControlName` (for Reveal). They are independent: `TopicId` navigates the content pane to a
+> sub-topic; `ControlName` shows an inline Reveal popup. A control with only `TopicId` is **not** revealed
+> (Reveal enumerates `ControlName` only) — this keeps Reveal focused on the curated control set.
+
+### 11.3 Content authoring — the `## Controls` chapter
+
+Each dialog topic (and `ui/main-window.md`) ends with a standard `## Controls` chapter using the **same
+paragraph format as the glossary** so the existing parser logic applies and the chapter renders naturally
+as part of the normal help page:
+
+```markdown
+## Controls
+
+**Backup sets list** — The table of available backup sets. Tick the rows you want to include.
+**Restore to** — Choose where files are written: their original location or a target folder.
+**Include incremental chain** — When on, the full [incremental chain](help://glossary/incremental-chain) is processed.
+**Start button** — Begins the selected operation (Restore, Validate, or Verify).
+```
+
+- The **bold term** is the control's help name. The attached property value is slugified the same way
+  (`lowercase`, whitespace/slashes/parentheses → hyphens), so authors may set
+  `help:Help.ControlName="Backup sets list"` **or** `="backup-sets-list"` — both resolve.
+- The definition text may contain `help://glossary/…` / `help://topic/…` links; they are stripped to plain
+  text for the popup but remain live when the user reads the full `## Controls` chapter in the content pane.
+- Authoring the chapter once serves **three** purposes: Reveal popups, a human-readable controls reference
+  in the page, and (later) Walkthrough step bodies can reference the same names.
+
+### 11.4 `HelpContentStore` generalization
+
+`BuildGlossaryCache` is refactored so the same line-scanning logic serves glossary **and** per-topic
+`## Controls` chapters:
+
+```csharp
+// Shared, section-aware definition-entry parser (generalized from BuildGlossaryCache).
+//  sectionHeading == null  → scan the whole body (glossary topic).
+//  sectionHeading == "Controls" → scan only lines under "## Controls" until the next "## ".
+private static void ParseDefinitionEntries(
+    string markdownBody,
+    IDictionary<string,string> into,
+    string? sectionHeading = null);
+
+// Glossary now delegates:
+private Dictionary<string,string> BuildGlossaryCache()
+{
+    var cache = new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+    if (GetById("reference.glossary") is { } g)
+        ParseDefinitionEntries(g.MarkdownBody, cache, sectionHeading: null);
+    return cache;
+}
+
+// New: per-topic control help, cached by topic id.
+private readonly Dictionary<string, IReadOnlyDictionary<string,string>> _controlCacheByTopic = new(StringComparer.OrdinalIgnoreCase);
+
+public IReadOnlyDictionary<string,string> GetControlDefinitions(string topicId)
+{
+    if (_controlCacheByTopic.TryGetValue(topicId, out var cached)) return cached;
+    var map = new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+    if (GetById(topicId) is { } t)
+        ParseDefinitionEntries(t.MarkdownBody, map, sectionHeading: "Controls");
+    var ro = (IReadOnlyDictionary<string,string>)map;
+    _controlCacheByTopic[topicId] = ro;
+    return ro;
+}
+```
+
+`IHelpSession` gains a thin façade so the WPF layer never touches the store directly (consistent with
+`TryGetGlossaryDefinition`):
+
+```csharp
+/// <summary>Returns the plain-text Reveal explanation for a control within a topic's
+/// <c>## Controls</c> chapter, or <c>null</c> when not found.</summary>
+string? TryGetControlHelp(string topicId, string controlName);
+```
+
+`HelpSession` implementation:
+
+```csharp
+public string? TryGetControlHelp(string topicId, string controlName)
+{
+    var map = _store.GetControlDefinitions(topicId);
+    var slug = HelpSlug.From(controlName);   // shared slugify helper (also used by the store)
+    return map.TryGetValue(slug, out var def) ? def : null;
+}
+```
+
+> **Slugify reuse.** The slug rule currently inlined in `BuildGlossaryCache` is extracted into an internal
+> `HelpSlug.From(string)` helper in HelpNET so both the parser (key generation) and the lookups (control
+> name → key) stay in lock-step.
+
+### 11.5 Reusable `HelpPopup` control
+
+The glossary popup logic currently embedded in `HelpPane.xaml.cs` (`EnsureGlossaryPopup`,
+`Renderer_GlossaryLinkClicked`, the `StaysOpen` deferral timer, layout-before-open) is lifted into a
+self-contained control so both glossary and Reveal reuse it:
+
+```csharp
+namespace TapeWinNET.Controls;
+
+/// <summary>
+/// Reusable info popup (lifted from the HelpPane glossary implementation).
+/// Shows a short plain-text definition near the mouse, with an optional footer link.
+/// Encapsulates the StaysOpen-deferral timer that prevents the opening click's
+/// MouseUp from immediately dismissing the popup.
+/// </summary>
+public sealed class HelpPopup
+{
+    public HelpPopup(UIElement placementTarget);
+
+    /// <summary>Optional footer link text + click handler (e.g. "View full glossary…").</summary>
+    public void SetFooter(string? text, Action? onClick);
+
+    /// <summary>Shows <paramref name="text"/> at the current mouse position.</summary>
+    public void Show(string text);
+
+    public void Close();
+    public bool IsOpen { get; }
+}
+```
+
+- `HelpPane` constructs **one** `HelpPopup` and uses it for **both** glossary clicks and Reveal clicks.
+- Glossary calls `SetFooter("View full glossary…", () => Navigate("reference.glossary"))` before showing.
+- Reveal calls `SetFooter("Open dialog help…", () => Navigate(currentTopicId))` (or no footer) before showing.
+- The 500 ms `StaysOpen` deferral, `Measure/Arrange`-before-open, and single-shot timer move into `HelpPopup`
+  unchanged (see §6.8a for the rationale).
+
+### 11.6 Overlay foundation (reusable)
+
+#### `IHelpPaneHost.GetOverlayRoot()`
+
+The overlay must adorn **the host's content area only** (Column 0), never the help pane itself — otherwise
+the highlight would cover the pane and the "Exit Reveal" button. Added as a **default interface method** so
+existing hosts opt in by naming an element, with zero code-behind changes:
+
+```csharp
+public interface IHelpPaneHost
+{
+    // … existing members …
+
+    /// <summary>
+    /// Returns the element whose <see cref="AdornerLayer"/> hosts help overlays
+    /// (Reveal / Walkthrough). Defaults to the element named <c>HelpOverlayRoot</c>.
+    /// Should be the host's content root (excluding the HelpPane column).
+    /// </summary>
+    FrameworkElement? GetOverlayRoot()
+        => this is FrameworkElement fe ? fe.FindName("HelpOverlayRoot") as FrameworkElement : null;
+}
+```
+
+Each host marks its content root (the existing Column-0 grid) with `x:Name="HelpOverlayRoot"`. For
+MainWindow that is the inner content grid spanning rows 2-4 of Column 0; for dialogs it is the
+`Grid.Column="0"` content grid. No host needs to override the method.
+
+#### `HelpHighlightAdorner` — the visual layer
+
+```csharp
+/// <summary>
+/// Visual-only adorner that draws an "informational" highlight (thick blue rounded
+/// border + subtle glow) around a set of target rectangles. Hit-testing is disabled
+/// so the adorner never intercepts input.
+/// </summary>
+internal sealed class HelpHighlightAdorner : Adorner
+{
+    public HelpHighlightAdorner(UIElement adornedElement) : base(adornedElement)
+        => IsHitTestVisible = false;
+
+    /// <summary>Rectangles (in adorned-element coordinates) to highlight.</summary>
+    public IReadOnlyList<Rect> Targets { get; set; } = [];
+
+    /// <summary>Optional element to emphasize (Walkthrough current step); others dimmed.</summary>
+    public Rect? Spotlight { get; set; }   // used by Walkthrough; null for Reveal
+
+    protected override void OnRender(DrawingContext dc) { /* draw borders; optional scrim for Spotlight */ }
+}
+```
+
+- **Reveal** sets `Targets` = every tagged control's bounds; `Spotlight = null` (no scrim — all controls
+  remain visible and equally highlighted).
+- **Walkthrough** (later) sets a single `Spotlight` rect and draws a dimming scrim with a cut-out — the
+  same adorner, different inputs (see §11.9).
+
+#### `HelpOverlayBase` — lifecycle + input
+
+```csharp
+/// <summary>
+/// Base class for help overlays (Reveal, Walkthrough). Manages the adorner lifecycle,
+/// captures tunneling input on the host overlay root, and exposes Activate/Deactivate.
+/// Subclasses implement target enumeration and click/keyboard handling.
+/// </summary>
+public abstract class HelpOverlayBase : IHelpOverlay
+{
+    protected FrameworkElement OverlayRoot { get; }
+    protected AdornerLayer     Layer       { get; }
+    protected HelpHighlightAdorner Adorner { get; }
+
+    protected HelpOverlayBase(FrameworkElement overlayRoot);
+
+    public bool IsActive { get; private set; }
+    public event EventHandler? Deactivated;
+
+    public void Activate();      // add adorner, hook Preview events + LayoutUpdated, set cursor, focus for keys
+    public void Deactivate();    // remove adorner, unhook, restore cursor; raise Deactivated
+
+    // Tunneling handlers wired on OverlayRoot during Activate:
+    protected virtual void OnPreviewMouseDown(object s, MouseButtonEventArgs e);  // hit-test targets
+    protected virtual void OnPreviewMouseMove(object s, MouseEventArgs e);        // hand cursor over targets
+    protected virtual void OnPreviewKeyDown(object s, KeyEventArgs e);            // Esc → Deactivate
+    protected virtual void OnLayoutUpdated(object? s, EventArgs e);               // refresh Targets on resize/scroll
+
+    // Subclass hook: enumerate the elements this overlay cares about.
+    protected abstract IReadOnlyList<FrameworkElement> EnumerateTargets();
+}
+```
+
+Key behaviors handled once in the base:
+- **Input isolation.** Handlers are attached on `OverlayRoot` (the host content), **not** on the help pane.
+  Clicks inside the pane (including **Exit Reveal**) are never intercepted, so the toggle always works.
+- **Outside-click exit.** A `PreviewMouseDown` on `OverlayRoot` that does not hit any target deactivates the
+  overlay (and is marked handled so it does not also actuate the underlying control).
+- **`Esc` exit.** `OverlayRoot.Focus()` on activate; `PreviewKeyDown` on `Esc` deactivates.
+- **Live geometry.** `LayoutUpdated` (and the adorned element's `SizeChanged`) re-computes target rectangles
+  so highlights track window resizes, splitter drags, and content scrolls.
+- **Cursor.** Hand cursor is shown when hovering a target (via `OnPreviewMouseMove`), default otherwise.
+
+#### `IHelpOverlay`
+
+```csharp
+public interface IHelpOverlay
+{
+    bool IsActive { get; }
+    void Activate();
+    void Deactivate();
+    event EventHandler? Deactivated;
+}
+```
+
+### 11.7 `RevealOverlay`
+
+```csharp
+public sealed class RevealOverlay : HelpOverlayBase
+{
+    public RevealOverlay(FrameworkElement overlayRoot, IHelpPaneHost host);
+
+    /// <summary>Raised when a tagged control is clicked; carries the control's help name
+    ///  and its screen rectangle so the pane can position the popup.</summary>
+    public event EventHandler<RevealTarget>? TargetActivated;
+
+    protected override IReadOnlyList<FrameworkElement> EnumerateTargets();   // visual-tree walk for help:Help.ControlName
+    protected override void OnPreviewMouseDown(object s, MouseButtonEventArgs e);  // hit → TargetActivated; miss → Deactivate
+}
+
+public sealed record RevealTarget(FrameworkElement Element, string ControlName);
+```
+
+**Target enumeration.** Walk the visual tree under `OverlayRoot`, collecting every element with a non-empty
+`help:Help.ControlName`. Only **visible, loaded, hit-testable** elements are highlighted (skip
+`Visibility != Visible`, zero-size, or collapsed). Bounds are computed via
+`element.TransformToAncestor(adornedElement).TransformBounds(new Rect(element.RenderSize))`.
+
+**Click dispatch.** On `PreviewMouseDown`, hit-test the click point against the enumerated target rects:
+- **Hit** → raise `TargetActivated(target)`, mark `e.Handled = true` (so the control does not actuate),
+  keep the overlay active (the user can click multiple controls in sequence).
+- **Miss** → `Deactivate()` and mark handled (the click only dismisses Reveal; it does not fall through).
+
+> **Why keep Reveal active after a popup.** Users typically scan several controls. Reveal stays on until an
+> explicit exit (outside-click on a non-target, `Esc`, or `Exit Reveal`). The control-info popup itself is a
+> `HelpPopup` with `StaysOpen` deferral, so it closes on the next click while Reveal remains active for the
+> following target.
+
+### 11.8 `HelpPane` integration (owns the overlay)
+
+`HelpPane` already owns the VM, session, and glossary popup. It gains ownership of one `RevealOverlay` and
+re-uses its single `HelpPopup`.
+
+```csharp
+// HelpPane.xaml.cs (sketch)
+private HelpPopup?     _infoPopup;       // shared by glossary + reveal
+private RevealOverlay? _reveal;
+
+private void OnRevealRequested()         // invoked when VM.IsRevealActive flips true
+{
+    var host = /* the IHelpPaneHost that hosts this pane */;
+    var root = host.GetOverlayRoot();
+    if (root is null) { /* log + reset VM flag */ return; }
+
+    _reveal ??= new RevealOverlay(root, host);
+    _reveal.TargetActivated += Reveal_TargetActivated;
+    _reveal.Deactivated     += (_, _) => Vm.IsRevealActive = false;  // sync button state
+    _reveal.Activate();
+}
+
+private void Reveal_TargetActivated(object? sender, RevealTarget t)
+{
+    var topicId = Vm.CurrentTopicId ?? host.GetDefaultTopicId();   // dialog's topic
+    var text = Vm.Session.TryGetControlHelp(topicId, t.ControlName)
+               ?? $"({t.ControlName})";
+    EnsureInfoPopup().SetFooter("Open full help…", () => Vm.NavigateCommand.Execute(topicId));
+    EnsureInfoPopup().Show(text);   // positioned at mouse (PlacementMode.Mouse), same as glossary
+}
+```
+
+- **How the pane learns its host.** The `HelpPaneViewModel` already holds an `IHelpPaneHost _host`. Expose it
+  to the control as `internal IHelpPaneHost Host => _host;` (mirrors the existing
+  `internal IHelpSession Session`). The control reads `Vm.Host` to call `GetOverlayRoot()` and
+  `GetDefaultTopicId()`.
+- **`GetDefaultTopicId()`** is added to `IHelpPaneHost` (default returns `null`); `DialogHelpPaneController`
+  hosts return their `_defaultTopicId`; MainWindow returns `"ui.main-window"`. Used when the content pane is
+  showing an unrelated topic at the moment Reveal is invoked, so the control lookup still targets the host's
+  own `## Controls` chapter.
+- The glossary handler (`Renderer_GlossaryLinkClicked`) is rewritten to use the same `_infoPopup`
+  (`EnsureInfoPopup().SetFooter("View full glossary…", …); .Show(def)`), removing the duplicated popup code.
+
+#### ViewModel changes
+
+```csharp
+private bool _isRevealActive;
+public bool IsRevealActive
+{
+    get => _isRevealActive;
+    set { if (SetProperty(ref _isRevealActive, value)) { OnPropertyChanged(nameof(RevealButtonLabel)); RevealRequested?.Invoke(this, value); } }
+}
+
+/// <summary>Idle ⇄ active toggle label.</summary>
+public string RevealButtonLabel => _isRevealActive ? "Exit Reveal" : "Reveal";
+
+/// <summary>Raised when IsRevealActive flips; HelpPane activates/deactivates the overlay.</summary>
+public event EventHandler<bool>? RevealRequested;
+
+public ICommand RevealCommand { get; }   // toggles IsRevealActive; CanExecute: pane open && CurrentTopic != null
+```
+
+The existing **`Reveal`** button in `HelpPane.xaml` is enabled and bound:
+
+```xml
+<Button DockPanel.Dock="Right"
+        Command="{Binding RevealCommand}"
+        Content="{Binding RevealButtonLabel}"
+        Padding="6,2" FontSize="11"
+        ToolTip="Highlight the controls on this window and click one for help."/>
+```
+
+(The active/tinted look is a `DataTrigger` on `IsRevealActive` setting `Background`/`FontWeight`.)
+
+#### Lifecycle & edge cases
+
+- **Closing the pane while Reveal is active** → `ExecuteClose`/`OnPaneClosed` calls `_reveal?.Deactivate()`.
+- **Navigating / asking while Reveal is active** → allowed; the overlay tracks the *host* controls, not the
+  pane content, so it is unaffected. (The `RevealCommand.CanExecute` only gates *starting* Reveal.)
+- **Adjacent dialogs** — `OverlayRoot` is the dialog's Column-0 content grid, so the help pane column is never
+  covered. Window-shift/resize while Reveal is active is handled by `LayoutUpdated`.
+- **Provider/mode changes** — irrelevant to Reveal (no AI involved).
+- **Disposal** — `HelpPane` unsubscribes overlay events and deactivates on `DataContextChanged`/unload.
+
+### 11.9 Forward-looking: `WalkthroughOverlay` (Phase 8b)
+
+The Reveal foundation is intentionally shaped so Walkthrough reuses ~80% of it:
+
+| Concern | Reveal | Walkthrough (reuse) |
+|---|---|---|
+| Adorner | `HelpHighlightAdorner` with `Targets` | **same** adorner with `Spotlight` + scrim cut-out |
+| Base lifecycle | `HelpOverlayBase` | **same** (Activate/Deactivate, Esc, LayoutUpdated) |
+| Target source | `help:Help.ControlName` enumeration | `WalkthroughStep.Target` resolved via `IHelpPaneHost.ResolveControlByName` (already exists) |
+| Input | click target → popup; outside/Esc → exit | Next/Back/Skip in a **callout balloon** anchored to the current step's control |
+| Content | `## Controls` entries | `walkthrough:` front-matter `steps:` (already parsed into `WalkthroughScript`) |
+| Popup | `HelpPopup` (info) | a richer **callout** control (Next/Back/Skip), but may reuse `HelpPopup` styling |
+
+Concretely, `WalkthroughOverlay : HelpOverlayBase` adds a step cursor (`Current`, `Next()`, `Back()`,
+`Skip()`), sets `Adorner.Spotlight` to the current step's control bounds (dimming everything else), and shows
+a callout balloon with the step `Title`/`Body` and navigation buttons. `IHelpPaneHost.ResolveControlByName`
+and `IHelpSession.GetWalkthroughsForHost` already exist (Phase 3/5), so no new content-engine work is needed
+beyond the overlay UI. The `Guide Me` button binds to a `GuideMeCommand` analogous to `RevealCommand`.
+
+### 11.10 File-by-file change summary (Phase 8a)
+
+| File | Change |
+|---|---|
+| `HelpNET/Content/HelpContentStore.cs` | Extract `ParseDefinitionEntries` + `HelpSlug.From`; add `GetControlDefinitions`; `BuildGlossaryCache` delegates. |
+| `HelpNET/Session/IHelpSession.cs` + `HelpSession.cs` | Add `TryGetControlHelp(topicId, controlName)`. |
+| `TapeWinNET/Help/HelpControlNameAttachedProperty.cs` | **New** attached property. |
+| `TapeWinNET/Help/IHelpPaneHost.cs` | Add `GetOverlayRoot()` (default) + `GetDefaultTopicId()` (default). |
+| `TapeWinNET/Help/Overlays/IHelpOverlay.cs` | **New.** |
+| `TapeWinNET/Help/Overlays/HelpOverlayBase.cs` | **New** reusable base. |
+| `TapeWinNET/Help/Overlays/HelpHighlightAdorner.cs` | **New** visual adorner. |
+| `TapeWinNET/Help/Overlays/RevealOverlay.cs` + `RevealTarget.cs` | **New.** |
+| `TapeWinNET/Controls/HelpPopup.cs` | **New** — lifted from HelpPane glossary popup. |
+| `TapeWinNET/Controls/HelpPane.xaml(.cs)` | Own `RevealOverlay`; reuse `HelpPopup` for glossary + reveal; enable Reveal button. |
+| `TapeWinNET/ViewModels/HelpPaneViewModel.cs` | `RevealCommand`, `IsRevealActive`, `RevealButtonLabel`, `RevealRequested`; expose `Host`. |
+| `TapeWinNET/MainWindow.xaml` + dialog XAMLs | `x:Name="HelpOverlayRoot"` on content root; `help:Help.ControlName` on key controls. |
+| `TapeWinNET/Resources/Help/ui/main-window.md` + `dialogs/*.md` | Add `## Controls` chapter. |
+| `DialogHelpPaneController.cs` / `MainWindow.xaml.cs` | `GetDefaultTopicId()` returns `_defaultTopicId` / `"ui.main-window"`; deactivate overlay on pane close. |
+
+### 11.11 Tests (Phase 8a)
+
+| Suite | Project | Coverage |
+|---|---|---|
+| `ParseDefinitionEntriesTests` | `HelpNET.Tests` | `## Controls` section parsing; section boundary (stops at next `##`); whole-body glossary regression; link-stripping. |
+| `ControlHelpCacheTests` | `HelpNET.Tests` | `GetControlDefinitions` caches per topic; `TryGetControlHelp` slug round-trip (display name ⇄ slug); unknown control → null. |
+| `HelpSlugTests` | `HelpNET.Tests` | Slugify rules (spaces/slashes/parens → hyphens; trim; lowercase). |
+| `RevealOverlayTests` | `TapeWinNET.Tests` `[StaFact]` | Enumerates only `Help.ControlName`-tagged, visible elements; click-on-target raises `TargetActivated`; click-miss/`Esc` deactivates; adorner `IsHitTestVisible == false`. |
+| `HelpPopupTests` | `TapeWinNET.Tests` `[StaFact]` | `Show` opens; footer link invokes callback; `StaysOpen` deferral flips after the timer; `Close` hides. |
+| (Manual) | — | Per-host smoke test: Reveal highlights, hand cursor, popup content, exit paths; pane buttons stay live. |
+
+### 11.12 Implementation plan (Phase 8a)
+
+**Step 1 — HelpNET content engine (no WPF).** Extract `HelpSlug.From` + `ParseDefinitionEntries`; make `BuildGlossaryCache` delegate; add `GetControlDefinitions(topicId)` (cached per topic). Add `TryGetControlHelp(topicId, controlName)` to `IHelpSession`/`HelpSession`.
+**Step 2 — HelpNET tests.** `HelpSlugTests`, `ParseDefinitionEntriesTests` (incl. glossary regression), `ControlHelpCacheTests`. Build + run.
+**Step 3 — HelpPopup control.** Lift the glossary popup (timer deferral, Measure/Arrange-before-open, footer link) from `HelpPane.xaml.cs` into reusable `TapeWinNET/Controls/HelpPopup.cs`; rewire glossary to use it.
+**Step 4 — Attached property + host hooks.** Add `HelpControlNameAttachedProperty`; add `GetOverlayRoot()` and `GetDefaultTopicId()` default members to `IHelpPaneHost`.
+**Step 5 — Overlay foundation.** `IHelpOverlay`, `HelpHighlightAdorner` (visual-only), `HelpOverlayBase` (adorner lifecycle, Preview* input on overlay root, `Esc`, `LayoutUpdated` geometry tracking, hand cursor).
+**Step 6 — RevealOverlay + RevealTarget.** Visual-tree enumeration of visible tagged controls; hit→`TargetActivated`, miss/`Esc`→deactivate.
+**Step 7 — HelpPane + VM wiring.** VM: enable `RevealCommand`, add `IsRevealActive`, `RevealButtonLabel`, `RevealRequested`, expose `Host`. HelpPane: own `RevealOverlay`, show control info via shared `HelpPopup`, deactivate on close. Enable + bind the `Reveal` button (tint via DataTrigger).
+**Step 8 — Host XAML + content.** Add x:Name="HelpOverlayRoot" to each content root; tag key controls with `help:Help.ControlName`; add a ## Controls chapter to ui/main-window.md and each dialogs/*.md. Set `GetDefaultTopicId()` returns.
+**Step 9 — TapeWinNET tests + build.** `HelpPopupTests`, `RevealOverlayTests` ([StaFact]); full run_build; manual smoke per host.
+**Walkthrough (Phase 8b)** is deferred but architected in §11.9 so it reuses the same adorner + base.

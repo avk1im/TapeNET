@@ -79,6 +79,16 @@ public interface IHelpSession : IAsyncDisposable
     /// </summary>
     string? TryGetGlossaryDefinition(string termSlug);
 
+    /// <summary>
+    /// Returns the plain-text Reveal explanation for a control within a topic's
+    /// <c>## Controls</c> chapter, or <c>null</c> when not found.
+    /// <para>
+    /// Both the display name and the pre-slugified form of <paramref name="controlName"/>
+    /// are accepted: <c>"Backup sets list"</c> and <c>"backup-sets-list"</c> both work.
+    /// </para>
+    /// </summary>
+    string? TryGetControlHelp(string topicId, string controlName);
+
     // ── Events ────────────────────────────────────────────────────────────────
 
     /// <summary>Raised when <see cref="CurrentTopic"/> changes.</summary>

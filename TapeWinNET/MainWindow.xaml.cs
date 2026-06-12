@@ -726,6 +726,12 @@ namespace TapeWinNET
         public FrameworkElement? ResolveControlByName(string name)
             => FindName(name) as FrameworkElement;
 
+        /// <summary>
+        /// Returns the primary help topic for MainWindow — used by Reveal to look up
+        /// the <c>## Controls</c> chapter when the content pane is on a different topic.
+        /// </summary>
+        public string? GetDefaultTopicId() => "ui.main-window";
+
         // ── Open / toggle ─────────────────────────────────────────────────────
 
         /// <summary>

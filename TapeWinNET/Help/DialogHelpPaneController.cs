@@ -256,6 +256,12 @@ public sealed class DialogHelpPaneController
     // ── F1 context help ────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Returns the default topic id for this dialog — used by Reveal to find the
+    /// <c>## Controls</c> chapter when the content pane is showing a different topic.
+    /// </summary>
+    public string GetDefaultTopicId() => _defaultTopicId;
+
+    /// <summary>
     /// Handles an F1 key press: resolves the focused element's contextual topic id
     /// (if any) and opens the help pane on it. Marks the event handled when F1 fired.
     /// </summary>

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -10,6 +9,7 @@ using System.Windows.Threading;
 using HelpNET.Content;
 using HelpNET.Indexing;
 using TapeWinNET.Help;
+using TapeWinNET.Help.Overlays;
 using TapeWinNET.ViewModels;
 
 namespace TapeWinNET.Controls;
@@ -147,6 +147,8 @@ public partial class HelpPane : UserControl
             oldVm.ConversationItems.CollectionChanged -= ConversationItems_Changed;
             oldVm.PropertyChanged -= Vm_PropertyChanged;
             oldVm.Renderer.GlossaryLinkClicked -= Renderer_GlossaryLinkClicked;
+            oldVm.RevealRequested -= OnRevealRequested;
+            _reveal?.Deactivate();
         }
 
         // Subscribe to new VM and push the current document immediately.
@@ -156,6 +158,7 @@ public partial class HelpPane : UserControl
             newVm.ConversationItems.CollectionChanged += ConversationItems_Changed;
             newVm.PropertyChanged += Vm_PropertyChanged;
             newVm.Renderer.GlossaryLinkClicked += Renderer_GlossaryLinkClicked;
+            newVm.RevealRequested += OnRevealRequested;
             PushDocument(newVm.CurrentDocument);
             // Restore the persisted chat row height for this VM
             ApplyChatHeight(newVm);
@@ -186,153 +189,97 @@ public partial class HelpPane : UserControl
         ContentViewer.Document = document ?? new FlowDocument();
     }
 
-    // ── Glossary popup (built entirely in code-behind) ────────────────────────
-    // The Popup is not declared in XAML. Putting a Popup inside a UserControl in
-    // XAML triggers MC3089 ("already has a child") from the XAML compiler because
-    // WPF's logical-child rules treat Popup as a second root even inside a panel.
-    // Building it here eliminates the warning with no functional change.
-    //
-    // We employ a 1-shot timer to temporarily set popup.StaysOpen to true to
-    // prevent the popup from immediately closing on the same click that opens it.
+    // ── Info popup (shared by glossary and Reveal) ────────────────────────────
+    // HelpPopup encapsulates the StaysOpen-deferral timer, Measure/Arrange-before-open,
+    //  and footer-link logic that was previously inlined here (§6.8a / Phase 8a).
+    // A single instance is created lazily and reused for both glossary and Reveal clicks.
 
-    private Popup?     _glossaryPopup;
-    private TextBlock? _glossaryPopupText;
-    private Border?    _glossaryPopupBorder;
-    private DispatcherTimer? _glossaryPopupTimer;
+    private HelpPopup? _infoPopup;
+
+    /// <summary>Lazily creates and returns the shared <see cref="HelpPopup"/>, anchored to this UserControl.</summary>
+    internal HelpPopup EnsureInfoPopup()
+        => _infoPopup ??= new HelpPopup(this);
+
+    // ── Reveal overlay ─────────────────────────────────────────────────────────────────────
+    // Lazily created per pane instance; shared by all Reveal activations on the same pane.
+
+    private RevealOverlay? _reveal;
 
     /// <summary>
-    /// Lazily constructs the glossary <see cref="Popup"/> and returns it.
-    /// The popup is created once, reused on every subsequent click.
-    /// <para>Likewise we lazily create the timer used to prevent immediate auto-close
-    /// of the popup.</para>
+    /// Called when <see cref="HelpPaneViewModel.RevealRequested"/> fires.
+    /// Activates or deactivates the <see cref="RevealOverlay"/> on the host's overlay root.
     /// </summary>
-    private Popup EnsureGlossaryPopup()
+    private void OnRevealRequested(object? sender, bool activate)
     {
-        if (_glossaryPopup is not null)
-            return _glossaryPopup;
+        if (DataContext is not HelpPaneViewModel vm) return;
 
-        // "View full glossary…" link inside the popup footer
-        var fullPageLink = new System.Windows.Documents.Hyperlink(
-            new Run("View full glossary…"))
+        if (!activate)
         {
-            Foreground = new SolidColorBrush(Color.FromRgb(0x33, 0x66, 0x99)),
-        };
-        fullPageLink.Click += GlossaryFullPageLink_Click;
+            _reveal?.Deactivate();
+            return;
+        }
 
-        _glossaryPopupText = new TextBlock
+        var root = vm.Host.GetOverlayRoot();
+        if (root is null)
         {
-            TextWrapping = TextWrapping.Wrap,
-            FontSize     = 12,
-            FontFamily   = new FontFamily("Segoe UI"),
-            Foreground   = new SolidColorBrush(Color.FromRgb(0x00, 0x33, 0x66)),
-        };
+            // Host has no overlay root — reset VM flag silently.
+            vm.IsRevealActive = false;
+            return;
+        }
 
-        var footerBlock = new TextBlock
+        // Create the overlay (or recreate if the overlay root changed).
+        if (_reveal is null || !ReferenceEquals(_reveal.OverlayRootElement, root))
         {
-            Margin      = new Thickness(0, 5, 0, 0),
-            FontSize    = 11,
-            FontStyle   = FontStyles.Italic,
-            Foreground  = new SolidColorBrush(Color.FromRgb(0x33, 0x66, 0x99)),
-        };
-        footerBlock.Inlines.Add(fullPageLink);
+            _reveal = new RevealOverlay(root, vm.Host);
+            _reveal.TargetActivated += Reveal_TargetActivated;
+            _reveal.Deactivated     += (_, _) => vm.IsRevealActive = false;
+        }
 
-        _glossaryPopupBorder = new Border
-        {
-            Background      = new SolidColorBrush(Color.FromRgb(0xCC, 0xE5, 0xFF)),
-            BorderBrush     = new SolidColorBrush(Color.FromRgb(0x33, 0x99, 0xCC)),
-            BorderThickness = new Thickness(1),
-            CornerRadius    = new CornerRadius(4),
-            Padding         = new Thickness(10, 7, 10, 7),
-            MaxWidth        = 300,
-            Child           = new StackPanel
-            {
-                MaxWidth  = 300,
-                Children  = { _glossaryPopupText, footerBlock },
-            },
-        };
-
-        _glossaryPopup = new Popup
-        {
-            Child             = _glossaryPopupBorder,
-            Placement         = PlacementMode.Mouse,
-            StaysOpen         = false, // auto-close when clicking outside
-            AllowsTransparency = true,
-            MaxWidth          = 320,
-            // Anchor to this UserControl so the popup is positioned relative to it
-            PlacementTarget   = this,
-        };
-
-        _glossaryPopupTimer = new()
-        {
-            Interval = TimeSpan.FromMilliseconds(500),
-            IsEnabled = false
-        };
-        _glossaryPopupTimer.Tick += (_, _) =>
-        {
-            if (_glossaryPopup is not null)
-                _glossaryPopup!.StaysOpen = false;
-            _glossaryPopupTimer.IsEnabled = false; // single-shot
-        };
-        
-        return _glossaryPopup;
+        _reveal.Activate();
     }
 
     /// <summary>
-    /// Handles <see cref="MarkdownRenderer.GlossaryLinkClicked"/>: shows the
-    /// glossary popup with the term's definition near the mouse cursor.
-    /// <para>
-    /// Opening is deferred to <see cref="DispatcherPriority.Input"/> so the popup
-    /// becomes visible only after the MouseUp that closes the current click chain
-    /// has been processed — otherwise <c>StaysOpen=False</c> would treat that
-    /// MouseUp as an outside-click and immediately dismiss the popup.
-    /// </para>
+    /// Shows the info popup with the control's Reveal explanation when a tagged
+    /// control is clicked in the overlay.
+    /// </summary>
+    private void Reveal_TargetActivated(object? sender, RevealTarget target)
+    {
+        if (DataContext is not HelpPaneViewModel vm) return;
+
+        // Prefer the currently-displayed topic's Controls chapter; fall back to the
+        //  host's own default topic (e.g. the dialog's own page) so the lookup is
+        //  always against the most relevant ## Controls section.
+        var topicId = vm.CurrentTopicId
+                      ?? vm.Host.GetDefaultTopicId();
+
+        var text = (topicId is not null
+            ? vm.Session.TryGetControlHelp(topicId, target.ControlName)
+            : null)
+            ?? $"({target.ControlName})";
+
+        var popup = EnsureInfoPopup();
+        // Footer: open the host's dialog/UI topic in the content pane.
+        if (topicId is not null)
+            popup.SetFooter("Open full help…", () => vm.NavigateCommand.Execute(topicId));
+        else
+            popup.SetFooter(null, null);
+
+        popup.Show(text);
+    }
+
+    /// <summary>
+    /// Handles <see cref="MarkdownRenderer.GlossaryLinkClicked"/>: shows the glossary
+    /// popup with the term's definition near the mouse cursor.
     /// </summary>
     private void Renderer_GlossaryLinkClicked(object? sender, string termSlug)
     {
         if (DataContext is not HelpPaneViewModel vm) return;
 
         var def = vm.Session.TryGetGlossaryDefinition(termSlug);
-
-        // Strip markdown bold markers for plain display.
-        var displayText = (def ?? $"({termSlug})").Replace("**", string.Empty);
-
-        var popup = EnsureGlossaryPopup();
-        // The following have been created in EnsureGlossaryPopup()
-        Debug.Assert(_glossaryPopupText is not null);
-        Debug.Assert(_glossaryPopupBorder is not null);
-        Debug.Assert(_glossaryPopupTimer is not null);
-
-        // Close any currently-open glossary popup first
-        popup.IsOpen = false;
-
-        _glossaryPopupText!.Text = displayText;
-
-        // Force layout so the popup resizes to fit the text
-        _glossaryPopupBorder!.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        _glossaryPopupBorder.Arrange(new Rect(_glossaryPopupBorder.DesiredSize));
-
-        // Prevent immediate auto-close
-        popup.StaysOpen = true;
-
-        // Open
-        popup.IsOpen = true;
-
-        // Ensure final layout is correct
-        popup.Child.UpdateLayout();
-
-        // Arm the single-shot timer
-        _glossaryPopupTimer!.IsEnabled = true;
-    }
-
-    /// <summary>
-    /// Clicking "View full glossary…" inside the popup navigates to the full glossary topic.
-    /// </summary>
-    private void GlossaryFullPageLink_Click(object sender, RoutedEventArgs e)
-    {
-        if (_glossaryPopup is not null)
-            _glossaryPopup.IsOpen = false;
-        if (DataContext is HelpPaneViewModel vm)
-            vm.NavigateCommand.Execute("reference.glossary");
+        var popup = EnsureInfoPopup();
+        popup.SetFooter("View full glossary…",
+            () => vm.NavigateCommand.Execute("reference.glossary"));
+        popup.Show(def ?? $"({termSlug})");
     }
 
     // ── Chat splitter / pane-height persistence ───────────────────────────────

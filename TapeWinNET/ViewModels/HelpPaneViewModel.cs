@@ -56,8 +56,11 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     /// <summary>Exposes the renderer so the host control can delegate hyperlink clicks.</summary>
     internal MarkdownRenderer Renderer => _renderer;
 
-    /// <summary>Exposes the session so the host control can call glossary lookups.</summary>
+    /// <summary>Exposes the session so the host control can call glossary and control-help lookups.</summary>
     internal IHelpSession Session => _session;
+
+    /// <summary>Exposes the host so the HelpPane control can call overlay hooks (Reveal, Guide Me).</summary>
+    internal IHelpPaneHost Host => _host;
 
     private FlowDocument? _currentDocument;
     private string?       _currentTopicTitle;
@@ -66,6 +69,7 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     private bool          _isBusy;
     private bool          _isPaneOpen;
     private bool          _isAsking;
+    private bool          _isRevealActive;
     private double        _chatPaneHeight = 200.0;
     private string        _thinkingAnimationText = string.Empty;
     private HelpAssistantMode _assistantMode;
@@ -124,6 +128,7 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
         NavigateTopicRefCommand = new AsyncRelayCommand(async p => await ExecuteNavigate((p as HelpTopicRef)?.Id));
         InvokeActionCommand     = new RelayCommand(p => { if (p is HelpActionRef a) _actions.Invoke(a.ActionId); });
         OpenAiSetupCommand      = new AsyncRelayCommand(async _ => await Services.AppAiSessionHost.ReconfigureAndNotifyAsync());
+        RevealCommand           = new RelayCommand(ExecuteReveal, () => _isPaneOpen && _session.CurrentTopic != null);
     }
 
     // ── Events ────────────────────────────────────────────────────────────────
@@ -152,6 +157,13 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     /// The host (MainWindow) subscribes to forward the message to the log pane as a sub entry.
     /// </summary>
     public event EventHandler<string>? SessionInfo;
+
+    /// <summary>
+    /// Raised when <see cref="IsRevealActive"/> changes so <see cref="Controls.HelpPane"/>
+    /// can activate or deactivate the <see cref="Overlays.RevealOverlay"/>.
+    /// The boolean argument is the new value of <see cref="IsRevealActive"/>.
+    /// </summary>
+    public event EventHandler<bool>? RevealRequested;
 
     // ── Bindable properties ───────────────────────────────────────────────────
 
@@ -201,8 +213,33 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     public bool IsPaneOpen
     {
         get => _isPaneOpen;
-        set => SetProperty(ref _isPaneOpen, value);
+        set
+        {
+            if (SetProperty(ref _isPaneOpen, value))
+                RelayCommand.RaiseCanExecuteChanged();
+        }
     }
+
+    /// <summary>
+    /// <c>true</c> while the Reveal overlay is active on the host window.
+    /// Setting this raises <see cref="RevealRequested"/> so <see cref="Controls.HelpPane"/>
+    /// can activate or deactivate the overlay.
+    /// </summary>
+    public bool IsRevealActive
+    {
+        get => _isRevealActive;
+        set
+        {
+            if (SetProperty(ref _isRevealActive, value))
+            {
+                OnPropertyChanged(nameof(RevealButtonLabel));
+                RevealRequested?.Invoke(this, value);
+            }
+        }
+    }
+
+    /// <summary>Toggle label for the Reveal button: <c>"Reveal"</c> ↔ <c>"Exit Reveal"</c>.</summary>
+    public string RevealButtonLabel => _isRevealActive ? "Exit Reveal" : "Reveal";
 
     /// <summary>
     /// Height (pixels) of the chat sub-pane.
@@ -296,6 +333,12 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     public ICommand InvokeActionCommand     { get; }
     public ICommand OpenAiSetupCommand      { get; }
 
+    /// <summary>
+    /// Toggles the Reveal overlay.
+    /// Enabled only when the pane is open and a topic is loaded.
+    /// </summary>
+    public ICommand RevealCommand { get; }
+
     // ── Public helpers ────────────────────────────────────────────────────────
 
     /// <summary>
@@ -327,6 +370,9 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
 
             OnPropertyChanged(nameof(CanGoBack));
             OnPropertyChanged(nameof(CanGoForward));
+            OnPropertyChanged(nameof(CurrentTopicId));
+            // Re-evaluate Reveal canExecute whenever the loaded topic changes.
+            RelayCommand.RaiseCanExecuteChanged();
         });
     }
 
@@ -451,8 +497,15 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
         ConversationItems.Clear();
     }
 
+    private void ExecuteReveal()
+        => IsRevealActive = !_isRevealActive;
+
     private void ExecuteClose()
     {
+        // Ensure Reveal is deactivated when the pane closes.
+        if (_isRevealActive)
+            IsRevealActive = false;
+
         IsPaneOpen = false;
         _host.OnPaneClosed();
         PaneCloseRequested?.Invoke(this, EventArgs.Empty);

@@ -107,9 +107,16 @@ public sealed class HelpContentStore
         return t?.Kind == HelpTopicKind.Glossary ? t : null;
     }
 
-    // Lazily-built cache of glossary definitions parsed from the reference.glossary topic body.
-    // Key: slug (term lowercased, spaces replaced by hyphens). Value: definition text (plain).
+    // ── Definition-entry caches ───────────────────────────────────────────────
+
+    // Lazily-built cache of glossary definitions (from the reference.glossary topic body).
+    // Key: slug (via HelpSlug.From). Value: formatted "**Term** — definition" string.
     private Dictionary<string, string>? _glossaryCache;
+
+    // Per-topic cache of control-help definitions (from each topic's ## Controls chapter).
+    // Outer key: topic id (OrdinalIgnoreCase). Inner key: control-name slug.
+    private readonly Dictionary<string, IReadOnlyDictionary<string, string>>
+        _controlCacheByTopic = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Returns the plain-text definition for the given glossary term slug, or <c>null</c>
@@ -128,19 +135,69 @@ public sealed class HelpContentStore
             termSlug.Trim().ToLowerInvariant(), out var def) ? def : null;
     }
 
-    /// <summary>Parses the <c>reference.glossary</c> topic body into a slug → definition map.</summary>
-    private Dictionary<string, string> BuildGlossaryCache()
+    /// <summary>
+    /// Returns a slug → definition map for the <c>## Controls</c> chapter of the
+    /// topic with the given <paramref name="topicId"/>, or an empty map when the
+    /// topic does not exist or has no <c>## Controls</c> chapter.
+    /// The result is cached so repeated calls within the same session are free.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> GetControlDefinitions(string topicId)
     {
-        var cache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var glossaryTopic = GetById("reference.glossary");
-        if (glossaryTopic is null)
-            return cache;
+        if (_controlCacheByTopic.TryGetValue(topicId, out var cached))
+            return cached;
 
-        // Each entry is a paragraph starting with **Term** — definition.
-        // We scan lines looking for lines that start with "**".
-        foreach (var line in glossaryTopic.MarkdownBody.Split('\n'))
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (GetById(topicId) is { } topic)
+            ParseDefinitionEntries(topic.MarkdownBody, map, sectionHeading: "Controls");
+
+        IReadOnlyDictionary<string, string> result = map;
+        _controlCacheByTopic[topicId] = result;
+        return result;
+    }
+
+    // ── Shared definition-entry parser ────────────────────────────────────────
+
+    /// <summary>
+    /// Scans <paramref name="markdownBody"/> for bold-term definition entries of the
+    /// form <c>**Term name** — definition text.</c> and inserts them into
+    /// <paramref name="into"/> keyed by their <see cref="HelpSlug"/> value.
+    /// <para>
+    /// When <paramref name="sectionHeading"/> is <c>null</c>, the entire body is
+    /// scanned (used for the flat glossary page).  When it is set (e.g.
+    /// <c>"Controls"</c>), only the lines under that <c>## Heading</c> are scanned;
+    /// scanning stops at the next <c>## </c> heading or the end of the body.
+    /// </para>
+    /// </summary>
+    private static void ParseDefinitionEntries(
+        string                      markdownBody,
+        IDictionary<string, string> into,
+        string?                     sectionHeading = null)
+    {
+        bool   inSection       = sectionHeading is null; // whole-body scan starts immediately
+        string sectionMarker   = sectionHeading is null
+            ? string.Empty
+            : $"## {sectionHeading}";
+
+        foreach (var line in markdownBody.Split('\n'))
         {
             var trimmed = line.Trim();
+
+            if (sectionHeading is not null)
+            {
+                // Enter the target section
+                if (!inSection)
+                {
+                    if (trimmed.Equals(sectionMarker, StringComparison.OrdinalIgnoreCase))
+                        inSection = true;
+                    continue;
+                }
+
+                // Stop scanning when a new ## heading begins (but allow ### sub-headings)
+                if (trimmed.StartsWith("## ", StringComparison.Ordinal)
+                    && !trimmed.Equals(sectionMarker, StringComparison.OrdinalIgnoreCase))
+                    break;
+            }
+
             // Expected pattern: **Term name** — definition text.
             if (!trimmed.StartsWith("**", StringComparison.Ordinal))
                 continue;
@@ -155,24 +212,30 @@ public sealed class HelpContentStore
 
             // Everything after the closing ** and optional " — " is the definition.
             var rest = trimmed[(closeStars + 2)..].TrimStart();
-            if (rest.StartsWith("—", StringComparison.Ordinal))
+            if (rest.StartsWith('—'))
                 rest = rest[1..].TrimStart();
             else if (rest.StartsWith("--", StringComparison.Ordinal))
                 rest = rest[2..].TrimStart();
 
-            // Strip any trailing help:// links from the plain-text definition
-            //  (links like "See [Foo](help://...)" become "See [Foo]").
+            // Strip embedded help:// link syntax to produce clean plain text
+            //  e.g. "[Foo](help://topic/foo)" → "Foo"
             rest = System.Text.RegularExpressions.Regex.Replace(
                 rest, @"\[([^\]]+)\]\(help://[^\)]+\)", "$1");
 
-            // Build a slug from the term: lowercase, collapse whitespace/slashes to hyphens.
-            var slug = System.Text.RegularExpressions.Regex.Replace(
-                term.ToLowerInvariant(), @"[\s/()]+", "-").Trim('-');
+            var slug = HelpSlug.From(term);
 
             if (!string.IsNullOrEmpty(slug) && !string.IsNullOrEmpty(rest))
-                cache[slug] = $"**{term}** — {rest}";
+                into[slug] = $"**{term}** — {rest}";
         }
+    }
 
+    /// <summary>Parses the <c>reference.glossary</c> topic body into a slug → definition map.</summary>
+    private Dictionary<string, string> BuildGlossaryCache()
+    {
+        var cache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var glossaryTopic = GetById("reference.glossary");
+        if (glossaryTopic is not null)
+            ParseDefinitionEntries(glossaryTopic.MarkdownBody, cache, sectionHeading: null);
         return cache;
     }
 

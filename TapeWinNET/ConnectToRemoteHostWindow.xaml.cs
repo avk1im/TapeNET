@@ -54,6 +54,7 @@ public partial class ConnectToRemoteHostWindow : Window, IHelpPaneHost
         => FindName(name) as FrameworkElement;
 
     public void OpenHelpPane(string? topicId = null) => _help.OpenHelpPane(topicId);
+    public string? GetDefaultTopicId() => _help.GetDefaultTopicId();
 
     #endregion
 }

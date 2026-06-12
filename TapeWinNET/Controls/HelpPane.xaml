@@ -229,9 +229,21 @@
                         Padding="6,2" FontSize="11" Margin="4,0,0,0"
                         ToolTip="Interactive walkthroughs — coming soon"/>
                 <Button DockPanel.Dock="Right"
-                        Content="Reveal" IsEnabled="False"
+                        Command="{Binding RevealCommand}"
+                        Content="{Binding RevealButtonLabel}"
                         Padding="6,2" FontSize="11"
-                        ToolTip="Reveal controls — coming soon"/>
+                        ToolTip="Highlight the controls on this window — click one for help.">
+                    <Button.Style>
+                        <Style TargetType="Button">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsRevealActive}" Value="True">
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                    <Setter Property="Background" Value="{StaticResource WarningBg.Info}"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
             </DockPanel>
         </Border>
 

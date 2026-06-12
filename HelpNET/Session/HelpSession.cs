@@ -226,6 +226,14 @@ public sealed class HelpSession : IHelpSession
     public string? TryGetGlossaryDefinition(string termSlug)
         => _store.GetGlossaryDefinition(termSlug);
 
+    /// <inheritdoc/>
+    public string? TryGetControlHelp(string topicId, string controlName)
+    {
+        var map  = _store.GetControlDefinitions(topicId);
+        var slug = HelpNET.Content.HelpSlug.From(controlName);
+        return map.TryGetValue(slug, out var def) ? def : null;
+    }
+
     // ── Events ────────────────────────────────────────────────────────────────
 
     /// <inheritdoc/>
