@@ -18,30 +18,29 @@ namespace TapeWinNET.Help.Overlays;
 /// </list>
 /// </para>
 /// </summary>
-internal sealed class RevealOverlay : HelpOverlayBase
+/// <param name="overlayRoot">The host content root (Column-0 grid).</param>
+/// <param name="host">The <see cref="IHelpPaneHost"/> that opened this pane.</param>
+/// <param name="excludedElement">Element (e.g. the HelpPane UserControl) whose
+///  clicks/moves are never captured — its own buttons stay fully interactive.</param>
+internal sealed class RevealOverlay(FrameworkElement overlayRoot, IHelpPaneHost host,
+    FrameworkElement? excludedElement = null) : HelpOverlayBase(overlayRoot, excludedElement)
 {
-    private readonly IHelpPaneHost _host;
+    private readonly IHelpPaneHost _host = host;
 
     /// <summary>Exposes the overlay root so callers can detect root changes.</summary>
     public FrameworkElement OverlayRootElement => OverlayRoot;
 
     /// <summary>
     /// Raised when a tagged control is clicked.
-    /// The argument carries the element and its resolved control name.
+    /// The argument carries the target and its resolved control name.
     /// </summary>
     public event EventHandler<RevealTarget>? TargetActivated;
-
-    public RevealOverlay(FrameworkElement overlayRoot, IHelpPaneHost host)
-        : base(overlayRoot)
-    {
-        _host = host;
-    }
 
     // ── Target enumeration ────────────────────────────────────────────────────
 
     /// <summary>
     /// Walks the visual tree under <see cref="HelpOverlayBase.OverlayRoot"/> and
-    /// collects every loaded, visible, non-zero-size element that carries a
+    /// collects every loaded, visible, non-zero-size target that carries a
     /// non-empty <see cref="HelpControlNameAttachedProperty.ControlNameProperty"/>.
     /// </summary>
     protected override IReadOnlyList<FrameworkElement> EnumerateTargets()
@@ -77,26 +76,41 @@ internal sealed class RevealOverlay : HelpOverlayBase
 
     // ── Input ─────────────────────────────────────────────────────────────────
 
+    /*
     protected override void OnPreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.ChangedButton != MouseButton.Left)
-            return;
+        // Clicks within the excluded target (HelpPane) are never intercepted.
+        if (IsInExcludedElement(e)) return;
 
-        var hitIndex = HitTestTargets(e.GetPosition(OverlayRoot));
-        if (hitIndex.HasValue)
+        if (e.ChangedButton == MouseButton.Left)
         {
-            var element     = GetTarget(hitIndex.Value)!;
-            var controlName = HelpControlNameAttachedProperty.GetControlName(element)!;
-            TargetActivated?.Invoke(this, new RevealTarget(element, controlName));
-            // Mark handled so the underlying control doesn't actuate.
-            e.Handled = true;
-            // Overlay stays active — user can click another control.
+            var hitIndex = HitTestTargets(e.GetPosition(OverlayRoot));
+            if (hitIndex.HasValue)
+            {
+                var target     = GetTarget(hitIndex.Value)!;
+                var controlName = HelpControlNameAttachedProperty.GetControlName(target)!;
+                TargetActivated?.Invoke(this, new RevealTarget(target, controlName));
+                // Mark handled so the underlying control doesn't actuate.
+                e.Handled = true;
+                // Overlay stays active — user can click another control.
+                return;
+            }
         }
-        else
+
+        // Any click (left miss, right, middle) outside a tagged target deactivates Reveal.
+        Deactivate();
+        e.Handled = true;
+    }
+    */
+
+    protected override void HandleMouseDownOnTarget(FrameworkElement target, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton == MouseButton.Left)
         {
-            // Miss: deactivate and swallow the click.
-            Deactivate();
-            e.Handled = true;
+            var controlName = HelpControlNameAttachedProperty.GetControlName(target)!;
+            TargetActivated?.Invoke(this, new RevealTarget(target, controlName));
         }
+        // Mark handled so the underlying control doesn't actuate.
+        e.Handled = true;
     }
 }

@@ -196,8 +196,8 @@
         </Style>
 
     </Window.Resources>
-    
-    <Grid>
+
+    <Grid x:Name="HelpOverlayRoot" >
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />  <!-- Row 0: Menu -->
             <RowDefinition Height="Auto" />  <!-- Row 1: Toolbar -->
@@ -541,7 +541,8 @@
             </Grid.ColumnDefinitions>
             
             <!-- Tree View Pane -->
-            <GroupBox Grid.Column="0" Header="Tape Structure" Margin="4">
+            <GroupBox Grid.Column="0" Header="Tape Structure" Margin="4"
+                      help:HelpControlNameAttachedProperty.ControlName="Tree view">
                 <TreeView ItemsSource="{Binding TreeItems}"
                           ItemTemplate="{StaticResource TreeItemTemplate}"
                           ItemContainerStyle="{StaticResource TreeViewItemStyle}"
@@ -570,7 +571,8 @@
                 </Grid.RowDefinitions>
                 
                 <!-- Properties Subpane -->
-                <GroupBox Grid.Row="0" Header="{Binding PropertiesHeader}">
+                <GroupBox Grid.Row="0" Header="{Binding PropertiesHeader}"
+                          help:HelpControlNameAttachedProperty.ControlName="Properties pane">
                     <DockPanel LastChildFill="True">
                         <!-- Media usage bar - docked to bottom, visible only for media view when enabled -->
                         <controls:MediaUsageBarControl
@@ -618,7 +620,8 @@
                 
                 <!-- Table Subpane -->
                 <GroupBox Grid.Row="2" Header="{Binding TableHeader}"
-                          Visibility="{Binding IsTableVisible, Converter={StaticResource BoolToVis}}">
+                          Visibility="{Binding IsTableVisible, Converter={StaticResource BoolToVis}}"
+                          help:HelpControlNameAttachedProperty.ControlName="Content table">
                     <Grid>
                         <!-- Files Table + Filter Pane (visible when BackupSet is selected) -->
                         <Grid Visibility="{Binding IsFileTableVisible, Converter={StaticResource BoolToVis}}">
@@ -716,6 +719,7 @@
                             <!-- File Filter Pane -->
                             <controls:FileFilterPane Grid.Row="2"
                                                      x:Name="FileFilterPaneControl"
+                                                     help:HelpControlNameAttachedProperty.ControlName="File filter pane"
                                                      TotalCount="{Binding FileTotalCount}"
                                                      FilteredCount="{Binding FileFilteredCount}"
                                                      IsFilterActive="{Binding IsFileFilterActive}"/>
@@ -723,6 +727,7 @@
 
                         <!-- Backup Sets Table (visible when Media is selected) -->
                         <ListView x:Name="BackupSetsListView"
+                                  help:HelpControlNameAttachedProperty.ControlName="Backup sets list"
                                   ItemsSource="{Binding BackupSetList}"
                                   SelectedItem="{Binding SelectedBackupSet}"
                                   GridViewColumnHeader.Click="GridViewColumnHeader_Click"
@@ -1023,7 +1028,8 @@
                       Background="LightGray" />
         
         <!-- Log/Message Pane -->
-        <GroupBox Grid.Row="4" Grid.Column="0" Header="{Binding LogPaneHeader}" Margin="4">
+        <GroupBox Grid.Row="4" Grid.Column="0" Header="{Binding LogPaneHeader}" Margin="4"
+                  help:HelpControlNameAttachedProperty.ControlName="Log pane">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>

@@ -77,3 +77,15 @@ based on the current selection and filters.
 Click the action button (**Restore**, **Validate**, or **Verify**) to begin.
 Progress is reported in the main window log pane.  You can abort at any time
 using the **Abort** button that appears during the operation.
+
+## Controls
+
+**Backup sets list** — Table of backup sets available for the operation. Tick the rows you want to include; the set on the current volume is shown in full colour, off-volume sets are dimmed.
+
+**Operation** — Selects what to do with the checked files: Restore writes them to disk, Validate checks data integrity without writing, Verify compares tape data to existing disk files.
+
+**Restore to** — Chooses where restored files are written: their original location, or a target folder you specify.
+
+**Options** — Fine-grained control: [incremental chain](help://topic/concepts.incremental-backup), handle-existing strategy, error handling, and volume scope.
+
+**Start button** — Begins the selected operation. The button label changes to match the chosen mode (Restore / Validate / Verify).

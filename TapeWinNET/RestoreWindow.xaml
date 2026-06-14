@@ -32,7 +32,7 @@
         </Grid.ColumnDefinitions>
 
         <!-- Dialog content fills column 0 -->
-        <Grid Grid.Column="0" Margin="16">
+        <Grid x:Name="HelpOverlayRoot" Grid.Column="0" Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" MinHeight="100"/>
             <RowDefinition Height="Auto"/>
@@ -48,7 +48,8 @@
 
             <!-- Left: Backup sets summary table -->
             <GroupBox Grid.Column="0" Header="{Binding ItemsGroupHeader}" Margin="0,0,4,0"
-                      help:HelpTopicIdAttachedProperty.TopicId="dialog.restore.sets">
+                      help:HelpTopicIdAttachedProperty.TopicId="dialog.restore.sets"
+                      help:HelpControlNameAttachedProperty.ControlName="Backup sets list">
                 <ListView ItemsSource="{Binding BackupSets}"
                           CheckBox.Checked="ItemCheckBox_Changed"
                           CheckBox.Unchecked="ItemCheckBox_Changed"
@@ -153,7 +154,8 @@
             <StackPanel>
                 <!-- Operation Selection -->
                 <GroupBox Header="Operation" Margin="0,0,0,8"
-                          help:HelpTopicIdAttachedProperty.TopicId="dialog.restore.operation">
+                          help:HelpTopicIdAttachedProperty.TopicId="dialog.restore.operation"
+                          help:HelpControlNameAttachedProperty.ControlName="Operation">
                     <StackPanel Margin="8">
                         <RadioButton Content="Restore"
                                      IsChecked="{Binding IsRestoreMode}"
@@ -169,7 +171,8 @@
                 <!-- Restore To -->
                 <GroupBox Header="Restore to" Margin="0,0,0,8"
                           IsEnabled="{Binding IsRestoreToEnabled}"
-                          help:HelpTopicIdAttachedProperty.TopicId="dialog.restore.destination">
+                          help:HelpTopicIdAttachedProperty.TopicId="dialog.restore.destination"
+                          help:HelpControlNameAttachedProperty.ControlName="Restore to">
                     <StackPanel Margin="8">
                         <RadioButton Content="Original location"
                                      IsChecked="{Binding RestoreToOriginal}"
@@ -201,7 +204,8 @@
                 </GroupBox>
 
                 <!-- Options -->
-                <GroupBox Header="Options" help:HelpTopicIdAttachedProperty.TopicId="dialog.restore.options">
+                <GroupBox Header="Options" help:HelpTopicIdAttachedProperty.TopicId="dialog.restore.options"
+                          help:HelpControlNameAttachedProperty.ControlName="Options">
                     <StackPanel Margin="8">
                         <CheckBox Content="Include incremental chain"
                                   IsChecked="{Binding Incremental}"
@@ -290,7 +294,8 @@
                 <Button Content="{Binding ActionButtonText}"
                         Command="{Binding StartCommand}"
                         IsDefault="True"
-                        Width="100"/>
+                        Width="100"
+                        help:HelpControlNameAttachedProperty.ControlName="Start button"/>
             </StackPanel>
         </Grid>
         </Grid><!-- end dialog-content Grid (column 0) -->

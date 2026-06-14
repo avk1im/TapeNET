@@ -228,9 +228,11 @@ public partial class HelpPane : UserControl
         }
 
         // Create the overlay (or recreate if the overlay root changed).
+        //  Pass 'this' (the HelpPane UserControl) as the excluded element so the pane's
+        //  own buttons — Close, Exit Reveal, etc. — stay fully interactive during Reveal.
         if (_reveal is null || !ReferenceEquals(_reveal.OverlayRootElement, root))
         {
-            _reveal = new RevealOverlay(root, vm.Host);
+            _reveal = new RevealOverlay(root, vm.Host, excludedElement: this);
             _reveal.TargetActivated += Reveal_TargetActivated;
             _reveal.Deactivated     += (_, _) => vm.IsRevealActive = false;
         }
@@ -246,16 +248,15 @@ public partial class HelpPane : UserControl
     {
         if (DataContext is not HelpPaneViewModel vm) return;
 
-        // Prefer the currently-displayed topic's Controls chapter; fall back to the
-        //  host's own default topic (e.g. the dialog's own page) so the lookup is
-        //  always against the most relevant ## Controls section.
-        var topicId = vm.CurrentTopicId
-                      ?? vm.Host.GetDefaultTopicId();
+        // Try to look up the control in the host's own ## Controls section.
+        //  Use the current topic as the fallback
+        var topicId = vm.Host.GetDefaultTopicId()
+                    ?? vm.CurrentTopicId;
 
         var text = (topicId is not null
             ? vm.Session.TryGetControlHelp(topicId, target.ControlName)
             : null)
-            ?? $"({target.ControlName})";
+            ?? $"{target.ControlName}"; // the final fallback: just display the control name
 
         var popup = EnsureInfoPopup();
         // Footer: open the host's dialog/UI topic in the content pane.

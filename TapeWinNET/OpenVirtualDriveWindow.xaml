@@ -54,7 +54,7 @@
         </Grid.ColumnDefinitions>
 
         <!-- Dialog content fills column 0 -->
-        <Grid Grid.Column="0" Margin="16">
+        <Grid x:Name="HelpOverlayRoot" Grid.Column="0" Margin="16">
             <Grid.RowDefinitions>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
@@ -68,7 +68,8 @@
             <StackPanel>
 
             <!-- Mode Selection -->
-            <Grid Margin="0,0,0,16">
+            <Grid Margin="0,0,0,16"
+                  help:HelpControlNameAttachedProperty.ControlName="Drive mode">
                 <StackPanel Orientation="Horizontal">
                     <RadioButton Content="Open existing virtual media" 
                                  IsChecked="{Binding IsOpenExistingMode}"
@@ -85,7 +86,8 @@
             </Grid>
 
             <!-- File Paths - Fixed height to prevent layout shift -->
-            <GroupBox Header="File Paths" Margin="0,0,0,12">
+            <GroupBox Header="File Paths" Margin="0,0,0,12"
+                      help:HelpControlNameAttachedProperty.ControlName="File paths">
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -188,7 +190,8 @@
 
             <!-- Preset Configuration -->
             <GroupBox Header="Preset Configuration" Margin="0,0,0,12"
-                      IsEnabled="{Binding IsPresetsEnabled}">
+                      IsEnabled="{Binding IsPresetsEnabled}"
+                      help:HelpControlNameAttachedProperty.ControlName="Preset configuration">
                 <Grid Margin="8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -214,7 +217,8 @@
 
             <!-- Capacity -->
             <GroupBox Header="Capacity" Margin="0,0,0,12"
-                      IsEnabled="{Binding IsCreateNewMode}">
+                      IsEnabled="{Binding IsCreateNewMode}"
+                      help:HelpControlNameAttachedProperty.ControlName="Capacity">
                 <Grid Margin="8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>

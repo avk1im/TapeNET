@@ -49,7 +49,9 @@ internal sealed class HelpHighlightAdorner : Adorner
 
     public HelpHighlightAdorner(UIElement adornedElement) : base(adornedElement)
     {
-        // Purely visual: must never intercept any input.
+        // Start non-interactive. HelpOverlayBase sets IsHitTestVisible = true on Activate
+        //  so the adorner becomes a capture surface, placing underlying controls outside
+        //  the event routing path and preventing their class handlers from firing.
         IsHitTestVisible = false;
     }
 
@@ -57,6 +59,11 @@ internal sealed class HelpHighlightAdorner : Adorner
 
     protected override void OnRender(DrawingContext dc)
     {
+        // A transparent fill over the entire adorned area ensures every pixel is
+        //  hit-testable when IsHitTestVisible = true. A null brush would be invisible
+        //  to WPF's hit-testing, leaving empty regions unblocked.
+        dc.DrawRectangle(Brushes.Transparent, null, new Rect(AdornedElement.RenderSize));
+
         foreach (var rect in _targets)
         {
             // Expand the rect slightly so the border sits just outside the control edge.

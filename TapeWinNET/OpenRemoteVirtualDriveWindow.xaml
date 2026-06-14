@@ -34,7 +34,7 @@
         </Grid.ColumnDefinitions>
 
         <!-- Dialog content fills column 0 -->
-        <Grid Grid.Column="0" Margin="16">
+        <Grid x:Name="HelpOverlayRoot" Grid.Column="0" Margin="16">
             <Grid.RowDefinitions>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
@@ -60,7 +60,8 @@
             </StackPanel>
 
             <!-- Open / Create mode selection -->
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,16"
+                        help:HelpControlNameAttachedProperty.ControlName="Drive mode">
                 <RadioButton Content="Open _existing remote volume"
                              IsChecked="{Binding IsOpenExistingMode}"
                              IsEnabled="{Binding IsModeSwitchEnabled}"
@@ -73,7 +74,8 @@
             <!-- Volume picker (Open existing mode) -->
             <GroupBox Header="Select Volume"
                       Margin="0,0,0,12"
-                      Visibility="{Binding IsVolumePickerVisible, Converter={StaticResource BoolToVisConverter}}">
+                      Visibility="{Binding IsVolumePickerVisible, Converter={StaticResource BoolToVisConverter}}"
+                      help:HelpControlNameAttachedProperty.ControlName="Select volume">
                 <Grid Margin="8,6,8,6">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -94,7 +96,8 @@
             <!-- Media Storage: in-memory vs named (Create mode only) -->
             <GroupBox Header="Media Storage"
                       Margin="0,0,0,12"
-                      Visibility="{Binding AreCreateFieldsEnabled, Converter={StaticResource BoolToVisConverter}}">
+                      Visibility="{Binding AreCreateFieldsEnabled, Converter={StaticResource BoolToVisConverter}}"
+                      help:HelpControlNameAttachedProperty.ControlName="Media storage">
                 <Grid Margin="8,6,8,4">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>

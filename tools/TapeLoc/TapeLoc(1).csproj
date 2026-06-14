@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+	<OutputType>Exe</OutputType>
+	<TargetFramework>net8.0</TargetFramework>
+	<ImplicitUsings>enable</ImplicitUsings>
+	<Nullable>enable</Nullable>
+	<LangVersion>12</LangVersion>
+	<AssemblyName>tapeloc</AssemblyName>
+	<RootNamespace>TapeLoc</RootNamespace>
+	<!--
+	  TapeLoc is the AI-powered localization tool (see docs/Design-TapeLoc.md).
+	  It is NOT part of the main solution build by default — invoke it manually
+	  (or via tools/publish-loc.ps1) as the last step before building a
+	  distribution package for a given culture.
+	-->
+  </PropertyGroup>
+
+  <ItemGroup>
+	<PackageReference Include="System.CommandLine" Version="2.0.7" />
+	<PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+	<!-- Expose internal validators/config to the test project. -->
+	<InternalsVisibleTo Include="TapeLoc.Tests" />
+  </ItemGroup>
+
+  <!-- The test project lives in a subfolder; keep its sources out of this build. -->
+  <ItemGroup>
+	<Compile Remove="TapeLoc.Tests\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+	<!-- Ship the default rule-set alongside the tool. -->
+	<None Update="loc-rules.json">
+	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	</None>
+  </ItemGroup>
+
+</Project>

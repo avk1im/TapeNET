@@ -47,3 +47,9 @@ A media-usage bar visualises the before/after state.
 Click **Delete** to remove the selected sets, or **Cancel** to abort.
 
 > Shortcut: [Delete backup sets](help://action/delete-sets).
+
+## Controls
+
+**Delete from set** — Selects which portion of the tape to erase: the newest set only, all sets from a chosen set onwards, or all sets on the tape.
+**Preview** — Live summary of the capacity freed and remaining after the deletion, plus the tape usage bar showing the affected range highlighted in red.
+**Delete button** — Permanently removes the selected sets from the tape. This operation cannot be undone.

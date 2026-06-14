@@ -1,0 +1,63 @@
+{
+  "rulesVersion": "1.0.0",
+
+  "provider": {
+    "kind": "openai-compatible",
+    "endpoint": "https://api.openai.com/v1/chat/completions",
+    "model": "gpt-4o",
+    "temperature": 0.1,
+    "apiKeyEnvVar": "TAPELOC_API_KEY",
+    "maxRetries": 3,
+    "timeoutSeconds": 120
+  },
+
+  "source": {
+    "root": "TapeWinNET",
+    "include": [ "**/*.xaml", "**/*.cs" ],
+    "exclude": [
+      "**/bin/**",
+      "**/obj/**",
+      "**/*.g.cs",
+      "**/*.g.i.cs",
+      "**/App.g.cs",
+      "**/*.Designer.cs",
+      "**/AssemblyInfo.cs"
+    ]
+  },
+
+  "translateAttributes": [
+    "Content",
+    "Header",
+    "Text",
+    "Title",
+    "ToolTip",
+    "Watermark",
+    "Tag"
+  ],
+
+  "translateXmlDocs": false,
+
+  "invariants": {
+    "preserveEnumMemberNames": true,
+    "preserveIdentifiers": true,
+    "preserveResourceKeys": true,
+    "preserveBindingPaths": true,
+    "preserveXName": true,
+    "preservePlaceholders": true,
+    "preserveGlyphs": [ "\u2713", "\u2139", "\u26A0", "\u2717" ],
+    "logErrorCodePatterns": [ "\\bE\\d{3,}\\b", "\\bWARN_[A-Z_]+\\b" ],
+    "neverTranslateLiterals": [ "FCL", "TapeNET", "TapeCon", "TapeWinNET" ]
+  },
+
+  "ignoreMarkers": {
+    "csharpBegin": "// loc:ignore",
+    "csharpEnd": "// loc:end",
+    "xamlComment": "<!-- loc:ignore -->"
+  },
+
+  "chunking": {
+    "maxCharsPerChunk": 12000,
+    "splitCSharpOn": "member",
+    "splitXamlOn": "element"
+  }
+}

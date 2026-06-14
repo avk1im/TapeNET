@@ -43,3 +43,9 @@ need before continuing.
 Click **Format** to erase and initialise the media, or **Cancel** to back out.
 
 > Shortcut: [Format media](help://action/format-media).
+
+## Controls
+
+**Media description** — An optional label written into the tape header. Shown in the Properties pane and in the backup-sets table.
+**Create initiator partition** — Allocates a small TOC partition at the start of the tape. Required for append/overwrite set management; disable only for raw sequential use.
+**Format button** — Erases the entire tape and writes the new header. All existing data is permanently destroyed.

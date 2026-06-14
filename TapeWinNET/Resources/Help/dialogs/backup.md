@@ -124,3 +124,19 @@ pane, and you can stop a running backup with **Abort Backup**.
 
 > Tip: you can launch this dialog any time with
 > [Start a new backup](help://action/new-backup).
+
+## Controls
+
+**Sources list** — The table of source folders and file patterns to include in this backup. Tick rows to include them; untick to skip. Drag folders here from Explorer.
+
+**Files list** — Preview of individual files in the currently selected source. Tick or untick files to refine the selection.
+
+**File filter pane** — [FCL-powered](help://topic/ui.file-filter-pane) filter for the files list. Collapse the pane by dragging the splitter up.
+
+**Options** — Write options: subfolders, [incremental backup](help://topic/concepts.incremental-backup), block size, hash algorithm, and compression level.
+
+**Media** — Controls where on the tape the new set is written: append after an existing set, or overwrite the entire tape.
+
+**Scanning** — Auto-scan counts files as you add sources; Scan All Now forces an immediate rescan of all sources.
+
+**Start Backup** — Begins writing the backup set to tape. Progress appears in the main window log pane.

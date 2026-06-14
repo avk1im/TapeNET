@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Default run settings for TapeNET test suite.
+  Excludes resource-intensive large-file tests (multi-GB) and remote-host tests (external
+  gRPC server dependency) from routine runs.
+
+  LargeFileTests uses Category trait filtering — tests are declared directly on the class.
+  RemoteHostBackendTests uses FullyQualifiedName filtering — its test methods are inherited
+  from RemoteBackendTestsBase, so xUnit reports traits from the base class, not the subclass,
+  making trait-based filtering ineffective for inherited tests.
+
+  To run ALL tests including large-file and remote-host tests:
+    dotnet test  (omit the -settings flag; no filter applies)
+
+  To run only large-file tests:
+    dotnet test -filter "Category=LargeFile"
+
+  To run only remote-host tests:
+    dotnet test -filter "FullyQualifiedName~RemoteHostBackendTests"
+
+  Visual Studio: Test Explorer → gear icon → select/deselect this .runsettings file.
+-->
+<RunSettings>
+  <RunConfiguration>
+	  <!--
+	  <TestCaseFilter>Category!=LargeFile</TestCaseFilter>
+	  <TestCaseFilter>Category!=LargeFile &amp; FullyQualifiedName!~RemoteHostBackendTests</TestCaseFilter>
+	  -->
+  </RunConfiguration>
+</RunSettings>

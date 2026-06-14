@@ -41,7 +41,7 @@
         </Grid.ColumnDefinitions>
 
         <!-- Dialog content fills column 0 -->
-        <Grid Grid.Column="0" Margin="12">
+        <Grid x:Name="HelpOverlayRoot" Grid.Column="0" Margin="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
@@ -112,7 +112,8 @@
 
                 <!-- Sources (Folders) pane -->
                 <GroupBox Grid.Row="1" Header="Sources"
-                          help:HelpTopicIdAttachedProperty.TopicId="dialog.backup.sources">
+                          help:HelpTopicIdAttachedProperty.TopicId="dialog.backup.sources"
+                          help:HelpControlNameAttachedProperty.ControlName="Sources list">
                     <Grid>
                         <ListView x:Name="SourceList"
                               ItemsSource="{Binding SourceItems}"
@@ -180,7 +181,8 @@
                               Background="LightGray"/>
 
                 <!-- Files pane (lower, collapsible) -->
-                <GroupBox Grid.Row="3" x:Name="FilesPaneGroup">
+                <GroupBox Grid.Row="3" x:Name="FilesPaneGroup"
+                          help:HelpControlNameAttachedProperty.ControlName="Files list">
                     <GroupBox.Header>
                         <TextBlock>
                             <Run Text="Files"/>
@@ -258,7 +260,8 @@
 
                         <!-- File Filter Pane -->
                         <controls:FileFilterPane Grid.Row="2"
-                                                 x:Name="FileFilterPaneControl"/>
+                                                 x:Name="FileFilterPaneControl"
+                                                 help:HelpControlNameAttachedProperty.ControlName="File filter pane"/>
                     </Grid>
                 </GroupBox>
 
@@ -296,7 +299,8 @@
 
                     <!-- Write Options -->
                     <GroupBox Header="Options" Margin="0,0,0,8"
-                              help:HelpTopicIdAttachedProperty.TopicId="dialog.backup.options">
+                              help:HelpTopicIdAttachedProperty.TopicId="dialog.backup.options"
+                              help:HelpControlNameAttachedProperty.ControlName="Options">
                         <StackPanel Margin="8">
                             <CheckBox Content="Include subfolders"
                                       IsChecked="{Binding IncludeSubdirectories}"
@@ -466,7 +470,8 @@
 
                     <!-- Append / Overwrite -->
                     <GroupBox Header="Media" Margin="0,0,0,8"
-                              help:HelpTopicIdAttachedProperty.TopicId="dialog.backup.media">
+                              help:HelpTopicIdAttachedProperty.TopicId="dialog.backup.media"
+                              help:HelpControlNameAttachedProperty.ControlName="Media">
                         <StackPanel Margin="8">
                             <!-- Radio buttons: only shown when a TOC is present -->
                             <StackPanel Visibility="{Binding IsNoToc,
@@ -507,7 +512,8 @@
                     </GroupBox>
 
                     <!-- Auto-scan -->
-                    <GroupBox Header="Scanning" Margin="0,0,0,8">
+                    <GroupBox Header="Scanning" Margin="0,0,0,8"
+                              help:HelpControlNameAttachedProperty.ControlName="Scanning">
                         <StackPanel Margin="8">
                             <CheckBox Content="Auto-scan when adding sources"
                                       IsChecked="{Binding AutoScan}"
@@ -568,7 +574,8 @@
                 <Button Content="Start Backup"
                         Command="{Binding StartBackupCommand}"
                         IsDefault="True"
-                        Width="100"/>
+                        Width="100"
+                        help:HelpControlNameAttachedProperty.ControlName="Start Backup"/>
             </StackPanel>
         </Grid>
         </Grid><!-- end dialog-content Grid (column 0) -->

@@ -6,6 +6,7 @@
         xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
         xmlns:controls="clr-namespace:TapeWinNET.Controls"
         xmlns:converters="clr-namespace:TapeWinNET.Converters"
+        xmlns:help="clr-namespace:TapeWinNET.Help"
         d:DataContext="{d:DesignInstance Type=vm:FclFilterWindowVM}"
         mc:Ignorable="d"
         Title="Advanced Filter"
@@ -34,7 +35,7 @@
         </Grid.ColumnDefinitions>
 
     <!-- Dialog content fills column 0 -->
-    <Grid Grid.Column="0" Margin="12">
+    <Grid x:Name="HelpOverlayRoot" Grid.Column="0" Margin="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>     <!-- Main content area -->
             <RowDefinition Height="Auto"/>  <!-- Sync buttons -->
@@ -53,7 +54,8 @@
             </Grid.ColumnDefinitions>
 
             <!-- ─── Left pane: Visual DNF editor ─── -->
-            <GroupBox Grid.Column="0" Header="Conditions" Margin="0,0,2,0">
+            <GroupBox Grid.Column="0" Header="Conditions" Margin="0,0,2,0"
+                      help:HelpControlNameAttachedProperty.ControlName="Conditions editor">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
@@ -135,7 +137,8 @@
 
             <!-- ─── Right pane: FCL Program ─── -->
             <GroupBox Grid.Column="2" Header="{Binding ProgramPaneHeader}"
-                      Visibility="{Binding IsProgramPaneOpen, Converter={StaticResource BoolToVis}}">
+                      Visibility="{Binding IsProgramPaneOpen, Converter={StaticResource BoolToVis}}"
+                      help:HelpControlNameAttachedProperty.ControlName="FCL program pane">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>   <!-- Text editor -->
@@ -243,7 +246,8 @@
                 Background="#FFF6F8FC"
                 BorderBrush="#FFB9C4D6" BorderThickness="1"
                 CornerRadius="4"
-                Visibility="{Binding IsAiPanelOpen, Converter={StaticResource BoolToVis}}">
+                Visibility="{Binding IsAiPanelOpen, Converter={StaticResource BoolToVis}}"
+                help:HelpControlNameAttachedProperty.ControlName="AI Generate panel">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -380,7 +384,8 @@
                     Content="Apply"
                     Command="{Binding ApplyFilterCommand}"
                     IsDefault="True"
-                    Width="76"/>
+                    Width="76"
+                    help:HelpControlNameAttachedProperty.ControlName="Apply button"/>
         </Grid>
             </Grid><!-- end dialog content Grid (column 0) -->
 

@@ -36,7 +36,7 @@
         </Grid.ColumnDefinitions>
 
         <!-- Dialog content fills column 0 -->
-        <Grid Grid.Column="0" Margin="16">
+        <Grid x:Name="HelpOverlayRoot" Grid.Column="0" Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -46,7 +46,8 @@
         </Grid.RowDefinitions>
 
         <!-- Host / Port fields -->
-        <Grid Grid.Row="0" Margin="0,0,0,8">
+        <Grid Grid.Row="0" Margin="0,0,0,8"
+              help:HelpControlNameAttachedProperty.ControlName="Host and port">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
@@ -77,7 +78,8 @@
         </Grid>
 
         <!-- Checkboxes -->
-        <StackPanel Grid.Row="1" Margin="0,0,0,8">
+        <StackPanel Grid.Row="1" Margin="0,0,0,8"
+                    help:HelpControlNameAttachedProperty.ControlName="Connection options">
             <CheckBox Content="Use _local host (127.0.0.1)"
                       IsChecked="{Binding UseLocalHost}"
                       Margin="0,0,0,4"/>
@@ -122,7 +124,8 @@
                 <Button Content="Cancel" Command="{Binding CancelCommand}"
                         Width="80" Margin="0,0,8,0" IsCancel="True"/>
                 <Button Content="Connect" Command="{Binding ConnectCommand}"
-                        Width="80" IsDefault="True"/>
+                        Width="80" IsDefault="True"
+                        help:HelpControlNameAttachedProperty.ControlName="Connect button"/>
             </StackPanel>
         </Grid>
         </Grid><!-- end dialog-content Grid (column 0) -->

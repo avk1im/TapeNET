@@ -52,3 +52,10 @@ not just the current one.  Newly visited sets inherit the filter automatically.
 ## Applying
 
 Click **Apply** to use the filter, or **Cancel** to discard your changes.
+
+## Controls
+
+**Conditions editor** — Visual DNF editor: each row is a condition group (AND within a group, OR between groups). Use the drop-downs to set field, operator, and value without typing FCL.
+**FCL program pane** — Full [FCL](help://topic/reference.fcl-cheatsheet) text editor for power users. The Update→ / ←Apply buttons sync the two panes. Syntax errors are underlined and listed below the editor.
+**AI Generate panel** — Describe the files you want in plain language; the AI translates your description into an FCL expression and populates the editor.
+**Apply button** — Saves the current filter and closes the dialog. The file list in the main window is immediately filtered.

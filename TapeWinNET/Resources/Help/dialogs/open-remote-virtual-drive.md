@@ -59,3 +59,9 @@ Click the confirm button (its label reflects **Open** or **Create**) to mount
 the remote volume, or **Cancel** to abort.
 
 > Shortcut: [Open a remote virtual drive](help://action/open-remote-virtual-drive).
+
+## Controls
+
+**Drive mode** — Chooses between opening an existing named volume on the remote host or creating a new one for this session.
+**Select volume** — (Open existing mode) Drop-down list of named volumes available on the connected remote host.
+**Media storage** — (Create mode) Named stores the media as a server-side file that persists between sessions; in-memory creates a temporary volume that is deleted when the drive closes.
