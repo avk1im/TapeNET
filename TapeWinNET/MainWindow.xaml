@@ -18,7 +18,7 @@
 
     <Window.InputBindings>
         <KeyBinding Key="F2" Command="{Binding RenameSelectedCommand}"/>
-        <KeyBinding Key="F1" Command="{Binding ShowHelpCommand}"/>
+        <KeyBinding Key="F1" Command="{Binding ShowHelpOnMainWindowCommand}"/>
     </Window.InputBindings>
 
     <Window.Resources>
@@ -339,7 +339,9 @@
                 <MenuItem Header="_Clear Log" Command="{Binding ClearLogCommand}"/>
             </MenuItem>
             <MenuItem Header="_Help">
-                <MenuItem Header="_Help Topics" Command="{Binding ShowHelpCommand}" InputGestureText="F1"/>
+                <MenuItem Header="_Help Content" Command="{Binding ShowHelpContentCommand}"/>
+                <MenuItem Header="Last Help &Topic" Command="{Binding ShowHelpLastTopicCommand}"/>
+                <MenuItem Header="Help on _Window Controls" Command="{Binding ShowHelpOnMainWindowCommand}" InputGestureText="F1"/>
                 <Separator/>
                 <MenuItem Header="{Binding AiProviderMenuHeader}" Command="{Binding ConfigureAiCommand}"/>
                 <MenuItem Header="_Reset AI Providers…"          Command="{Binding ResetAiProvidersCommand}"/>
@@ -521,7 +523,7 @@
             <!-- Help group -->
             <ToolBar Band="0" BandIndex="5" Margin="12,0,0,0">
                 <Separator/>
-                <Button Command="{Binding ShowHelpCommand}"
+                <Button Command="{Binding ShowHelpTopicsCommand}"
                         Style="{StaticResource ToolbarButtonStyle}"
                         ToolTip="About TapeWin">
                     <TextBlock Text="&#xE897;" FontFamily="Segoe MDL2 Assets" FontSize="14"

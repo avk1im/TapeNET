@@ -1,4 +1,10 @@
-﻿using System.ComponentModel;
+﻿using AiNET;
+using Microsoft.Extensions.Logging;
+using Microsoft.Win32;
+using System.ComponentModel;
+using System.Data.Common;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -7,14 +13,11 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using AiNET;
-using Microsoft.Extensions.Logging;
-using Microsoft.Win32;
 using TapeWinNET.Help;
+using TapeWinNET.Models;
 using TapeWinNET.Services;
 using TapeWinNET.Utils;
 using TapeWinNET.ViewModels;
-using TapeWinNET.Models;
 
 namespace TapeWinNET
 {
@@ -129,7 +132,9 @@ namespace TapeWinNET
             Closing += MainWindow_Closing;
 
             // Wire ShowHelp / ConfigureAi / ResetAiProviders commands
-            _viewModel.ShowHelpCommand   = new RelayCommand(() => OpenHelpPane());
+            _viewModel.ShowHelpContentCommand = new RelayCommand(OpenHelpPaneHome);
+            _viewModel.ShowHelpLastTopicCommand = new RelayCommand(() => OpenHelpPane(/*last or home topic*/));
+            _viewModel.ShowHelpOnMainWindowCommand   = new RelayCommand(OpenHelpPaneForMainWindow);
             _viewModel.ConfigureAiCommand = new AsyncRelayCommand(async _ =>
                 await AppAiSessionHost.ReconfigureAndNotifyAsync());
             _viewModel.ResetAiProvidersCommand = new AsyncRelayCommand(async _ =>
@@ -734,20 +739,16 @@ namespace TapeWinNET
 
         // ── Open / toggle ─────────────────────────────────────────────────────
 
-        /// <summary>
-        /// Opens the help pane (or navigates it to <paramref name="topicId"/> if already open).
-        /// Builds the session on first call.
-        /// </summary>
-        public async void OpenHelpPane(string? topicId = null)
+        private async Task EnsureHelpPaneOpen()
         {
             var setting = MainViewModel.Settings;
 
             if (_helpPaneVm == null)
             {
                 // First open — build the session and wire the VM
-                var session  = await AppHelpSessionFactory.CreateAsync(this);
-                var actions  = BuildHelpActions();
-                _helpPaneVm  = new HelpPaneViewModel(session, this, actions)
+                var session = await AppHelpSessionFactory.CreateAsync(this);
+                var actions = BuildHelpActions();
+                _helpPaneVm = new HelpPaneViewModel(session, this, actions)
                 {
                     // Restore persisted chat sub-pane height before binding so the
                     //  DataContextChanged handler in HelpPane.xaml.cs applies it immediately.
@@ -755,8 +756,8 @@ namespace TapeWinNET
                         setting.HelpPaneChatHeight ?? 200.0
                 };
                 // Forward session errors, warnings, and info messages to the main log pane
-                _helpPaneVm.SessionError   += OnHelpSessionError;
-                _helpPaneVm.SessionInfo    += OnHelpSessionInfo;
+                _helpPaneVm.SessionError += OnHelpSessionError;
+                _helpPaneVm.SessionInfo += OnHelpSessionInfo;
                 _helpPaneVm.SessionWarning += OnHelpSessionWarning;
                 HelpPaneControl.DataContext = _helpPaneVm;
             }
@@ -767,20 +768,53 @@ namespace TapeWinNET
             OnPaneOpening(width);
             HelpPaneControl.Visibility = Visibility.Visible;
             _helpPaneVm.IsPaneOpen = true;
+        }
 
-            // Navigate to requested topic (or restore last-viewed / home)
+        /// <summary>
+        /// Opens the help pane (or navigates it to <paramref name="topicId"/> if already open).
+        /// Builds the session on first call.
+        /// </summary>
+        /// <param name="topicId">
+        /// Optional topic id string. If not provided, navigate to the last-viewed
+        /// topic for this host, or the home topic if no last-viewed topic is saved.
+        /// </param>
+        public async void OpenHelpPane(string? topicId = null)
+        {
+            await EnsureHelpPaneOpen();
+            Debug.Assert(_helpPaneVm is not null, "Help pane VM should be initialized by EnsureHelpPaneOpen");
+
+            // Navigate to requested topic... 
             if (topicId != null)
             {
                 await _helpPaneVm.NavigateToAsync(topicId);
             }
-            else
+            else // ...or restore last-viewed / home
             {
+                var setting = MainViewModel.Settings;
                 var lastTopic = setting.HelpPaneLastTopicPerHost?.GetValueOrDefault(HostName);
                 if (lastTopic != null)
                     await _helpPaneVm.NavigateToAsync(lastTopic);
                 else
                     await _helpPaneVm.GoHomeAsync();
             }
+        }
+
+        /// <summary>
+        /// Opens the help pane to the topic on MainWindow controls
+        /// </summary>
+        public async void OpenHelpPaneForMainWindow()
+        {
+            OpenHelpPane(GetDefaultTopicId());
+        }
+
+        /// <summary>
+        /// Opens the help pane to its home topic
+        /// </summary>
+        public async void OpenHelpPaneHome()
+        {
+            await EnsureHelpPaneOpen();
+            Debug.Assert(_helpPaneVm is not null, "Help pane VM should be initialized by EnsureHelpPaneOpen");
+            await _helpPaneVm.GoHomeAsync();
         }
 
         /// <summary>

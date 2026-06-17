@@ -69,26 +69,50 @@ internal sealed class HelpHighlightAdorner : Adorner
 
     private Geometry? _activeGeometry;
     private Geometry? _inactiveGeometry;
+    private Geometry? _containedGeometry;
     private Size _lastSize;
 
     private void RebuildGeometries()
     {
         var full = new RectangleGeometry(new Rect(AdornedElement.RenderSize));
 
-        // Build union of all highlight rects
-        Geometry? g = null;
+        Geometry? union = null;
+        GeometryGroup contained = new();
 
+        // Detect contained rectangles
+        for (int i = 0; i < _targets.Count; i++)
+        {
+            var r1 = _targets[i];
+
+            for (int j = 0; j < _targets.Count; j++)
+            {
+                if (i == j) continue;
+
+                var r2 = _targets[j];
+
+                if (r2.Contains(r1))
+                {
+                    contained.Children.Add(
+                        new RectangleGeometry(Rect.Inflate(r1, 2, 2), 4, 4)
+                    );
+                    break;
+                }
+            }
+        }
+
+        // Build union of all inflated rectangles
         foreach (var rect in _targets)
         {
             var inflated = Rect.Inflate(rect, 2, 2);
-            var r = new RectangleGeometry(inflated, 4, 4);
+            var g = new RectangleGeometry(inflated, 4, 4);
 
-            g = g == null
-                ? r
-                : new CombinedGeometry(GeometryCombineMode.Union, g, r);
+            union = union == null
+                ? g
+                : new CombinedGeometry(GeometryCombineMode.Union, union, g);
         }
 
-        _activeGeometry = g ?? Geometry.Empty;
+        _activeGeometry = union ?? Geometry.Empty;
+        _containedGeometry = contained.Children.Count > 0 ? contained : Geometry.Empty;
 
         // Build inactive region = full minus active
         _inactiveGeometry = new CombinedGeometry(
@@ -97,23 +121,16 @@ internal sealed class HelpHighlightAdorner : Adorner
             _activeGeometry
         );
 
-        // now substract the excluded element (e.g. the HelpPane) from both active and inactive geometries
+        // Subtract excluded element from both
         if (_excludedElement != null)
         {
             var transform = _excludedElement.TransformToVisual(AdornedElement);
             var excludedRect = transform.TransformBounds(new Rect(_excludedElement.RenderSize));
-            var excludedGeometry = new RectangleGeometry(excludedRect);
-            
-            _activeGeometry = new CombinedGeometry(
-                GeometryCombineMode.Exclude,
-                _activeGeometry,
-                excludedGeometry
-            );
-            _inactiveGeometry = new CombinedGeometry(
-                GeometryCombineMode.Exclude,
-                _inactiveGeometry,
-                excludedGeometry
-            );
+            var excluded = new RectangleGeometry(excludedRect);
+
+            _activeGeometry = new CombinedGeometry(GeometryCombineMode.Exclude, _activeGeometry, excluded);
+            _inactiveGeometry = new CombinedGeometry(GeometryCombineMode.Exclude, _inactiveGeometry, excluded);
+            _containedGeometry = new CombinedGeometry(GeometryCombineMode.Exclude, _containedGeometry, excluded);
         }
     }
 
@@ -123,8 +140,8 @@ internal sealed class HelpHighlightAdorner : Adorner
             _activeGeometry == null ||
             _lastSize != AdornedElement.RenderSize)
         {
-            _lastSize = AdornedElement.RenderSize;
             RebuildGeometries();
+            _lastSize = AdornedElement.RenderSize;
         }
     }
 
@@ -132,28 +149,20 @@ internal sealed class HelpHighlightAdorner : Adorner
 
     protected override void OnRender(DrawingContext dc)
     {
-        /*
-        // A transparent fill over the entire adorned area ensures every pixel is
-        //  hit-testable when IsHitTestVisible = true. A null brush would be invisible
-        //  to WPF's hit-testing, leaving empty regions unblocked.
-        dc.DrawRectangle(Brushes.Transparent, null, new Rect(AdornedElement.RenderSize));
-
-        foreach (var rect in _targets)
-        {
-            // Expand the rect slightly so the border sits just outside the control edge.
-            var inflated = Rect.Inflate(rect, 2, 2);
-            dc.DrawRoundedRectangle(InfoFill, InfoPen, inflated, 4, 4);
-        }
-        */
         EnsureGeometries();
 
         // 1. Dim inactive area
         dc.DrawGeometry(DimBrush, null, _inactiveGeometry);
 
-        // 2. Hit-test layer -- not needed as our both geometries cover the entire adorned area
-        // dc.DrawRectangle(Brushes.Transparent, null, new Rect(AdornedElement.RenderSize)); // need to substract _excludedElement area!
+        // 2. Hit-test layer (full minus excluded) -- not needed since
+        //  _inactiveGeometry + _activeGeometry already cover the whole hit-test area
+        // dc.DrawGeometry(Brushes.Transparent, null, _inactiveGeometry);
+        // dc.DrawGeometry(Brushes.Transparent, null, _activeGeometry);
 
-        // 3. Draw active highlight area
+        // 3. Draw active union area
         dc.DrawGeometry(InfoFill, InfoPen, _activeGeometry);
+
+        // 4. Draw contained rectangles last so their borders reappear
+        dc.DrawGeometry(InfoFill, InfoPen, _containedGeometry);
     }
 }

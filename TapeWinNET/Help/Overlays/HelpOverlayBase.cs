@@ -260,12 +260,13 @@ internal abstract class HelpOverlayBase : IHelpOverlay
             //  should be the topmost in the visual tree.
             for (int i = hitRects.Count - 1; i >= 0; i--)
             {
-                bool isInnermost = false;
+                bool isInnermost = true;
                 for (int j = 0; j < hitRects.Count; j++)
                 {
-                    if (i != j && hitRects[j].Contains(hitRects[i]))
+                    if (j == i) continue; // don't check against self
+                    if (!hitRects[j].Contains(hitRects[i]))
                     {
-                        isInnermost = true;
+                        isInnermost = false;
                         break;
                     }
                 }
