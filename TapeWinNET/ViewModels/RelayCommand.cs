@@ -2,16 +2,10 @@ using System.Windows.Input;
 
 namespace TapeWinNET.ViewModels;
 
-public class RelayCommand : ICommand
+public class RelayCommand(Action<object?> execute, Predicate<object?>? canExecute = null) : ICommand
 {
-    private readonly Action<object?> _execute;
-    private readonly Predicate<object?>? _canExecute;
-
-    public RelayCommand(Action<object?> execute, Predicate<object?>? canExecute = null)
-    {
-        _execute = execute ?? throw new ArgumentNullException(nameof(execute));
-        _canExecute = canExecute;
-    }
+    private readonly Action<object?> _execute = execute ?? throw new ArgumentNullException(nameof(execute));
+    private readonly Predicate<object?>? _canExecute = canExecute;
 
     public RelayCommand(Action execute, Func<bool>? canExecute = null)
         : this(_ => execute(), canExecute != null ? _ => canExecute() : null)
@@ -34,17 +28,11 @@ public class RelayCommand : ICommand
     }
 }
 
-public class AsyncRelayCommand : ICommand
+public class AsyncRelayCommand(Func<object?, Task> execute, Predicate<object?>? canExecute = null) : ICommand
 {
-    private readonly Func<object?, Task> _execute;
-    private readonly Predicate<object?>? _canExecute;
+    private readonly Func<object?, Task> _execute = execute ?? throw new ArgumentNullException(nameof(execute));
+    private readonly Predicate<object?>? _canExecute = canExecute;
     private bool _isExecuting;
-
-    public AsyncRelayCommand(Func<object?, Task> execute, Predicate<object?>? canExecute = null)
-    {
-        _execute = execute ?? throw new ArgumentNullException(nameof(execute));
-        _canExecute = canExecute;
-    }
 
     public AsyncRelayCommand(Func<Task> execute, Func<bool>? canExecute = null)
         : this(_ => execute(), canExecute != null ? _ => canExecute() : null)

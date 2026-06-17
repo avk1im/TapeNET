@@ -136,7 +136,7 @@ public partial class MainViewModel : ViewModelBase
             DriveNumber: 0,
             Command: OpenDriveCommand);
         DriveMenuItems.Add(drive0Item);
-        ToolbarDriveItems.Add(drive0Item); // mirrored — toolbar excludes "Specify..."
+        ToolbarDriveItems.Add(drive0Item/* with { Header = "Drive 0" }*/); // mirrored — toolbar excludes "Specify..."
 
         // "Specify..." lets the user enter a device name directly (menu only, not toolbar)
         DriveMenuItems.Add(new DriveMenuItem(
@@ -162,7 +162,7 @@ public partial class MainViewModel : ViewModelBase
                             Command: OpenDriveCommand);
                         DriveMenuItems.Insert(insertIndex, driveItem);
                         // Mirror to toolbar: insert at end (all physical drives are appended)
-                        ToolbarDriveItems.Add(driveItem);
+                        ToolbarDriveItems.Add(driveItem/* with { Header = $"Drive {driveNum}" }*/);
                     });
                 }
             }
