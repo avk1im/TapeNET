@@ -66,7 +66,7 @@ internal abstract class HelpOverlayBase : IHelpOverlay
                 $"No AdornerLayer found on '{overlayRoot.GetType().Name}'. " +
                  "Ensure the element is part of a visual tree that includes an AdornerDecorator.");
         Layer   = layer;
-        Adorner = new HelpHighlightAdorner(overlayRoot);
+        Adorner = new HelpHighlightAdorner(overlayRoot, excludedElement);
     }
 
     // ── IHelpOverlay ──────────────────────────────────────────────────────────

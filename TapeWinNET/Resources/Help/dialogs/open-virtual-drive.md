@@ -74,6 +74,9 @@ the virtual drive, or **Cancel** to abort.
 ## Controls
 
 **Drive mode** — Chooses between opening an existing virtual media file or creating a new one. In-memory mode creates a temporary media backed by RAM (no files on disk).
+
 **File paths** — The content-partition file path (required). The initiator-partition file is auto-computed from the content path when enabled.
+
 **Preset configuration** — One-click presets for common virtual drive setups (e.g. LTO-8 equivalent). Applying a preset populates Capacity, Features, and IO Speed.
+
 **Capacity** — Sets the logical size of the content and initiator partitions for new media. Ignored when opening an existing file.

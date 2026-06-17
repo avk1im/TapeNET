@@ -51,5 +51,7 @@ the remote drive submenu to mount a drive.
 ## Controls
 
 **Host and port** — The network address (hostname or IP) and port number of the TapeWin [remote service](help://topic/concepts.remote-service). Default port is 7474.
+
 **Connection options** — Use local host (127.0.0.1) for a service running on this machine; enable TLS for an encrypted connection.
+
 **Connect button** — Attempts to connect to the specified host and port. On success the dialog closes and the drive tree updates.
