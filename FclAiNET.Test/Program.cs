@@ -5,6 +5,8 @@ using FclAiNET.Test;
 
 using Microsoft.Extensions.Logging;
 
+using Microsoft.Extensions.AI;
+
 // ─────────────────────────────────────────────────────
 //  FclAiNET Test App — interactive NL → FCL console
 // ─────────────────────────────────────────────────────
@@ -13,6 +15,12 @@ Console.OutputEncoding = System.Text.Encoding.UTF8;
 Console.WriteLine("╔══════════════════════════════════════╗");
 Console.WriteLine("║   FclAiNET — Interactive Test App    ║");
 Console.WriteLine("╚══════════════════════════════════════╝");
+Console.WriteLine();
+
+Console.WriteLine("Assemblies used:");
+Console.WriteLine(typeof(ChatOptions).Assembly.FullName);
+Console.WriteLine(typeof(IChatClient).Assembly.FullName);
+Console.WriteLine(typeof(FunctionInvokingChatClient).Assembly.FullName);
 Console.WriteLine();
 
 // ── Logging ─────────────────────────────────────────

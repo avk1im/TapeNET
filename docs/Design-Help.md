@@ -2165,3 +2165,233 @@ beyond the overlay UI. The `Guide Me` button binds to a `GuideMeCommand` analogo
 **Step 8 — Host XAML + content.** Add x:Name="HelpOverlayRoot" to each content root; tag key controls with `help:Help.ControlName`; add a ## Controls chapter to ui/main-window.md and each dialogs/*.md. Set `GetDefaultTopicId()` returns.
 **Step 9 — TapeWinNET tests + build.** `HelpPopupTests`, `RevealOverlayTests` ([StaFact]); full run_build; manual smoke per host.
 **Walkthrough (Phase 8b)** is deferred but architected in §11.9 so it reuses the same adorner + base.
+
+---
+
+## 12. Walkthrough Mode ("Guide Me")
+
+### 12.1 Mission & UX Philosophy
+The "Guide Me" walkthrough mode provides users with an interactive, step-by-step guided tour across the application's user interface. Unlike rigid wizards or obstructive modal dialogs, Walkthrough Mode adheres to a **non-blocking, focus-driven flow**. 
+
+The interface remains fully interactive during a tour, allowing users to input data, resize elements, and click live controls naturally. To guide the user's focus without impeding productivity, the system utilizes an **Intensity Matching** technique: a focus-transparent, semi-transparent dimming overlay covers the active window, explicitly clipping out the exact bounding rectangle of the target control to make it pop visually.
+
+---
+
+### 12.2 Content Authoring Schema (Markdown-Centric Format)
+To support rich-text features such as custom highlights, alert blocks, and operational links within the help text, each walkthrough step's body text is authored using standard Markdown syntax. 
+
+Rather than encapsulating multi-line Markdown inside nested YAML literal blocks—which forces complex indentation rules and quote escaping—the walkthrough scripts utilize a **Markdown-Centric Step Document** layout. The global walkthrough attributes are written as standard, flat YAML front-matter, and individual steps are delineated using structural Markdown Level 2 headers (`##`) embedded with target control metadata.
+
+#### Authoring Format Specification (`walkthroughs/first-restore.md`)
+Example of a walkthrough script using the Markdown-Centric format. The front-matter block defines global metadata for the walkthrough, while each step is introduced by a `##` header that specifies the target control and step title. The body of each step follows its header, allowing for rich Markdown formatting without YAML nesting complications.
+
+```markdown
+---
+id: walkthrough.first-restore
+title: Restoring your first backup
+description: Guided walkthrough for selecting a historical backup set and setting extract directories.
+kind: walkthrough
+start-host: main-window
+next-host: restore-dialog
+---
+
+## [Backup sets list] Select a Backup Set
+Tick the **backup set** containing your missing data. 
+
+If you aren't sure which set to pick, reference the [Incremental Chain](help://glossary/incremental-chain) glossary entry to understand how recovery dependencies work.
+
+## [main-window -> restore-dialog] Open the Restore Dialog
+Chose **Restore | Restore Backup Set** from the menu, the toolbar, or click this [link](help://action/restore) below to open the Restore dialog.
+
+## [Destination folder] Choose destination folder
+The Restore dialog is now active. Select the local target folder where you want to place the extracted files.
+
+> ⚠️ **Note:** Ensure your tape drive is online and the status indicator is green before proceeding.
+
+```
+
+#### Syntax Rules for Step Headers:
+* **Single-Window Scope:** `## [HelpControlNameAttachedProperty.ControlName] Step Title` targets a control on the default script host window.
+* **Cross-Window Crossover Scope:** `## [HostWindowName -> DialogName] Step Title` overrides the default host window, signaling to the execution coordinator that the step takes us to the next host window.
+
+---
+
+### 12.3 Architectural Extensions & Public APIs
+The walkthrough infrastructure is managed by a centralized coordination engine that updates the view layers via event propagation.
+
+```csharp
+public sealed record WalkthroughStep
+{
+    public required string Target { get; init; }
+    public string? Host { get; init; }
+    public required string Title { get; init; }
+    public required string BodyMarkdown { get; init; }
+}
+
+public sealed record WalkthroughScript
+{
+    public required string Id { get; init; }
+    public required string Title { get; init; }
+    public required string Description { get; init; }
+    public required string Host { get; init; }
+    public required IReadOnlyList<WalkthroughStep> Steps { get; init; }
+}
+
+public sealed class WalkthroughStepChangedEventArgs : EventArgs
+{
+    public required WalkthroughScript ActiveScript { get; init; }
+    public required WalkthroughStep TargetStep { get; init; }
+    public required int CurrentStepIndex { get; init; }
+}
+
+public interface IGlobalWalkthroughCoordinator
+{
+    WalkthroughScript? ActiveScript { get; }
+    int CurrentStepIndex { get; }
+    bool IsGuideActive { get; }
+
+    void Start(WalkthroughScript script);
+    void Next();
+    void Previous();
+    void End();
+    void FastForwardToStep(int stepIndex);
+
+    event EventHandler<WalkthroughStepChangedEventArgs>? StepChanged;
+    event EventHandler? GuideTerminated;
+}
+```
+
+---
+
+### 12.4 Parsing Mechanics
+Because the underlying help system engine relies on a bespoke, lightweight line-by-line front-matter parser to minimize external library footprints, true YAML multi-line blocks are avoided. The body below the front-matter block is split cleanly by header tags within `HelpContentStore` when initializing walkthrough entries.
+
+```csharp
+public static class WalkthroughParser
+{
+    public static IReadOnlyList<WalkthroughStep> ParseSteps(string markdownBody)
+    {
+        var steps = new List<WalkthroughStep>();
+        
+        // Delineate blocks split cleanly by structural markdown H2 segments
+        string[] rawBlocks = markdownBody.Split(new[] { "\n## " }, StringSplitOptions.RemoveEmptyEntries);
+        
+        foreach (var block in rawBlocks)
+        {
+            if (block.StartsWith("---")) continue; 
+
+            int firstNewLine = block.IndexOf('\n');
+            if (firstNewLine == -1) continue;
+
+            string headerLine = block.Substring(0, firstNewLine).Trim();
+            string stepContent = block.Substring(firstNewLine + 1).Trim();
+
+            // Extract Target and Title data from structural sequence: "[Target] Title"
+            if (headerLine.StartsWith("[") && headerLine.Contains("]"))
+            {
+                int closingBracket = headerLine.IndexOf(']');
+                string targetRaw = headerLine.Substring(1, closingBracket - 1).Trim();
+                string title = headerLine.Substring(closingBracket + 1).Trim();
+
+                string? hostOverride = null;
+                string targetControl = targetRaw;
+
+                // Process contextual crossover window notations (e.g. "HostWindow -> Control")
+                if (targetRaw.Contains("->"))
+                {
+                    var parts = targetRaw.Split(new[] { "->" }, StringSplitOptions.None);
+                    hostOverride = parts[0].Trim();
+                    targetControl = parts[1].Trim();
+                }
+
+                steps.Add(new WalkthroughStep
+                {
+                    Target = targetControl,
+                    Host = hostOverride,
+                    Title = title,
+                    BodyMarkdown = stepContent
+                });
+            }
+        }
+        
+        return steps;
+    }
+}
+```
+
+---
+
+### 12.5 UX Lifecycle & Navigation Vectors
+
+#### 12.5.1 On-the-Fly Directory Generation
+To eliminate asset compilation synchronization penalties and maintain clean decoupling, static directory pages are discarded. When a user triggers the "Guide Me" button from the main context root, the `HelpPaneViewModel` dynamic interface engine queries `IHelpSession` for active topics of type `Walkthrough`. It automatically formats an in-memory Markdown syntax block and pipes it directly into the active `MarkdownRenderer` layout layer:
+
+```csharp
+public void DisplayWalkthroughDirectory()
+{
+    var tours = _helpSession.GetAllTopics().Where(t => t.Kind == HelpTopicKind.Walkthrough);
+
+    var sb = new StringBuilder();
+    sb.AppendLine("# Available Guided Tours");
+    sb.AppendLine("Select a tour from the index below to launch live step guidance:");
+    sb.AppendLine();
+
+    foreach (var tour in tours)
+    {
+        // Re-use cross-topic help scheme routing to initialize selected execution sequences
+        sb.AppendLine($"* **[{tour.Title}](help://topic/{tour.Id})** — *{tour.Description}*");
+    }
+
+    HelpPaneFlowDocument = _markdownRenderer.Render(sb.ToString());
+}
+```
+
+#### 12.5.2 Context-Specific Window Entry (Fast-Forwarding)
+When a user launches Walkthrough Mode while working inside a sub-dialog window (e.g., `RestoreWindow`), the execution system runs a **Filtered Fallback** strategy to optimize routing efficiency:
+
+1. **Query Availability:** Query the active data context via `_helpSession.GetWalkthroughsForHost(hostName)`. If the registration count equals zero, the "Guide Me" action button is automatically disabled for that workspace.
+2. **Directory Filtering:** If multiple operational tours reference the sub-dialog, a contextual directory filtered exclusively to those items is rendered dynamically on-the-fly.
+3. **Execution Fast-Forwarding:** If exactly one matching tour exists, the coordinator launches it but bypasses initial setup phases by scanning the script sequence and immediately setting `CurrentStepIndex` to match the first position index where `step.Host == dialogHostName`. The user bypasses preliminary parent instructions and immediately begins tracking relevant elements within their current workspace.
+
+#### 12.5.3 Backward Boundary Crossovers (Closing Dialogs)
+If a user is traversing a multi-window tour inside an active dialog window and repeatedly selects the `< Back` step navigation control, the focus state may drive backwards onto a target control residing on the primary parent window (`MainWindow`). 
+
+Because parent controls are visually obscured or disabled under modal dialog constraints, leaving the dialog open breaks the experience. To resolve this boundary condition, the unified `DialogHelpPaneController` coordinates window lifecycle teardowns through global event interception:
+
+```csharp
+private void OnGlobalStepChanged(object sender, WalkthroughStepChangedEventArgs e)
+{
+    string expectedHost = e.TargetStep.Host ?? e.ActiveScript.Host;
+
+    // Check if the state engine drove the focus requirement completely out of this sub-window environment
+    if (expectedHost != _hostName)
+    {
+        // Unsubscribe early to block double-firing occurrences during window layout destruction
+        _coordinator.StepChanged -= OnGlobalStepChanged;
+
+        // Perform a programmatic clean close, returning native layout control and visual focus to MainWindow
+        _window.Close();
+    }
+}
+```
+
+#### 12.5.4 Out-of-Sequence Manual Dismissals
+If a user bypasses walkthrough navigation components entirely and manually triggers native window closing controls (such as hitting the title bar `X` button or the `Cancel` action button), `DialogHelpPaneController` catches the lifecycle modification inside its standard window unloading sequence:
+
+```csharp
+// Intercepted within Window_Unloaded execution context inside DialogHelpPaneController
+if (_coordinator.IsGuideActive && 
+    _coordinator.ActiveScript?.Steps[_coordinator.CurrentStepIndex].Host == this._hostName)
+{
+    // Programmatically terminate the tour sequence to prevent parent window synchronization anomalies
+    _coordinator.End();
+}
+```
+Abrupt window terminations explicitly drop the active walkthrough context, automatically resetting the parent `HelpPane` interface layers back to standard query/chat operation modes.
+
+---
+
+### 12.6 UI Rendering Integration
+When Walkthrough Mode updates its step metrics, the text within `BodyMarkdown` passes directly through the existing `MarkdownRenderer` engine. This ensures full compilation compatibility across all rich formatting enhancements out of the box:
+* Glossary cross-links (`help://glossary/`) preserve hover-activated tooltip caching mechanics and single-shot `DispatcherTimer` outside-click popups natively without modifications.
+* Layout components render smoothly within standard `FlowDocument` subpanes, maintaining visual identity cohesion across standard text lookup components and guided help elements.
