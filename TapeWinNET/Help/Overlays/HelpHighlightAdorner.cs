@@ -32,6 +32,10 @@ internal sealed class HelpHighlightAdorner : Adorner
     // Blue border pen and semi-transparent interrior brush
     private static readonly Pen InfoPen = CreatePen(Color.FromArgb(0xCC, 0x00, 0x78, 0xD4), 2.5);
     private static readonly Brush InfoFill = CreateFill(Color.FromArgb(0x22, 0x00, 0x78, 0xD4));
+
+    private static readonly Pen HighlightPen = CreatePen(Color.FromArgb(0xCC, 0xFF, 0xA5, 0x00), 3);
+    private static readonly Brush HighlightFill = CreateFill(Color.FromArgb(0x22, 0xFF, 0xA5, 0x00));
+
     private static readonly Brush DimBrush = CreateFill(Color.FromArgb(0x18, 0x00, 0x00, 0x00));
 
     private static Pen CreatePen(Color color, double thickness)
@@ -65,11 +69,47 @@ internal sealed class HelpHighlightAdorner : Adorner
     }
     private IReadOnlyList<Rect> _targets = [];
 
+    /// <summary>Optional element to emphasize (Walkthrough current step; null for Reveal)</summary>
+    public Rect? Spotlight
+    {
+        get => _spotlight;
+        set
+        {
+            _spotlight = value;
+            _spotlightIndex = _spotlight.HasValue
+                ? Targets.Select((r, i) => (Rect: r, Index: i))
+                    .FirstOrDefault(t => t.Rect == _spotlight.Value).Index
+                : null;
+
+            RebuildGeometries();
+            InvalidateVisual();
+        }
+    }
+    private Rect? _spotlight = null;
+    private int? _spotlightIndex = null;
+
+    /// <summary>
+    /// Optimization: Set Targets and Spotlight together to avoid multiple geometry rebuilds.
+    /// </summary>
+    public void SetTargetsAndSpotlight(IReadOnlyList<Rect> targets, Rect? spotlight)
+    {
+        _targets = targets;
+        _spotlight = spotlight;
+        _spotlightIndex = _spotlight.HasValue
+            ? Targets.Select((r, i) => (Rect: r, Index: i))
+                .FirstOrDefault(t => t.Rect == _spotlight.Value).Index
+            : null;
+        
+        RebuildGeometries();
+        InvalidateVisual();
+    }
+
     // ── Geometries ────────────────────────────────────────────────────────────
 
     private Geometry? _activeGeometry;
     private Geometry? _inactiveGeometry;
     private Geometry? _containedGeometry;
+    private Geometry? _spotlightGeometry;
     private Size _lastSize;
 
     private void RebuildGeometries()
@@ -82,6 +122,8 @@ internal sealed class HelpHighlightAdorner : Adorner
         // Detect contained rectangles
         for (int i = 0; i < _targets.Count; i++)
         {
+            if (i == _spotlightIndex) continue; // Spotlight is dran separate anyways
+            
             var r1 = _targets[i];
 
             for (int j = 0; j < _targets.Count; j++)
@@ -103,6 +145,8 @@ internal sealed class HelpHighlightAdorner : Adorner
         // Build union of all inflated rectangles
         foreach (var rect in _targets)
         {
+            if (rect == _spotlight) continue; // Spotlight is drawn separate
+
             var inflated = Rect.Inflate(rect, 2, 2);
             var g = new RectangleGeometry(inflated, 4, 4);
 
@@ -131,6 +175,15 @@ internal sealed class HelpHighlightAdorner : Adorner
             _activeGeometry = new CombinedGeometry(GeometryCombineMode.Exclude, _activeGeometry, excluded);
             _inactiveGeometry = new CombinedGeometry(GeometryCombineMode.Exclude, _inactiveGeometry, excluded);
             _containedGeometry = new CombinedGeometry(GeometryCombineMode.Exclude, _containedGeometry, excluded);
+        }
+
+        // Finally, substract the spotlight from both
+        if (_spotlight.HasValue)
+        {
+            _spotlightGeometry = new RectangleGeometry(Rect.Inflate(_spotlight.Value, 2, 2), 4, 4);
+            _activeGeometry = new CombinedGeometry(GeometryCombineMode.Exclude, _activeGeometry, _spotlightGeometry);
+            _inactiveGeometry = new CombinedGeometry(GeometryCombineMode.Exclude, _inactiveGeometry, _spotlightGeometry);
+            _containedGeometry = new CombinedGeometry(GeometryCombineMode.Exclude, _containedGeometry, _spotlightGeometry);
         }
     }
 
@@ -164,5 +217,9 @@ internal sealed class HelpHighlightAdorner : Adorner
 
         // 4. Draw contained rectangles last so their borders reappear
         dc.DrawGeometry(InfoFill, InfoPen, _containedGeometry);
+
+        // 5. Draw spotlight on top if present
+        if (_spotlightGeometry is not null)
+            dc.DrawGeometry(HighlightFill, HighlightPen, _spotlightGeometry);
     }
 }

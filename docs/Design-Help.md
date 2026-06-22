@@ -1676,7 +1676,7 @@ The mode is re-evaluated whenever `IAiSession.ProviderChanged` fires, so the use
 
 ## 11. Help Overlays — Reveal & Walkthrough (v2)
 
-> **Status:** **Reveal** (this section) is fully designed and ready to implement (Phase 8a).
+> **Status:** **Reveal** (this section) is fully designed and implemented acc. to the design, except the tests (Phase 8a).
 > **Walkthrough / Guide Me** is architected here (§11.9) and scheduled for Phase 8b.
 > Both build on a shared, reusable overlay foundation so the engine is written once.
 
@@ -2176,9 +2176,9 @@ beyond the overlay UI. The `Guide Me` button binds to a `GuideMeCommand` analogo
 > `HelpActionRouter` (`help://action/<id>`), and the `RevealCommand`/`IsRevealActive`/
 > `RevealRequested` VM pattern. **No new application-wide subsystem is introduced.**
 
-### 12.0 Critical re-scope — what changed vs. the original draft
+### 12.0 Critical re-scope — a radical UX and code design simplification vs. the initial considerations
 
-The original draft proposed a heavy, app-wide `IGlobalWalkthroughCoordinator` singleton, automatic
+In this design we *avoid* a heavy, app-wide `IGlobalWalkthroughCoordinator` singleton, automatic
 cross-window choreography (dialog auto-close on Back, forward fast-forwarding, host-transition events),
 focus-driven step activation (subscribing to `GotFocus` on every tagged control), and a new bespoke
 `WalkthroughParser` with a richer `WalkthroughStep`/`WalkthroughScript` model. All of that is **dropped**
@@ -2191,7 +2191,7 @@ in favour of a lightweight design that mirrors Reveal almost exactly. The decisi
 | Focus-driven activation (`GotFocus` on thousands of controls) | **Removed.** The current step is driven solely by **Next / Back**. The step's control is highlighted in amber; the step body shows immediately in the pane. | Honours the project's stated preference against per-item event subscriptions (perf). Far simpler and deterministic. |
 | New `WalkthroughParser` + extended records (`Host`, `BodyMarkdown`, `StartHost`, `NextHost`, `next-host-open-action`) | **Reuse the existing `WalkthroughScript`/`WalkthroughStep`** model with one tiny addition (a `kind: walkthrough` topic *is* the tour; `host:` front-matter already scopes it to a window). Steps are parsed by a small helper in `HelpContentStore`, reusing the existing line-scanner. | The current model is already minimal and already host-scoped via `host:`. No second parser, no second record family. |
 | Dynamic in-memory "tour directory" page generation | **Reuse the lexical content path.** "Guide Me" with multiple tours shows a tiny generated chooser (one `SelectDialog`, the same primitive used by AI-provider selection); with one tour it starts immediately. | No new MarkdownRenderer plumbing; reuses an existing dialog primitive. |
-| Amber + blue numbered overlays, dimming, large step numbers everywhere | **Minimal visual.** Reuse `HelpHighlightAdorner` (blue border + faint dim). Add a single **amber** highlight for the *current* step's control and a small **step-number badge** on it. Other steps are not highlighted (keeps the screen calm and the engine simple). | Reuses the existing adorner with one new "current target + badge" mode; avoids enumerating/numbering every control. |
+| Amber + blue numbered overlays, dimming, large step numbers everywhere | **Minimal visual.** Reuse `HelpHighlightAdorner` (blue border + faint dim). Add a single **amber** highlight for the *current* step's control and a small **step-number badge** on it. Other steps are not highlighted, just indicated by semi-transparent "informational" borders - keeps the screen calm and the engine simple. | Reuses the existing adorner with one new "current target + badge" mode; avoids enumerating/numbering every control. |
 
 The result is a feature roughly the size of Reveal, sharing ~85 % of its code.
 
@@ -2225,13 +2225,13 @@ A step whose `Target` begins with `action:` is an **action step**. Its body expl
 typically contains a `help://action/<id>` link. Reaching such a step (or pressing **Next** on it):
 
 - highlights nothing (there is no on-screen control to outline) — instead the pane shows a prominent
-  **`[Do it ▶]`** button in the footer next to **Next**, wired to that action id;
+  **`[Do it ▶]`** button in the footer instead of **Next**, wired to that action id;
 - pressing **`[Do it ▶]`** (or clicking the inline `help://action/<id>` link) runs the command via the
   existing `HelpActionRouter`, which opens the dialog;
 - the **main-window tour simply ends** at this point (the overlay clears, the pane returns to normal).
   The newly opened dialog independently offers its **own** Guide Me tour (`dialog.*` walkthrough).
 
-This replaces every piece of the original cross-window state machine with one router call.
+This replaces every piece of the original concept's cross-window state machine with one router call.
 
 #### Ending a walkthrough
 
@@ -2243,7 +2243,13 @@ A walkthrough ends — overlay removed, pane restored to the host's default topi
 - the host **window closes** (dialogs: handled in `DialogHelpPaneController.OnPaneClosed`, which already
   runs on `Window.Closing`).
 
-There is deliberately **no** auto-close of dialogs, no "tour succeeded?" tracking, and no resume-across-windows.
+There is deliberately *no* auto-close of dialogs, no "tour succeeded?" tracking, and no resume-across-windows.
+
+#### The chat pane
+
+The chat pane (with optional AI-generated content) of the Help pane remains operational during
+walkthroughs, allowing users to ask questions or request clarifications without exiting the guided
+experience.
 
 #### Tours planned
 
@@ -2328,7 +2334,7 @@ Press **Start** to begin. Watch the progress panel; you can **Abort** at any tim
   **`[Do it ▶]`** button wired to `help://action/<id>`. Reaching this step ends the current
   (single-host) tour once the action runs (the action typically opens a dialog that offers its own tour).
 
-There is intentionally **no** `Host -> Dialog` crossover grammar — that role is filled by the
+There is intentionally *no* `Host -> Dialog` crossover grammar — that role is filled by the
 `action:<id>` step, which reuses the existing `HelpActionRouter`.
 
 ---
@@ -2336,7 +2342,7 @@ There is intentionally **no** `Host -> Dialog` crossover grammar — that role i
 ### 12.3 Content model (minimal extensions)
 
 The existing model is intentionally tiny. We add **two** fields to `WalkthroughStep` and **one** computed
-property — no new `Host`, `StartHost`, `NextHost`, coordinator, or event-args type. A tour is always
+property — no new `Host`, `StartHost`, `NextHost`, coordinator, nor event-args type. A tour is always
 single-host (its host is the owning `HelpTopic.Host`), so the step never needs to carry a host.
 
 ```csharp
@@ -2431,7 +2437,7 @@ via `GetWalkthroughsForHost("RestoreWindow")` — it has no awareness of the mai
 #### The hand-off UX (lightweight)
 
 1. The user reaches the **action step** at the end of the main-window leg. The step body renders normally;
-   the pane footer shows **`[Do it ▶]`** (plus `◀ Back`).
+   the pane footer shows **`[Do it ▶]`** instead of `[Next ▶]` (plus `◀ Back`).
 2. Clicking **`[Do it ▶]`** (or the inline `help://action/restore` link) runs the action through the
    existing `HelpActionRouter`. The main-window tour **ends** (overlay cleared, button reverts to
    *Guide Me*) — the main window's job is done.
@@ -2479,7 +2485,7 @@ if (_router.PendingWalkthroughHandoffActionId is not null)
 If the dialog has **more than one** tour, the hint is ignored and the user picks from the `SelectDialog`
 chooser (§12.6.1). This keeps the common single-tour dialogs frictionless while staying correct for the
 rare multi-tour case. The hint is purely cosmetic — if anything goes wrong the dialog just shows its
-normal help and the user clicks **Guide Me** manually.
+normal Help pane and the user clicks **Guide Me** manually.
 
 #### 12.5.2 Launching a tour from inside a dialog
 
@@ -2525,7 +2531,7 @@ rectangles plus an optional emphasised one. Walkthrough sets:
 Controls stay **fully operational and undimmed** (no scrim) — per the UX note. The only adorner addition
 needed is drawing the numeric badge; the amber-emphasis path already exists from Reveal's `Spotlight`.
 
-**No focus tracking.** The original "show the step text only when the user focuses the control" idea is
+**No focus tracking.** The original concept "show the step text only when the user focuses the control" idea is
 dropped — it needs per-control event wiring and competes with normal data entry. Instead the **current
 step's body is always shown in the pane's content area**. This is simpler, always visible, and reuses the
 existing `MarkdownRenderer` (so glossary/topic/action links work verbatim).
@@ -2622,7 +2628,7 @@ without exiting.
 
 ---
 
-### 12.8 Tests (Phase 8b)
+### 12.8 Tests (Phase 8b) [OPTIONAL]
 
 | Suite | Project | Coverage |
 |---|---|---|
@@ -2641,19 +2647,19 @@ without exiting.
 `IsActionStep`); add internal `WalkthroughParser.ParseSteps` reusing the shared H2 splitter and
 `HelpSlug.From`; switch `HelpContentStore` to parse steps from the body. Build.
 
-**Step 2 — HelpNET tests.** `WalkthroughParserTests`, `HelpContentStoreWalkthroughTests`
+**Step 2 — HelpNET tests. [OPTIONAL]** `WalkthroughParserTests`, `HelpContentStoreWalkthroughTests`
 (incl. `GetWalkthroughsForHost`). Build + run.
 
 **Step 3 — Adorner badge.** Add step-number badge drawing to `HelpHighlightAdorner` (reuse the existing
-amber-emphasis path for the current step). `[StaFact]` `HelpHighlightAdornerBadgeTests`.
+amber-emphasis path for the current step). OPTIONAL: `[StaFact]` `HelpHighlightAdornerBadgeTests`.
 
 **Step 4 — WalkthroughOverlay.** New `HelpOverlayBase` subclass: enumerate resolvable control-step
 targets via `IHelpPaneHost.ResolveControlByName`; set `Targets` + current `Spotlight`; non-interactive.
-`[StaFact]` `WalkthroughOverlayTests`.
+OPTIONAL: `[StaFact]` `WalkthroughOverlayTests`.
 
 **Step 5 — VM cursor + commands.** Add the walkthrough cursor, `GuideMeCommand` / `NextStepCommand` /
 `BackStepCommand`, `GuideRequested`, `StartWalkthrough`, header text, and the `SelectDialog` multi-tour
-chooser to `HelpPaneViewModel`. `[StaFact]` `HelpPaneViewModelWalkthroughTests`.
+chooser to `HelpPaneViewModel`. OPTIONAL: `[StaFact]` `HelpPaneViewModelWalkthroughTests`.
 
 **Step 6 — HelpPane wiring.** Own the `WalkthroughOverlay`; add the header strip and Back / Next / Do it
 footer; enable + bind the **Guide Me** button (label → `GuideButtonLabel`); (de)activate the overlay on
@@ -2671,8 +2677,4 @@ the referenced controls with `help:Help.ControlName` (many already exist from Re
 **Step 9 — Build + smoke.** Full `run_build`; manual per-host smoke incl. the main-window → dialog
 continuation hand-off and all exit paths.
 
-The chat pane (with optional AI-generated content) of the Help pane remains operational during
-walkthroughs, allowing users to ask questions or request clarifications without exiting the guided
-experience.
 
-The chat pane (with optional AI-generated content) of the Help pane remains operational during walkthroughs, allowing users to ask questions or request clarifications without exiting the guided experience.
