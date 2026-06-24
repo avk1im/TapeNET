@@ -1,9 +1,10 @@
-﻿using System.Diagnostics;
-using Windows.Win32.Foundation;
-using Microsoft.Extensions.Logging;
-using Windows.Win32.System.SystemServices;
+﻿using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 using TapeLibNET;
+using TapeLibNET.Remote;
 using TapeLibNET.TapeFilePacker;
+using Windows.Win32.Foundation;
+using Windows.Win32.System.SystemServices;
 
 
 namespace TapeLibNET
@@ -40,6 +41,21 @@ namespace TapeLibNET
             base.Dispose(disposing);
         }
 
+        private long ComputeRemainingCapacity()
+        {
+            bool isLtoDrive = Drive.Backend is TapeDriveWin32Backend wbe && wbe.IsLto
+                || Drive.Backend is RemoteTapeDriveBackend rbe && rbe.IsLto;
+            
+            var remainingCapacity = isLtoDrive
+                ? Drive.GetContentRemainingCapacity() // trust the remaining capacity reporting of LTO drives
+                : Drive.ContentCapacity - TOC.ComputeTotalFileSizeOnTape(); // for the others, compute
+            
+            if (!Drive.HasInitiatorPartition)
+                remainingCapacity -= Navigator.TOCCapacity; // if TOC is in a content set, reserve space for it
+
+            return remainingCapacity;
+        }
+
         private bool BeginWriteContentForCurrentSet(bool newSet)
         {
             // If we were reading or writing, end it first - before setting the new set's parameters
@@ -55,9 +71,7 @@ namespace TapeLibNET
             //  so that Navigator can optimize moving to the target content set once we call BeginWriteContent()
             Navigator.TargetContentSet = newSet ? ((TOC.CurrentSetIndexOnVolume > 0) ? -1 : 0) : CurrentSetAsNavigatorContentSet;
 
-            var remainingCapacity = Drive.ContentCapacity - TOC.ComputeTotalFileSizeOnTape();
-            if (!Drive.HasInitiatorPartition)
-                remainingCapacity -= Navigator.TOCCapacity; // if TOC is in a content set, reserve space for it
+            var remainingCapacity = ComputeRemainingCapacity();
 
             BytesBackedupMarker = BytesBackedup; // important in case of multi-volume backup continuation
 

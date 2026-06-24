@@ -159,8 +159,13 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         }
     }
 
-    /// <summary>Estimated remaining capacity in bytes (Capacity − Used).</summary>
-    public long Remaining => Capacity - Used;
+    /// <summary>
+    /// Estimated remaining capacity in bytes (Capacity − Used).
+    /// <para>For LTO drives, trust drive reporting. For others, compute</para>
+    /// </summary>
+    public long Remaining => IsLtoDrive
+        ? GetRemainingCapacityFromDrive()
+        : Capacity - Used;
 
     /// <summary>
     /// Reads the remaining capacity directly from the drive hardware (thread-safe).
@@ -180,6 +185,10 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
     /// <summary>True when the virtual drive uses in-memory streams (no persistent files).</summary>
     public bool IsInMemoryDrive => _vmdLast?.InMemory ?? false;
+
+    /// <summary>True when the drive is a physical LTO drive</summary>
+    public bool IsLtoDrive => _drive?.Backend is TapeDriveWin32Backend wbe && wbe.IsLto
+        || _drive?.Backend is RemoteTapeDriveBackend rbe && rbe.IsLto;
 
     /// <summary>The last <see cref="VirtualMediaDescriptor"/> used to open or insert media.</summary>
     public VirtualMediaDescriptor? LastVMD => _vmdLast;

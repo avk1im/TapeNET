@@ -48,6 +48,7 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
         SupportsSeqFilemarks = b.SupportsSeqFilemarks,
         Vendor = b.Vendor,
         Product = b.Product,
+        IsLto = b is TapeDriveWin32Backend wbe && wbe.IsLto,
     };
 
     /// <summary>

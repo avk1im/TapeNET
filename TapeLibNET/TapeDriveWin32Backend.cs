@@ -52,15 +52,14 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     //  flips to true and ALL future positioning uses bImmediate=false.
     private bool m_setPositionNeedsBlocking;
 
-    // LTO generation detection (probed once in Open via SCSI INQUIRY).
+    // LTO generation detection (probed once in Open via ProbeForLtoInformation() SCSI INQUIRY).
     //  -1 = not yet probed / probe failed; 0 = not LTO; >= 1 = LTO generation.
     private int m_ltoGeneration = -1;
     private string m_ltoVendor = string.Empty;
     private string m_ltoProduct = string.Empty;
 
-    // LTO partition numbering flag — set during Open, cleared in Close.
-    //  When true, account for LTO QUIRK in partition numbering!
-    private bool m_useLtoPartitionSchema; // SetPositionToPartition → LOCATE(10)
+    // LTO partition usage flag — set during Open via ProbeForLtoInformation(), cleared in Close
+    private bool m_useLtoPartitions;
 
     #endregion
 
@@ -126,8 +125,11 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     public override bool HasMedia => IsOpen && m_mediaParams != null;
     public override string DeviceName => $"\\\\.\\TAPE{m_driveNumber}";
     public override uint DriveNumber => m_driveNumber;
-    public override string Vendor => m_ltoVendor;
-    public override string Product => m_ltoProduct;
+    public override string Vendor => string.IsNullOrEmpty(m_ltoVendor) ? "[generic]" : m_ltoVendor;
+    public override string Product => string.IsNullOrEmpty(m_ltoProduct) ? "[unknown]" : m_ltoProduct;
+
+    public bool IsLto => m_ltoGeneration >= 1;
+    public bool IsLto5plus => m_ltoGeneration >= 5;
 
     #endregion
 
@@ -201,7 +203,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         m_positionQueryNeedsRetry = false;
         m_setPositionNeedsBlocking = false;
         m_ltoGeneration = -1;
-        m_useLtoPartitionSchema = false;
+        m_useLtoPartitions = false;
     }
 
     public override bool SetDriveParameters(bool compression, bool ecc, bool dataPadding, bool reportSetmarks, uint eotWarningZoneSize)
@@ -328,7 +330,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
 
         m_logger.LogTrace("{Prefix}: Formatting media", LogPrefix);
 
-        if (m_useLtoPartitionSchema)
+        if (m_useLtoPartitions)
         {
             // LTO FORMAT MEDIUM requires the tape to be at Initiator (if present) & BOT
             if (HasInitiatorPartition && !SetPositionToPartition(MediaPartition.Initiator, 0L))
@@ -345,11 +347,12 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
             }
 
             if (!PollForCompletion()) // ensure rewind completed
+            {
                 LogErrorAsWarning("FORMAT LTO MEDIUM: polling failed after rewind");
-        }
+                // Do NOT give up yet -- LTO format MAY still succeed
+                // return false;
+            }
 
-        if (m_useLtoPartitionSchema)
-        {
             uint formatError = (uint)WIN32_ERROR.NO_ERROR;
 
             if (initiatorPartitionSize > 0L && SupportsInitiatorPartition)
@@ -362,7 +365,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
             else
             {
                 // LTO-5+ supports only TAPE_SELECT_PARTITIONS
-                //  Do NOT atteempt TAPE_FIXED_PARTITIONS: not only will it fail, but retrying with TAPE_SELECT_PARTITIONS might fail, too!
+                //  Do NOT attempt TAPE_FIXED_PARTITIONS: not only will it fail, but retrying with TAPE_SELECT_PARTITIONS might fail, too!
                 formatError = PInvoke.CreateTapePartition(m_driveHandle, CREATE_TAPE_PARTITION_METHOD.TAPE_SELECT_PARTITIONS,
                     1 /*one common partition*/, 0 /*ignored*/);
             }
@@ -571,13 +574,14 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         }
 
         // LTO-5+: partition switching must go through SCSI LOCATE(10) // VALIDATE: not necessary
-        //if (m_useLtoPartitionSchema)
+        //if (m_useLtoPartitions)
         //    return SetPositionToPartitionLto(partition, block);
 
         uint win32Partition = MapPartitionToWin32(partition);
 
         // QUIRK Sony AIT: must go to partition 1 before partition 2+
-        if (win32Partition > 1)
+        //  No need for LTO
+        if (!IsLto && win32Partition > 1)
         {
             Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, 1, 0)).WithRetry().Run();
         }
@@ -1202,10 +1206,8 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         if (HasInitiatorPartition)
         {
             // In Win32 partition 2 = initiator, partition 1 = content
-            //  QUIRK LTO-5+: it's vice versa!
-            return false //m_useLtoPartitionSchema
-                ? (partition == MediaPartition.Initiator) ? 1U : 2U
-                : (partition == MediaPartition.Initiator) ? 2U : 1U;
+            //  Notice: for LTO-5+ it's the same -> no need to check m_useLtoPartitions
+            return partition == MediaPartition.Initiator ? 2U : 1U;
         }
 
         if (partition == MediaPartition.Initiator)
@@ -1225,10 +1227,8 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         if (HasInitiatorPartition)
         {
             // In Win32 partition 2 = initiator, partition 1 = content
-            //  QUIRK LTO-5+: it's vice versa!
-            return false //m_useLtoPartitionSchema
-                ? (win32Partition == 2U) ? MediaPartition.Content : MediaPartition.Initiator
-                : (win32Partition == 2U) ? MediaPartition.Initiator : MediaPartition.Content;
+            //  Notice: for LTO-5+ it's the same -> no need to check m_useLtoPartitions
+            return win32Partition == 2U ? MediaPartition.Initiator : MediaPartition.Content;
         }
         // In Win32 partition 1 = common
         return MediaPartition.Content;

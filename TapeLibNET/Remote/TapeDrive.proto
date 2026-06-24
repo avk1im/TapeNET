@@ -125,6 +125,7 @@ message BackendState {
   bool   supports_seq_filemarks      = 15;
   string vendor                      = 16;
   string product                     = 17;
+  bool   is_lto                      = 18;
 }
 
 // ============================================================================

@@ -10,11 +10,10 @@ using static System.Runtime.InteropServices.JavaScript.JSType;
 namespace TapeLibNET;
 
 /// <summary>
-/// LTO-5+ SCSI pass-through (SPTI) support for <see cref="TapeDriveWin32Backend"/>.
+/// LTO SCSI pass-through (SPTI) support for <see cref="TapeDriveWin32Backend"/>.
 /// <para>
-/// LTO-5 and later drives do not reliably support partition switching via the Win32
-/// Tape API (<c>SetTapePosition</c>). This partial class provides the SCSI IOCTL
-/// infrastructure and the LTO-specific replacements for those operations.
+/// This partial class provides the SCSI IOCTL infrastructure and the LTO-specific
+/// alternatives to Win32 Tape API operations such as <c>SetTapePosition</c>. 
 /// </para>
 /// <para>
 /// Entry points called from the main partial class:
@@ -76,7 +75,7 @@ public partial class TapeDriveWin32Backend
     ];
 
     // LTO generation that starts exhibiting LTO QUIRK in partition numbering
-    const int c_ltoGenForPartitionSchema = 5; // LTO-5+ exhibit LTO QUIRK in partition numbering
+    const int c_ltoGenForPartitions = 5; // apply special approach to LTO-5+
 
     /// <summary>
     /// Issues a SCSI INQUIRY to the open drive handle and sets <see cref="m_ltoGeneration"/>
@@ -92,21 +91,21 @@ public partial class TapeDriveWin32Backend
         }
 
         m_ltoGeneration = ParseLtoGeneration(m_ltoVendor, m_ltoProduct);
-        m_useLtoPartitionSchema = m_ltoGeneration >= c_ltoGenForPartitionSchema;
+        m_useLtoPartitions = m_ltoGeneration >= c_ltoGenForPartitions;
 
         m_logger.LogInformation(
-            "{Prefix}: LTO generation {Gen} detected —> LTO partition switch {Status}",
-            LogPrefix, m_ltoGeneration, m_useLtoPartitionSchema ? "enabled" : "disabled");
+            "{Prefix}: LTO generation {Gen} detected —> LTO partition usage {Status}",
+            LogPrefix, m_ltoGeneration, m_useLtoPartitions ? "enabled" : "disabled");
     }
 
     #endregion
 
-    #region *** LTO Public Replacements ***
+    #region *** LTO Method Replacements ***
 
     /// <summary>
     /// LTO-5+ replacement for <see cref="SetPositionToPartition"/>: issues a SCSI
     /// <c>LOCATE(10)</c> command to switch partitions and seek to the requested block.
-    /// Called from <see cref="SetPositionToPartition"/> when <c>m_useLtoPartitionSchema</c>
+    /// Called from <see cref="SetPositionToPartition"/> when <c>m_useLtoPartitions</c>
     /// is true.
     /// </summary>
     private bool SetPositionToPartitionLto(MediaPartition partition, long block)
@@ -132,7 +131,7 @@ public partial class TapeDriveWin32Backend
     /// LTO-5+ replacement for <see cref="FormatMedia"/>: issues a SCSI
     /// <c>FORMAT MEDIUM</c> command (opcode 0x04, SSC-4 §6.3) to reformat the tape
     /// as a single partition or a dual-partition LTFS layout.
-    /// Called from <see cref="FormatMedia"/> when <c>m_useLtoPartitionSchema</c> is true.
+    /// Called from <see cref="FormatMedia"/> when <c>m_useLtoPartitions</c> is true.
     /// <para>
     /// FORMAT MEDIUM 6-byte CDB layout:
     /// <code>
