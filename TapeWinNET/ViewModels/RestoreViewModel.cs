@@ -56,6 +56,7 @@ public class RestoreViewModel : ViewModelBase
     private RestoreMode _mode;
     private bool _incremental;
     private bool _noMultivolume;
+    private bool _suggestNoMultivolume; // store to be able to reset to default
     private bool _restoreToOriginal = true;
     private bool _recurseSubdirectories;
     private bool _uncheckProcessedFiles = true;
@@ -96,18 +97,22 @@ public class RestoreViewModel : ViewModelBase
         // Auto-detect incremental: check if any selected set is incremental
         _incremental = preSelectedSets.Any(s => s.IsIncremental);
 
-        _noMultivolume = suggestNoMultivolume;
+        _noMultivolume = _suggestNoMultivolume = suggestNoMultivolume;
 
         // Initialize aggregate summaries
         UpdateItemsGroupHeader();
         UpdatePreview();
 
+        // Commands — main actions
         BrowseTargetCommand = new RelayCommand(BrowseTarget);
         StartCommand = new RelayCommand(ExecuteStart, _ => CanStart);
         CancelCommand = new RelayCommand(_ => _onCancel());
         RemoveUncheckedSetsCommand = new RelayCommand(
             _ => RemoveUncheckedSets(),
             _ => BackupSets.Any(b => b.IsCheckedForRestore == false));
+
+        // Commands — load options
+        LoadDefaultsCommand = new RelayCommand(LoadDefaults);
     }
 
     #region Properties
@@ -426,6 +431,8 @@ public class RestoreViewModel : ViewModelBase
     public ICommand CancelCommand { get; }
     public ICommand RemoveUncheckedSetsCommand { get; }
 
+    public ICommand LoadDefaultsCommand { get; }
+
     #endregion
 
     #region Command Handlers
@@ -469,13 +476,28 @@ public class RestoreViewModel : ViewModelBase
         _onStart(request);
     }
 
+    /// <summary>
+    /// Resets all backup options to their defaults (same as when the dialog opens fresh).
+    /// </summary>
+    private void LoadDefaults()
+    { 
+        Incremental = BackupSets.Any(s => s.IsIncremental);
+        NoMultivolume = _suggestNoMultivolume;
+        RestoreToOriginal = true;
+        RecurseSubdirectories = true; // pre-assume user wants to include subdirs
+        UncheckProcessedFiles = true;
+        SkipAllErrors = false;
+        TargetDirectory = string.Empty;
+        SelectedHandleExisting = HandleExistingOption.All[0]; // Keep Both
+    }
+
     #endregion
 
-    #region Private Methods
+        #region Private Methods
 
-    /// <summary>
-    /// Recomputes <see cref="ItemsGroupHeader"/> from current set/file counts.
-    /// </summary>
+        /// <summary>
+        /// Recomputes <see cref="ItemsGroupHeader"/> from current set/file counts.
+        /// </summary>
     private void UpdateItemsGroupHeader()
     {
         int checkedSets = BackupSets.Count(b => b.IsCheckedForRestore != false);

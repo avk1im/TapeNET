@@ -489,17 +489,22 @@
                                              Margin="0,4,0,0"/>
                             </StackPanel>
 
-                            <!-- Warning panel: always shown -->
-                            <Border Style="{StaticResource WarningPanelStyle}">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
-                                               FontSize="13" Margin="0,0,6,0"/>
-                                    <TextBlock Text="{Binding WarningMessage}"
-                                               VerticalAlignment="Center" TextWrapping="Wrap"/>
-                                </StackPanel>
-                            </Border>
+                            <!-- Warning panel: always shown. Use DockPanel to properly resize the WarningMessage TextBlock -->
 
-                            <!-- Media description: shown whenever entire media is overwritten
+                                <Border Style="{StaticResource WarningPanelStyle}">
+                                    <DockPanel>
+                                        <TextBlock DockPanel.Dock="Left"
+                                           Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
+                                           FontSize="13" Margin="0,0,6,0"
+                                           VerticalAlignment="Center"/>
+
+                                        <TextBlock Text="{Binding WarningMessage}"
+                                           VerticalAlignment="Center" 
+                                           TextWrapping="Wrap"/>
+                                    </DockPanel>
+                                </Border>
+
+                                <!-- Media description: shown whenever entire media is overwritten
                                  (covers both no-TOC and normal overwrite mode) -->
                             <StackPanel Visibility="{Binding OverwriteMedia,
                                                     Converter={StaticResource BoolToVis}}"
@@ -566,6 +571,16 @@
                         ToolTip="Open help for this dialog (F1)"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Load _Defaults"
+                        Command="{Binding LoadDefaultsCommand}"
+                        Padding="8,1"
+                        Margin="0,0,8,0"
+                        ToolTip="Reset backup options to their defaults"/>
+                <Button Content="Load from _Last"
+                        Command="{Binding LoadFromLastBackupCommand}"
+                        Padding="8,1"
+                        Margin="0,0,24,0"
+                        ToolTip="Copy backup options from the last backup set on this media"/>
                 <Button Content="Cancel"
                         Command="{Binding CancelCommand}"
                         IsCancel="True"

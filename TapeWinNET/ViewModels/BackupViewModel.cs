@@ -91,6 +91,7 @@ public class BackupViewModel : ViewModelBase
     private bool _skipAllErrors;
     private bool _noMultivolume;
     private int _selectedBlockSizeIndex;
+    private int _defaultBlockSizeIndex;        // initial drive default; used by Load Defaults
     private int _selectedHashIndex = 1;        // Default CRC32
     private int _selectedCompressionIndex;     // Default None; overridden in constructor
     private int _compressionLevel = ZstdLevel.Default;
@@ -138,6 +139,7 @@ public class BackupViewModel : ViewModelBase
         // Build block size options dynamically from drive capabilities
         (BlockSizeValues, BlockSizeOptions, _selectedBlockSizeIndex) =
             BuildBlockSizeOptions();
+        _defaultBlockSizeIndex = _selectedBlockSizeIndex; // save for Load Defaults
 
         // Populate append options from current TOC
         PopulateAppendOptions();
@@ -171,6 +173,10 @@ public class BackupViewModel : ViewModelBase
         SetCompressionFastCommand     = new RelayCommand(_ => CompressionLevel = ZstdLevel.Fast);
         SetCompressionBalancedCommand = new RelayCommand(_ => CompressionLevel = ZstdLevel.Balanced);
         SetCompressionHighCommand     = new RelayCommand(_ => CompressionLevel = ZstdLevel.High);
+
+        // Commands — load options
+        LoadDefaultsCommand       = new RelayCommand(LoadDefaults);
+        LoadFromLastBackupCommand = new RelayCommand(LoadFromLastBackup, () => HasLastBackupSet);
     }
 
     // ═════════════════════════════════════════════════
@@ -419,6 +425,9 @@ public class BackupViewModel : ViewModelBase
     /// </summary>
     public bool IsNoToc => _tapeService.TOC is null;
 
+    /// <summary>True when there is at least one backup set in the TOC to copy options from.</summary>
+    public bool HasLastBackupSet => _tapeService.TOC is { Count: > 0 };
+
     /// <summary>
     /// Description to write to the new media when <see cref="IsNoToc"/> is true.
     /// Pre-populated from <see cref="TapeServiceBase.DefaultNewMediaName"/>.
@@ -537,6 +546,10 @@ public class BackupViewModel : ViewModelBase
     public ICommand SetCompressionFastCommand     { get; }
     public ICommand SetCompressionBalancedCommand { get; }
     public ICommand SetCompressionHighCommand     { get; }
+
+    // ── Load-options commands ─────────────────────────────────────────────────
+    public ICommand LoadDefaultsCommand       { get; }
+    public ICommand LoadFromLastBackupCommand { get; }
 
     // ═════════════════════════════════════════════════
     //  Scan state
@@ -1175,6 +1188,61 @@ public class BackupViewModel : ViewModelBase
 
         // Remember what we auto-added for next time
         _prevAutoAdded = patternToAdd;
+    }
+
+    // ═════════════════════════════════════════════════
+    //  Load options helpers
+    // ═════════════════════════════════════════════════
+
+    /// <summary>
+    /// Resets all backup options to their defaults (same as when the dialog opens fresh).
+    /// </summary>
+    private void LoadDefaults()
+    {
+        IncrementalBackup      = false;
+        SkipAllErrors          = false;
+        NoMultivolume          = false;
+        SelectedBlockSizeIndex = _defaultBlockSizeIndex;
+        SelectedHashIndex      = 1; // CRC32
+
+        // Default compression: Hardware when the drive supports it, None otherwise
+        SelectedCompressionIndex = _tapeService.SupportsCompression
+            ? Array.IndexOf(CompressionModeValues, TapeCompression.Hardware)
+            : 0; // None
+
+        CompressionLevel = ZstdLevel.Default;
+    }
+
+    /// <summary>
+    /// Copies backup options (block size, hash, compression, incremental flag) from the
+    ///  last backup set on the current media. Disabled when no sets exist.
+    /// </summary>
+    private void LoadFromLastBackup()
+    {
+        var toc = _tapeService.TOC;
+        if (!(toc is { Count: > 0 }))
+            return;
+
+        var lastSet = toc[toc.LastSetOnVolume];
+
+        // Map hash algorithm to combo-box index
+        int hashIdx = Array.IndexOf(HashValues, lastSet.HashAlgorithm);
+        if (hashIdx >= 0)
+            SelectedHashIndex = hashIdx;
+
+        // Map block size to combo-box index
+        int blockIdx = Array.IndexOf(BlockSizeValues, lastSet.BlockSize);
+        if (blockIdx >= 0)
+            SelectedBlockSizeIndex = blockIdx;
+
+        // Map compression mode to combo-box index (values array may differ when
+        //  the drive doesn't support hardware compression)
+        int compIdx = Array.IndexOf(CompressionModeValues, lastSet.Compression);
+        if (compIdx >= 0)
+            SelectedCompressionIndex = compIdx;
+
+        CompressionLevel  = lastSet.CompressionLevel;
+        IncrementalBackup = lastSet.Incremental;
     }
 
     // ═════════════════════════════════════════════════
