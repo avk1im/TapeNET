@@ -225,22 +225,23 @@
                         <ComboBox ItemsSource="{Binding HandleExistingOptions}"
                                   SelectedItem="{Binding SelectedHandleExisting}"
                                   IsEnabled="{Binding IsHandleExistingEnabled}"
-                                  Margin="0,0,0,8"/>
+                                  Margin="0,0,0,4"/>
 
                         <!-- Handle-existing warning -->
                         <Border Style="{StaticResource WarningPanelStyle}">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Left"
+                                           Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
                                            FontSize="13" Margin="0,0,6,0"/>
                                 <TextBlock Text="{Binding WarningMessage}"
                                            VerticalAlignment="Center" TextWrapping="Wrap"/>
-                            </StackPanel>
+                            </DockPanel>
                         </Border>
                         
                         <CheckBox Content="Skip all errors"
                                 IsChecked="{Binding SkipAllErrors}"
                                 ToolTip="Silently skip all file errors without prompting (unattended mode)"
-                                Margin="0,4,0,0"/>
+                                Margin="0,12,0,0"/>
                         </StackPanel>
                 </GroupBox>
 
@@ -286,7 +287,12 @@
                         ToolTip="Open help for this dialog (F1)"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Content="Cancel"
+                    <Button Content="Load _Defaults"
+                        Command="{Binding LoadDefaultsCommand}"
+                        Padding="8,1"
+                        Margin="0,0,24,0"
+                        ToolTip="Reset backup options to their defaults"/>
+                    <Button Content="Cancel"
                         Command="{Binding CancelCommand}"
                         IsCancel="True"
                         Width="80"
