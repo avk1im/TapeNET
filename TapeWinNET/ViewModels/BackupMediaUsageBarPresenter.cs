@@ -43,7 +43,7 @@ public class BackupMediaUsageBarPresenter(TapeService tapeService, BackupViewMod
     ///  selected AppendAfter target and appends the pending new-set segment
     ///  capped to the available room.
     /// </summary>
-    protected override void AddContentSegments(List<UsageSegment> segments, TapeTOC toc)
+    protected override void AddContentSegments(List<UsageSegment> segments, TapeTOC? toc)
     {
         // 1. Base populates all existing set segments (oldest → newest).
         base.AddContentSegments(segments, toc);
@@ -54,8 +54,20 @@ public class BackupMediaUsageBarPresenter(TapeService tapeService, BackupViewMod
         if (pendingSize <= 0 || pendingCount <= 0)
             return;
 
+        // special case toc is null: show the to-be-created toc
+        if (toc is null && _tapeService.HasInitiatorPartition) // TOC-in-partition: leftmost segment
+        {
+            long tocSize = TapeNavigator.DefaultTOCCapacity;
+            segments.Add(new UsageSegment(
+                label: "TOC (pending)",
+                size: tocSize,
+                color: default, // Kind-based color applied by the control
+                tooltip: $"Pending TOC in partition: {Helpers.BytesToString(tocSize)}",
+                kind: UsageSegmentKind.PendingTOC));
+        }
+
         // 3. Determine the AppendAfter target. Overwrite ⇒ −1 (drop everything).
-        bool overwrite = _vm.OverwriteMedia;
+        bool overwrite = _vm.OverwriteMedia; // also if toc is null
         int appendAfter = overwrite ? -1 : (_vm.SelectedAppendOption?.SetIndex ?? -1);
 
         // 4. Drop set segments with SetIndex > appendAfter.
@@ -109,6 +121,18 @@ public class BackupMediaUsageBarPresenter(TapeService tapeService, BackupViewMod
             tooltip:  tooltip,
             kind:     UsageSegmentKind.PendingBackupSet,
             setIndex: newSetIndex));
+ 
+        // special case toc is null: show the to-be-created toc
+        if (toc is null && !_tapeService.HasInitiatorPartition) // TOC-in-set: rightmost segment
+        {
+            long tocSize = TapeNavigator.DefaultTOCCapacity;
+            segments.Add(new UsageSegment(
+                label: "TOC (pending)",
+                size: tocSize,
+                color: default, // Kind-based color applied by the control
+                tooltip: $"Pending TOC (in set): {Helpers.BytesToString(tocSize)}",
+                kind: UsageSegmentKind.PendingTOC));
+        }
     }
 
     private static string BuildTooltip(

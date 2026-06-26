@@ -29,15 +29,10 @@ namespace TapeWinNET.ViewModels;
 ///         more existing set.</item>
 /// </list>
 /// </summary>
-public class DeleteBackupSetsMediaUsageBarPresenter : MediaUsageBarPresenter
+public class DeleteBackupSetsMediaUsageBarPresenter(TapeService tapeService, DeleteBackupSetsViewModel vm)
+    : MediaUsageBarPresenter(tapeService)
 {
-    private readonly DeleteBackupSetsViewModel _vm;
-
-    public DeleteBackupSetsMediaUsageBarPresenter(TapeService tapeService, DeleteBackupSetsViewModel vm)
-        : base(tapeService)
-    {
-        _vm = vm;
-    }
+    private readonly DeleteBackupSetsViewModel _vm = vm;
 
     // ─────────────────────────────────────────── Content with deletion preview ────────
 
@@ -45,12 +40,12 @@ public class DeleteBackupSetsMediaUsageBarPresenter : MediaUsageBarPresenter
     /// Adds all existing set segments via the base, then collapses the
     ///  "to-be-deleted" range into a single red pending segment.
     /// </summary>
-    protected override void AddContentSegments(List<UsageSegment> segments, TapeTOC toc)
+    protected override void AddContentSegments(List<UsageSegment> segments, TapeTOC? toc)
     {
         // 1. Base adds all existing sets (oldest → newest).
         base.AddContentSegments(segments, toc);
 
-        if (_vm.SelectedOption == null || toc.Count == 0)
+        if (_vm.SelectedOption == null || !(toc is { Count: > 0 }))
             return;
 
         int firstDeleteIdx = _vm.SelectedOption.SetIndex;

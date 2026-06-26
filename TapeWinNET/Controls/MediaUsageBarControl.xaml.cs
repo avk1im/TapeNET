@@ -52,6 +52,7 @@ public partial class MediaUsageBarControl : UserControl
 
     // Fixed colors for special segment kinds
     private static readonly Color TocColor   = Color.FromRgb(0x70, 0x70, 0x70);  // dark gray
+    private static readonly Color PendingTocColor = Color.FromRgb(0x80, 0xA0, 0x80);  // greenish gray
     private static readonly Color FreeColor  = Color.FromRgb(0xEA, 0xEA, 0xEA);  // very light gray
     private static readonly Color TocFgColor = Colors.White;
     private static readonly Color FreeFgColor = Color.FromRgb(0x70, 0x70, 0x70); // dark grey
@@ -228,6 +229,15 @@ public partial class MediaUsageBarControl : UserControl
         if (isStretched && freeSeg != null)
         {
             long nonFreeTotal = total - freeSeg.Size;
+
+            // add the pending segments to nonFreeTotal (since their space doesn't diminish free)
+            var pendingSegs = segments.Where(s => s.Kind == UsageSegmentKind.PendingBackupSet
+                || s.Kind == UsageSegmentKind.PendingTOC);
+            foreach (var seg in pendingSegs)
+            {
+                nonFreeTotal += seg.Size;
+            }
+
             if (nonFreeTotal > 0)
                 // Solve: freeSize / (freeSize + nonFreeTotal * stretchFactor) = FreeStretchedVisualRatio
                 stretchFactor = freeSeg.Size * (1.0 - FreeSegmentTargetRatio)
@@ -277,6 +287,7 @@ public partial class MediaUsageBarControl : UserControl
         Color fill = seg.Kind switch
         {
             UsageSegmentKind.TOC  => TocColor,
+            UsageSegmentKind.PendingTOC => PendingTocColor,
             UsageSegmentKind.Free => FreeColor,
             _                     => seg.Color,
         };
@@ -448,7 +459,8 @@ public partial class MediaUsageBarControl : UserControl
     /// <summary>Returns the appropriate foreground for a label on this segment.</summary>
     private static Color GetLabelForeground(UsageSegmentKind kind, Color fill) => kind switch
     {
-        UsageSegmentKind.TOC  => TocFgColor,
+        UsageSegmentKind.TOC => TocFgColor,
+        UsageSegmentKind.PendingTOC  => TocFgColor,
         UsageSegmentKind.Free => FreeFgColor,
         // Auto-contrast: perceived luminance threshold at 160
         _ => (0.299 * fill.R + 0.587 * fill.G + 0.114 * fill.B) > 160

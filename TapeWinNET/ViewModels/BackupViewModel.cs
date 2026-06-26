@@ -91,7 +91,7 @@ public class BackupViewModel : ViewModelBase
     private bool _skipAllErrors;
     private bool _noMultivolume;
     private int _selectedBlockSizeIndex;
-    private int _defaultBlockSizeIndex;        // initial drive default; used by Load Defaults
+    private readonly int _defaultBlockSizeIndex;        // initial drive default; used by Load Defaults
     private int _selectedHashIndex = 1;        // Default CRC32
     private int _selectedCompressionIndex;     // Default None; overridden in constructor
     private int _compressionLevel = ZstdLevel.Default;

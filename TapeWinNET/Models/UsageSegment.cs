@@ -8,6 +8,8 @@ public enum UsageSegmentKind
 {
     /// <summary>The TOC area (partition-based or set-based).</summary>
     TOC,
+    /// <summary>Pending / preview TOC region used by BackupWindow</summary>
+    PendingTOC,
     /// <summary>A backup set's data region.</summary>
     BackupSet,
     /// <summary>

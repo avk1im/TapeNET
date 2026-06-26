@@ -76,7 +76,7 @@ public class MediaUsageBarPresenter : ViewModelBase
     {
         var toc = _tapeService.TOC;
         long capacity = _tapeService.Capacity;
-        if (toc is null || capacity <= 0)
+        if (capacity <= 0)
         {
             Clear();
             return;
@@ -122,36 +122,43 @@ public class MediaUsageBarPresenter : ViewModelBase
     /// Orchestrates segment construction: leading TOC, content (override hook),
     ///  trailing TOC, then free-space.
     /// </summary>
-    protected virtual void BuildSegments(List<UsageSegment> segments, TapeTOC toc, long capacity)
+    protected virtual void BuildSegments(List<UsageSegment> segments, TapeTOC? toc, long capacity)
     {
-        long tocSize = TapeNavigator.DefaultTOCCapacity;
-        bool tocInPartition = _tapeService.HasInitiatorPartition;
+        if (toc is not null)
+        {
+            long tocSize = TapeNavigator.DefaultTOCCapacity;
+            bool tocInPartition = _tapeService.HasInitiatorPartition;
 
-        // TOC-in-partition: leftmost segment
-        if (tocInPartition)
-            segments.Add(new UsageSegment(
-                label:    "TOC",
-                size:     tocSize,
-                color:    default, // Kind-based color applied by the control
-                tooltip:  $"TOC partition: {Helpers.BytesToString(tocSize)}",
-                kind:     UsageSegmentKind.TOC));
+            // TOC-in-partition: leftmost segment
+            if (tocInPartition)
+                segments.Add(new UsageSegment(
+                    label: "TOC",
+                    size: tocSize,
+                    color: default, // Kind-based color applied by the control
+                    tooltip: $"TOC partition: {Helpers.BytesToString(tocSize)}",
+                    kind: UsageSegmentKind.TOC));
 
-        // Content (backup-set) segments — override hook
-        AddContentSegments(segments, toc);
+            // Content (backup-set) segments — override hook
+            AddContentSegments(segments, toc);
 
-        // TOC-in-set: rightmost data segment (immediately before free)
-        if (!tocInPartition)
-            segments.Add(new UsageSegment(
-                label:    "TOC",
-                size:     tocSize,
-                color:    default,
-                tooltip:  $"TOC (in set): {Helpers.BytesToString(tocSize)}",
-                kind:     UsageSegmentKind.TOC));
+            // TOC-in-set: rightmost data segment (immediately before free)
+            if (!tocInPartition)
+                segments.Add(new UsageSegment(
+                    label: "TOC",
+                    size: tocSize,
+                    color: default,
+                    tooltip: $"TOC (in set): {Helpers.BytesToString(tocSize)}",
+                    kind: UsageSegmentKind.TOC));
+        }
+        else // toc is null
+            AddContentSegments(segments, null); // derived classes may inject segments even if toc is null
 
         // Free space — computed as remainder so derived classes that add/remove
         //  content segments get a consistent picture without extra plumbing.
         long usedSoFar = segments.Sum(s => s.Size);
-        long free = Math.Max(capacity - usedSoFar, 1); // 1-byte minimum so the visual remnant survives
+        long free = toc is null
+            ? capacity
+            : Math.Max(capacity - usedSoFar, 1); // 1-byte minimum so the visual remnant survives
         segments.Add(new UsageSegment(
             label:    "Free",
             size:     free,
@@ -164,11 +171,11 @@ public class MediaUsageBarPresenter : ViewModelBase
     /// Adds backup-set content segments to <paramref name="segments"/>.
     ///  Default implementation lists every set on the current volume in physical order.
     /// </summary>
-    protected virtual void AddContentSegments(List<UsageSegment> segments, TapeTOC toc)
+    protected virtual void AddContentSegments(List<UsageSegment> segments, TapeTOC? toc)
     {
         // Guard against empty media: FirstSetOnVolume / LastSetOnVolume must not be
         //  called when Count == 0 as they can throw an out-of-range exception.
-        if (toc.Count == 0)
+        if (!(toc is { Count: > 0 }))
             return;
 
         uint blockSize = _tapeService.DefaultBlockSize;
