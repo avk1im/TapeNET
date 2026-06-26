@@ -545,16 +545,16 @@
                             </Grid.ColumnDefinitions>
 
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Total files:" Margin="0,0,8,4"/>
-                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding PreviewTotalFiles}"/>
+                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding PreviewTotalFiles}" TextWrapping="Wrap"/>
 
                             <TextBlock Grid.Row="1" Grid.Column="0" Text="Total size:" Margin="0,0,8,4"/>
-                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding PreviewTotalSize}"/>
+                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding PreviewTotalSize}" TextWrapping="Wrap"/>
 
                             <TextBlock Grid.Row="2" Grid.Column="0" Text="Selected files:" Margin="0,0,8,4"/>
-                            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding PreviewCheckedFiles}" FontWeight="SemiBold"/>
+                            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding PreviewCheckedFiles}" FontWeight="SemiBold" TextWrapping="Wrap"/>
 
                             <TextBlock Grid.Row="3" Grid.Column="0" Text="Selected size:" Margin="0,0,8,0"/>
-                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding PreviewCheckedSize}" FontWeight="SemiBold"/>
+                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding PreviewCheckedSize}" FontWeight="SemiBold" TextWrapping="Wrap"/>
                         </Grid>
                     </GroupBox>
                 </StackPanel>

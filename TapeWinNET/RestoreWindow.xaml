@@ -259,13 +259,13 @@
                         </Grid.ColumnDefinitions>
 
                         <TextBlock Grid.Row="0" Grid.Column="0" Text="Total files:" Margin="0,0,8,4"/>
-                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding PreviewTotalFiles}" FontWeight="SemiBold"/>
+                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding PreviewTotalFiles}" FontWeight="SemiBold" TextWrapping="Wrap"/>
 
                         <TextBlock Grid.Row="1" Grid.Column="0" Text="Total size:" Margin="0,0,8,4"/>
-                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding PreviewTotalSize}"/>
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding PreviewTotalSize}" TextWrapping="Wrap"/>
 
                         <TextBlock Grid.Row="2" Grid.Column="0" Text="Multivolume:" Margin="0,0,8,0"/>
-                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding PreviewMultivolume}"/>
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding PreviewMultivolume}" TextWrapping="Wrap"/>
                     </Grid>
                 </GroupBox>
             </StackPanel>

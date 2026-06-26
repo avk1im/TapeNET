@@ -8,12 +8,15 @@
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
         ShowInTaskbar="False"
-        Width="420" Height="220"
+        Width="420"
+        MinHeight="160"
+        MaxHeight="600"
+        SizeToContent="Height"
         Title="{Binding Title}">
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
@@ -29,11 +32,12 @@
                        VerticalAlignment="Center"/>
         </StackPanel>
 
-        <!-- Message -->
-        <TextBlock x:Name="MessageText"
-                   Grid.Row="1"
-                   TextWrapping="Wrap"
-                   VerticalAlignment="Top"/>
+        <!-- Message - wrap in a scroller for extremely long messages -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" MaxHeight="300">
+            <TextBlock x:Name="MessageText"
+               TextWrapping="Wrap"
+               VerticalAlignment="Top"/>
+        </ScrollViewer>
 
         <!-- Buttons -->
         <StackPanel x:Name="ButtonPanel"

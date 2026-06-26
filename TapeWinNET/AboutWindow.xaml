@@ -32,9 +32,10 @@
         <!-- OK Button -->
         <Button Content="OK" 
                 Grid.ColumnSpan="2"
-                Width="80" Height="28"
+                Width="74" Height="28"
                 HorizontalAlignment="Right"
                 VerticalAlignment="Bottom"
+                Margin="0,8,0,0"
                 IsDefault="True"
                 Click="OkButton_Click" />
     </Grid>

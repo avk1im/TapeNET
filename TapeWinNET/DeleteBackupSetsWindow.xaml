@@ -49,12 +49,13 @@
 
         <!-- Warning panel -->
         <Border Grid.Row="1" Style="{StaticResource WarningPanelStyle}" Margin="0,0,0,12">
-            <StackPanel Orientation="Horizontal">
-                <TextBlock Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Left"
+                           Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
                            FontSize="13" Margin="0,0,6,0"/>
                 <TextBlock Text="{Binding WarningMessage}" TextWrapping="Wrap"
                            VerticalAlignment="Center"/>
-            </StackPanel>
+            </DockPanel>
         </Border>
 
         <!-- Statistics -->
@@ -73,16 +74,16 @@
                 </Grid.ColumnDefinitions>
 
                 <TextBlock Grid.Row="0" Grid.Column="0" Text="Media capacity:" Margin="0,0,8,4"/>
-                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding MediaCapacityDisplay}"/>
+                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding MediaCapacityDisplay}" TextWrapping="Wrap"/>
 
                 <TextBlock Grid.Row="1" Grid.Column="0" Text="Remaining:" Margin="0,0,8,4"/>
-                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding MediaRemainingDisplay}"/>
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding MediaRemainingDisplay}" TextWrapping="Wrap"/>
 
                 <TextBlock Grid.Row="2" Grid.Column="0" Text="To delete:" Margin="0,0,8,4"/>
-                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding DeleteSizeDisplay}" FontWeight="SemiBold"/>
+                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding DeleteSizeDisplay}" FontWeight="SemiBold" TextWrapping="Wrap"/>
 
                 <TextBlock Grid.Row="3" Grid.Column="0" Text="Remaining after delete:" Margin="0,0,8,0"/>
-                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding RemainingAfterDeleteDisplay}" FontWeight="SemiBold"/>
+                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding RemainingAfterDeleteDisplay}" FontWeight="SemiBold" TextWrapping="Wrap"/>
             </Grid>
         </GroupBox>
 

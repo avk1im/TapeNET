@@ -617,12 +617,13 @@
                         </DockPanel>
                     </GroupBox>
                 
-                <!-- Vertical Splitter (only visible when table is shown) -->
+                <!-- Vertical Splitter -->
                 <GridSplitter Grid.Row="1" Height="4" 
                               HorizontalAlignment="Stretch" 
                               VerticalAlignment="Center"
-                              Background="LightGray"
-                              Visibility="{Binding IsTableVisible, Converter={StaticResource BoolToVis}}" />
+                              Background="LightGray" />
+                              <!-- To enable visibility only when table is shown, add: -->
+                              <!-- Visibility="{Binding IsTableVisible, Converter={StaticResource BoolToVis}}" -->
                 
                 <!-- Table Subpane -->
                 <GroupBox Grid.Row="2" Header="{Binding TableHeader}"

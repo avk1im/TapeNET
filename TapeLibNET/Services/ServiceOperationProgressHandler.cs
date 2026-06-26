@@ -101,6 +101,9 @@ public abstract class ServiceOperationProgressHandler(
         _host.Report(ServiceReportLevel.Info,
             $"Set #{setIndex} | {toc.SetIndexToAlt(setIndex)}: starting {_operationName.ToLowerInvariant()}...");
         ReportProgress(stats);
+#if DEBUG
+        // Agent.SimulateFileFailures.Enabled = true; // Enable simulation of file failures for testing purposes here
+#endif
     }
 
     /// <inheritdoc/>
@@ -148,16 +151,16 @@ public abstract class ServiceOperationProgressHandler(
         Sync(stats);
         ThrowIfAbortRequested();
 
-        _host.Report(ServiceReportLevel.Failed, $"Failed: '{fileInfo.FileDescr.FullName}'");
-        _host.Report(ServiceReportLevel.Failed, $"Error: {result.ErrorMessage}", isSubEntry: true);
-        ReportProgress(stats);
-
         // End-of-media errors are handled by the multi-volume loop; always skip silently.
         if (result.ErrorCode == (uint)WIN32_ERROR.ERROR_END_OF_MEDIA ||
             result.ErrorCode == (uint)WIN32_ERROR.ERROR_NO_DATA_DETECTED)
         {
             return FileFailedAction.Skip;
         }
+
+        _host.Report(ServiceReportLevel.Failed, $"Failed: '{fileInfo.FileDescr.FullName}'");
+        _host.Report(ServiceReportLevel.Failed, $"Error: {result.ErrorMessage}", isSubEntry: true);
+        ReportProgress(stats);
 
         if (_skipAllErrors)
             return FileFailedAction.Skip;

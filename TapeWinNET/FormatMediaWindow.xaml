@@ -59,12 +59,13 @@
 
         <!-- Warning Panel -->
         <Border Grid.Row="2" Style="{StaticResource WarningPanelStyle}" VerticalAlignment="Bottom">
-            <StackPanel Orientation="Horizontal">
-                <TextBlock Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Left"
+                           Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
                            FontSize="13" Margin="0,0,6,0"/>
                 <TextBlock Text="{Binding WarningMessage}" TextWrapping="Wrap"
                            VerticalAlignment="Center"/>
-            </StackPanel>
+            </DockPanel>
         </Border>
 
         <!-- Buttons -->
