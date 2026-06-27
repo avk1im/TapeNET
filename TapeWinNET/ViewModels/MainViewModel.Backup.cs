@@ -148,6 +148,7 @@ public partial class MainViewModel
                     AppendMode: request.AppendMode,
                     AppendAfterSetIndex: request.AppendAfterSetIndex,
                     SkipAllErrors: request.SkipAllErrors,
+                    EjectWhenDone: false, // we handle request.EjectWhenDone manually below, for proper window housekeeping
                     MediaName: request.MediaName)
                 {
                     NoMultivolume    = request.NoMultivolume,
@@ -157,7 +158,10 @@ public partial class MainViewModel
 
             // Refresh tree after backup to keep TOCView in sync with the (possibly modified) TOC.
             // Refresh might throw if TOC has been spoiled.
-            try { await RefreshAsync(); } catch { /* ignore */ }
+            if (!request.EjectWhenDone)
+                try { await RefreshAsync(); } catch { /* ignore */ }
+            else
+                try { await EjectAsync(); } catch { /* ignore */ }
 
             // Determine outcome from the result record
             if (operationResult is { HasFailed: true })

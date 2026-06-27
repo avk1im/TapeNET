@@ -40,6 +40,7 @@ public record BackupFormData(
     bool IncludeSubdirectories,
     bool SkipAllErrors,
     bool NoMultivolume,
+    bool EjectWhenDone,
     string? MediaName = null,
     TapeCompression Compression = TapeCompression.None,
     int CompressionLevel = ZstdLevel.Default);
@@ -89,6 +90,7 @@ public class BackupViewModel : ViewModelBase
     private string _mediaName = string.Empty;
     private bool _incrementalBackup;
     private bool _skipAllErrors;
+    private bool _ejectWhenDone;
     private bool _noMultivolume;
     private int _selectedBlockSizeIndex;
     private readonly int _defaultBlockSizeIndex;        // initial drive default; used by Load Defaults
@@ -371,6 +373,15 @@ public class BackupViewModel : ViewModelBase
     {
         get => _skipAllErrors;
         set => SetProperty(ref _skipAllErrors, value);
+    }
+
+    /// <summary>
+    /// When checked, the media will be ejected after the backup completes.
+    /// </summary>
+    public bool EjectWhenDone
+    {
+        get => _ejectWhenDone;
+        set => SetProperty(ref _ejectWhenDone, value);
     }
 
     /// <summary>
@@ -1141,6 +1152,7 @@ public class BackupViewModel : ViewModelBase
             IncludeSubdirectories: _sourceView.IncludeSubdirectories,
             SkipAllErrors: _skipAllErrors,
             NoMultivolume: _noMultivolume,
+            EjectWhenDone: _ejectWhenDone,
             MediaName: OverwriteMedia ? _mediaName : null,
             Compression: SelectedCompression,
             CompressionLevel: _compressionLevel);
@@ -1202,6 +1214,7 @@ public class BackupViewModel : ViewModelBase
         IncrementalBackup      = false;
         SkipAllErrors          = false;
         NoMultivolume          = false;
+        EjectWhenDone          = false;
         SelectedBlockSizeIndex = _defaultBlockSizeIndex;
         SelectedHashIndex      = 1; // CRC32
 

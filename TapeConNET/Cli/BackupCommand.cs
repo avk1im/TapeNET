@@ -72,6 +72,10 @@ internal static class BackupCommand
         {
             Description = "Stop the backup when the tape is full instead of continuing to a new volume.",
         };
+        var ejectWhenDoneOption = new Option<bool>("--eject-when-done")
+        {
+            Description = "Eject the media automatically when the backup is complete.",
+        };
         var emergencyTocOption = new Option<string?>("--emergency-toc")
         {
             Description = "Folder for the emergency TOC export if writing the TOC to tape fails.",
@@ -87,6 +91,7 @@ internal static class BackupCommand
         cmd.Options.Add(appendAfterOption);
         cmd.Options.Add(skipErrorsOption);
         cmd.Options.Add(noMultivolumeOption);
+        cmd.Options.Add(ejectWhenDoneOption);
         cmd.Options.Add(emergencyTocOption);
 
         cmd.SetAction(async (parseResult, ct) =>
@@ -103,6 +108,7 @@ internal static class BackupCommand
             var appendAfter = parseResult.GetValue(appendAfterOption);
             var skipErrors  = parseResult.GetValue(skipErrorsOption);
             var noMultivolume = parseResult.GetValue(noMultivolumeOption);
+            var ejectWhenDone = parseResult.GetValue(ejectWhenDoneOption);
             var emergency   = parseResult.GetValue(emergencyTocOption);
             var filterFcl   = parseResult.GetValue(FilterOptions.Filter);
             var filterFile  = parseResult.GetValue(FilterOptions.FilterFile);
@@ -140,6 +146,7 @@ internal static class BackupCommand
                 AppendMode:             append,
                 AppendAfterSetIndex:    appendAfter ?? 0,
                 SkipAllErrors:          skipErrors,
+                EjectWhenDone:          ejectWhenDone,
                 EmergencyTocFolder:     emergency,
                 Filter:                 resolved.Filter)
             {

@@ -74,7 +74,8 @@ public class RemoteServiceBaselineTests(LocalHostTapeServiceFixture fixture)
                 TargetDirectory:       restoreRoot,
                 RecurseSubdirectories: true,
                 HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                SkipAllErrors:         false);
+                SkipAllErrors:         false,
+                EjectWhenDone:         false);
 
             var result = await restoreSvc.ExecuteRestoreAsync(req);
 
@@ -161,7 +162,8 @@ public class RemoteServiceBaselineTests(LocalHostTapeServiceFixture fixture)
                 TargetDirectory:       restore1Root,
                 RecurseSubdirectories: true,
                 HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                SkipAllErrors:         false);
+                SkipAllErrors:         false,
+                EjectWhenDone:         false);
 
             var result = await svcR1.ExecuteRestoreAsync(req);
             Assert.True(result.Success, "Restore of Set-1 failed");
@@ -186,7 +188,8 @@ public class RemoteServiceBaselineTests(LocalHostTapeServiceFixture fixture)
                 TargetDirectory:       restore2Root,
                 RecurseSubdirectories: true,
                 HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                SkipAllErrors:         false);
+                SkipAllErrors:         false,
+                EjectWhenDone:         false);
 
             var result = await svcR2.ExecuteRestoreAsync(req);
             Assert.True(result.Success, "Restore of Set-2 failed");
@@ -230,7 +233,8 @@ public class RemoteServiceBaselineTests(LocalHostTapeServiceFixture fixture)
                 TargetDirectory:       null,
                 RecurseSubdirectories: true,
                 HandleExisting:        TapeHowToHandleExisting.Skip,
-                SkipAllErrors:         false);
+                SkipAllErrors:         false,
+                EjectWhenDone:         false);
 
             var result = await svcV.ExecuteRestoreAsync(req);
 

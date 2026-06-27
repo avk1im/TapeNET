@@ -211,7 +211,7 @@
                                   IsChecked="{Binding Incremental}"
                                   Margin="0,0,0,4"
                                   ToolTip="Process files from all backup sets of the incremental chain"/>
-                            <CheckBox Content="This volume only"
+                        <CheckBox Content="This volume only"
                                   IsChecked="{Binding NoMultivolume}"
                                   IsEnabled="{Binding IsNoMultivolumeEnabled}"
                                   Margin="0,4,0,4"
@@ -239,10 +239,15 @@
                         </Border>
                         
                         <CheckBox Content="Skip all errors"
-                                IsChecked="{Binding SkipAllErrors}"
-                                ToolTip="Silently skip all file errors without prompting (unattended mode)"
-                                Margin="0,12,0,0"/>
-                        </StackPanel>
+                                  IsChecked="{Binding SkipAllErrors}"
+                                  ToolTip="Silently skip all file errors without prompting (unattended mode)"
+                                  Margin="0,12,0,4"/>
+                        <CheckBox Content="Eject media when done"
+                                  IsChecked="{Binding EjectWhenDone}"
+                                  ToolTip="Eject the media after the backup is complete"
+                                  Margin="0,4,0,0"/>
+                        
+                            </StackPanel>
                 </GroupBox>
 
                 <!-- Preview -->

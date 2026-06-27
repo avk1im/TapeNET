@@ -45,6 +45,7 @@ public sealed record BackupRequest(
     bool AppendMode,
     int AppendAfterSetIndex,
     bool SkipAllErrors,
+    bool EjectWhenDone,
     string? EmergencyTocFolder = null,
     ITapeFileFilter? Filter = null,
     string? MediaName = null,
@@ -64,6 +65,7 @@ public sealed record RestoreRequest(
     bool RecurseSubdirectories,
     TapeHowToHandleExisting HandleExisting,
     bool SkipAllErrors,
+    bool EjectWhenDone,
     ITapeFileFilter? Filter = null) : ServiceOperationRequest;
 
 // ── List ─────────────────────────────────────────────────────────────────────

@@ -76,7 +76,8 @@ public class ServiceSelectiveRestoreTests : ServiceTestBase
                 TargetDirectory:       restoreRoot,
                 RecurseSubdirectories: true,
                 HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                SkipAllErrors:         false);
+                SkipAllErrors:         false,
+                EjectWhenDone:         false);
 
             var result = await svcR.ExecuteRestoreAsync(req);
 
@@ -171,7 +172,8 @@ public class ServiceSelectiveRestoreTests : ServiceTestBase
                 TargetDirectory:       restoreRoot,
                 RecurseSubdirectories: true,
                 HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                SkipAllErrors:         false);
+                SkipAllErrors:         false,
+                EjectWhenDone:         false);
 
             var result = await svcR.ExecuteRestoreAsync(req);
 

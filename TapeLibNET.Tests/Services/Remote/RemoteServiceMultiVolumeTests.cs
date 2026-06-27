@@ -151,7 +151,8 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
                 TargetDirectory:       restoreRoot,
                 RecurseSubdirectories: true,
                 HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                SkipAllErrors:         false);
+                SkipAllErrors:         false,
+                EjectWhenDone:         false);
 
             var result = await restoreSvc.ExecuteRestoreAsync(req);
 
@@ -306,7 +307,8 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
                     TargetDirectory:       restoreRoot,
                     RecurseSubdirectories: true,
                     HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                    SkipAllErrors:         false);
+                    SkipAllErrors:         false,
+                    EjectWhenDone:         false);
 
                 var result = await restoreSvc.ExecuteRestoreAsync(req);
 
@@ -338,7 +340,8 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
                     TargetDirectory:       restoreRoot,
                     RecurseSubdirectories: true,
                     HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                    SkipAllErrors:         false);
+                    SkipAllErrors:         false,
+                    EjectWhenDone:         false);
 
                 var result = await restoreSvc.ExecuteRestoreAsync(req);
 
@@ -526,7 +529,8 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
                     TargetDirectory:       restoreRoot,
                     RecurseSubdirectories: true,
                     HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                    SkipAllErrors:         false);
+                    SkipAllErrors:         false,
+                    EjectWhenDone:         false);
 
                 restoreResult = await restoreSvc.ExecuteRestoreAsync(req);
             }

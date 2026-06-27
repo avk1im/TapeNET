@@ -230,7 +230,8 @@ public class ServiceMultiVolumeTests : ServiceTestBase
                 TargetDirectory:       restoreRoot,
                 RecurseSubdirectories: true,
                 HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                SkipAllErrors:         false);
+                SkipAllErrors:         false,
+                EjectWhenDone:         false);
 
             var result = await restoreSvc.ExecuteRestoreAsync(req);
 
@@ -421,7 +422,8 @@ public class ServiceMultiVolumeTests : ServiceTestBase
                     TargetDirectory:       restoreRoot,
                     RecurseSubdirectories: true,
                     HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                    SkipAllErrors:         false);
+                    SkipAllErrors:         false,
+                    EjectWhenDone:         false);
 
                 var result = await restoreSvc.ExecuteRestoreAsync(req);
 
@@ -458,7 +460,8 @@ public class ServiceMultiVolumeTests : ServiceTestBase
                     TargetDirectory:       restoreRoot,
                     RecurseSubdirectories: true,
                     HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                    SkipAllErrors:         false);
+                    SkipAllErrors:         false,
+                    EjectWhenDone:         false);
 
                 var result = await restoreSvc.ExecuteRestoreAsync(req);
 

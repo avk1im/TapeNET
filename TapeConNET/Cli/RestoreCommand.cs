@@ -69,6 +69,10 @@ internal static class RestoreCommand
         {
             Description = "Stop the operation when the current volume is exhausted instead of continuing to another volume.",
         };
+        var ejectWhenDoneOption = new Option<bool>("--eject-when-done")
+        {
+            Description = "Eject the tape when the operation is complete.",
+        };
 
         cmd.Arguments.Add(setArg);
         cmd.Arguments.Add(filterArgs);
@@ -78,6 +82,7 @@ internal static class RestoreCommand
         cmd.Options.Add(incrementalOption);
         cmd.Options.Add(skipErrorsOption);
         cmd.Options.Add(noMultivolumeOption);
+        cmd.Options.Add(ejectWhenDoneOption);
 
         cmd.SetAction(async (parseResult, ct) =>
         {
@@ -91,6 +96,7 @@ internal static class RestoreCommand
             var incremental = parseResult.GetValue(incrementalOption);
             var skipErrors  = parseResult.GetValue(skipErrorsOption);
             var noMultivolume = parseResult.GetValue(noMultivolumeOption);
+            var ejectWhenDone = parseResult.GetValue(ejectWhenDoneOption);
             var filterFcl   = parseResult.GetValue(FilterOptions.Filter);
             var filterFile  = parseResult.GetValue(FilterOptions.FilterFile);
 
@@ -130,6 +136,7 @@ internal static class RestoreCommand
                 RecurseSubdirectories: subdirs,
                 HandleExisting:       existing,
                 SkipAllErrors:        skipErrors,
+                EjectWhenDone:        ejectWhenDone,
                 Filter:               resolved.Filter)
             {
                 NoMultivolume = noMultivolume,

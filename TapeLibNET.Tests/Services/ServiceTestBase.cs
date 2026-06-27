@@ -147,7 +147,8 @@ public abstract class ServiceTestBase
             HashAlgorithm:         TapeHashAlgorithm.Crc32,
             AppendMode:            append,
             AppendAfterSetIndex:   0,
-            SkipAllErrors:         false);
+            SkipAllErrors:         false,
+            EjectWhenDone:         false);
     }
 
     // ── Multi-volume factory helpers ──────────────────────────────────────────

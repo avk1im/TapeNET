@@ -63,7 +63,8 @@ public class ServiceBaselineTests : ServiceTestBase
                 TargetDirectory:       restoreRoot,
                 RecurseSubdirectories: true,
                 HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                SkipAllErrors:         false);
+                SkipAllErrors:         false,
+                EjectWhenDone:         false);
 
             var result = await restoreSvc.ExecuteRestoreAsync(req);
 
@@ -150,7 +151,8 @@ public class ServiceBaselineTests : ServiceTestBase
                 TargetDirectory:       restore1Root,
                 RecurseSubdirectories: true,
                 HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                SkipAllErrors:         false);
+                SkipAllErrors:         false,
+                EjectWhenDone:         false);
 
             var result = await svcR1.ExecuteRestoreAsync(req);
             Assert.True(result.Success, "Restore of Set-1 failed");
@@ -175,7 +177,8 @@ public class ServiceBaselineTests : ServiceTestBase
                 TargetDirectory:       restore2Root,
                 RecurseSubdirectories: true,
                 HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                SkipAllErrors:         false);
+                SkipAllErrors:         false,
+                EjectWhenDone:         false);
 
             var result = await svcR2.ExecuteRestoreAsync(req);
             Assert.True(result.Success, "Restore of Set-2 failed");
@@ -226,7 +229,8 @@ public class ServiceBaselineTests : ServiceTestBase
                 HashAlgorithm:         TapeHashAlgorithm.Crc32,
                 AppendMode:            false,
                 AppendAfterSetIndex:   0,
-                SkipAllErrors:         true);
+                SkipAllErrors:         true,
+                EjectWhenDone:         false);
 
             // Start the backup, then signal abort via the agent flag once the backup loop starts.
             var backupTask = svc.ExecuteBackupAsync(req);
@@ -280,7 +284,8 @@ public class ServiceBaselineTests : ServiceTestBase
                 HandleExisting:        TapeHowToHandleExisting.Skip,
                 // Allow the one file that may have been partially written at the abort
                 //  boundary to fail without stopping the entire validation run
-                SkipAllErrors:         true);
+                SkipAllErrors:         true,
+                EjectWhenDone:         false);
 
             var result = await valSvc.ExecuteRestoreAsync(req);
 
@@ -327,7 +332,8 @@ public class ServiceBaselineTests : ServiceTestBase
                 TargetDirectory:       null,
                 RecurseSubdirectories: true,
                 HandleExisting:        TapeHowToHandleExisting.Skip,
-                SkipAllErrors:         false);
+                SkipAllErrors:         false,
+                EjectWhenDone:         false);
 
             var result = await svcV.ExecuteRestoreAsync(req);
 

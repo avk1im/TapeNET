@@ -622,25 +622,31 @@ public partial class MainViewModel
                     TargetDirectory: targetDirectory,
                     RecurseSubdirectories: recurseSubdirectories,
                     HandleExisting: handleExisting,
-                    SkipAllErrors: request.SkipAllErrors)
+                    SkipAllErrors: request.SkipAllErrors,
+                    EjectWhenDone: false) // we handle request.EjectWhenDone manually below, for proper window housekeeping
                 {
                     NoMultivolume = request.NoMultivolume,
                 });
 
-            // Uncheck successfully processed files before refreshing the UI —
-            //  RefreshAsync rebuilds BackupSetList from _tocView which already
-            //  reflects the updated checked state, so no manual UI sync needed.
-            if (uncheckProcessedFiles && operationResult is { ProcessedFiles.Count: > 0 } result2
-                && _tocView != null)
+            if (!request.EjectWhenDone)
             {
-                var processedBySet = result2.ProcessedFiles
-                    .ToDictionary(kvp => kvp.Key, kvp => (IReadOnlyList<TapeFileInfo>?)kvp.Value);
-                _tocView.SetCheckedFilesBySet(processedBySet, isChecked: false);
-            }
+                // Uncheck successfully processed files before refreshing the UI —
+                //  RefreshAsync rebuilds BackupSetList from _tocView which already
+                //  reflects the updated checked state, so no manual UI sync needed.
+                if (uncheckProcessedFiles && operationResult is { ProcessedFiles.Count: > 0 } result2
+                && _tocView != null)
+                {
+                    var processedBySet = result2.ProcessedFiles
+                        .ToDictionary(kvp => kvp.Key, kvp => (IReadOnlyList<TapeFileInfo>?)kvp.Value);
+                    _tocView.SetCheckedFilesBySet(processedBySet, isChecked: false);
+                }
 
-            // Refresh tree after operation — always, regardless of outcome,
-            //  to keep TOCView in sync with the (possibly modified) TOC
-            await RefreshAsync();
+                // Refresh tree after operation — always, regardless of outcome,
+                //  to keep TOCView in sync with the (possibly modified) TOC
+                try { await RefreshAsync(); } catch { /* ignore */ }
+            }
+            else
+                try { await EjectAsync(); } catch { /* ignore */ }
 
             // Determine outcome from the result record
             if (operationResult is { HasFailed: true })

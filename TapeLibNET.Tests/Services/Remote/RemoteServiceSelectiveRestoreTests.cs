@@ -81,7 +81,8 @@ public class RemoteServiceSelectiveRestoreTests(LocalHostTapeServiceFixture fixt
                 TargetDirectory:       restoreRoot,
                 RecurseSubdirectories: true,
                 HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                SkipAllErrors:         false);
+                SkipAllErrors:         false,
+                EjectWhenDone:         false);
 
             var result = await svcR.ExecuteRestoreAsync(req);
 
@@ -171,7 +172,8 @@ public class RemoteServiceSelectiveRestoreTests(LocalHostTapeServiceFixture fixt
                 TargetDirectory:       restoreRoot,
                 RecurseSubdirectories: true,
                 HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                SkipAllErrors:         false);
+                SkipAllErrors:         false,
+                EjectWhenDone:         false);
 
             var result = await svcR.ExecuteRestoreAsync(req);
 

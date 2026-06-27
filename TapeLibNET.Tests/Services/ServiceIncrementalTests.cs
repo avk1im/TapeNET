@@ -115,7 +115,8 @@ public class ServiceIncrementalTests : ServiceTestBase
                     TargetDirectory:       restoreRoot,
                     RecurseSubdirectories: true,
                     HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                    SkipAllErrors:         false);
+                    SkipAllErrors:         false,
+                    EjectWhenDone:         false);
 
                 var result = await svc.ExecuteRestoreAsync(req);
                 Assert.True(result.Success, "Case A: incremental restore failed");
@@ -147,7 +148,8 @@ public class ServiceIncrementalTests : ServiceTestBase
                     TargetDirectory:       restoreRoot,
                     RecurseSubdirectories: true,
                     HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                    SkipAllErrors:         false);
+                    SkipAllErrors:         false,
+                    EjectWhenDone:         false);
 
                 var result = await svc.ExecuteRestoreAsync(req);
                 Assert.True(result.Success, "Case B: set-2 restore failed");
@@ -174,7 +176,8 @@ public class ServiceIncrementalTests : ServiceTestBase
                     TargetDirectory:       restoreRoot,
                     RecurseSubdirectories: true,
                     HandleExisting:        TapeHowToHandleExisting.Overwrite,
-                    SkipAllErrors:         false);
+                    SkipAllErrors:         false,
+                    EjectWhenDone:         false);
 
                 var result = await svc.ExecuteRestoreAsync(req);
                 Assert.Equal(0,  result.FilesFailed);

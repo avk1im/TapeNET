@@ -457,14 +457,19 @@
 
                             </StackPanel>
 
+                            <CheckBox Content="No multivolume"
+                                      IsChecked="{Binding NoMultivolume}"
+                                      ToolTip="Stop the backup when the tape is full instead of continuing to a new volume"
+                                      Margin="0,4,0,4"/>
                             <CheckBox Content="Skip all errors"
                                       IsChecked="{Binding SkipAllErrors}"
                                       ToolTip="Silently skip all file errors without prompting (unattended backup mode)"
                                       Margin="0,4,0,4"/>
-                            <CheckBox Content="No multivolume"
-                                      IsChecked="{Binding NoMultivolume}"
-                                      ToolTip="Stop the backup when the tape is full instead of continuing to a new volume"
+                            <CheckBox Content="Eject media when done"
+                                      IsChecked="{Binding EjectWhenDone}"
+                                      ToolTip="Eject the media after the backup is complete"
                                       Margin="0,4,0,0"/>
+
                         </StackPanel>
                     </GroupBox>
 

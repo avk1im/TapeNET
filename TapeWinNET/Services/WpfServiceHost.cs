@@ -1,4 +1,5 @@
 using System.DirectoryServices;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Threading;
 using TapeLibNET;
@@ -75,10 +76,8 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                 _viewModel.CurrentRestoreFile = System.IO.Path.GetFileName(currentFile);
             _viewModel.RestoreProgressPercent = total > 0 ? (int)(100.0 * processed / total) : 0;
             _viewModel.RestoreProgressText    = $"{processed:N0} / {total:N0} files ({Helpers.BytesToString(bytes)})";
-            double elapsed = _stopwatch.IsRunning ? _stopwatch.ElapsedSeconds : 0.0;
-            double rate    = elapsed > 0.001 ? bytes / elapsed : 0.0;
-            _viewModel.IOProgressText = rate > 0 ? $"{Helpers.BytesToString((long)rate)}/s" : string.Empty;
-            _viewModel.IOProgressRate = rate;
+            
+            UpdateIOProgress(processed, total, bytes);
         });
     }
 
@@ -94,11 +93,34 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                 _viewModel.CurrentBackupFile = System.IO.Path.GetFileName(currentFile);
             _viewModel.BackupProgressPercent = total > 0 ? (int)(100.0 * processed / total) : 0;
             _viewModel.BackupProgressText    = $"{processed:N0} / {total:N0} files ({Helpers.BytesToString(bytes)})";
-            double elapsed = _stopwatch.IsRunning ? _stopwatch.ElapsedSeconds : 0.0;
-            double rate    = elapsed > 0.001 ? bytes / elapsed : 0.0;
-            _viewModel.IOProgressText = rate > 0 ? $"{Helpers.BytesToString((long)rate)}/s" : string.Empty;
-            _viewModel.IOProgressRate = rate;
+
+            UpdateIOProgress(processed, total, bytes);
         });
+    }
+
+    private void UpdateIOProgress(int processed, int total, long bytes)
+    {
+        double elapsed = _stopwatch.IsRunning ? _stopwatch.ElapsedSeconds : 0.0;
+        double rate = elapsed > 0.001 ? bytes / elapsed : 0.0;
+        _viewModel.IOProgressRate = rate;
+
+        var elapsedTime = TimeSpan.FromSeconds(elapsed);
+        string progressText = $"Elapsed: {elapsedTime.ToString(@"hh\:mm\:ss", CultureInfo.CurrentCulture)}";
+
+        if (processed > 0)
+        {
+            // Estimate time to completion (ETA) based processed vs. total files
+            //  Notice we do  not (yet) pass the total bytes to process - do not scan all files in advance
+            int remaining = total - processed;
+            double remainingSeconds = (remaining * elapsed) / processed;
+            var remainingTime = TimeSpan.FromSeconds(remainingSeconds);
+            progressText += $", est. remaining: {remainingTime.ToString(@"hh\:mm\:ss", CultureInfo.CurrentCulture)}";
+        }
+
+        if (rate > 0)
+            progressText += $", {Helpers.BytesToString((long)rate)}/s";
+
+        _viewModel.IOProgressText = progressText;
     }
 
     // ── ITapeServiceHost — Prompts ───────────────────────────────────────────────

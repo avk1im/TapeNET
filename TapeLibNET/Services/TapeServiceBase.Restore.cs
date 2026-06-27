@@ -30,13 +30,26 @@ public partial class TapeServiceBase
         _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return Task.Run(async () =>
         {
+            // 1. Wait for the semaphore
             await _operationLock.WaitAsync().ConfigureAwait(false);
             try
             {
-                return ExecuteRestoreCore(request);
+                // 2. Run the core operation synchronously
+                var result = ExecuteRestoreCore(request);
+
+                // 3. If requested, automatically eject the media while STILL holding the lock
+                if (request.EjectWhenDone)
+                {
+                    LogInfo("Ejecting media upon completion...");
+                    // Use the core method bypassing the outer semaphore check of EjectMediaAsync
+                    EjectMediaCore();
+                }
+
+                return result;
             }
             finally
             {
+                // 4. Release the semaphore and notify host
                 _operationLock.Release();
                 _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
             }

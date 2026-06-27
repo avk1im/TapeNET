@@ -327,38 +327,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             await _operationLock.WaitAsync().ConfigureAwait(false);
             try
             {
-                if (_drive is null) { LastError = "Drive not open"; return false; }
-
-                LogInfo("Ejecting media...");
-
-                _agent?.Dispose();
-                _agent = null;
-                _toc = null;
-                IsTOCFromFile = false;
-                TOCFilePath = null;
-
-                if (!_drive.UnloadMedia())
-                {
-                    LastError = _drive.LastErrorMessage;
-                    LogErr($"Couldn't eject media. Error: {LastError}");
-                    return false;
-                }
-
-                LogOk("Media ejected");
-                _host.OnServiceStateChanged(ServiceStateChange.MediaEjected);
-                return true;
-            }
-            catch (RpcException rpc)
-            {
-                LastError = FormatRpcError(rpc);
-                LogErr($"gRPC error ejecting media: {LastError}");
-                return false;
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-                LogErr($"Exception ejecting media: {ex.Message}");
-                return false;
+                return EjectMediaCore();
             }
             finally
             {
@@ -367,6 +336,46 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         });
     }
 
+    // Helper method runs synchronously inside the semaphore  - no async / await needed here.
+    private bool EjectMediaCore()
+    {
+        try
+        {
+            if (_drive is null) { LastError = "Drive not open"; return false; }
+
+            LogInfo("Ejecting media...");
+
+            _agent?.Dispose();
+            _agent = null;
+            _toc = null;
+            IsTOCFromFile = false;
+            TOCFilePath = null;
+
+            if (!_drive.UnloadMedia())
+            {
+                LastError = _drive.LastErrorMessage;
+                LogErr($"Couldn't eject media. Error: {LastError}");
+                return false;
+            }
+
+            LogOk("Media ejected");
+            _host.OnServiceStateChanged(ServiceStateChange.MediaEjected);
+            return true;
+        }
+        catch (RpcException rpc)
+        {
+            LastError = FormatRpcError(rpc);
+            LogErr($"gRPC error ejecting media: {LastError}");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            LastError = ex.Message;
+            LogErr($"Exception ejecting media: {ex.Message}");
+            return false;
+        }
+    }
+    
     #endregion
 
     #region Drive lifecycle: open virtual

@@ -26,7 +26,8 @@ public record RestoreFormData(
     TapeHowToHandleExisting HandleExisting,
     bool UncheckProcessedFiles,
     bool SkipAllErrors,
-    bool NoMultivolume);
+    bool NoMultivolume,
+    bool EjectWhenDone);
 
 /// <summary>
 /// Represents an option in the "Handle existing files" combo box.
@@ -56,11 +57,12 @@ public class RestoreViewModel : ViewModelBase
     private RestoreMode _mode;
     private bool _incremental;
     private bool _noMultivolume;
-    private bool _suggestNoMultivolume; // store to be able to reset to default
+    private readonly bool _suggestNoMultivolume; // store to be able to reset to default
     private bool _restoreToOriginal = true;
     private bool _recurseSubdirectories;
     private bool _uncheckProcessedFiles = true;
     private bool _skipAllErrors;
+    private bool _ejectWhenDone;
     private string _targetDirectory = string.Empty;
     private HandleExistingOption _selectedHandleExisting = HandleExistingOption.All[0]; // Keep Both
     private string _itemsGroupHeader = string.Empty;
@@ -318,6 +320,15 @@ public class RestoreViewModel : ViewModelBase
         set => SetProperty(ref _skipAllErrors, value);
     }
 
+    /// <summary>
+    /// When checked, the tape is ejected after the operation completes.
+    /// </summary>
+    public bool EjectWhenDone
+    {
+        get => _ejectWhenDone;
+        set => SetProperty(ref _ejectWhenDone, value);
+    }
+
     /// <summary>Warning level for the options panel.</summary>
     public WarningLevel WarningLevel => _mode == RestoreMode.Restore ? _selectedHandleExisting.Value switch
     {
@@ -471,7 +482,8 @@ public class RestoreViewModel : ViewModelBase
             HandleExisting: _selectedHandleExisting.Value,
             UncheckProcessedFiles: _uncheckProcessedFiles,
             SkipAllErrors: _skipAllErrors,
-            NoMultivolume: _noMultivolume);
+            NoMultivolume: _noMultivolume,
+            EjectWhenDone: _ejectWhenDone);
 
         _onStart(request);
     }
@@ -487,6 +499,7 @@ public class RestoreViewModel : ViewModelBase
         RecurseSubdirectories = true; // pre-assume user wants to include subdirs
         UncheckProcessedFiles = true;
         SkipAllErrors = false;
+        EjectWhenDone = false;
         TargetDirectory = string.Empty;
         SelectedHandleExisting = HandleExistingOption.All[0]; // Keep Both
     }
