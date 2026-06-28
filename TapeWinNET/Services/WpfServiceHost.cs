@@ -98,6 +98,20 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
         });
     }
 
+    private static string FormatTimeSpan(TimeSpan ts)
+    {
+        string format;
+
+        if (ts.Days >= 1)
+            format = @"d\.hh\:mm\:ss";
+        else if (ts.Hours >= 1)
+            format = @"hh\:mm\:ss";
+        else
+            format = @"mm\:ss";
+
+        return ts.ToString(format, CultureInfo.CurrentCulture);
+    }
+
     private void UpdateIOProgress(int processed, int total, long bytes)
     {
         double elapsed = _stopwatch.IsRunning ? _stopwatch.ElapsedSeconds : 0.0;
@@ -105,7 +119,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
         _viewModel.IOProgressRate = rate;
 
         var elapsedTime = TimeSpan.FromSeconds(elapsed);
-        string progressText = $"Elapsed: {elapsedTime.ToString(@"hh\:mm\:ss", CultureInfo.CurrentCulture)}";
+        string progressText = $"Elapsed: {FormatTimeSpan(elapsedTime)}";
 
         if (processed > 0)
         {
@@ -114,7 +128,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
             int remaining = total - processed;
             double remainingSeconds = (remaining * elapsed) / processed;
             var remainingTime = TimeSpan.FromSeconds(remainingSeconds);
-            progressText += $", est. remaining: {remainingTime.ToString(@"hh\:mm\:ss", CultureInfo.CurrentCulture)}";
+            progressText += $", est. remaining: {FormatTimeSpan(remainingTime)}";
         }
 
         if (rate > 0)
