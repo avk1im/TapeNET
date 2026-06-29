@@ -43,11 +43,15 @@ namespace TapeWinNET
         // Help pane state
         private HelpPaneViewModel? _helpPaneVm;
         private const double DefaultHelpPaneWidth = 360;
+        // App-wide singleton action router — created once in the constructor,
+        //  populated once by BuildHelpActions(), and shared with all dialog panes.
+        private readonly HelpActionRouter _helpActionRouter;
 
         public MainWindow()
         {
             InitializeComponent();
 
+            _helpActionRouter = new HelpActionRouter();
             _viewModel = new MainViewModel();
             DataContext = _viewModel;
 
@@ -243,8 +247,7 @@ namespace TapeWinNET
 
                 // Rebuild with the new AI session
                 var session = await AppHelpSessionFactory.CreateAsync(this);
-                var actions = BuildHelpActions();
-                _helpPaneVm = new HelpPaneViewModel(session, this, actions);
+                _helpPaneVm = new HelpPaneViewModel(session, this, BuildHelpActions());
                 _helpPaneVm.SessionError += OnHelpSessionError;
                 _helpPaneVm.SessionInfo  += OnHelpSessionInfo;
                 _helpPaneVm.SessionWarning += OnHelpSessionWarning;
@@ -747,8 +750,7 @@ namespace TapeWinNET
             {
                 // First open — build the session and wire the VM
                 var session = await AppHelpSessionFactory.CreateAsync(this);
-                var actions = BuildHelpActions();
-                _helpPaneVm = new HelpPaneViewModel(session, this, actions)
+                _helpPaneVm = new HelpPaneViewModel(session, this, BuildHelpActions())
                 {
                     // Restore persisted chat sub-pane height before binding so the
                     //  DataContextChanged handler in HelpPane.xaml.cs applies it immediately.
@@ -818,9 +820,11 @@ namespace TapeWinNET
         }
 
         /// <summary>
-        /// Builds the <see cref="HelpActionRouter"/> with MainWindow-level commands.
+        /// Populates the app-wide <see cref="_helpActionRouter"/> with MainWindow-level commands
+        /// and returns it.  Called once during pane construction; subsequent calls re-populate the
+        /// same instance (needed after an AI-session rebuild so commands stay current).
         /// The <c>opensTopicId</c> for each registration tells
-        /// <see cref="DialogHelpActionRouter"/> which dialog the command leads to, so
+        /// <see cref="HelpActionRouter"/> which dialog the command leads to, so
         /// dialog-hosted help panes can suppress same-dialog re-opens and ask for
         /// confirmation before switching to a different dialog.
         /// </summary>
@@ -838,15 +842,14 @@ namespace TapeWinNET
         */
         internal HelpActionRouter BuildHelpActions()
         {
-            var router = new HelpActionRouter();
-            router.Register("new-backup",   _viewModel.NewBackupCommand,           opensTopicId: "dialog.backup");
-            router.Register("restore",      _viewModel.RestoreCommand,             opensTopicId: "dialog.restore");
-            router.Register("open-virtual-drive", _viewModel.OpenVirtualDriveCommand, opensTopicId: "dialog.open-virtual-drive");
-            router.Register("open-remote-virtual-drive", _viewModel.OpenRemoteVirtualDriveCommand, opensTopicId: "dialog.open-remote-virtual-drive");
-            router.Register("connect-to-remote-host", _viewModel.ConnectToRemoteHostCommand, opensTopicId: "dialog.connect-to-remote-host");
-            router.Register("format-media", _viewModel.FormatMediaCommand,         opensTopicId: "dialog.format-media");
-            router.Register("delete-sets",  _viewModel.DeleteBackupSetsCommand,    opensTopicId: "dialog.delete-backup-sets");
-            return router;
+            _helpActionRouter.Register("new-backup",   _viewModel.NewBackupCommand,           opensTopicId: "dialog.backup");
+            _helpActionRouter.Register("restore",      _viewModel.RestoreCommand,             opensTopicId: "dialog.restore");
+            _helpActionRouter.Register("open-virtual-drive", _viewModel.OpenVirtualDriveCommand, opensTopicId: "dialog.open-virtual-drive");
+            _helpActionRouter.Register("open-remote-virtual-drive", _viewModel.OpenRemoteVirtualDriveCommand, opensTopicId: "dialog.open-remote-virtual-drive");
+            _helpActionRouter.Register("connect-to-remote-host", _viewModel.ConnectToRemoteHostCommand, opensTopicId: "dialog.connect-to-remote-host");
+            _helpActionRouter.Register("format-media", _viewModel.FormatMediaCommand,         opensTopicId: "dialog.format-media");
+            _helpActionRouter.Register("delete-sets",  _viewModel.DeleteBackupSetsCommand,    opensTopicId: "dialog.delete-backup-sets");
+            return _helpActionRouter;
         }
 
         #endregion

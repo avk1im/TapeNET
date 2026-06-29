@@ -4,8 +4,8 @@ namespace TapeWinNET.Help;
 /// Dispatches <c>help://action/&lt;actionId&gt;</c> URIs to registered commands.
 /// </summary>
 /// <remarks>
-/// The interface is implemented by <see cref="HelpActionRouter"/> (plain, used in MainWindow)
-/// and by <see cref="DialogHelpActionRouter"/> (dialog-aware, used inside dialogs).
+/// The single concrete implementation is <see cref="HelpActionRouter"/>, which is
+/// owned by <c>MainWindow</c> and shared app-wide across all dialog HelpPane instances.
 /// </remarks>
 public interface IHelpActionRouter
 {

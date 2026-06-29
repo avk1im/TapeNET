@@ -109,8 +109,26 @@ internal sealed class WalkthroughOverlay : HelpOverlayBase
         return null;
     }
 
+    private readonly Dictionary<string, FrameworkElement> _targetCache = [];
+
     private FrameworkElement? FindTargetElement(string target)
-        => FindTargetElement(OverlayRoot, target);
+    {
+        if (_targetCache.TryGetValue(target, out var cached))
+        {
+            // validate that the cached element is still correct - in case of dynamic property re-assignment
+            var name = HelpControlNameAttachedProperty.GetControlName(cached);
+            if (name is not null && HelpSlug.From(name) == HelpSlug.From(target))
+                return cached;
+            else // otherwise remove from cache
+                _targetCache.Remove(target);
+        }
+
+        var result = FindTargetElement(OverlayRoot, target);
+        if (result is not null)
+            _targetCache[target] = result;
+
+        return result;
+    }
 
     // ── Adorner update (override base to set spotlight + labels) ─────────────
 

@@ -56,6 +56,9 @@ public sealed class DialogHelpPaneController
 
     private HelpPaneViewModel? _vm;
 
+    // Shared app-wide action router (supplied by MainWindow; null in fallback mode).
+    private readonly HelpActionRouter? _router;
+
     /// <summary>
     /// Creates a controller bound to the host dialog and its embedded help-pane controls.
     /// </summary>
@@ -94,11 +97,28 @@ public sealed class DialogHelpPaneController
         _defaultWidth   = defaultWidth;
         _mininimalHeight = minimalHeight;
 
+        // Grab the shared app-wide router from MainWindow (if available).
+        if (Application.Current.MainWindow is MainWindow mw)
+        {
+            _router = mw.BuildHelpActions();
+        }
+
         // Snapshot the initial (no-pane) window width
         _dialogContentWidth = window.Width;
 
         // Persist state whenever the dialog closes (the pane may still be visible)
         window.Closing += (_, _) => OnPaneClosed();
+
+        // Auto-open the help pane (and start the continuation tour) after the dialog
+        //  has fully loaded, if a walkthrough handoff is pending from the main window.
+        window.Loaded += OnWindowLoaded;
+    }
+
+    private void OnWindowLoaded(object sender, RoutedEventArgs e)
+    {
+        _window.Loaded -= OnWindowLoaded; // one-shot
+        if (_router?.PendingWalkthroughHandoffActionId is not null)
+            OpenHelpPane(); // will consume and act on the handoff
     }
 
     // ── IHelpPaneHost forwarding ───────────────────────────────────────────────
@@ -139,6 +159,20 @@ public sealed class DialogHelpPaneController
     public void OnPaneClosed()
     {
         PersistState();
+
+        // Clear the dialog context so the shared router reverts to pass-through mode
+        _router?.SetDialogContext(null, null);
+
+        // If the VM still thinks the pane is open (i.e. close was triggered externally
+        //  via the "< Close Help" button rather than the in-pane × button), tell it to
+        //  shut down cleanly so active overlays (Reveal, Guide Me) are deactivated.
+        //  IsPaneOpen is set to false by ExecuteClose before it calls back here, so the
+        //  check acts as a one-shot guard against re-entry.
+        if (_vm?.IsPaneOpen == true)
+        {
+            _vm.CloseCommand.Execute(null);
+            return; // CloseCommand → ExecuteClose → OnPaneClosed re-enters with IsPaneOpen = false
+        }
 
         // Shrink the window back to the dialog-content-only width...
         var removedWidth = _paneColumn.ActualWidth + SplitterWidth; // pane + splitter
@@ -194,21 +228,13 @@ public sealed class DialogHelpPaneController
             //  moment; show a disabled "Loading…" button until the pane is ready.
             SetButtonState(LoadingLabel, enabled: false);
 
-            // First open — build the session and wire the VM.
             // Pass _defaultTopicId as the home topic so the Home button returns to
             //  this dialog's own topic rather than the application-wide home page.
             var session = await AppHelpSessionFactory.CreateAsync(_host, homeTopicId: _defaultTopicId);
 
-            // Build a dialog-aware action router: borrows the full set of registered
-            //  actions from MainWindow but wraps them so that clicking an action link:
-            //  - does nothing (and activates this window) if the action would reopen
-            //    this same dialog, or
-            //  - asks for confirmation, closes this dialog, then runs the command.
-            IHelpActionRouter router;
-            if (Application.Current.MainWindow is MainWindow mw)
-                router = new DialogHelpActionRouter(mw.BuildHelpActions(), _defaultTopicId, _window);
-            else
-                router = new HelpActionRouter(); // fallback: no actions registered
+            // Use the shared app-wide router (falls back to a fresh no-action router
+            //  if MainWindow is somehow not available — extremely unlikely in practice).
+            IHelpActionRouter router = _router ?? new HelpActionRouter();
 
             _vm = new HelpPaneViewModel(session, _host, router)
             {
@@ -231,13 +257,17 @@ public sealed class DialogHelpPaneController
             _paneControl.Visibility = Visibility.Visible;
         }
 
+        // Tell the shared router which dialog is currently active so that Invoke()
+        //  can apply same-dialog suppression and cross-dialog confirmation.
+        _router?.SetDialogContext(_defaultTopicId, _window);
+
         _vm.IsPaneOpen = true;
 
         // Dialogs have no log pane — surface warnings via MainWindow
         _vm.SessionInfo += OnSessionInfo;
         _vm.SessionWarning += OnSessionWarning;
         _vm.SessionError += OnSessionError;
-        
+
         // Pane is now open — let the button close it on the next click
         SetButtonState(OpenLabel, enabled: true);
 
@@ -253,15 +283,17 @@ public sealed class DialogHelpPaneController
         }
 
         // Walkthrough continuation handoff (§12.5.1):
-        //  If the router carries a pending handoff from a main-window action step that opened
-        //  this dialog, and this dialog has exactly one tour, auto-start it.
-        if (_vm.GetActionRouter() is HelpActionRouter hardRouter
-            && hardRouter.PendingWalkthroughHandoffActionId is not null)
+        //  If the shared router carries a pending handoff from a main-window action step that
+        //  opened this dialog, auto-start the tour: exactly one tour → start it directly;
+        //  more than one → open the tour chooser so the user can pick.
+        if (_router?.PendingWalkthroughHandoffActionId is not null)
         {
-            hardRouter.ClearWalkthroughHandoff();
+            _router.ClearWalkthroughHandoff();
             var tours = _vm.Session.GetWalkthroughTopicsForHost(_host.HostName);
             if (tours.Count == 1)
                 _vm.StartWalkthrough(tours[0].Topic, tours[0].Script);
+            else if (tours.Count > 1)
+                _vm.GuideMeCommand.Execute(null); // opens the tour-selection UI
         }
     }
 

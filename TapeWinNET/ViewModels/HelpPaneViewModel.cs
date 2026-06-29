@@ -294,6 +294,7 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
                 OnPropertyChanged(nameof(GuideButtonLabel));
                 OnPropertyChanged(nameof(IsGuideHeaderVisible));
                 OnPropertyChanged(nameof(IsActionStep));
+                OnPropertyChanged(nameof(IsLastStep));
                 // Re-evaluate all canExecute affected by tour state.
                 RelayCommand.RaiseCanExecuteChanged();
                 GuideRequested?.Invoke(this, value);
@@ -329,6 +330,13 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     /// "Do it ▶" rather than "Next ▶".
     /// </summary>
     public bool IsActionStep => CurrentStep?.IsActionStep == true;
+
+    /// <summary>
+    /// <c>true</c> when the current step is the last step in the tour so the footer displays
+    /// "Finish" rather than "Next ▶".
+    /// </summary>
+    public bool IsLastStep => _activeTour is not null
+        && _stepIndex == _activeTour.Steps.Count - 1 && !IsActionStep;
 
     /// <summary>Step body markdown for the current step (empty when no tour is active).</summary>
     public string CurrentStepBody => CurrentStep?.Body ?? string.Empty;
@@ -726,6 +734,7 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
         OnPropertyChanged(nameof(GuideHeader));
         OnPropertyChanged(nameof(CurrentStep));
         OnPropertyChanged(nameof(IsActionStep));
+        OnPropertyChanged(nameof(IsLastStep));
         OnPropertyChanged(nameof(CurrentStepBody));
         OnPropertyChanged(nameof(CurrentStepTitle));
         RelayCommand.RaiseCanExecuteChanged();

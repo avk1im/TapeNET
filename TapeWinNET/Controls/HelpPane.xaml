@@ -333,6 +333,11 @@
                                         <Setter Property="Background"
                                                 Value="{StaticResource WarningBg.Completed}"/>
                                     </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsLastStep}" Value="True">
+                                        <Setter Property="Content" Value="Finish"/>
+                                        <Setter Property="Background"
+                                                Value="{StaticResource WarningBg.Completed}"/>
+                                    </DataTrigger>
                                 </Style.Triggers>
                             </Style>
                         </Button.Style>
