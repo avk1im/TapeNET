@@ -65,6 +65,7 @@ public sealed class MarkdownRendererTests
             => Task.FromResult<HelpAssistantResponse>(null!);
 
         public IReadOnlyList<WalkthroughScript> GetWalkthroughsForHost(string hostName) => [];
+        public IReadOnlyList<(HelpTopic Topic, WalkthroughScript Script)> GetWalkthroughTopicsForHost(string hostName) => [];
         public HelpTopic? GetTopicForControl(string hostName, string topicId) => null;
         public void ClearConversation() { }
         public string? TryGetControlHelp(string topicId, string controlName) => null;

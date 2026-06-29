@@ -251,6 +251,18 @@ public sealed class DialogHelpPaneController
             var lastTopic = settings.HelpPaneLastTopicPerHost?.GetValueOrDefault(_host.HostName);
             await _vm.NavigateToAsync(lastTopic ?? _defaultTopicId);
         }
+
+        // Walkthrough continuation handoff (§12.5.1):
+        //  If the router carries a pending handoff from a main-window action step that opened
+        //  this dialog, and this dialog has exactly one tour, auto-start it.
+        if (_vm.GetActionRouter() is HelpActionRouter hardRouter
+            && hardRouter.PendingWalkthroughHandoffActionId is not null)
+        {
+            hardRouter.ClearWalkthroughHandoff();
+            var tours = _vm.Session.GetWalkthroughTopicsForHost(_host.HostName);
+            if (tours.Count == 1)
+                _vm.StartWalkthrough(tours[0].Topic, tours[0].Script);
+        }
     }
 
     // ── F1 context help ────────────────────────────────────────────────────────

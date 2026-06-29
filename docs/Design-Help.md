@@ -705,6 +705,9 @@ public interface IHelpPaneHost
 	void OnPaneClosed();
 
 	/// Used by Reveal & Guide Me to map walkthrough targets → live controls.
+	/// UPDATE: This proved not useful so far. Reveal doesn't need it;
+	///  Guide Me looks up controls using the attached property <see cref="HelpControlNameAttachedProperty.GetControlName"/>.
+	///  Kept for now just in case.
 	FrameworkElement? ResolveControlByName(string name);
 
 	/// Opens the pane (first call builds the session) and navigates to topicId.
@@ -2112,14 +2115,14 @@ The Reveal foundation is intentionally shaped so Walkthrough reuses ~80% of it:
 |---|---|---|
 | Adorner | `HelpHighlightAdorner` with `Targets` | **same** adorner with `Spotlight` + scrim cut-out |
 | Base lifecycle | `HelpOverlayBase` | **same** (Activate/Deactivate, Esc, LayoutUpdated) |
-| Target source | `help:Help.ControlName` enumeration | `WalkthroughStep.Target` resolved via `IHelpPaneHost.ResolveControlByName` (already exists) |
+| Target source | `help:Help.ControlName` enumeration | `WalkthroughStep.Target` resolved via `HelpControlNameAttachedProperty.GetControlName` (already exists) |
 | Input | click target → popup; outside/Esc → exit | Next/Back/Skip in a **callout balloon** anchored to the current step's control |
 | Content | `## Controls` entries | `walkthrough:` front-matter `steps:` (already parsed into `WalkthroughScript`) |
 | Popup | `HelpPopup` (info) | a richer **callout** control (Next/Back/Skip), but may reuse `HelpPopup` styling |
 
 Concretely, `WalkthroughOverlay : HelpOverlayBase` adds a step cursor (`Current`, `Next()`, `Back()`,
 `Skip()`), sets `Adorner.Spotlight` to the current step's control bounds (dimming everything else), and shows
-a callout balloon with the step `Title`/`Body` and navigation buttons. `IHelpPaneHost.ResolveControlByName`
+a callout balloon with the step `Title`/`Body` and navigation buttons. `HelpControlNameAttachedProperty.GetControlName`
 and `IHelpSession.GetWalkthroughsForHost` already exist (Phase 3/5), so no new content-engine work is needed
 beyond the overlay UI. The `Guide Me` button binds to a `GuideMeCommand` analogous to `RevealCommand`.
 
@@ -2172,7 +2175,7 @@ beyond the overlay UI. The `Guide Me` button binds to a `GuideMeCommand` analogo
 
 > **Status:** 📝 Detailed design ready to implement. Builds directly on the Phase 8a Reveal
 > foundation (§11): the same `HelpOverlayBase`, `HelpHighlightAdorner`, `help:Help.ControlName`
-> tagging, `IHelpPaneHost.GetOverlayRoot()`/`GetDefaultTopicId()`/`ResolveControlByName()`,
+> tagging, `IHelpPaneHost.GetOverlayRoot()`/`GetDefaultTopicId()`/`HelpControlNameAttachedProperty.GetControlName()`,
 > `HelpActionRouter` (`help://action/<id>`), and the `RevealCommand`/`IsRevealActive`/
 > `RevealRequested` VM pattern. **No new application-wide subsystem is introduced.**
 
@@ -2215,7 +2218,7 @@ opens that dialog (via the existing `help://action/<id>` router); the dialog the
    (`🚶 First Backup — Step 2 of 4`), the step **title + rendered body**, and a footer row
    `[◀ Back] [Next ▶]`. The chat sub-pane stays available.
 4. A `WalkthroughOverlay` (a `HelpOverlayBase` subclass) draws an **amber** outline + **step badge**
-   on the current step's control, resolved via `IHelpPaneHost.ResolveControlByName(step.Target)`.
+   on the current step's control, resolved via `HelpControlNameAttachedProperty.GetControlName` == `step.Target` (after slugification via `HelpSlug.From`).
 5. **Next / Back** advance/retreat the step cursor; the overlay re-highlights and the pane re-renders.
 6. The **Guide Me** button becomes **Exit Guide** while active (exactly like Reveal ⇄ Exit Reveal).
 
@@ -2501,7 +2504,7 @@ multi-host script" problem from the original draft no longer exists — there is
 
 Walkthrough mode is a second `HelpOverlayBase` subclass alongside `RevealOverlay`. It reuses the adorner,
 the input/lifecycle plumbing, the `help:Help.ControlName` attached property, and
-`IHelpPaneHost.ResolveControlByName` — all of which already exist for Reveal.
+`HelpControlNameAttachedProperty.GetControlName` — all of which already exist for Reveal.
 
 ```csharp
 // TapeWinNET/Help/Overlays/WalkthroughOverlay.cs
@@ -2520,13 +2523,21 @@ public sealed class WalkthroughOverlay : HelpOverlayBase
     // No click-to-activate: walkthrough targets are not clickable; navigation is via pane buttons.
 }
 ```
+### 12.6.1 Visual model: `HelpHighlightAdorner` reused
 
-**Visual model (reuses `HelpHighlightAdorner`).** The adorner already supports a set of highlighted
+**Visual model reuses `HelpHighlightAdorner`.** The adorner already supports a set of highlighted
 rectangles plus an optional emphasised one. Walkthrough sets:
 - `Targets` = the bounds of every **control step** in the tour (drawn as a thin blue outline + a small
-  **step-number badge** at the corner), and
+  **step-number badge** at the bottom-right corner), and
 - `Spotlight` = the **current** step's control bounds, drawn in the standard amber
-  `Color.FromRgb(0xFF, 0xA5, 0x00)` with a slightly thicker outline.
+  `Color.FromRgb(0xFF, 0xA5, 0x00)`.
+- `TargetLabels` = text labels for `Targets` that can be set to the step numbers (1-based) for each control step,
+  drawn in a small badge at the bottom-right corner of each control's outline. Alternatively can user `AutolabelTargets`
+  to automatically generate labels based on the order of the targets (can be brittle if no strict step-to-target mapping).
+- `DimInactive` = whether to dim the non-target areas. Set to `false` for walkthroughs, `true` (default) for Reveal.
+- `FillTargets` = whether to fill the target rectangles. Set to `false` for walkthroughs, `true` (default) for Reveal.
+
+### 12.6.2 Interaction model
 
 Controls stay **fully operational and undimmed** (no scrim) — per the UX note. The only adorner addition
 needed is drawing the numeric badge; the amber-emphasis path already exists from Reveal's `Spotlight`.
@@ -2536,7 +2547,7 @@ dropped — it needs per-control event wiring and competes with normal data entr
 step's body is always shown in the pane's content area**. This is simpler, always visible, and reuses the
 existing `MarkdownRenderer` (so glossary/topic/action links work verbatim).
 
-#### 12.6.1 HelpPane drives the tour (cursor lives on the VM)
+#### 12.6.3 HelpPane drives the tour (cursor lives on the VM)
 
 The "coordinator" collapses into a few `HelpPaneViewModel` members mirroring the existing Reveal pattern
 (`IsRevealActive` / `RevealRequested`):
@@ -2574,7 +2585,7 @@ public void StartWalkthrough(WalkthroughScript tour) { ActiveTour = tour; StepIn
 - **`HelpPane`** owns the `WalkthroughOverlay` exactly like it owns `RevealOverlay`; `GuideRequested`
   (de)activates it and pushes the latest `Steps` + `CurrentStepIndex`.
 
-#### 12.6.2 Header strip & footer (minimal additions to HelpPane.xaml)
+#### 12.6.4 Header strip & footer (minimal additions to HelpPane.xaml)
 
 A small `Border` above the content area, visible only when `IsGuideActive`:
 
@@ -2590,7 +2601,7 @@ The existing bottom action strip gains two buttons shown only during a tour — 
 `GuideButtonLabel` (so it reads **Exit Guide** while active, mirroring the Reveal button). The active
 state is tinted via a `DataTrigger` on `IsGuideActive`, exactly like Reveal.
 
-#### 12.6.3 Lifecycle & edge cases (all handled in HelpPane/VM — no dialog-coordinator state machine)
+#### 12.6.5 Lifecycle & edge cases (all handled in HelpPane/VM — no dialog-coordinator state machine)
 
 | Event | Behavior |
 |---|---|
@@ -2650,11 +2661,12 @@ without exiting.
 **Step 2 — HelpNET tests. [OPTIONAL]** `WalkthroughParserTests`, `HelpContentStoreWalkthroughTests`
 (incl. `GetWalkthroughsForHost`). Build + run.
 
-**Step 3 — Adorner badge.** Add step-number badge drawing to `HelpHighlightAdorner` (reuse the existing
+**Step 3 — Adorner update. [DONE]** Add step-number badge drawing to `HelpHighlightAdorner` (reuse the existing
 amber-emphasis path for the current step). OPTIONAL: `[StaFact]` `HelpHighlightAdornerBadgeTests`.
+**Notice:** Completed acc. to §12.6.1.
 
 **Step 4 — WalkthroughOverlay.** New `HelpOverlayBase` subclass: enumerate resolvable control-step
-targets via `IHelpPaneHost.ResolveControlByName`; set `Targets` + current `Spotlight`; non-interactive.
+targets via `HelpControlNameAttachedProperty.GetControlName`; set `Targets` + current `Spotlight`; non-interactive.
 OPTIONAL: `[StaFact]` `WalkthroughOverlayTests`.
 
 **Step 5 — VM cursor + commands.** Add the walkthrough cursor, `GuideMeCommand` / `NextStepCommand` /

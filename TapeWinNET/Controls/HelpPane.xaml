@@ -225,9 +225,21 @@
                         Content="Clear Chat" Padding="6,2" FontSize="11"
                         ToolTip="Clear conversation history"/>
                 <Button DockPanel.Dock="Right"
-                        Content="Guide Me" IsEnabled="False"
+                        Command="{Binding GuideMeCommand}"
+                        Content="{Binding GuideButtonLabel}"
                         Padding="6,2" FontSize="11" Margin="4,0,0,0"
-                        ToolTip="Interactive walkthroughs — coming soon"/>
+                        ToolTip="Start an interactive walkthrough for this window.">
+                    <Button.Style>
+                        <Style TargetType="Button">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsGuideActive}" Value="True">
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                    <Setter Property="Background" Value="{StaticResource WarningBg.Completed}"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
                 <Button DockPanel.Dock="Right"
                         Command="{Binding RevealCommand}"
                         Content="{Binding RevealButtonLabel}"
@@ -250,10 +262,30 @@
         <!-- ── Main body: content / splitter / chat ──────────────────── -->
         <Grid>
             <Grid.RowDefinitions>
-                <RowDefinition x:Name="ContentRow" Height="*" MinHeight="60"/>
+                <!-- row 0: guide header strip (auto-height; hidden when no tour active) -->
                 <RowDefinition Height="Auto"/>
+                <!-- row 1: content -->
+                <RowDefinition x:Name="ContentRow" Height="*" MinHeight="60"/>
+                <!-- row 2: walkthrough step-nav footer (auto-height; hidden when no tour active) -->
+                <RowDefinition Height="Auto"/>
+                <!-- row 3: splitter -->
+                <RowDefinition Height="Auto"/>
+                <!-- row 4: chat subpane -->
                 <RowDefinition x:Name="ChatRow"    Height="200" MinHeight="80"/>
             </Grid.RowDefinitions>
+
+            <!-- Guide-Me header strip (row 0): amber title bar showing tour title + step counter.
+                 Collapsed until a tour is active via IsGuideHeaderVisible. -->
+            <Border Grid.Row="0"
+                    Background="{StaticResource WarningBg.Warning}"
+                    BorderBrush="{StaticResource WarningBr.Warning}"
+                    BorderThickness="0,0,0,1" Padding="6,4"
+                    Visibility="{Binding IsGuideHeaderVisible,
+                                 Converter={StaticResource BoolToVis}}">
+                <TextBlock Text="{Binding GuideHeader}"
+                           FontWeight="SemiBold" FontSize="11"
+                           TextTrimming="CharacterEllipsis"/>
+            </Border>
 
             <!-- Content subpane.
                  RichTextBox is used instead of FlowDocumentScrollViewer because FDSV's internal
@@ -263,7 +295,7 @@
                  Document is set in code-behind (ContentViewer.Document) because RichTextBox.Document
                  is not a bindable dependency property. -->
             <RichTextBox x:Name="ContentViewer"
-                         Grid.Row="0"
+                         Grid.Row="1"
                          IsReadOnly="True"
                          BorderThickness="0"
                          Background="Transparent"
@@ -274,16 +306,50 @@
                          PreviewMouseMove="RichTextBox_PreviewMouseMove"
                          MouseLeave="RichTextBox_MouseLeave"/>
 
-            <!-- Splitter between content and chat -->
+            <!-- Walkthrough step-navigation footer (row 2):
+                 Shown only when a tour is active; sits between the content pane and the
+                 chat splitter so it does not push the chat pane upward during a tour. -->
+            <Border Grid.Row="2"
+                    Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
+                    BorderBrush="LightGray" BorderThickness="0,1,0,0" Padding="4,3"
+                    Visibility="{Binding IsGuideHeaderVisible,
+                                 Converter={StaticResource BoolToVis}}">
+                <DockPanel LastChildFill="False">
+                    <!-- Back step -->
+                    <Button DockPanel.Dock="Left"
+                            Command="{Binding BackStepCommand}"
+                            Content="&#x25C0; Back" Padding="6,2" FontSize="11"
+                            ToolTip="Go to previous step"/>
+                    <!-- Next / Do it -->
+                    <Button DockPanel.Dock="Right"
+                            Command="{Binding NextStepCommand}"
+                            Padding="6,2" FontSize="11" FontWeight="SemiBold">
+                        <Button.Style>
+                            <Style TargetType="Button">
+                                <Setter Property="Content" Value="Next &#x25B6;"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsActionStep}" Value="True">
+                                        <Setter Property="Content" Value="Do it &#x25B6;"/>
+                                        <Setter Property="Background"
+                                                Value="{StaticResource WarningBg.Completed}"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                </DockPanel>
+            </Border>
+
+            <!-- Splitter between content/step-nav and chat -->
             <GridSplitter x:Name="ChatSplitter"
-                          Grid.Row="1" Height="4"
+                          Grid.Row="3" Height="4"
                           HorizontalAlignment="Stretch"
                           VerticalAlignment="Center"
                           Background="LightGray"
                           DragCompleted="ChatSplitter_DragCompleted"/>
 
             <!-- Chat subpane -->
-            <Grid Grid.Row="2">
+            <Grid Grid.Row="4">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="Auto"/>

@@ -9,7 +9,7 @@ namespace HelpNET.Content;
 /// when looking up a term by display name at runtime, so the two sides always
 /// stay in lock-step.
 /// </summary>
-internal static class HelpSlug
+public static class HelpSlug
 {
     // Pre-compiled regex: one or more of: whitespace, slash, parentheses, brackets.
     private static readonly Regex SlugSeparatorsRegex =

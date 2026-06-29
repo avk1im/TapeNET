@@ -170,7 +170,7 @@ public sealed class HelpContentStore
     /// </summary>
     private static void ParseDefinitionEntries(
         string                      markdownBody,
-        IDictionary<string, string> into,
+        Dictionary<string, string>  into,
         string?                     sectionHeading = null)
     {
         bool   inSection       = sectionHeading is null; // whole-body scan starts immediately
@@ -297,7 +297,7 @@ public sealed class HelpContentStore
 
         var plainText  = PlainTextRenderer.Render(body);
         var walkthrough = kind == HelpTopicKind.Walkthrough
-            ? ParseWalkthrough(fields)
+            ? ParseWalkthrough(body)
             : null;
 
         return new HelpTopic(
@@ -329,31 +329,11 @@ public sealed class HelpContentStore
             _            => HelpTopicKind.Concept,
         };
 
-    private static WalkthroughScript? ParseWalkthrough(Dictionary<string, object> fields)
+    private static WalkthroughScript? ParseWalkthrough(string body)
     {
-        // The walkthrough block is a nested YAML mapping; our minimal parser
-        // flattens it into prefixed keys via ParseWalkthroughSteps.
-        // If the outer "walkthrough" key holds a list, we treat it as the steps directly.
-        // (The front-matter block parser would need to handle nested mappings for the
-        //  full design spec — for Phase 3 we support the flat-steps pattern and leave
-        //  nested-YAML walkthrough parsing as a Phase 8 concern, noting it in diagnostics.)
-        if (!fields.TryGetValue("walkthrough", out var raw))
-            return null;
-
-        if (raw is not IReadOnlyList<string> steps || steps.Count == 0)
-            return null;
-
-        // Each entry is expected to be a string in the form "target|title|body"
-        // (a simplified encoding that the test fixture can supply directly).
-        // The HelpIndexBuilder and real authoring will use the richer YAML block.
-        var parsed = new List<WalkthroughStep>();
-        foreach (var entry in steps)
-        {
-            var parts = entry.Split('|', 3);
-            if (parts.Length == 3)
-                parsed.Add(new WalkthroughStep(parts[0].Trim(), parts[1].Trim(), parts[2].Trim()));
-        }
-
-        return parsed.Count > 0 ? new WalkthroughScript(parsed.AsReadOnly()) : null;
+        // Steps are sourced from the topic body via WalkthroughParser,
+        //  using ## [Target] Title section headers (see §12.2 / §12.4).
+        var steps = WalkthroughParser.ParseSteps(body);
+        return steps.Count > 0 ? new WalkthroughScript(steps) : null;
     }
 }

@@ -148,7 +148,9 @@ public partial class HelpPane : UserControl
             oldVm.PropertyChanged -= Vm_PropertyChanged;
             oldVm.Renderer.GlossaryLinkClicked -= Renderer_GlossaryLinkClicked;
             oldVm.RevealRequested -= OnRevealRequested;
+            oldVm.GuideRequested  -= OnGuideRequested;
             _reveal?.Deactivate();
+            _guide?.Deactivate();
         }
 
         // Subscribe to new VM and push the current document immediately.
@@ -159,6 +161,7 @@ public partial class HelpPane : UserControl
             newVm.PropertyChanged += Vm_PropertyChanged;
             newVm.Renderer.GlossaryLinkClicked += Renderer_GlossaryLinkClicked;
             newVm.RevealRequested += OnRevealRequested;
+            newVm.GuideRequested  += OnGuideRequested;
             PushDocument(newVm.CurrentDocument);
             // Restore the persisted chat row height for this VM
             ApplyChatHeight(newVm);
@@ -283,7 +286,58 @@ public partial class HelpPane : UserControl
         popup.Show(def ?? $"({termSlug})");
     }
 
-    // ── Chat splitter / pane-height persistence ───────────────────────────────
+    // ── Guide Me (Walkthrough) overlay ───────────────────────────────────────────────
+    // Lazily created per pane instance; reuses the same overlay root as Reveal.
+
+    private WalkthroughOverlay? _guide;
+
+    /// <summary>
+    /// Called when <see cref="HelpPaneViewModel.GuideRequested"/> fires.
+    /// When <paramref name="activate"/> is <c>true</c> and the tour is advancing
+    /// (step cursor already updated in the VM), the overlay is updated to show
+    /// the new spotlight; when <c>false</c> the overlay is deactivated.
+    /// </summary>
+    private void OnGuideRequested(object? sender, bool activate)
+    {
+        if (DataContext is not HelpPaneViewModel vm) return;
+
+        if (!activate)
+        {
+            _guide?.Deactivate();
+            return;
+        }
+
+        var root = vm.Host.GetOverlayRoot();
+        if (root is null)
+        {
+            // Host has no overlay root — reset VM flag silently.
+            vm.NotifyGuideDeactivated();
+            return;
+        }
+
+        // Create or re-create the overlay if the root changed.
+        if (_guide is null || !ReferenceEquals(_guide.OverlayRootElement, root))
+        {
+            _guide = new WalkthroughOverlay(root, vm.Host, excludedElement: this);
+            // Sync vm flag when the overlay exits via Esc.
+            _guide.Deactivated += (_, _) =>
+            {
+                if (DataContext is HelpPaneViewModel v)
+                    v.NotifyGuideDeactivated();
+            };
+        }
+
+        // Push current tour state into the overlay.
+        if (vm.ActiveTour is not null)
+            _guide.SetTour(vm.ActiveTour.Steps, vm.StepIndex);
+
+        if (!_guide.IsActive)
+            _guide.Activate();
+        else
+            _guide.SetCurrentStep(vm.StepIndex); // step advanced — just move the spotlight
+    }
+
+    // ── Chat splitter / pane-height persistence
 
     /// <summary>
     /// Applies <see cref="HelpPaneViewModel.ChatPaneHeight"/> to <c>ChatRow</c>.

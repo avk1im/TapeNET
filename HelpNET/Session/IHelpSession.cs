@@ -55,6 +55,12 @@ public interface IHelpSession : IAsyncDisposable
     IReadOnlyList<WalkthroughScript> GetWalkthroughsForHost(string hostName);
 
     /// <summary>
+    /// Returns all walkthrough topics (with their scripts) applicable to the named host window.
+    /// Includes the owning <see cref="HelpTopic"/> so callers can display the tour title and id.
+    /// </summary>
+    IReadOnlyList<(HelpTopic Topic, WalkthroughScript Script)> GetWalkthroughTopicsForHost(string hostName);
+
+    /// <summary>
     /// Returns the topic tagged for a specific control within a host window, or
     /// <c>null</c> if none exists.
     /// </summary>

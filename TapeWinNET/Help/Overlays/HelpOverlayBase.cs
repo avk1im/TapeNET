@@ -31,6 +31,12 @@ internal abstract class HelpOverlayBase : IHelpOverlay
     /// <summary>The host's content-area root (Column-0 grid) on which we adorn.</summary>
     protected FrameworkElement OverlayRoot { get; }
 
+    /// <summary>
+    /// Exposes <see cref="OverlayRoot"/> so callers (e.g. HelpPane.xaml.cs) can check
+    /// whether the overlay is already attached to the same root before re-creating it.
+    /// </summary>
+    internal FrameworkElement OverlayRootElement => OverlayRoot;
+
     /// <summary>The adorner layer of <see cref="OverlayRoot"/>.</summary>
     protected AdornerLayer Layer { get; }
 
@@ -105,13 +111,21 @@ internal abstract class HelpOverlayBase : IHelpOverlay
 
         // Add the adorner and draw the initial targets.
         Layer.Add(Adorner);
-        // Make the adorner hit-testable: it now forms a capture surface over OverlayRoot.
-        //  Mouse events land on the adorner (the topmost visual) rather than on the
-        //  underlying controls, so those controls are never in the event routing path
-        //  and their class handlers (e.g. Button.Click) cannot fire.
-        Adorner.IsHitTestVisible = true;
+        // Subclasses that want controls to stay fully interactive (e.g. WalkthroughOverlay)
+        //  return false from EnableHitTestCapture; Reveal returns true.
+        Adorner.IsHitTestVisible = EnableHitTestCapture;
         RefreshTargets();
     }
+
+    /// <summary>
+    /// When <c>true</c> (default), the adorner forms a hit-test capture surface over
+    /// the overlay root so that underlying controls cannot be accidentally actuated.
+    /// <para>
+    /// <see cref="Overlays.WalkthroughOverlay"/> overrides this to <c>false</c> so
+    /// controls remain fully interactive throughout the guided tour.
+    /// </para>
+    /// </summary>
+    protected virtual bool EnableHitTestCapture => true;
 
     /// <inheritdoc/>
     public void Deactivate()
@@ -205,6 +219,22 @@ internal abstract class HelpOverlayBase : IHelpOverlay
 
     // ── Geometry helpers ──────────────────────────────────────────────────────
 
+    protected Rect RectOfElement(FrameworkElement el)
+    {
+        if (!el.IsVisible || el.ActualWidth <= 0 || el.ActualHeight <= 0)
+            return Rect.Empty;
+        try
+        {
+            var transform = el.TransformToAncestor(OverlayRoot);
+            return transform.TransformBounds(new Rect(el.RenderSize));
+        }
+        catch (InvalidOperationException)
+        {
+            // Element is no longer connected to the same visual tree.
+            return Rect.Empty;
+        }
+    }
+
     /// <summary>
     /// Re-enumerates targets and recomputes their bounds in OverlayRoot coordinates.
     /// Called automatically on LayoutUpdated; also called at Activate time.
@@ -215,26 +245,22 @@ internal abstract class HelpOverlayBase : IHelpOverlay
 
         var rects = new List<Rect>(_targets.Count);
         foreach (var el in _targets)
-        {
-            if (!el.IsVisible || el.ActualWidth <= 0 || el.ActualHeight <= 0)
-            {
-                rects.Add(Rect.Empty); // placeholder to keep indexes aligned
-                continue;
-            }
-            try
-            {
-                var transform = el.TransformToAncestor(OverlayRoot);
-                var bounds    = transform.TransformBounds(new Rect(el.RenderSize));
-                rects.Add(bounds);
-            }
-            catch (InvalidOperationException)
-            {
-                // Element is no longer connected to the same visual tree.
-                rects.Add(Rect.Empty);
-            }
-        }
+            rects.Add(RectOfElement(el));
 
         _targetRects    = rects.AsReadOnly();
+        UpdateAdorner(_targets, _targetRects);
+    }
+
+    /// <summary>
+    /// Called by <see cref="RefreshTargets"/> after target rectangles are computed.
+    /// The default implementation sets <see cref="HelpHighlightAdorner.Targets"/>.
+    /// Subclasses (e.g. <c>WalkthroughOverlay</c>) override this to also set spotlight
+    /// and labels via <see cref="HelpHighlightAdorner.SetTargetsAndSpotlight"/>.
+    /// </summary>
+    protected virtual void UpdateAdorner(
+        IReadOnlyList<FrameworkElement> targets,
+        IReadOnlyList<Rect> rects)
+    {
         Adorner.Targets = [.. rects.Where(r => !r.IsEmpty)];
     }
 

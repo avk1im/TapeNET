@@ -66,5 +66,14 @@ public interface IHelpPaneHost
     /// </para>
     /// </summary>
     string? GetDefaultTopicId() => null;
+
+    // ── Phase 8b: Guide Me helpers ─────────────────────────────────────────
+
+    /// <summary>
+    /// Returns <c>true</c> when the given <paramref name="session"/> has at least one
+    /// walkthrough tour for this host.  Used by <c>GuideMeCommand.CanExecute</c>.
+    /// </summary>
+    bool HostHasWalkthroughs(HelpNET.Session.IHelpSession session)
+        => session.GetWalkthroughsForHost(HostName).Count > 0;
 }
 

@@ -27,8 +27,9 @@ internal sealed class RevealOverlay(FrameworkElement overlayRoot, IHelpPaneHost 
 {
     private readonly IHelpPaneHost _host = host;
 
-    /// <summary>Exposes the overlay root so callers can detect root changes.</summary>
-    public FrameworkElement OverlayRootElement => OverlayRoot;
+    // Moved to HelpOveralyBase
+    // /// <summary>Exposes the overlay root so callers can detect root changes.</summary>
+    // public FrameworkElement OverlayRootElement => OverlayRoot;
 
     /// <summary>
     /// Raised when a tagged control is clicked.
@@ -107,8 +108,12 @@ internal sealed class RevealOverlay(FrameworkElement overlayRoot, IHelpPaneHost 
     {
         if (e.ChangedButton == MouseButton.Left)
         {
-            var controlName = HelpControlNameAttachedProperty.GetControlName(target)!;
-            TargetActivated?.Invoke(this, new RevealTarget(target, controlName));
+            var controlName = HelpControlNameAttachedProperty.GetControlName(target);
+            if (controlName is not null)
+            {
+                Adorner.Spotlight = RectOfElement(target);
+                TargetActivated?.Invoke(this, new RevealTarget(target, controlName));
+            }
         }
         // Mark handled so the underlying control doesn't actuate.
         e.Handled = true;

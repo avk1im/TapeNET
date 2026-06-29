@@ -62,6 +62,18 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     /// <summary>Exposes the host so the HelpPane control can call overlay hooks (Reveal, Guide Me).</summary>
     internal IHelpPaneHost Host => _host;
 
+    /// <summary>
+    /// Exposes the action router so <see cref="Help.DialogHelpPaneController"/> can check for
+    /// a pending walkthrough continuation handoff after the pane is first opened.
+    /// </summary>
+    internal IHelpActionRouter GetActionRouter() => _actions;
+
+    /// <summary>The currently active walkthrough script; null when no tour is running.</summary>
+    internal WalkthroughScript? ActiveTour => _activeTour;
+
+    /// <summary>Zero-based index of the currently shown walkthrough step.</summary>
+    internal int StepIndex => _stepIndex;
+
     private FlowDocument? _currentDocument;
     private string?       _currentTopicTitle;
     private string        _searchText   = string.Empty;
@@ -70,6 +82,7 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     private bool          _isPaneOpen;
     private bool          _isAsking;
     private bool          _isRevealActive;
+    private bool          _isGuideActive;
     private double        _chatPaneHeight = 200.0;
     private string        _thinkingAnimationText = string.Empty;
     private HelpAssistantMode _assistantMode;
@@ -82,6 +95,14 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     // Stop icon (solid square) shown on the Ask button while thinking
     private const string StopLabel  = "\u25A0";
     private const string AskLabel   = "Ask";
+
+    // ── Walkthrough (Guide Me) state ──────────────────────────────────────────
+
+    // The active tour; null when no tour is running.
+    private WalkthroughScript? _activeTour;
+    private string?            _activeTourTitle;
+    private int                _stepIndex;
+    private readonly HelpActionRouter? _hardRouter; // cached cast used for walkthrough action invocation
 
     // ── Construction ─────────────────────────────────────────────────────────
 
@@ -129,6 +150,14 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
         InvokeActionCommand     = new RelayCommand(p => { if (p is HelpActionRef a) _actions.Invoke(a.ActionId); });
         OpenAiSetupCommand      = new AsyncRelayCommand(async _ => await Services.AppAiSessionHost.ReconfigureAndNotifyAsync());
         RevealCommand           = new RelayCommand(ExecuteReveal, () => _isPaneOpen && _session.CurrentTopic != null);
+
+        // Guide Me — enabled when the pane is open and the host has at least one tour.
+        GuideMeCommand  = new AsyncRelayCommand(async _ => await ExecuteGuideMe(), _ => _isPaneOpen && _host.HostHasWalkthroughs(_session));
+        NextStepCommand = new RelayCommand(ExecuteNextStep, () => _isGuideActive);
+        BackStepCommand = new RelayCommand(ExecuteBackStep, () => _isGuideActive && _stepIndex > 0);
+
+        // Cache the concrete HelpActionRouter if available (used for walkthrough action steps).
+        _hardRouter = _actions as HelpActionRouter;
     }
 
     // ── Events ────────────────────────────────────────────────────────────────
@@ -164,6 +193,13 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     /// The boolean argument is the new value of <see cref="IsRevealActive"/>.
     /// </summary>
     public event EventHandler<bool>? RevealRequested;
+
+    /// <summary>
+    /// Raised when <see cref="IsGuideActive"/> changes so <see cref="Controls.HelpPane"/>
+    /// can activate or deactivate the <see cref="Overlays.WalkthroughOverlay"/>.
+    /// The boolean argument is the new value of <see cref="IsGuideActive"/>.
+    /// </summary>
+    public event EventHandler<bool>? GuideRequested;
 
     // ── Bindable properties ───────────────────────────────────────────────────
 
@@ -240,6 +276,65 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
 
     /// <summary>Toggle label for the Reveal button: <c>"Reveal"</c> ↔ <c>"Exit Reveal"</c>.</summary>
     public string RevealButtonLabel => _isRevealActive ? "Exit Reveal" : "Reveal";
+
+    // ── Guide Me (Walkthrough) properties ─────────────────────────────────────
+
+    /// <summary>
+    /// <c>true</c> while a walkthrough tour is active on the host window.
+    /// Setting this raises <see cref="GuideRequested"/> so <see cref="Controls.HelpPane"/>
+    /// can activate or deactivate the <see cref="Overlays.WalkthroughOverlay"/>.
+    /// </summary>
+    public bool IsGuideActive
+    {
+        get => _isGuideActive;
+        private set
+        {
+            if (SetProperty(ref _isGuideActive, value))
+            {
+                OnPropertyChanged(nameof(GuideButtonLabel));
+                OnPropertyChanged(nameof(IsGuideHeaderVisible));
+                OnPropertyChanged(nameof(IsActionStep));
+                // Re-evaluate all canExecute affected by tour state.
+                RelayCommand.RaiseCanExecuteChanged();
+                GuideRequested?.Invoke(this, value);
+            }
+        }
+    }
+
+    /// <summary>Toggle label for the Guide Me button: <c>"Guide Me"</c> ↔ <c>"Exit Guide"</c>.</summary>
+    public string GuideButtonLabel => _isGuideActive ? "Exit Guide" : "Guide Me";
+
+    /// <summary>Header strip visibility — true when a tour is active.</summary>
+    public bool IsGuideHeaderVisible => _isGuideActive;
+
+    /// <summary>Header text shown in the guide strip while a tour is active.</summary>
+    public string GuideHeader
+    {
+        get
+        {
+            if (_activeTour is null) return string.Empty;
+            return $"🚶 {_activeTourTitle} — Step {_stepIndex + 1} of {_activeTour.Steps.Count}";
+        }
+    }
+
+    /// <summary>
+    /// The current walkthrough step, or <c>null</c> when no tour is active or the
+    /// index is out of range.
+    /// </summary>
+    public WalkthroughStep? CurrentStep
+        => _activeTour?.Steps.ElementAtOrDefault(_stepIndex);
+
+    /// <summary>
+    /// <c>true</c> when the current step is an action step so the footer shows
+    /// "Do it ▶" rather than "Next ▶".
+    /// </summary>
+    public bool IsActionStep => CurrentStep?.IsActionStep == true;
+
+    /// <summary>Step body markdown for the current step (empty when no tour is active).</summary>
+    public string CurrentStepBody => CurrentStep?.Body ?? string.Empty;
+
+    /// <summary>Step title for the current step (empty when no tour is active).</summary>
+    public string CurrentStepTitle => CurrentStep?.Title ?? string.Empty;
 
     /// <summary>
     /// Height (pixels) of the chat sub-pane.
@@ -338,6 +433,13 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     /// Enabled only when the pane is open and a topic is loaded.
     /// </summary>
     public ICommand RevealCommand { get; }
+
+    /// <summary>Starts or exits the Guide Me walkthrough tour.</summary>
+    public ICommand GuideMeCommand  { get; }
+    /// <summary>Advances to the next step (or runs the action on an action step).</summary>
+    public ICommand NextStepCommand { get; }
+    /// <summary>Goes back one step. Disabled at step 0.</summary>
+    public ICommand BackStepCommand { get; }
 
     // ── Public helpers ────────────────────────────────────────────────────────
 
@@ -502,13 +604,157 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
 
     private void ExecuteClose()
     {
-        // Ensure Reveal is deactivated when the pane closes.
+        // Ensure both overlays are deactivated when the pane closes.
         if (_isRevealActive)
             IsRevealActive = false;
+        if (_isGuideActive)
+            EndTour();
 
         IsPaneOpen = false;
         _host.OnPaneClosed();
         PaneCloseRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    // ── Guide Me command implementations ──────────────────────────────────────
+
+    private async Task ExecuteGuideMe()
+    {
+        // Exit if already running
+        if (_isGuideActive)
+        {
+            EndTour();
+            return;
+        }
+
+        var tours = _session.GetWalkthroughTopicsForHost(_host.HostName);
+        if (tours.Count == 0) return;
+
+        HelpTopic topic;
+        WalkthroughScript script;
+        if (tours.Count == 1)
+        {
+            (topic, script) = (tours[0].Topic, tours[0].Script);
+        }
+        else
+        {
+            // Show a SelectDialog on the UI thread for the user to choose
+            var titles  = (IReadOnlyList<string>)[.. tours.Select(t => t.Topic.Title)];
+            int chosen  = await Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                var dlg = new SelectDialog("Guide Me", "Choose a tour:", titles)
+                {
+                    Owner = Window.GetWindow(Application.Current.MainWindow)
+                };
+                return dlg.ShowDialog() == true ? dlg.SelectedIndex : -1;
+            });
+            if (chosen < 0) return;
+            (topic, script) = (tours[chosen].Topic, tours[chosen].Script);
+        }
+
+        StartWalkthrough(topic, script);
+    }
+
+    /// <summary>
+    /// Starts a walkthrough tour from outside the VM (e.g. continuation handoff from
+    /// <see cref="Help.DialogHelpPaneController"/>).
+    /// </summary>
+    internal void StartWalkthrough(HelpTopic topic, WalkthroughScript script)
+    {
+        _activeTour      = script;
+        _activeTourTitle = topic.Title;
+        _stepIndex       = 0;
+        RenderCurrentStep();
+        IsGuideActive = true;
+    }
+
+    private void ExecuteNextStep()
+    {
+        if (_activeTour is null) return;
+
+        var step = _activeTour.Steps.ElementAtOrDefault(_stepIndex);
+        if (step is null) return;
+
+        if (step.IsActionStep)
+        {
+            // Run the action (with walkthrough handoff hint) then end this tour.
+            if (!string.IsNullOrEmpty(step.ActionId))
+            {
+                if (_hardRouter is not null)
+                    _hardRouter.InvokeFromWalkthrough(step.ActionId);
+                else
+                    _actions.Invoke(step.ActionId);
+            }
+            EndTour();
+            return;
+        }
+
+        // Advance to next step
+        _stepIndex++;
+        if (_stepIndex >= _activeTour.Steps.Count)
+        {
+            // Tour complete
+            EndTour();
+            return;
+        }
+
+        RenderCurrentStep();
+        // Notify the overlay to move the spotlight
+        GuideRequested?.Invoke(this, true);
+    }
+
+    private void ExecuteBackStep()
+    {
+        if (_activeTour is null || _stepIndex <= 0) return;
+        _stepIndex--;
+        RenderCurrentStep();
+        GuideRequested?.Invoke(this, true);
+    }
+
+    /// <summary>Renders the current step body into the content subpane.</summary>
+    private void RenderCurrentStep()
+    {
+        var step = _activeTour?.Steps.ElementAtOrDefault(_stepIndex);
+        if (step is null) return;
+
+        // Render the step body as a FlowDocument so links in the body work.
+        CurrentDocument   = string.IsNullOrWhiteSpace(step.Body)
+            ? null
+            : _renderer.Render(step.Body);
+        CurrentTopicTitle = step.Title;
+
+        // Notify all dependent properties
+        OnPropertyChanged(nameof(GuideHeader));
+        OnPropertyChanged(nameof(CurrentStep));
+        OnPropertyChanged(nameof(IsActionStep));
+        OnPropertyChanged(nameof(CurrentStepBody));
+        OnPropertyChanged(nameof(CurrentStepTitle));
+        RelayCommand.RaiseCanExecuteChanged();
+        AsyncRelayCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>Terminates the active tour and restores the pane to normal mode.</summary>
+    private void EndTour()
+    {
+        _activeTour      = null;
+        _activeTourTitle = null;
+        _stepIndex       = 0;
+        IsGuideActive    = false;
+
+        // Navigate back to the host's default topic after the tour ends.
+        var homeTopicId = _host.GetDefaultTopicId();
+        _ = homeTopicId is not null
+            ? ExecuteNavigate(homeTopicId)
+            : ExecuteHome();
+    }
+
+    /// <summary>
+    /// Called by <see cref="Controls.HelpPane"/> when the Esc key deactivates the overlay
+    /// externally (outside the ViewModel command path).
+    /// </summary>
+    internal void NotifyGuideDeactivated()
+    {
+        if (_isGuideActive)
+            EndTour();
     }
 
     private async Task UpdateSearchSuggestionsAsync(string query)

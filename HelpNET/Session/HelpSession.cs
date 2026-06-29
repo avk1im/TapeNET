@@ -206,6 +206,14 @@ public sealed class HelpSession : IHelpSession
                  .AsReadOnly();
 
     /// <inheritdoc/>
+    public IReadOnlyList<(HelpTopic Topic, WalkthroughScript Script)> GetWalkthroughTopicsForHost(string hostName)
+        => _store.GetByHost(hostName)
+                 .Where(t => t.Kind == HelpTopicKind.Walkthrough && t.Walkthrough is not null)
+                 .Select(t => (t, t.Walkthrough!))
+                 .ToList()
+                 .AsReadOnly();
+
+    /// <inheritdoc/>
     public HelpTopic? GetTopicForControl(string hostName, string topicId)
     {
         var topic = _store.GetById(topicId) ?? ResolveParentTopic(topicId);

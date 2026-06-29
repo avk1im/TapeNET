@@ -16,6 +16,26 @@ public sealed class HelpActionRouter : IHelpActionRouter
     private readonly Dictionary<string, (ICommand Command, string? OpensTopicId)>
         _entries = new(StringComparer.OrdinalIgnoreCase);
 
+    // ── Walkthrough continuation hint ─────────────────────────────────────────
+    // When a walkthrough action step fires Invoke(actionId, fromWalkthrough: true)
+    //  this id is stored so the newly-opened dialog can auto-start its own tour.
+    //  The consumer (DialogHelpPaneController) calls ClearWalkthroughHandoff() once it
+    //  has read the value.
+
+    /// <summary>
+    /// The action id of the most-recently-invoked walkthrough action step, or
+    /// <c>null</c> when no pending continuation handoff is set.
+    /// Read and cleared by <see cref="DialogHelpPaneController"/> on the first pane open
+    /// after a walkthrough action step.
+    /// </summary>
+    public string? PendingWalkthroughHandoffActionId { get; private set; }
+
+    /// <summary>Clears the one-shot walkthrough continuation hint.</summary>
+    public void ClearWalkthroughHandoff()
+        => PendingWalkthroughHandoffActionId = null;
+
+    // ── Registration ──────────────────────────────────────────────────────────
+
     /// <summary>
     /// Registers <paramref name="command"/> under the given <paramref name="actionId"/>.
     /// <para>
@@ -28,15 +48,34 @@ public sealed class HelpActionRouter : IHelpActionRouter
     public void Register(string actionId, ICommand command, string? opensTopicId = null)
         => _entries[actionId] = (command, opensTopicId);
 
+    // ── Invocation ────────────────────────────────────────────────────────────
+
     /// <summary>
     /// Invokes the command registered for <paramref name="actionId"/>.
     /// Does nothing silently if the id is not registered or <c>CanExecute</c> is false.
     /// </summary>
     public void Invoke(string actionId)
+        => InvokeCore(actionId, fromWalkthrough: false);
+
+    /// <summary>
+    /// Invokes the command for <paramref name="actionId"/> and, when
+    /// <paramref name="fromWalkthrough"/> is <c>true</c>, stores the id as a
+    /// one-shot continuation hint so the target dialog can auto-start its own tour
+    /// (see <see cref="PendingWalkthroughHandoffActionId"/>).
+    /// </summary>
+    public void InvokeFromWalkthrough(string actionId)
+        => InvokeCore(actionId, fromWalkthrough: true);
+
+    private void InvokeCore(string actionId, bool fromWalkthrough)
     {
+        if (fromWalkthrough)
+            PendingWalkthroughHandoffActionId = actionId;
+
         if (_entries.TryGetValue(actionId, out var e) && e.Command.CanExecute(null))
             e.Command.Execute(null);
     }
+
+    // ── Queries ───────────────────────────────────────────────────────────────
 
     /// <summary>Returns <c>true</c> when a command is registered for <paramref name="actionId"/>.</summary>
     public bool IsRegistered(string actionId) => _entries.ContainsKey(actionId);
