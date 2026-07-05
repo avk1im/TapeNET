@@ -75,6 +75,50 @@ internal abstract class TapeBackupStreamBase(SafeFileHandle handle, ILogger logg
 
     /// <summary>Returns a raw HANDLE suitable for passing to BackupRead/BackupWrite.</summary>
     protected HANDLE RawHandle => (HANDLE)_handle.DangerousGetHandle();
+
+    /// <summary>
+    /// Converts a normal Win32 path into an extended-length NT path (\\?\ or \\?\UNC\).
+    /// <para>This allows CreateFileW to open paths longer than MAX_PATH.</para>
+    /// </summary>
+    public static string NormalizeFullPathWin32(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return path;
+
+        // 1. Already NT-style?
+        if (path.StartsWith(@"\\?\", StringComparison.Ordinal))
+            return path;
+
+        // 2. UNC path?
+        if (path.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            // \\server\share → \\?\UNC\server\share
+            return @"\\?\UNC\" + path[2..];
+        }
+
+        // 3. Absolute local path? (C:\...)
+        if (IsAbsoluteLocalPath(path))
+        {
+            return @"\\?\" + path;
+        }
+
+        // 4. Relative path → expand first
+        string fullPath = Path.GetFullPath(path);
+
+        if (fullPath.StartsWith(@"\\", StringComparison.Ordinal))
+            return @"\\?\UNC\" + fullPath[2..];
+
+        return @"\\?\" + fullPath;
+    }
+
+    private static bool IsAbsoluteLocalPath(string path)
+    {
+        return path.Length >= 3 &&
+               char.IsLetter(path[0]) &&
+               path[1] == ':' &&
+               path[2] == '\\';
+    }
+
 }
 
 /// <summary>
@@ -97,7 +141,7 @@ internal sealed class TapeBackupSourceStream : TapeBackupStreamBase
     public static TapeBackupSourceStream Open(FileInfo fileInfo, ILogger logger)
     {
         var handle = PInvoke.CreateFile(
-            fileInfo.FullName,
+            NormalizeFullPathWin32(fileInfo.FullName),
             (uint)FILE_ACCESS_RIGHTS.FILE_GENERIC_READ | (uint)FILE_ACCESS_RIGHTS.READ_CONTROL,
             // Note: ACCESS_SYSTEM_SECURITY (0x01000000) is intentionally omitted — it requires SeSecurityPrivilege
             //  which is not available in unprivileged processes. SACL will simply be absent from the blob.
@@ -206,7 +250,7 @@ internal sealed class TapeBackupTargetStream : TapeBackupStreamBase
         fileInfo.Directory?.Create();
 
         var handle = PInvoke.CreateFile(
-            fileInfo.FullName,
+            NormalizeFullPathWin32(fileInfo.FullName),
             (uint)FILE_ACCESS_RIGHTS.FILE_GENERIC_WRITE | (uint)FILE_ACCESS_RIGHTS.WRITE_DAC,
             // Note: WRITE_OWNER (requires SeRestorePrivilege) and ACCESS_SYSTEM_SECURITY (requires
             //  SeSecurityPrivilege) are intentionally omitted - not available in unprivileged processes.

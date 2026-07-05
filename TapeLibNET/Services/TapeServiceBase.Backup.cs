@@ -213,10 +213,12 @@ public partial class TapeServiceBase
             var  dataTimer     = new Stopwatch();
             var  tocTimer      = new Stopwatch();
             long dataElapsedUs = 0;
+            long dataIoElapsedUs = 0;
             long tocElapsedUs  = 0;
 
             do
             {
+                _drive.IoTimeCounterUs = 0; // reset I/O time counter for this volume
                 dataTimer.Restart();
                 bool result = agent.CanResumeToNextVolume
                     ? agent.ResumeBackupToNextVolume()
@@ -227,6 +229,7 @@ public partial class TapeServiceBase
                               ignoreFailures: true, progressHandler);
                 dataTimer.Stop();
                 dataElapsedUs += dataTimer.ElapsedMicroseconds;
+                dataIoElapsedUs += _drive.IoTimeCounterUs;
 
                 // The agent catches TapeAbortRequestedException internally and returns false,
                 //  so abort is detected via the flag rather than catching the exception.
@@ -440,9 +443,10 @@ public partial class TapeServiceBase
 
                     // Timing sub-line: elapsed time, data rate, and TOC save time
                     double dataSecs = dataElapsedUs / 1e6;
+                    double dataIoSecs = dataIoElapsedUs / 1e6;
                     double tocSecs  = tocElapsedUs  / 1e6;
                     var timingParts = new List<string>(3) { FormatElapsed(dataSecs) };
-                    string rate = FormatDataRate(agent.BytesBackedup, dataSecs);
+                    string rate = FormatDataIoRate(agent.BytesBackedup, dataIoSecs);
                     if (rate.Length > 0) timingParts.Add(rate);
                     if (tocSecs >= 1.0) timingParts.Add($"TOC save {FormatElapsed(tocSecs)}");
                     LogInfoSub(string.Join(", ", timingParts));
@@ -539,7 +543,7 @@ public partial class TapeServiceBase
                 {
                     $"Before abort: {Helpers.BytesToString(agent.BytesBackedup)} written"
                 };
-                string abortRate = FormatDataRate(agent.BytesBackedup, abortDataSecs);
+                string abortRate = FormatDataIoRate(agent.BytesBackedup, abortDataSecs);
                 if (abortRate.Length > 0) abortParts.Add(abortRate);
                 LogInfoSub(string.Join(", ", abortParts));
                 OnStatusUpdate("Backup aborted");

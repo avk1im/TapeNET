@@ -212,12 +212,15 @@ public partial class TapeServiceBase
             //  user interaction time between volumes is excluded.
             var  dataTimer     = new Stopwatch();
             long dataElapsedUs = 0;
+            long dataIoElapsedUs = 0;
 
+            _drive.IoTimeCounterUs = 0; // reset I/O time counter for this volume
             dataTimer.Start();
             bool success = agent.RestoreFilesFromCurrentSetDown(
                 combined, ignoreFailures: true, progressHandler);
             dataTimer.Stop();
             dataElapsedUs += dataTimer.ElapsedMicroseconds;
+            dataIoElapsedUs += _drive.IoTimeCounterUs;
 
             // The agent catches TapeAbortRequestedException internally and returns false,
             //  so abort is detected via the flag rather than catching the exception.
@@ -295,10 +298,12 @@ public partial class TapeServiceBase
                 OnStatusUpdate($"{modeName} files...");
 
                 // Step 5: Resume restore on the new volume
+                _drive.IoTimeCounterUs = 0; // reset I/O time counter for this volume
                 dataTimer.Restart();
                 success = agent.ResumeRestoreFromAnotherVolume();
                 dataTimer.Stop();
                 dataElapsedUs += dataTimer.ElapsedMicroseconds;
+                dataIoElapsedUs += _drive.IoTimeCounterUs;
                 wasAborted = agent.IsAbortRequested;
             } // while multi-volume continuation
             // ─────────────────────────────────────────────────────────────────
@@ -317,7 +322,7 @@ public partial class TapeServiceBase
                     $"Before abort: {result.FilesSucceeded:N0} succeeded",
                     $"{Helpers.BytesToString(bytesProcessed)} processed"
                 };
-                string abortRate = FormatDataRate(bytesProcessed, abortSecs);
+                string abortRate = FormatDataIoRate(bytesProcessed, abortSecs);
                 if (abortRate.Length > 0) abortParts.Add(abortRate);
                 LogInfoSub(string.Join(", ", abortParts));
                 OnStatusUpdate($"{modeName} aborted");
@@ -360,8 +365,9 @@ public partial class TapeServiceBase
                 LogInfoSub(string.Join(", ", parts));
 
                 double dataSecs = dataElapsedUs / 1e6;
+                double dataIoSecs = dataIoElapsedUs / 1e6;
                 var timingParts = new List<string>(2) { FormatElapsed(dataSecs) };
-                string rate     = FormatDataRate(result.BytesProcessed, dataSecs);
+                string rate     = FormatDataIoRate(result.BytesProcessed, dataIoSecs);
                 if (rate.Length > 0) timingParts.Add(rate);
                 LogInfoSub(string.Join(", ", timingParts));
             }

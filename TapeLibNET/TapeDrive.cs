@@ -4,7 +4,8 @@ using System.Text;
 using Windows.Win32.Foundation;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using TapeLibNET.Remote;
+
+using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
 
 namespace TapeLibNET;
 
@@ -22,6 +23,9 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     private readonly TapeDriveBackend m_backend = backend;
     private DriveCapabilities? m_driveParams = null;
     private MediaParameters? m_mediaParams = null;
+
+    private long m_byteCounter = 0L; // running count of bytes transferred via WriteDirect/ReadDirect
+    private readonly Stopwatch m_IoTimer = new();
 
     // Content partition capacity cache — avoids needing to be on the Content partition
     // to query its capacity. Updated whenever RefreshMediaParams() is called while on Content.
@@ -179,7 +183,18 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     }
 
     /// <summary>Running count of bytes transferred via <see cref="WriteDirect"/>/<see cref="ReadDirect"/>. Reset by the stream manager.</summary>
-    public long ByteCounter { get; internal set; } = 0L;
+    public long ByteCounter {
+        get => m_byteCounter;
+        internal set
+        {
+            if (value == 0)
+                IoTimeCounterUs = 0L; // reset I/O time counter when byte counter is reset
+            m_byteCounter = value;
+        }
+    }
+
+    /// <summary>Running count of microseconds spent in I/O operations via <see cref="WriteDirect"/>/<see cref="ReadDirect"/>.</summary>
+    public long IoTimeCounterUs { get; internal set; } = 0L;
 
     /// <summary>Logger factory shared with the backend.</summary>
     public ILoggerFactory LoggerFactory => m_backend.LoggerFactory;
@@ -257,7 +272,10 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         if (toWrite == 0)
             return 0;
 
+        m_IoTimer.Restart();
         int written = m_backend.Write(buffer, offset, toWrite, out tapemark, out eof);
+        m_IoTimer.Stop();
+        IoTimeCounterUs += m_IoTimer.ElapsedMicroseconds;
         SyncErrorFrom(m_backend);
 
         if (WentBad)
@@ -270,7 +288,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
                 LogErrorAsDebug("Write failed");
         }
 
-        ByteCounter += written;
+        m_byteCounter += written;
         return written;
     }
 
@@ -288,7 +306,10 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         if (toRead == 0)
             return 0;
 
+        m_IoTimer.Restart();
         int read = m_backend.Read(buffer, offset, toRead, out tapemark, out eof);
+        m_IoTimer.Stop();
+        IoTimeCounterUs += m_IoTimer.ElapsedMicroseconds;
         SyncErrorFrom(m_backend);
 
         if (WentBad)
@@ -304,7 +325,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
                 LogErrorAsDebug("Read failed");
         }
 
-        ByteCounter += read;
+        m_byteCounter += read;
         return read;
     }
 

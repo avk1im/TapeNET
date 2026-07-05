@@ -1324,7 +1324,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// Formats a data rate as <c>"X.XX MB/s"</c>; returns an empty string
     ///  when the duration is too short or no bytes were processed.
     /// </summary>
-    public static string FormatDataRate(long bytes, double totalSeconds)
+    public static string FormatDataIoRate(long bytes, double totalSeconds)
     {
         if (totalSeconds < 0.001 || bytes <= 0) return string.Empty;
         long bytesPerSecond = (long)(bytes / totalSeconds);
