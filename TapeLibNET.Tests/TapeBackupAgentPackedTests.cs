@@ -1,4 +1,4 @@
-﻿using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
 
@@ -256,7 +256,7 @@ public class TapeBackupAgentPackedTests
     #endregion
 
 
-    #region *** Multiple Sets — Sequential Packed Backup ***
+    #region *** Multiple Sets � Sequential Packed Backup ***
 
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -313,7 +313,7 @@ public class TapeBackupAgentPackedTests
         Assert.Equal(tree.Files.Count, finalStats.FilesSucceeded);
         Assert.Equal(0, finalStats.FilesFailed);
         Assert.Equal(0, finalStats.FilesSkipped);
-        Assert.True(finalStats.BytesProcessed > 0);
+        Assert.True(finalStats.FileBytesProcessed > 0);
     }
 
     [Theory]

@@ -51,6 +51,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
         if ((change & ServiceStateChange.OperationStarted) != 0)
         {
             _stopwatch.Restart();
+            ResetIOProgressTracking();
             _dispatcher.Invoke(_viewModel.RaiseResetSparkline);
         }
 
@@ -68,16 +69,16 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
     /// Updates the restore progress indicators on the bound <see cref="MainViewModel"/>.
     /// Safe to call from any thread — marshals to the UI dispatcher internally.
     /// </summary>
-    public void UpdateRestoreProgress(int processed, int total, long bytes, string? currentFile)
+    public void UpdateRestoreProgress(int processed, int total, long bytes, long totalBytes, string? currentFile)
     {
         _dispatcher.Invoke(() =>
         {
             if (currentFile is not null)
                 _viewModel.CurrentRestoreFile = System.IO.Path.GetFileName(currentFile);
-            _viewModel.RestoreProgressPercent = total > 0 ? (int)(100.0 * processed / total) : 0;
-            _viewModel.RestoreProgressText    = $"{processed:N0} / {total:N0} files ({Helpers.BytesToString(bytes)})";
-            
-            UpdateIOProgress(processed, total, bytes);
+            double progress = UpdateIOProgress(processed, total, bytes, totalBytes);
+            _viewModel.RestoreProgressPercent = Math.Clamp(progress * 100.0, 0.0, 100.0);
+            _viewModel.RestoreProgressText    = $"{processed:N0} file(s) of {total:N0} "
+                + $"({Helpers.BytesToStringLong(bytes)} of {Helpers.BytesToStringLong(totalBytes)})";
         });
     }
 
@@ -85,16 +86,16 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
     /// Updates the backup progress indicators on the bound <see cref="MainViewModel"/>.
     /// Safe to call from any thread — marshals to the UI dispatcher internally.
     /// </summary>
-    public void UpdateBackupProgress(int processed, int total, long bytes, string? currentFile)
+    public void UpdateBackupProgress(int processed, int total, long bytes, long totalBytes, string? currentFile)
     {
         _dispatcher.Invoke(() =>
         {
             if (currentFile is not null)
                 _viewModel.CurrentBackupFile = System.IO.Path.GetFileName(currentFile);
-            _viewModel.BackupProgressPercent = total > 0 ? (int)(100.0 * processed / total) : 0;
-            _viewModel.BackupProgressText    = $"{processed:N0} / {total:N0} files ({Helpers.BytesToString(bytes)})";
-
-            UpdateIOProgress(processed, total, bytes);
+            double progress = UpdateIOProgress(processed, total, bytes, totalBytes);
+            _viewModel.BackupProgressPercent = Math.Clamp(progress * 100.0, 0.0, 100.0);
+            _viewModel.BackupProgressText    = $"{processed:N0} file(s) of {total:N0} files "
+                + $"({Helpers.BytesToStringLong(bytes)} of {Helpers.BytesToStringLong(totalBytes)})";
         });
     }
 
@@ -112,29 +113,114 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
         return ts.ToString(format, CultureInfo.CurrentCulture);
     }
 
-    private void UpdateIOProgress(int processed, int total, long bytes)
+    // Tracking fields for rolling EMA window and monotonic progress
+    private long _lastBytesProcessed = 0L;
+    private int _lastFilesProcessed = 0;
+    private double _smoothedAvgFileSize = 0.0;
+    private double _lastReportedProgress = 0.0;
+
+    private void ResetIOProgressTracking()
+    {
+        _lastBytesProcessed = 0;
+        _lastFilesProcessed = 0;
+        _smoothedAvgFileSize = 0.0;
+        _lastReportedProgress = 0.0;
+    }
+
+    private static double CalculateDynamicByteWeight(double avgFileBytes, long totalBytes)
+    {
+        // 1. If totalBytes is unknown, file count is our only reliable anchor
+        if (totalBytes <= 0)
+            return 0.0;
+
+        // 2. Default to balanced weight if no average size is available yet
+        if (avgFileBytes <= 0)
+            return 0.50;
+
+        // Thresholds & corresponding weights
+        const double minAvgBytes = 10_000.0;      // 10 KB
+        const double maxAvgBytes = 50_000_000.0;  // 50 MB
+        const double minWeight = 0.50;
+        const double maxWeight = 0.95;
+
+        // 3. Clamp boundary extremes early
+        if (avgFileBytes <= minAvgBytes) return minWeight;
+        if (avgFileBytes >= maxAvgBytes) return maxWeight;
+
+        // 4. Log-linear interpolation between 10 KB and 50 MB
+        double logMin = Math.Log(minAvgBytes);
+        double logMax = Math.Log(maxAvgBytes);
+        double logCurrent = Math.Log(avgFileBytes);
+
+        // 5. Compute ratio [0.0 ... 1.0] in log-space
+        double t = (logCurrent - logMin) / (logMax - logMin);
+
+        // 6. Linearly interpolate weight using t
+        return minWeight + (t * (maxWeight - minWeight));
+    }
+
+    private double UpdateIOProgress(int processed, int total, long bytes, long totalBytes)
     {
         double elapsed = _stopwatch.IsRunning ? _stopwatch.ElapsedSeconds : 0.0;
-        double rate = elapsed > 0.001 ? bytes / elapsed : 0.0;
+
+        // Compute overall throughput rate
+        double rate = elapsed > 0.1 ? bytes / elapsed : 0.0;
         _viewModel.IOProgressRate = rate;
 
-        var elapsedTime = TimeSpan.FromSeconds(elapsed);
+        TimeSpan elapsedTime = TimeSpan.FromSeconds(elapsed);
         string progressText = $"Elapsed: {FormatTimeSpan(elapsedTime)}";
 
-        if (processed > 0)
+        // 1. Compute rolling average file size for the latest batch tick
+        long deltaBytes = bytes - _lastBytesProcessed;
+        int deltaFiles = processed - _lastFilesProcessed;
+
+        _lastBytesProcessed = bytes;
+        _lastFilesProcessed = processed;
+
+        if (deltaFiles > 0 && deltaBytes > 0)
         {
-            // Estimate time to completion (ETA) based processed vs. total files
-            //  Notice we do  not (yet) pass the total bytes to process - do not scan all files in advance
-            int remaining = total - processed;
-            double remainingSeconds = (remaining * elapsed) / processed;
-            var remainingTime = TimeSpan.FromSeconds(remainingSeconds);
+            double batchAvgSize = (double)deltaBytes / deltaFiles;
+
+            // Apply Exponential Moving Average (EMA)
+            // alpha = 0.2 gives ~80% weight to history and 20% to the current tick sample
+            const double alpha = 0.2;
+            _smoothedAvgFileSize = _smoothedAvgFileSize <= 0.0
+                ? batchAvgSize
+                : (alpha * batchAvgSize) + ((1.0 - alpha) * _smoothedAvgFileSize);
+        }
+
+        // 2. Compute individual progress ratios (0.0 to 1.0)
+        double fileProgress = total > 0 ? (double)processed / total : 0.0;
+        double byteProgress = totalBytes > 0 ? (double)bytes / totalBytes : fileProgress;
+
+        // 3. Compute dynamic byte weight using the rolling smoothed average file size
+        double byteWeight = CalculateDynamicByteWeight(_smoothedAvgFileSize, totalBytes);
+
+        // 4. Blended combination
+        double rawCombined = (byteProgress * byteWeight) + (fileProgress * (1.0 - byteWeight));
+
+        // Monotonic enforcement: Ensure progress ONLY moves forward
+        double combinedProgress = Math.Clamp(Math.Max(_lastReportedProgress, rawCombined), 0.0, 1.0);
+        _lastReportedProgress = combinedProgress;
+
+        // 5. Compute overall ETA based on monotonic combined progress
+        if (combinedProgress > 0.001 && combinedProgress < 1.0)
+        {
+            double estimatedTotalSeconds = elapsed / combinedProgress;
+            double remainingSeconds = Math.Max(0.0, estimatedTotalSeconds - elapsed);
+
+            TimeSpan remainingTime = TimeSpan.FromSeconds(remainingSeconds);
             progressText += $", est. remaining: {FormatTimeSpan(remainingTime)}";
         }
 
         if (rate > 0)
+        {
             progressText += $", {Helpers.BytesToString((long)rate)}/s";
+        }
 
         _viewModel.IOProgressText = progressText;
+
+        return combinedProgress;
     }
 
     // ── ITapeServiceHost — Prompts ───────────────────────────────────────────────
@@ -413,7 +499,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
 
     /// <inheritdoc/>
     public bool OnVolumeFullConfirm(int currentVolume, int nextVolume,
-        int filesProcessed, int totalFiles, long bytesBackedup)
+        int filesProcessed, int totalFiles, long bytesBackedup, long totalBytes)
     {
         bool result = false;
         _dispatcher.Invoke(() =>
@@ -421,8 +507,8 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
             var dialog = new MediaChangeDialog(
                 "Volume Full",
                 $"Volume #{currentVolume} is full.\n" +
-                $"Backed up {filesProcessed:N0} of {totalFiles:N0} files " +
-                $"({Helpers.BytesToString(bytesBackedup)}) so far.",
+                $"Backed up {filesProcessed:N0} of {totalFiles:N0} files\n" +
+                $"({Helpers.BytesToStringLong(bytesBackedup)} of {Helpers.BytesToStringLong(totalBytes)}) so far.",
                 "Click Continue to eject this volume and continue the backup on a new media volume.",
                 "Continue to Next Volume")
             {

@@ -118,7 +118,7 @@ public class BackupSourceSetView
     {
         var ff = FilteredFiles;
         if (ff.CheckedCount > 0 && ff.CheckedCount < ff.SourceCount)
-            _savedCheckedItems = new HashSet<TapeFileInfo>(ff.CheckedItems);
+            _savedCheckedItems = [.. ff.CheckedItems];
     }
 
     /// <summary>

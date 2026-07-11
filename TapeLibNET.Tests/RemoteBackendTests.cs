@@ -1,4 +1,4 @@
-ï»¿using TapeLibNET.Remote;
+using TapeLibNET.Remote;
 using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
@@ -10,7 +10,7 @@ namespace TapeLibNET.Tests;
 /// <para>
 /// All tests share a single gRPC server via an <see cref="ITapeServiceFixture"/>
 /// (collection fixture). Each test creates its own <see cref="RemoteVirtualTapeFixture"/>
-/// for full isolation â€” the server replaces its backend on each <c>OpenVirtual</c> call.
+/// for full isolation — the server replaces its backend on each <c>OpenVirtual</c> call.
 /// </para>
 /// These tests mirror a curated subset of <see cref="VirtualDriveBasicTests"/>,
 /// <see cref="TapeBackupAgentTests"/>, and <see cref="TapeTOCRoundTripTests"/> to
@@ -316,14 +316,14 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
 
         var drives = backend.ProbeDrives();
 
-        // Result is always a valid list â€” empty when no physical drives are present.
+        // Result is always a valid list — empty when no physical drives are present.
         Assert.NotNull(drives);
     }
 
     [SkippableFact]
     public void ProbeDrives_MaxDriveZero_ProbesOnlyDriveZero()
     {
-        // When maxDrive = 0, only drive 0 is probed â€” result has 0 or 1 entries.
+        // When maxDrive = 0, only drive 0 is probed — result has 0 or 1 entries.
         EnsureServiceAvailable();
         using var backend = new RemoteTapeDriveBackend(_service.Channel,
             Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
@@ -576,7 +576,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
     [SkippableFact]
     public async Task OpenAsync_Win32Drive_OpensAndClosesCleanly()
     {
-        // Win32 drives may not be present â€” a "not found" error from the server is fine;
+        // Win32 drives may not be present — a "not found" error from the server is fine;
         // we only verify the async path completes without deadlock and without throwing
         // on connection-level problems.
         EnsureServiceAvailable();
@@ -585,7 +585,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
 
         bool ok = await backend.OpenAsync(0).ConfigureAwait(false);
         // On a machine with no physical tape drive the server returns false; that is
-        // acceptable â€” the goal is no hang / no exception.
+        // acceptable — the goal is no hang / no exception.
         Assert.False(backend.IsOpen != ok,
             "IsOpen must match the return value of OpenAsync");
         if (ok)
@@ -614,7 +614,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
 
         await backend.CloseAsync().ConfigureAwait(false);
         // Note: IsOpen reflects cached server state; the Close response carries no State,
-        // so the cache is not updated â€” consistent with the sync Close behaviour.
+        // so the cache is not updated — consistent with the sync Close behaviour.
     }
 
     [SkippableFact]
@@ -699,7 +699,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         var stats = fixture.BackupFiles(tree.Files, description: "Remote Single File");
 
         Assert.Equal(1, stats.FilesSucceeded);
-        Assert.True(stats.BytesProcessed > 0);
+        Assert.True(stats.FileBytesProcessed > 0);
 
         // Restore to a separate directory and verify
         using var restoreDir = new TempFileTree();
@@ -813,7 +813,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         using var backend = new RemoteTapeDriveBackend(_service.Channel,
             Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
 
-        // Volume 1 â”€ file-backed temp drive
+        // Volume 1 - file-backed temp drive
         bool ok1 = backend.CreateTempVirtual(capacityBytes: 10L * 1024 * 1024, name: "vol01");
         Assert.True(ok1, "CreateTempVirtual vol01 failed");
 
@@ -826,7 +826,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         var block = new byte[drive.BlockSize];
         drive.WriteDirect(block, 0, block.Length, out _, out _);
 
-        // Volume 2 â”€ swap via InsertMediaAsync
+        // Volume 2 - swap via InsertMediaAsync
         bool ok2 = await backend.InsertMediaAsync(
             contentFilePath: "vol02",
             contentCapacity: 10L * 1024 * 1024,
@@ -957,7 +957,7 @@ public class LocalHostBackendTests(LocalHostTapeServiceFixture service)
 /// <para>
 /// Resource-intensive: requires external gRPC server configuration.
 /// Excluded from routine runs via <c>FullyQualifiedName!~RemoteHostBackendTests</c> in
-/// <c>TapeNET.runsettings</c> â€” trait-based filtering does not work here because test
+/// <c>TapeNET.runsettings</c> — trait-based filtering does not work here because test
 /// methods are inherited from <see cref="RemoteBackendTestsBase"/>, and xUnit applies
 /// traits from the declaring (base) class, not the concrete subclass.
 /// </para>

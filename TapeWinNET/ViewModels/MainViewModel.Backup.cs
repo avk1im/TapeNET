@@ -18,7 +18,7 @@ public partial class MainViewModel
     #region Backup Fields
 
     // Backup progress properties
-    private int _backupProgressPercent;
+    private double _backupProgressPercent;
     private string _backupProgressText = string.Empty;
     private string _currentBackupFile = string.Empty;
 
@@ -29,7 +29,7 @@ public partial class MainViewModel
 
     #region Backup Properties
 
-    public int BackupProgressPercent
+    public double BackupProgressPercent
     {
         get => _backupProgressPercent;
         set => SetProperty(ref _backupProgressPercent, value);

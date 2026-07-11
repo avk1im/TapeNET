@@ -57,7 +57,7 @@ public sealed class CatalogDrivenRemoteServiceHost(
     /// <inheritdoc/>
     /// <remarks>Always agrees — the actual swap happens in <see cref="OnInsertNewMediaConfirm"/>.</remarks>
     public override bool OnVolumeFullConfirm(int currentVolume, int nextVolume,
-        int filesProcessed, int totalFiles, long bytesBackedup)
+        int filesProcessed, int totalFiles, long bytesBackedup, long totalBytes)
         => true;
 
     /// <inheritdoc/>

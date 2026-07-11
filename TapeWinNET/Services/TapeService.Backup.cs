@@ -40,7 +40,7 @@ public partial class TapeService
         : ServiceBackupProgressHandler(host, agent, skipAllErrors, filter)
     {
         protected override void ReportProgress(in TapeFileStatistics stats, string? currentFile = null)
-            => host.UpdateBackupProgress(stats.FilesProcessed, stats.FilesTotal, stats.BytesProcessed, currentFile);
+            => host.UpdateBackupProgress(stats.FilesProcessed, stats.FilesTotal, stats.FileBytesProcessed, stats.BytesTotal, currentFile);
     }
 
     #endregion

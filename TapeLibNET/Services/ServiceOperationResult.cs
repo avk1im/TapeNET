@@ -52,6 +52,9 @@ public abstract record FileOperationResult : ServiceOperationResult
 {
     /// <summary>Total number of files selected for the operation.</summary>
     public int FilesTotal { get; init; }
+    
+    /// <summary>Total logical bytes expected for the entire operation (sum of all file lengths).</summary>
+    public long BytesTotal { get; init; }
 
     /// <summary>Files that completed without error.</summary>
     public int FilesSucceeded { get; init; }

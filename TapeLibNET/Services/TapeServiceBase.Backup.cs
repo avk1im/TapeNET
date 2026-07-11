@@ -67,6 +67,7 @@ public partial class TapeServiceBase
         BackupResult MakeResult(bool aborted = false, bool failed = false) => new()
         {
             FilesTotal     = progressHandler?.FilesTotal ?? 0,
+            BytesTotal     = progressHandler?.BytesTotal ?? 0,
             FilesProcessed = progressHandler?.FilesProcessed ?? 0,
             FilesSucceeded = progressHandler?.FilesSucceeded ?? 0,
             FilesFailed    = progressHandler?.FilesFailed ?? 0,
@@ -470,7 +471,8 @@ public partial class TapeServiceBase
 
                 // Step 1: Ask user if they want to continue on a new volume
                 if (!_host.OnVolumeFullConfirm(toc.Volume, toc.Volume + 1,
-                        progressHandler.FilesProcessed, progressHandler.FilesTotal, agent.BytesBackedup))
+                        progressHandler.FilesProcessed, progressHandler.FilesTotal,
+                        progressHandler.BytesProcessed, progressHandler.BytesTotal))
                 {
                     LogInfo("User chose to end multi-volume backup");
                     break;
@@ -541,9 +543,9 @@ public partial class TapeServiceBase
                 double abortDataSecs = dataElapsedUs / 1e6;
                 var abortParts = new List<string>(3)
                 {
-                    $"Before abort: {Helpers.BytesToString(agent.BytesBackedup)} written"
+                    $"Before abort: {Helpers.BytesToString(progressHandler.BytesProcessed)} written"
                 };
-                string abortRate = FormatDataIoRate(agent.BytesBackedup, abortDataSecs);
+                string abortRate = FormatDataIoRate(progressHandler.BytesProcessed, abortDataSecs);
                 if (abortRate.Length > 0) abortParts.Add(abortRate);
                 LogInfoSub(string.Join(", ", abortParts));
                 OnStatusUpdate("Backup aborted");

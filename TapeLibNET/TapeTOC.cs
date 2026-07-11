@@ -538,6 +538,12 @@ namespace TapeLibNET
 
             return filesSelected; // don't use "null means all files" shortcut since the list might need editing
         }
+
+        /// <summary>
+        /// Returns the total source size of all files in the set -- NOT the size on tape.
+        /// </summary>
+        public long TotalFileSize => m_tapeFileInfos.Sum(tfi => tfi.FileDescr.Length);
+
         /// <summary>
         /// Estimates the tape footprint of a single file under the legacy block-aligned
         ///  layout: file data + serialized header, rounded up to the next block boundary.
@@ -1021,8 +1027,11 @@ namespace TapeLibNET
         /// Considering incremental sets, select files from the current and previous set(s)
         /// that pass the given filter. A <c>null</c> filter means consider all files.
         /// Returns an array of lists from newest to oldest set in the incremental chain.
-        /// A <c>null</c> list entry means all files from the corresponding set.
         /// </summary>
+        /// <returns>
+        /// An array of lists of <see cref="TapeFileInfo"/> objects, from current (newest) to oldest set in the incremental chain.
+        /// <para>A <c>null</c> list entry means all files from the corresponding set.</para>
+        /// </returns>
         public List<TapeFileInfo>?[] SelectFiles(bool incremental, ITapeFileFilter? filter)
         {
             if (!incremental || !CurrentSetTOC.Incremental) // non-incremental case
@@ -1231,30 +1240,55 @@ namespace TapeLibNET
         /// Returns per-set file counts from a pre-assembled <paramref name="combined"/> selection
         ///  array (as produced by <see cref="SelectFilesFromSets"/>), plus the overall total.
         ///  A <c>null</c> entry in <paramref name="combined"/> means "all files in set", so the
-        ///  count comes from the corresponding <see cref="SetTOC"/>.
+        ///  file count and size come from the corresponding <see cref="SetTOC"/>.
         /// </summary>
         /// <param name="combined">Selection array (index 0 = newest set, running down to oldest).</param>
         /// <param name="newestSetIndex">Standard 1-based index of the newest set (slot 0).</param>
         /// <returns>
-        /// A tuple of (<c>totalFiles</c>, <c>perSet</c>) where <c>perSet</c> maps standard
-        ///  set index → number of files targeted for that set. Sets with zero files are omitted.
+        /// A tuple of (<c>totalFiles</c>, <c>totalBytes</c>, <c>perSet</c>) where <c>perSet</c> maps standard
+        ///  set index → (number of files, total bytes) targeted for that set. Sets with zero files are omitted.
         /// </returns>
-        public (int totalFiles, Dictionary<int, int> perSet) GetFileCounts(
+        public (int totalFiles, long totalBytes, Dictionary<int, (int, long)> perSet) GetFileCounts(
             List<TapeFileInfo>?[] combined, int newestSetIndex)
         {
-            var perSet = new Dictionary<int, int>();
+            var perSet = new Dictionary<int, (int, long)>();
             int total = 0;
+            long totalBytes = 0;
 
             for (int i = 0; i < combined.Length; i++)
             {
                 int setIndex = newestSetIndex - i;
                 int count = combined[i]?.Count ?? this[setIndex].Count;
+                long bytes = combined[i]?.Sum(f => f.FileDescr.Length) ?? this[setIndex].TotalFileSize;
                 if (count > 0)
-                    perSet[setIndex] = count;
+                    perSet[setIndex] = (count, bytes);
                 total += count;
+
+                totalBytes += bytes;
             }
 
-            return (total, perSet);
+            return (total, totalBytes, perSet);
+        }
+
+        /// <summary>
+        /// Returns the total file size in bytes from a pre-assembled <paramref name="combined"/> selection
+        ///  array (as produced by <see cref="SelectFilesFromSets"/>), plus the overall total.
+        ///  A <c>null</c> entry in <paramref name="combined"/> means "all files in set", so the
+        ///  file size comes from the corresponding <see cref="SetTOC"/>.
+        /// </summary>
+        /// <param name="combined">Selection array (index 0 = newest set, running down to oldest).</param>
+        /// <param name="newestSetIndex">Standard 1-based index of the newest set (slot 0).</param>
+        /// <returns>Total file size in bytes.</returns>
+        public long GetTotalFileSize(List<TapeFileInfo>?[] combined, int newestSetIndex)
+        {
+            long totalBytes = 0;
+            for (int i = 0; i < combined.Length; i++)
+            {
+                int setIndex = newestSetIndex - i;
+                long bytes = combined[i]?.Sum(f => f.FileDescr.Length) ?? this[setIndex].TotalFileSize;
+                totalBytes += bytes;
+            }
+            return totalBytes;
         }
 
         /// <summary>
@@ -1349,8 +1383,12 @@ namespace TapeLibNET
             return (picked is not null && picked.Count == setTOC.Count) ? null : picked;
         }
 
-        // Compute total file size on tape -- considering block sizes per set
-        // onVolumeOnly : if true, only compute for sets on the current volume; otherwise, compute for all sets
+        /// <summary>
+        /// Computes the total file size on tape for all sets considering block sizes per set, optionally restricted to the current volume.
+        /// </summary>
+        /// <param name="defaultBlockSize">The default block size to use if a set does not specify one.</param>
+        /// <param name="onVolumeOnly">If true, only compute for sets on the current volume; otherwise, compute for all sets.</param>
+        /// <returns>The total file size on tape.</returns>
         public long ComputeTotalFileSizeOnTape(uint defaultBlockSize = 0, bool onVolumeOnly = true)
         {
             if (Count == 0)

@@ -31,12 +31,46 @@ namespace TapeLibNET
         private ProbingCompressionStream.Session GetOrCreateCompressionSession()
             => _compressionSession ??= new ProbingCompressionStream.Session();
 
+        // ── Background total-size estimation ──────────────────────────────────
+        //  Source files can be scanned (stat'd) concurrently with the backup itself,
+        //  progressively growing Statistics.BytesTotal as the scan proceeds. Restore
+        //  doesn't need this since all file sizes are already known upfront from the TOC.
+        private FileSizeAggregator? _sizeAggregator;
+
+        /// <summary>
+        /// Starts (or restarts) a background estimate of the total logical size of <paramref name="files"/>,
+        ///  progressively refreshed into <see cref="TapeFileStatistics.BytesTotal"/> — see
+        ///  <see cref="RefreshBytesTotalEstimate"/>.
+        /// </summary>
+        protected void StartBackgroundSizeEstimate(IEnumerable<string?> files)
+        {
+            _sizeAggregator?.Dispose();
+            _sizeAggregator = new FileSizeAggregator(files);
+            _sizeAggregator.Start();
+        }
+
+        /// <summary>Stops and releases any active background size estimate.</summary>
+        protected void StopBackgroundSizeEstimate()
+        {
+            _sizeAggregator?.Dispose();
+            _sizeAggregator = null;
+        }
+
+        /// <inheritdoc/>
+        protected override void RefreshBytesTotalEstimate()
+        {
+            if (_sizeAggregator != null)
+                _stats.BytesTotal = _sizeAggregator.TotalSize;
+        }
+
         protected override void Dispose(bool disposing)
         {
             if (!IsDisposed && disposing)
             {
                 _compressionSession?.Dispose();
                 _compressionSession = null;
+                _sizeAggregator?.Dispose();
+                _sizeAggregator = null;
             }
             base.Dispose(disposing);
         }
@@ -1001,6 +1035,9 @@ namespace TapeLibNET
             }
 
             _stats.Reset();
+            // Background estimation: source files can be scanned (stat'd) concurrently with the
+            //  backup itself, progressively growing Statistics.BytesTotal as the scan proceeds.
+            StartBackgroundSizeEstimate(fileList);
             NotifyBatchStart(fileNotify, fileList.Count);
 
             m_logger.LogTrace("Starting backing up (packed) {Count} files to current set #{Set}",
@@ -1010,8 +1047,15 @@ namespace TapeLibNET
 
             MultiVolumeContext = new(fileList, ignoreFailures, fileNotify, TOC.CurrentSetTOC.Incremental, packed: true);
 
-            return BackupFilesToCurrentSet(newSet)
+            var result = BackupFilesToCurrentSet(newSet)
                 ? TapeResult.OK : TapeResult.Fail(this);
+
+            // Only stop the estimate once the operation is truly done (not just paused for a
+            //  multi-volume media swap) — ResumeBackupToNextVolume continues the same fileList.
+            if (!CanResumeToNextVolume)
+                StopBackgroundSizeEstimate();
+
+            return result;
         }
 
     } // class TapeFileBackupAgent

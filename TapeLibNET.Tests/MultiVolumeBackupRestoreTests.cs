@@ -410,7 +410,7 @@ public class MultiVolumeBackupRestoreTests
             backupStats.FilesSucceeded + backupStats.FilesFailed + backupStats.FilesSkipped);
         Assert.Equal(FileCount, backupStats.FilesSucceeded);
         Assert.Equal(0, backupStats.FilesFailed);
-        Assert.True(backupStats.BytesProcessed > 0, "BytesProcessed should be > 0");
+        Assert.True(backupStats.FileBytesProcessed > 0, "BytesProcessed should be > 0");
 
         // Restore statistics
         string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_MVStats_{Guid.NewGuid():N}");
@@ -427,7 +427,7 @@ public class MultiVolumeBackupRestoreTests
                 restoreStats.FilesSucceeded + restoreStats.FilesFailed + restoreStats.FilesSkipped);
             Assert.Equal(FileCount, restoreStats.FilesSucceeded);
             Assert.Equal(0, restoreStats.FilesFailed);
-            Assert.True(restoreStats.BytesProcessed > 0);
+            Assert.True(restoreStats.FileBytesProcessed > 0);
 
             // Callback counts
             Assert.True(restoreNotifiable.BatchStarts.Count >= 1,

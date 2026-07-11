@@ -18,7 +18,7 @@ public partial class MainViewModel
 {
     #region Restore Fields
 
-    private int _restoreProgressPercent;
+    private double _restoreProgressPercent;
     private string _restoreProgressText = string.Empty;
     private string _currentRestoreFile = string.Empty;
     private bool _isRestoreInProgress;
@@ -56,7 +56,7 @@ public partial class MainViewModel
         }
     }
 
-    public int RestoreProgressPercent
+    public double RestoreProgressPercent
     {
         get => _restoreProgressPercent;
         set => SetProperty(ref _restoreProgressPercent, value);

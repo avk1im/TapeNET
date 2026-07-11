@@ -43,6 +43,8 @@ public abstract class ServiceOperationProgressHandler(
 
     /// <summary>Total files expected for the entire operation.</summary>
     public int FilesTotal { get; private set; }
+    /// <summary>Total logical bytes expected for the entire operation (sum of all file lengths). Can be updated progressively.</summary>
+    public long BytesTotal { get; private set; }
     /// <summary>Files finished (succeeded + failed + skipped).</summary>
     public int FilesProcessed { get; private set; }
     /// <summary>Files completed without error.</summary>
@@ -65,11 +67,12 @@ public abstract class ServiceOperationProgressHandler(
     protected void Sync(in TapeFileStatistics stats)
     {
         FilesTotal     = stats.FilesTotal;
+        BytesTotal     = stats.BytesTotal;
         FilesProcessed = stats.FilesProcessed;
         FilesSucceeded = stats.FilesSucceeded;
         FilesFailed    = stats.FilesFailed;
         FilesSkipped   = stats.FilesSkipped;
-        BytesProcessed = stats.BytesProcessed;
+        BytesProcessed = stats.FileBytesProcessed;
     }
 
     /// <summary>Reports current progress to the host. Override to add custom progress display.</summary>
@@ -276,6 +279,7 @@ public class ServiceRestoreProgressHandler(
     public RestoreResult GenerateResult() => new()
     {
         FilesTotal     = FilesTotal,
+        BytesTotal     = BytesTotal,
         FilesProcessed = FilesProcessed,
         FilesSucceeded = FilesSucceeded,
         FilesFailed    = FilesFailed,

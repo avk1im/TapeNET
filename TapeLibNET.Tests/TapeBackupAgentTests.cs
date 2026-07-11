@@ -387,7 +387,7 @@ public class TapeBackupAgentTests
         Assert.Equal(tree.Files.Count, finalStats.FilesSucceeded);
         Assert.Equal(0, finalStats.FilesFailed);
         Assert.Equal(0, finalStats.FilesSkipped);
-        Assert.True(finalStats.BytesProcessed > 0);
+        Assert.True(finalStats.FileBytesProcessed > 0);
     }
 
     [Theory]

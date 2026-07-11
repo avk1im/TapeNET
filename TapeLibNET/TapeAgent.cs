@@ -84,6 +84,13 @@ public struct TapeFileStatistics
 {
     /// <summary>Total files expected for the entire operation (across all batches/volumes).</summary>
     public int FilesTotal;
+    /// <summary>
+    /// Total logical (actual file-length) bytes estimated for the entire operation
+    ///  (across all batches/volumes). May keep growing as the operation progresses
+    ///  — see the background size estimation started by <c>TapeFileBackupAgent</c>/
+    ///  <c>TapeFileRestoreBaseAgent</c>.
+    /// </summary>
+    public long BytesTotal;
     /// <summary>Files finished (succeeded + failed + skipped). Retried files are counted once.</summary>
     public int FilesProcessed;
     /// <summary>Files completed without error.</summary>
@@ -92,8 +99,18 @@ public struct TapeFileStatistics
     public int FilesFailed;
     /// <summary>Files skipped (by pre-processor, incremental, or user choice).</summary>
     public int FilesSkipped;
-    /// <summary>Total logical bytes of succeeded files.</summary>
-    public long BytesProcessed;
+    /// <summary>
+    /// Total logical (actual file-length) bytes of succeeded files. Comparable to
+    ///  <see cref="BytesTotal"/> for computing a logical-size-based completion share.
+    /// </summary>
+    public long FileBytesProcessed;
+    /// <summary>
+    /// Total on-tape footprint (header + body, after any software compression) of succeeded
+    ///  files, as recorded via <see cref="TapeFileInfo.SizeOnTape"/>. This can diverge from
+    ///  <see cref="FileBytesProcessed"/> when software compression is in effect — it never
+    ///  reflects hardware tape-drive compression, which isn't observable above the drive I/O.
+    /// </summary>
+    public long BytesOnTapeProcessed;
 
     /// <summary>Reset all counters to zero.</summary>
     public void Reset() => this = default;
@@ -105,12 +122,14 @@ public struct TapeFileStatistics
     /// </summary>
     public readonly TapeFileStatistics Delta(in TapeFileStatistics baseline) => new()
     {
-        FilesTotal = FilesTotal - baseline.FilesTotal,
+        FilesTotal = FilesTotal,
+        BytesTotal = BytesTotal,
         FilesProcessed = FilesProcessed - baseline.FilesProcessed,
         FilesSucceeded = FilesSucceeded - baseline.FilesSucceeded,
         FilesFailed = FilesFailed - baseline.FilesFailed,
         FilesSkipped = FilesSkipped - baseline.FilesSkipped,
-        BytesProcessed = BytesProcessed - baseline.BytesProcessed
+        FileBytesProcessed = FileBytesProcessed - baseline.FileBytesProcessed,
+        BytesOnTapeProcessed = BytesOnTapeProcessed - baseline.BytesOnTapeProcessed
     };
 }
 
@@ -178,6 +197,21 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
 
     /// <summary>Read-only reference to the current statistics.</summary>
     public ref readonly TapeFileStatistics Statistics => ref _stats;
+
+    /// <summary>
+    /// Refreshes <see cref="TapeFileStatistics.BytesTotal"/> from whatever total-size estimation
+    ///  mechanism the derived agent uses. Called before every <see cref="ITapeFileNotifiable"/>
+    ///  notification so subscribers always see the latest estimate.
+    /// <para><see cref="TapeFileBackupAgent"/> overrides this to pull from a background
+    ///  <see cref="FileSizeAggregator"/> (source files are scanned concurrently with the backup).
+    ///  Restore doesn't need to override it: all file sizes are known upfront from the TOC, so
+    ///  <see cref="TapeFileRestoreBaseAgent"/> sets <see cref="TapeFileStatistics.BytesTotal"/>
+    ///  once, synchronously, before the notification loop begins.</para>
+    /// </summary>
+    protected virtual void RefreshBytesTotalEstimate()
+    {
+        // no-op by default; overridden by TapeFileBackupAgent
+    }
 
     // Checked periodically if the entire operation should be aborted
     //  Uses olatile field instead of auto-property — fixes the theoretical data race
@@ -880,6 +914,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     protected void NotifyBatchStart(ITapeFileNotifiable? fileNotify, int filesFound)
     {
         _stats.FilesTotal += filesFound;
+        RefreshBytesTotalEstimate();
         if (fileNotify != null)
         {
             try
@@ -895,6 +930,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     }
     protected void NotifyBatchEnd(ITapeFileNotifiable? fileNotify)
     {
+        RefreshBytesTotalEstimate();
         if (fileNotify != null)
         {
             try
@@ -911,6 +947,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
 
     protected bool NotifyPreProcessFile(ITapeFileNotifiable? fileNotify, TapeFileInfo fileInfo)
     {
+        RefreshBytesTotalEstimate();
         if (fileNotify != null)
         {
             try
@@ -933,7 +970,11 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     {
         _stats.FilesProcessed++;
         _stats.FilesSucceeded++;
-        _stats.BytesProcessed += fileInfo.FileDescr.Length;
+        _stats.FileBytesProcessed += fileInfo.FileDescr.Length;
+        // SizeOnTape reflects the actual on-tape footprint (post software-compression); fall
+        //  back to the logical length when it hasn't been populated (e.g. legacy/aligned paths).
+        _stats.BytesOnTapeProcessed += fileInfo.SizeOnTape > 0 ? fileInfo.SizeOnTape : fileInfo.FileDescr.Length;
+        RefreshBytesTotalEstimate();
 
         if (fileNotify != null)
         {
@@ -962,6 +1003,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     {
         _stats.FilesProcessed++;
         _stats.FilesFailed++;
+        RefreshBytesTotalEstimate();
 
         FileFailedAction result = FileFailedAction.Skip;
         var failResult = TapeResult.Fail(ex);
@@ -993,6 +1035,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     {
         _stats.FilesProcessed++;
         _stats.FilesSkipped++;
+        RefreshBytesTotalEstimate();
 
         if (fileNotify != null)
         {

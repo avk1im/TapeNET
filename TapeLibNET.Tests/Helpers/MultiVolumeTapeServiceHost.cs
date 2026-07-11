@@ -63,7 +63,7 @@ public sealed class MultiVolumeTapeServiceHost(
     ///  <see cref="OnInsertNewMediaConfirm"/> after the service ejects the current volume.
     /// </remarks>
     public override bool OnVolumeFullConfirm(int currentVolume, int nextVolume,
-        int filesProcessed, int totalFiles, long bytesBackedup)
+        int filesProcessed, int totalFiles, long bytesBackedup, long totalBytes)
         => true;
 
     /// <inheritdoc/>

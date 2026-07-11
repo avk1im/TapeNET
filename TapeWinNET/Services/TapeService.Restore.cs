@@ -43,7 +43,7 @@ public partial class TapeService
         protected override void ReportProgress(in TapeFileStatistics stats, string? currentFile = null)
         {
             int total = TotalFilesToProcess > 0 ? TotalFilesToProcess : stats.FilesTotal;
-            host.UpdateRestoreProgress(stats.FilesProcessed, total, stats.BytesProcessed, currentFile);
+            host.UpdateRestoreProgress(stats.FilesProcessed, total, stats.FileBytesProcessed, stats.BytesTotal, currentFile);
         }
     }
 

@@ -106,9 +106,9 @@ public sealed class ConsoleUxServiceHost(IConsoleUx ux) : ITapeServiceHost
 
     /// <inheritdoc/>
     public bool OnVolumeFullConfirm(int currentVolume, int nextVolume,
-        int filesProcessed, int totalFiles, long bytesBackedup)
+        int filesProcessed, int totalFiles, long bytesBackedup, long bytesTotal)
         => ux.Confirm(
-            $"Volume #{currentVolume} is full. Continue backup on a new volume #{nextVolume}?",
+            $"Volume #{currentVolume} is full. {filesProcessed} file(s) processed of {totalFiles}. Continue backup on a new volume #{nextVolume}?",
             defaultAnswer: false);
 
     /// <inheritdoc/>

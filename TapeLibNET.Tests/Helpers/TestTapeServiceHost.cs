@@ -176,7 +176,7 @@ public class TestTapeServiceHost : ITapeServiceHost
     ///  when the queue is empty (safe default: do not continue multi-volume backup).
     /// </remarks>
     public virtual bool OnVolumeFullConfirm(int currentVolume, int nextVolume,
-        int filesProcessed, int totalFiles, long bytesBackedup)
+        int filesProcessed, int totalFiles, long bytesBackedup, long totalBytes)
         => ConfirmAnswers.Count > 0 && ConfirmAnswers.Dequeue();
 
     /// <inheritdoc/>

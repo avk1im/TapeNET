@@ -164,8 +164,9 @@ public interface ITapeServiceHost
     /// <param name="filesProcessed">Files backed up so far (for the progress display).</param>
     /// <param name="totalFiles">Total files in this backup run.</param>
     /// <param name="bytesBackedup">Bytes written so far (for the progress display).</param>
+    /// <param name="totalBytes">Total bytes expected for the entire operation (for the progress display).</param>
     bool OnVolumeFullConfirm(int currentVolume, int nextVolume,
-        int filesProcessed, int totalFiles, long bytesBackedup);
+        int filesProcessed, int totalFiles, long bytesBackedup, long totalBytes);
 
     /// <summary>
     /// Invoked after a backup volume has been ejected; the host prompts the user

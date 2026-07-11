@@ -686,7 +686,7 @@ public class IncrementalBackupRestoreTests
             Assert.Equal(tree.Files.Count, stats.FilesSucceeded);
             Assert.Equal(0, stats.FilesFailed);
             Assert.Equal(0, stats.FilesSkipped);
-            Assert.True(stats.BytesProcessed > 0, "BytesProcessed should be > 0");
+            Assert.True(stats.FileBytesProcessed > 0, "BytesProcessed should be > 0");
 
             // One batch start/end per set in the chain (4 sets: 1?2?3?4)
             Assert.Equal(4, notifiable.BatchStarts.Count);

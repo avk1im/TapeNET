@@ -70,7 +70,10 @@ public partial class TapeServiceBase
             FilesSucceeded = progressHandler?.FilesSucceeded ?? 0,
             FilesFailed    = progressHandler?.FilesFailed ?? 0,
             FilesSkipped   = progressHandler?.FilesSkipped ?? 0,
+
+            BytesTotal     = progressHandler?.BytesTotal ?? 0,
             BytesProcessed = progressHandler?.BytesProcessed ?? 0,
+
             WasAborted     = aborted,
             HasFailed      = failed,
             Success        = !failed,
@@ -189,14 +192,14 @@ public partial class TapeServiceBase
 
             toc.CurrentSetIndex = newestIdx;
 
-            var (totalFiles, perSet) = toc.GetFileCounts(combined, newestIdx);
-            LogInfo($"{modeName} {totalFiles:N0} file(s) from {perSet.Count} set(s)");
+            var (totalFiles, totalBytes, perSet) = toc.GetFileCounts(combined, newestIdx);
+            LogInfo($"{modeName} {totalFiles:N0} file(s) ({Helpers.BytesToStringLong(totalBytes)}) from {perSet.Count} set(s)");
             foreach (var setIndex in setIndexes)
             {
                 toc.CurrentSetIndex = setIndex;
-                int count = perSet.GetValueOrDefault(setIndex);
+                var (count, bytes) = perSet.GetValueOrDefault(setIndex);
                 LogInfoSub($"From set #{setIndex} | {toc.SetIndexToAlt(setIndex)}: " +
-                           $"{toc.CurrentSetTOC.Description}: {count:N0} file(s)");
+                           $"{toc.CurrentSetTOC.Description}: {count:N0} file(s) ({Helpers.BytesToStringLong(bytes)})");
             }
             if (request.Mode == RestoreMode.Restore && !string.IsNullOrEmpty(request.TargetDirectory))
                 LogInfoSub($"Target folder: {request.TargetDirectory}");

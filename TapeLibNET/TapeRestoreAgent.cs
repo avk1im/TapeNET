@@ -783,6 +783,12 @@ namespace TapeLibNET
             TapeRestoreContext rc = CanResumeFromAnotherVolume ? MultiVolumeContext!.Value :
                 new(filesSelected!, TOC.CurrentSetIndex, ignoreFailures, fileNotify, packed);
 
+            // Total file size is fully known upfront from the TOC (unlike backup, where source
+            //  files must be scanned in the background) — compute it synchronously, once, on a
+            //  fresh start. Resumes reuse the estimate already stored in _stats.
+            if (!CanResumeFromAnotherVolume)
+                _stats.BytesTotal = TOC.GetTotalFileSize(filesSelected!, TOC.CurrentSetIndex);
+
             m_logger.LogTrace("RestoreFilesFromCurrentSetDownInt: incoming rc.overallSuccess={Success}, filesSelectedIdx={Idx}, initialCurrSetIdx={Init}, isResume={Resume}",
                 rc.overallSuccess, rc.filesSelectedIdx, rc.initialCurrSetIdx, CanResumeFromAnotherVolume);
 

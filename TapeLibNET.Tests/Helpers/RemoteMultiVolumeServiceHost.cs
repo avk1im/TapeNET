@@ -50,7 +50,7 @@ public sealed class RemoteMultiVolumeServiceHost(
     ///  <see cref="OnInsertNewMediaConfirm"/>.
     /// </remarks>
     public override bool OnVolumeFullConfirm(int currentVolume, int nextVolume,
-        int filesProcessed, int totalFiles, long bytesBackedup)
+        int filesProcessed, int totalFiles, long bytesBackedup, long totalBytes)
         => true;
 
     /// <inheritdoc/>

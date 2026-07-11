@@ -70,7 +70,7 @@ public class StatisticsTests
     /// <summary>
     /// Asserts that final <see cref="TapeFileStatistics"/> match expectations for
     /// a fully-successful operation (zero failures, zero skips).
-    /// Also checks <see cref="TapeFileStatistics.BytesProcessed"/> against source sizes.
+    /// Also checks <see cref="TapeFileStatistics.FileBytesProcessed"/> against source sizes.
     /// </summary>
     private static void AssertFullSuccess(TestNotifiable notifiable, int expectedFiles, long expectedBytes)
     {
@@ -82,7 +82,7 @@ public class StatisticsTests
         Assert.Equal(expectedFiles, stats.FilesSucceeded);
         Assert.Equal(0, stats.FilesFailed);
         Assert.Equal(0, stats.FilesSkipped);
-        Assert.Equal(expectedBytes, stats.BytesProcessed);
+        Assert.Equal(expectedBytes, stats.FileBytesProcessed);
     }
 
     #endregion
@@ -249,7 +249,7 @@ public class StatisticsTests
         long skippedBytes = 0;
         for (int i = 0; i < skipCount; i++)
             skippedBytes += new FileInfo(tree.Files[i]).Length;
-        Assert.Equal(tree.TotalSize - skippedBytes, stats.BytesProcessed);
+        Assert.Equal(tree.TotalSize - skippedBytes, stats.FileBytesProcessed);
     }
 
     #endregion
@@ -341,8 +341,8 @@ public class StatisticsTests
 
         // Agent stats should reflect set 2 only (reset happened via BackupFileListToCurrentSet)
         Assert.Equal(tree2.Files.Count, notify2.BatchEnds[^1].Stats.FilesTotal);
-        Assert.NotEqual(notify1.BatchEnds[^1].Stats.BytesProcessed,
-                         notify2.BatchEnds[^1].Stats.BytesProcessed);
+        Assert.NotEqual(notify1.BatchEnds[^1].Stats.FileBytesProcessed,
+                         notify2.BatchEnds[^1].Stats.FileBytesProcessed);
     }
 
     #endregion
@@ -372,11 +372,11 @@ public class StatisticsTests
         {
             Assert.True(pp.Stats.FilesProcessed >= prevProcessed,
                 $"FilesProcessed decreased: {pp.Stats.FilesProcessed} < {prevProcessed}");
-            Assert.True(pp.Stats.BytesProcessed >= prevBytes,
-                $"BytesProcessed decreased: {pp.Stats.BytesProcessed} < {prevBytes}");
+            Assert.True(pp.Stats.FileBytesProcessed >= prevBytes,
+                $"BytesProcessed decreased: {pp.Stats.FileBytesProcessed} < {prevBytes}");
 
             prevProcessed = pp.Stats.FilesProcessed;
-            prevBytes = pp.Stats.BytesProcessed;
+            prevBytes = pp.Stats.FileBytesProcessed;
         }
 
         // Final values should match totals
@@ -412,11 +412,11 @@ public class StatisticsTests
             {
                 Assert.True(pp.Stats.FilesProcessed >= prevProcessed,
                     $"FilesProcessed decreased: {pp.Stats.FilesProcessed} < {prevProcessed}");
-                Assert.True(pp.Stats.BytesProcessed >= prevBytes,
-                    $"BytesProcessed decreased: {pp.Stats.BytesProcessed} < {prevBytes}");
+                Assert.True(pp.Stats.FileBytesProcessed >= prevBytes,
+                    $"BytesProcessed decreased: {pp.Stats.FileBytesProcessed} < {prevBytes}");
 
                 prevProcessed = pp.Stats.FilesProcessed;
-                prevBytes = pp.Stats.BytesProcessed;
+                prevBytes = pp.Stats.FileBytesProcessed;
             }
         }
         finally
@@ -467,7 +467,7 @@ public class StatisticsTests
         Assert.Equal(0, stats.FilesSucceeded);
         Assert.Equal(0, stats.FilesFailed);
         Assert.Equal(0, stats.FilesSkipped);
-        Assert.Equal(0, stats.BytesProcessed);
+        Assert.Equal(0, stats.FileBytesProcessed);
     }
 
     #endregion
@@ -564,7 +564,7 @@ public class StatisticsTests
         fixture.BackupFiles(tree.Files, description: "Bytes accuracy", notifiable: notifiable);
 
         var stats = notifiable.BatchEnds[^1].Stats;
-        Assert.Equal(expectedBytes, stats.BytesProcessed);
+        Assert.Equal(expectedBytes, stats.FileBytesProcessed);
     }
 
     /// <summary>
@@ -593,7 +593,7 @@ public class StatisticsTests
 
             Assert.True(success);
             var stats = notifiable.BatchEnds[^1].Stats;
-            Assert.Equal(expectedBytes, stats.BytesProcessed);
+            Assert.Equal(expectedBytes, stats.FileBytesProcessed);
         }
         finally
         {
@@ -714,7 +714,7 @@ public class StatisticsTests
         Assert.Equal(0, startStats.FilesSucceeded);
         Assert.Equal(0, startStats.FilesFailed);
         Assert.Equal(0, startStats.FilesSkipped);
-        Assert.Equal(0, startStats.BytesProcessed);
+        Assert.Equal(0, startStats.FileBytesProcessed);
     }
 
     #endregion
