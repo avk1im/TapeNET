@@ -67,6 +67,29 @@ public interface IHelpPaneHost
     /// </summary>
     string? GetDefaultTopicId() => null;
 
+    // ── Operation-in-progress gating ─────────────────────────────────────────
+    // Hosts that run long tape operations (backup/restore/validate/verify) must
+    //  suppress Reveal / Guide Me while one is active, since both overlays walk
+    //  or highlight live controls that the operation's overlay is currently
+    //  covering/disabling (see MainWindow's Operation overlay). Hosts that have
+    //  no such concept (dialogs) simply keep the default of true.
+
+    /// <summary>
+    /// Returns <c>false</c> to disable <c>RevealCommand</c> while this host is busy
+    ///  with an operation that should not be interrupted by the Reveal overlay.
+    /// The default returns <c>true</c>; only hosts with a notion of "operation in
+    ///  progress" (currently <c>MainWindow</c>) override it.
+    /// </summary>
+    bool CanReveal() => true;
+
+    /// <summary>
+    /// Returns <c>false</c> to disable <c>GuideMeCommand</c> while this host is busy
+    ///  with an operation that should not be interrupted by a walkthrough tour.
+    /// The default returns <c>true</c>; only hosts with a notion of "operation in
+    ///  progress" override it.
+    /// </summary>
+    bool CanGuideMe() => true;
+
     // ── Phase 8b: Guide Me helpers ─────────────────────────────────────────
 
     /// <summary>

@@ -564,7 +564,7 @@
                           HorizontalAlignment="Center" 
                           VerticalAlignment="Stretch"
                           Background="LightGray" />
-            
+
             <!-- Content Pane (Properties + Table) -->
             <Grid Grid.Column="2" Margin="4">
                 <Grid.RowDefinitions>
@@ -884,118 +884,6 @@
                     </Grid>
                 </GroupBox>
 
-                <!-- Backup Progress Overlay (covers only tree + content, not log pane) -->
-                <Grid Grid.RowSpan="3" 
-                      Background="#80000000"
-                      Visibility="{Binding IsBackupInProgress, Converter={StaticResource BoolToVis}}">
-                    <Border Background="White" 
-                            CornerRadius="8"
-                            Padding="24"
-                            HorizontalAlignment="Center"
-                            VerticalAlignment="Center"
-                            MinWidth="350">
-                        <StackPanel>
-                            <TextBlock Text="{Binding BusyMessage}" 
-                                       FontSize="14"
-                                       FontWeight="SemiBold"
-                                       HorizontalAlignment="Center"
-                                       Margin="0,0,0,12"/>
-
-                            <ProgressBar Value="{Binding BackupProgressPercent}" 
-                                         Maximum="100"
-                                         Height="24" 
-                                         Margin="0,0,0,8"/>
-
-                            <TextBlock Text="{Binding BackupProgressText}"
-                                       HorizontalAlignment="Center"
-                                       Margin="0,0,0,4"/>
-
-                            <TextBlock Text="{Binding CurrentBackupFile}"
-                                       HorizontalAlignment="Center"
-                                       Foreground="Gray"
-                                       FontSize="11"
-                                       TextTrimming="CharacterEllipsis"
-                                       MaxWidth="300"
-                                       Margin="0,0,0,6"/>
-
-                            <!-- IO rate sparkline chart -->
-                            <controls:IoRateSparklineControl
-                                       x:Name="BackupSparkline"
-                                       CurrentRate="{Binding IOProgressRate}"
-                                       Height="48"
-                                       Width="300"
-                                       Margin="0,0,0,4"/>
-
-                            <TextBlock Text="{Binding IOProgressText}"
-                                       HorizontalAlignment="Center"
-                                       FontSize="11"
-                                       Margin="0,0,0,16"/>
-
-                            <Button Content="Abort Backup"
-                                    Command="{Binding AbortBackupCommand}"
-                                    IsEnabled="{Binding IsAbortBackupEnabled}"
-                                    HorizontalAlignment="Center"
-                                    Width="100"/>
-                        </StackPanel>
-                    </Border>
-                </Grid>
-
-                <!-- Restore/Validate/Verify Progress Overlay (covers only tree + content, not log pane) -->
-                <Grid Grid.RowSpan="3" 
-                      Background="#80000000"
-                      Visibility="{Binding IsRestoreInProgress, Converter={StaticResource BoolToVis}}">
-                    <Border Background="White" 
-                            CornerRadius="8"
-                            Padding="24"
-                            HorizontalAlignment="Center"
-                            VerticalAlignment="Center"
-                            MinWidth="350">
-                        <StackPanel>
-                            <TextBlock Text="{Binding BusyMessage}" 
-                                       FontSize="14"
-                                       FontWeight="SemiBold"
-                                       HorizontalAlignment="Center"
-                                       Margin="0,0,0,12"/>
-
-                            <ProgressBar Value="{Binding RestoreProgressPercent}" 
-                                         Maximum="100"
-                                         Height="24" 
-                                         Margin="0,0,0,8"/>
-
-                            <TextBlock Text="{Binding RestoreProgressText}"
-                                       HorizontalAlignment="Center"
-                                       Margin="0,0,0,4"/>
-
-                            <TextBlock Text="{Binding CurrentRestoreFile}"
-                                       HorizontalAlignment="Center"
-                                       Foreground="Gray"
-                                       FontSize="11"
-                                       TextTrimming="CharacterEllipsis"
-                                       MaxWidth="300"
-                                       Margin="0,0,0,6"/>
-
-                            <!-- IO rate sparkline chart -->
-                            <controls:IoRateSparklineControl
-                                       x:Name="RestoreSparkline"
-                                       CurrentRate="{Binding IOProgressRate}"
-                                       Height="48"
-                                       Width="300"
-                                       Margin="0,0,0,4"/>
-
-                            <TextBlock Text="{Binding IOProgressText}"
-                                       HorizontalAlignment="Center"
-                                       FontSize="11"
-                                       Margin="0,0,0,16"/>
-
-                            <Button Content="Abort"
-                                    Command="{Binding AbortRestoreCommand}"
-                                    IsEnabled="{Binding IsAbortRestoreEnabled}"
-                                    HorizontalAlignment="Center"
-                                    Width="100"/>
-                        </StackPanel>
-                    </Border>
-                </Grid>
-
                 <!-- TOC Load Overlay - shown while reading TOC, cancellable for blank/new media -->
                 <Grid Grid.RowSpan="3"
                       Background="#80000000"
@@ -1026,8 +914,67 @@
                     </Border>
                 </Grid>
             </Grid>
+
+            <!-- Operation Overlay (Backup / Restore / Validate / Verify) - covers tree + splitter + content,
+                 not the log pane, so the user cannot change the TreeView selection (which would mutate
+                 state the in-progress operation depends on) while an operation is running.
+                 Placed last in the Main Content Area grid so it renders on top of the tree and content panes. -->
+            <Grid Grid.Column="0" Grid.ColumnSpan="3"
+                  Background="#80000000"
+                  Visibility="{Binding IsOperationInProgress, Converter={StaticResource BoolToVis}}">
+                <Border Background="White" 
+                        CornerRadius="8"
+                        Padding="24"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        MinWidth="350">
+                    <StackPanel>
+                        <TextBlock Text="{Binding BusyMessage}" 
+                                   FontSize="14"
+                                   FontWeight="SemiBold"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,0,0,12"/>
+
+                        <ProgressBar Value="{Binding OperationProgressPercent, Mode=OneWay}" 
+                                     Maximum="100"
+                                     Height="24" 
+                                     Margin="0,0,0,8"/>
+
+                        <TextBlock Text="{Binding OperationProgressText}"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,0,0,4"/>
+
+                        <TextBlock Text="{Binding CurrentOperationFile}"
+                                   HorizontalAlignment="Center"
+                                   Foreground="Gray"
+                                   FontSize="11"
+                                   TextTrimming="CharacterEllipsis"
+                                   MaxWidth="300"
+                                   Margin="0,0,0,6"/>
+
+                        <!-- IO rate sparkline chart -->
+                        <controls:IoRateSparklineControl
+                                   x:Name="OperationSparkline"
+                                   CurrentRate="{Binding IOProgressRate}"
+                                   Height="48"
+                                   Width="300"
+                                   Margin="0,0,0,4"/>
+
+                        <TextBlock Text="{Binding IOProgressText}"
+                                   HorizontalAlignment="Center"
+                                   FontSize="11"
+                                   Margin="0,0,0,16"/>
+
+                        <Button Content="{Binding AbortOperationButtonText}"
+                                Command="{Binding AbortOperationCommand}"
+                                IsEnabled="{Binding IsAbortOperationEnabled}"
+                                HorizontalAlignment="Center"
+                                Width="100"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
         </Grid>
-        
+
         <!-- Splitter for Log Pane -->
         <GridSplitter Grid.Row="3" Grid.Column="0" Height="4"
                       HorizontalAlignment="Stretch" 

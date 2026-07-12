@@ -70,32 +70,42 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
     /// Safe to call from any thread — marshals to the UI dispatcher internally.
     /// </summary>
     public void UpdateRestoreProgress(int processed, int total, long bytes, long totalBytes, string? currentFile)
-    {
-        _dispatcher.Invoke(() =>
-        {
-            if (currentFile is not null)
-                _viewModel.CurrentRestoreFile = System.IO.Path.GetFileName(currentFile);
-            double progress = UpdateIOProgress(processed, total, bytes, totalBytes);
-            _viewModel.RestoreProgressPercent = Math.Clamp(progress * 100.0, 0.0, 100.0);
-            _viewModel.RestoreProgressText    = $"{processed:N0} file(s) of {total:N0} "
-                + $"({Helpers.BytesToStringLong(bytes)} of {Helpers.BytesToStringLong(totalBytes)})";
-        });
-    }
+        => UpdateProgressCore(
+            processed, total, bytes, totalBytes, currentFile,
+            setCurrentFile: name => _viewModel.CurrentRestoreFile = name,
+            setPercent: percent => _viewModel.RestoreProgressPercent = percent,
+            setText: text => _viewModel.RestoreProgressText = text,
+            filesSuffix: string.Empty);
 
     /// <summary>
     /// Updates the backup progress indicators on the bound <see cref="MainViewModel"/>.
     /// Safe to call from any thread — marshals to the UI dispatcher internally.
     /// </summary>
     public void UpdateBackupProgress(int processed, int total, long bytes, long totalBytes, string? currentFile)
+        => UpdateProgressCore(
+            processed, total, bytes, totalBytes, currentFile,
+            setCurrentFile: name => _viewModel.CurrentBackupFile = name,
+            setPercent: percent => _viewModel.BackupProgressPercent = percent,
+            setText: text => _viewModel.BackupProgressText = text,
+            filesSuffix: " files");
+
+    /// <summary>
+    /// Shared implementation for <see cref="UpdateBackupProgress"/> and
+    ///  <see cref="UpdateRestoreProgress"/> — both operations report the same shape
+    ///  of progress data, differing only in which view-model properties they update.
+    /// </summary>
+    private void UpdateProgressCore(
+        int processed, int total, long bytes, long totalBytes, string? currentFile,
+        Action<string> setCurrentFile, Action<double> setPercent, Action<string> setText, string filesSuffix)
     {
         _dispatcher.Invoke(() =>
         {
             if (currentFile is not null)
-                _viewModel.CurrentBackupFile = System.IO.Path.GetFileName(currentFile);
+                setCurrentFile(System.IO.Path.GetFileName(currentFile));
             double progress = UpdateIOProgress(processed, total, bytes, totalBytes);
-            _viewModel.BackupProgressPercent = Math.Clamp(progress * 100.0, 0.0, 100.0);
-            _viewModel.BackupProgressText    = $"{processed:N0} file(s) of {total:N0} files "
-                + $"({Helpers.BytesToStringLong(bytes)} of {Helpers.BytesToStringLong(totalBytes)})";
+            setPercent(Math.Clamp(progress * 100.0, 0.0, 100.0));
+            setText($"{processed:N0} file(s) of {total:N0}{filesSuffix} "
+                + $"({Helpers.BytesToStringLong(bytes)} of {Helpers.BytesToStringLong(totalBytes)})");
         });
     }
 

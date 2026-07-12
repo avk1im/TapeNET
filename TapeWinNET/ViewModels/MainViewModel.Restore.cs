@@ -39,7 +39,11 @@ public partial class MainViewModel
     public bool IsAbortRestoreEnabled
     {
         get => _isAbortRestoreEnabled;
-        set => SetProperty(ref _isAbortRestoreEnabled, value);
+        set
+        {
+            if (SetProperty(ref _isAbortRestoreEnabled, value))
+                OnPropertyChanged(nameof(IsAbortOperationEnabled));
+        }
     }
 
     public bool IsRestoreInProgress
@@ -51,6 +55,7 @@ public partial class MainViewModel
             {
                 OnPropertyChanged(nameof(IsGeneralBusy));
                 OnPropertyChanged(nameof(IsOperationInProgress));
+                NotifyOperationPropertiesChanged();
                 CommandManager.InvalidateRequerySuggested();
             }
         }
@@ -59,19 +64,31 @@ public partial class MainViewModel
     public double RestoreProgressPercent
     {
         get => _restoreProgressPercent;
-        set => SetProperty(ref _restoreProgressPercent, value);
+        set
+        {
+            if (SetProperty(ref _restoreProgressPercent, value))
+                OnPropertyChanged(nameof(OperationProgressPercent));
+        }
     }
 
     public string RestoreProgressText
     {
         get => _restoreProgressText;
-        set => SetProperty(ref _restoreProgressText, value);
+        set
+        {
+            if (SetProperty(ref _restoreProgressText, value))
+                OnPropertyChanged(nameof(OperationProgressText));
+        }
     }
 
     public string CurrentRestoreFile
     {
         get => _currentRestoreFile;
-        set => SetProperty(ref _currentRestoreFile, value);
+        set
+        {
+            if (SetProperty(ref _currentRestoreFile, value))
+                OnPropertyChanged(nameof(CurrentOperationFile));
+        }
     }
 
     /// <summary>

@@ -149,10 +149,10 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
         NavigateTopicRefCommand = new AsyncRelayCommand(async p => await ExecuteNavigate((p as HelpTopicRef)?.Id));
         InvokeActionCommand     = new RelayCommand(p => { if (p is HelpActionRef a) _actions.Invoke(a.ActionId); });
         OpenAiSetupCommand      = new AsyncRelayCommand(async _ => await Services.AppAiSessionHost.ReconfigureAndNotifyAsync());
-        RevealCommand           = new RelayCommand(ExecuteReveal, () => _isPaneOpen && _session.CurrentTopic != null);
+        RevealCommand           = new RelayCommand(ExecuteReveal, () => _isPaneOpen && _session.CurrentTopic != null && _host.CanReveal());
 
-        // Guide Me — enabled when the pane is open and the host has at least one tour.
-        GuideMeCommand  = new AsyncRelayCommand(async _ => await ExecuteGuideMe(), _ => _isPaneOpen && _host.HostHasWalkthroughs(_session));
+        // Guide Me — enabled when the pane is open, the host has at least one tour, and the host allows it.
+        GuideMeCommand  = new AsyncRelayCommand(async _ => await ExecuteGuideMe(), _ => _isPaneOpen && _host.HostHasWalkthroughs(_session) && _host.CanGuideMe());
         NextStepCommand = new RelayCommand(ExecuteNextStep, () => _isGuideActive);
         BackStepCommand = new RelayCommand(ExecuteBackStep, () => _isGuideActive && _stepIndex > 0);
 

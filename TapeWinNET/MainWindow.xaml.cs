@@ -110,8 +110,7 @@ namespace TapeWinNET
             // Sparkline reset: clear stale samples at operation start and end
             _viewModel.RequestResetSparkline += () =>
             {
-                BackupSparkline.Reset();
-                RestoreSparkline.Reset();
+                OperationSparkline.Reset();
             };
 
             // Auto-scroll: the ViewModel raises RequestAutoScroll after each batch flush
@@ -739,6 +738,19 @@ namespace TapeWinNET
         /// the <c>## Controls</c> chapter when the content pane is on a different topic.
         /// </summary>
         public string? GetDefaultTopicId() => "ui.main-window";
+
+        /// <summary>
+        /// Reveal is suppressed while a tape operation (backup/restore/validate/verify)
+        ///  is in progress — the Operation overlay already covers the tree and content
+        ///  panes, so Reveal would have nothing valid to highlight.
+        /// </summary>
+        public bool CanReveal() => !_viewModel.IsOperationInProgress;
+
+        /// <summary>
+        /// Guide Me is suppressed while a tape operation is in progress, for the same
+        ///  reason as <see cref="CanReveal"/>.
+        /// </summary>
+        public bool CanGuideMe() => !_viewModel.IsOperationInProgress;
 
         // ── Open / toggle ─────────────────────────────────────────────────────
 

@@ -244,6 +244,7 @@ public partial class MainViewModel : ViewModelBase
             {
                 OnPropertyChanged(nameof(IsGeneralBusy));
                 OnPropertyChanged(nameof(IsOperationInProgress));
+                NotifyOperationPropertiesChanged();
                 CommandManager.InvalidateRequerySuggested();
             }
         }
@@ -294,6 +295,44 @@ public partial class MainViewModel : ViewModelBase
 
     // BackupProgressPercent, BackupProgressText, CurrentBackupFile properties are in MainViewModel.Backup.cs
     // RestoreProgressPercent, RestoreProgressText, CurrentRestoreFile, IsRestoreInProgress properties are in MainViewModel.Restore.cs
+
+    // ── Unified Operation overlay ─────────────────────────────────────────────
+    // Backup and Restore/Validate/Verify progress overlays were merged into a single
+    //  "Operation overlay" in MainWindow.xaml (they showed identical content: progress
+    //  bar, current file, IO sparkline, abort button). These properties pick the
+    //  currently active operation's values, since only one operation runs at a time.
+
+    /// <summary>Progress percent of whichever operation (backup or restore) is currently active.</summary>
+    public double OperationProgressPercent => IsBackupInProgress ? BackupProgressPercent : RestoreProgressPercent;
+
+    /// <summary>Progress text of whichever operation (backup or restore) is currently active.</summary>
+    public string OperationProgressText => IsBackupInProgress ? BackupProgressText : RestoreProgressText;
+
+    /// <summary>Current file name of whichever operation (backup or restore) is currently active.</summary>
+    public string CurrentOperationFile => IsBackupInProgress ? CurrentBackupFile : CurrentRestoreFile;
+
+    /// <summary>Abort command of whichever operation (backup or restore) is currently active.</summary>
+    public ICommand AbortOperationCommand => IsBackupInProgress ? AbortBackupCommand : AbortRestoreCommand;
+
+    /// <summary>Abort button IsEnabled state of whichever operation (backup or restore) is currently active.</summary>
+    public bool IsAbortOperationEnabled => IsBackupInProgress ? IsAbortBackupEnabled : IsAbortRestoreEnabled;
+
+    /// <summary>Abort button label — distinguishes the two operations for clarity.</summary>
+    public string AbortOperationButtonText => IsBackupInProgress ? "Abort Backup" : "Abort";
+
+    /// <summary>
+    /// Raises change notifications for all unified Operation-overlay properties.
+    /// Called whenever any of the underlying backup/restore progress properties change.
+    /// </summary>
+    private void NotifyOperationPropertiesChanged()
+    {
+        OnPropertyChanged(nameof(OperationProgressPercent));
+        OnPropertyChanged(nameof(OperationProgressText));
+        OnPropertyChanged(nameof(CurrentOperationFile));
+        OnPropertyChanged(nameof(AbortOperationCommand));
+        OnPropertyChanged(nameof(IsAbortOperationEnabled));
+        OnPropertyChanged(nameof(AbortOperationButtonText));
+    }
 
     /// <summary>
     /// Raised at operation start and end so the View can reset the IO-rate sparkline

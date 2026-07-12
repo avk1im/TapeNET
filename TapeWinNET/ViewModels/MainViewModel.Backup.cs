@@ -32,19 +32,31 @@ public partial class MainViewModel
     public double BackupProgressPercent
     {
         get => _backupProgressPercent;
-        set => SetProperty(ref _backupProgressPercent, value);
+        set
+        {
+            if (SetProperty(ref _backupProgressPercent, value))
+                OnPropertyChanged(nameof(OperationProgressPercent));
+        }
     }
 
     public string BackupProgressText
     {
         get => _backupProgressText;
-        set => SetProperty(ref _backupProgressText, value);
+        set
+        {
+            if (SetProperty(ref _backupProgressText, value))
+                OnPropertyChanged(nameof(OperationProgressText));
+        }
     }
 
     public string CurrentBackupFile
     {
         get => _currentBackupFile;
-        set => SetProperty(ref _currentBackupFile, value);
+        set
+        {
+            if (SetProperty(ref _currentBackupFile, value))
+                OnPropertyChanged(nameof(CurrentOperationFile));
+        }
     }
 
     /// <summary>
@@ -55,7 +67,11 @@ public partial class MainViewModel
     public bool IsAbortBackupEnabled
     {
         get => _isAbortBackupEnabled;
-        set => SetProperty(ref _isAbortBackupEnabled, value);
+        set
+        {
+            if (SetProperty(ref _isAbortBackupEnabled, value))
+                OnPropertyChanged(nameof(IsAbortOperationEnabled));
+        }
     }
 
     #endregion
