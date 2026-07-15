@@ -104,8 +104,8 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                 setCurrentFile(System.IO.Path.GetFileName(currentFile));
             double progress = UpdateIOProgress(processed, total, bytes, totalBytes);
             setPercent(Math.Clamp(progress * 100.0, 0.0, 100.0));
-            setText($"{processed:N0} file(s) of {total:N0}{filesSuffix} "
-                + $"({Helpers.BytesToStringLong(bytes)} of {Helpers.BytesToStringLong(totalBytes)})");
+            setText($"{processed:N0} file(s) of {total:N0}{filesSuffix}"
+                + $"\n({Helpers.BytesToStringLong(bytes)} of {Helpers.BytesToStringLong(totalBytes)})");
         });
     }
 
@@ -128,6 +128,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
     private int _lastFilesProcessed = 0;
     private double _smoothedAvgFileSize = 0.0;
     private double _lastReportedProgress = 0.0;
+    private double? _initialSec = null; // time elapsed before the first progress tick (used to avoid skewing ETA & IO rate)
 
     private void ResetIOProgressTracking()
     {
@@ -135,6 +136,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
         _lastFilesProcessed = 0;
         _smoothedAvgFileSize = 0.0;
         _lastReportedProgress = 0.0;
+        _initialSec = null;
     }
 
     private static double CalculateDynamicByteWeight(double avgFileBytes, long totalBytes)
@@ -173,12 +175,23 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
     {
         double elapsed = _stopwatch.IsRunning ? _stopwatch.ElapsedSeconds : 0.0;
 
+        TimeSpan elapsedTime = TimeSpan.FromSeconds(elapsed);
+        string progressText = $"Elapsed: {FormatTimeSpan(elapsedTime)}";
+
+        if (_initialSec is null)
+        {
+            // First tick: record the initial elapsed time to avoid skewing ETA & IO rate
+            _initialSec = elapsed;
+        }
+        else
+        {
+            // Subtract the initial elapsed time from subsequent ticks
+            elapsed = Math.Max(elapsed - _initialSec.Value, 0.0); // avoid negative elapsed time
+        }
+
         // Compute overall throughput rate
         double rate = elapsed > 0.1 ? bytes / elapsed : 0.0;
         _viewModel.IOProgressRate = rate;
-
-        TimeSpan elapsedTime = TimeSpan.FromSeconds(elapsed);
-        string progressText = $"Elapsed: {FormatTimeSpan(elapsedTime)}";
 
         // 1. Compute rolling average file size for the latest batch tick
         long deltaBytes = bytes - _lastBytesProcessed;

@@ -59,8 +59,8 @@ function Show-Usage {
     Write-Host "  -Verbose                Print one-line details for each folder and file."
     Write-Host ""
     Write-Host "Examples:"
-    Write-Host "  .\\GenerateTestFiles.ps1 -TargetFolder D:\\TestData"
-    Write-Host "  .\\GenerateTestFiles.ps1 -TargetFolder D:\\TD -TotalSize 50GB -ForceLongPaths"
+    Write-Host "  .\GenerateTestFiles.ps1 -TargetFolder D:\TestData"
+    Write-Host "  .\GenerateTestFiles.ps1 -TargetFolder D:\TestData -TotalSize 50GB -ForceLongPaths"
     Write-Host ""
 }
 
