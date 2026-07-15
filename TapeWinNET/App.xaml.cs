@@ -52,7 +52,7 @@ public partial class App : Application
     private static ILoggerFactory BuildLoggerFactory() =>
         Debugger.IsAttached
             ? Microsoft.Extensions.Logging.LoggerFactory.Create(builder =>
-                builder.AddDebug().SetMinimumLevel(LogLevel.Information))
+                builder.AddDebug().SetMinimumLevel(LogLevel.Trace)) // FIXME: change to LogLevel.Information for public RELEASE builds
             : NullLoggerFactory.Instance;
 #endif
 
