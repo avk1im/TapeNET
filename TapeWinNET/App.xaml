@@ -5,9 +5,15 @@
              xmlns:converters="clr-namespace:TapeWinNET.Converters"
              xmlns:models="clr-namespace:TapeWinNET.Models"
              xmlns:services="clr-namespace:TapeLibNET.Services;assembly=tapelib"
+             xmlns:markdig="clr-namespace:Markdig.Wpf;assembly=Markdig.Wpf"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
         <ResourceDictionary>
+            <!-- Merge in the styles from Markdig.Wpf -->
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="pack://application:,,,/Markdig.Wpf;component/Themes/Generic.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
             <!-- Default style for all Windows - sets application icon -->
             <!-- Note: Icon is also set programmatically in App.xaml.cs via TapeIcons.GetTapeDriveIcon() -->
             <!-- Uncomment below to use an .ico file from Resources folder: -->
@@ -114,6 +120,14 @@
                     </DataTrigger>
                 </Style.Triggers>
             </Style>
+
+            <!-- Alias Markdig.Wpf's ParagraphStyleKey to the default Paragraph style -->
+            <Style
+                x:Key="{ComponentResourceKey TypeInTargetAssembly={x:Type markdig:Styles},
+                       ResourceId=ParagraphStyleKey}"
+                TargetType="Paragraph"
+                BasedOn="{StaticResource {x:Type Paragraph}}"
+            />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

@@ -24,6 +24,10 @@ public partial class AboutWindow : Window
         
         VersionText.Text = $"Version: {version}";
         LibVersionText.Text = $"TapeLibNET Version: {libVersion}";
+
+        var asm = typeof(Markdig.Wpf.MarkdownViewer).Assembly;
+        if (asm is not null)
+            LibVersionText.Text += $"\nMarkdownViewer Version: {asm.GetName().Version}";
     }
     
     private void OkButton_Click(object sender, RoutedEventArgs e)

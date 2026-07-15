@@ -716,6 +716,8 @@ namespace TapeLibNET
             {
                 if (length >= 0 && !CheckContentCapacity(length, writtenSoFar))
                 {
+                    m_logger.LogInformation("Drive #{Drive}: Write content stream request for {L} B EXCEEDS remaining capacity {R} B, written so far {WSF} B, capacity for current set {S} B",
+                        DriveNumber, length, CapacityForCurrentSet - writtenSoFar, writtenSoFar, CapacityForCurrentSet);
                     SetError(WIN32_ERROR.ERROR_END_OF_MEDIA);
                     return null;
                 }
