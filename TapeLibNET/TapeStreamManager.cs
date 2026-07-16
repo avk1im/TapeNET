@@ -800,7 +800,20 @@ namespace TapeLibNET
                 {
                     long remaining = long.MaxValue;
                     if (enforceReserved)
-                        remaining = CapacityForCurrentSet - m_packerBytesWritten;
+                    {
+                        if (Drive.IsLtoDrive)
+                        {
+                            // for LTO drives, trust the remaining capacity reported by the drive.
+                            //  We enforceReserved only for TOC in set, hence deduct the TOC size
+                            remaining = Drive.GetRemainingCapacity() - Navigator.TOCCapacity;
+                        }
+                        else
+                            remaining = CapacityForCurrentSet - m_packerBytesWritten;
+
+                        remaining = Math.Max(remaining, 0L); // don't let it go negative
+                    }
+
+                    // Honor the artificial ContentCapacityLimit if set
                     if (ContentCapacityLimit > 0L)
                         remaining = Math.Min(remaining, ContentCapacityLimit - m_packerBytesWritten);
 

@@ -187,8 +187,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     public bool IsInMemoryDrive => _vmdLast?.InMemory ?? false;
 
     /// <summary>True when the drive is a physical LTO drive</summary>
-    public bool IsLtoDrive => _drive?.Backend is TapeDriveWin32Backend wbe && wbe.IsLto
-        || _drive?.Backend is RemoteTapeDriveBackend rbe && rbe.IsLto;
+    public bool IsLtoDrive => _drive?.IsLtoDrive ?? false;
 
     /// <summary>The last <see cref="VirtualMediaDescriptor"/> used to open or insert media.</summary>
     public VirtualMediaDescriptor? LastVMD => _vmdLast;
@@ -1270,7 +1269,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 toc.CurrentSetIndex = deleteFromSetIndex;
 
                 _agent = new TapeFileAgent(_drive, toc);
-                var result = _agent.DeleteSetsFromCurrentSetUp();
+                var result = _agent.DeleteSetsFromCurrentSetUp(navigateFromBegin: IsTOCFromFile); // if TOC is from file, assume the TOC on tape might be missing
                 if (!result)
                 {
                     LastError = result.ErrorMessage;

@@ -77,12 +77,9 @@ namespace TapeLibNET
 
         private long ComputeRemainingCapacity()
         {
-            bool isLtoDrive = Drive.Backend is TapeDriveWin32Backend wbe && wbe.IsLto
-                || Drive.Backend is RemoteTapeDriveBackend rbe && rbe.IsLto;
-            
-            var remainingCapacity = isLtoDrive
+            var remainingCapacity = Drive.IsLtoDrive
                 ? Drive.GetContentRemainingCapacity() // trust the remaining capacity reporting of LTO drives
-                : Drive.ContentCapacity - TOC.ComputeTotalFileSizeOnTape(); // for the others, compute
+                : Drive.ContentCapacity - TOC.ComputeTotalFileSizeOnTape(onVolumeOnly: true); // for the others, compute
             
             if (!Drive.HasInitiatorPartition)
                 remainingCapacity -= Navigator.TOCCapacity; // if TOC is in a content set, reserve space for it

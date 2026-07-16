@@ -1,10 +1,10 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
+using TapeLibNET.Remote;
 using Windows.Win32.Foundation;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
-
 using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
 
 namespace TapeLibNET;
@@ -181,6 +181,12 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         // On another partition — return the cached content remaining
         return m_cachedContentRemaining >= 0 ? m_cachedContentRemaining : 0;
     }
+
+    /// <summary>
+    /// True if the underlying backend is a Win32 tape drive and the drive is an LTO model.
+    /// </summary>
+    public bool IsLtoDrive => m_backend is TapeDriveWin32Backend wbe && wbe.IsLto
+                || m_backend is RemoteTapeDriveBackend rbe && rbe.IsLto;
 
     /// <summary>Running count of bytes transferred via <see cref="WriteDirect"/>/<see cref="ReadDirect"/>. Reset by the stream manager.</summary>
     public long ByteCounter {

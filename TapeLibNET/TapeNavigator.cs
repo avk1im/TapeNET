@@ -714,7 +714,8 @@ namespace TapeLibNET
         private void MoveToEndOfContentInternal()
         {
             // QUIRK in Quantum SDLT: it seems necessary to rewind before going to the end of the data
-            Drive.Rewind();
+            if (!Drive.IsLtoDrive)
+                Drive.Rewind();
 
             // First move to the end of the data in the partition. Notice the following will produce an error if TOC hasn't been written yet
             Drive.FastforwardToEnd(partition: MediaPartition.Content); // CommonPartition
