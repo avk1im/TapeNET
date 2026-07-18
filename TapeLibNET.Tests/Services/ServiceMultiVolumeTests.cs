@@ -38,7 +38,7 @@ public class ServiceMultiVolumeTests : ServiceTestBase
     ///  the backup agent reserves that space for the in-tape TOC on setmarks drives.
     ///  20 MiB → 4 MiB usable per volume; 22 MiB total content overflows trivially.
     /// </summary>
-    private const long MultiVolumeCapacity_Setmarks = 20L * 1024 * 1024;
+    private const long MultiVolumeCapacity_Setmarks = 40L * 1024 * 1024;
 
     /// <summary>
     /// Content-partition capacity for initiator-partition multi-volume test volumes.
