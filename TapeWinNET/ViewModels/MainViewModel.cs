@@ -1955,7 +1955,7 @@ public partial class MainViewModel : ViewModelBase
         try
         {
             long initiatorPartitionSize = formatViewModel.CreateInitiatorPartition
-                ? TapeNavigator.DefaultTOCCapacity : -1;
+                ? _tapeService.DefaultTOCCapacity : -1;
 
             var success = await _tapeService.FormatMediaAsync(initiatorPartitionSize, formatViewModel.MediaName);
 
@@ -2103,7 +2103,7 @@ public partial class MainViewModel : ViewModelBase
 
             BusyMessage = "Formatting media...";
             long initiatorPartitionSize = formatViewModel.CreateInitiatorPartition
-                ? TapeNavigator.DefaultTOCCapacity : -1;
+                ? _tapeService.DefaultTOCCapacity : -1;
 
             if (!await _tapeService.FormatMediaAsync(initiatorPartitionSize, formatViewModel.MediaName))
             {

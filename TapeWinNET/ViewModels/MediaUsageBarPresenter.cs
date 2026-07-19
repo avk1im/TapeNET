@@ -124,10 +124,13 @@ public class MediaUsageBarPresenter : ViewModelBase
     /// </summary>
     protected virtual void BuildSegments(List<UsageSegment> segments, TapeTOC? toc, long capacity)
     {
+        long tocSize = 0;
+        bool tocInPartition = false;
+
         if (toc is not null)
         {
-            long tocSize = TapeNavigator.DefaultTOCCapacity;
-            bool tocInPartition = _tapeService.HasInitiatorPartition;
+            tocSize = _tapeService.DefaultTOCCapacity;
+            tocInPartition = _tapeService.HasInitiatorPartition;
 
             // TOC-in-partition: leftmost segment
             if (tocInPartition)
@@ -156,12 +159,27 @@ public class MediaUsageBarPresenter : ViewModelBase
         // Free space — computed as remainder so derived classes that add/remove
         //  content segments get a consistent picture without extra plumbing.
         long usedSoFar = segments.Sum(s => s.Size);
-        long free = toc is null
-            ? capacity
-            : Math.Max(capacity - usedSoFar, 1); // 1-byte minimum so the visual remnant survives
+        long free = capacity - usedSoFar;
+        // any segments pending?
+        bool pending = segments.Any(s => s.Kind == UsageSegmentKind.PendingBackupSet
+            || s.Kind == UsageSegmentKind.PendingTOC);
+
+        if (pending)
+        {
+            // Don't use _tapeService.AdjustRemainingContentCapacity(free) as it can't know about
+            //  to-be-added backup set / TOC and will retun the (adjusted) drive's reported free space
+            free = Math.Max(free, 0); // avoid negative free space
+        }
+        else
+        {
+            free += tocSize; // AdjustRemainingContentCapacity() will account for TOC size
+            // Adjust free space to account for the TOC's reserved capacity.
+            free = _tapeService.AdjustRemainingContentCapacity(free);
+        }
+
         segments.Add(new UsageSegment(
             label:    "Free",
-            size:     free,
+            size:     Math.Max(free, 1), // 1-byte minimum so the visual remnant survives
             color:    default,
             tooltip:  $"Free: {Helpers.BytesToString(free)}",
             kind:     UsageSegmentKind.Free));

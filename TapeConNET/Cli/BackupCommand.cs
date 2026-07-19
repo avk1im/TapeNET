@@ -54,6 +54,11 @@ internal static class BackupCommand
             Description = "Per-file hash algorithm. Choices: None, Crc32, Crc64, XxHash32, XxHash3, XxHash64, XxHash128.",
             DefaultValueFactory = _ => TapeHashAlgorithm.Crc32,
         };
+        var compressionOption = new Option<string>("--compression", "-c")
+        {
+            Description = "Per-file compression. Choices: off/none, hardware, low, medium (default), high, or 1-19 (ZSTD level).",
+            DefaultValueFactory = _ => CompressionPreset.KeyMedium,
+        };
         var appendOption = new Option<bool>("--append", "-a")
         {
             Description = "Append a new set to existing media (default: replace all).",
@@ -87,6 +92,7 @@ internal static class BackupCommand
         cmd.Options.Add(incrementalOption);
         cmd.Options.Add(blockSizeOption);
         cmd.Options.Add(hashOption);
+        cmd.Options.Add(compressionOption);
         cmd.Options.Add(appendOption);
         cmd.Options.Add(appendAfterOption);
         cmd.Options.Add(skipErrorsOption);
@@ -104,6 +110,7 @@ internal static class BackupCommand
             var incremental = parseResult.GetValue(incrementalOption);
             var blockSize   = parseResult.GetValue(blockSizeOption);
             var hash        = parseResult.GetValue(hashOption);
+            var compressionSpec = parseResult.GetValue(compressionOption);
             var append      = parseResult.GetValue(appendOption);
             var appendAfter = parseResult.GetValue(appendAfterOption);
             var skipErrors  = parseResult.GetValue(skipErrorsOption);
@@ -122,6 +129,9 @@ internal static class BackupCommand
                 throw new TapeConException(TapeConExitCode.UsageError,
                     "No backup sources specified — at least one path, folder or wildcard pattern is required.");
 
+            if (!CompressionPreset.TryParse(compressionSpec, out var compression, out var compressionLevel, out var compressionError))
+                throw new TapeConException(TapeConExitCode.UsageError, compressionError);
+
             // Append-after implies append
             if (appendAfter.HasValue) append = true;
             // Incremental implies append (cannot be incremental of nothing)
@@ -131,8 +141,8 @@ internal static class BackupCommand
             var steps = append ? VerbHost.LifecycleSteps.Full : VerbHost.LifecycleSteps.Media;
             using var service = VerbHost.BuildAndOpen(parseResult, ux, steps, ct);
 
-            // If user didn't pick a block size, fall back to the drive's default
-            uint effectiveBlockSize = blockSize ?? service.DefaultBlockSize;
+            // If user didn't pick a block size, fall back to the drive's max (LTO) or default size
+            uint effectiveBlockSize = blockSize ?? (service.IsLtoDrive ? service.MaximumBlockSize : service.DefaultBlockSize);
             if (effectiveBlockSize == 0) effectiveBlockSize = 64 * 1024;
 
             var options = new BackupRequest(
@@ -148,7 +158,9 @@ internal static class BackupCommand
                 SkipAllErrors:          skipErrors,
                 EjectWhenDone:          ejectWhenDone,
                 EmergencyTocFolder:     emergency,
-                Filter:                 resolved.Filter)
+                Filter:                 resolved.Filter,
+                Compression:            compression,
+                CompressionLevel:       compressionLevel)
             {
                 NoMultivolume = noMultivolume,
             };

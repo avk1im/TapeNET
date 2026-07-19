@@ -57,7 +57,7 @@ public class BackupMediaUsageBarPresenter(TapeService tapeService, BackupViewMod
         // special case toc is null: show the to-be-created toc
         if (toc is null && _tapeService.HasInitiatorPartition) // TOC-in-partition: leftmost segment
         {
-            long tocSize = TapeNavigator.DefaultTOCCapacity;
+            long tocSize = _tapeService.DefaultTOCCapacity;
             segments.Add(new UsageSegment(
                 label: "TOC (pending)",
                 size: tocSize,
@@ -85,8 +85,9 @@ public class BackupMediaUsageBarPresenter(TapeService tapeService, BackupViewMod
         long usedAfterDrop = segments.Sum(s => s.Size);
         long trailingTocReserve = _tapeService.HasInitiatorPartition
             ? 0
-            : TapeNavigator.DefaultTOCCapacity;
-        long available = capacity - usedAfterDrop - trailingTocReserve - 1;
+            : _tapeService.DefaultTOCCapacity;
+        long available = capacity - usedAfterDrop;
+        available = _tapeService.AdjustRemainingContentCapacity(available) - 1;
         if (available < 1) available = 1;
 
         bool fits = pendingSize <= available;
@@ -125,7 +126,7 @@ public class BackupMediaUsageBarPresenter(TapeService tapeService, BackupViewMod
         // special case toc is null: show the to-be-created toc
         if (toc is null && !_tapeService.HasInitiatorPartition) // TOC-in-set: rightmost segment
         {
-            long tocSize = TapeNavigator.DefaultTOCCapacity;
+            long tocSize = _tapeService.DefaultTOCCapacity;
             segments.Add(new UsageSegment(
                 label: "TOC (pending)",
                 size: tocSize,

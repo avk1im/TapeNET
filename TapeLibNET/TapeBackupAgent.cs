@@ -77,13 +77,8 @@ namespace TapeLibNET
 
         private long ComputeRemainingCapacity()
         {
-            var remainingCapacity = Drive.IsLtoDrive
-                ? Drive.GetContentRemainingCapacity() // trust the remaining capacity reporting of LTO drives
-                : Drive.ContentCapacity - TOC.ComputeTotalFileSizeOnTape(onVolumeOnly: true); // for the others, compute
-            
-            if (!Drive.HasInitiatorPartition)
-                remainingCapacity -= Navigator.TOCCapacity; // if TOC is in a content set, reserve space for it
-
+            var remainingCapacity = Drive.ContentCapacity - TOC.ComputeTotalFileSizeOnTape(onVolumeOnly: true);
+            remainingCapacity = Navigator.AdjustRemainingContentCapacity(remainingCapacity);
             return remainingCapacity;
         }
 

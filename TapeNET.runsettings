@@ -26,5 +26,6 @@
 	  <TestCaseFilter>Category!=LargeFile</TestCaseFilter>
 	  <TestCaseFilter>Category!=LargeFile &amp; FullyQualifiedName!~RemoteHostBackendTests</TestCaseFilter>
 	  -->
+	  <TestCaseFilter>Category!=Physical &amp; Category!=LargeFile</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>
