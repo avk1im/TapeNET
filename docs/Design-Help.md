@@ -1,6 +1,9 @@
 # TapeWinNET Help System — Detailed Design
 
-> **Status:** Phases 0 ✅ 1 ✅ 2 ✅ 3 ✅ 4 ✅ 5 ✅ complete — `HelpNET` fully implemented; TapeWinNET HelpPane integrated and working. Phase 6 in progress: §6.1 ✅ §6.2 ✅ §6.3 ✅ §6.4 ✅ §6.6 ✅ §6.7 ✅ §6.8a ✅ done. Phase 7 done: `BackupWindow` ✅ `RestoreWindow` ✅ remaining dialogs pending. Phase 8 (Overlays): **Reveal** detailed design (§11) + implementation plan (§9 → Phase 8) authored — 📝 ready to implement; **Guide Me** (Walkthrough) deferred with forward-looking design notes (§11.9).
+> **Status:** Phases 0 ✅ 1 ✅ 2 ✅ 3 ✅ 4 ✅ 5 ✅ complete — `HelpNET` fully implemented; TapeWinNET HelpPane integrated and working.
+Phase 6: §6.1 ✅ §6.2 ✅ §6.3 ✅ §6.4 ✅ §6.6 ✅ §6.7 ✅ §6.8a ✅ done.
+Phase 7 ✅ done: `BackupWindow` ✅ `RestoreWindow` ✅ and further dialogs.
+Phase 8 (Overlays) ✅ done: **Reveal** detailed design (§11) + implementation plan (§9 → Phase 8); **Guide Me** (Walkthrough) detailed design (§12) + implementation plan (§12.9 → Phase 8b).
 > **Scope:** A modern, optionally AI-augmented help system for TapeWinNET, with reusable engines (`AiNET`, `HelpNET`) ready for TapeConNET and other future consumers.
 > **Authoring convention:** Markdown + YAML front-matter for all help content. Library API surfaces are described in C# pseudo-signatures; sections marked **(not yet implemented)** are still design-only.
 
