@@ -31,14 +31,60 @@ namespace TapeLibNET
     {
         #region *** Properties ***
 
-        /// <summary>Default TOC capacity used when no override is specified (16 MB).</summary>
-        public const long DefaultTOCCapacity = 16 * 1024 * 1024; // 16 MB
+        /// <summary>Default TOC capacity used when no override is specified.</summary>
+        public static long DefaultTOCCapacity(TapeDrive? drive)
+            => drive?.IsLto5PlusDrive == true
+                ? 1024 * 1024 * 1024 // 1 GB for LTO-5+
+                : drive?.IsLtoDrive == true
+                    ? 512 * 1024 * 1024 // 512 MB for LTO-1..4
+                    : 32 * 1024 * 1024; // 32 MB for non-LTO drives (default if no drive specified)
 
         /// <summary>
         /// Maximum space reserved for the TOC area on this tape.
         /// Instance-level so that concurrent tape operations (or tests) don't interfere.
         /// </summary>
-        public long TOCCapacity { get; set; } = DefaultTOCCapacity;
+        public long TOCCapacity
+        {
+            get => m_tocCapacityOverride ?? DefaultTOCCapacity(Drive);
+            set => m_tocCapacityOverride = value;
+        }
+
+        /// <summary>
+        /// Adjusts the remaining content capacity accounting for the drive reporting and TOC capacity.
+        /// <para>Do <b>not</b> deduct the TOC capacity; the method will do this.</para>
+        /// </summary>
+        /// <param name="remainingCapacity">
+        /// The remaining content capacity to adjust <b>without</b> deducted TOC capacity.
+        /// </param>
+        /// <returns>The adjusted remaining content capacity.</returns>
+        public long AdjustRemainingContentCapacity(long remainingCapacity)
+            => AdjustRemainingContentCapacity(Drive, remainingCapacity);
+
+        /// <summary>
+        /// Adjusts the remaining content capacity accounting for the drive reporting and TOC capacity.
+        /// <para>Do <b>not</b> deduct the TOC capacity; the method will do this.</para>
+        /// </summary>
+        /// <param name="drive">The tape drive to use for the adjustment.</param>
+        /// <param name="remainingCapacity">
+        /// The remaining content capacity to adjust <b>without</b> deducted TOC capacity.
+        /// </param>
+        /// <returns>The adjusted remaining content capacity.</returns>
+        public static long AdjustRemainingContentCapacity(TapeDrive drive, long remainingCapacity)
+        {
+            var remainingFromDrive = drive.GetContentRemainingCapacity();
+            // adjust down by 1% of drive capacity to account for drive reporting inaccuracies
+            remainingFromDrive -= drive.Capacity / 100;
+            
+            remainingCapacity = Math.Max(remainingCapacity, remainingFromDrive);
+
+            if (!drive.HasInitiatorPartition)
+                remainingCapacity -= DefaultTOCCapacity(drive);
+
+            remainingCapacity = Math.Max(remainingCapacity, 0); // don't return negative capacity
+            return remainingCapacity;
+        }
+        
+        private long? m_tocCapacityOverride = null;
 
         public virtual bool TOCInvalidated { get; protected set; } = false;
 
@@ -714,7 +760,8 @@ namespace TapeLibNET
         private void MoveToEndOfContentInternal()
         {
             // QUIRK in Quantum SDLT: it seems necessary to rewind before going to the end of the data
-            Drive.Rewind();
+            if (!Drive.IsLtoDrive)
+                Drive.Rewind();
 
             // First move to the end of the data in the partition. Notice the following will produce an error if TOC hasn't been written yet
             Drive.FastforwardToEnd(partition: MediaPartition.Content); // CommonPartition

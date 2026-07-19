@@ -183,6 +183,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     public override string Vendor  => _state.Vendor ?? string.Empty;
     public override string Product => _state.Product ?? string.Empty;
     public bool IsLto => _state.IsLto;
+    public bool IsLto5Plus => _state.IsLto5Plus;
     public override uint DriveNumber => _state.DriveNumber;
 
     #endregion

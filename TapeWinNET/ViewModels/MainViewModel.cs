@@ -91,7 +91,8 @@ public partial class MainViewModel : ViewModelBase
         RereadTOCCommand = new AsyncRelayCommand(RereadTOCAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         EjectCommand = new AsyncRelayCommand(EjectAsync, () => !IsBusy && _tapeService.IsMediaLoaded);
         FormatMediaCommand = new RelayCommand(ShowFormatMediaWindow, _ => !IsBusy && _tapeService.IsMediaLoaded);
-        DeleteBackupSetsCommand = new RelayCommand(ShowDeleteBackupSetsWindow, _ => !IsBusy && _tapeService.IsMediaLoaded && !_tapeService.IsTOCFromFile && (_tapeService.TOC?.Count ?? 0) > 0);
+        DeleteBackupSetsCommand = new RelayCommand(ShowDeleteBackupSetsWindow, _ => !IsBusy && _tapeService.IsMediaLoaded && /*!_tapeService.IsTOCFromFile &&*/ (_tapeService.TOC?.Count ?? 0) > 0);
+            // We can handle the case of missing TOC in TapeServiceBase.DeleteBackupSetsAsync() --> no need to check for IsTOCFromFile
         ExportTOCCommand = new AsyncRelayCommand(ExportTOCAsync, () => !IsBusy && _tapeService.TOC != null);
         ImportTOCCommand = new AsyncRelayCommand(ImportTOCAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         NavigateToBackupSetCommand = new RelayCommand(NavigateToSelectedBackupSet, _ => SelectedBackupSet != null);
@@ -1954,7 +1955,7 @@ public partial class MainViewModel : ViewModelBase
         try
         {
             long initiatorPartitionSize = formatViewModel.CreateInitiatorPartition
-                ? TapeNavigator.DefaultTOCCapacity : -1;
+                ? _tapeService.DefaultTOCCapacity : -1;
 
             var success = await _tapeService.FormatMediaAsync(initiatorPartitionSize, formatViewModel.MediaName);
 
@@ -2102,7 +2103,7 @@ public partial class MainViewModel : ViewModelBase
 
             BusyMessage = "Formatting media...";
             long initiatorPartitionSize = formatViewModel.CreateInitiatorPartition
-                ? TapeNavigator.DefaultTOCCapacity : -1;
+                ? _tapeService.DefaultTOCCapacity : -1;
 
             if (!await _tapeService.FormatMediaAsync(initiatorPartitionSize, formatViewModel.MediaName))
             {

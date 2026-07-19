@@ -716,6 +716,8 @@ namespace TapeLibNET
             {
                 if (length >= 0 && !CheckContentCapacity(length, writtenSoFar))
                 {
+                    m_logger.LogInformation("Drive #{Drive}: Write content stream request for {L} B EXCEEDS remaining capacity {R} B, written so far {WSF} B, capacity for current set {S} B",
+                        DriveNumber, length, CapacityForCurrentSet - writtenSoFar, writtenSoFar, CapacityForCurrentSet);
                     SetError(WIN32_ERROR.ERROR_END_OF_MEDIA);
                     return null;
                 }
@@ -798,7 +800,12 @@ namespace TapeLibNET
                 {
                     long remaining = long.MaxValue;
                     if (enforceReserved)
+                    {
                         remaining = CapacityForCurrentSet - m_packerBytesWritten;
+                        remaining = Navigator.AdjustRemainingContentCapacity(remaining);
+                    }
+
+                    // Honor the artificial ContentCapacityLimit if set
                     if (ContentCapacityLimit > 0L)
                         remaining = Math.Min(remaining, ContentCapacityLimit - m_packerBytesWritten);
 
@@ -813,8 +820,8 @@ namespace TapeLibNET
                             ? (int)(remaining - (remaining % blockSize))
                             : 0;
 
-                        m_logger.LogTrace("Drive #{Drive}: Packer hit reserved capacity ({Written}+{Bytes} > {Cap}); writing {Writable} B then EOM",
-                            DriveNumber, m_packerBytesWritten, validBytes, CapacityForCurrentSet, writable);
+                        m_logger.LogTrace("Drive #{Drive}: Remaining {Remaining} B; packer hit reserved capacity ({Written}+{Bytes} > {Cap}); writing {Writable} B then EOM",
+                            DriveNumber, remaining, m_packerBytesWritten, validBytes, CapacityForCurrentSet, writable);
 
                         int partialBlocks = 0;
                         if (writable > 0)
@@ -825,6 +832,9 @@ namespace TapeLibNET
                         }
                         return new WriteResult(partialBlocks, EomEncountered: true, Exception: null);
                     }
+
+                    m_logger.LogTrace("Drive #{Drive}: Packer to write {Valid} B (written so far {Written} B, remaining {Remaining} B)",
+                        DriveNumber, validBytes, m_packerBytesWritten, remaining);
                 }
 
                 int written = Drive.WriteDirect(buffer, 0, validBytes, out _, out bool eof);
@@ -835,7 +845,11 @@ namespace TapeLibNET
                 // Map drive errors. Treat ERROR_END_OF_MEDIA as the EOM status; everything
                 //  else surfaces as a hard error exception per the backend contract.
                 if (Drive.WentOK)
+                {
+                    m_logger.LogTrace("Drive #{Drive}: Packer wrote {Written} B ({Blocks} blocks), eof={Eof}",
+                        DriveNumber, written, blocks, eof);
                     return new WriteResult(blocks, eof, Exception: null);
+                }
 
                 if (Drive.LastErrorWin32 == WIN32_ERROR.ERROR_END_OF_MEDIA)
                     return new WriteResult(blocks, EomEncountered: true, Exception: null);

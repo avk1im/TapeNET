@@ -95,7 +95,7 @@ public abstract class RemoteServiceTestBase(LocalHostTapeServiceFixture fixture)
             await service.LoadMediaAsync(),
             $"LoadMediaAsync (remote create) failed: {service.LastError}");
 
-        long initSize = media.HasInitiator ? TapeNavigator.DefaultTOCCapacity : -1L;
+        long initSize = media.HasInitiator ? service.DefaultTOCCapacity : -1L;
         Assert.True(
             await service.FormatMediaAsync(initSize, MediaName),
             $"FormatMediaAsync (remote) failed: {service.LastError}");
@@ -174,7 +174,7 @@ public abstract class RemoteServiceTestBase(LocalHostTapeServiceFixture fixture)
             await service.LoadMediaAsync(),
             $"LoadMediaAsync (remote multi-vol, vol-1) failed: {service.LastError}");
 
-        long initSize = first.HasInitiator ? TapeNavigator.DefaultTOCCapacity : -1L;
+        long initSize = first.HasInitiator ? service.DefaultTOCCapacity : -1L;
         Assert.True(
             await service.FormatMediaAsync(initSize, MediaName),
             $"FormatMediaAsync (remote multi-vol, vol-1) failed: {service.LastError}");

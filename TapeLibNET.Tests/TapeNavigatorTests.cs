@@ -209,7 +209,7 @@ public class TapeNavigatorTests
 
         Assert.Equal(int.MinValue, TapeNavigator.UnknownSet);
         Assert.Equal(int.MinValue + 1, TapeNavigator.InTOCSet);
-        Assert.True(TapeNavigator.DefaultTOCCapacity > 0);
+        Assert.True(TapeNavigator.DefaultTOCCapacity(null) > 0);
     }
 
     #endregion

@@ -1,10 +1,10 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
+using TapeLibNET.Remote;
 using Windows.Win32.Foundation;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
-
 using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
 
 namespace TapeLibNET;
@@ -182,6 +182,18 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         return m_cachedContentRemaining >= 0 ? m_cachedContentRemaining : 0;
     }
 
+    /// <summary>
+    /// True if the underlying backend is a Win32 tape drive and the drive is an LTO model.
+    /// </summary>
+    public bool IsLtoDrive => m_backend is TapeDriveWin32Backend wbe && wbe.IsLto
+                || m_backend is RemoteTapeDriveBackend rbe && rbe.IsLto;
+
+    /// <summary>
+    /// True if the underlying backend is a Win32 tape drive and the drive is an LTO-5+ model.
+    /// </summary>
+    public bool IsLto5PlusDrive => m_backend is TapeDriveWin32Backend wbe && wbe.IsLto5Plus
+                || m_backend is RemoteTapeDriveBackend rbe && rbe.IsLto5Plus;
+    
     /// <summary>Running count of bytes transferred via <see cref="WriteDirect"/>/<see cref="ReadDirect"/>. Reset by the stream manager.</summary>
     public long ByteCounter {
         get => m_byteCounter;
@@ -365,11 +377,17 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
         if (!RefreshDriveCaps())
         {
-            LogErrorAsDebug("Failed to fill drive parameters");
+            LogErrorAsDebug("Failed to pre-fill drive parameters");
             return false;
         }
 
         SetOptimalDriveParams();
+
+        if (!RefreshDriveCaps())
+        {
+            LogErrorAsDebug("Failed to fill drive parameters after setting optimal ones");
+            return false;
+        }
 
         m_logger.LogTrace("{Prefix}: Drive reopened", LogPrefix);
         return IsDriveOpen;
@@ -861,9 +879,9 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
         bool compression = m_driveParams.Value.SupportsCompression;
         bool ecc = m_driveParams.Value.SupportsEcc;
-        bool padding = m_driveParams.Value.SupportsPadding;
+        bool padding = false; // m_driveParams.Value.SupportsPadding;
         bool reportSetmarks = m_driveParams.Value.SupportsSetmarks;
-        uint eotZone = padding ? m_driveParams.Value.DefaultBlockSize * 4 : 0;
+        uint eotZone = (uint)Math.Min(TapeNavigator.DefaultTOCCapacity(this), uint.MaxValue);
 
         if (!m_backend.SetDriveParameters(compression, ecc, padding, reportSetmarks, eotZone))
         {

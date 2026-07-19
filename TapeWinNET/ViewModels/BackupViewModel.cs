@@ -167,9 +167,8 @@ public class BackupViewModel : ViewModelBase
         StartBackupCommand = new RelayCommand(ExecuteStart, _ => CanStart);
         CancelCommand = new RelayCommand(_ => _onCancel());
 
-        // Default to Hardware compression when the drive supports it
-        if (tapeService.SupportsCompression)
-            _selectedCompressionIndex = Array.IndexOf(CompressionModeValues, TapeCompression.Hardware);
+        // Default to Software compression
+        _selectedCompressionIndex = Array.IndexOf(CompressionModeValues, TapeCompression.Software);
 
         // Commands — compression level presets
         SetCompressionFastCommand     = new RelayCommand(_ => CompressionLevel = ZstdLevel.Fast);
@@ -1065,11 +1064,12 @@ public class BackupViewModel : ViewModelBase
         // Sensible fallbacks when drive parameters are unavailable
         uint min = _tapeService.MinimumBlockSize;
         uint max = _tapeService.MaximumBlockSize;
-        uint def = _tapeService.DefaultBlockSize;
+        uint def = _tapeService.IsLtoDrive ? _tapeService.MaximumBlockSize
+            : _tapeService.DefaultBlockSize;
 
         if (min == 0) min = 1024;
-        if (max == 0) max = 65536;
-        if (def == 0) def = 16384;
+        if (max == 0) max = 64 * 1024 * 1024;
+        if (def == 0) def = 16 * 1024 * 1024;
 
         // Clamp minimum to at least 1 KB (smaller sizes are impractical for backup)
         if (min < 1024) min = 1024;
@@ -1218,11 +1218,8 @@ public class BackupViewModel : ViewModelBase
         SelectedBlockSizeIndex = _defaultBlockSizeIndex;
         SelectedHashIndex      = 1; // CRC32
 
-        // Default compression: Hardware when the drive supports it, None otherwise
-        SelectedCompressionIndex = _tapeService.SupportsCompression
-            ? Array.IndexOf(CompressionModeValues, TapeCompression.Hardware)
-            : 0; // None
-
+        // Default compression: Software
+        SelectedCompressionIndex = Array.IndexOf(CompressionModeValues, TapeCompression.Software);
         CompressionLevel = ZstdLevel.Default;
     }
 

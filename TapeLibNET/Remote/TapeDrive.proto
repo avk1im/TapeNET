@@ -126,6 +126,7 @@ message BackendState {
   string vendor                      = 16;
   string product                     = 17;
   bool   is_lto                      = 18;
+  bool   is_lto5plus                 = 19;
 }
 
 // ============================================================================

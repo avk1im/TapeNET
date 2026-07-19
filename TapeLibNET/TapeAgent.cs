@@ -495,8 +495,12 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     /// </list>
     /// </para>
     /// </summary>
+    /// <param name="navigateFromBegin">
+    /// If <see langword="true"/>, enforces navigator to count from the beginning of media --
+    ///     useful if TOC is missing or corrupted, hence its filemarks should not be trusted.
+    /// </param>
     /// <returns>A <see cref="TapeResult"/> indicating success or failure with error details.</returns>
-    public TapeResult DeleteSetsFromCurrentSetUp()
+    public TapeResult DeleteSetsFromCurrentSetUp(bool navigateFromBegin = false)
     {
         m_logger.LogTrace("Deleting sets from #{Set} up", TOC.CurrentSetIndex);
 
@@ -565,7 +569,17 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                 m_logger.LogTrace("Navigating to set #{Set} for deletion", TOC.CurrentSetIndex);
 
                 Manager.EndReadWrite();
-                Navigator.TargetContentSet = CurrentSetAsNavigatorContentSet;
+                if (navigateFromBegin)
+                {
+                    m_logger.LogTrace("Enforced navigating to beginning of content");
+                    Navigator.MoveToBeginOfContent();
+                    Navigator.TargetContentSet = TOC.CurrentSetIndexOnVolume;
+                }
+                else
+                {
+                    Navigator.TargetContentSet = CurrentSetAsNavigatorContentSet;
+                }
+                
                 Navigator.MoveToTargetContentSet();
                 if (Navigator.WentBad)
                 {

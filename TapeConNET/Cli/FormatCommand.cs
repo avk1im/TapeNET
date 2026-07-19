@@ -48,7 +48,7 @@ internal static class FormatCommand
 
             using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.Media, ct);
 
-            long initiatorSize = single ? -1 : TapeNavigator.DefaultTOCCapacity;
+            long initiatorSize = single ? -1 : service.DefaultTOCCapacity;
             var ok = await service.FormatMediaAsync(initiatorSize, name);
 
             return ok ? (int)TapeConExitCode.Ok : (int)TapeConExitCode.OperationFailed;

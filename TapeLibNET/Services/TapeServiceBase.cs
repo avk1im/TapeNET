@@ -116,6 +116,11 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     #region Drive capability properties
     // ── Drive capability properties ───────────────────────────────────────────
 
+    /// <summary>
+    /// Default TOC capacity in bytes for the currently open drive (or default 32MiB when no drive is open).
+    /// </summary>
+    public long DefaultTOCCapacity => TapeNavigator.DefaultTOCCapacity(_drive);
+
     /// <summary>Whether the drive supports an initiator (TOC) partition.</summary>
     public bool SupportsInitiatorPartition => _drive?.SupportsInitiatorPartition ?? false;
 
@@ -154,21 +159,36 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             if (_toc is null) return 0;
             var used = _toc.ComputeTotalFileSizeOnTape(DefaultBlockSize);
             if (!HasInitiatorPartition)
-                used += TapeNavigator.DefaultTOCCapacity;
+                used += DefaultTOCCapacity;
             return used;
         }
     }
 
     /// <summary>
     /// Estimated remaining capacity in bytes (Capacity − Used).
-    /// <para>For LTO drives, trust drive reporting. For others, compute</para>
     /// </summary>
-    public long Remaining => IsLtoDrive
-        ? GetRemainingCapacityFromDrive()
-        : Capacity - Used;
+    public long Remaining => _drive is not null
+            ? AdjustRemainingContentCapacity(Capacity - Used
+                + (HasInitiatorPartition ? 0 : DefaultTOCCapacity))
+            : 0;
+    
+    /// <summary>
+    /// Adjusts the remaining content capacity accounting for the drive reporting and TOC capacity.
+    /// <para>Do <b>not</b> deduct the TOC capacity; the method will do this.</para>
+    /// <para>Delegates to <see cref="TapeNavigator.AdjustRemainingContentCapacity(TapeDrive, long)"/>.</para>
+    /// </summary>
+    /// <param name="remainingCapacity">
+    /// The remaining content capacity to adjust <b>without</b> deducted TOC capacity.
+    /// </param>
+    /// <returns>The adjusted remaining content capacity.</returns>
+    public long AdjustRemainingContentCapacity(long remainingCapacity) =>
+        _drive is not null
+            ? TapeNavigator.AdjustRemainingContentCapacity(_drive, remainingCapacity)
+            : 0;
 
     /// <summary>
     /// Reads the remaining capacity directly from the drive hardware (thread-safe).
+    /// <para>Do NOT call this method while another operation that obtains the lock!</para>
     /// </summary>
     public long GetRemainingCapacityFromDrive()
     {
@@ -187,8 +207,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     public bool IsInMemoryDrive => _vmdLast?.InMemory ?? false;
 
     /// <summary>True when the drive is a physical LTO drive</summary>
-    public bool IsLtoDrive => _drive?.Backend is TapeDriveWin32Backend wbe && wbe.IsLto
-        || _drive?.Backend is RemoteTapeDriveBackend rbe && rbe.IsLto;
+    public bool IsLtoDrive => _drive?.IsLtoDrive ?? false;
 
     /// <summary>The last <see cref="VirtualMediaDescriptor"/> used to open or insert media.</summary>
     public VirtualMediaDescriptor? LastVMD => _vmdLast;
@@ -706,7 +725,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         if (_drive is null) return;
         LogInfoSub($"Partition count: {_drive.PartitionCount}");
         LogInfoSub($"Capacity: {Helpers.BytesToStringLong(_drive.ContentCapacity)}");
-        LogInfoSub($"Remaining: {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
+        LogInfoSub($"Remaining (est.): {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
     }
 
     /// <summary>
@@ -912,7 +931,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// Reloads media after format to refresh parameters.
     /// </summary>
     /// <param name="initiatorPartitionSize">
-    /// Use <see cref="TapeNavigator.DefaultTOCCapacity"/> for an initiator partition,
+    /// Use <see cref="DefaultTOCCapacity"/> for an initiator partition,
     ///  or <c>-1</c> for single-partition (TOC in set) mode.
     /// </param>
     public Task<bool> FormatMediaAsync(long initiatorPartitionSize, string? mediaName)
@@ -1270,7 +1289,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 toc.CurrentSetIndex = deleteFromSetIndex;
 
                 _agent = new TapeFileAgent(_drive, toc);
-                var result = _agent.DeleteSetsFromCurrentSetUp();
+                var result = _agent.DeleteSetsFromCurrentSetUp(navigateFromBegin: IsTOCFromFile); // if TOC is from file, assume the TOC on tape might be missing
                 if (!result)
                 {
                     LastError = result.ErrorMessage;

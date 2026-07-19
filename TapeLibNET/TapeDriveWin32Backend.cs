@@ -129,7 +129,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     public override string Product => string.IsNullOrEmpty(m_ltoProduct) ? "[unknown]" : m_ltoProduct;
 
     public bool IsLto => m_ltoGeneration >= 1;
-    public bool IsLto5plus => m_ltoGeneration >= 5;
+    public bool IsLto5Plus => m_ltoGeneration >= 5;
 
     #endregion
 

@@ -244,8 +244,8 @@ public partial class TapeServiceBase
         if (_drive.IsMediaLoaded)
         {
             LogInfoSub($"Partition count: {_drive.PartitionCount}");
-            LogInfoSub($"Capacity: {Helpers.BytesToStringLong(_drive.ContentCapacity)}");
-            LogInfoSub($"Remaining (est.): {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
+            LogInfoSub($"Capacity: {Helpers.BytesToStringLong(Capacity)}");
+            LogInfoSub($"Remaining (est. from drive): {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
         }
     }
 
@@ -290,14 +290,10 @@ public partial class TapeServiceBase
         LogInfoSub($"Created on: {toc.CreationTime}");
         LogInfoSub($"Last saved: {toc.LastSaveTime}");
         LogInfoSub($"Backup sets: {toc.Count}");
-        LogInfoSub($"Capacity: {Helpers.BytesToStringLong(_drive.ContentCapacity)}");
-        var used = toc.ComputeTotalFileSizeOnTape(_drive.DefaultBlockSize);
-        if (!_drive.HasInitiatorPartition)
-            used += TapeNavigator.DefaultTOCCapacity;
-        var remaining = _drive.ContentCapacity - used;
-        LogInfoSub($"Used: {Helpers.BytesToStringLong(used)}");
-        LogInfoSub($"Remaining: {Helpers.BytesToStringLong(remaining)}");
-        LogInfoSub($"Remaining (est.): {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
+        LogInfoSub($"Capacity: {Helpers.BytesToStringLong(Capacity)}");
+        LogInfoSub($"Used: {Helpers.BytesToStringLong(Used)}");
+        LogInfoSub($"Remaining: {Helpers.BytesToStringLong(Remaining)}");
+        LogInfoSub($"Remaining (est. from drive): {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
         LogInfoSub($"TOC placement: {(_drive.HasInitiatorPartition ? "partition" : "set")}");
         LogInfoSub($"Volume: #{toc.Volume}");
         LogInfoSub($"Continued on next volume: {(toc.ContinuedOnNextVolume ? "Yes" : "No")}");

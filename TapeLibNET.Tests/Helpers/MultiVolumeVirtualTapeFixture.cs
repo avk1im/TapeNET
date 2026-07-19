@@ -103,7 +103,11 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
         long initCap = Capabilities.SupportsInitiatorPartition
             ? DefaultInitiatorCapacity : 0;
 
-        Backend.InsertMemoryMedia(ContentCapacity, initCap);
+        var capacity = ContentCapacity;
+        if (!Drive.HasInitiatorPartition)
+            capacity += TapeNavigator.DefaultTOCCapacity(Drive); // ensure enough space for TOC in set
+
+        Backend.InsertMemoryMedia(capacity, initCap);
         Assert.True(Drive.ReloadMedia(), $"Failed to load new volume #{newVolume}");
         Assert.True(Drive.PrepareMedia(), $"Failed to prepare new volume #{newVolume}");
 
@@ -154,6 +158,9 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
         long initCap = Capabilities.SupportsInitiatorPartition
             ? DefaultInitiatorCapacity : 0;
+
+        if (!Capabilities.SupportsInitiatorPartition)
+            contentCapacity += TapeNavigator.DefaultTOCCapacity(null); // ensure enough space for TOC in set
 
         Backend = VirtualTapeDriveBackend.CreateMemoryBacked(
             LoggerFactory, Capabilities, contentCapacity, initCap);

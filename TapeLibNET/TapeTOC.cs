@@ -566,8 +566,13 @@ namespace TapeLibNET
         // Invalidate cached layout flag when the file set is mutated.
         internal void InvalidateLayoutCache() => m_isPackedLayout = null;
 
-        // Compute the size of all files in the set on tape, considering the block size.
-        //  Detects packed-layout sets dynamically: if any file has a non-zero intra-block
+        /// <summary>
+        /// Computes the total size of all files in the set on tape, considering the block size.
+        /// <para>Works properly for both packed and aligned (deprecated) layouts.</para>
+        /// </summary>
+        /// <param name="defaultBlockSize">The default block size to use if the set's block size is not specified.</param>
+        /// <returns>The total size of all files on tape, rounded up to the nearest block boundary.</returns>
+        // We detect packed-layout sets dynamically: if any file has a non-zero intra-block
         //  offset (Address.Offset != 0), the set is packed and files share blocks, so we
         //  only round the *total* of (file + header) sizes up to one block boundary
         //  rather than rounding each file individually. The detection result is cached.

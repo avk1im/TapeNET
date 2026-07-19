@@ -34,11 +34,11 @@ public class ServiceMultiVolumeTests : ServiceTestBase
 
     /// <summary>
     /// Content-partition capacity for setmarks (single-partition) multi-volume test volumes.
-    ///  Must be larger than <see cref="TapeNavigator.DefaultTOCCapacity"/> (16 MiB) because
+    ///  Must be larger than <see cref="TapeNavigator.DefaultTOCCapacity"/> (32 MiB) because
     ///  the backup agent reserves that space for the in-tape TOC on setmarks drives.
-    ///  20 MiB → 4 MiB usable per volume; 22 MiB total content overflows trivially.
+    ///  36 MiB → 4 MiB usable per volume; 22 MiB total content overflows trivially.
     /// </summary>
-    private const long MultiVolumeCapacity_Setmarks = 20L * 1024 * 1024;
+    private const long MultiVolumeCapacity_Setmarks = 36L * 1024 * 1024;
 
     /// <summary>
     /// Content-partition capacity for initiator-partition multi-volume test volumes.
@@ -71,10 +71,10 @@ public class ServiceMultiVolumeTests : ServiceTestBase
     /// Vol-1 capacity for setmarks drives in A-6.
     ///  Block-rounded full backup: 16 × ⌈350/64⌉ × 64 KiB = 16 × 384 KiB = 6,144 KiB.
     ///  With file-header overhead this slightly exceeds a 6 MiB usable window, so
-    ///  vol-1 is sized at 24 MiB (usable = 24 − 16 MiB TOC reserve = 8 MiB):
+    ///  vol-1 is sized at 40 MiB (usable = 40 − 32 MiB TOC reserve = 8 MiB):
     ///  8 MiB &gt; ~6.1 MiB (full backup, block-padded) ✓  and  8 MiB &lt; ~11.2 MiB (incremental) ✓.
     /// </summary>
-    private const long MvIncVol1Capacity_Setmarks = 24L * 1024 * 1024;
+    private const long MvIncVol1Capacity_Setmarks = 40L * 1024 * 1024;
 
     /// <summary>
     /// Vol-1 capacity for initiator-partition drives in A-6.
@@ -86,9 +86,9 @@ public class ServiceMultiVolumeTests : ServiceTestBase
     /// <summary>
     /// Vol-2 capacity for setmarks drives in A-6.
     ///  Must hold the full incremental overflow: 16 × 700 KiB = 11.2 MiB data
-    ///  plus 16 MiB TOC reserve = 27.2 MiB → 30 MiB with headroom.
+    ///  plus 32 MiB TOC reserve = 43.2 MiB → 46 MiB with headroom.
     /// </summary>
-    private const long MvIncVol2Capacity_Setmarks = 30L * 1024 * 1024;
+    private const long MvIncVol2Capacity_Setmarks = 46L * 1024 * 1024;
 
     /// <summary>
     /// Vol-2 capacity for initiator-partition drives in A-6.

@@ -88,7 +88,7 @@ public abstract class ServiceTestBase
         Assert.True(await service.LoadMediaAsync(),
             $"LoadMediaAsync (post-create) failed: {service.LastError}");
 
-        long initSize = media.HasInitiator ? TapeNavigator.DefaultTOCCapacity : -1L;
+        long initSize = media.HasInitiator ? service.DefaultTOCCapacity : -1L;
         Assert.True(await service.FormatMediaAsync(initSize, MediaName),
             $"FormatMediaAsync failed: {service.LastError}");
 
@@ -200,7 +200,7 @@ public abstract class ServiceTestBase
         Assert.True(await service.LoadMediaAsync(),
             $"LoadMediaAsync (multi-vol, vol-1) failed: {service.LastError}");
 
-        long initSize = first.HasInitiator ? TapeNavigator.DefaultTOCCapacity : -1L;
+        long initSize = first.HasInitiator ? service.DefaultTOCCapacity : -1L;
         Assert.True(await service.FormatMediaAsync(initSize, MediaName),
             $"FormatMediaAsync (multi-vol, vol-1) failed: {service.LastError}");
 
