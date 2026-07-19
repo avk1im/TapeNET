@@ -549,9 +549,16 @@
             <!-- Tree View Pane -->
             <GroupBox Grid.Column="0" Header="Tape Structure" Margin="4"
                       help:HelpControlNameAttachedProperty.ControlName="Tree view">
+                <!-- IsEnabled (not just the overlay covering it) is bound to IsMediaBrowsingEnabled so
+                     the TreeView is truly disabled - and stops receiving keyboard input - while an
+                     operation or TOC load is in progress. The overlay Grids only block mouse
+                     hit-testing; they do not stop keyboard events routed to a control that still
+                     holds keyboard focus (e.g. arrow-key navigation), which could otherwise change
+                     the selection and re-enter TOC access while a worker thread is mutating it. -->
                 <TreeView ItemsSource="{Binding TreeItems}"
                           ItemTemplate="{StaticResource TreeItemTemplate}"
                           ItemContainerStyle="{StaticResource TreeViewItemStyle}"
+                          IsEnabled="{Binding IsMediaBrowsingEnabled}"
                           SelectedItemChanged="TreeView_SelectedItemChanged"
                           PreviewMouseRightButtonDown="TreeView_PreviewMouseRightButtonDown"
                           PreviewMouseLeftButtonDown="DragSource_PreviewMouseLeftButtonDown"
@@ -588,7 +595,12 @@
                             SegmentClickCommand="{Binding UsageBar.SegmentClickCommand}"
                             Visibility="{Binding IsUsageBarVisible, Converter={StaticResource BoolToVis}}"/>
 
+                        <!-- IsEnabled bound to IsMediaBrowsingEnabled - see TreeView comment above;
+                             even though renaming media/checking the media's properties happens via
+                             menu commands rather than this ListView, keeping it disabled avoids any
+                             keyboard-driven selection/interaction while media data is being mutated. -->
                         <ListView ItemsSource="{Binding PropertyList}"
+                              IsEnabled="{Binding IsMediaBrowsingEnabled}"
                               VirtualizingPanel.IsVirtualizing="True"
                               VirtualizingPanel.VirtualizationMode="Recycling">
                         <ListView.ContextMenu>
@@ -733,9 +745,13 @@
                         </Grid>
 
                         <!-- Backup Sets Table (visible when Media is selected) -->
+                        <!-- IsEnabled bound to IsMediaBrowsingEnabled - see TreeView comment above;
+                             prevents arrow-key navigation + Enter (NavigateToBackupSetCommand) from
+                             re-entering TOC access while a worker thread is mutating it. -->
                         <ListView x:Name="BackupSetsListView"
                                   help:HelpControlNameAttachedProperty.ControlName="Backup sets list"
                                   ItemsSource="{Binding BackupSetList}"
+                                  IsEnabled="{Binding IsMediaBrowsingEnabled}"
                                   SelectedItem="{Binding SelectedBackupSet}"
                                   GridViewColumnHeader.Click="GridViewColumnHeader_Click"
                                   CheckBox.Checked="BackupSetCheckBox_Changed"

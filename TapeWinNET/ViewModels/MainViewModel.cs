@@ -231,25 +231,12 @@ public partial class MainViewModel : ViewModelBase
             {
                 OnPropertyChanged(nameof(IsGeneralBusy));
                 OnPropertyChanged(nameof(IsIoSpeedEnabled));
+                OnPropertyChanged(nameof(IsMediaBrowsingEnabled));
                 CommandManager.InvalidateRequerySuggested();
             }
         }
     }
 
-    public bool IsBackupInProgress
-    {
-        get => _isBackupInProgress;
-        set
-        {
-            if (SetProperty(ref _isBackupInProgress, value))
-            {
-                OnPropertyChanged(nameof(IsGeneralBusy));
-                OnPropertyChanged(nameof(IsOperationInProgress));
-                NotifyOperationPropertiesChanged();
-                CommandManager.InvalidateRequerySuggested();
-            }
-        }
-    }
 
     /// <summary>
     /// True while the TOC is being read from media (shows cancellable overlay).
@@ -262,6 +249,7 @@ public partial class MainViewModel : ViewModelBase
             if (SetProperty(ref _isTOCLoadInProgress, value))
             {
                 OnPropertyChanged(nameof(IsGeneralBusy));
+                OnPropertyChanged(nameof(IsMediaBrowsingEnabled));
                 CommandManager.InvalidateRequerySuggested();
             }
         }
@@ -293,6 +281,20 @@ public partial class MainViewModel : ViewModelBase
     /// True when any tape operation (backup or restore/validate/verify) is in progress.
     /// </summary>
     public bool IsOperationInProgress => IsBackupInProgress || IsRestoreInProgress;
+
+    /// <summary>
+    /// False whenever any operation/busy overlay is shown, so the TreeView and the media/property
+    ///  ListViews can be bound to <c>IsEnabled</c> and thereby stop receiving keyboard input
+    ///  (e.g. arrow-key navigation, Enter to browse into a set). The overlays themselves only
+    ///  cover these panes visually and block mouse hit-testing; they do not stop keyboard events
+    ///  routed to a control that still holds keyboard focus. Disabling the controls is the only
+    ///  way to prevent a stray/queued keystroke from changing the selection - and hence
+    ///  re-entering TOC access - while a worker thread is mutating it.
+    /// Named for what it enables (browsing the media's drive/tape/backup-set structure), not
+    ///  generically "UI enabled" - other UI (menu commands, log pane, Abort button) stays
+    ///  interactive during backup/restore.
+    /// </summary>
+    public bool IsMediaBrowsingEnabled => !IsBusy && !IsOperationInProgress && !IsTOCLoadInProgress;
 
     // BackupProgressPercent, BackupProgressText, CurrentBackupFile properties are in MainViewModel.Backup.cs
     // RestoreProgressPercent, RestoreProgressText, CurrentRestoreFile, IsRestoreInProgress properties are in MainViewModel.Restore.cs

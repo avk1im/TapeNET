@@ -29,6 +29,22 @@ public partial class MainViewModel
 
     #region Backup Properties
 
+    public bool IsBackupInProgress
+    {
+        get => _isBackupInProgress;
+        set
+        {
+            if (SetProperty(ref _isBackupInProgress, value))
+            {
+                OnPropertyChanged(nameof(IsGeneralBusy));
+                OnPropertyChanged(nameof(IsOperationInProgress));
+                OnPropertyChanged(nameof(IsMediaBrowsingEnabled));
+                NotifyOperationPropertiesChanged();
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
     public double BackupProgressPercent
     {
         get => _backupProgressPercent;

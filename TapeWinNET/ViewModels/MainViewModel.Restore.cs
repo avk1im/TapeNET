@@ -55,6 +55,7 @@ public partial class MainViewModel
             {
                 OnPropertyChanged(nameof(IsGeneralBusy));
                 OnPropertyChanged(nameof(IsOperationInProgress));
+                OnPropertyChanged(nameof(IsMediaBrowsingEnabled));
                 NotifyOperationPropertiesChanged();
                 CommandManager.InvalidateRequerySuggested();
             }
