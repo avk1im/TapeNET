@@ -43,6 +43,17 @@ namespace TapeLibNET;
 /// and <see cref="ScsiWriteDirect"/> on the same session. Pick one writer per open handle so
 /// the class driver's notion of position stays coherent with the drive.
 /// </para>
+/// <para>
+/// <b>Alignment / large-block note:</b> <c>IOCTL_SCSI_PASS_THROUGH_DIRECT</c> hands the miniport
+/// the caller's data buffer directly, so the transfer is bounded by the adapter's
+/// <c>MaximumTransferLength</c> and <c>MaximumPhysicalPages</c> (scatter/gather fragment count),
+/// and the buffer should be adapter/cache aligned. A pinned managed array is only 8-byte aligned,
+/// so a 64 KB payload spans 17 physical pages — exactly the common adapter SG limit — which is why
+/// unaligned SPTD writes fail above 64 KB while <c>WriteFile</c> (which the class driver page-aligns)
+/// does not. The <c>*Aligned</c> members below route the payload through a reusable page-aligned
+/// native buffer and honor the probed adapter limits. The original (non-aligned) members are kept
+/// for reference, diagnostics, and small transfers.
+/// </para>
 /// </summary>
 public partial class TapeDriveWin32Backend
 {
@@ -54,16 +65,16 @@ public partial class TapeDriveWin32Backend
     private const uint c_ioctlScsiPassThroughDirect = 0x0004D014u;
 
     // SCSI status codes
-    private const byte c_scsiStatusGood           = 0x00;
+    private const byte c_scsiStatusGood = 0x00;
     private const byte c_scsiStatusCheckCondition = 0x02;
 
     // Sense keys of interest (fixed-format sense byte 2, low nibble)
-    private const byte c_senseKeyNoSense        = 0x00;
+    private const byte c_senseKeyNoSense = 0x00;
     private const byte c_senseKeyRecoveredError = 0x01;
     private const byte c_senseKeyVolumeOverflow = 0x0D;
 
     // Opcodes
-    private const byte c_scsiOpWrite6          = 0x0A;
+    private const byte c_scsiOpWrite6 = 0x0A;
     private const byte c_scsiOpWriteFilemarks6 = 0x10;
 
     // WRITE(6) byte-1 FIXED bit
@@ -79,17 +90,17 @@ public partial class TapeDriveWin32Backend
     private unsafe struct SCSI_PASS_THROUGH_DIRECT
     {
         public ushort Length;
-        public byte   ScsiStatus;
-        public byte   PathId;
-        public byte   TargetId;
-        public byte   Lun;
-        public byte   CdbLength;
-        public byte   SenseInfoLength;
-        public byte   DataIn;
-        public uint   DataTransferLength;
-        public uint   TimeOutValue;
-        public void*  DataBuffer;       // separate, pinned data region
-        public uint   SenseInfoOffset;  // offset of sense within the control buffer
+        public byte ScsiStatus;
+        public byte PathId;
+        public byte TargetId;
+        public byte Lun;
+        public byte CdbLength;
+        public byte SenseInfoLength;
+        public byte DataIn;
+        public uint DataTransferLength;
+        public uint TimeOutValue;
+        public void* DataBuffer;       // separate, pinned data region
+        public uint SenseInfoOffset;  // offset of sense within the control buffer
         public fixed byte Cdb[16];
     }
 
@@ -103,19 +114,19 @@ public partial class TapeDriveWin32Backend
     /// </summary>
     public readonly struct ScsiDirectOutcome
     {
-        public bool TransportOk     { get; init; } // DeviceIoControl itself succeeded
-        public byte ScsiStatus      { get; init; } // 0x00 GOOD, 0x02 CHECK CONDITION
-        public bool SenseValid      { get; init; }
-        public bool Filemark        { get; init; } // sense byte 2 bit 7
-        public bool Eom             { get; init; } // sense byte 2 bit 6 (EW *or* hard EOM)
-        public bool Ili             { get; init; } // sense byte 2 bit 5
-        public byte SenseKey        { get; init; }
-        public byte Asc             { get; init; }
-        public byte Ascq            { get; init; }
-        public uint Information      { get; init; } // fixed-format INFORMATION (residual)
+        public bool TransportOk { get; init; } // DeviceIoControl itself succeeded
+        public byte ScsiStatus { get; init; } // 0x00 GOOD, 0x02 CHECK CONDITION
+        public bool SenseValid { get; init; }
+        public bool Filemark { get; init; } // sense byte 2 bit 7
+        public bool Eom { get; init; } // sense byte 2 bit 6 (EW *or* hard EOM)
+        public bool Ili { get; init; } // sense byte 2 bit 5
+        public byte SenseKey { get; init; }
+        public byte Asc { get; init; }
+        public byte Ascq { get; init; }
+        public uint Information { get; init; } // fixed-format INFORMATION (residual)
         public uint DataTransferLength { get; init; } // as reported back by the port driver
 
-        public bool IsGood           => TransportOk && ScsiStatus == c_scsiStatusGood;
+        public bool IsGood => TransportOk && ScsiStatus == c_scsiStatusGood;
         public bool IsCheckCondition => TransportOk && ScsiStatus == c_scsiStatusCheckCondition;
 
         /// <summary>Early warning: data accepted, drive says "entering the EW zone".</summary>
@@ -147,6 +158,12 @@ public partial class TapeDriveWin32Backend
     /// precisely how Early Warning is caught. This method does NOT set the backend error
     /// state; the caller decides what a given sense condition means (EW is not an error).
     /// </para>
+    /// <para>
+    /// <b>Note:</b> this pins the caller's (managed) buffer directly, which is only 8-byte
+    /// aligned. That is fine for small transfers (INQUIRY-sized, and tape blocks up to ~64 KB)
+    /// but will fail for larger blocks on adapters with a tight scatter/gather budget. For large
+    /// payloads use <see cref="SendScsiCommandDirectAligned"/>.
+    /// </para>
     /// </summary>
     /// <param name="cdb">Command Descriptor Block (up to 16 bytes).</param>
     /// <param name="dataBuffer">
@@ -170,14 +187,14 @@ public partial class TapeDriveWin32Backend
         fixed (byte* pData = dataBuffer)   // null when dataBuffer is empty
         {
             var spt = (SCSI_PASS_THROUGH_DIRECT*)pCtrl;
-            spt->Length             = (ushort)sptdSize;
-            spt->CdbLength          = (byte)cdb.Length;
-            spt->SenseInfoLength    = (byte)c_senseBufferSize;
-            spt->DataIn             = dataIn ? c_scsiDataIn : c_scsiDataOut;
+            spt->Length = (ushort)sptdSize;
+            spt->CdbLength = (byte)cdb.Length;
+            spt->SenseInfoLength = (byte)c_senseBufferSize;
+            spt->DataIn = dataIn ? c_scsiDataIn : c_scsiDataOut;
             spt->DataTransferLength = (uint)dataBuffer.Length;
-            spt->TimeOutValue       = timeoutSeconds;
-            spt->DataBuffer         = dataBuffer.Length > 0 ? pData : null;
-            spt->SenseInfoOffset    = (uint)sptdSize;
+            spt->TimeOutValue = timeoutSeconds;
+            spt->DataBuffer = dataBuffer.Length > 0 ? pData : null;
+            spt->SenseInfoOffset = (uint)sptdSize;
 
             for (int i = 0; i < cdb.Length; i++)
                 spt->Cdb[i] = cdb[i];
@@ -203,17 +220,17 @@ public partial class TapeDriveWin32Backend
 
             var outcome = new ScsiDirectOutcome
             {
-                TransportOk        = true,
-                ScsiStatus         = spt->ScsiStatus,
+                TransportOk = true,
+                ScsiStatus = spt->ScsiStatus,
                 DataTransferLength = spt->DataTransferLength,
-                SenseValid         = senseValid,
-                Filemark           = senseValid && (pSense[2] & 0x80) != 0,
-                Eom                = senseValid && (pSense[2] & 0x40) != 0,
-                Ili                = senseValid && (pSense[2] & 0x20) != 0,
-                SenseKey           = senseValid ? (byte)(pSense[2] & 0x0F) : (byte)0,
-                Asc                = senseValid ? pSense[12] : (byte)0,
-                Ascq               = senseValid ? pSense[13] : (byte)0,
-                Information        = senseValid
+                SenseValid = senseValid,
+                Filemark = senseValid && (pSense[2] & 0x80) != 0,
+                Eom = senseValid && (pSense[2] & 0x40) != 0,
+                Ili = senseValid && (pSense[2] & 0x20) != 0,
+                SenseKey = senseValid ? (byte)(pSense[2] & 0x0F) : (byte)0,
+                Asc = senseValid ? pSense[12] : (byte)0,
+                Ascq = senseValid ? pSense[13] : (byte)0,
+                Information = senseValid
                     ? ((uint)pSense[3] << 24) | ((uint)pSense[4] << 16) | ((uint)pSense[5] << 8) | pSense[6]
                     : 0u,
             };
@@ -245,6 +262,11 @@ public partial class TapeDriveWin32Backend
     /// blocks); a zero block size selects <b>variable-block</b> mode (FIXED=0, transfer
     /// length in bytes). Pass <paramref name="forceVariable"/> to force the variable path.
     /// </para>
+    /// <para>
+    /// <b>Large blocks:</b> this variant pins the caller's managed buffer directly and can fail
+    /// above ~64 KB on adapters with a small scatter/gather budget. For large blocks prefer
+    /// <see cref="ScsiWriteDirectAligned"/>.
+    /// </para>
     /// </summary>
     /// <param name="buffer">Source buffer.</param>
     /// <param name="offset">Offset into <paramref name="buffer"/>.</param>
@@ -266,8 +288,8 @@ public partial class TapeDriveWin32Backend
         bool forceVariable = false)
     {
         earlyWarning = false;
-        eom          = false;
-        tapemark     = false;
+        eom = false;
+        tapemark = false;
 
 #if DEBUG
         if (SimulateIOFailures.ShouldFailNow())
@@ -297,12 +319,12 @@ public partial class TapeDriveWin32Backend
                 return 0;
             }
             xferLen = (uint)(count / blockSize);    // blocks
-            flags   = c_write6FixedBit;             // FIXED = 1
+            flags = c_write6FixedBit;             // FIXED = 1
         }
         else
         {
             xferLen = (uint)count;                  // bytes
-            flags   = 0x00;                         // FIXED = 0 (variable-block, one block == whole buffer)
+            flags = 0x00;                         // FIXED = 0 (variable-block, one block == whole buffer)
         }
 
         if (xferLen > c_write6MaxTransferLength)
@@ -313,11 +335,13 @@ public partial class TapeDriveWin32Backend
             return 0;
         }
 
+#pragma warning disable IDE0302 // Simplify collection initialization -- for explicity
         Span<byte> cdb = stackalloc byte[6];
+#pragma warning restore IDE0302 // Simplify collection initialization
         cdb[0] = c_scsiOpWrite6;
         cdb[1] = flags;
         cdb[2] = (byte)((xferLen >> 16) & 0xFF);
-        cdb[3] = (byte)((xferLen >> 8)  & 0xFF);
+        cdb[3] = (byte)((xferLen >> 8) & 0xFF);
         cdb[4] = (byte)(xferLen & 0xFF);
         cdb[5] = 0x00; // CONTROL
 
@@ -342,7 +366,6 @@ public partial class TapeDriveWin32Backend
         {
             int written = count - ResidualToBytes(r.Information, fixedBlock, blockSize);
             if (written < 0) written = 0;
-
             earlyWarning = true;
             ResetError(); // EW is not an error
             m_logger.LogInformation(
@@ -356,7 +379,6 @@ public partial class TapeDriveWin32Backend
         {
             int written = count - ResidualToBytes(r.Information, fixedBlock, blockSize);
             if (written < 0) written = 0;
-
             eom = true;
             SetError(WIN32_ERROR.ERROR_END_OF_MEDIA);
             LogErrorAsTrace("ScsiWriteDirect hit physical EOM");
@@ -387,7 +409,7 @@ public partial class TapeDriveWin32Backend
     public int WriteDirect(byte[] buffer, int offset, int count,
         out bool tapemark, out bool eof, out bool earlyWarning)
     {
-        int written = ScsiWriteDirect(buffer, offset, count,
+        int written = ScsiWriteDirectAligned(buffer, offset, count,
             out earlyWarning, out bool eom, out tapemark);
         eof = eom;
         return written;
@@ -421,11 +443,13 @@ public partial class TapeDriveWin32Backend
     {
         earlyWarning = false;
 
+#pragma warning disable IDE0302 // Simplify collection initialization -- for explicity
         Span<byte> cdb = stackalloc byte[6];
+#pragma warning restore IDE0302 // Simplify collection initialization
         cdb[0] = c_scsiOpWriteFilemarks6;
         cdb[1] = immediate ? (byte)0x01 : (byte)0x00; // IMMED bit
         cdb[2] = (byte)((count >> 16) & 0xFF);
-        cdb[3] = (byte)((count >> 8)  & 0xFF);
+        cdb[3] = (byte)((count >> 8) & 0xFF);
         cdb[4] = (byte)(count & 0xFF);
         cdb[5] = 0x00; // CONTROL
 
@@ -456,6 +480,393 @@ public partial class TapeDriveWin32Backend
             "{Prefix}: WRITE FILEMARKS(6) failed key=0x{Key:X2} ASC=0x{Asc:X2} ASCQ=0x{Ascq:X2}",
             LogPrefix, r.SenseKey, r.Asc, r.Ascq);
         return false;
+    }
+
+    #endregion
+
+    // =========================================================================
+    //  PAGE-ALIGNED SPTD PATH
+    //
+    //  Fixes "SPTD writes fail above 64 KB". Root cause: IOCTL_SCSI_PASS_THROUGH_DIRECT
+    //  hands the miniport the caller's data buffer directly (locked-down MDL). The transfer
+    //  is bounded by the adapter's MaximumTransferLength and, crucially, its
+    //  MaximumPhysicalPages (scatter/gather fragment count), and the buffer should be
+    //  adapter/cache aligned. A pinned managed array is only 8-byte aligned, so a 64 KB
+    //  payload spans 17 physical pages — exactly the common adapter SG limit — hence the
+    //  64 KB cliff. WriteFile avoids this because the tape class driver builds a page-aligned
+    //  MDL for the full transfer.
+    //
+    //  Fix: (1) probe adapter capabilities once via IOCTL_SCSI_GET_CAPABILITIES; (2) route the
+    //  payload through a reusable page-aligned native scratch buffer; (3) refuse (or let the
+    //  caller fall back) when a single block exceeds one SRB, since a tape logical block cannot
+    //  be split across multiple WRITE commands.
+    //
+    //  The non-aligned members above are retained for small transfers and diagnostics.
+    // =========================================================================
+
+    #region *** GET CAPABILITIES structures & constants ***
+
+    // CTL_CODE(IOCTL_SCSI_BASE=0x0004, 0x0304, METHOD_BUFFERED, FILE_ANY_ACCESS) = 0x00041010
+    private const uint c_ioctlScsiGetCapabilities = 0x00041010u;
+
+    // Matches IO_SCSI_CAPABILITIES (ntddscsi.h)
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IO_SCSI_CAPABILITIES
+    {
+        public uint Length;
+        public uint MaximumTransferLength;   // max bytes per single SRB
+        public uint MaximumPhysicalPages;    // max scatter/gather fragments per SRB
+        public uint SupportedAsynchronousEvents;
+        public uint AlignmentMask;           // required buffer alignment - 1 (e.g. 0=any, 1=word, 3=dword)
+        [MarshalAs(UnmanagedType.U1)] public bool TaggedQueuing;
+        [MarshalAs(UnmanagedType.U1)] public bool AdapterScansDown;
+        [MarshalAs(UnmanagedType.U1)] public bool AdapterUsesPio;
+    }
+
+    private const int c_pageSize = 4096;
+
+    // Cached adapter capabilities (probed lazily, once per open handle).
+    private uint m_maxTransferLength;   // 0 = not yet probed
+    private uint m_maxPhysicalPages;
+    private uint m_alignmentMask;
+
+    // Reusable page-aligned scratch for SPTD payloads. Allocated on demand, grown as needed.
+    //  IMPORTANT: call FreeAlignedScratch() from your existing Close(), and reset
+    //  m_maxTransferLength = 0 there too so capabilities are re-probed on the next Open().
+    private nint m_alignedScratch;      // native, page-aligned
+    private int m_alignedScratchSize;
+
+    #endregion
+
+    #region *** Capability probe ***
+
+    /// <summary>
+    /// Queries and caches the adapter's pass-through limits. Safe to call repeatedly;
+    /// the actual IOCTL runs only once per open handle. Returns false if the adapter
+    /// does not answer (in which case conservative fallbacks are used).
+    /// </summary>
+    public unsafe bool EnsureScsiCapabilities()
+    {
+        if (m_maxTransferLength != 0)
+            return true; // already probed
+
+        var caps = new IO_SCSI_CAPABILITIES();
+        uint bytesReturned;
+
+        bool ok = PInvoke.DeviceIoControl(
+            new HANDLE(m_driveHandle.DangerousGetHandle()),
+            c_ioctlScsiGetCapabilities,
+            null, 0,
+            &caps, (uint)sizeof(IO_SCSI_CAPABILITIES),
+            &bytesReturned, null);
+
+        if (!ok)
+        {
+            SetErrorFromPInvoke();
+            // Conservative fallbacks: 64 KB transfer, 17 SG entries, no special alignment.
+            m_maxTransferLength = 0x10000;
+            m_maxPhysicalPages = 17;
+            m_alignmentMask = 0;
+            m_logger.LogWarning(
+                "{Prefix}: IOCTL_SCSI_GET_CAPABILITIES failed — using conservative limits " +
+                "(maxTransfer={Max}, maxPages={Pages})",
+                LogPrefix, m_maxTransferLength, m_maxPhysicalPages);
+            return false;
+        }
+
+        m_maxTransferLength = caps.MaximumTransferLength;
+        m_maxPhysicalPages = caps.MaximumPhysicalPages;
+        m_alignmentMask = caps.AlignmentMask;
+
+        m_logger.LogInformation(
+            "{Prefix}: SCSI capabilities — MaximumTransferLength={Max} bytes, " +
+            "MaximumPhysicalPages={Pages}, AlignmentMask=0x{Align:X}",
+            LogPrefix, m_maxTransferLength, m_maxPhysicalPages, m_alignmentMask);
+
+        return true;
+    }
+
+    /// <summary>
+    /// The largest single-SRB payload we can push through SPTD with a PAGE-ALIGNED buffer.
+    /// With page alignment an N-byte transfer occupies ceil(N / PAGE) fragments, so the SG
+    /// limit allows up to <c>MaximumPhysicalPages * PAGE</c> bytes; we also honor
+    /// <c>MaximumTransferLength</c>.
+    /// </summary>
+    public uint MaxScsiDirectTransfer
+    {
+        get
+        {
+            EnsureScsiCapabilities();
+            uint byPages = m_maxPhysicalPages > 0
+                ? m_maxPhysicalPages * (uint)c_pageSize
+                : 0x10000u;
+            uint limit = m_maxTransferLength > 0
+                ? Math.Min(m_maxTransferLength, byPages)
+                : byPages;
+            return limit;
+        }
+    }
+
+    #endregion
+
+    #region *** Page-aligned scratch management ***
+
+    private unsafe byte* EnsureAlignedScratch(int size)
+    {
+        if (m_alignedScratch != 0 && m_alignedScratchSize >= size)
+            return (byte*)m_alignedScratch;
+
+        FreeAlignedScratch();
+
+        // Round the allocation up to a whole page; AlignedAlloc guarantees page alignment,
+        //  which minimizes physical-page fragmentation for the miniport's SG list.
+        nuint alignment = (nuint)c_pageSize;
+        nuint bytes = (nuint)((size + c_pageSize - 1) & ~(c_pageSize - 1));
+
+        m_alignedScratch = (nint)NativeMemory.AlignedAlloc(bytes, alignment);
+        m_alignedScratchSize = (int)bytes;
+        return (byte*)m_alignedScratch;
+    }
+
+    /// <summary>Frees the aligned scratch buffer. Call this from your existing <c>Close()</c>.</summary>
+    public unsafe void FreeAlignedScratch()
+    {
+        if (m_alignedScratch != 0)
+        {
+            NativeMemory.AlignedFree((void*)m_alignedScratch);
+            m_alignedScratch = 0;
+            m_alignedScratchSize = 0;
+        }
+    }
+
+    #endregion
+
+    #region *** Aligned SPTD core ***
+
+    /// <summary>
+    /// Page-aligned variant of <see cref="SendScsiCommandDirect"/>. The payload is copied into a
+    /// reusable page-aligned native buffer before the IOCTL, and (for data-in) copied back after.
+    /// This is what makes transfers larger than 64 KB succeed.
+    /// </summary>
+    private unsafe ScsiDirectOutcome SendScsiCommandDirectAligned(
+        Span<byte> cdb,
+        Span<byte> dataBuffer,
+        bool dataIn,
+        uint timeoutSeconds = c_sptiDefaultTimeoutSec)
+    {
+        int sptdSize = sizeof(SCSI_PASS_THROUGH_DIRECT);
+        int ctrlSize = sptdSize + c_senseBufferSize;
+
+        byte[] ctrl = new byte[ctrlSize];
+
+        byte* pData = null;
+        if (dataBuffer.Length > 0)
+        {
+            pData = EnsureAlignedScratch(dataBuffer.Length);
+            if (!dataIn)
+                dataBuffer.CopyTo(new Span<byte>(pData, dataBuffer.Length)); // managed -> aligned
+        }
+
+        fixed (byte* pCtrl = ctrl)
+        {
+            var spt = (SCSI_PASS_THROUGH_DIRECT*)pCtrl;
+            spt->Length = (ushort)sptdSize;
+            spt->CdbLength = (byte)cdb.Length;
+            spt->SenseInfoLength = (byte)c_senseBufferSize;
+            spt->DataIn = dataIn ? c_scsiDataIn : c_scsiDataOut;
+            spt->DataTransferLength = (uint)dataBuffer.Length;
+            spt->TimeOutValue = timeoutSeconds;
+            spt->DataBuffer = dataBuffer.Length > 0 ? pData : null;
+            spt->SenseInfoOffset = (uint)sptdSize;
+
+            for (int i = 0; i < cdb.Length; i++)
+                spt->Cdb[i] = cdb[i];
+
+            bool ok = PInvoke.DeviceIoControl(
+                new HANDLE(m_driveHandle.DangerousGetHandle()),
+                c_ioctlScsiPassThroughDirect,
+                pCtrl, (uint)ctrlSize,
+                pCtrl, (uint)ctrlSize,
+                null, null);
+
+            if (!ok)
+            {
+                SetErrorFromPInvoke();
+                m_logger.LogDebug("{Prefix}: SPTD(aligned) DeviceIoControl failed (transport), Win32=0x{Err:X}",
+                    LogPrefix, (uint)LastErrorWin32);
+                return new ScsiDirectOutcome { TransportOk = false };
+            }
+
+            byte* pSense = pCtrl + sptdSize;
+            byte responseCode = (byte)(pSense[0] & 0x7F);
+            bool senseValid = responseCode is 0x70 or 0x71;
+
+            var outcome = new ScsiDirectOutcome
+            {
+                TransportOk = true,
+                ScsiStatus = spt->ScsiStatus,
+                DataTransferLength = spt->DataTransferLength,
+                SenseValid = senseValid,
+                Filemark = senseValid && (pSense[2] & 0x80) != 0,
+                Eom = senseValid && (pSense[2] & 0x40) != 0,
+                Ili = senseValid && (pSense[2] & 0x20) != 0,
+                SenseKey = senseValid ? (byte)(pSense[2] & 0x0F) : (byte)0,
+                Asc = senseValid ? pSense[12] : (byte)0,
+                Ascq = senseValid ? pSense[13] : (byte)0,
+                Information = senseValid
+                    ? ((uint)pSense[3] << 24) | ((uint)pSense[4] << 16) | ((uint)pSense[5] << 8) | pSense[6]
+                    : 0u,
+            };
+
+            // Data-in: copy the aligned scratch back into the caller's span.
+            if (dataIn && dataBuffer.Length > 0 && outcome.TransportOk)
+                new Span<byte>(pData, dataBuffer.Length).CopyTo(dataBuffer);
+
+            if (outcome.IsCheckCondition)
+            {
+                m_logger.LogTrace(
+                    "{Prefix}: SPTD(aligned) CHECK CONDITION key=0x{Key:X2} ASC=0x{Asc:X2} ASCQ=0x{Ascq:X2} " +
+                    "FM={Fm} EOM={Eom} ILI={Ili} info={Info}",
+                    LogPrefix, outcome.SenseKey, outcome.Asc, outcome.Ascq,
+                    outcome.Filemark, outcome.Eom, outcome.Ili, outcome.Information);
+            }
+
+            return outcome;
+        }
+    }
+
+    #endregion
+
+    #region *** Aligned SPTD write ***
+
+    /// <summary>
+    /// Drop-in replacement for <see cref="ScsiWriteDirect"/> that (a) uses a page-aligned payload
+    /// buffer and (b) enforces the adapter's single-SRB transfer ceiling. If a single block would
+    /// exceed <see cref="MaxScsiDirectTransfer"/> the write is refused with
+    /// <c>ERROR_INSUFFICIENT_BUFFER</c> — a tape logical block cannot be split across WRITE commands,
+    /// so the caller must either lower the block size or fall back to <c>WriteFile</c> for payload.
+    /// </summary>
+    public int ScsiWriteDirectAligned(
+        byte[] buffer, int offset, int count,
+        out bool earlyWarning, out bool eom, out bool tapemark,
+        bool forceVariable = false)
+    {
+        earlyWarning = false;
+        eom = false;
+        tapemark = false;
+
+#if DEBUG
+        if (SimulateIOFailures.ShouldFailNow())
+        {
+            SetError(WIN32_ERROR.ERROR_IO_DEVICE);
+            m_logger.LogWarning("{Prefix}: SIMULATED SPTD(aligned) write failure (counter {Counter})",
+                LogPrefix, SimulateIOFailures.Counter);
+            return 0;
+        }
+#endif
+
+        // Guard against the adapter's single-SRB ceiling.
+        uint maxXfer = MaxScsiDirectTransfer;
+        if ((uint)count > maxXfer)
+        {
+            SetError(WIN32_ERROR.ERROR_INSUFFICIENT_BUFFER);
+            m_logger.LogError(
+                "{Prefix}: SPTD write of {Count} bytes exceeds adapter single-SRB limit {Max} bytes " +
+                "(MaximumTransferLength={MTL}, MaximumPhysicalPages={MPP}). Lower the block size or use WriteFile.",
+                LogPrefix, count, maxXfer, m_maxTransferLength, m_maxPhysicalPages);
+            return 0;
+        }
+
+        uint blockSize = BlockSize;             // 0 => variable-block mode
+        bool fixedBlock = !forceVariable && blockSize > 0;
+
+        uint xferLen;
+        byte flags;
+
+        if (fixedBlock)
+        {
+            if ((count % blockSize) != 0)
+            {
+                SetError(WIN32_ERROR.ERROR_INVALID_PARAMETER);
+                m_logger.LogError(
+                    "{Prefix}: fixed-block SPTD write count {Count} not a multiple of block size {Bs}",
+                    LogPrefix, count, blockSize);
+                return 0;
+            }
+            xferLen = (uint)(count / blockSize);   // blocks
+            flags = c_write6FixedBit;
+        }
+        else
+        {
+            xferLen = (uint)count;                 // bytes
+            flags = 0x00;
+        }
+
+        if (xferLen > c_write6MaxTransferLength)
+        {
+            SetError(WIN32_ERROR.ERROR_INVALID_PARAMETER);
+            m_logger.LogError("{Prefix}: WRITE(6) transfer length {Len} exceeds 24-bit limit",
+                LogPrefix, xferLen);
+            return 0;
+        }
+
+#pragma warning disable IDE0302 // Simplify collection initialization -- for explicity
+        Span<byte> cdb = stackalloc byte[6];
+#pragma warning restore IDE0302 // Simplify collection initialization
+        cdb[0] = c_scsiOpWrite6;
+        cdb[1] = flags;
+        cdb[2] = (byte)((xferLen >> 16) & 0xFF);
+        cdb[3] = (byte)((xferLen >> 8) & 0xFF);
+        cdb[4] = (byte)(xferLen & 0xFF);
+        cdb[5] = 0x00;
+
+        ScsiDirectOutcome r = SendScsiCommandDirectAligned(cdb, buffer.AsSpan(offset, count), dataIn: false);
+
+        if (!r.TransportOk)
+        {
+            LogErrorAsDebug("ScsiWriteDirectAligned transport failure");
+            return 0;
+        }
+
+        if (r.IsGood)
+        {
+            ResetError();
+            return count;
+        }
+
+        if (r.IsEarlyWarning)
+        {
+            int written = count - ResidualToBytes(r.Information, fixedBlock, blockSize);
+            if (written < 0) written = 0;
+            earlyWarning = true;
+            ResetError();
+            m_logger.LogInformation(
+                "{Prefix}: EARLY WARNING on write (accepted {Written} of {Count} bytes)",
+                LogPrefix, written, count);
+            return written;
+        }
+
+        if (r.IsPhysicalEom)
+        {
+            int written = count - ResidualToBytes(r.Information, fixedBlock, blockSize);
+            if (written < 0) written = 0;
+            eom = true;
+            SetError(WIN32_ERROR.ERROR_END_OF_MEDIA);
+            LogErrorAsTrace("ScsiWriteDirectAligned hit physical EOM");
+            return written;
+        }
+
+        if (r.Filemark)
+        {
+            tapemark = true;
+            LogErrorAsTrace("ScsiWriteDirectAligned encountered filemark");
+        }
+
+        SetError(WIN32_ERROR.ERROR_IO_DEVICE);
+        m_logger.LogDebug(
+            "{Prefix}: ScsiWriteDirectAligned failed key=0x{Key:X2} ASC=0x{Asc:X2} ASCQ=0x{Ascq:X2}",
+            LogPrefix, r.SenseKey, r.Asc, r.Ascq);
+        return 0;
     }
 
     #endregion
