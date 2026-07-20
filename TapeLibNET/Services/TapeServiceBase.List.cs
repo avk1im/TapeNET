@@ -233,17 +233,17 @@ public partial class TapeServiceBase
         if (!string.IsNullOrEmpty(_drive.DriveVendor) || !string.IsNullOrEmpty(_drive.DriveProduct))
             LogInfoSub($"Device model: {_drive.DriveVendor} {_drive.DriveProduct}");
         LogInfoSub($"Drive open: Yes");
-        LogInfoSub($"Supports multiple partitions: {(_drive.SupportsInitiatorPartition ? "Yes" : "No")}");
-        LogInfoSub($"Supports setmarks: {(_drive.SupportsSetmarks ? "Yes" : "No")}");
-        LogInfoSub($"Supports sequential filemarks: {(_drive.SupportsSeqFilemarks ? "Yes" : "No")}");
-        LogInfoSub($"Block size (min): {Helpers.BytesToString(_drive.MinimumBlockSize)}");
-        LogInfoSub($"Block size (default): {Helpers.BytesToString(_drive.DefaultBlockSize)}");
-        LogInfoSub($"Block size (max): {Helpers.BytesToString(_drive.MaximumBlockSize)}");
-        LogInfoSub($"Media loaded: {(_drive.IsMediaLoaded ? "Yes" : "No")}");
+        LogInfoSub($"Supports multiple partitions: {(SupportsInitiatorPartition ? "Yes" : "No")}");
+        LogInfoSub($"Supports setmarks: {(SupportsSetmarks ? "Yes" : "No")}");
+        LogInfoSub($"Supports sequential filemarks: {(SupportsSeqFilemarks ? "Yes" : "No")}");
+        LogInfoSub($"Block size (min): {Helpers.BytesToString(MinimumBlockSize)}");
+        LogInfoSub($"Block size (default): {Helpers.BytesToString(DefaultBlockSize)}");
+        LogInfoSub($"Block size (max): {Helpers.BytesToString(MaximumBlockSize)}");
+        LogInfoSub($"Media loaded: {(IsMediaLoaded ? "Yes" : "No")}");
 
-        if (_drive.IsMediaLoaded)
+        if (IsMediaLoaded)
         {
-            LogInfoSub($"Partition count: {_drive.PartitionCount}");
+            LogInfoSub($"Partition count: {PartitionCount}");
             LogInfoSub($"Capacity: {Helpers.BytesToStringLong(Capacity)}");
             LogInfoSub($"Remaining (est. from drive): {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
         }
@@ -294,7 +294,7 @@ public partial class TapeServiceBase
         LogInfoSub($"Used: {Helpers.BytesToStringLong(Used)}");
         LogInfoSub($"Remaining: {Helpers.BytesToStringLong(Remaining)}");
         LogInfoSub($"Remaining (est. from drive): {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
-        LogInfoSub($"TOC placement: {(_drive.HasInitiatorPartition ? "partition" : "set")}");
+        LogInfoSub($"TOC placement: {(HasInitiatorPartition ? "partition" : "set")}");
         LogInfoSub($"Volume: #{toc.Volume}");
         LogInfoSub($"Continued on next volume: {(toc.ContinuedOnNextVolume ? "Yes" : "No")}");
     }

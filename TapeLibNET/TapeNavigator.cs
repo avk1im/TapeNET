@@ -131,7 +131,7 @@ namespace TapeLibNET
         #endregion // Properties
 
 
-        #region *** Constructors ***
+        #region *** Constructors and factories ***
 
         public TapeNavigator(TapeDrive drive) : base(drive)
         {
@@ -177,7 +177,7 @@ namespace TapeLibNET
             return new TapeNavigatorTOCInSetWithFmks(drive);
         }
 
-        #endregion // Constructors
+        #endregion // Constructors and factories
 
 
         #region *** Notifications ***

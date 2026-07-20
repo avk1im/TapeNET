@@ -524,7 +524,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
 
         bool deletingAll = TOC.CurrentSetIndex == TOC.FirstSetOnVolume;
 
-        if (deletingAll && Drive.HasInitiatorPartition)
+        if (deletingAll && /*Drive.HasInitiatorPartition*/ Navigator is TapeNavigatorTOCInPartition)
         {
             // Cannot erase all content when TOC is in a separate partition —
             //  the caller should format the media instead.
