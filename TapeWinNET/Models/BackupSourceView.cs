@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.IO;
+using System.Windows;
 
 using TapeLibNET;
 using TapeWinNET.Utils;
@@ -159,11 +161,12 @@ public class BackupSourceSetView
 /// Manages <see cref="BackupSourceEntry"/> sources, assigns monotonic UIDs to
 /// resolved disk files, and provides aggregate statistics for the Preview panel.
 /// </para>
+/// <param name="getSourceFiles">A function to retrieve source files for a given set index.</param>
 /// </summary>
-public class BackupSourceView(Func<TapeTOC?>? getTOC = null)
+public class BackupSourceView(Func<int, List<TapeFileInfo>>? getSourceFiles = null)
 {
     private readonly Dictionary<BackupSourceEntry, BackupSourceSetView> _setViews = [];
-    private readonly Func<TapeTOC?>? _getTOC = getTOC;
+    private readonly Func<int, List<TapeFileInfo>>? _getSourceFiles = getSourceFiles;
     private TypeUID _nextUID = 1UL; // 0 is reserved / invalid, same as TapeTOC
 
     // ─────────────────────────────────────────────────
@@ -307,12 +310,16 @@ public class BackupSourceView(Func<TapeTOC?>? getTOC = null)
                 //  re-resolve current disk state for each. Missing files are
                 //  silently skipped. Avoids materializing a separate path list
                 //  for sets that may contain tens of thousands of files.
-                var setTOC = _getTOC?.Invoke()?[entry.SourceSetIndex];
-                if (setTOC is not null)
+                //var sourceFiles = _getSourceFiles?.Invoke(entry.SourceSetIndex);
+                // Ensure _getSourceFiles runs on the GUI thread since it modifies TOC.CurrentSetIndex
+                var sourceFiles = _getSourceFiles is not null
+                    ? Application.Current.Dispatcher.Invoke(
+                        () => _getSourceFiles(entry.SourceSetIndex))
+                    : null;
+                if (sourceFiles is not null)
                 {
-                    foreach (var tfi in setTOC)
+                    foreach (var tfi in sourceFiles)
                     {
-                        ct.ThrowIfCancellationRequested();
                         var fi = new FileInfo(tfi.FileDescr.FullName);
                         if (fi.Exists)
                             AddFile(fi);

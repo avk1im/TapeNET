@@ -1,16 +1,15 @@
+using Microsoft.Win32;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
-using Microsoft.Win32;
-
-using Windows.Win32.System.SystemServices; // for Helpers
-
 using TapeLibNET;
 using TapeLibNET.Services;
 using TapeWinNET.Converters;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
+using Windows.Win32.System.SystemServices; // for Helpers
+using static Grpc.Core.Metadata;
 
 namespace TapeWinNET.ViewModels;
 
@@ -126,10 +125,25 @@ public class BackupViewModel : ViewModelBase
         Action<BackupFormData> onStartBackup,
         Action onCancel)
     {
+        // Source file generator from an existing backup set. Used by the "Add from set" combo box via BackupSourceView.
+        //  We define it here to ensure it runs on the UI thread, since it may update the TOC's CurrentSetIndex.
+        List<TapeFileInfo> GetSourceFilesFromSet(int setIndex)
+        {
+            var toc = _tapeService.TOC;
+            if (toc is null || setIndex < 1 || setIndex > toc.Count)
+                return [];
+            
+            toc.CurrentSetIndex = setIndex;
+            // if the source set is incremental, then we list all files from the incremental chain
+            var filesBySets = toc.SelectFiles(incremental: true, filter: null);
+            var sourceFiles = toc.SelectedFilesToList(filesBySets);
+            return sourceFiles;
+        }
+
         _tapeService = tapeService;
         _onStartBackup = onStartBackup;
         _onCancel = onCancel;
-        _sourceView = new BackupSourceView(() => _tapeService.TOC);
+        _sourceView = new BackupSourceView(GetSourceFilesFromSet);
 
         // Default description
         Description = $"Backup set created {DateTime.Now:g}";

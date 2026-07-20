@@ -1029,7 +1029,7 @@ namespace TapeLibNET
         }
 
         /// <summary>
-        /// Considering incremental sets, select files from the current and previous set(s)
+        /// Considering incremental sets and multi-volume continuation, select files from the current and previous set(s)
         /// that pass the given filter. A <c>null</c> filter means consider all files.
         /// Returns an array of lists from newest to oldest set in the incremental chain.
         /// </summary>
@@ -1086,6 +1086,29 @@ namespace TapeLibNET
 
                 return filesSelected;
             }
+        }
+
+        /// <summary>
+        /// Flattens the array of lists of <see cref="TapeFileInfo"/> objects returned by <see cref="SelectFiles(bool, ITapeFileFilter?)"/>
+        /// <para>Assumes the same current set remains as in the call to <see cref="SelectFiles(bool, ITapeFileFilter?)"/></para>
+        /// </summary>
+        /// <param name="filesBySets">The array of lists of <see cref="TapeFileInfo"/> objects, where each list corresponds to a set of files.
+        /// <para>A <c>null</c> list entry means all files from the corresponding set.</para>
+        /// </param>
+        /// <returns>A flattened list of <see cref="TapeFileInfo"/> objects.</returns>
+        public List<TapeFileInfo> SelectedFilesToList(List<TapeFileInfo>?[] filesBySets)
+        {
+            var allFiles = new List<TapeFileInfo>();
+            int setIndex = CurrentSetIndex;
+            foreach (var setFiles in filesBySets)
+            {
+                if (setFiles != null)
+                    allFiles.AddRange(setFiles);
+                else // null entries = "all files from that set"
+                    allFiles.AddRange(this[setIndex]);
+                setIndex--; // move to the next older set
+            }
+            return allFiles;
         }
 
         /// <summary>

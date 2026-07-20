@@ -190,19 +190,13 @@ public class TOCView(TapeTOC toc)
         if (needsIncremental)
         {
             _toc.CurrentSetIndex = setIndex;
-            var allFiles = new List<TapeFileInfo>();
             var filesBySets = _toc.SelectFiles(incremental: true, filter: null);
-            foreach (var setFiles in filesBySets)
-            {
-                if (setFiles != null)
-                    allFiles.AddRange(setFiles);
-                // null entries = "all files from that set" — replicate existing
-                //  MainViewModel.LoadBackupSetInfo behavior for now
-            }
-            sourceFiles = allFiles;
+            sourceFiles = _toc.SelectedFilesToList(filesBySets);
         }
         else
         {
+            // notice for non-incremental we intentionally do not want multi-volume resolution,
+            //  therefore we don't call _toc.SelectFiles(incremental: false, filter: null)
             sourceFiles = setTOC;
         }
 
