@@ -12,5 +12,8 @@ public enum BackupSourceType
     SingleFolder,
 
     /// <summary>A pattern with wildcards (* or ?) that may match multiple files</summary>
-    FilePattern
+    FilePattern,
+
+    /// <summary>All current-disk files belonging to a previous backup set on this media</summary>
+    FilesFromBackupSet
 }

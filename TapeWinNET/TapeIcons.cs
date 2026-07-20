@@ -238,6 +238,7 @@ public static class BackupSourceIcons
     private static BitmapSource? _singleFileIcon;
     private static BitmapSource? _singleFolderIcon;
     private static BitmapSource? _filePatternIcon;
+    private static BitmapSource? _backupSetIcon;
     private static bool _iconsLoaded;
 
     static BackupSourceIcons()
@@ -263,6 +264,10 @@ public static class BackupSourceIcons
             // File pattern: stack icon for multiple files
             _filePatternIcon = IconLoader.LoadStockIcon(SHSTOCKICONID.SIID_STACK, large: false);
             _filePatternIcon?.Freeze();
+
+            // Files from a previous backup set: tape media icon
+            _backupSetIcon = TapeIcons.GetTapeMediaIcon(large: false);
+            _backupSetIcon?.Freeze();
         }
         catch
         {
@@ -280,6 +285,7 @@ public static class BackupSourceIcons
         BackupSourceType.SingleFile => _singleFileIcon,
         BackupSourceType.SingleFolder => _singleFolderIcon,
         BackupSourceType.FilePattern => _filePatternIcon,
+        BackupSourceType.FilesFromBackupSet => _backupSetIcon,
         _ => _singleFileIcon
     };
 }

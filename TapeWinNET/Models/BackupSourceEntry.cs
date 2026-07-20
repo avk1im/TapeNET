@@ -67,6 +67,12 @@ public class BackupSourceEntry : INotifyPropertyChanged
     }
 
     /// <summary>
+    /// 1-based set index of the previous backup set this entry was created from.
+    /// -1 for entries that are not <see cref="BackupSourceType.FilesFromBackupSet"/>.
+    /// </summary>
+    public int SourceSetIndex { get; } = -1;
+
+    /// <summary>
     /// Whether this entry is selected in the list.
     /// </summary>
     public bool IsSelected
@@ -110,6 +116,18 @@ public class BackupSourceEntry : INotifyPropertyChanged
     }
 
     /// <summary>
+    /// Creates a source entry representing all current-disk files belonging to a
+    /// previous backup set. Only the set index is captured; files are resolved
+    /// directly from the TOC on demand (see <see cref="BackupSourceView.EnumerateFiles"/>).
+    /// </summary>
+    /// <param name="setIndex">1-based set index within the current TOC.</param>
+    /// <param name="displayText">Set description -- the display pattern.</param>
+    public static BackupSourceEntry CreateFromBackupSet(int setIndex, string displayText)
+    {
+        return new BackupSourceEntry("From set " + displayText, BackupSourceType.FilesFromBackupSet, setIndex);
+    }
+
+    /// <summary>
     /// Determines the source type using the same logic as TapeFileBackupAgent.
     /// </summary>
     private static BackupSourceType DetermineSourceType(string pattern)
@@ -126,10 +144,11 @@ public class BackupSourceEntry : INotifyPropertyChanged
         return BackupSourceType.SingleFile;
     }
 
-    private BackupSourceEntry(string pattern, BackupSourceType type)
+    private BackupSourceEntry(string pattern, BackupSourceType type, int sourceSetIndex = -1)
     {
         Pattern = pattern;
         SourceType = type;
+        SourceSetIndex = sourceSetIndex;
     }
 
     #region INotifyPropertyChanged

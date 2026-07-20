@@ -160,9 +160,10 @@ public class BackupSourceSetView
 /// resolved disk files, and provides aggregate statistics for the Preview panel.
 /// </para>
 /// </summary>
-public class BackupSourceView
+public class BackupSourceView(Func<TapeTOC?>? getTOC = null)
 {
     private readonly Dictionary<BackupSourceEntry, BackupSourceSetView> _setViews = [];
+    private readonly Func<TapeTOC?>? _getTOC = getTOC;
     private TypeUID _nextUID = 1UL; // 0 is reserved / invalid, same as TapeTOC
 
     // ─────────────────────────────────────────────────
@@ -300,7 +301,25 @@ public class BackupSourceView
 
         try
         {
-            if (TapeFileBackupAgent.HasWildcards(entry.Pattern))
+            if (entry.SourceType == BackupSourceType.FilesFromBackupSet)
+            {
+                // Previous backup set: stream files straight from the TOC and
+                //  re-resolve current disk state for each. Missing files are
+                //  silently skipped. Avoids materializing a separate path list
+                //  for sets that may contain tens of thousands of files.
+                var setTOC = _getTOC?.Invoke()?[entry.SourceSetIndex];
+                if (setTOC is not null)
+                {
+                    foreach (var tfi in setTOC)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        var fi = new FileInfo(tfi.FileDescr.FullName);
+                        if (fi.Exists)
+                            AddFile(fi);
+                    }
+                }
+            }
+            else if (TapeFileBackupAgent.HasWildcards(entry.Pattern))
             {
                 // Wildcard pattern: enumerate matching files
                 var dirName = Path.GetDirectoryName(entry.Pattern);

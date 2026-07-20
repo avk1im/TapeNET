@@ -64,7 +64,7 @@ public class BackupViewModel : ViewModelBase
     //  Source management
     // ─────────────────────────────────────────────────
 
-    private readonly BackupSourceView _sourceView = new();
+    private readonly BackupSourceView _sourceView;
     private BackupSourceListItem? _selectedSource;
     private readonly Dictionary<BackupSourceEntry, CancellationTokenSource> _scanCtsMap = [];
 
@@ -81,6 +81,7 @@ public class BackupViewModel : ViewModelBase
 
     private string _patternInput = string.Empty;
     private string? _prevAutoAdded;
+    private AppendAfterOption? _selectedSourceSetOption;
 
     // ─────────────────────────────────────────────────
     //  Backup options
@@ -128,6 +129,7 @@ public class BackupViewModel : ViewModelBase
         _tapeService = tapeService;
         _onStartBackup = onStartBackup;
         _onCancel = onCancel;
+        _sourceView = new BackupSourceView(() => _tapeService.TOC);
 
         // Default description
         Description = $"Backup set created {DateTime.Now:g}";
@@ -146,6 +148,9 @@ public class BackupViewModel : ViewModelBase
         // Populate append options from current TOC
         PopulateAppendOptions();
 
+        // Default the "Add from set" combo box to the same latest set, if any
+        SelectedSourceSetOption = AppendOptions.FirstOrDefault(o => !o.IsOverwrite);
+
         // Construct the media usage bar presenter and do an initial build so the
         //  bar shows the existing-sets layout even before any source is added.
         UsageBar = new BackupMediaUsageBarPresenter(_tapeService, this);
@@ -157,6 +162,8 @@ public class BackupViewModel : ViewModelBase
         AddFolderCommand = new RelayCommand(AddFolder, () => !IsScanning);
         AddPatternsCommand = new RelayCommand(AddPatterns,
             () => !IsScanning && !string.IsNullOrWhiteSpace(PatternInput));
+        AddFromSetCommand = new RelayCommand(_ => AddFromBackupSet(),
+            _ => !IsScanning && SelectedSourceSetOption is { IsOverwrite: false });
         RemoveSelectedCommand = new RelayCommand(
             _ => RemoveSelectedSources(),
             _ => !IsScanning && SourceItems.Any(s => s.IsCheckedForBackup == false));
@@ -721,6 +728,7 @@ public class BackupViewModel : ViewModelBase
     public ICommand AddFilesCommand { get; }
     public ICommand AddFolderCommand { get; }
     public ICommand AddPatternsCommand { get; }
+    public ICommand AddFromSetCommand { get; }
     public ICommand RemoveSelectedCommand { get; }
     public ICommand ScanAllCommand { get; }
     public ICommand StartBackupCommand { get; }
@@ -775,6 +783,49 @@ public class BackupViewModel : ViewModelBase
         }
 
         PatternInput = string.Empty;
+    }
+
+    /// <summary>
+    /// Backup set selected in the "Add from set" combo box. Reuses
+    ///  <see cref="AppendOptions"/> so previous sets only need to be built once.
+    /// </summary>
+    public AppendAfterOption? SelectedSourceSetOption
+    {
+        get => _selectedSourceSetOption;
+        set
+        {
+            if (SetProperty(ref _selectedSourceSetOption, value))
+                CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
+    /// <summary>
+    /// Adds a new source entry representing all current-disk files that belonged
+    ///  to the backup set selected in <see cref="SelectedSourceSetOption"/>.
+    /// Duplicate entries for the same set are ignored.
+    /// </summary>
+    private void AddFromBackupSet()
+    {
+        var option = SelectedSourceSetOption;
+        if (option is null || option.IsOverwrite)
+            return;
+
+        if (SourceItems.Any(s => s.Entry.SourceType == BackupSourceType.FilesFromBackupSet
+            && s.Entry.SourceSetIndex == option.SetIndex))
+            return;
+
+        if (_tapeService.TOC is null)
+            return;
+
+        var entry = BackupSourceEntry.CreateFromBackupSet(option.SetIndex, option.DisplayText);
+        var listItem = new BackupSourceListItem(entry);
+        SourceItems.Add(listItem);
+
+        OnPropertyChanged(nameof(AreAllSourcesChecked));
+        CommandManager.InvalidateRequerySuggested();
+
+        if (AutoScan)
+            _ = ScanSourceAsync(listItem);
     }
 
     /// <summary>
@@ -1171,6 +1222,10 @@ public class BackupViewModel : ViewModelBase
     /// </summary>
     private void AutoAddPatternFromSelection(BackupSourceEntry entry)
     {
+        // Cannot add any pattern from backup sets
+        if (entry.SourceType == BackupSourceType.FilesFromBackupSet)
+            return;
+
         // Build the pattern to add
         string patternToAdd = entry.Pattern;
 

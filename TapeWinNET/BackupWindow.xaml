@@ -72,42 +72,72 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <!-- Source toolbar: Add Files, Add Folder, Pattern input, Remove Unchecked -->
+                <!-- Source toolbar: Add Files, Add Folder, Pattern input, Add from set, Remove Unchecked -->
                 <Grid Grid.Row="0" Margin="0,0,0,4">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*" MinWidth="60"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
 
-                    <Button Grid.Column="0" Content="Add Files..."
-                            Command="{Binding AddFilesCommand}"
-                            Width="80" Margin="0,0,4,0"
-                            ToolTip="Add files (keyboard: +)"/>
-                    <Button Grid.Column="1" Content="Add Folder..."
-                            Command="{Binding AddFolderCommand}"
-                            Width="90" Margin="0,0,8,0"
-                            ToolTip="Add folder (keyboard: Ctrl++)"/>
-                    <TextBlock Grid.Column="2" Text="Patterns:"
-                               VerticalAlignment="Center" Margin="8,0,4,0"/>
-                    <TextBox Grid.Column="3"
-                             Text="{Binding PatternInput, UpdateSourceTrigger=PropertyChanged}"
-                             VerticalContentAlignment="Center"
-                             Margin="0,0,4,0">
-                        <TextBox.InputBindings>
-                            <KeyBinding Key="Return" Command="{Binding AddPatternsCommand}"/>
-                        </TextBox.InputBindings>
-                    </TextBox>
-                    <Button Grid.Column="4" Content="+"
-                            Command="{Binding AddPatternsCommand}"
-                            Width="24" Margin="0,0,8,0" ToolTip="Add pattern(s)"/>
-                    <Button Grid.Column="5" Content="Remove Unchecked"
-                            Command="{Binding RemoveSelectedCommand}"
-                            Padding="8,1"
-                            ToolTip="Remove all unchecked source entries"/>
+                    <Grid Grid.Row="0" Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*" MinWidth="60"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Button Grid.Column="0" Content="Add Files..."
+                                Command="{Binding AddFilesCommand}"
+                                Width="80" Margin="0,0,4,0"
+                                ToolTip="Add files (keyboard: +)"/>
+                        <Button Grid.Column="1" Content="Add Folder..."
+                                Command="{Binding AddFolderCommand}"
+                                Width="90" Margin="0,0,8,0"
+                                ToolTip="Add folder (keyboard: Ctrl++)"/>
+                        <TextBlock Grid.Column="2" Text="Patterns:"
+                                   VerticalAlignment="Center" Margin="8,0,4,0"/>
+                        <TextBox Grid.Column="3"
+                                 Text="{Binding PatternInput, UpdateSourceTrigger=PropertyChanged}"
+                                 VerticalContentAlignment="Center"
+                                 Margin="0,0,4,0">
+                            <TextBox.InputBindings>
+                                <KeyBinding Key="Return" Command="{Binding AddPatternsCommand}"/>
+                            </TextBox.InputBindings>
+                        </TextBox>
+                        <Button Grid.Column="4" Content="+"
+                                Command="{Binding AddPatternsCommand}"
+                                Width="24" ToolTip="Add pattern(s)"/>
+                    </Grid>
+
+                    <Grid Grid.Row="1" Visibility="{Binding HasLastBackupSet,
+                                                    Converter={StaticResource BoolToVis}}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*" MinWidth="40"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Column="0" Text="Add sources from set:"
+                                   VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox Grid.Column="1"
+                                  ItemsSource="{Binding AppendOptions}"
+                                  SelectedItem="{Binding SelectedSourceSetOption}"
+                                  DisplayMemberPath="DisplayText"
+                                  VerticalContentAlignment="Center"
+                                  Margin="0,0,4,0"/>
+                        <Button Grid.Column="2" Content="+"
+                                Command="{Binding AddFromSetCommand}"
+                                Width="24" Margin="0,0,32,0"
+                                ToolTip="Add all current-disk files from the selected backup set"/>
+                        <Button Grid.Column="3" Content="Remove Unchecked"
+                                Command="{Binding RemoveSelectedCommand}"
+                                Padding="8,1"
+                                ToolTip="Remove all unchecked source entries"/>
+                    </Grid>
                 </Grid>
 
                 <!-- Sources (Folders) pane -->
