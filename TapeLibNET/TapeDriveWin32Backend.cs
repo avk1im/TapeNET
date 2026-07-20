@@ -494,6 +494,9 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
 
     public override int Write(byte[] buffer, int offset, int count, out bool tapemark, out bool eof)
     {
+        if (IsLto)
+            return WriteDirect(buffer, offset, count, out tapemark, out eof, out _ /* earlyWarning */);
+
         tapemark = false;
         eof = false;
 
