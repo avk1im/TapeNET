@@ -442,6 +442,14 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
             Manager.EndReadWrite();
             Navigator.ResetContentSet();
 
+            if (Navigator.TOCInvalidated && Navigator is TapeNavigatorTOCInSet)
+            {
+                // Do NOT try to navigate if TOC-in-set has been invalidated -- we may end up overwriting content
+                //  -> fail instead to allow the user to save TOC to a file
+                m_logger.LogTrace("Cannot enforce TOC backup by resetting content set since TOC has been invalidated");
+                return TapeResult.Fail(this);
+            }
+
             m_logger.LogTrace("Enforcing TOC backup by resetting content set");
         }
 
