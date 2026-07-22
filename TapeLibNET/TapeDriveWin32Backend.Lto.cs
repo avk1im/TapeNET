@@ -82,7 +82,7 @@ public partial class TapeDriveWin32Backend
     /// and the <c>m_useLto*</c> dispatch flags. Safe to call with no media loaded.
     /// Called once at the end of <see cref="Open"/>.
     /// </summary>
-    private void ProbeForLtoInformation()
+    internal void ProbeForLtoInformation()
     {
         if (!LtoDetect(out m_ltoVendor, out m_ltoProduct))
         {
@@ -108,7 +108,7 @@ public partial class TapeDriveWin32Backend
     /// Called from <see cref="SetPositionToPartition"/> when <c>m_useLtoPartitions</c>
     /// is true.
     /// </summary>
-    private bool SetPositionToPartitionLto(MediaPartition partition, long block)
+    internal bool SetPositionToPartitionLto(MediaPartition partition, long block)
     {
         byte scsiPartition = MapPartitionToScsi(partition);
         uint blockU = (uint)block; // LOCATE(10) uses 32-bit block address
@@ -161,7 +161,7 @@ public partial class TapeDriveWin32Backend
     /// Desired size of the initiator partition in bytes.
     /// Zero or negative formats as a single partition.
     /// </param>
-    private bool FormatMediaLto(long initiatorPartitionSize)
+    internal bool FormatMediaLto(long initiatorPartitionSize)
     {
         // LTO-5+ minimum partition size: one "warp" ≈ 38 GB (16 wraps × ~2.4 GB on LTO-5).
         //  Drives reject FORMAT 0x01 with CHECK CONDITION (INVALID FIELD IN PARAMETER LIST)
@@ -567,7 +567,7 @@ public partial class TapeDriveWin32Backend
     /// Used internally; for diagnostics use <see cref="GetLtoPositionU32"/> /
     /// <see cref="GetLtoPositionI64"/>.
     /// </summary>
-    private bool GetLtoPosition(out byte partition, out uint logicalBlock)
+    internal bool GetLtoPosition(out byte partition, out uint logicalBlock)
         => GetLtoPositionU32(out partition, out logicalBlock);
 
     /// <summary>
@@ -581,7 +581,7 @@ public partial class TapeDriveWin32Backend
     /// The caller must then poll for completion. When <c>false</c> (default), the command
     /// returns only after the physical seek is complete.
     /// </param>
-    private bool SetLtoPosition(byte partition, uint logicalBlock, bool immediate = false)
+    internal bool SetLtoPosition(byte partition, uint logicalBlock, bool immediate = false)
     {
         // LOCATE(10) CDB layout (SSC-3 Table 55 / SPC-3 §6.9):
         //  Byte 0 : 0x2B  (LOCATE(10) opcode)
@@ -727,4 +727,356 @@ public partial class TapeDriveWin32Backend
     };
 
     #endregion
+
+    // =============================================================================
+    //  Programmable Early Warning (PEW) Size
+    //
+    //  Programmable Early Warning (PEW) size get/set via SCSI MODE SENSE(10) /
+    //  MODE SELECT(10) on the Device Configuration Extension mode page
+    //  (page code 0x10, subpage 0x01). LTO-5+ / TS11xx only.
+    //
+    //  They use the buffered SendScsiCommand (SPTI) path — small metadata
+    //  transfers, no payload, no page-alignment concerns — exactly like
+    //  FormatMediaLtoModeSelect.
+    //
+    //  Design: READ-MODIFY-WRITE. We MODE SENSE the current page, change only
+    //  the PEWS field, and MODE SELECT it back. This avoids hand-constructing
+    //  the whole page and getting sibling fields wrong.
+    //
+    //  >>> VERIFY THE PEWS OFFSET (c_pewsOffsetInPage) against your drive's SCSI
+    //  >>> reference before trusting a SET. Both methods log the full page as hex
+    //  >>> at Debug level so you can confirm it empirically during bring-up.
+    // =============================================================================
+
+    #region *** Programmable Early Warning (PEWS) — MODE SENSE/SELECT(10) ***
+
+    // SCSI opcodes
+    private const byte c_scsiOpModeSelect10 = 0x55;
+    private const byte c_scsiOpModeSense10 = 0x5A;
+
+    // Device Configuration Extension mode page (SSC-3/SSC-4 §8.3.8)
+    private const byte c_modePageDeviceConfigExt = 0x10; // page code
+    private const byte c_modeSubpageDeviceConfigExt = 0x01; // subpage code
+
+    // MODE SENSE/SELECT(10) parameter header is 8 bytes; with DBD=1 there is no
+    //  block descriptor, so the mode page begins at a fixed offset of 8.
+    private const int c_modeHeader10Length = 8;
+
+    // PEWS field location WITHIN the Device Configuration Extension page.
+    //  >>> VERIFY against your drive's SCSI reference. Best recollection:
+    //  >>> a 2-byte, big-endian value in MEGABYTES at page bytes 6-7.
+    private const int c_pewsOffsetInPage = 6;
+
+    // PEWS is a 16-bit field expressed in megabytes.
+    private const uint c_pewsBytesPerUnit = 1024u * 1024u; // 1 MB
+    private const uint c_pewsMaxUnits = 0xFFFFu;        // 2-byte field ceiling
+
+    // Generous allocation for header + Device Configuration Extension page.
+    //  Page length is typically 0x1C (28) -> total page 32 bytes; header 8 bytes.
+    private const int c_modeSenseAllocLen = 64;
+
+    /// <summary>
+    /// Queries the Programmable Early Warning Size (PEWS) from the Device
+    /// Configuration Extension mode page (0x10/0x01) via <c>MODE SENSE(10)</c>.
+    /// <para>
+    /// PEWS defines a zone whose end-of-partition side sits at early-warning and
+    /// extends toward BOP by <paramref name="sizeBytes"/>. A value of 0 means no
+    /// programmable zone is established (the drive still has its fixed hardware EW).
+    /// </para>
+    /// <para>
+    /// Returns <c>false</c> (gracefully) on drives that do not implement the page —
+    /// e.g. LTO-1..4 — where the drive answers CHECK CONDITION (INVALID FIELD IN CDB).
+    /// </para>
+    /// </summary>
+    /// <param name="sizeBytes">
+    /// Receives the PEWS in BYTES (PEWS_field_megabytes × 1 MB). Zero if unset.
+    /// </param>
+    internal bool GetProgrammableEarlyWarningSize(out uint sizeBytes)
+    {
+        sizeBytes = 0;
+
+        Span<byte> page = stackalloc byte[c_modeSenseAllocLen];
+        if (!ModeSenseDeviceConfigExt(page, out int pageOffset, out int pageTotalLen))
+        {
+            // SendScsiCommand already logged sense at Debug. Treat as "unsupported".
+            LogErrorAsTrace("PEWS: MODE SENSE(10) of Device Configuration Extension page failed (likely unsupported)");
+            return false;
+        }
+
+        int pewsAt = pageOffset + c_pewsOffsetInPage;
+        if (pewsAt + 1 >= pageOffset + pageTotalLen)
+        {
+            m_logger.LogWarning(
+                "{Prefix}: PEWS offset {Off} lies outside the returned page (len {Len}) — verify c_pewsOffsetInPage",
+                LogPrefix, c_pewsOffsetInPage, pageTotalLen);
+            return false;
+        }
+
+        uint pewsUnits = ((uint)page[pewsAt] << 8) | page[pewsAt + 1];
+        sizeBytes = pewsUnits * c_pewsBytesPerUnit;
+
+        m_logger.LogTrace("{Prefix}: PEWS = {Units} MB ({Bytes} bytes)",
+            LogPrefix, pewsUnits, sizeBytes);
+        return true;
+    }
+
+    /// <summary>
+    /// Sets the Programmable Early Warning Size (PEWS) on the Device Configuration
+    /// Extension mode page (0x10/0x01) via a <c>MODE SENSE(10)</c> →
+    /// <c>MODE SELECT(10)</c> read-modify-write. LTO-5+ only.
+    /// <para>
+    /// <paramref name="sizeBytes"/> is rounded UP to whole megabytes (the PEWS field
+    /// granularity) and clamped to the 16-bit field ceiling (~64 GB). A value of 0
+    /// disables the programmable zone.
+    /// </para>
+    /// <para>
+    /// Not saved to NVRAM (SP=0): the setting applies to the current session/mount.
+    /// </para>
+    /// </summary>
+    /// <param name="sizeBytes">Desired PEWS in bytes (0 = disable).</param>
+    internal bool SetProgrammableEarlyWarningSize(uint sizeBytes)
+    {
+        if (!IsLto5Plus)
+        {
+            SetError(WIN32_ERROR.ERROR_NOT_SUPPORTED);
+            m_logger.LogInformation(
+                "{Prefix}: PEWS set skipped — Programmable Early Warning is LTO-5+ only (detected generation {Gen})",
+                LogPrefix, m_ltoGeneration);
+            return false;
+        }
+
+        // Convert bytes -> megabytes (round up), clamp to 16-bit field.
+        uint pewsUnits = (uint)((sizeBytes + c_pewsBytesPerUnit - 1) / c_pewsBytesPerUnit);
+        if (pewsUnits > c_pewsMaxUnits)
+        {
+            m_logger.LogWarning("{Prefix}: PEWS {Units} MB exceeds field max — clamping to {Max} MB",
+                LogPrefix, pewsUnits, c_pewsMaxUnits);
+            pewsUnits = c_pewsMaxUnits;
+        }
+
+        // --- Read current page (with the drive's own field values) ---
+        Span<byte> buf = stackalloc byte[c_modeSenseAllocLen];
+        if (!ModeSenseDeviceConfigExt(buf, out int pageOffset, out int pageTotalLen))
+        {
+            LogErrorAsDebug("PEWS: MODE SENSE(10) failed before SET");
+            return false;
+        }
+
+        int pewsAt = pageOffset + c_pewsOffsetInPage;
+        if (pewsAt + 1 >= pageOffset + pageTotalLen)
+        {
+            SetError(WIN32_ERROR.ERROR_INVALID_PARAMETER);
+            m_logger.LogWarning(
+                "{Prefix}: PEWS offset {Off} lies outside the returned page (len {Len}) — verify c_pewsOffsetInPage",
+                LogPrefix, c_pewsOffsetInPage, pageTotalLen);
+            return false;
+        }
+
+        // --- Build the MODE SELECT(10) parameter list: header(8) + page ---
+        int paramLen = c_modeHeader10Length + pageTotalLen;
+        Span<byte> param = stackalloc byte[paramLen];
+
+        // Header (bytes 0-7): MODE DATA LENGTH must be 0 for MODE SELECT; no block
+        //  descriptor. stackalloc zero-inits, so nothing else to set.
+
+        // Copy the page in verbatim, then tweak the two fields we own.
+#pragma warning disable IDE0057 // Use range operator -- keep Slice for explicity
+        buf.Slice(pageOffset, pageTotalLen).CopyTo(param.Slice(c_modeHeader10Length));
+#pragma warning restore IDE0057 // Use range operator
+
+        int pageInParam = c_modeHeader10Length;
+        // PS bit (page byte 0, bit 7) MUST be 0 in a MODE SELECT parameter list.
+        param[pageInParam] &= 0x7F;
+
+        // Write PEWS (big-endian, megabytes).
+        int pewsInParam = pageInParam + c_pewsOffsetInPage;
+        param[pewsInParam] = (byte)((pewsUnits >> 8) & 0xFF);
+        param[pewsInParam + 1] = (byte)(pewsUnits & 0xFF);
+
+        // --- MODE SELECT(10) CDB ---
+        Span<byte> cdb = stackalloc byte[10];
+        cdb[0] = c_scsiOpModeSelect10;
+        cdb[1] = 0x10;                    // PF=1 (Page Format); SP=0 (do not save to NVRAM)
+        // bytes 2-6 reserved
+        cdb[7] = (byte)((paramLen >> 8) & 0xFF); // PARAMETER LIST LENGTH (BE)
+        cdb[8] = (byte)(paramLen & 0xFF);
+        // byte 9 CONTROL = 0
+
+        m_logger.LogDebug("{Prefix}: PEWS SET parameter list (hex): {Hex}",
+            LogPrefix, Convert.ToHexString(param));
+
+        if (!SendScsiCommand(cdb, param, dataIn: false))
+        {
+            LogErrorAsDebug("PEWS: MODE SELECT(10) rejected");
+            return false;
+        }
+
+        ResetError();
+        m_logger.LogInformation("{Prefix}: PEWS set to {Units} MB ({Bytes} bytes requested)",
+            LogPrefix, pewsUnits, sizeBytes);
+        return true;
+    }
+
+    /// <summary>
+    /// Issues <c>MODE SENSE(10)</c> for the Device Configuration Extension page
+    /// (0x10/0x01) with DBD=1 (no block descriptor) and current values (PC=00b),
+    /// then locates the page within the returned buffer and validates it.
+    /// </summary>
+    /// <param name="buffer">Caller buffer that receives header + page.</param>
+    /// <param name="pageOffset">Byte offset of the mode page within <paramref name="buffer"/>.</param>
+    /// <param name="pageTotalLen">Total length of the mode page in bytes (incl. page header).</param>
+    private bool ModeSenseDeviceConfigExt(Span<byte> buffer, out int pageOffset, out int pageTotalLen)
+    {
+        pageOffset = 0;
+        pageTotalLen = 0;
+
+        Span<byte> cdb = stackalloc byte[10];
+        cdb[0] = c_scsiOpModeSense10;
+        cdb[1] = 0x08;                            // DBD=1 (bit 3) — no block descriptor
+        cdb[2] = c_modePageDeviceConfigExt;       // PC=00b (current) | PAGE CODE 0x10
+        cdb[3] = c_modeSubpageDeviceConfigExt;    // SUBPAGE CODE 0x01
+        // bytes 4-6 reserved
+        cdb[7] = (byte)((buffer.Length >> 8) & 0xFF); // ALLOCATION LENGTH (BE)
+        cdb[8] = (byte)(buffer.Length & 0xFF);
+        // byte 9 CONTROL = 0
+
+        if (!SendScsiCommand(cdb, buffer, dataIn: true))
+            return false;
+
+        // MODE SENSE(10) parameter header (bytes 0-7):
+        //  0-1: MODE DATA LENGTH, 6-7: BLOCK DESCRIPTOR LENGTH.
+        int blockDescLen = (buffer[6] << 8) | buffer[7];
+        pageOffset = c_modeHeader10Length + blockDescLen; // = 8 when DBD honored
+
+        if (pageOffset + 4 > buffer.Length)
+        {
+            m_logger.LogWarning("{Prefix}: PEWS MODE SENSE returned too little data (pageOffset {Off})",
+                LogPrefix, pageOffset);
+            return false;
+        }
+
+        // Validate SPF=1, PAGE CODE=0x10, SUBPAGE=0x01.
+        byte pageCode = (byte)(buffer[pageOffset] & 0x3F);
+        bool spf = (buffer[pageOffset] & 0x40) != 0;
+        byte subpage = buffer[pageOffset + 1];
+        if (!spf || pageCode != c_modePageDeviceConfigExt || subpage != c_modeSubpageDeviceConfigExt)
+        {
+            m_logger.LogWarning(
+                "{Prefix}: PEWS MODE SENSE returned unexpected page (SPF={Spf} code=0x{Code:X2} sub=0x{Sub:X2})",
+                LogPrefix, spf, pageCode, subpage);
+            return false;
+        }
+
+        // Subpage-format PAGE LENGTH is at bytes 2-3 and counts bytes AFTER byte 3.
+        int pageLen = (buffer[pageOffset + 2] << 8) | buffer[pageOffset + 3];
+        pageTotalLen = 4 + pageLen;
+
+        if (pageOffset + pageTotalLen > buffer.Length)
+        {
+            m_logger.LogWarning("{Prefix}: PEWS page length {Len} exceeds buffer — increase c_modeSenseAllocLen",
+                LogPrefix, pageTotalLen);
+            return false;
+        }
+
+        m_logger.LogDebug("{Prefix}: Device Configuration Extension page (hex): {Hex}",
+            LogPrefix, Convert.ToHexString(buffer.Slice(pageOffset, pageTotalLen)));
+
+        return true;
+    }
+
+    #endregion
+
+    // =============================================================================
+    //  On-demand Early-Warning STATUS via SCSI READ POSITION (short form).
+    //
+    //  Reports two INDEPENDENT position flags from byte 0 of the response:
+    //
+    //    BPEW (bit 0) - Beyond Programmable Early Warning:
+    //                   current logical position is past the PEW point you set
+    //                   via SetProgrammableEarlyWarningSize(). Meaningful only when
+    //                   a PEWS has been established (LTO-5+); otherwise always 0.
+    //
+    //    EOP  (bit 6) - End Of Partition region:
+    //                   current position is within the built-in (fixed) early-warning
+    //                   / EWEOM region. This is the hardware EW, independent of PEW.
+    //
+    //  These are DISTINCT boundaries: PEW sits earlier (toward BOP) than EOP/EW.
+    //  PEW does NOT resize the built-in EW zone — it adds an earlier trip point.
+    //
+    //  This is a non-motion query: safe to call any time media is loaded, including
+    //  between writes, to poll "have I crossed the warning point yet?" without
+    //  writing. Complements the per-write signal surfaced by ScsiWriteDirect.
+    //
+    //  Belongs in .Lto.cs: buffered SPTI, no payload, mirrors GetLtoPositionU32.
+    // =============================================================================
+
+    #region *** Early-Warning Status — READ POSITION (BPEW / EOP) ***
+
+    // READ POSITION short-form byte-0 flag bits (SSC-3/SSC-4 Table, short form).
+    private const byte c_readPosFlagBop = 0x80; // bit 7: Beginning Of Partition
+    private const byte c_readPosFlagEop = 0x40; // bit 6: within End-Of-Partition (built-in EW/EWEOM)
+    private const byte c_readPosFlagBpew = 0x01; // bit 0: Beyond Programmable Early Warning point
+
+    /// <summary>
+    /// Reads the current early-warning status via SCSI <c>READ POSITION</c> (short form).
+    /// This is an on-demand, non-motion query — safe to call between writes.
+    /// <para>
+    /// <paramref name="beyondProgrammableEarlyWarning"/> (BPEW) reflects the PEW point set
+    /// via <see cref="SetProgrammableEarlyWarningSize"/> and is meaningful only on drives
+    /// that implement PEW (LTO-5+) with a non-zero PEWS; it reads 0 otherwise.
+    /// </para>
+    /// <para>
+    /// <paramref name="inEndOfPartitionRegion"/> (EOP) reflects the drive's built-in, fixed
+    /// early-warning / EWEOM region — independent of PEW. This is the same underlying
+    /// condition that sets the EOM bit on a crossing WRITE.
+    /// </para>
+    /// </summary>
+    /// <param name="beyondProgrammableEarlyWarning">Receives the BPEW flag.</param>
+    /// <param name="inEndOfPartitionRegion">Receives the EOP flag.</param>
+    /// <returns><c>true</c> if the status was read; <c>false</c> on command failure.</returns>
+    internal bool GetEarlyWarningStatus(
+        out bool beyondProgrammableEarlyWarning,
+        out bool inEndOfPartitionRegion)
+    {
+        beyondProgrammableEarlyWarning = false;
+        inEndOfPartitionRegion = false;
+
+        if (!HasMedia)
+        {
+            SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
+            return false;
+        }
+
+        Span<byte> cdb = stackalloc byte[10];
+        cdb[0] = 0x34; // READ POSITION
+        // cdb[1] service action 0x00 (short form) — default
+        cdb[8] = c_readPositionShortAllocLen;
+
+        Span<byte> data = stackalloc byte[c_readPositionShortAllocLen];
+        if (!SendScsiCommand(cdb, data, dataIn: true))
+        {
+            LogErrorAsTrace("EW status: READ POSITION (short form) failed");
+            return false;
+        }
+
+        byte flags = data[0];
+        beyondProgrammableEarlyWarning = (flags & c_readPosFlagBpew) != 0;
+        inEndOfPartitionRegion = (flags & c_readPosFlagEop) != 0;
+
+        m_logger.LogTrace("{Prefix}: EW status — BPEW={Bpew} EOP={Eop} (flags=0x{Flags:X2})",
+            LogPrefix, beyondProgrammableEarlyWarning, inEndOfPartitionRegion, flags);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Convenience overload: returns only whether the current position is beyond the
+    /// Programmable Early Warning point (BPEW). Returns <c>false</c> if the status could
+    /// not be read or no PEW zone applies.
+    /// </summary>
+    internal bool IsBeyondProgrammableEarlyWarning()
+        => GetEarlyWarningStatus(out bool bpew, out _) && bpew;
+
+    #endregion
+
 }

@@ -159,8 +159,10 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
         long initCap = Capabilities.SupportsInitiatorPartition
             ? DefaultInitiatorCapacity : 0;
 
-        if (!Capabilities.SupportsInitiatorPartition)
-            contentCapacity += TapeNavigator.DefaultTOCCapacity(null); // ensure enough space for TOC in set
+        // The following is NOT needed since we override the default (really large, 32MB) TOC capacity in Navigator,
+        //  s. MultiVolumeVirtualTapeFixture.CreateBackupAgent() and .CreateRestoreAgent()
+        //if (!Capabilities.SupportsInitiatorPartition)
+        //    contentCapacity += TapeNavigator.DefaultTOCCapacity(null); // ensure enough space for TOC in set
 
         Backend = VirtualTapeDriveBackend.CreateMemoryBacked(
             LoggerFactory, Capabilities, contentCapacity, initCap);

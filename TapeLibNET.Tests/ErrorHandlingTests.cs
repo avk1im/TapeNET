@@ -891,7 +891,7 @@ public class ErrorHandlingTests
         // Now re-write TOC with 1st copy failing (bit 0 = 1)
         using var writeAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
         writeAgent.SimulateTOCFailureMask = 1;
-        bool tocWriteOk = writeAgent.BackupTOC(enforce: true);
+        bool tocWriteOk = writeAgent.BackupTOC();
         Assert.True(tocWriteOk, "BackupTOC should succeed when only 1st copy fails");
 
         // Restore TOC — should recover from the 2nd copy

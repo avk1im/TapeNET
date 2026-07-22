@@ -58,7 +58,19 @@ namespace TapeLibNET
         /// </param>
         /// <returns>The adjusted remaining content capacity.</returns>
         public long AdjustRemainingContentCapacity(long remainingCapacity)
-            => AdjustRemainingContentCapacity(Drive, remainingCapacity);
+        {
+            var remainingFromDrive = Drive.GetContentRemainingCapacity();
+            // adjust down by 1% of drive capacity to account for drive reporting inaccuracies
+            remainingFromDrive -= Drive.Capacity / 100;
+
+            remainingCapacity = Math.Max(remainingCapacity, remainingFromDrive);
+
+            if (!Drive.HasInitiatorPartition)
+                remainingCapacity -= TOCCapacity;
+
+            remainingCapacity = Math.Max(remainingCapacity, 0); // don't return negative capacity
+            return remainingCapacity;
+        }
 
         /// <summary>
         /// Adjusts the remaining content capacity accounting for the drive reporting and TOC capacity.

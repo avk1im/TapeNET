@@ -197,7 +197,7 @@ namespace Windows.Win32
                 ((TAPE_GET_DRIVE_PARAMETERS_FEATURES_LOW)FeaturesLow).HasFlag(feature);
             public readonly bool HasFeature(TAPE_GET_DRIVE_PARAMETERS_FEATURES_HIGH feature)
             {
-                TAPE_GET_DRIVE_PARAMETERS_FEATURES_HIGH fixFeaturesHigh = (TAPE_GET_DRIVE_PARAMETERS_FEATURES_HIGH)(((uint)FeaturesHigh) | PInvoke.TAPE_DRIVE_HIGH_FEATURES);
+                var fixFeaturesHigh = (TAPE_GET_DRIVE_PARAMETERS_FEATURES_HIGH)(((uint)FeaturesHigh) | PInvoke.TAPE_DRIVE_HIGH_FEATURES);
                 return fixFeaturesHigh.HasFlag(feature);
             }
 
@@ -205,10 +205,12 @@ namespace Windows.Win32
             public readonly bool CreatesFixedPartitions => HasFeature(TAPE_GET_DRIVE_PARAMETERS_FEATURES_LOW.TAPE_DRIVE_FIXED);
             public readonly bool CreatesSelectPartitions => HasFeature(TAPE_GET_DRIVE_PARAMETERS_FEATURES_LOW.TAPE_DRIVE_SELECT);
             public readonly bool CreatesInitiatorPartitions => HasFeature(TAPE_GET_DRIVE_PARAMETERS_FEATURES_LOW.TAPE_DRIVE_INITIATOR);
+            public readonly bool ReportsEarlyWarningZoneSize => HasFeature(TAPE_GET_DRIVE_PARAMETERS_FEATURES_LOW.TAPE_DRIVE_EOT_WZ_SIZE);
             public readonly bool SupportsSetmarks => HasFeature(TAPE_GET_DRIVE_PARAMETERS_FEATURES_HIGH.TAPE_DRIVE_SETMARKS);
             public readonly bool SupportsFilemarks => HasFeature(TAPE_GET_DRIVE_PARAMETERS_FEATURES_HIGH.TAPE_DRIVE_FILEMARKS);
             public readonly bool SupportsSeqFilemarks => HasFeature(TAPE_GET_DRIVE_PARAMETERS_FEATURES_HIGH.TAPE_DRIVE_SEQUENTIAL_FMKS);
             public readonly bool SupportsEndOfData => HasFeature(TAPE_GET_DRIVE_PARAMETERS_FEATURES_HIGH.TAPE_DRIVE_END_OF_DATA);
+            public readonly bool SetsEarlyWarningZoneSize => HasFeature(TAPE_GET_DRIVE_PARAMETERS_FEATURES_LOW.TAPE_DRIVE_SET_EOT_WZ_SIZE);
 
             public override readonly string ToString()
             {

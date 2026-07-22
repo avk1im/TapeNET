@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text;
 using TapeLibNET.Remote;
@@ -23,7 +24,6 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     private readonly TapeDriveBackend m_backend = backend;
     private DriveCapabilities? m_driveParams = null;
     private MediaParameters? m_mediaParams = null;
-
     private long m_byteCounter = 0L; // running count of bytes transferred via WriteDirect/ReadDirect
     private readonly Stopwatch m_IoTimer = new();
 
@@ -33,6 +33,10 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     private long m_cachedContentRemaining = -1;
     private bool m_onContentPartition; // tracked via MoveToPartition / EnsureOnContentPartition
 
+    // Last requested early-warning reserve (bytes before EOM). Re-applied after (re)load,
+    //  since early warning is a media-level setting like block size. 0 = not requested.
+    private long m_desiredEarlyWarning = 0L;
+
     #endregion
 
     #region *** Private Constants ***
@@ -41,6 +45,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     private const int c_gapFileLength = 64;
 
     #endregion
+
     #region *** Constructors ***
 
     public TapeDrive(TapeDriveBackend backend)
@@ -92,6 +97,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return false;
         }
     }
+
     #endregion
 
     #region *** Properties ***
@@ -112,41 +118,61 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
     /// <summary>Zero-based drive number (\\.\ TAPE<i>N</i>).</summary>
     public uint DriveNumber => m_backend.DriveNumber;
+
     /// <summary>NT device path (e.g. <c>\\.\TAPE0</c>).</summary>
     public string DriveDeviceName => m_backend.DeviceName;
+
     /// <summary>Drive vendor name, can be empty</summary>
     public string DriveVendor => m_backend.Vendor;
+
     /// <summary>Drive product name, can be empty</summary>
     public string DriveProduct => m_backend.Product;
 
+    /// <summary>Drive firmware / microcode revision, can be empty.</summary>
+    public string DriveRevision => m_backend.Revision;
+
+    /// <summary>Stable identity for keying calibration data to this drive+media profile.</summary>
+    public string DriveProfileKey => m_backend.ProfileKey;
+
     /// <summary>Drive handle is open and capabilities have been read.</summary>
     public bool IsDriveOpen => m_backend.IsOpen && m_driveParams != null;
+
     /// <summary>Drive is open and media (tape cartridge) is loaded.</summary>
     public bool IsMediaLoaded => IsDriveOpen && m_mediaParams != null;
 
     /// <summary>Drive hardware supports a separate initiator (TOC) partition.</summary>
     public bool SupportsInitiatorPartition => m_driveParams?.SupportsInitiatorPartition ?? false;
+
     /// <summary>Current media has an initiator partition created.</summary>
     public bool HasInitiatorPartition => m_mediaParams?.HasInitiatorPartition ?? false;
+
     /// <summary>Number of partitions on the current media (1 or 2).</summary>
     public uint PartitionCount => HasInitiatorPartition ? 2U : 1U;
+
     /// <summary>Drive supports setmarks (enables <c>WithSetmarks</c> tape organization).</summary>
     public bool SupportsSetmarks => m_driveParams?.SupportsSetmarks ?? false;
+
     /// <summary>Drive can distinguish sequential filemark counts (enables <c>WithSeqFilemarks</c> organization).</summary>
     public bool SupportsSeqFilemarks => m_driveParams?.SupportsSeqFilemarks ?? false;
+
     /// <summary>Minimum block size the drive accepts, in bytes.</summary>
     public uint MinimumBlockSize => m_driveParams?.MinimumBlockSize ?? 0U;
+
     /// <summary>Maximum block size the drive accepts, in bytes.</summary>
     public uint MaximumBlockSize => m_driveParams?.MaximumBlockSize ?? 0U;
+
     /// <summary>Drive's default block size, in bytes.</summary>
     public uint DefaultBlockSize => m_driveParams?.DefaultBlockSize ?? 0U;
+
     /// <summary>Drive supports hardware compression</summary>
     public bool SupportsCompression => m_driveParams?.SupportsCompression ?? false;
 
     /// <summary>Current block size for read/write operations, in bytes.</summary>
     public uint BlockSize => m_mediaParams?.BlockSize ?? 0U;
+
     /// <summary>Current logical block address from the device.</summary>
     internal long BlockCounter => GetCurrentBlock();
+
     /// <summary>Total capacity of the current partition, in bytes.</summary>
     public long Capacity => m_mediaParams?.Capacity ?? 0L;
 
@@ -193,9 +219,38 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     /// </summary>
     public bool IsLto5PlusDrive => m_backend is TapeDriveWin32Backend wbe && wbe.IsLto5Plus
                 || m_backend is RemoteTapeDriveBackend rbe && rbe.IsLto5Plus;
-    
+
+    /// <summary>
+    /// Early-warning reserve, in bytes before physical EOM. Universal across all drives:
+    /// under the hood the backend realizes it with the best mechanism available — programmable
+    /// early warning (LTO-5+), the drive's built-in early-warning zone, a calibrated estimate,
+    /// or an uncalibrated estimate.
+    /// <para>
+    /// Assigning requests a value; the drive may not honor it exactly, so read the property back
+    /// afterward to see what was actually achieved (the same pattern as <see cref="BlockSize"/>).
+    /// A crossing during writing is reported by <see cref="WriteDirect"/> setting <c>eof=true</c>
+    /// together with <see cref="LastError"/> = <see cref="TapeEarlyWarning.EarlyWarningError"/>
+    /// (see <see cref="IsEarlyWarning"/>), distinct from hard end-of-media.
+    /// </para>
+    /// </summary>
+    public long EarlyWarning
+    {
+        get => m_mediaParams?.EarlyWarning ?? 0L;
+        set => TrySetEarlyWarning(value);
+    }
+
+    /// <summary>How <see cref="EarlyWarning"/> is currently realized (best available mechanism).</summary>
+    public EarlyWarningMechanism EarlyWarningMechanism => m_backend.EarlyWarningMechanism;
+
+    /// <summary>
+    /// True when the current error state indicates an early-warning crossing (data was written;
+    /// wrap up and write the TOC) — as opposed to a hard end-of-media (<see cref="IsEOM"/>).
+    /// </summary>
+    public bool IsEarlyWarning => LastError == TapeEarlyWarning.EarlyWarningError;
+
     /// <summary>Running count of bytes transferred via <see cref="WriteDirect"/>/<see cref="ReadDirect"/>. Reset by the stream manager.</summary>
-    public long ByteCounter {
+    public long ByteCounter
+    {
         get => m_byteCounter;
         internal set
         {
@@ -216,19 +271,16 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         StringBuilder sb = new();
         sb.Append("Drive name: ").Append(DriveDeviceName);
         sb.Append("\nOpen?: ").Append(IsDriveOpen);
-
         sb.Append("\nDrive parameters: ");
         if (m_driveParams != null)
             sb.Append('\n').Append(m_driveParams.ToString());
         else
             sb.Append("<not filled>");
-
         sb.Append("\nMedia parameters: ");
         if (m_mediaParams != null)
             sb.Append('\n').Append(m_mediaParams.ToString());
         else
             sb.Append("<not filled>");
-
         return sb.ToString();
     }
 
@@ -249,11 +301,9 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         if (!m_disposed)
         {
             m_logger.LogTrace("{Prefix}: Disposing", LogPrefix);
-
             // Set the flag before calling backend.Dispose() so that any exception
             //  from the backend does not leave this object re-entrant.
             m_disposed = true;
-
             if (disposing)
             {
                 m_backend.Dispose();
@@ -274,13 +324,10 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     public int WriteDirect(byte[] buffer, int offset, int count, out bool tapemark, out bool eof)
     {
         m_backend.CheckForRW(buffer, offset, count);
-
         int blocksToWrite = count / (int)BlockSize;
         int toWrite = blocksToWrite * (int)BlockSize;
-
         tapemark = false;
         eof = false;
-
         if (toWrite == 0)
             return 0;
 
@@ -295,7 +342,13 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             if (tapemark)
                 LogErrorAsTrace("Write encountered tapemark");
             if (eof)
-                LogErrorAsTrace("Write encountered EOF");
+            {
+                // Distinguish an early-warning crossing (data written; wrap up) from hard EOM.
+                if (IsEarlyWarning)
+                    LogErrorAsTrace("Write crossed early-warning boundary");
+                else
+                    LogErrorAsTrace("Write encountered EOF");
+            }
             if (!tapemark && !eof)
                 LogErrorAsDebug("Write failed");
         }
@@ -308,13 +361,10 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     public int ReadDirect(byte[] buffer, int offset, int count, out bool tapemark, out bool eof)
     {
         m_backend.CheckForRW(buffer, offset, count);
-
         int blocksToRead = count / (int)BlockSize;
         int toRead = blocksToRead * (int)BlockSize;
-
         tapemark = false;
         eof = false;
-
         if (toRead == 0)
             return 0;
 
@@ -347,6 +397,116 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
     #endregion
 
+    #region *** Early Warning & Calibration ***
+
+    /// <summary>
+    /// Requests an early-warning reserve of <paramref name="bytesBeforeEom"/> bytes before EOM.
+    /// Returns <see langword="true"/> if the backend accepted the request. Read <see cref="EarlyWarning"/>
+    /// back to see the value actually achieved, and <see cref="EarlyWarningMechanism"/> to see how.
+    /// </summary>
+    public bool TrySetEarlyWarning(long bytesBeforeEom)
+    {
+        if (!IsMediaLoaded)
+        {
+            SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
+            return false;
+        }
+        if (bytesBeforeEom < 0)
+            bytesBeforeEom = 0;
+
+        m_desiredEarlyWarning = bytesBeforeEom;
+
+        bool ok = m_backend.SetEarlyWarning(bytesBeforeEom);
+        SyncErrorFrom(m_backend);
+
+        // Refresh either way so the EarlyWarning getter reflects the drive's actual state.
+        RefreshMediaParams();
+
+        if (ok)
+            m_logger.LogTrace("{Prefix}: Early warning requested {Req} bytes → effective {Eff} bytes (mechanism {Mech})",
+                LogPrefix, bytesBeforeEom, EarlyWarning, EarlyWarningMechanism);
+        else
+            LogErrorAsDebug("Failed to set early warning");
+
+        return ok;
+    }
+
+    /// <summary>True if the backend can run and apply early-warning calibration.</summary>
+    public bool SupportsEarlyWarningCalibration => m_backend.SupportsEarlyWarningCalibration;
+
+    /// <summary>The calibration currently installed/active on the backend, if any.</summary>
+    public ITapeCalibration? CurrentEarlyWarningCalibration => m_backend.CurrentEarlyWarningCalibration;
+
+    /// <summary>
+    /// Runs a (destructive) early-warning calibration on the loaded scratch media and returns an
+    /// opaque, persistable result that is also installed as the active calibration. The application
+    /// should save the result via <see cref="ITapeCalibration.SaveTo"/> keyed by
+    /// <see cref="ITapeCalibration.ProfileKey"/>. Returns <see langword="null"/> if unsupported or on failure.
+    /// </summary>
+    public ITapeCalibration? CalibrateEarlyWarning(
+        EarlyWarningCalibrationOptions? options = null,
+        IProgress<EarlyWarningCalibrationProgress>? progress = null)
+    {
+        if (!IsMediaLoaded)
+        {
+            SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
+            return null;
+        }
+
+        ITapeCalibration? result = m_backend.CalibrateEarlyWarning(
+            options ?? new EarlyWarningCalibrationOptions(), progress);
+        SyncErrorFrom(m_backend);
+        RefreshMediaParams();
+
+        if (result == null)
+            LogErrorAsDebug("Early-warning calibration failed");
+        else
+            m_logger.LogTrace("{Prefix}: Early-warning calibration completed (profile {Key})",
+                LogPrefix, result.ProfileKey);
+
+        return result;
+    }
+
+    /// <summary>
+    /// Installs a previously-saved calibration so subsequent <see cref="EarlyWarning"/> assignments can
+    /// use the calibrated estimate. Returns <see langword="false"/> if unsupported or the calibration
+    /// does not match this drive+media profile.
+    /// </summary>
+    public bool ApplyEarlyWarningCalibration(ITapeCalibration calibration)
+    {
+        ArgumentNullException.ThrowIfNull(calibration);
+
+        bool ok = m_backend.ApplyEarlyWarningCalibration(calibration);
+        SyncErrorFrom(m_backend);
+
+        if (ok && m_desiredEarlyWarning > 0)
+            TrySetEarlyWarning(m_desiredEarlyWarning); // re-derive effective value under the new calibration
+        else if (!ok)
+            LogErrorAsDebug("Failed to apply early-warning calibration");
+
+        return ok;
+    }
+
+    /// <summary>
+    /// Reconstructs an opaque calibration object from a stream the application previously saved.
+    /// The backend is the factory (only it understands its own format). Returns <see langword="null"/>
+    /// if unsupported or unrecognized.
+    /// </summary>
+    public ITapeCalibration? LoadEarlyWarningCalibration(Stream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+
+        ITapeCalibration? cal = m_backend.LoadEarlyWarningCalibration(stream);
+        SyncErrorFrom(m_backend);
+
+        if (cal == null)
+            LogErrorAsDebug("Failed to load early-warning calibration");
+
+        return cal;
+    }
+
+    #endregion
+
     #region *** Drive & Media Operations ***
 
     /// <summary>Opens (or reopens) the drive, reads capabilities, and sets optimal parameters.</summary>
@@ -366,7 +526,6 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         if (!m_backend.IsOpen)
         {
             CloseDrive();
-
             if (!m_backend.Open(driveNumber))
             {
                 SyncErrorFrom(m_backend);
@@ -380,15 +539,12 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             LogErrorAsDebug("Failed to pre-fill drive parameters");
             return false;
         }
-
         SetOptimalDriveParams();
-
         if (!RefreshDriveCaps())
         {
             LogErrorAsDebug("Failed to fill drive parameters after setting optimal ones");
             return false;
         }
-
         m_logger.LogTrace("{Prefix}: Drive reopened", LogPrefix);
         return IsDriveOpen;
     }
@@ -399,15 +555,12 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return false;
 
         m_logger.LogTrace("Probing drive #{Number}", driveNumber);
-
         if (!m_backend.Open(driveNumber))
         {
             m_logger.LogTrace("Failed probing drive #{Number}", driveNumber);
             return false;
         }
-
         m_backend.Close();
-
         m_logger.LogTrace("Suceeded probing drive #{Number}", driveNumber);
         return true;
     }
@@ -416,12 +569,11 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     public void CloseDrive()
     {
         m_logger.LogTrace("{Prefix}: Closing", LogPrefix);
-
         m_backend.Close();
         m_driveParams = null;
         m_mediaParams = null;
+        m_desiredEarlyWarning = 0L;
         InvalidateContentCache();
-
         m_logger.LogTrace("{Prefix}: Closed", LogPrefix);
     }
 
@@ -478,14 +630,11 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return false;
 
         ResetError();
-
         SetOptimalMediaParams();
-
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Media prepared", LogPrefix);
         else
             LogErrorAsDebug("Failed to prepare media");
-
         return WentOK;
     }
 
@@ -499,7 +648,6 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return false;
 
         m_logger.LogTrace("{Prefix}: Formatting media", LogPrefix);
-
         if (!m_backend.FormatMedia(initiatorPartitionSize))
         {
             SyncErrorFrom(m_backend);
@@ -527,7 +675,6 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             m_logger.LogTrace("{Prefix}: Formatted media", LogPrefix);
         else
             LogErrorAsDebug("Failed to format media");
-
         return WentOK;
     }
 
@@ -542,9 +689,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             size = MaximumBlockSize;
         else if (size < MinimumBlockSize)
             size = MinimumBlockSize;
-
         size = Math.Min(size, int.MaxValue);
-
         if (BlockSize == size)
             return true;
 
@@ -571,7 +716,6 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return false;
 
         m_logger.LogTrace("{Prefix}: Moving to partition {Partition}", LogPrefix, partition);
-
         if (!m_backend.SetPositionToPartition(partition, block))
         {
             SyncErrorFrom(m_backend);
@@ -585,7 +729,6 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
         // parameters may differ for another partition, e.g. Capacity -> refresh them
         RefreshMediaParams();
-
         m_logger.LogTrace("{Prefix}: Moved to partition {Partition}", LogPrefix, partition);
         return true;
     }
@@ -693,19 +836,15 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
         int length = Math.Max((int)MinimumBlockSize, c_gapFileLength);
         byte[] buffer = new byte[length];
-
         uint blockSize = BlockSize;
         SetBlockSize((uint)length);
-
         int result = WriteDirect(buffer, 0, length, out _, out _);
-
         SetBlockSize(blockSize);
 
         if (WentOK && result == length)
             m_logger.LogTrace("{Prefix}: Wrote gap file: {Bytes} bytes", LogPrefix, length);
         else
             LogErrorAsDebug("Failed to write gap file");
-
         return WentOK && result == length;
     }
 
@@ -781,7 +920,6 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
         long position = m_backend.GetPosition();
         SyncErrorFrom(m_backend);
-
         return WentOK ? position : -1;
     }
 
@@ -793,7 +931,6 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
         MediaPartition partition = m_backend.GetCurrentPartition();
         SyncErrorFrom(m_backend);
-
         return WentOK ? partition : MediaPartition.Current;
     }
 
@@ -805,10 +942,8 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     {
         m_backend.FillDriveCapabilities(out DriveCapabilities driveParams);
         SyncErrorFrom(m_backend);
-
         if (WentOK)
             m_driveParams = driveParams;
-
         return WentOK;
     }
 
@@ -816,15 +951,12 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     {
         m_backend.FillMediaParameters(out MediaParameters mediaParams);
         SyncErrorFrom(m_backend);
-
         if (WentOK)
         {
             m_mediaParams = mediaParams;
-
             if (m_onContentPartition)
                 CacheContentMediaParams(mediaParams);
         }
-
         return WentOK;
     }
 
@@ -882,7 +1014,6 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         bool padding = false; // m_driveParams.Value.SupportsPadding;
         bool reportSetmarks = m_driveParams.Value.SupportsSetmarks;
         uint eotZone = (uint)Math.Min(TapeNavigator.DefaultTOCCapacity(this), uint.MaxValue);
-
         if (!m_backend.SetDriveParameters(compression, ecc, padding, reportSetmarks, eotZone))
         {
             SyncErrorFrom(m_backend);
@@ -904,11 +1035,10 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         if (!IsDriveOpen || m_driveParams == null)
             return;
 
-        bool ecc           = m_driveParams.Value.SupportsEcc;
-        bool padding       = m_driveParams.Value.SupportsPadding;
+        bool ecc = m_driveParams.Value.SupportsEcc;
+        bool padding = m_driveParams.Value.SupportsPadding;
         bool reportSetmarks = m_driveParams.Value.SupportsSetmarks;
-        uint eotZone       = padding ? m_driveParams.Value.DefaultBlockSize * 4 : 0;
-
+        uint eotZone = padding ? m_driveParams.Value.DefaultBlockSize * 4 : 0;
         if (!m_backend.SetDriveParameters(enabled, ecc, padding, reportSetmarks, eotZone))
         {
             SyncErrorFrom(m_backend);
@@ -919,6 +1049,18 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     private void SetOptimalMediaParams()
     {
         SetBlockSize(uint.Max(c_defaultBlockSize, DefaultBlockSize));
+
+        // Re-apply a previously requested early-warning reserve (media-level setting, like block
+        //  size). Failure-tolerant: a drive without any EW mechanism simply keeps EarlyWarning = 0.
+        if (m_desiredEarlyWarning > 0)
+        {
+            if (!m_backend.SetEarlyWarning(m_desiredEarlyWarning))
+            {
+                SyncErrorFrom(m_backend);
+                ResetError(); // ignore — best-effort re-application
+            }
+            RefreshMediaParams();
+        }
     }
 
     #endregion

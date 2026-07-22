@@ -160,7 +160,7 @@ public sealed class VirtualTapeFixture : IDisposable
     public void SaveTOC()
     {
         using var agent = new TapeFileAgent(Drive, TOC);
-        Assert.True(agent.BackupTOC(enforce: true), "Failed to save TOC to tape");
+        Assert.True(agent.BackupTOC(), "Failed to save TOC to tape");
     }
 
     /// <summary>

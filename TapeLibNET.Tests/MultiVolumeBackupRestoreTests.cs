@@ -8,8 +8,8 @@ namespace TapeLibNET.Tests;
 /// Exercises backup sets that span volume boundaries for both regular and
 /// incremental modes, verifying:
 /// <list type="bullet">
-///   <item>Regular backup spanning 2+ volumes ? full restore from both volumes</item>
-///   <item>Incremental chain across volumes ? restore assembles correct versions</item>
+///   <item>Regular backup spanning 2+ volumes -> full restore from both volumes</item>
+///   <item>Incremental chain across volumes -> restore assembles correct versions</item>
 ///   <item>TOC persistence across volumes after save/reload</item>
 ///   <item>Backup and restore statistics consistency across volume boundaries</item>
 ///   <item>ContinuedFromPrevVolume / ContinuedOnNextVolume flags are set correctly</item>
