@@ -148,6 +148,7 @@ public partial class TapeDriveWin32Backend
         public bool IsGood => TransportOk && ScsiStatus == c_scsiStatusGood;
         public bool IsCheckCondition => TransportOk && ScsiStatus == c_scsiStatusCheckCondition;
 
+        /*
         /// <summary>
         /// Programmable Early Warning: data accepted, drive reports the configured PEW trip
         /// point via ASC/ASCQ 00/07. The EOM bit is NOT set (that is the built-in EW). LTO-5+.
@@ -166,6 +167,34 @@ public partial class TapeDriveWin32Backend
         public bool IsPhysicalEom =>
             IsCheckCondition && Eom &&
             (SenseKey == c_senseKeyVolumeOverflow || (Asc == c_ascNoAdditionalSense && Ascq == c_ascqEndOfPartition));
+        */
+        /// <summary>
+        /// Programmable Early Warning: drive reports the configured PEW trip point via
+        /// ASC/ASCQ 00/07, sense key NO SENSE. Distinct from the built-in EW below and
+        /// closer to BOP. LTO-5+ only. (ASC/ASCQ 00/07 is unique to PEW, so we key on it.)
+        /// </summary>
+        public bool IsProgrammableEarlyWarning =>
+            IsCheckCondition &&
+            Asc == c_ascNoAdditionalSense && Ascq == c_ascqProgrammableEw;
+
+        /// <summary>
+        /// Built-in Early Warning: a write COMPLETED in the early-warning area — data WAS
+        /// accepted. The EOM bit is set and the sense key is NOT VOLUME OVERFLOW.
+        /// <para>
+        /// IMPORTANT: on LTO the ASC/ASCQ is 00/02 (END-OF-PARTITION) for BOTH early warning
+        /// AND hard EOM; only the SENSE KEY distinguishes them (NO SENSE ⇒ EW/data written,
+        /// VOLUME OVERFLOW ⇒ hard EOM/data rejected). Do not use ASC/ASCQ to tell them apart.
+        /// </para>
+        /// </summary>
+        public bool IsEarlyWarning =>
+            IsCheckCondition && Eom &&
+            SenseKey != c_senseKeyVolumeOverflow &&
+            !IsProgrammableEarlyWarning;
+
+        /// <summary>Hard physical EOM: data NOT written. Signalled by VOLUME OVERFLOW sense key.</summary>
+        public bool IsPhysicalEom =>
+            IsCheckCondition && Eom &&
+            SenseKey == c_senseKeyVolumeOverflow;
     }
 
     #endregion
