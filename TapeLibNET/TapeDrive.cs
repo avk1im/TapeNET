@@ -229,8 +229,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     /// <para>
     /// Assigning requests a value; the drive may not honor it exactly, so read the property back
     /// afterward to see what was actually achieved (the same pattern as <see cref="BlockSize"/>).
-    /// A crossing during writing is reported by <see cref="WriteDirect"/> setting <c>eof=true</c>
-    /// together with <see cref="LastError"/> = <see cref="TapeEarlyWarning.EarlyWarningError"/>
+    /// A crossing during writing is reported by <see cref="WriteDirect"/> setting <c>earlyWarning=true</c>
     /// (see <see cref="IsEarlyWarning"/>), distinct from hard end-of-media.
     /// </para>
     /// </summary>
@@ -244,10 +243,11 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     public EarlyWarningMechanism EarlyWarningMechanism => m_backend.EarlyWarningMechanism;
 
     /// <summary>
-    /// True when the current error state indicates an early-warning crossing (data was written;
+    /// A sticky flag set after <see cref="WriteDirect"/> sensed an early-warning crossing (data was written;
     /// wrap up and write the TOC) — as opposed to a hard end-of-media (<see cref="IsEOM"/>).
+    /// <para>Reset in <see cref="UnloadMedia"/>, <see cref="CloseDrive"/>, or when <see cref="WriteDirect"/> returned no early warning.</para>
     /// </summary>
-    public bool IsEarlyWarning => LastError == TapeEarlyWarning.EarlyWarningError;
+    public bool IsEarlyWarning { get; private set; } = false;
 
     /// <summary>Running count of bytes transferred via <see cref="WriteDirect"/>/<see cref="ReadDirect"/>. Reset by the stream manager.</summary>
     public long ByteCounter
@@ -349,8 +349,11 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
                 // We do NOT set error after all, just return the out flag. EW is not a hard error,
                 //  just a condition for caller to consider.
                 //  SetError(TapeEarlyWarning.EarlyWarningError);
+                IsEarlyWarning = true;
                 LogErrorAsTrace("WriteDirect reached beyond early-warning boundary");
             }
+            else
+                IsEarlyWarning = false;
             if (eom)
                 LogErrorAsInfo("WriteDirect encountered EOM");
             if (!tapemark && !earlyWarning && !eom)
@@ -587,6 +590,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         m_driveParams = null;
         m_mediaParams = null;
         m_desiredEarlyWarning = 0L;
+        IsEarlyWarning = false;
         InvalidateContentCache();
         m_logger.LogTrace("{Prefix}: Closed", LogPrefix);
     }
@@ -632,6 +636,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         }
 
         m_mediaParams = null;
+        IsEarlyWarning = false;
         InvalidateContentCache();
         m_logger.LogTrace("{Prefix}: Media unloaded", LogPrefix);
         return true;
