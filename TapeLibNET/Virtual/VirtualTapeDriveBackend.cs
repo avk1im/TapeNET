@@ -923,10 +923,11 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
         return bytesRead;
     }
 
-    public override int Write(byte[] buffer, int offset, int count, out bool tapemark, out bool eof)
+    public override int Write(byte[] buffer, int offset, int count, out bool tapemark, out bool earlyWarning, out bool eom)
     {
         tapemark = false;
-        eof = false;
+        earlyWarning = false;
+        eom = false;
 
         if (m_currentMedia == null)
         {
@@ -942,7 +943,7 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
             SetError(m_currentMedia.LastError);
 
             if (m_currentMedia.LastErrorWin32 == WIN32_ERROR.ERROR_END_OF_MEDIA)
-                eof = true;
+                eom = true;
         }
         else
             ResetError();

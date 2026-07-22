@@ -111,6 +111,11 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         WIN32_ERROR.ERROR_END_OF_MEDIA,
     ];
 
+    private static readonly WIN32_ERROR[] c_endOfMediaErrors = [
+        WIN32_ERROR.ERROR_END_OF_MEDIA,
+        WIN32_ERROR.ERROR_NO_DATA_DETECTED,
+    ];
+
     // Errors treated as "still in progress" during PollForCompletion.
     // QUIRK DLT-V4: GetTapeStatus may return ERROR_IO_DEVICE instead of
     //  ERROR_NOT_READY while a bImmediate operation is still executing.
@@ -477,31 +482,33 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
             if (c_tapemarkErrors.Contains(LastErrorWin32))
             {
                 tapemark = true;
-                LogErrorAsTrace("Read encountered tapemark");
+                LogErrorAsTrace("ReadDirect encountered tapemark");
             }
 
             if (c_endOfFileErrors.Contains(LastErrorWin32))
             {
                 eof = true;
-                LogErrorAsTrace("Read encountered EOF");
+                LogErrorAsTrace("ReadDirect encountered EOF");
                 ResetError(); // EOF is not an error for reads
             }
 
             if (!tapemark && !eof)
-                LogErrorAsDebug("Read failed");
+                LogErrorAsDebug("ReadDirect encountered error");
         }
 
         return (int)read;
     }
 
-    public override int Write(byte[] buffer, int offset, int count, out bool tapemark, out bool eof)
+    public override int Write(byte[] buffer, int offset, int count,
+        out bool tapemark, out bool earlyWarning, out bool eom)
     {
         if (IsLto)
-            return WriteDirect(buffer, offset, count, out tapemark, out eof,
-                out _ /* programmableEarlyWarning */, out _ /* earlyWarning */);
+            return WriteDirect(buffer, offset, count,
+                out tapemark, out _ /* programmableEarlyWarning */, out earlyWarning, out eom);
 
         tapemark = false;
-        eof = false;
+        earlyWarning = false;
+        eom = false;
 
 #if DEBUG
         if (SimulateIOFailures.ShouldFailNow())
@@ -532,18 +539,18 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
             if (c_tapemarkErrors.Contains(LastErrorWin32))
             {
                 tapemark = true;
-                LogErrorAsTrace("Write encountered tapemark");
+                LogErrorAsTrace("WriteDirect encountered tapemark");
             }
 
-            if (c_endOfFileErrors.Contains(LastErrorWin32))
+            if (c_endOfMediaErrors.Contains(LastErrorWin32))
             {
-                eof = true;
-                LogErrorAsTrace("Write encountered EOF");
-                // Do NOT reset error for writes - EOF is significant
+                eom = true;
+                LogErrorAsInfo("WriteDirect encountered EOM");
+                // Do NOT reset error for writes - EOM is significant
             }
 
-            if (!tapemark && !eof)
-                LogErrorAsDebug("Write failed");
+            if (!tapemark && !eom && !earlyWarning)
+                LogErrorAsDebug("WriteDirect encountered error");
         }
 
         return (int)written;

@@ -115,5 +115,6 @@ public static class TapeEarlyWarning
     /// (112) because it is semantically apt ("space running out") and never collides with the
     /// Win32 Tape API's 1100-range codes.
     /// </summary>
-    public const uint EarlyWarningError = (uint)WIN32_ERROR.ERROR_DISK_FULL;
+    internal const WIN32_ERROR EarlyWarningErrorWin32 = WIN32_ERROR.ERROR_DISK_FULL;
+    public const uint EarlyWarningError = (uint)EarlyWarningErrorWin32;
 }

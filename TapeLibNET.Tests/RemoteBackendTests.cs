@@ -142,7 +142,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
 
         // Write some data to advance position
         var buffer = new byte[drive.BlockSize];
-        drive.WriteDirect(buffer, 0, buffer.Length, out _, out _);
+        drive.WriteDirect(buffer, 0, buffer.Length);
         Assert.True(drive.BlockCounter > 0, "Position should have advanced after write");
 
         Assert.True(drive.Rewind());
@@ -160,7 +160,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         // Write several blocks to create addressable space
         var buffer = new byte[drive.BlockSize];
         for (int i = 0; i < 10; i++)
-            drive.WriteDirect(buffer, 0, buffer.Length, out _, out _);
+            drive.WriteDirect(buffer, 0, buffer.Length);
 
         Assert.True(drive.MoveToBlock(5));
         Assert.Equal(5, drive.BlockCounter);
@@ -190,13 +190,13 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         for (int i = 0; i < blockSize; i++)
             writeBuffer[i] = (byte)(i % 251);
 
-        int written = drive.WriteDirect(writeBuffer, 0, blockSize, out _, out _);
+        int written = drive.WriteDirect(writeBuffer, 0, blockSize);
         Assert.Equal(blockSize, written);
 
         Assert.True(drive.Rewind());
 
         byte[] readBuffer = new byte[blockSize];
-        int read = drive.ReadDirect(readBuffer, 0, blockSize, out _, out _);
+        int read = drive.ReadDirect(readBuffer, 0, blockSize);
         Assert.Equal(blockSize, read);
         Assert.Equal(writeBuffer, readBuffer);
     }
@@ -216,13 +216,13 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         for (int i = 0; i < totalSize; i++)
             writeBuffer[i] = (byte)((i / blockSize * 37 + i % blockSize) % 256);
 
-        int written = drive.WriteDirect(writeBuffer, 0, totalSize, out _, out _);
+        int written = drive.WriteDirect(writeBuffer, 0, totalSize);
         Assert.Equal(totalSize, written);
 
         Assert.True(drive.Rewind());
 
         byte[] readBuffer = new byte[totalSize];
-        int read = drive.ReadDirect(readBuffer, 0, totalSize, out _, out _);
+        int read = drive.ReadDirect(readBuffer, 0, totalSize);
         Assert.Equal(totalSize, read);
         Assert.Equal(writeBuffer, readBuffer);
     }
@@ -246,24 +246,24 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
 
         byte[] block1 = new byte[blockSize];
         Array.Fill(block1, (byte)0xAA);
-        drive.WriteDirect(block1, 0, blockSize, out _, out _);
+        drive.WriteDirect(block1, 0, blockSize);
 
         Assert.True(fixture.Backend.WriteFilemarks(1));
 
         byte[] block2 = new byte[blockSize];
         Array.Fill(block2, (byte)0xBB);
-        drive.WriteDirect(block2, 0, blockSize, out _, out _);
+        drive.WriteDirect(block2, 0, blockSize);
 
         Assert.True(drive.Rewind());
 
         byte[] readBuf = new byte[blockSize];
-        int read = drive.ReadDirect(readBuf, 0, blockSize, out _, out _);
+        int read = drive.ReadDirect(readBuf, 0, blockSize);
         Assert.Equal(blockSize, read);
         Assert.Equal(block1, readBuf);
 
         Assert.True(fixture.Backend.SpaceFilemarks(1));
 
-        read = drive.ReadDirect(readBuf, 0, blockSize, out _, out _);
+        read = drive.ReadDirect(readBuf, 0, blockSize);
         Assert.Equal(blockSize, read);
         Assert.Equal(block2, readBuf);
     }
@@ -278,23 +278,23 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
 
         byte[] block1 = new byte[blockSize];
         Array.Fill(block1, (byte)0x11);
-        drive.WriteDirect(block1, 0, blockSize, out _, out _);
+        drive.WriteDirect(block1, 0, blockSize);
 
         Assert.True(fixture.Backend.WriteSetmarks(1));
 
         byte[] block2 = new byte[blockSize];
         Array.Fill(block2, (byte)0x22);
-        drive.WriteDirect(block2, 0, blockSize, out _, out _);
+        drive.WriteDirect(block2, 0, blockSize);
 
         Assert.True(drive.Rewind());
 
         byte[] readBuf = new byte[blockSize];
-        drive.ReadDirect(readBuf, 0, blockSize, out _, out _);
+        drive.ReadDirect(readBuf, 0, blockSize);
         Assert.Equal(block1, readBuf);
 
         Assert.True(fixture.Backend.SpaceSetmarks(1));
 
-        drive.ReadDirect(readBuf, 0, blockSize, out _, out _);
+        drive.ReadDirect(readBuf, 0, blockSize);
         Assert.Equal(block2, readBuf);
     }
 
@@ -391,7 +391,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         // The fixture's drive (opened before the probe) should still be operational
         var drive = fixture.Drive;
         var buffer = new byte[drive.BlockSize];
-        int written = drive.WriteDirect(buffer, 0, buffer.Length, out _, out _);
+        int written = drive.WriteDirect(buffer, 0, buffer.Length);
         Assert.Equal(buffer.Length, written);
     }
 
@@ -421,7 +421,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         Assert.True(drive.PrepareMedia());
 
         var buffer = new byte[drive.BlockSize];
-        int written = drive.WriteDirect(buffer, 0, buffer.Length, out _, out _);
+        int written = drive.WriteDirect(buffer, 0, buffer.Length);
         Assert.Equal(buffer.Length, written);
     }
 
@@ -445,7 +445,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         Assert.True(drive.PrepareMedia());
 
         var buffer = new byte[drive.BlockSize];
-        int written = drive.WriteDirect(buffer, 0, buffer.Length, out _, out _);
+        int written = drive.WriteDirect(buffer, 0, buffer.Length);
         Assert.Equal(buffer.Length, written);
     }
 
@@ -483,7 +483,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         // The existing fixture's drive should still respond correctly
         var drive = existingFixture.Drive;
         var buffer = new byte[drive.BlockSize];
-        int written = drive.WriteDirect(buffer, 0, buffer.Length, out _, out _);
+        int written = drive.WriteDirect(buffer, 0, buffer.Length);
         Assert.Equal(buffer.Length, written);
     }
 
@@ -655,7 +655,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         // Write a block to prove the session is fully functional.
         var data = new byte[drive.BlockSize];
         new Random(42).NextBytes(data);
-        int written = drive.WriteDirect(data, 0, data.Length, out _, out _);
+        int written = drive.WriteDirect(data, 0, data.Length);
         Assert.Equal(data.Length, written);
 
         await backend.CloseAsync().ConfigureAwait(false);
@@ -824,7 +824,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         Assert.True(drive.ReloadMedia());
         Assert.True(drive.PrepareMedia());
         var block = new byte[drive.BlockSize];
-        drive.WriteDirect(block, 0, block.Length, out _, out _);
+        drive.WriteDirect(block, 0, block.Length);
 
         // Volume 2 - swap via InsertMediaAsync
         bool ok2 = await backend.InsertMediaAsync(

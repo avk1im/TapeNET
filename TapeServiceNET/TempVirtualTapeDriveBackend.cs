@@ -64,8 +64,8 @@ internal sealed class TempVirtualTapeDriveBackend(
 
     public override int Read(byte[] buffer, int offset, int count, out bool tapemark, out bool eof)
         => _inner.Read(buffer, offset, count, out tapemark, out eof);
-    public override int Write(byte[] buffer, int offset, int count, out bool tapemark, out bool eof)
-        => _inner.Write(buffer, offset, count, out tapemark, out eof);
+    public override int Write(byte[] buffer, int offset, int count, out bool tapemark, out bool earlyWarning, out bool eom)
+        => _inner.Write(buffer, offset, count, out tapemark, out earlyWarning, out eom);
 
     public override bool SetPosition(long block) => _inner.SetPosition(block);
     public override bool SetPositionToPartition(TapeLibNET.MediaPartition partition, long block)

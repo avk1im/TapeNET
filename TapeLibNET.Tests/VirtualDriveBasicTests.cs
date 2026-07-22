@@ -182,7 +182,7 @@ public class VirtualDriveBasicTests
 
         // Write some data to advance position
         var buffer = new byte[drive.BlockSize];
-        drive.WriteDirect(buffer, 0, buffer.Length, out _, out _);
+        drive.WriteDirect(buffer, 0, buffer.Length);
 
         Assert.True(drive.BlockCounter > 0, "Position should have advanced after write");
 
@@ -201,7 +201,7 @@ public class VirtualDriveBasicTests
         // Write several blocks to create addressable space
         var buffer = new byte[drive.BlockSize];
         for (int i = 0; i < 10; i++)
-            drive.WriteDirect(buffer, 0, buffer.Length, out _, out _);
+            drive.WriteDirect(buffer, 0, buffer.Length);
 
         // Seek to a specific block
         Assert.True(drive.MoveToBlock(5));
@@ -230,14 +230,14 @@ public class VirtualDriveBasicTests
             writeBuffer[i] = (byte)(i % 251); // prime modulus avoids aliasing with block size
 
         // Write
-        int written = drive.WriteDirect(writeBuffer, 0, blockSize, out _, out _);
+        int written = drive.WriteDirect(writeBuffer, 0, blockSize);
         Assert.Equal(blockSize, written);
 
         // Rewind and read back
         Assert.True(drive.Rewind());
 
         byte[] readBuffer = new byte[blockSize];
-        int read = drive.ReadDirect(readBuffer, 0, blockSize, out _, out _);
+        int read = drive.ReadDirect(readBuffer, 0, blockSize);
         Assert.Equal(blockSize, read);
 
         // Verify content
@@ -259,14 +259,14 @@ public class VirtualDriveBasicTests
         for (int i = 0; i < totalSize; i++)
             writeBuffer[i] = (byte)((i / blockSize * 37 + i % blockSize) % 256);
 
-        int written = drive.WriteDirect(writeBuffer, 0, totalSize, out _, out _);
+        int written = drive.WriteDirect(writeBuffer, 0, totalSize);
         Assert.Equal(totalSize, written);
 
         // Rewind and read back
         Assert.True(drive.Rewind());
 
         byte[] readBuffer = new byte[totalSize];
-        int read = drive.ReadDirect(readBuffer, 0, totalSize, out _, out _);
+        int read = drive.ReadDirect(readBuffer, 0, totalSize);
         Assert.Equal(totalSize, read);
 
         Assert.Equal(writeBuffer, readBuffer);
@@ -287,13 +287,13 @@ public class VirtualDriveBasicTests
         // Write a block, then a filemark, then another block
         byte[] block1 = new byte[blockSize];
         Array.Fill(block1, (byte)0xAA);
-        drive.WriteDirect(block1, 0, blockSize, out _, out _);
+        drive.WriteDirect(block1, 0, blockSize);
 
         Assert.True(fixture.Backend.WriteFilemarks(1));
 
         byte[] block2 = new byte[blockSize];
         Array.Fill(block2, (byte)0xBB);
-        drive.WriteDirect(block2, 0, blockSize, out _, out _);
+        drive.WriteDirect(block2, 0, blockSize);
 
         // Rewind and read first block
         Assert.True(drive.Rewind());
@@ -322,24 +322,24 @@ public class VirtualDriveBasicTests
         // Write block, setmark, block
         byte[] block1 = new byte[blockSize];
         Array.Fill(block1, (byte)0x11);
-        drive.WriteDirect(block1, 0, blockSize, out _, out _);
+        drive.WriteDirect(block1, 0, blockSize);
 
         Assert.True(fixture.Backend.WriteSetmarks(1));
 
         byte[] block2 = new byte[blockSize];
         Array.Fill(block2, (byte)0x22);
-        drive.WriteDirect(block2, 0, blockSize, out _, out _);
+        drive.WriteDirect(block2, 0, blockSize);
 
         // Rewind, read block 1, space past setmark, read block 2
         Assert.True(drive.Rewind());
 
         byte[] readBuf = new byte[blockSize];
-        drive.ReadDirect(readBuf, 0, blockSize, out _, out _);
+        drive.ReadDirect(readBuf, 0, blockSize);
         Assert.Equal(block1, readBuf);
 
         Assert.True(fixture.Backend.SpaceSetmarks(1));
 
-        drive.ReadDirect(readBuf, 0, blockSize, out _, out _);
+        drive.ReadDirect(readBuf, 0, blockSize);
         Assert.Equal(block2, readBuf);
     }
 
@@ -353,25 +353,25 @@ public class VirtualDriveBasicTests
         // Write block, filemark, block
         byte[] block1 = new byte[blockSize];
         Array.Fill(block1, (byte)0x33);
-        drive.WriteDirect(block1, 0, blockSize, out _, out _);
+        drive.WriteDirect(block1, 0, blockSize);
 
         Assert.True(fixture.Backend.WriteFilemarks(1));
 
         byte[] block2 = new byte[blockSize];
         Array.Fill(block2, (byte)0x44);
-        drive.WriteDirect(block2, 0, blockSize, out _, out _);
+        drive.WriteDirect(block2, 0, blockSize);
 
         // Rewind and space through
         Assert.True(drive.Rewind());
 
         byte[] readBuf = new byte[blockSize];
-        drive.ReadDirect(readBuf, 0, blockSize, out _, out _);
+        drive.ReadDirect(readBuf, 0, blockSize);
         Assert.Equal(block1, readBuf);
 
         // Use sequential filemark spacing (SDLT-style)
         Assert.True(fixture.Backend.SpaceSequentialFilemarks(1));
 
-        drive.ReadDirect(readBuf, 0, blockSize, out _, out _);
+        drive.ReadDirect(readBuf, 0, blockSize);
         Assert.Equal(block2, readBuf);
     }
 
@@ -409,23 +409,23 @@ public class VirtualDriveBasicTests
         // Write to content partition
         byte[] contentData = new byte[blockSize];
         Array.Fill(contentData, (byte)0xCC);
-        drive.WriteDirect(contentData, 0, blockSize, out _, out _);
+        drive.WriteDirect(contentData, 0, blockSize);
 
         // Switch to initiator partition and write different data
         Assert.True(drive.MoveToPartition(MediaPartition.Initiator));
         byte[] initData = new byte[blockSize];
         Array.Fill(initData, (byte)0xDD);
-        drive.WriteDirect(initData, 0, blockSize, out _, out _);
+        drive.WriteDirect(initData, 0, blockSize);
 
         // Switch back to content and verify
         Assert.True(drive.MoveToPartition(MediaPartition.Content, 0));
         byte[] readBuf = new byte[blockSize];
-        drive.ReadDirect(readBuf, 0, blockSize, out _, out _);
+        drive.ReadDirect(readBuf, 0, blockSize);
         Assert.Equal(contentData, readBuf);
 
         // Switch to initiator and verify
         Assert.True(drive.MoveToPartition(MediaPartition.Initiator, 0));
-        drive.ReadDirect(readBuf, 0, blockSize, out _, out _);
+        drive.ReadDirect(readBuf, 0, blockSize);
         Assert.Equal(initData, readBuf);
     }
 
@@ -505,7 +505,7 @@ public class VirtualDriveBasicTests
         // Write some data
         byte[] data = new byte[blockSize * 5];
         Array.Fill(data, (byte)0xFF);
-        drive.WriteDirect(data, 0, data.Length, out _, out _);
+        drive.WriteDirect(data, 0, data.Length);
 
         // Format
         long initPartSize = drive.HasInitiatorPartition ? VirtualTapeFixture.DefaultInitiatorCapacity : -1;
@@ -533,7 +533,7 @@ public class VirtualDriveBasicTests
 
         // Write some data
         byte[] data = new byte[blockSize * 10];
-        drive.WriteDirect(data, 0, data.Length, out _, out _);
+        drive.WriteDirect(data, 0, data.Length);
 
         long remainingAfter = drive.GetRemainingCapacity();
         Assert.True(remainingAfter < remainingBefore,

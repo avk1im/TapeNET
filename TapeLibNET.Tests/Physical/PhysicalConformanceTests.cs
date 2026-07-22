@@ -76,7 +76,7 @@ public class PhysicalConformanceTests(PhysicalDriveFixtureWrapper fixtureWrapper
         byte[] buffer = new byte[blockSize * blockCount];
         FillPattern(buffer, seed);
 
-        int written = drive.WriteDirect(buffer, 0, buffer.Length, out _, out _);
+        int written = drive.WriteDirect(buffer, 0, buffer.Length);
         Assert.Equal(buffer.Length, written);
 
         return buffer;
@@ -217,10 +217,10 @@ public class PhysicalConformanceTests(PhysicalDriveFixtureWrapper fixtureWrapper
         FillPattern(writeBuffer, seed: 0xAB);
 
         int written = drive.WriteDirect(writeBuffer, 0, writeBuffer.Length,
-            out bool wTapemark, out bool wEof);
+            out bool wTapemark, out bool _, out bool wEom);
         Assert.Equal(writeBuffer.Length, written);
         Assert.False(wTapemark, "Unexpected tapemark during write");
-        Assert.False(wEof, "Unexpected EOF during write");
+        Assert.False(wEom, "Unexpected EOM during write");
         _output.WriteLine($"Wrote {written} bytes ({blocksToWrite} blocks of {blockSize})");
 
         long posAfterWrite = drive.GetCurrentBlock();
@@ -235,7 +235,7 @@ public class PhysicalConformanceTests(PhysicalDriveFixtureWrapper fixtureWrapper
         byte[] writeBuffer2 = new byte[blockSize * 2];
         FillPattern(writeBuffer2, seed: 0xCD);
 
-        int written2 = drive.WriteDirect(writeBuffer2, 0, writeBuffer2.Length, out _, out _);
+        int written2 = drive.WriteDirect(writeBuffer2, 0, writeBuffer2.Length);
         Assert.Equal(writeBuffer2.Length, written2);
         _output.WriteLine($"Wrote second segment: {written2} bytes");
 
@@ -271,7 +271,7 @@ public class PhysicalConformanceTests(PhysicalDriveFixtureWrapper fixtureWrapper
 
         // Read second segment
         byte[] readBuffer2 = new byte[blockSize * 2];
-        int read2 = drive.ReadDirect(readBuffer2, 0, readBuffer2.Length, out _, out _);
+        int read2 = drive.ReadDirect(readBuffer2, 0, readBuffer2.Length);
         Assert.Equal(writeBuffer2.Length, read2);
         AssertBufferEqual(writeBuffer2, readBuffer2, read2);
         _output.WriteLine($"Read and verified second segment: {read2} bytes ✓");
@@ -408,7 +408,7 @@ public class PhysicalConformanceTests(PhysicalDriveFixtureWrapper fixtureWrapper
         // Write something small to the initiator partition
         byte[] initData = new byte[blockSize];
         FillPattern(initData, seed: 0xEE);
-        int initWritten = drive.WriteDirect(initData, 0, initData.Length, out _, out _);
+        int initWritten = drive.WriteDirect(initData, 0, initData.Length);
         Assert.Equal(initData.Length, initWritten);
         _output.WriteLine($"Wrote {initWritten} bytes to Initiator partition ✓");
 
@@ -505,7 +505,7 @@ public class PhysicalConformanceTests(PhysicalDriveFixtureWrapper fixtureWrapper
         // Verify data survived the close/reopen cycle
         Assert.True(drive.Rewind(), "Rewind after reopen failed");
         byte[] verifyBuffer = new byte[writeBuffer.Length];
-        int verifyRead = drive.ReadDirect(verifyBuffer, 0, verifyBuffer.Length, out _, out _);
+        int verifyRead = drive.ReadDirect(verifyBuffer, 0, verifyBuffer.Length);
         Assert.Equal(writeBuffer.Length, verifyRead);
         AssertBufferEqual(writeBuffer, verifyBuffer, verifyRead);
         _output.WriteLine("Data verified after close/reopen cycle ✓");

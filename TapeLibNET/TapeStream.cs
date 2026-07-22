@@ -407,9 +407,9 @@ namespace TapeLibNET
 
         internal int WriteDirect(byte[] buffer, int offset, int count)
         {
-            var result = m_mgr.Drive.WriteDirect(buffer, offset, count, out bool tapemark, out bool eof);
+            var result = m_mgr.Drive.WriteDirect(buffer, offset, count, out bool tapemark, out bool _, out bool eom);
             TapemarkEncountered = tapemark;
-            EOFEncountered = eof;
+            EOFEncountered = eom;
             return result;
         }
 

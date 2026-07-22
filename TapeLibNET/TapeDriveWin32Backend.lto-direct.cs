@@ -334,7 +334,7 @@ public partial class TapeDriveWin32Backend
     /// <returns>The total number of payload bytes the drive accepted across all chunks.</returns>
     internal int ScsiWriteDirect(
         byte[] buffer, int offset, int count,
-        out bool programmableEarlyWarning, out bool earlyWarning, out bool eom, out bool tapemark,
+        out bool tapemark, out bool programmableEarlyWarning, out bool earlyWarning, out bool eom,
         bool useAligned = true, bool forceVariable = false)
     {
         programmableEarlyWarning = false;
@@ -548,13 +548,11 @@ public partial class TapeDriveWin32Backend
     /// exactly like the WriteFile path. Uses the page-aligned transport.
     /// </summary>
     public int WriteDirect(byte[] buffer, int offset, int count,
-        out bool tapemark, out bool eof,
-        out bool programmableEarlyWarning, out bool earlyWarning)
+        out bool tapemark, out bool programmableEarlyWarning, out bool earlyWarning, out bool eom)
     {
         int written = ScsiWriteDirect(buffer, offset, count,
-            out programmableEarlyWarning, out earlyWarning, out bool eom, out tapemark,
+            out tapemark, out programmableEarlyWarning, out earlyWarning, out eom,
             useAligned: true, forceVariable: false);
-        eof = eom;
         return written;
     }
 

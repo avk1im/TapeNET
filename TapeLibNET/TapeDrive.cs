@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using TapeLibNET.Remote;
 using Windows.Win32.Foundation;
+
 using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
 
 namespace TapeLibNET;
@@ -320,19 +321,21 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
     #region *** Direct Read/Write ***
 
-    /// <summary>Writes raw blocks to tape. Returns bytes written; sets <paramref name="tapemark"/>/<paramref name="eof"/> on boundary conditions.</summary>
-    public int WriteDirect(byte[] buffer, int offset, int count, out bool tapemark, out bool eof)
+    /// <summary>Writes raw blocks to tape. Returns bytes written;
+    /// sets <paramref name="tapemark"/>/<paramref name="earlyWarning"/>/<paramref name="eom"/> on boundary conditions.</summary>
+    public int WriteDirect(byte[] buffer, int offset, int count, out bool tapemark, out bool earlyWarning, out bool eom)
     {
         m_backend.CheckForRW(buffer, offset, count);
         int blocksToWrite = count / (int)BlockSize;
         int toWrite = blocksToWrite * (int)BlockSize;
         tapemark = false;
-        eof = false;
+        earlyWarning = false;
+        eom = false;
         if (toWrite == 0)
             return 0;
 
         m_IoTimer.Restart();
-        int written = m_backend.Write(buffer, offset, toWrite, out tapemark, out eof);
+        int written = m_backend.Write(buffer, offset, toWrite, out tapemark, out earlyWarning, out eom);
         m_IoTimer.Stop();
         IoTimeCounterUs += m_IoTimer.ElapsedMicroseconds;
         SyncErrorFrom(m_backend);
@@ -340,22 +343,27 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         if (WentBad)
         {
             if (tapemark)
-                LogErrorAsTrace("Write encountered tapemark");
-            if (eof)
+                LogErrorAsInfo("WriteDirect encountered tapemark");
+            if (earlyWarning)
             {
-                // Distinguish an early-warning crossing (data written; wrap up) from hard EOM.
-                if (IsEarlyWarning)
-                    LogErrorAsTrace("Write crossed early-warning boundary");
-                else
-                    LogErrorAsTrace("Write encountered EOF");
+                // We do NOT set error after all, just return the out flag. EW is not a hard error,
+                //  just a condition for caller to consider.
+                //  SetError(TapeEarlyWarning.EarlyWarningError);
+                LogErrorAsTrace("WriteDirect reached beyond early-warning boundary");
             }
-            if (!tapemark && !eof)
-                LogErrorAsDebug("Write failed");
+            if (eom)
+                LogErrorAsInfo("WriteDirect encountered EOM");
+            if (!tapemark && !earlyWarning && !eom)
+                LogErrorAsDebug("WriteDirect encountered error");
         }
 
         m_byteCounter += written;
         return written;
     }
+
+    /// <summary>Writes raw blocks to tape (parameter-less version). Returns bytes written; ignores tapemark/earlyWarning/eom.</summary>
+    public int WriteDirect(byte[] buffer, int offset, int count)
+        => WriteDirect(buffer, offset, count, out _, out _, out _);
 
     /// <summary>Reads raw blocks from tape. Returns bytes read; sets <paramref name="tapemark"/>/<paramref name="eof"/> on boundary conditions.</summary>
     public int ReadDirect(byte[] buffer, int offset, int count, out bool tapemark, out bool eof)
@@ -384,12 +392,18 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
                 ResetError();
             }
             if (!tapemark && !eof)
-                LogErrorAsDebug("Read failed");
+                LogErrorAsDebug("Read encountered error");
         }
 
         m_byteCounter += read;
         return read;
     }
+
+    /// <summary>
+    /// Parameter-less version of <see cref="ReadDirect(byte[], int, int, out bool, out bool)"/>. Returns bytes read; ignores tapemark/eof. 
+    /// </summary>
+    public int ReadDirect(byte[] buffer, int offset, int count)
+        => ReadDirect(buffer, offset, count, out _, out _);
 
     internal void CheckForRW([CallerMemberName] string methodName = "") => m_backend.CheckForRW(methodName);
     internal void CheckForRW(byte[] buffer, int offset, int count, [CallerMemberName] string methodName = "") =>
@@ -838,7 +852,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         byte[] buffer = new byte[length];
         uint blockSize = BlockSize;
         SetBlockSize((uint)length);
-        int result = WriteDirect(buffer, 0, length, out _, out _);
+        int result = WriteDirect(buffer, 0, length);
         SetBlockSize(blockSize);
 
         if (WentOK && result == length)

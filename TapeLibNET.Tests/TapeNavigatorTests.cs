@@ -90,7 +90,7 @@ public class TapeNavigatorTests
         Array.Fill(buffer, fillByte);
         for (int i = 0; i < blockCount; i++)
         {
-            int written = drive.WriteDirect(buffer, 0, buffer.Length, out _, out _);
+            int written = drive.WriteDirect(buffer, 0, buffer.Length);
             Assert.Equal(buffer.Length, written);
         }
         return startBlock;

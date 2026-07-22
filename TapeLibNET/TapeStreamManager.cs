@@ -826,7 +826,7 @@ namespace TapeLibNET
                         int partialBlocks = 0;
                         if (writable > 0)
                         {
-                            int w = Drive.WriteDirect(buffer, 0, writable, out _, out _);
+                            int w = Drive.WriteDirect(buffer, 0, writable);
                             partialBlocks = w / (int)blockSize;
                             m_packerBytesWritten += w;
                         }
@@ -837,7 +837,7 @@ namespace TapeLibNET
                         DriveNumber, validBytes, m_packerBytesWritten, remaining);
                 }
 
-                int written = Drive.WriteDirect(buffer, 0, validBytes, out _, out bool eof);
+                int written = Drive.WriteDirect(buffer, 0, validBytes, out _, out _, out bool eom);
 
                 int blocks = written / (int)Drive.BlockSize;
                 m_packerBytesWritten += written;
@@ -846,9 +846,9 @@ namespace TapeLibNET
                 //  else surfaces as a hard error exception per the backend contract.
                 if (Drive.WentOK)
                 {
-                    m_logger.LogTrace("Drive #{Drive}: Packer wrote {Written} B ({Blocks} blocks), eof={Eof}",
-                        DriveNumber, written, blocks, eof);
-                    return new WriteResult(blocks, eof, Exception: null);
+                    m_logger.LogTrace("Drive #{Drive}: Packer wrote {Written} B ({Blocks} blocks), eom={Eom}",
+                        DriveNumber, written, blocks, eom);
+                    return new WriteResult(blocks, EomEncountered: eom, Exception: null);
                 }
 
                 if (Drive.LastErrorWin32 == WIN32_ERROR.ERROR_END_OF_MEDIA)
@@ -856,7 +856,7 @@ namespace TapeLibNET
 
                 return new WriteResult(
                     blocks,
-                    EomEncountered: eof,
+                    EomEncountered: eom,
                     Exception: new TapeIOException((uint)Drive.LastErrorWin32,
                         $"WriteDirect failed for {validBytes} bytes"));
             }

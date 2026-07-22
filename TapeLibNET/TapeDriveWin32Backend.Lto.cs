@@ -549,7 +549,7 @@ public partial class TapeDriveWin32Backend
         // Extract generation from well-known product name patterns:
         //  "ULT3580-HH5", "ULTRIUM 5-SCSI", "LTO-5 HH", "LTO5-HH", "ULTRIUM-5", …
         // Try each generation from highest to lowest to avoid "5" matching "15"
-        foreach (int gen in new[] { 9, 8, 7, 6, 5, 3, 2 })
+        foreach (int gen in new[] { 11, 10, 9, 8, 7, 6, 5, 4, 3, 2 })
         {
             // Match "LTO-N", "LTON", "ULTRIUM N", "ULTRIUMNN", "HHN", "-HHN", trailing digit
             if (product.Contains($"LTO-{gen}") ||

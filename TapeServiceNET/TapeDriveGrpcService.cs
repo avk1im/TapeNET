@@ -351,13 +351,14 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
         using var scope = GetScope(context); var b = scope.Backend;
 
         var data = request.Data.ToByteArray();
-        int written = b.Write(data, 0, data.Length, out bool tapemark, out bool eof);
+        int written = b.Write(data, 0, data.Length, out bool tapemark, out bool earlyWarning, out bool eom);
 
         var response = new WriteResponse
         {
             BytesWritten = written,
             Tapemark = tapemark,
-            Eof = eof,
+            EarlyWarning = earlyWarning,
+            Eom = eom,
             Error = CaptureError(b),
             State = CaptureState(b),
         };
