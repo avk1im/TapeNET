@@ -84,7 +84,7 @@ public partial class TapeDriveWin32Backend
     /// </summary>
     internal void ProbeForLtoInformation()
     {
-        if (!LtoDetect(out m_ltoVendor, out m_ltoProduct))
+        if (!LtoDetect(out m_ltoVendor, out m_ltoProduct, out m_ltoRevision))
         {
             m_logger.LogTrace("{Prefix}: Failed to detect LTO/SCSI", LogPrefix);
             return;
@@ -104,6 +104,7 @@ public partial class TapeDriveWin32Backend
         m_useLtoPartitions = false;
         m_ltoVendor = string.Empty;
         m_ltoProduct = string.Empty;
+        m_ltoRevision = string.Empty;
 
         FreeAlignedScratch();
     }
@@ -497,29 +498,31 @@ public partial class TapeDriveWin32Backend
     #region *** SCSI Helpers ***
 
     /// <summary>
-    /// Issues a SCSI INQUIRY and fills out the vendor and product strings.
+    /// Issues a SCSI INQUIRY and fills out the vendor, product and revision strings.
     /// Returns true if the command succeeded. 
     /// </summary>
-    private bool LtoDetect(out string vendor, out string product)
+    private bool LtoDetect(out string vendor, out string product, out string revision)
     {
         const byte inquiryAllocLen = 96;
-        Span<byte> cdb  = stackalloc byte[6];
+        Span<byte> cdb = stackalloc byte[6];
         cdb[0] = 0x12; // INQUIRY
         cdb[4] = inquiryAllocLen;
 
         Span<byte> data = stackalloc byte[inquiryAllocLen];
-
         if (!SendScsiCommand(cdb, data, dataIn: true))
         {
-            vendor = product = string.Empty;
+            vendor = product = revision = string.Empty;
             return false;
         }
 
-        vendor  = Encoding.ASCII.GetString(data.Slice(8,  8)).Trim();
+        // Standard SCSI INQUIRY data (SPC): T10 VENDOR ID bytes 8-15,
+        //  PRODUCT ID bytes 16-31, PRODUCT REVISION LEVEL bytes 32-35.
+        vendor = Encoding.ASCII.GetString(data.Slice(8, 8)).Trim();
         product = Encoding.ASCII.GetString(data.Slice(16, 16)).Trim();
+        revision = Encoding.ASCII.GetString(data.Slice(32, 4)).Trim();
 
-        m_logger.LogTrace("{Prefix}: LTO/SCSI INQUIRY vendor='{Vendor}' product='{Product}'",
-            LogPrefix, vendor, product);
+        m_logger.LogTrace("{Prefix}: LTO/SCSI INQUIRY vendor='{Vendor}' product='{Product}' revision='{Revision}'",
+            LogPrefix, vendor, product, revision);
 
         return true;
     }

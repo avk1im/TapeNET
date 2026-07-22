@@ -57,6 +57,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     private int m_ltoGeneration = -1;
     private string m_ltoVendor = string.Empty;
     private string m_ltoProduct = string.Empty;
+    private string m_ltoRevision = string.Empty;
 
     // LTO partition usage flag — set during Open via ProbeForLtoInformation(), cleared in Close
     private bool m_useLtoPartitions;
@@ -127,6 +128,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     public override uint DriveNumber => m_driveNumber;
     public override string Vendor => string.IsNullOrEmpty(m_ltoVendor) ? "[generic]" : m_ltoVendor;
     public override string Product => string.IsNullOrEmpty(m_ltoProduct) ? "[unknown]" : m_ltoProduct;
+    public override string Revision => m_ltoRevision; // SCSI INQUIRY Product Revision Level; empty when unknown
 
     public bool IsLto => m_ltoGeneration >= 1;
     public bool IsLto5Plus => m_ltoGeneration >= 5;
@@ -202,8 +204,6 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         m_blockingTapemarkOps.Clear();
         m_positionQueryNeedsRetry = false;
         m_setPositionNeedsBlocking = false;
-        m_ltoGeneration = -1;
-        m_useLtoPartitions = false;
 
         LtoClose();
     }

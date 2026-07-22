@@ -1446,7 +1446,13 @@ public partial class MainViewModel : ViewModelBase
         UsageBar.Clear();
 
         PropertyList.Add(new PropertyItem("Device Name", _tapeService.DeviceName));
-        PropertyList.Add(new PropertyItem("Device Model", $"{_tapeService.DeviceVendor} {_tapeService.DeviceProduct}"));
+        string model = _tapeService.DeviceVendor;
+        if (!string.IsNullOrEmpty(_tapeService.DeviceProduct))
+            model += $" {_tapeService.DeviceProduct}";
+        if (!string.IsNullOrEmpty(_tapeService.DeviceRevision))
+            model += $" rev {_tapeService.DeviceRevision}";
+        if (!string.IsNullOrEmpty(model))
+            PropertyList.Add(new PropertyItem("Device Model", model));
         PropertyList.Add(new PropertyItem("Drive Open", _tapeService.IsDriveOpen ? "Yes" : "No"));
 
         if (_tapeService.IsDriveOpen)

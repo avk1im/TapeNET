@@ -91,6 +91,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// <summary>Drive product name, can be empty</summary>
     public string DeviceProduct => _drive?.DriveProduct ?? string.Empty;
 
+    /// <summary>Drive revision, can be empty</summary>
+    public string DeviceRevision => _drive?.DriveRevision ?? string.Empty;
+
     /// <summary>Human-readable message from the last failed operation; null on success.</summary>
     public string? LastError { get; protected set; }
 

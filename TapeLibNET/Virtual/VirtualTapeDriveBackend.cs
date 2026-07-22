@@ -297,13 +297,15 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
 
     #region *** State Properties ***
 
+    protected static readonly string VTapePrefix = "VTAPE";
+
     public override bool IsOpen => m_isOpen;
     public override bool HasMedia => m_hasMedia && m_currentMedia != null;
     public override string DeviceName
     {
         get
         {
-            string name = $"VTAPE{m_driveNumber}";
+            string name = $"{VTapePrefix}{m_driveNumber}";
 
             if (!string.IsNullOrEmpty(m_contentMedia?.Name))
             {
@@ -318,8 +320,9 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
         }
     }
     public override uint DriveNumber => m_driveNumber;
-    public override string Vendor => Assembly.GetExecutingAssembly().GetName().Name ?? "TapeLibNET";
-    public override string Product => Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? string.Empty;
+    public override string Vendor => Assembly.GetExecutingAssembly().GetName().Name ?? string.Empty;
+    public override string Product => VTapePrefix; // GetType().Name;
+    public override string Revision => Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? string.Empty;
 
 
 /// <summary>
