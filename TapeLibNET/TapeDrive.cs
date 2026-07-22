@@ -1027,7 +1027,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     ///  <see cref="TapeCompression.Software"/> or <see cref="TapeCompression.None"/>; call with
     ///  <see langword="true"/> (or don't call at all) for <see cref="TapeCompression.Hardware"/>.</para>
     /// <para>This method is idempotent and failure-tolerant — a drive that does not support the toggle
-    ///  is silently ignored, matching the pattern of <c>SetOptimalDriveParams</c>.</para>
+    ///  is silently ignored, matching the pattern of <see cref="SetOptimalDriveParams"/>.</para>
     /// </summary>
     /// <param name="enabled"><see langword="true"/> to enable, <see langword="false"/> to disable HW compression.</param>
     internal void SetHardwareCompression(bool enabled)
@@ -1036,9 +1036,9 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return;
 
         bool ecc = m_driveParams.Value.SupportsEcc;
-        bool padding = m_driveParams.Value.SupportsPadding;
+        bool padding = false; // m_driveParams.Value.SupportsPadding;
         bool reportSetmarks = m_driveParams.Value.SupportsSetmarks;
-        uint eotZone = padding ? m_driveParams.Value.DefaultBlockSize * 4 : 0;
+        uint eotZone = (uint)Math.Min(TapeNavigator.DefaultTOCCapacity(this), uint.MaxValue);
         if (!m_backend.SetDriveParameters(enabled, ecc, padding, reportSetmarks, eotZone))
         {
             SyncErrorFrom(m_backend);
