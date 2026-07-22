@@ -544,26 +544,51 @@ public partial class TapeDriveWin32Backend
     //  and diagnostics; ScsiWriteDirect selects between them via useAligned.
     // =========================================================================
 
+    // =============================================================================
+    //  IOCTL_STORAGE_QUERY_PROPERTY(StorageAdapterProperty):
+    //
+    //   IOCTL_SCSI_GET_CAPABILITIES is a SCSI port/miniport IOCTL intended for the
+    //   adapter object (\\.\ScsiN:). The tape class driver (tape.sys) does NOT
+    //   implement it on a \\.\TAPEn device handle, so DeviceIoControl returns
+    //   ERROR_INVALID_FUNCTION — even though IOCTL_SCSI_PASS_THROUGH[_DIRECT] works
+    //   (those ARE forwarded by the class driver).
+    //
+    //   IOCTL_STORAGE_QUERY_PROPERTY(StorageAdapterProperty) is the Storport-friendly
+    //   replacement: it IS forwarded by the class driver, works on the existing tape
+    //   handle, and returns MaximumTransferLength / MaximumPhysicalPages / AlignmentMask
+    //   in STORAGE_ADAPTER_DESCRIPTOR.
+    // =============================================================================
+
     #region *** GET CAPABILITIES structures & constants ***
 
-    // CTL_CODE(IOCTL_SCSI_BASE=0x0004, 0x0304, METHOD_BUFFERED, FILE_ANY_ACCESS) = 0x00041010
-    private const uint c_ioctlScsiGetCapabilities = 0x00041010u;
-
-    // Matches IO_SCSI_CAPABILITIES (ntddscsi.h)
-    [StructLayout(LayoutKind.Sequential)]
-    private struct IO_SCSI_CAPABILITIES
-    {
-        public uint Length;
-        public uint MaximumTransferLength;   // max bytes per single SRB
-        public uint MaximumPhysicalPages;    // max scatter/gather fragments per SRB
-        public uint SupportedAsynchronousEvents;
-        public uint AlignmentMask;           // required buffer alignment - 1 (e.g. 0=any, 1=word, 3=dword)
-        [MarshalAs(UnmanagedType.U1)] public bool TaggedQueuing;
-        [MarshalAs(UnmanagedType.U1)] public bool AdapterScansDown;
-        [MarshalAs(UnmanagedType.U1)] public bool AdapterUsesPio;
-    }
-
     private const int c_pageSize = 4096;
+
+    // CTL_CODE(IOCTL_STORAGE_BASE=0x2D, 0x0500, METHOD_BUFFERED, FILE_ANY_ACCESS) = 0x002D1400
+    private const uint c_ioctlStorageQueryProperty = 0x002D1400u;
+
+    // STORAGE_PROPERTY_ID
+    private const uint c_storageAdapterProperty = 1;   // StorageAdapterProperty
+    // STORAGE_QUERY_TYPE
+    private const uint c_propertyStandardQuery = 0;   // PropertyStandardQuery
+
+    // Input: STORAGE_PROPERTY_QUERY { PropertyId; QueryType; AdditionalParameters[1] }.
+    //  12 bytes is the canonical marshalled size (2 x uint + 1 byte, padded to 4).
+    private const int c_storagePropertyQuerySize = 12;
+
+    // Field byte-offsets within STORAGE_ADAPTER_DESCRIPTOR. The leading five DWORDs
+    //  are naturally aligned, so reading them positionally is safe across Win8+
+    //  additions (SrbType/AddressType) that only append fields at the end.
+    //   0: Version (DWORD)
+    //   4: Size (DWORD)
+    //   8: MaximumTransferLength (DWORD)
+    //  12: MaximumPhysicalPages (DWORD)
+    //  16: AlignmentMask (DWORD)
+    private const int c_adapterDescMaxTransferOffset = 8;
+    private const int c_adapterDescMaxPagesOffset = 12;
+    private const int c_adapterDescAlignMaskOffset = 16;
+
+    // Generous output buffer for STORAGE_ADAPTER_DESCRIPTOR (real size ~28-40 bytes).
+    private const int c_adapterDescAllocLen = 128;
 
     // Cached adapter capabilities (probed lazily, once per open handle).
     private uint m_maxTransferLength;   // 0 = not yet probed
@@ -581,48 +606,79 @@ public partial class TapeDriveWin32Backend
     #region *** Capability probe ***
 
     /// <summary>
-    /// Queries and caches the adapter's pass-through limits. Safe to call repeatedly;
-    /// the actual IOCTL runs only once per open handle. Returns false if the adapter
-    /// does not answer (in which case conservative fallbacks are used).
+    /// Queries and caches the adapter's transfer limits via
+    /// <c>IOCTL_STORAGE_QUERY_PROPERTY(StorageAdapterProperty)</c>. Safe to call repeatedly;
+    /// the actual IOCTL runs only once per open handle.
+    /// <para>
+    /// We use the storage-property IOCTL rather than <c>IOCTL_SCSI_GET_CAPABILITIES</c> because the
+    /// latter is a port/miniport IOCTL that the tape class driver does not implement on a
+    /// <c>\\.\TAPEn</c> handle (it returns ERROR_INVALID_FUNCTION). The storage-property query is
+    /// forwarded by the class driver and returns the same MaximumTransferLength / MaximumPhysicalPages
+    /// / AlignmentMask fields.
+    /// </para>
+    /// Returns false (and installs conservative fallbacks) if the adapter does not answer.
     /// </summary>
     internal unsafe bool EnsureScsiCapabilities()
     {
         if (m_maxTransferLength != 0)
             return true; // already probed
 
-        var caps = new IO_SCSI_CAPABILITIES();
+        Span<byte> input = stackalloc byte[c_storagePropertyQuerySize];
+        Span<byte> output = stackalloc byte[c_adapterDescAllocLen];
+
+        // STORAGE_PROPERTY_QUERY: PropertyId = StorageAdapterProperty, QueryType = PropertyStandardQuery.
+        BitConverter.TryWriteBytes(input[0..], c_storageAdapterProperty);
+        BitConverter.TryWriteBytes(input[4..], c_propertyStandardQuery);
+        // bytes 8-11 (AdditionalParameters + padding) remain zero.
+
         uint bytesReturned;
+        bool ok;
 
-        bool ok = PInvoke.DeviceIoControl(
-            new HANDLE(m_driveHandle.DangerousGetHandle()),
-            c_ioctlScsiGetCapabilities,
-            null, 0,
-            &caps, (uint)sizeof(IO_SCSI_CAPABILITIES),
-            &bytesReturned, null);
-
-        if (!ok)
+        fixed (byte* pIn = input)
+        fixed (byte* pOut = output)
         {
-            SetErrorFromPInvoke();
+            ok = PInvoke.DeviceIoControl(
+                new HANDLE(m_driveHandle.DangerousGetHandle()),
+                c_ioctlStorageQueryProperty,
+                pIn, (uint)input.Length,
+                pOut, (uint)output.Length,
+                &bytesReturned, null);
+        }
+
+        if (!ok || bytesReturned < c_adapterDescAlignMaskOffset + sizeof(uint))
+        {
+            if (!ok)
+                SetErrorFromPInvoke();
+            else
+                SetError(WIN32_ERROR.ERROR_INSUFFICIENT_BUFFER);
+
             // Conservative fallbacks: 64 KB transfer, 17 SG entries, no special alignment.
             m_maxTransferLength = 0x10000;
             m_maxPhysicalPages = 17;
             m_alignmentMask = 0;
             m_logger.LogWarning(
-                "{Prefix}: IOCTL_SCSI_GET_CAPABILITIES failed — using conservative limits " +
+                "{Prefix}: IOCTL_STORAGE_QUERY_PROPERTY(adapter) failed — using conservative limits " +
                 "(maxTransfer={Max}, maxPages={Pages})",
                 LogPrefix, m_maxTransferLength, m_maxPhysicalPages);
             return false;
         }
 
-        m_maxTransferLength = caps.MaximumTransferLength;
-        m_maxPhysicalPages = caps.MaximumPhysicalPages;
-        m_alignmentMask = caps.AlignmentMask;
+        m_maxTransferLength = BitConverter.ToUInt32(output[c_adapterDescMaxTransferOffset..]);
+        m_maxPhysicalPages = BitConverter.ToUInt32(output[c_adapterDescMaxPagesOffset..]);
+        m_alignmentMask = BitConverter.ToUInt32(output[c_adapterDescAlignMaskOffset..]);
+
+        // Defensive: a broken descriptor (all zero) would make MaxScsiDirectTransfer nonsensical.
+        if (m_maxTransferLength == 0)
+            m_maxTransferLength = 0x10000;
+        if (m_maxPhysicalPages == 0)
+            m_maxPhysicalPages = 17;
 
         m_logger.LogInformation(
-            "{Prefix}: SCSI capabilities — MaximumTransferLength={Max} bytes, " +
+            "{Prefix}: Adapter limits — MaximumTransferLength={Max} bytes, " +
             "MaximumPhysicalPages={Pages}, AlignmentMask=0x{Align:X}",
             LogPrefix, m_maxTransferLength, m_maxPhysicalPages, m_alignmentMask);
 
+        ResetError();
         return true;
     }
 
