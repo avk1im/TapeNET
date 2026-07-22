@@ -204,6 +204,8 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         m_setPositionNeedsBlocking = false;
         m_ltoGeneration = -1;
         m_useLtoPartitions = false;
+
+        LtoClose();
     }
 
     public override bool SetDriveParameters(bool compression, bool ecc, bool dataPadding, bool reportSetmarks, uint eotWarningZoneSize)

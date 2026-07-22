@@ -98,6 +98,16 @@ public partial class TapeDriveWin32Backend
             LogPrefix, m_ltoGeneration, m_useLtoPartitions ? "enabled" : "disabled");
     }
 
+    internal void LtoClose()
+    {
+        m_ltoGeneration = -1;
+        m_useLtoPartitions = false;
+        m_ltoVendor = string.Empty;
+        m_ltoProduct = string.Empty;
+
+        FreeAlignedScratch();
+    }
+
     #endregion
 
     #region *** LTO Method Replacements ***
@@ -728,6 +738,8 @@ public partial class TapeDriveWin32Backend
 
     #endregion
 
+    #region *** Programmable Early Warning (PEWS) — MODE SENSE/SELECT(10) ***
+
     // =============================================================================
     //  Programmable Early Warning (PEW) Size
     //
@@ -747,8 +759,6 @@ public partial class TapeDriveWin32Backend
     //  >>> reference before trusting a SET. Both methods log the full page as hex
     //  >>> at Debug level so you can confirm it empirically during bring-up.
     // =============================================================================
-
-    #region *** Programmable Early Warning (PEWS) — MODE SENSE/SELECT(10) ***
 
     // SCSI opcodes
     private const byte c_scsiOpModeSelect10 = 0x55;
@@ -986,6 +996,8 @@ public partial class TapeDriveWin32Backend
 
     #endregion
 
+    #region *** Early-Warning Status — READ POSITION (BPEW / EOP) ***
+
     // =============================================================================
     //  On-demand Early-Warning STATUS via SCSI READ POSITION (short form).
     //
@@ -1009,8 +1021,6 @@ public partial class TapeDriveWin32Backend
     //
     //  Belongs in .Lto.cs: buffered SPTI, no payload, mirrors GetLtoPositionU32.
     // =============================================================================
-
-    #region *** Early-Warning Status — READ POSITION (BPEW / EOP) ***
 
     // READ POSITION short-form byte-0 flag bits (SSC-3/SSC-4 Table, short form).
     private const byte c_readPosFlagBop = 0x80; // bit 7: Beginning Of Partition

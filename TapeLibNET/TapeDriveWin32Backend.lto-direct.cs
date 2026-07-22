@@ -636,7 +636,7 @@ public partial class TapeDriveWin32Backend
 
     #region *** GET CAPABILITIES structures & constants ***
 
-    private const int c_pageSize = 4096;
+    private static readonly int c_pageSize = Environment.SystemPageSize;
 
     // CTL_CODE(IOCTL_STORAGE_BASE=0x2D, 0x0500, METHOD_BUFFERED, FILE_ANY_ACCESS) = 0x002D1400
     private const uint c_ioctlStorageQueryProperty = 0x002D1400u;
