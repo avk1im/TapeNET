@@ -52,6 +52,8 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     //  flips to true and ALL future positioning uses bImmediate=false.
     private bool m_setPositionNeedsBlocking;
 
+    private bool m_reportEw = false; // cached value of ReportEarlyWarning()
+
     // LTO generation detection (probed once in Open via ProbeForLtoInformation() SCSI INQUIRY).
     //  -1 = not yet probed / probe failed; 0 = not LTO; >= 1 = LTO generation.
     private int m_ltoGeneration = -1;
@@ -157,6 +159,25 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     private bool CreatesInitiatorPartitions => m_driveParams?.CreatesInitiatorPartitions ?? false;
     private bool CreatesFixedPartitions => m_driveParams?.CreatesFixedPartitions ?? false;
     private bool CreatesSelectPartitions => m_driveParams?.CreatesSelectPartitions ?? false;
+
+    #endregion
+
+    #region *** Early Warning Properties ***
+
+    public override bool ReportsEarlyWarning => m_reportEw;
+
+    public override bool ReportEarlyWarning(bool report)
+    {
+        if (IsLto)
+        {
+            m_reportEw = report;
+            return true;
+        }
+        return false;
+    }
+
+    public override EarlyWarningMechanism EarlyWarningMechanism =>
+        IsLto ? EarlyWarningMechanism.HardwareEarlyWarning : EarlyWarningMechanism.None;
 
     #endregion
 
@@ -500,14 +521,23 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     }
 
     public override int Write(byte[] buffer, int offset, int count,
-        out bool tapemark, out bool earlyWarning, out bool eom)
+        out bool tapemark, out bool pew, out bool ew, out bool eom)
     {
         if (IsLto)
-            return WriteDirect(buffer, offset, count,
-                out tapemark, out _ /* programmableEarlyWarning */, out earlyWarning, out eom);
+        {
+            var result = WriteDirect(buffer, offset, count,
+                out tapemark, out pew, out ew, out eom);
+
+            // only report PEW and EW if desired by the caller
+            pew &= m_reportEw;
+            ew &= m_reportEw;
+
+            return result;
+        }
 
         tapemark = false;
-        earlyWarning = false;
+        pew = false;
+        ew = false;
         eom = false;
 
 #if DEBUG
@@ -549,7 +579,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
                 // Do NOT reset error for writes - EOM is significant
             }
 
-            if (!tapemark && !eom && !earlyWarning)
+            if (!tapemark && !eom && !ew)
                 LogErrorAsDebug("WriteDirect encountered error");
         }
 

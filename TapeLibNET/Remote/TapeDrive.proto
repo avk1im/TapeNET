@@ -310,10 +310,11 @@ message WriteRequest {
 message WriteResponse {
   int32     bytes_written = 1;
   bool      tapemark      = 2;
-  bool	    early_warning = 3;
-  bool      eom           = 4;
-  ErrorInfo error         = 5;
-  BackendState state      = 6;
+  bool	    pew           = 3;
+  bool	    ew            = 4;
+  bool      eom           = 5;
+  ErrorInfo error         = 6;
+  BackendState state      = 7;
 }
 
 // ============================================================================

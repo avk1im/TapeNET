@@ -923,10 +923,12 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
         return bytesRead;
     }
 
-    public override int Write(byte[] buffer, int offset, int count, out bool tapemark, out bool earlyWarning, out bool eom)
+    public override int Write(byte[] buffer, int offset, int count, out bool tapemark,
+        out bool pew, out bool ew, out bool eom)
     {
         tapemark = false;
-        earlyWarning = false;
+        pew = false;
+        ew = false;
         eom = false;
 
         if (m_currentMedia == null)
@@ -936,6 +938,8 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
         }
 
         int bytesWritten = m_currentMedia.WriteBlocks(buffer, offset, count);
+
+        // FIXME: Implement pew and ew
 
         // Sync error from media
         if (!m_currentMedia.WentOK)

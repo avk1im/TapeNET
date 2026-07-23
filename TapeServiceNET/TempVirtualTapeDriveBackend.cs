@@ -1,5 +1,6 @@
-using TapeLibNET.Virtual;
 using Microsoft.Extensions.Logging;
+using TapeLibNET;
+using TapeLibNET.Virtual;
 
 namespace TapeServiceNET;
 
@@ -64,8 +65,9 @@ internal sealed class TempVirtualTapeDriveBackend(
 
     public override int Read(byte[] buffer, int offset, int count, out bool tapemark, out bool eof)
         => _inner.Read(buffer, offset, count, out tapemark, out eof);
-    public override int Write(byte[] buffer, int offset, int count, out bool tapemark, out bool earlyWarning, out bool eom)
-        => _inner.Write(buffer, offset, count, out tapemark, out earlyWarning, out eom);
+    public override int Write(byte[] buffer, int offset, int count,
+        out bool tapemark, out bool pew, out bool ew, out bool eom)
+        => _inner.Write(buffer, offset, count, out tapemark, out pew, out ew, out eom);
 
     public override bool SetPosition(long block) => _inner.SetPosition(block);
     public override bool SetPositionToPartition(TapeLibNET.MediaPartition partition, long block)
@@ -86,6 +88,10 @@ internal sealed class TempVirtualTapeDriveBackend(
     public override void FillMediaParameters(out TapeLibNET.MediaParameters parameters)
         => _inner.FillMediaParameters(out parameters);
 
+    public override bool ReportsEarlyWarning => _inner.ReportsEarlyWarning;
+    public override EarlyWarningMechanism EarlyWarningMechanism => _inner.EarlyWarningMechanism;
+    public override bool ReportEarlyWarning(bool report) => _inner.ReportEarlyWarning(report);
+
     // ── Dispose: close inner backend then delete temp files ─────────────────
 
     /// <summary>
@@ -99,7 +105,7 @@ internal sealed class TempVirtualTapeDriveBackend(
         _inner.Close();
         _inner.Dispose();
         // Skip DeleteTempFiles() intentionally — caller owns cleanup.
-        GC.SuppressFinalize(this);
+        //GC.SuppressFinalize(this); // not needed outside Dispose() pattern
     }
 
     protected override void Dispose(bool disposing)

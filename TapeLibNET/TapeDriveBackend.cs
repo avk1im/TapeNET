@@ -168,73 +168,22 @@ public abstract class TapeDriveBackend : ErrorManageableBase, IDisposable
     #region *** Early Warning ***
 
     /// <summary>
-    /// Effective early-warning reserve currently in force, in bytes before physical EOM
-    /// (0 = none). This is what the drive actually achieved — which may differ from what was
-    /// requested via <see cref="SetEarlyWarning"/>, exactly like block size. Default: not supported.
+    /// If early warnings are being reported. This is what the drive actually does — which may differ
+    /// from what was requested via <see cref="ReportEarlyWarning"/>, exactly like block size.
+    /// Default: <c>false</c> since not supported.
     /// </summary>
-    public virtual long EarlyWarning => 0L;
+    public virtual bool ReportsEarlyWarning => false;
 
-    /// <summary>How <see cref="EarlyWarning"/> is currently realized (best available mechanism).</summary>
+    /// <summary>How <see cref="ReportsEarlyWarning"/> is currently realized (best available mechanism).</summary>
     public virtual EarlyWarningMechanism EarlyWarningMechanism => EarlyWarningMechanism.None;
 
     /// <summary>
-    /// Requests an early-warning reserve of <paramref name="bytesBeforeEom"/> bytes before physical EOM,
-    /// using the best mechanism the backend has available (programmable EW → built-in EW → calibrated
-    /// estimate → uncalibrated estimate). The drive may not honor the exact value; read back
-    /// <see cref="EarlyWarning"/> to see what was achieved. Default: not supported.
+    /// Best-effort, non-binding request that the backend SURFACE the drive's physical early warning
+    /// in <see cref="Write"/> (via the <c>ew</c>/<c>pew</c> flags). Backends that can't simply accept
+    /// and ignore it — TapeDrive maps the LOGICAL early warning itself. Returns whether honored.
+    /// Default: not supported.
     /// </summary>
-    /// <param name="bytesBeforeEom">Desired reserve in bytes (0 = disable).</param>
-    public virtual bool SetEarlyWarning(long bytesBeforeEom)
-    {
-        SetError(WIN32_ERROR.ERROR_NOT_SUPPORTED);
-        return false;
-    }
-
-    #endregion
-
-    #region *** Early Warning Calibration ***
-
-    /// <summary>True if this backend can run and apply early-warning calibration.</summary>
-    public virtual bool SupportsEarlyWarningCalibration => false;
-
-    /// <summary>
-    /// Runs a (destructive) early-warning calibration on the loaded scratch media, measuring the
-    /// true PEW/EW/EOM positions, and returns an opaque, persistable result (also installed as the
-    /// active calibration). Returns <see langword="null"/> if unsupported or on failure.
-    /// </summary>
-    public virtual ITapeCalibration? CalibrateEarlyWarning(
-        EarlyWarningCalibrationOptions options,
-        IProgress<EarlyWarningCalibrationProgress>? progress = null)
-    {
-        SetError(WIN32_ERROR.ERROR_NOT_SUPPORTED);
-        return null;
-    }
-
-    /// <summary>
-    /// Installs a previously-saved calibration so subsequent <see cref="SetEarlyWarning"/> calls can
-    /// use the <see cref="EarlyWarningMechanism.Calibrated"/> mechanism. Returns <see langword="false"/>
-    /// if unsupported or the calibration does not match this drive+media profile.
-    /// </summary>
-    public virtual bool ApplyEarlyWarningCalibration(ITapeCalibration calibration)
-    {
-        SetError(WIN32_ERROR.ERROR_NOT_SUPPORTED);
-        return false;
-    }
-
-    /// <summary>
-    /// Reconstructs an opaque calibration object from a stream the application previously saved via
-    /// <see cref="ITapeCalibration.SaveTo"/>. The backend is the factory because only it understands
-    /// its own <see cref="ITapeCalibration.FormatId"/>. Returns <see langword="null"/> if unsupported
-    /// or unrecognized.
-    /// </summary>
-    public virtual ITapeCalibration? LoadEarlyWarningCalibration(Stream stream)
-    {
-        SetError(WIN32_ERROR.ERROR_NOT_SUPPORTED);
-        return null;
-    }
-
-    /// <summary>The calibration currently installed/active, if any (e.g. to persist after a calibration run).</summary>
-    public virtual ITapeCalibration? CurrentEarlyWarningCalibration => null;
+    public virtual bool ReportEarlyWarning(bool report) => false;
 
     #endregion
 
@@ -289,14 +238,16 @@ public abstract class TapeDriveBackend : ErrorManageableBase, IDisposable
     /// <param name="offset">Offset in buffer.</param>
     /// <param name="count">Number of bytes to write (must be multiple of BlockSize).</param>
     /// <param name="tapemark">Set to true if a filemark/setmark was encountered.</param>
-    /// <param name="earlyWarning">Set to true if an early-warning boundary was encountered.</param>
+    /// <param name="pew">Set to true if a programmable early-warning boundary was encountered (if supported -- e.g. on LTO-5+).</param>
+    /// <param name="ew">Set to true if an early-warning boundary was encountered.</param>
     /// <param name="eom">Set to true if end-of-media was encountered. Callers can also distinguish
     /// via <see cref="IErrorManageable.LastError"/>: <see cref="WIN32_ERROR.ERROR_END_OF_MEDIA"/>
     /// for hard EOM (data NOT written) versus <see cref="TapeEarlyWarning.EarlyWarningError"/> for early
     /// warning (data WAS written — wrap up and write the TOC).
     /// </param>
     /// <returns>Number of bytes actually written.</returns>
-    public abstract int Write(byte[] buffer, int offset, int count, out bool tapemark, out bool earlyWarning, out bool eom);
+    public abstract int Write(byte[] buffer, int offset, int count,
+        out bool tapemark, out bool pew, out bool ew, out bool eom);
 
     #endregion
 

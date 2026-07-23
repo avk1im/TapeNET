@@ -669,7 +669,8 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
         return bytesRead;
     }
 
-    public override int Write(byte[] buffer, int offset, int count, out bool tapemark, out bool earlyWarning, out bool eom)
+    public override int Write(byte[] buffer, int offset, int count,
+        out bool tapemark, out bool pew, out bool ew, out bool eom)
     {
         // Extract the segment to send — avoid sending the entire buffer
         var data = ByteString.CopyFrom(buffer, offset, count);
@@ -679,7 +680,8 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
         SyncError(response.Error);
 
         tapemark = response.Tapemark;
-        earlyWarning = response.EarlyWarning;
+        pew = response.Pew;
+        ew = response.Ew;
         eom = response.Eom;
 
         return response.BytesWritten;
