@@ -252,17 +252,181 @@ Runtime (every session):
 
 ---
 
-### What's Next (Planned)
+### API review — corrections applied before integration
 
-- **EW / PEW / quirky-Remaining emulation in `VirtualTapeDriveBackend`** — teach the virtual backend to model a
-  configurable physical EW (fires ~4% of capacity before EOM, keeps firing to EOM), PEW (phase 2),
-  and an overestimating `Remaining` that floors near the end. This is the prerequisite for validating the whole
-  subsystem faster and without actuaal hardware.
-- **Calibration + logical-EW unit-test suite using `VirtualTapeDriveBackend`** — end-to-end tests in
-  `TapeLibNET.Tests`: a full calibration run against the emulated quirks, curve/round-trip fidelity of
-  `TapeCalibration` JSON, multi-profile auto-selection, and precise logical-EW triggering across both the
-  before-EW (curve) and after-EW (byte-count) regimes, before anything touches the physical LTO-4.
-- **Implement PEW and leverage it for tighter logical EW + Remaining** — set `PEWS` (Device Configuration
-  Extension page 0x10/0x01) on LTO-5+ to place a *host-chosen* landmark earlier than the fixed physical EW,
-  turning the imprecise "large desired reserve" (before-EW) regime into the precise byte-counted regime. The
-  calibration model reserves a nullable PEW curve (`LogicalPew → PewToSet`) for this phase.
+Before wiring the estimator into the Agent/Service/UI layers, the following integration-surface issues in the
+current TapeLibNET implementation are resolved as part of this plan (Phase 0). They do not touch the validated
+low-level `TapeDriveWin32Backend.lto-direct.cs`.
+
+- **`IsProgrammableEarlyWarning` is `protected` on a sealed-in-practice type.** `TapeDrive` is not designed to
+  be subclassed for PEW consumption, so `protected` neither hides nor exposes it usefully — it just prevents a
+  future same-assembly helper from reading it. Change to `private` (or `internal` if a Phase-2 mapping helper in
+  the same assembly needs it). This keeps the "PEW is an internal detail" contract without the misleading
+  access modifier.
+- **`EarlyWarningError` / `ERROR_DISK_FULL` reuse is dead code.** Part 2 explicitly states logical EW is *not*
+  surfaced as a Win32 error, yet `TapeEarlyWarning.EarlyWarningErrorWin32` still maps it to `ERROR_DISK_FULL`.
+  Either delete the constant or add a clear `// reserved, not currently raised` note so future readers don't
+  wire it back into the write path. The plan removes it to avoid a latent legacy-callers regression.
+- **`EstimateActualRemaining()` and `GetRemainingCapacity()` both hit the device.** Each calls
+  `RefreshMediaParams()`, so a UI polling `Remaining` several times per second will issue redundant MODE SENSE
+  round-trips. The plan adds a lightweight throttle/cache (reuse the existing `m_cachedContentRemaining` path)
+  so Service-layer polling stays cheap.
+- **`TapeDrive.Remaining` does not exist; callers use `GetRemainingCapacity()` + Navigator adjustment.** The
+  integration introduces a single authoritative property (see Phase 3) rather than leaving three competing
+  notions (`GetRemainingCapacity`, `GetContentRemainingCapacity`, `AdjustRemainingContentCapacity`).
+- **`EarlyWarning` setter silently no-ops without media.** `TrySetEarlyWarning` returns `false` and sets
+  `ERROR_NO_MEDIA_IN_DRIVE`, but the property setter swallows the result. Document that the reserve is only
+  applied once media is loaded, and have the Service layer (re)apply the desired reserve in `PrepareMedia`.
+
+---
+
+### Detailed specification & implementation plan
+
+The work is sequenced bottom-up: emulation first (so everything below is testable without hardware), then the
+library integration, then the two apps. Each phase lands with its own tests and is independently shippable.
+
+#### Phase 0 — API cleanup (TapeLibNET)
+
+Apply the five API-review corrections above in `TapeDrive.cs`, `TapeEarlyWarning.cs`. No behavior change for the
+validated hardware path; purely tightens the integration surface. Update the existing `TapeLibNET.Tests` build so
+nothing references the removed `ERROR_DISK_FULL` constant.
+
+**Acceptance:** solution builds; existing FclNET/TapeLibNET tests still green.
+
+#### Phase 1 — EW + quirky-`Remaining` emulation in `VirtualTapeDriveBackend`
+
+Goal: let `VirtualTapeMedia` / `VirtualTapeDriveBackend` reproduce the two LTO behaviors the estimator exists to
+tame, so calibration and logical-EW can be validated end-to-end in `TapeLibNET.Tests`. (PEW is deferred to
+Phase 2 and only needs a stub so the `Write` signature stays honest.)
+
+- **New emulation profile on `VirtualTapeMedia`** (opt-in, defaults preserve current exact behavior):
+  - `EarlyWarningZone` (bytes before physical EOM at which built-in EW starts firing; e.g. `~4%` of capacity).
+    Null/0 ⇒ no EW emulation (legacy behavior).
+  - `ReportedRemainingModel` — a delegate/curve mapping *true* `bytesWritten` → *reported* `Remaining` that
+    overshoots and floors near the tail (model the LTO-4 ~3.6% overshoot, monotonic, floored ≈ 32/50 of
+    capacity as in the doc). Default ⇒ the current exact `capacity − bytesWritten`.
+- **`WriteBlocks` / `Write` semantics:**
+  - When `bytesWritten` enters the EW zone (but capacity remains) → set `ew = true`, data **is** written,
+    no error (mirrors the real sense-key ⇒ EW mapping). EW keeps firing on every subsequent write to EOM.
+  - When truly full → keep the existing `ERROR_END_OF_MEDIA` ⇒ `eom = true` (data rejected).
+  - `pew` remains `false` (Phase-2 stub); leave a single `// Phase 2` marker replacing the current `FIXME`.
+- **`Remaining` property** returns the `ReportedRemainingModel` value (the "quirky" figure the driver would
+  report), while the media internally still tracks true `bytesWritten` for capacity enforcement.
+- **`EarlyWarningMechanism`** on the virtual backend returns `HardwareEarlyWarning` when the EW zone is
+  configured, else `None`. `ReportEarlyWarning(bool)` records the request and gates whether `ew` is surfaced.
+- **Fixture:** add a "realistic LTO-4-like" media descriptor (`VirtualMediaDescriptor`) preset — nominal
+  capacity, EW zone, overshoot model — reusable by tests and by manual Service/UI smoke runs.
+
+**Acceptance:** a unit test writing incompressible blocks to a configured virtual medium observes: `Remaining`
+overshoots then floors; `ew` fires ~EW-zone before the true end and stays sticky; `eom` fires exactly when the
+true capacity is exhausted.
+
+#### Phase 2 — Calibration + logical-EW test suite (`TapeLibNET.Tests`)
+
+End-to-end coverage over the Phase-1 emulation:
+
+- **Calibration run:** `new TapeCalibrator(drive).Run()` against the realistic virtual medium produces an
+  `ITapeCalibration` whose `CapacityActual` ≈ configured capacity, whose `EarlyWarning` landmark ≈ configured
+  EW zone, and whose curve is monotonic.
+- **JSON round-trip:** `SaveTo` → `LoadFrom` yields an equal artifact (curve points, EW landmark, profile key,
+  format id); loader rejects an unknown `FormatId`.
+- **`Apriori` baseline:** produces a usable, conservative curve with no run.
+- **Multi-profile auto-selection:** two calibrations with different capacity buckets loaded; `SelectCalibration`
+  picks the one matching the mounted medium; `IsCalibrationMatched` reflects (un)load transitions.
+- **Logical-EW triggering — before-EW (curve) regime:** with a *large* desired reserve, `WriteDirect` raises
+  `ew` when the calibrated `TranslateRemaining(ReportedRemaining) ≤ desired`, before the physical EW fires;
+  verify the poll throttle (fires within one `c_ewRemainingPollInterval` of the ideal point, not per write).
+- **Logical-EW triggering — after-EW (byte-count) regime:** with a *small* desired reserve, `ew` fires when
+  `EwToEomDistance − BytesAfterPhysicalEw() ≤ desired`; verify block-position anchoring survives a mid-stream
+  `SetBlockSize`.
+- **`EstimateActualRemaining()`** tracks true remaining within a tight tolerance across the whole write, in all
+  three regimes (no-cal passthrough, before-EW curve, after-EW byte-count).
+- **State reset:** `ResetEarlyWarningRuntime` clears the sticky latch and anchor on unload/close/load.
+
+**Acceptance:** new test class(es) green; estimator error against the emulated ground truth stays within the
+target tolerance (e.g. < 1% after EW).
+
+#### Phase 3 — Agent / Service integration (`TapeLibNET`)
+
+Make the improved estimate the *default* remaining-capacity figure the rest of the library and apps consume, and
+retire the ad-hoc `AdjustRemainingContentCapacity` heuristic.
+
+- **New authoritative property `TapeDrive.Remaining`** ⇒ returns `EstimateActualRemaining()` (calibrated when
+  available, raw driver value otherwise), throttled/cached per Phase 0.
+- **`TapeDrive.DriverReportedRemaining`** ⇒ the raw `GetRemainingCapacity()` value, kept for diagnostics,
+  calibration, and UI "driver says vs. we estimate" display.
+- **Deprecate `TapeNavigator.AdjustRemainingContentCapacity`** (instance + static): mark `[Obsolete]` and route
+  its callers to the new estimate. The TOC-reservation deduction it performed moves into a single, explicit
+  step in `ComputeRemainingCapacity`/`BeginWriteContentForCurrentSet` so the estimate stays pure "writable
+  bytes" and the TOC reserve is applied once, visibly.
+  - `TapeBackupAgent.ComputeRemainingCapacity`: `Drive.Remaining − (HasInitiatorPartition ? 0 : TOCCapacity)`,
+    clamped ≥ 0.
+- **Wire logical EW into the backup stop decision.** Today the write path stops on `ERROR_END_OF_MEDIA`. Add: a
+  `WriteDirect`-reported `ew` (sticky `IsEarlyWarning`) is the *preferred* "volume full, wrap up and write TOC"
+  trigger; hard EOM remains the hard fallback. Surface an event/flag from `TapeStreamManager` →
+  `TapeBackupAgent` so the agent finalizes the set and flushes the TOC on logical EW rather than overrunning.
+- **`TapeServiceBase`:** `Remaining` ⇒ `Drive.Remaining`; add `DriverReportedRemaining`,
+  `EstimateMechanism` (`EarlyWarningMechanism`), and `IsEarlyWarning` passthroughs. Re-apply the configured
+  `EarlyWarning` reserve in `PrepareMedia` (fixes the "setter no-ops without media" gap).
+- **Service calibration surface:** `CalibrateAsync(IProgress/callback, ref bool abort)`, `AddCalibration`,
+  `RemoveCalibration`, `LoadCalibration(stream)`, `SaveCalibration(cal, stream)`, and a
+  `CalibrationStore` abstraction (see Phase 4) so apps persist/reload profiles without touching file I/O in the
+  library.
+
+**Acceptance:** Agent-level backup tests (real + virtual) still pass; a new virtual-backend backup test using the
+realistic EW profile stops on logical EW, writes the TOC, and leaves no overrun; `Remaining` reported to the
+Service equals `EstimateActualRemaining()`.
+
+#### Phase 4 — `TapeWinNET` (WPF) reporting + persistence
+
+- **Media-usage reporting:** `MediaUsageBarPresenter` / `BackupMediaUsageBarPresenter` consume
+  `Service.Remaining` (calibrated) instead of `AdjustRemainingContentCapacity`. Optionally show a secondary
+  "driver estimate" figure (`DriverReportedRemaining`) and the active `EarlyWarningMechanism` as a tooltip so
+  the user can see *why* the number differs.
+- **Log pane:** when a backup finalizes on logical EW, emit a `LogEntry` (`WarningLevel.Info`/`Completed`) —
+  e.g. *"Early warning: volume full at ~N GB (calibrated); writing table of contents."* — via the existing
+  `LogMessageReceived` → `AddLog` path, so the user understands why the run wrapped up before the driver's
+  optimistic figure.
+- **Calibration persistence:** store `TapeCalibration` blobs via a `CalibrationStore` in a dedicated app-data
+  folder (keyed by `ProfileKey`), loaded at startup and pushed into the drive via `AddCalibration`. Keep it out
+  of the main settings blob (opaque, potentially large curves).
+
+**Acceptance:** backup UI shows the calibrated figure; log pane explains the EW wrap-up; calibration profiles
+persist across app restarts and auto-apply to matching media.
+
+#### Phase 5 — Calibration UI (`TapeWinNET`)
+
+The largest UI addition. A dedicated calibration workflow (dialog or wizard), consistent with existing
+backup/restore progress panels:
+
+- **Pre-flight:** explicit destructive-operation warning (scratch cartridge required), profile summary
+  (vendor/product/revision/capacity bucket), and a confirm gate.
+- **Progress:** percent bar, bytes-written / estimated-capacity, current phase (writing to EOM, capturing EW,
+  finalizing), and an **Abort** button bound to the calibrator's cooperative `IsAbortRequested`.
+- **Result:** show measured `CapacityActual`, EW landmark, and `EwToEomDistance`; offer *Save profile* (into the
+  `CalibrationStore`) and immediate activation via `AddCalibration`.
+- **MVVM:** a `CalibrationViewModel` owning the run on a background thread, marshaling progress/log to the UI via
+  the established dispatch helpers; reuse `WarningLevel`/`LogEntry` styling for status.
+
+**Acceptance:** user can run, monitor, abort, and save a calibration entirely from the GUI; a saved profile
+immediately improves the remaining-capacity figure for matching media.
+
+#### Phase 6 — `TapeConNET` (CLI)
+
+- **Reporting:** the calibrated `Remaining` flows automatically through the Service layer; ensure any status
+  output prints the estimate (and optionally `--verbose` shows driver-reported vs. calibrated + mechanism).
+- **Calibrate command:** `tapecon --calibrate [--force]` runs a destructive calibration with a text progress
+  line and Ctrl-C ⇒ cooperative abort; on success saves the profile to the shared `CalibrationStore`.
+- **Profile management:** `tapecon --calibrations` (list), `--calibration-remove <key>`,
+  `--calibration-import/-export <file>` for moving profiles between machines.
+
+**Acceptance:** CLI can calibrate, list, and manage profiles; backup runs consume the calibrated estimate;
+help/usage documents the new flags.
+
+#### Deferred — Phase 2 (PEW), out of scope here
+
+Implementing SCSI PEWS (Device Configuration Extension page `0x10/0x01`) on LTO-5+ to place a host-chosen
+landmark earlier than the fixed physical EW — converting the imprecise before-EW (curve) regime into the precise
+byte-counted regime — remains future work, confined to the `TapeDrive` / `TapeCalibration` layer. The model
+already reserves a nullable PEW curve (`LogicalPew → PewToSet`) and the `pew` write flag for it; no API changes
+above are required to add it later.
