@@ -271,15 +271,15 @@ low-level `TapeDriveWin32Backend.lto-direct.cs`.
   `RefreshMediaParams()`, so a UI polling `Remaining` several times per second will issue redundant MODE SENSE
   round-trips. The plan adds a lightweight throttle/cache (reuse the existing `m_cachedContentRemaining` path)
   so Service-layer polling stays cheap. --> implemented caching `m_mediaParams` -- invalidate on every write.
-  S. `EnsureMediaParams()`, `InvalidateMediaParams()`, `ReloadMediaParams()`. Additional caching to accelerate `BlockSize` getter.
+  S. `EnsureMediaParams()`, `InvalidateMediaParams()`, `ReloadMediaParams()`. Additional block size caching to accelerate `BlockSize` getter.
 - [ ] WIP **`TapeDrive.Remaining` does not exist; callers use `GetRemainingCapacity()` + Navigator adjustment.** The
   integration introduces a single authoritative property (see Phase 3) rather than leaving three competing
-  notions (`GetRemainingCapacity`, `GetContentRemainingCapacity`, `AdjustRemainingContentCapacity`) --> address during integration
+  notions (`GetRemainingCapacity`, `GetContentRemainingCapacity`, `AdjustRemainingContentCapacity`) --> address during integration (Phase 3)
 - [v] DONE **`EarlyWarning` setter silently no-ops without media.** `SetEarlyWarning` returns `false` and sets
   `ERROR_NO_MEDIA_IN_DRIVE`, but the property setter swallows the result. Document that the reserve is only
   applied once media is loaded, and have the Service layer (re)apply the desired reserve in `PrepareMedia`. -->
   `EarlyWarning` is now a get-only property similar to `SetBlockSize`; `SetEarlyWarning()` returns `bool` to indicate success; if failure, nothing is set / stuck.
-- [ ]WIP **`SetEarlyWarning()` should activate** an EW regardless whether the backend supports it or whether a calibartion
+- [v] DONE **`SetEarlyWarning()` should activate** an EW regardless whether the backend supports it or whether a calibartion
   is loaded -- of course, with various degress of precision, as reported by the `EarlyWarningMechanism`. The caller will rely on `EarlyWarning` functionality to ensure room for the TOC!
 
 ---
@@ -291,11 +291,12 @@ library integration, then the two apps. Each phase lands with its own tests and 
 
 #### Phase 0 — API cleanup (TapeLibNET)
 
-Apply the five API-review corrections above in `TapeDrive.cs`, `TapeEarlyWarning.cs`. No behavior change for the
+[v] DONE, with remarks: Apply the five API-review corrections above in `TapeDrive.cs`, `TapeEarlyWarning.cs`. No behavior change for the
 validated hardware path; purely tightens the integration surface. Update the existing `TapeLibNET.Tests` build so
-nothing references the removed `ERROR_DISK_FULL` constant.
+nothing references the removed `ERROR_DISK_FULL` constant. --> Still open, all legacy APIs across `TapeLibNET` kept.
+We'll nify `TapeDrive`'s `GetCapacity` APIs in Phase 3
 
-**Acceptance:** solution builds; existing FclNET/TapeLibNET tests still green.
+[v] PASSED **Acceptance:** solution builds; existing FclNET/TapeLibNET tests still green.
 
 #### Phase 1 — EW + quirky-`Remaining` emulation in `VirtualTapeDriveBackend`
 
