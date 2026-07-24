@@ -152,13 +152,43 @@ public sealed class TapeCalibration : ITapeCalibration
     /// estimate improve on raw reported remaining until a real calibration replaces it.
     /// </summary>
     public static ITapeCalibration Apriori(
-        string profileKey, long capacity, int marginPercent = 5, int remainingAtEwPercent = 7)
+        string profileKey, long capacity, double marginPercent = 5.0, double remainingAtEwPercent = 7.0)
     {
         if (capacity < 0) capacity = 0;
-        long margin = capacity * marginPercent / 100;
-        long ewReported = capacity * remainingAtEwPercent / 100;
+        long margin = (long)(capacity * marginPercent / 100.0);
+        long ewReported = (long)(capacity * remainingAtEwPercent / 100.0);
         long capacityActual = Math.Max(0L, capacity - margin);
 
+        // A-priori calibration curve: ReportedRemaining -> ActualRemaining
+        // (blind linear model; example numbers for an ~780 GB LTO-4 at margin=5%, ewAt=7%)
+        //
+        //   ActualRemaining
+        //     ^
+        //  741┤ capacityActual                                              ● BOT
+        //  (GB)│  = capacity - margin                                   ╱     (reported=780, actual=741)
+        //     │                                                     ╱
+        //     │                                                 ╱
+        //     │                                             ╱   slope ≈ 1
+        //     │                                         ╱       (actual ≈ reported - margin)
+        //     │                                     ╱
+        //     │                                 ╱
+        //     │                             ╱
+        //   16┤ - - - - - - - - - - - - -◆   EW landmark (fake / synthesized)
+        //     │                       ╱ :    reported = ewReported (7%)  = 54.6 GB
+        //     │                   ╱     :    actual   = ewReported-margin = 15.6 GB
+        //     │               ╱         :    → EwToEomDistance
+        //     │           ╱             :
+        //    0┤───────●─────────────────┼───────────────────────────────────→ ReportedRemaining
+        //     0     margin              54.6                                780   (GB)
+        //     │    (39 GB)            (ewReported)                       (capacity)
+        //     │       ↑
+        //     │  blind stop point: driver still reports `margin` free,
+        //     │  but real writable space is already 0 (curve clamps below here)
+        //
+        //   Anchors stored in curve[]:  (margin, 0)  and  (capacity, capacityActual)
+        //   EW point (nullable):        (ewReported, ewReported - margin)
+        //   Model:  ActualRemaining ≈ ReportedRemaining - margin,  floored at 0
+        
         // Curve (ascending by ReportedRemaining):
         //  at reported == margin       → actual == 0        (blind stop point)
         //  at reported == capacity     → actual == capacity − margin (BOT)

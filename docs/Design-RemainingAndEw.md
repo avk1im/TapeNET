@@ -279,7 +279,7 @@ low-level `TapeDriveWin32Backend.lto-direct.cs`.
   `ERROR_NO_MEDIA_IN_DRIVE`, but the property setter swallows the result. Document that the reserve is only
   applied once media is loaded, and have the Service layer (re)apply the desired reserve in `PrepareMedia`. -->
   `EarlyWarning` is now a get-only property similar to `SetBlockSize`; `SetEarlyWarning()` returns `bool` to indicate success; if failure, nothing is set / stuck.
-- [ ]WIP **`SetEarlyWarning()` should activate an EW regardless whether the backend supports it or whether a calibartion
+- [ ]WIP **`SetEarlyWarning()` should activate** an EW regardless whether the backend supports it or whether a calibartion
   is loaded -- of course, with various degress of precision, as reported by the `EarlyWarningMechanism`. The caller will rely on `EarlyWarning` functionality to ensure room for the TOC!
 
 ---

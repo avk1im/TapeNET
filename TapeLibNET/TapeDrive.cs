@@ -53,6 +53,12 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     private ITapeCalibration? m_calibration = null;
     private bool m_isCalibrationMatched = false;
 
+    // Effective EW mechanism selected by SetEarlyWarning (best available; see SelectEarlyWarningMechanism).
+    private EarlyWarningMechanism m_ewMechanism = EarlyWarningMechanism.None;
+    // A-priori (blind-guess) calibration synthesized from Capacity when no measured calibration matches,
+    //  so a requested reserve is ALWAYS honored. Null when a real calibration is used or no reserve is set.
+    private ITapeCalibration? m_aprioriCalibration = null;
+
     // Disposing
     private bool m_disposed = false;
 
@@ -247,8 +253,11 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     public long EarlyWarning => m_desiredEarlyWarning;
 
     /// <summary>How the logical <see cref="EarlyWarning"/> is currently realized (best available mechanism).</summary>
-    public EarlyWarningMechanism EarlyWarningMechanism =>
-        m_calibration is not null ? EarlyWarningMechanism.Calibrated : m_backend.EarlyWarningMechanism;
+    public EarlyWarningMechanism EarlyWarningMechanism => m_ewMechanism;
+
+    /// <summary>The calibration actually driving EW mapping / remaining estimation: the matching user
+    ///  calibration if any, else the synthesized a-priori baseline, else null.</summary>
+    private ITapeCalibration? EffectiveCalibration => m_calibration ?? m_aprioriCalibration;
 
     /// <summary>
     /// A sticky flag set after <see cref="WriteDirect"/> sensed an early-warning crossing (data was written;
@@ -262,7 +271,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     /// <para>Marked <c>protected</c> since used internally to support logical implementation of <see cref="IsEarlyWarning"/></para>
     /// </summary>
     internal bool IsProgrammableEarlyWarning { get; private set; } = false;
-    
+
     /// <summary>Running count of bytes transferred via <see cref="WriteDirect"/>/<see cref="ReadDirect"/>. Reset by the stream manager.</summary>
     public long ByteCounter
     {
@@ -358,6 +367,9 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
         // Track the physical early-warning landmark at the drive's AUTHORITATIVE block position.
         //  PEW stays an internal detail (phase-2 anchor); EW anchor drives the precise tail estimate.
+        //  We ALWAYS track the physical EW/PEW landmark: cheap (anchor set once), and required by
+        //  EstimateActualRemaining()'s precise tail path even when NO logical reserve was requested
+
         IsProgrammableEarlyWarning = pew;
         if (physicalEw && !m_physicalEwSeen)
         {
@@ -368,11 +380,14 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         }
 
         // Map physical EW/PEW + calibrated ReportedRemaining onto the caller's LOGICAL early warning.
-        bool logicalEw = EvaluateLogicalEarlyWarning(written, physicalEw);
+        //  Logical EW is only meaningful once a reserve is requested. The costly ReportedRemaining
+        //  poll lives inside EvaluateLogicalEarlyWarning and is already gated + throttled.
+        bool logicalEw = m_desiredEarlyWarning > 0L && EvaluateLogicalEarlyWarning(written, physicalEw);
         if (logicalEw && !IsEarlyWarning)
             m_logger.LogInformation("{Prefix}: WriteDirect crossed logical early-warning boundary", LogPrefix);
         IsEarlyWarning = logicalEw;
         ew = logicalEw;
+
 
         if (WentBad)
         {
@@ -453,9 +468,16 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
     /// <summary>
     /// Requests an early-warning reserve of <paramref name="bytesBeforeEom"/> bytes before EOM.
-    /// Returns <see langword="true"/> if the backend accepted the request. Read <see cref="EarlyWarning"/>
-    /// back to see the value actually achieved, and <see cref="EarlyWarningMechanism"/> to see how.
+    /// ALWAYS honored while media is loaded: TapeDrive selects the best available mechanism —
+    /// a matching calibration, the drive's physical EW/PEW, or an a-priori estimate — so the
+    /// caller can always rely on EW to reserve room for the TOC. Read <see cref="EarlyWarning"/>
+    /// back for the requested value and <see cref="EarlyWarningMechanism"/> for the achieved precision.
+    /// Pass 0 to disable.
     /// </summary>
+    /// <param name="bytesBeforeEom">Desired reserve in bytes before EOM (0 = none).</param>
+    /// <returns>
+    /// True if the requested reserve is honored (<c>true</c> unless capacity is unknown and the backend has no physical EW).
+    /// </returns>
     public bool SetEarlyWarning(long bytesBeforeEom)
     {
         if (!IsMediaLoaded)
@@ -463,23 +485,70 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
             return false;
         }
-        if (bytesBeforeEom < 0)
-            bytesBeforeEom = 0;
+        if (bytesBeforeEom < 0L)
+            bytesBeforeEom = 0L;
 
         m_desiredEarlyWarning = bytesBeforeEom;
 
-        bool ok = m_backend.ReportEarlyWarning(bytesBeforeEom > 0L);
-        SyncErrorFrom(m_backend);
+        // Ask the backend to surface its physical EW too (best-effort, non-binding): when present it
+        //  feeds the precise calibrated-tail path and serves as a safety backstop. A backend without
+        //  any EW mechanism simply ignores this — we never fail the call on it.
+        m_backend.ReportEarlyWarning(true); // we use backend EW not only for logical EW
+                                            // but also for more accurate remaining capacity tracking!
+        ResetError(); // ok if backend doesn't support EW
 
-        // FIXME: Regardless whether / what the backend supports, we MUST make the best effort to honor EW setting!
+        // Pick the best available logical-EW mechanism. Always succeeds: with neither backend EW nor a
+        //  calibration we fall back to an a-priori estimate, so the reserve is honored regardless.
+        SelectEarlyWarningMechanism();
 
-        if (ok)
-            m_logger.LogTrace("{Prefix}: Early warning requested {Req} bytes → effective {Eff} bytes (mechanism {Mech})",
-                LogPrefix, bytesBeforeEom, EarlyWarning, EarlyWarningMechanism);
+        m_logger.LogTrace("{Prefix}: Early warning set to {Req} bytes (mechanism {Mech})",
+            LogPrefix, bytesBeforeEom, m_ewMechanism);
+
+        return m_desiredEarlyWarning == 0L
+            || EarlyWarningMechanism != EarlyWarningMechanism.None; // Failure is unlikely -- only happens when
+                                                                    //  capacity is unknown and the backend has no physical EW
+    }
+
+    /// <summary>
+    /// Selects the best available logical-EW mechanism given the requested reserve, loaded calibration,
+    /// backend capabilities, and media capacity. Synthesizes an a-priori baseline when no measured
+    /// calibration matches, so a reserve is always enforceable.
+    /// </summary>
+    private void SelectEarlyWarningMechanism()
+    {
+        m_aprioriCalibration = null;
+
+        if (m_desiredEarlyWarning <= 0L || !IsMediaLoaded)
+        {
+            m_ewMechanism = EarlyWarningMechanism.None;
+            return;
+        }
+
+        // Best: a matching, measured calibration.
+        if (m_calibration is not null)
+        {
+            m_ewMechanism = EarlyWarningMechanism.Calibrated;
+            return;
+        }
+
+        EarlyWarningMechanism backendMech = m_backend.EarlyWarningMechanism;
+        bool backendHasEw = backendMech is EarlyWarningMechanism.ProgrammableEarlyWarning
+                                         or EarlyWarningMechanism.HardwareEarlyWarning;
+
+        long capacity = Capacity;
+        if (capacity > 0L)
+        {
+            // Synthesize an a-priori baseline so the reserve is honored even with no measured data.
+            //  A backend physical EW, when present, opportunistically sharpens the tail estimate —
+            //  hence the higher (Hardware/Programmable) precision label in that case.
+            m_aprioriCalibration = TapeCalibration.Apriori(DriveProfileKey, capacity);
+            m_ewMechanism = backendHasEw ? backendMech : EarlyWarningMechanism.Uncalibrated;
+        }
         else
-            LogErrorAsDebug("Failed to set early warning");
-
-        return ok;
+        {
+            // Capacity unknown: rely solely on the backend's physical EW if it has one.
+            m_ewMechanism = backendHasEw ? backendMech : EarlyWarningMechanism.None;
+        }
     }
 
     /// <summary>
@@ -494,26 +563,31 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         if (IsEarlyWarning)
             return true;
 
-        if (m_desiredEarlyWarning <= 0L || m_calibration is null)
+        // No reserve requested → surface the drive's physical EW 1:1 as a safety backstop (legacy).
+        if (m_desiredEarlyWarning <= 0L)
             return physicalEw;
 
-        // Precise tail regime: after physical EW, byte-count down from the measured EW→EOM
-        //  distance using the drive's authoritative block position. No Remaining query needed.
+        ITapeCalibration? cal = EffectiveCalibration;
+        if (cal is null)
+            return physicalEw;   // capacity-unknown fallback: physical EW only
+
+        // Precise tail regime: after physical EW, byte-count down from the (measured or a-priori)
+        //  EW→EOM distance using the drive's authoritative block position. No Remaining query needed.
         if (m_physicalEwSeen)
         {
-            long actualRemaining = Math.Max(0L, m_calibration.EwToEomDistance - BytesAfterPhysicalEw());
+            long actualRemaining = Math.Max(0L, cal.EwToEomDistance - BytesAfterPhysicalEw());
             return actualRemaining <= m_desiredEarlyWarning;
         }
 
-        // Before physical EW: consult the calibrated curve on ReportedRemaining, throttling the
-        //  costly query. Host-byte accumulation is acceptable here — it only paces the poll.
+        // Before physical EW: consult the curve on ReportedRemaining, throttling the costly query,
+        //  while still honoring a physical-EW backstop between polls.
         m_bytesSinceRemainingPoll += written;
         if (m_bytesSinceRemainingPoll < c_ewRemainingPollInterval)
-            return false;
+            return physicalEw;
         m_bytesSinceRemainingPoll = 0L;
 
-        long est = m_calibration.TranslateRemaining(GetRemainingCapacity());
-        return est <= m_desiredEarlyWarning;
+        long est = cal.TranslateRemaining(GetRemainingCapacity());
+        return est <= m_desiredEarlyWarning || physicalEw;
     }
 
     /// <summary>
@@ -595,8 +669,9 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
                 m_calibration = c;
                 break;
             }
-        
+
         m_isCalibrationMatched = m_calibration is not null;
+        SelectEarlyWarningMechanism(); // up/downgrade the mechanism depending on new m_calibration
     }
 
     /// <summary>
@@ -613,11 +688,12 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         long reported = GetRemainingCapacity();
         if (reported < 0L)
             return 0L;
-        if (m_calibration is null)
+        ITapeCalibration? cal = EffectiveCalibration;
+        if (cal is null)
             return reported;
         if (m_physicalEwSeen)
-            return Math.Max(0L, m_calibration.EwToEomDistance - BytesAfterPhysicalEw());
-        return m_calibration.TranslateRemaining(reported);
+            return Math.Max(0L, cal.EwToEomDistance - BytesAfterPhysicalEw());
+        return cal.TranslateRemaining(reported);
     }
 
     #endregion // *** Calibration ***
@@ -687,10 +763,11 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         m_backend.Close();
         m_driveParams = null;
         m_mediaParams = null;
-        
+
         ResetEarlyWarningRuntime();
         m_desiredEarlyWarning = 0L;
-        
+        SelectEarlyWarningMechanism();   // → None (reserve cleared / media gone)
+
         InvalidateContentCache();
         m_logger.LogTrace("{Prefix}: Closed", LogPrefix);
     }
@@ -738,7 +815,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
         InvalidateMediaParams(keepBlockSize: false);
         ResetEarlyWarningRuntime();
-        
+
         InvalidateContentCache();
         m_logger.LogTrace("{Prefix}: Media unloaded", LogPrefix);
         return true;
@@ -1101,7 +1178,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
         m_backend.FillMediaParameters(out MediaParameters mediaParams);
         // Do NOT SyncErrorFrom(m_backend); -- not to mask potential existing error from a prior operation
-        
+
         m_mediaParams = mediaParams;
         m_cachedBlockSize = mediaParams.BlockSize;
         if (m_onContentPartition)
@@ -1210,10 +1287,13 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     {
         SetBlockSize(DefaultBlockSize);
 
-        // Re-apply a previously requested early-warning reserve (media-level setting, like block
-        //  size). Failure-tolerant: a drive backend without any EW mechanism simply keeps ReportsEarlyWarning = 0.
-        m_backend.ReportEarlyWarning(m_desiredEarlyWarning > 0L);
+        // Ask the backend to surface its physical EW too (best-effort, non-binding): when present it
+        //  feeds the precise calibrated-tail path and serves as a safety backstop. A backend without
+        //  any EW mechanism simply ignores this — we never fail the call on it.
+        m_backend.ReportEarlyWarning(true); // we use backend EW not only for logical EW
+                                            // but also for more accurate remaining capacity tracking!
+        ResetError(); // ok if backend doesn't support EW
     }
 
     #endregion // *** Private Helpers ***
-}
+} // class TapeDrive
