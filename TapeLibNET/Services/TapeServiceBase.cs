@@ -197,7 +197,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     {
         // Brief lock — just reading a hardware register, never blocks long.
         _operationLock.Wait();
-        try   { return _drive?.GetContentRemainingCapacity() ?? 0; }
+        try   { return _drive?.GetRemainingContentCapacity() ?? 0; }
         finally { _operationLock.Release(); }
     }
 
@@ -728,7 +728,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         if (_drive is null) return;
         LogInfoSub($"Partition count: {_drive.PartitionCount}");
         LogInfoSub($"Capacity: {Helpers.BytesToStringLong(_drive.ContentCapacity)}");
-        LogInfoSub($"Remaining (est.): {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
+        LogInfoSub($"Remaining (est.): {Helpers.BytesToStringLong(_drive.GetRemainingContentCapacity())}");
     }
 
     /// <summary>

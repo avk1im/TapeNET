@@ -250,7 +250,7 @@ public partial class TapeServiceBase
         {
             LogInfoSub($"Partition count: {PartitionCount}");
             LogInfoSub($"Capacity: {Helpers.BytesToStringLong(Capacity)}");
-            LogInfoSub($"Remaining (est. from drive): {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
+            LogInfoSub($"Remaining (est. from drive): {Helpers.BytesToStringLong(_drive.GetRemainingContentCapacity())}");
         }
     }
 
@@ -298,7 +298,7 @@ public partial class TapeServiceBase
         LogInfoSub($"Capacity: {Helpers.BytesToStringLong(Capacity)}");
         LogInfoSub($"Used: {Helpers.BytesToStringLong(Used)}");
         LogInfoSub($"Remaining: {Helpers.BytesToStringLong(Remaining)}");
-        LogInfoSub($"Remaining (est. from drive): {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
+        LogInfoSub($"Remaining (est. from drive): {Helpers.BytesToStringLong(_drive.GetRemainingContentCapacity())}");
         LogInfoSub($"TOC placement: {(HasInitiatorPartition ? "partition" : "set")}");
         LogInfoSub($"Volume: #{toc.Volume}");
         LogInfoSub($"Continued on next volume: {(toc.ContinuedOnNextVolume ? "Yes" : "No")}");

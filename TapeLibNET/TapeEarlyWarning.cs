@@ -27,6 +27,7 @@ public enum EarlyWarningMechanism
     ProgrammableEarlyWarning
 }
 
+#if MAYBE_USE_LATER // uncomment if we decide to add functionality "treat EW as error"
 /// <summary>
 /// Shared early-warning constants.
 /// </summary>
@@ -42,3 +43,4 @@ public static class TapeEarlyWarning
     internal const WIN32_ERROR EarlyWarningErrorWin32 = WIN32_ERROR.ERROR_DISK_FULL;
     public const uint EarlyWarningError = (uint)EarlyWarningErrorWin32;
 }
+#endif

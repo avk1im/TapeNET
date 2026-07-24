@@ -452,7 +452,7 @@ public partial class TapeServiceBase
                     if (tocSecs >= 1.0) timingParts.Add($"TOC save {FormatElapsed(tocSecs)}");
                     LogInfoSub(string.Join(", ", timingParts));
                 }
-                LogInfoSub($"Remaining media capacity: {Helpers.BytesToStringLong(_drive.GetContentRemainingCapacity())}");
+                LogInfoSub($"Remaining media capacity: {Helpers.BytesToStringLong(_drive.GetRemainingContentCapacity())}");
 
                 // If backup was aborted, TOC has been saved — break out
                 if (wasAborted)

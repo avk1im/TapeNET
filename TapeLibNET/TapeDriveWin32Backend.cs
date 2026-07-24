@@ -130,7 +130,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     #region *** State Properties ***
 
     public override bool IsOpen => !m_driveHandle.IsInvalid && !m_driveHandle.IsClosed && m_driveParams != null;
-    public override bool HasMedia => IsOpen && m_mediaParams != null;
+    public override bool HasMedia => IsOpen && m_mediaParams is not null;
     public override string DeviceName => $"\\\\.\\TAPE{m_driveNumber}";
     public override uint DriveNumber => m_driveNumber;
     public override string Vendor => string.IsNullOrEmpty(m_ltoVendor) ? "[generic]" : m_ltoVendor;
@@ -822,7 +822,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     {
         RefreshMediaParams();
 
-        parameters = m_mediaParams != null
+        parameters = m_mediaParams is not null
             ? new MediaParameters(
                 m_mediaParams.Value.Capacity,
                 m_mediaParams.Value.Remaining,

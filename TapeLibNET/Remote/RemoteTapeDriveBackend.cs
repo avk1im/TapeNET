@@ -118,7 +118,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
         _ownsChannel = false;
         _ownsSession = false; // session lifetime is managed by TapeServiceBase
         // Mark the session as already open so ReopenDrive skips the Open() call.
-        //  The real state snapshot will be refreshed by RefreshDriveCaps() via ReopenDrive.
+        //  The real state snapshot will be refreshed by ReloadDriveCaps() via ReopenDrive.
         _state = new BackendState { IsOpen = true };
         // Start the keepalive ping now — the session is already open on the server.
         StartPingTimer();

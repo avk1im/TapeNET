@@ -59,7 +59,7 @@ namespace TapeLibNET
         /// <returns>The adjusted remaining content capacity.</returns>
         public long AdjustRemainingContentCapacity(long remainingCapacity)
         {
-            var remainingFromDrive = Drive.GetContentRemainingCapacity();
+            var remainingFromDrive = Drive.GetRemainingContentCapacity();
             // adjust down by 1% of drive capacity to account for drive reporting inaccuracies
             remainingFromDrive -= Drive.Capacity / 100;
 
@@ -83,7 +83,7 @@ namespace TapeLibNET
         /// <returns>The adjusted remaining content capacity.</returns>
         public static long AdjustRemainingContentCapacity(TapeDrive drive, long remainingCapacity)
         {
-            var remainingFromDrive = drive.GetContentRemainingCapacity();
+            var remainingFromDrive = drive.GetRemainingContentCapacity();
             // adjust down by 1% of drive capacity to account for drive reporting inaccuracies
             remainingFromDrive -= drive.Capacity / 100;
             

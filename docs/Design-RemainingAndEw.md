@@ -258,25 +258,29 @@ Before wiring the estimator into the Agent/Service/UI layers, the following inte
 current TapeLibNET implementation are resolved as part of this plan (Phase 0). They do not touch the validated
 low-level `TapeDriveWin32Backend.lto-direct.cs`.
 
-- **`IsProgrammableEarlyWarning` is `protected` on a sealed-in-practice type.** `TapeDrive` is not designed to
+- [v] DONE **`IsProgrammableEarlyWarning` is `protected` on a sealed-in-practice type.** `TapeDrive` is not designed to
   be subclassed for PEW consumption, so `protected` neither hides nor exposes it usefully — it just prevents a
   future same-assembly helper from reading it. Change to `private` (or `internal` if a Phase-2 mapping helper in
   the same assembly needs it). This keeps the "PEW is an internal detail" contract without the misleading
-  access modifier.
-- **`EarlyWarningError` / `ERROR_DISK_FULL` reuse is dead code.** Part 2 explicitly states logical EW is *not*
+  access modifier. --> changed to `internal` so the Phase-2 mapping helper can read it.
+- [v] DONE **`EarlyWarningError` / `ERROR_DISK_FULL` reuse is dead code.** Part 2 explicitly states logical EW is *not*
   surfaced as a Win32 error, yet `TapeEarlyWarning.EarlyWarningErrorWin32` still maps it to `ERROR_DISK_FULL`.
   Either delete the constant or add a clear `// reserved, not currently raised` note so future readers don't
-  wire it back into the write path. The plan removes it to avoid a latent legacy-callers regression.
-- **`EstimateActualRemaining()` and `GetRemainingCapacity()` both hit the device.** Each calls
+  wire it back into the write path. The plan removes it to avoid a latent legacy-callers regression. --> commented out
+- [v] DONE **`EstimateActualRemaining()` and `GetRemainingCapacity()` both hit the device.** Each calls
   `RefreshMediaParams()`, so a UI polling `Remaining` several times per second will issue redundant MODE SENSE
   round-trips. The plan adds a lightweight throttle/cache (reuse the existing `m_cachedContentRemaining` path)
-  so Service-layer polling stays cheap.
-- **`TapeDrive.Remaining` does not exist; callers use `GetRemainingCapacity()` + Navigator adjustment.** The
+  so Service-layer polling stays cheap. --> implemented caching `m_mediaParams` -- invalidate on every write.
+  S. `EnsureMediaParams()`, `InvalidateMediaParams()`, `ReloadMediaParams()`. Additional caching to accelerate `BlockSize` getter.
+- [ ] WIP **`TapeDrive.Remaining` does not exist; callers use `GetRemainingCapacity()` + Navigator adjustment.** The
   integration introduces a single authoritative property (see Phase 3) rather than leaving three competing
-  notions (`GetRemainingCapacity`, `GetContentRemainingCapacity`, `AdjustRemainingContentCapacity`).
-- **`EarlyWarning` setter silently no-ops without media.** `TrySetEarlyWarning` returns `false` and sets
+  notions (`GetRemainingCapacity`, `GetContentRemainingCapacity`, `AdjustRemainingContentCapacity`) --> address during integration
+- [v] DONE **`EarlyWarning` setter silently no-ops without media.** `SetEarlyWarning` returns `false` and sets
   `ERROR_NO_MEDIA_IN_DRIVE`, but the property setter swallows the result. Document that the reserve is only
-  applied once media is loaded, and have the Service layer (re)apply the desired reserve in `PrepareMedia`.
+  applied once media is loaded, and have the Service layer (re)apply the desired reserve in `PrepareMedia`. -->
+  `EarlyWarning` is now a get-only property similar to `SetBlockSize`; `SetEarlyWarning()` returns `bool` to indicate success; if failure, nothing is set / stuck.
+- [ ]WIP **`SetEarlyWarning()` should activate an EW regardless whether the backend supports it or whether a calibartion
+  is loaded -- of course, with various degress of precision, as reported by the `EarlyWarningMechanism`. The caller will rely on `EarlyWarning` functionality to ensure room for the TOC!
 
 ---
 
@@ -356,9 +360,8 @@ retire the ad-hoc `AdjustRemainingContentCapacity` heuristic.
 - **`TapeDrive.DriverReportedRemaining`** ⇒ the raw `GetRemainingCapacity()` value, kept for diagnostics,
   calibration, and UI "driver says vs. we estimate" display.
 - **Deprecate `TapeNavigator.AdjustRemainingContentCapacity`** (instance + static): mark `[Obsolete]` and route
-  its callers to the new estimate. The TOC-reservation deduction it performed moves into a single, explicit
-  step in `ComputeRemainingCapacity`/`BeginWriteContentForCurrentSet` so the estimate stays pure "writable
-  bytes" and the TOC reserve is applied once, visibly.
+  its callers to the new estimate. The TOC-reservation deduction it performed (for TOC-in-set) is replaced by
+  setting `TapeDrive.SetEarlyWarning`.
   - `TapeBackupAgent.ComputeRemainingCapacity`: `Drive.Remaining − (HasInitiatorPartition ? 0 : TOCCapacity)`,
     clamped ≥ 0.
 - **Wire logical EW into the backup stop decision.** Today the write path stops on `ERROR_END_OF_MEDIA`. Add: a
