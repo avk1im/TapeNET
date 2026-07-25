@@ -380,13 +380,14 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         }
 
         // Map physical EW/PEW + calibrated ReportedRemaining onto the caller's LOGICAL early warning.
-        //  Logical EW is only meaningful once a reserve is requested. The costly ReportedRemaining
-        //  poll lives inside EvaluateLogicalEarlyWarning and is already gated + throttled.
-        bool logicalEw = m_desiredEarlyWarning > 0L && EvaluateLogicalEarlyWarning(written, physicalEw);
+        //  With NO reserve requested this surfaces the drive's physical EW 1:1 (v1.0 behavior, and exactly
+        //  what a calibration run needs to capture the EW landmark). The costly ReportedRemaining poll lives
+        //  inside EvaluateLogicalEarlyWarning and is gated + throttled, so calling it per write is cheap.
+        bool logicalEw = EvaluateLogicalEarlyWarning(written, physicalEw);
         if (logicalEw && !IsEarlyWarning)
             m_logger.LogInformation("{Prefix}: WriteDirect crossed logical early-warning boundary", LogPrefix);
         IsEarlyWarning = logicalEw;
-        ew = logicalEw;
+        ew = m_desiredEarlyWarning > 0L && logicalEw; // only report to caller if desired
 
 
         if (WentBad)

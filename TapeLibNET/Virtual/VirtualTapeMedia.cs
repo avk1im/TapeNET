@@ -324,7 +324,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
     public uint MinBlockSize => m_minBlockSize;
     public uint MaxBlockSize => m_maxBlockSize;
     public long Capacity => m_capacity;
-    public long Remaining => Math.Max(0, m_capacity - m_bytesWritten);
+    public long Remaining => ReportedRemaining();
     public long CurrentBlock => m_currentBlock;
     public bool IsAtEnd => m_currentVirtualBlockIndex >= m_virtualBlocks.Count;
     public bool IsAtBeginning => m_currentBlock == 0;
@@ -405,12 +405,13 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
             return 0;
         }
 
-        // Check capacity
-        if (Remaining < count)
+        // Check capacity — enforcement always uses the TRUE remaining, never the (possibly
+        //  optimistic) reported figure, so hard EOM lands at the real capacity.
+        if (TrueRemaining < count)
         {
             SetError(WIN32_ERROR.ERROR_END_OF_MEDIA);
             // Still try to write what we can (in complete blocks)
-            long availableBlocks = Remaining / m_blockSize;
+            long availableBlocks = TrueRemaining / m_blockSize;
             count = (int)(availableBlocks * m_blockSize);
             if (count == 0)
                 return 0;
@@ -470,7 +471,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         ResetError();
 
         // Check capacity - marks should not be written when media is full
-        if (Remaining <= 0)
+        if (TrueRemaining <= 0)
         {
             SetError(WIN32_ERROR.ERROR_END_OF_MEDIA);
             return false;

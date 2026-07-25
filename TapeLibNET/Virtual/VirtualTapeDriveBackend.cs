@@ -559,6 +559,9 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
         m_hasMedia = true;
         m_blockSize = m_contentMedia.BlockSize;
 
+        // Apply the configured early-warning emulation profile to the (re)loaded content media.
+        ApplyEwProfileToMedia();
+
         // Sync odometer state from throttle settings
         SyncOdometerEnabled(m_contentMedia);
         SyncOdometerEnabled(m_initiatorMedia);
@@ -939,7 +942,12 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
 
         int bytesWritten = m_currentMedia.WriteBlocks(buffer, offset, count);
 
-        // FIXME: Implement pew and ew
+        // Physical early warning (Phase 1 emulation): surface the EW zone the medium models, but only
+        //  when the caller asked us to report it (mirrors a real drive's ReportEarlyWarning gate). Data
+        //  IS written; EW is not an error. pew is a Phase 2 concern — stays false here.
+        if (m_reportEarlyWarning && m_currentMedia.IsInEarlyWarningZone)
+            ew = true;
+        // pew: Phase 2
 
         // Sync error from media
         if (!m_currentMedia.WentOK)

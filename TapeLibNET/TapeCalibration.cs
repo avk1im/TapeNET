@@ -62,6 +62,14 @@ public interface ITapeCalibration
     /// </summary>
     long TranslateRemaining(long reportedRemaining);
 
+    /// <summary>
+    /// Inverse, curve-only translation <c>ActualRemaining → ReportedRemaining</c> (bytes), with
+    /// clamping at the curve ends. Answers "what would the driver report if the true remaining were
+    /// <paramref name="actualRemaining"/>?" — used to REPRODUCE a drive's optimistic remaining figure
+    /// (e.g. by the virtual backend's emulation), the mirror image of <see cref="TranslateRemaining"/>.
+    /// </summary>
+    long TranslateActualToReported(long actualRemaining);
+
     /// <summary>Writes the opaque representation to <paramref name="stream"/>. The app saves this verbatim.</summary>
     void SaveTo(Stream stream);
 }
@@ -209,6 +217,12 @@ public sealed class TapeCalibration : ITapeCalibration
 
     public long EwToEomDistance => EarlyWarning?.ActualRemaining ?? 0L;
 
+    /// <summary>
+    /// Translates a driver-reported remaining byte count into a more accurate actual remaining count
+    /// estimation, based on the calibration curve.
+    /// </summary>
+    /// <param name="reportedRemaining">The remaining byte count reported by the driver.</param>
+    /// <returns>The estimated actual remaining byte count.</returns>
     public long TranslateRemaining(long reportedRemaining)
     {
         var c = Curve;
@@ -235,6 +249,39 @@ public sealed class TapeCalibration : ITapeCalibration
 
         double t = (double)(reportedRemaining - a.ReportedRemaining) / dr;
         return a.ActualRemaining + (long)Math.Round(t * (b.ActualRemaining - a.ActualRemaining));
+    }
+
+    /// <summary>
+    /// Inverse of <see cref="TranslateRemaining"/>: given a true <paramref name="actualRemaining"/>,
+    /// returns the (typically optimistic) figure the driver would report, by interpolating the curve
+    /// on its <see cref="CalibrationPoint.ActualRemaining"/> axis (monotonic non-decreasing).
+    /// </summary>
+    public long TranslateActualToReported(long actualRemaining)
+    {
+        var c = Curve;
+        if (c.Count == 0)
+            return actualRemaining;               // no data → passthrough
+
+        if (actualRemaining <= c[0].ActualRemaining)
+            return c[0].ReportedRemaining;        // clamp low (near EOM)
+        if (actualRemaining >= c[^1].ActualRemaining)
+            return c[^1].ReportedRemaining;       // clamp high (near BOT)
+
+        // Binary-search the bracketing pair on the ActualRemaining axis, then linearly interpolate.
+        int lo = 0, hi = c.Count - 1;
+        while (hi - lo > 1)
+        {
+            int mid = (lo + hi) / 2;
+            if (c[mid].ActualRemaining <= actualRemaining) lo = mid; else hi = mid;
+        }
+
+        CalibrationPoint a = c[lo], b = c[hi];
+        long da = b.ActualRemaining - a.ActualRemaining;
+        if (da <= 0)
+            return a.ReportedRemaining;
+
+        double t = (double)(actualRemaining - a.ActualRemaining) / da;
+        return a.ReportedRemaining + (long)Math.Round(t * (b.ReportedRemaining - a.ReportedRemaining));
     }
 
     #endregion

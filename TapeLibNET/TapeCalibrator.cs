@@ -92,6 +92,19 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
             return null;
         }
 
+        // Neutralize any active reserve and loaded calibrations for the duration so WriteDirect surfaces
+        //  the RAW physical early warning the run must measure (not a logical/calibrated remapping). Also
+        //  enables the backend to report its physical EW (SetEarlyWarning always requests backend EW).
+        //  All restored in the finally below.
+        long savedReserve = Drive.EarlyWarning;
+        var savedCalibrations = new List<ITapeCalibration>(Drive.Calibrations);
+        Drive.RemoveAllCalibrations();
+        Drive.SetEarlyWarning(0);            // clears reserve AND enables backend physical-EW reporting
+        Drive.ResetEarlyWarningRuntime();
+
+        try
+        {
+
         // --- Configure the drive for a deterministic byte→position mapping ---
         uint blockSize = Options.BlockSize != 0 ? Options.BlockSize : Drive.MaximumBlockSize;
         if (!Drive.SetBlockSize(blockSize))
@@ -155,11 +168,13 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
             }
 
             int written = Drive.WriteDirect(buffer, 0, chunkBytes,
-                out _ /* tapemark */, out bool ew, out bool eom);
+                out _ /* tapemark */, out _ /* ew (gated on reserve, unused here) */, out bool eom);
             bytesWritten += written;
 
-            // Capture the EW landmark exactly once, at first occurrence.
-            if (ew && ewPoint is null)
+            // Capture the EW landmark exactly once, at first occurrence. We read Drive.IsEarlyWarning
+            //  (set on every write regardless of the requested reserve) rather than the WriteDirect ew
+            //  out-param, which is suppressed while the run holds no reserve.
+            if (Drive.IsEarlyWarning && ewPoint is null)
             {
                 long rrEw = Drive.GetRemainingCapacity();
                 ewPoint = (bytesWritten, rrEw);
@@ -225,6 +240,16 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
 
         ResetError();
         return calibration;
+
+        }
+        finally
+        {
+            // Restore the caller's reserve and calibrations regardless of how the run ended.
+            foreach (var c in savedCalibrations)
+                Drive.AddCalibration(c);
+            Drive.SetEarlyWarning(savedReserve);
+            Drive.ResetEarlyWarningRuntime();
+        }
     }
 
     #endregion
