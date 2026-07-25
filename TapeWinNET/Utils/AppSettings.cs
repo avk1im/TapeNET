@@ -1,11 +1,16 @@
 using AiNET;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.ComponentModel;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media.TextFormatting;
+
+using TapeLibNET; // for TapeCalibrationStore
 
 namespace TapeWinNET.Utils;
 
@@ -238,4 +243,58 @@ public class AppSettings
     }
 
     #endregion
+
+    #region Logging (injected once at startup; never serialized)
+
+    /// <summary>
+    /// Logger factory used by settings-owned helpers that trace/report (blob stores).
+    /// Set this once after loading settings; unset ⇒ <see cref="NullLoggerFactory"/>.
+    /// </summary>
+    [JsonIgnore]
+    public ILoggerFactory? LoggerFactory { get; set; }
+
+    private ILoggerFactory EffectiveLoggerFactory => LoggerFactory ?? NullLoggerFactory.Instance;
+
+    #endregion // Logging
+
+    #region Calibrations (shared, library-scoped — NOT app-owned)
+
+    private TapeCalibrationStore? _calibrations;
+
+    /// <summary>
+    /// Convenience handle to the SHARED drive+media calibrations. These deliberately
+    /// live under the library folder (<c>%LocalAppData%\TapeLibNET\Calibrations</c>),
+    /// NOT the app folder, so every TapeLibNET-based app (TapeWinNET, TapeConNET, …)
+    /// reuses the same profiles.
+    /// <para>
+    /// Exposed here purely for ergonomics (<c>settings.Calibrations.Save(cal)</c>);
+    /// AppSettings does not own this data and never serializes it — see <see cref="JsonIgnoreAttribute"/>.
+    /// </para>
+    /// </summary>
+    [JsonIgnore]
+    public TapeCalibrationStore Calibrations =>
+        _calibrations ??= new TapeCalibrationStore(EffectiveLoggerFactory);
+
+    #endregion // Calibrations
+
+
+    // ---- OPTIONAL: app-PRIVATE blobs (same mechanism, app-scoped root) ----
+    // Keep this only if you ever need blobs that belong to THIS app alone.
+    // It reuses the very same KeyedBlobStore, rooted under the app folder next
+    // to Settings.json — demonstrating "scope decides the root, not the class".
+
+    #region App-private blobs (optional)
+
+    private KeyedBlobStore? _appBlobs;
+
+    /// <summary>
+    /// App-private keyed blob store, rooted at <c>...\TapeWinNET\Blobs</c> (next to
+    /// Settings.json). Use for artifacts that must NOT be shared across apps.
+    /// </summary>
+    [JsonIgnore]
+    public KeyedBlobStore AppBlobs => _appBlobs ??= new KeyedBlobStore(
+        Path.Combine(Path.GetDirectoryName(DefaultFilePath)!, "Blobs"),
+        EffectiveLoggerFactory.CreateLogger<KeyedBlobStore>());
+
+    #endregion // App-private blobs
 }

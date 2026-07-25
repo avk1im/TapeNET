@@ -85,6 +85,9 @@ public partial class App : Application
             }
         }
 
+        // Set logger for AppSettings
+        Settings.LoggerFactory = LoggerFactory;
+
         // Create and cache the application icon
         ApplicationIcon = TapeIcons.GetTapeDriveIcon(large: true);
         ApplicationIcon?.Freeze();
