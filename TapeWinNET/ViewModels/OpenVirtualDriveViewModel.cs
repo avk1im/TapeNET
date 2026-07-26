@@ -68,6 +68,7 @@ public record CapacityUnit(string Name, long Multiplier)
     public static CapacityUnit[] AllWithPercent { get; } =
     [
         Percent,
+        new("KB", 1024),
         new("MB", 1024 * 1024),
         new("GB", 1024L * 1024 * 1024),
     ];

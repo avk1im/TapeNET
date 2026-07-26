@@ -311,7 +311,7 @@
                               Margin="0,0,24,0"/>
                     <CheckBox Content="Supports Seq. Filemarks" 
                               IsChecked="{Binding SupportsSeqFilemarks}"
-                              Margin="0,0,0,0"/>
+                              Margin="24,0,0,0"/>
                 </WrapPanel>
             </GroupBox>
 

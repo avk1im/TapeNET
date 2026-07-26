@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
 
+using Windows.Win32.System.SystemServices; // for Helpers
+
 using TapeLibNET;
 using TapeLibNET.Virtual;
 
@@ -267,10 +269,10 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
     public long OverreportBytes => _overreportUnit.ToBytes(_overreportValue, ContentCapacityBytes);
 
     public string EwZoneBytesDisplay =>
-        IsEwCustom ? $"= {EwZoneBytes:N0} bytes" : string.Empty;
+        IsEwCustom ? EwZoneUnit == CapacityUnit.Percent ? $"= {Helpers.BytesToString(EwZoneBytes)}" : $"= {EwZoneBytes:N0} bytes" : string.Empty;
 
     public string OverreportBytesDisplay =>
-        IsEwCustom ? $"= {OverreportBytes:N0} bytes" : string.Empty;
+        IsEwCustom ? OverreportUnit == CapacityUnit.Percent ? $"= {Helpers.BytesToString(OverreportBytes)}" : $"= {OverreportBytes:N0} bytes" : string.Empty;
 
     /// <summary>
     /// Builds the <see cref="VirtualTapeEwProfile"/> for the current content capacity and EW settings, or
