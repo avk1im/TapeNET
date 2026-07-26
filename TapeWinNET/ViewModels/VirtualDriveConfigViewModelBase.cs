@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
 
+using TapeLibNET;
 using TapeLibNET.Virtual;
 
 namespace TapeWinNET.ViewModels;
@@ -34,6 +35,13 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
     protected PresetOption _selectedPreset = PresetOption.All[1]; // WithSetmarks
 
     protected string _mediaName = $"Virtual media created {DateTime.Now:yyyy-MM-dd HH:mm}";
+
+    // End-of-media emulation (early warning zone + capacity overreport)
+    protected EwProfileOption _selectedEwProfile = EwProfileOption.None;
+    protected string       _ewZoneValue     = "4";
+    protected CapacityUnit _ewZoneUnit      = CapacityUnit.Percent;
+    protected string       _overreportValue = "4";
+    protected CapacityUnit _overreportUnit  = CapacityUnit.Percent;
 
     // ── Commands ──────────────────────────────────────────────────────────────
 
@@ -114,6 +122,7 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
                 OnPropertyChanged(nameof(ContentCapacityBytesDisplay));
                 OnPropertyChanged(nameof(IsContentCapacityValid));
                 OnPropertyChanged(nameof(CanExecute));
+                OnEwBaseCapacityChanged();
             }
         }
     }
@@ -127,6 +136,7 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
             {
                 OnPropertyChanged(nameof(ContentCapacityBytes));
                 OnPropertyChanged(nameof(ContentCapacityBytesDisplay));
+                OnEwBaseCapacityChanged();
             }
         }
     }
@@ -176,6 +186,122 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
 
     public bool IsInitiatorCapacityValid =>
         long.TryParse(InitiatorCapacityValue, out var val) && val > 0;
+
+    // End-of-Media Behavior (early warning + capacity overreport)
+
+    /// <summary>
+    /// Selectable EW/EOM emulation profiles. Always contains <c>[Custom]</c> and <c>[LTO-4]</c>; any stored
+    /// calibration profiles are appended by the owning view-model.
+    /// </summary>
+    public ObservableCollection<EwProfileOption> EwProfiles { get; } =
+        new([EwProfileOption.None, EwProfileOption.Custom, EwProfileOption.Lto4]);
+
+    public EwProfileOption SelectedEwProfile
+    {
+        get => _selectedEwProfile;
+        set
+        {
+            if (SetProperty(ref _selectedEwProfile, value))
+            {
+                OnPropertyChanged(nameof(IsEwCustom));
+                OnPropertyChanged(nameof(EwZoneBytesDisplay));
+                OnPropertyChanged(nameof(OverreportBytesDisplay));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether the EW-zone / overreport value inputs are editable. Only the <c>[Custom]</c> profile exposes
+    /// its parameters; every other profile is opaque, so the inputs are disabled (and blanked in the UI).
+    /// </summary>
+    public bool IsEwCustom => _selectedEwProfile.IsCustom;
+
+    /// <summary>Units offered for the EW-zone and overreport inputs: % of capacity, MB, or GB.</summary>
+    public ObservableCollection<CapacityUnit> EwCapacityUnits { get; } =
+        new(CapacityUnit.AllWithPercent);
+
+    public string EwZoneValue
+    {
+        get => _ewZoneValue;
+        set
+        {
+            if (SetProperty(ref _ewZoneValue, value))
+                OnPropertyChanged(nameof(EwZoneBytesDisplay));
+        }
+    }
+
+    public CapacityUnit EwZoneUnit
+    {
+        get => _ewZoneUnit;
+        set
+        {
+            if (SetProperty(ref _ewZoneUnit, value))
+                OnPropertyChanged(nameof(EwZoneBytesDisplay));
+        }
+    }
+
+    public string OverreportValue
+    {
+        get => _overreportValue;
+        set
+        {
+            if (SetProperty(ref _overreportValue, value))
+                OnPropertyChanged(nameof(OverreportBytesDisplay));
+        }
+    }
+
+    public CapacityUnit OverreportUnit
+    {
+        get => _overreportUnit;
+        set
+        {
+            if (SetProperty(ref _overreportUnit, value))
+                OnPropertyChanged(nameof(OverreportBytesDisplay));
+        }
+    }
+
+    /// <summary>EW-zone size resolved to bytes against the current content capacity.</summary>
+    public long EwZoneBytes => _ewZoneUnit.ToBytes(_ewZoneValue, ContentCapacityBytes);
+
+    /// <summary>Capacity-overreport (floor) size resolved to bytes against the current content capacity.</summary>
+    public long OverreportBytes => _overreportUnit.ToBytes(_overreportValue, ContentCapacityBytes);
+
+    public string EwZoneBytesDisplay =>
+        IsEwCustom ? $"= {EwZoneBytes:N0} bytes" : string.Empty;
+
+    public string OverreportBytesDisplay =>
+        IsEwCustom ? $"= {OverreportBytes:N0} bytes" : string.Empty;
+
+    /// <summary>
+    /// Builds the <see cref="VirtualTapeEwProfile"/> for the current content capacity and EW settings, or
+    /// <see langword="null"/> when no meaningful emulation is configured. Transient — never persisted, like
+    /// the IO-rate emulation.
+    /// </summary>
+    public VirtualTapeEwProfile? BuildEwProfile() =>
+        _selectedEwProfile.BuildProfile(ContentCapacityBytes, EwZoneBytes, OverreportBytes);
+
+    /// <summary>
+    /// Appends stored calibration profiles to <see cref="EwProfiles"/>. Non-throwing: a store failure simply
+    /// leaves only the built-in options. Call once, after construction, when calibrations are available.
+    /// </summary>
+    protected void AddCalibrationProfiles(IEnumerable<ITapeCalibration>? calibrations)
+    {
+        if (calibrations is null)
+            return;
+
+        foreach (var cal in calibrations)
+            EwProfiles.Add(new EwProfileOption($"[{cal.ProfileKey}]", EnableEw: true, cal));
+    }
+
+    /// <summary>
+    /// Re-evaluates the EW byte displays when the base content capacity changes. Percentage-based EW inputs
+    /// resolve against <see cref="ContentCapacityBytes"/>, so their byte equivalents shift with capacity.
+    /// </summary>
+    private void OnEwBaseCapacityChanged()
+    {
+        OnPropertyChanged(nameof(EwZoneBytesDisplay));
+        OnPropertyChanged(nameof(OverreportBytesDisplay));
+    }
 
     // ── Initiator Partition ───────────────────────────────────────────────────
 

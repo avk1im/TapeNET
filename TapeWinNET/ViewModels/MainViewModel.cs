@@ -826,7 +826,7 @@ public partial class MainViewModel : ViewModelBase
             : "Opening virtual drive...";
         return RunBusyAsync(msg,
             () => _tapeService.OpenVirtualDriveAsync(request.Capabilities, request.Media, mediaMode,
-                request.IoRate?.Rate));
+                request.IoRate?.Rate, request.EwProfile));
     }
 
     // B — Load media
@@ -1778,7 +1778,8 @@ public partial class MainViewModel : ViewModelBase
                 Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
             },
             prePopulate: prePopulate,
-            preferCreateNew: preSelectCreateNew);
+            preferCreateNew: preSelectCreateNew,
+            calibrations: App.Settings.Calibrations.LoadAll());
 
         var window = new OpenVirtualDriveWindow(viewModel)
         {
@@ -2069,12 +2070,14 @@ public partial class MainViewModel : ViewModelBase
 
         var lastVmd = _tapeService.LastVMD;
         VirtualMediaDescriptor? newVmd = null;
+        VirtualTapeEwProfile? newEwProfile = null;
 
         var vm = new OpenVirtualDriveViewModel(
             onOpen: request =>
             {
                 Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
                 newVmd = request.Media;
+                newEwProfile = request.EwProfile;
             },
             onCancel: () =>
             {
@@ -2083,7 +2086,8 @@ public partial class MainViewModel : ViewModelBase
             prePopulate: lastVmd,
             mediaMode: FileMode.Create,
             currentCapabilities: currentCaps,
-            currentIoRate: _selectedIoSpeed);
+            currentIoRate: _selectedIoSpeed,
+            calibrations: App.Settings.Calibrations.LoadAll());
 
         var window = new OpenVirtualDriveWindow(vm)
         {
@@ -2099,7 +2103,7 @@ public partial class MainViewModel : ViewModelBase
 
         try
         {
-            if (!_tapeService.InsertVirtualMedia(newVmd, FileMode.Create))
+            if (!_tapeService.InsertVirtualMedia(newVmd, FileMode.Create, newEwProfile))
             {
                 SimpleBox.Show($"Failed to create virtual media files.\n\n{_tapeService.LastError}",
                     "Format Error", MessageBoxButton.OK, MessageBoxImage.Error);

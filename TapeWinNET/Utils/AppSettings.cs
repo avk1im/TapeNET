@@ -279,9 +279,9 @@ public class AppSettings
 
 
     // ---- OPTIONAL: app-PRIVATE blobs (same mechanism, app-scoped root) ----
-    // Keep this only if you ever need blobs that belong to THIS app alone.
-    // It reuses the very same KeyedBlobStore, rooted under the app folder next
-    // to Settings.json — demonstrating "scope decides the root, not the class".
+    // In case we ever need blobs that belong to THIS app alone.
+    //  It reuses the very same KeyedBlobStore, rooted under the app folder next
+    //  to Settings.json — demonstrating "scope decides the root, not the class".
 
     #region App-private blobs (optional)
 

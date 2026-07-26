@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows.Input;
 using Microsoft.Win32;
 
+using TapeLibNET;
 using TapeLibNET.Virtual;
 using TapeLibNET.Services;
 using TapeWinNET.Converters;
@@ -56,6 +57,38 @@ public record CapacityUnit(string Name, long Multiplier)
         new("MB", 1024 * 1024),
         new("GB", 1024L * 1024 * 1024),
     ];
+
+    /// <summary>
+    /// Special "% of capacity" unit. Its <see cref="Multiplier"/> is 0 as a sentinel — a percentage has no
+    /// constant byte multiplier; it is resolved against a live base capacity via <see cref="ToBytes"/>.
+    /// </summary>
+    public static CapacityUnit Percent { get; } = new("% Capacity", 0);
+
+    /// <summary>Units offered for percentage-or-absolute inputs (EW zone, capacity overreport).</summary>
+    public static CapacityUnit[] AllWithPercent { get; } =
+    [
+        Percent,
+        new("MB", 1024 * 1024),
+        new("GB", 1024L * 1024 * 1024),
+    ];
+
+    /// <summary>True when this unit expresses a percentage of a base capacity rather than absolute bytes.</summary>
+    public bool IsPercent => Multiplier == 0;
+
+    /// <summary>
+    /// Converts <paramref name="value"/> in this unit to bytes. For <see cref="IsPercent"/> units the result
+    /// is <paramref name="baseCapacityBytes"/> × value ÷ 100; otherwise value × <see cref="Multiplier"/>.
+    /// Returns 0 when the value cannot be parsed.
+    /// </summary>
+    public long ToBytes(string value, long baseCapacityBytes)
+    {
+        if (!double.TryParse(value, out var v) || v < 0)
+            return 0;
+
+        return IsPercent
+            ? (long)(baseCapacityBytes * v / 100.0)
+            : (long)(v * Multiplier);
+    }
 }
 
 /// <summary>
@@ -124,6 +157,69 @@ public record IoRateOption(long BytesPerSecond, long LocateBytesPerSecond, long 
 }
 
 /// <summary>
+/// Represents a selectable early-warning / end-of-media emulation profile in the ComboBox.
+/// <para>
+/// Three kinds exist:
+/// <list type="bullet">
+///   <item><see cref="None"/> — no profile specified -> do not emulate EW functionality.</item>
+///   <item><see cref="Custom"/> — the user supplies the EW-zone and capacity-overreport values directly.</item>
+///   <item><see cref="Lto4"/> — the built-in LTO-4-like preset.</item>
+///   <item>Calibration-backed — derived from a stored <see cref="ITapeCalibration"/> profile.</item>
+/// </list>
+/// The <see cref="Custom"/> option leaves the two value inputs editable; all others are opaque and blank the
+/// inputs while selected. Use <see cref="BuildProfile"/> to materialize the emulation profile for a capacity.
+/// </para>
+/// </summary>
+public sealed record EwProfileOption(string Display, bool EnableEw, ITapeCalibration? Calibration = null,
+    bool IsCustom = false)
+{
+    public override string ToString() => Display;
+
+    /// <summary>The default "[None]" option — do not emulate EW.</summary>
+    public static EwProfileOption None { get; } = new("[None]", EnableEw: false);
+
+    /// <summary>The editable "[Custom]" option — values come from the UI, not from this option.</summary>
+    public static EwProfileOption Custom { get; } = new("[Custom]", EnableEw: true, IsCustom: true);
+
+    /// <summary>The built-in LTO-4-like preset.</summary>
+    public static EwProfileOption Lto4 { get; } = new("[LTO-4]", EnableEw: true);
+
+    /// <summary>True when this option carries a stored calibration profile.</summary>
+    public bool IsCalibration => Calibration is not null;
+
+    /// <summary>
+    /// Builds the emulation profile for a target <paramref name="capacityBytes"/>. For <see cref="Custom"/>
+    /// the caller passes explicit <paramref name="ewZoneBytes"/> / <paramref name="overreportBytes"/>; for the
+    /// LTO-4 preset those are derived as percentages; for calibration options they are taken from the profile.
+    /// Returns <see langword="null"/> when no meaningful emulation is configured (e.g. Custom with zero zone).
+    /// </summary>
+    public VirtualTapeEwProfile? BuildProfile(long capacityBytes, long ewZoneBytes, long overreportBytes)
+    {
+        if (!EnableEw)
+            return null;
+
+        if (capacityBytes <= 0)
+            return null;
+
+        if (IsCalibration)
+            return VirtualTapeEwProfile.FromCalibration(Calibration!, capacityBytes);
+
+        if (IsCustom)
+        {
+            if (ewZoneBytes <= 0 && overreportBytes <= 0)
+                return null;
+
+            double ewZonePercent = 100.0 * ewZoneBytes / capacityBytes;
+            double floorPercent  = 100.0 * overreportBytes / capacityBytes;
+            return VirtualTapeEwProfile.Lto4Like(capacityBytes, ewZonePercent, floorPercent);
+        }
+
+        // Built-in LTO-4 preset (default 4% EW zone, 4% floor).
+        return VirtualTapeEwProfile.Lto4Like(capacityBytes);
+    }
+}
+
+/// <summary>
 /// Status of the virtual media probe operation.
 /// </summary>
 public enum VirtualDriveProbeStatus
@@ -143,7 +239,8 @@ public record VirtualDriveOpenRequest(
     VirtualMediaDescriptor Media,
     bool IsCreateNew,
     string? MediaName,
-    IoRateOption? IoRate = null
+    IoRateOption? IoRate = null,
+    VirtualTapeEwProfile? EwProfile = null
 );
 
 /// <summary>
@@ -274,7 +371,8 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
         bool? preferCreateNew = null,
         FileMode mediaMode = FileMode.OpenOrCreate,
         VirtualTapeDriveCapabilities? currentCapabilities = null,
-        IoRateOption? currentIoRate = null)
+        IoRateOption? currentIoRate = null,
+        IEnumerable<ITapeCalibration>? calibrations = null)
     {
         _onOpen = onOpen;
         _onCancel = onCancel;
@@ -346,6 +444,9 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
         BrowseContentFileCommand = new RelayCommand(BrowseContentFile);
         OpenCommand = new RelayCommand(ExecuteOpen, _ => CanExecute);
         CancelCommand = new RelayCommand(_ => _onCancel());
+
+        // Append any stored calibration profiles to the EW/EOM profile list (opaque, non-editable options).
+        AddCalibrationProfiles(calibrations);
     }
 
     #region Mode Selection
@@ -587,7 +688,10 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
                 InMemory: _isInMemory),
             IsCreateNew: IsCreateNewMode,
             MediaName: IsCreateNewMode ? MediaName : null,
-            IoRate: SelectedIoRate);
+            IoRate: SelectedIoRate,
+            // EW emulation scales to the content capacity, which is known from the UI:
+            //  either set for the new media or pre-loaded for the existing one.
+            EwProfile: BuildEwProfile());
 
         _onOpen(request);
     }

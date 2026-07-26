@@ -57,9 +57,12 @@ namespace TapeLibNET
         /// The remaining content capacity to adjust <b>without</b> deducted TOC capacity.
         /// </param>
         /// <returns>The adjusted remaining content capacity.</returns>
+        [Obsolete("Phase 3: superseded by TapeDrive.Remaining (calibrated estimate) plus early-warning " +
+            "enforcement via TapeDrive.SetEarlyWarning. Retained as a backstop for the legacy capacity checks.")]
         public long AdjustRemainingContentCapacity(long remainingCapacity)
         {
-            var remainingFromDrive = Drive.GetRemainingContentCapacity();
+            // Prefer the authoritative calibrated estimate; fall back to the raw driver figure.
+            var remainingFromDrive = Drive.Remaining;
             // adjust down by 1% of drive capacity to account for drive reporting inaccuracies
             remainingFromDrive -= Drive.Capacity / 100;
 
@@ -81,9 +84,11 @@ namespace TapeLibNET
         /// The remaining content capacity to adjust <b>without</b> deducted TOC capacity.
         /// </param>
         /// <returns>The adjusted remaining content capacity.</returns>
+        [Obsolete("Phase 3: superseded by TapeDrive.Remaining (calibrated estimate) plus early-warning " +
+            "enforcement via TapeDrive.SetEarlyWarning. Retained as a backstop for the legacy capacity checks.")]
         public static long AdjustRemainingContentCapacity(TapeDrive drive, long remainingCapacity)
         {
-            var remainingFromDrive = drive.GetRemainingContentCapacity();
+            var remainingFromDrive = drive.Remaining;
             // adjust down by 1% of drive capacity to account for drive reporting inaccuracies
             remainingFromDrive -= drive.Capacity / 100;
             

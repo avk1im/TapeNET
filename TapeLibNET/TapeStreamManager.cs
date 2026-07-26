@@ -573,6 +573,15 @@ namespace TapeLibNET
 
         private long CapacityForCurrentSet { get; set; } = -1; // unknow
 
+        /// <summary>
+        /// Phase 3: true when a logical early warning should terminate the current content write and
+        ///  reserve room for the TOC -- i.e. we are writing a content set and the TOC is co-located with
+        ///  content (no Initiator partition). While writing the TOC itself, or with an Initiator partition,
+        ///  early warning is not a stop condition (only a real end-of-media is).
+        /// </summary>
+        internal bool ShouldStopContentOnEarlyWarning =>
+            (TapeState)State == TapeState.WritingContent && !Drive.HasInitiatorPartition;
+
         private bool BeginWriteContentSet(long remainingCapacity)
         {
             ResetError();
@@ -802,7 +811,6 @@ namespace TapeLibNET
                     if (enforceReserved)
                     {
                         remaining = CapacityForCurrentSet - m_packerBytesWritten;
-                        remaining = Navigator.AdjustRemainingContentCapacity(remaining);
                     }
 
                     // Honor the artificial ContentCapacityLimit if set
@@ -837,18 +845,28 @@ namespace TapeLibNET
                         DriveNumber, validBytes, m_packerBytesWritten, remaining);
                 }
 
-                int written = Drive.WriteDirect(buffer, 0, validBytes, out _, out _, out bool eom);
+                int written = Drive.WriteDirect(buffer, 0, validBytes, out _, out bool ew, out bool eom);
 
                 int blocks = written / (int)Drive.BlockSize;
                 m_packerBytesWritten += written;
+
+                // Phase 3: in TOC-in-set mode a logical early warning means "stop content, leave room
+                //  for the TOC" -- which is exactly our end-of-media continuation semantics. Surface it
+                //  as EOM so the packer rolls back the uncommitted tail and the agent writes the TOC.
+                //  With an Initiator partition the TOC lives elsewhere, so EW is not a stop condition
+                //  and we let the real EOM govern.
+                bool ewStop = ew && !Drive.HasInitiatorPartition;
+                if (ewStop)
+                    m_logger.LogInformation("Drive #{Drive}: Packer crossed logical early warning (TOC-in-set); treating as EOM",
+                        DriveNumber);
 
                 // Map drive errors. Treat ERROR_END_OF_MEDIA as the EOM status; everything
                 //  else surfaces as a hard error exception per the backend contract.
                 if (Drive.WentOK)
                 {
-                    m_logger.LogTrace("Drive #{Drive}: Packer wrote {Written} B ({Blocks} blocks), eom={Eom}",
-                        DriveNumber, written, blocks, eom);
-                    return new WriteResult(blocks, EomEncountered: eom, Exception: null);
+                    m_logger.LogTrace("Drive #{Drive}: Packer wrote {Written} B ({Blocks} blocks), eom={Eom}, ew={Ew}",
+                        DriveNumber, written, blocks, eom, ew);
+                    return new WriteResult(blocks, EomEncountered: eom || ewStop, Exception: null);
                 }
 
                 if (Drive.LastErrorWin32 == WIN32_ERROR.ERROR_END_OF_MEDIA)

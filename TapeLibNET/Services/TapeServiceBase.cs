@@ -168,13 +168,25 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     }
 
     /// <summary>
-    /// Estimated remaining capacity in bytes (Capacity − Used).
+    /// Estimated remaining capacity in bytes — the authoritative calibrated estimate from the drive,
+    /// with room reserved for the TOC when it is co-located with content (no Initiator partition).
     /// </summary>
     public long Remaining => _drive is not null
-            ? AdjustRemainingContentCapacity(Capacity - Used
-                + (HasInitiatorPartition ? 0 : DefaultTOCCapacity))
+            ? Math.Max(0L, _drive.Remaining - (HasInitiatorPartition ? 0L : DefaultTOCCapacity))
             : 0;
-    
+
+    /// <summary>
+    /// The raw remaining capacity as reported by the drive/backend, for diagnostics and
+    /// "driver says vs. we estimate" display. Prefer <see cref="Remaining"/> for capacity decisions.
+    /// </summary>
+    public long DriverReportedRemaining => _drive?.DriverReportedRemaining ?? 0;
+
+    /// <summary>How the remaining-capacity estimate / logical early warning is currently realized.</summary>
+    public EarlyWarningMechanism EstimateMechanism => _drive?.EarlyWarningMechanism ?? EarlyWarningMechanism.None;
+
+    /// <summary>True once the drive has sensed a logical early-warning crossing this session.</summary>
+    public bool IsEarlyWarning => _drive?.IsEarlyWarning ?? false;
+
     /// <summary>
     /// Adjusts the remaining content capacity accounting for the drive reporting and TOC capacity.
     /// <para>Do <b>not</b> deduct the TOC capacity; the method will do this.</para>
@@ -184,6 +196,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// The remaining content capacity to adjust <b>without</b> deducted TOC capacity.
     /// </param>
     /// <returns>The adjusted remaining content capacity.</returns>
+    [Obsolete("Phase 3: superseded by Remaining (calibrated estimate). Retained as a backstop.")]
     public long AdjustRemainingContentCapacity(long remainingCapacity) =>
         _drive is not null
             ? TapeNavigator.AdjustRemainingContentCapacity(_drive, remainingCapacity)
@@ -413,10 +426,11 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         VirtualTapeDriveCapabilities capabilities,
         VirtualMediaDescriptor vmd,
         FileMode mediaMode = FileMode.OpenOrCreate,
-        VirtualTapeDriveIoRate? ioRate = null)
+        VirtualTapeDriveIoRate? ioRate = null,
+        VirtualTapeEwProfile? ewProfile = null)
     {
         if (vmd.InMemory)
-            return OpenVirtualDriveInMemoryAsync(capabilities, vmd, ioRate);
+            return OpenVirtualDriveInMemoryAsync(capabilities, vmd, ioRate, ewProfile);
 
         return Task.Run(async () =>
         {
@@ -440,6 +454,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 if (ioRate.HasValue)
                     backend.IoRate = ioRate.Value;
+
+                if (ewProfile is not null)
+                    backend.EmulatedEarlyWarning = ewProfile;
 
                 _agent?.Dispose();
                 _agent = null;
@@ -477,7 +494,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     private Task<bool> OpenVirtualDriveInMemoryAsync(
         VirtualTapeDriveCapabilities capabilities,
         VirtualMediaDescriptor vmd,
-        VirtualTapeDriveIoRate? ioRate = null)
+        VirtualTapeDriveIoRate? ioRate = null,
+        VirtualTapeEwProfile? ewProfile = null)
     {
         return Task.Run(async () =>
         {
@@ -504,6 +522,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 if (ioRate.HasValue)
                     backend.IoRate = ioRate.Value;
+
+                if (ewProfile is not null)
+                    backend.EmulatedEarlyWarning = ewProfile;
 
                 _agent?.Dispose();
                 _agent = null;
@@ -545,7 +566,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     ///  holds the <see cref="_operationLock"/>; this method does <b>not</b> acquire it.
     /// </para>
     /// </summary>
-    public bool InsertVirtualMedia(VirtualMediaDescriptor vmd, FileMode mediaMode = FileMode.Create)
+    public bool InsertVirtualMedia(VirtualMediaDescriptor vmd, FileMode mediaMode = FileMode.Create,
+        VirtualTapeEwProfile? ewProfile = null)
     {
         if (_drive?.Backend is not VirtualTapeDriveBackend vb)
         {
@@ -560,6 +582,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             if (vmd.InitiatorPath is not null)
                 LogInfoSub($"Initiator file: >{vmd.InitiatorPath}<");
             LogInfoSub($"Media mode: {mediaMode}");
+
+            if (ewProfile is not null)
+                vb.EmulatedEarlyWarning = ewProfile;
 
             vb.InsertMedia(vmd.ContentPath, vmd.ContentCapacity, vmd.InitiatorPath, vmd.InitiatorPartitionCapacity, mediaMode);
 

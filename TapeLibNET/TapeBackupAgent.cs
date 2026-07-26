@@ -77,9 +77,14 @@ namespace TapeLibNET
 
         private long ComputeRemainingCapacity()
         {
-            var remainingCapacity = Drive.ContentCapacity - TOC.ComputeTotalFileSizeOnTape(onVolumeOnly: true);
-            remainingCapacity = Navigator.AdjustRemainingContentCapacity(remainingCapacity);
-            return remainingCapacity;
+            // Phase 3: the authoritative remaining-capacity figure is the drive's calibrated estimate
+            //  (Drive.Remaining), from which we reserve room for the TOC when it is co-located with
+            //  content (no Initiator partition). The old Navigator.AdjustRemainingContentCapacity
+            //  heuristic is retired here; early-warning enforcement (see BeginWriteContentForCurrentSet)
+            //  is the real stop signal, this value is only a backstop for the legacy capacity checks.
+            var remainingCapacity = Drive.Remaining
+                - (Drive.HasInitiatorPartition ? 0L : Navigator.TOCCapacity);
+            return Math.Max(remainingCapacity, 0L);
         }
 
         private bool BeginWriteContentForCurrentSet(bool newSet)
@@ -116,6 +121,13 @@ namespace TapeLibNET
             // Hardware compression interlock: disable HW compression for Software/None sets so the
             //  drive doesn't double-compress or interfere; leave it enabled for Hardware sets.
             Drive.SetHardwareCompression(TOC.CurrentSetTOC.Compression == TapeCompression.Hardware);
+
+            // Phase 3: arm the drive's logical early warning to reserve room for the TOC when it is
+            //  co-located with content (TOC-in-set). The drive selects the best available mechanism
+            //  (matching calibration, physical EW, or an a-priori estimate), so WriteDirect raises EW
+            //  ~one TOC-reserve before EOM and the content write can stop cleanly and write the TOC.
+            //  With an Initiator partition the TOC lives elsewhere, so no reserve is needed.
+            Drive.SetEarlyWarning(Drive.HasInitiatorPartition ? 0L : Navigator.TOCCapacity);
 
             if (!Manager.BeginWriteContent(remainingCapacity))
             {

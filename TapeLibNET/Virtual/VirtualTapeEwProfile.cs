@@ -47,6 +47,20 @@ public sealed record VirtualTapeEwProfile
     /// linear reported-remaining model that overshoots toward the tail and floors at
     /// <paramref name="floorPercent"/> of capacity at hard EOM (mirrors the documented ~3.6% overshoot and
     /// ~4% floor). Independent of the medium's absolute capacity, so it applies to small test cartridges too.
+    /// <para>
+    /// The two percentages describe INDEPENDENT axes and do NOT overlap:
+    /// <list type="bullet">
+    ///   <item><paramref name="ewZonePercent"/> is a PHYSICAL distance before hard EOM at which early warning
+    ///   begins to assert (<see cref="EarlyWarningZone"/> = <c>capacity * ewZonePercent/100</c>). It is the
+    ///   last stretch of REAL, writable medium.</item>
+    ///   <item><paramref name="floorPercent"/> is a REPORTED-REMAINING figure: the phantom free space the
+    ///   driver still claims once hard EOM is reached (<c>reported(capacity) = capacity * floorPercent/100</c>).
+    ///   This space is not physically writable.</item>
+    /// </list>
+    /// Because the floor is phantom (over-reported) capacity rather than physical medium, the EW zone
+    /// <b>EXCLUDES</b> the floor — the two are orthogonal knobs. With the defaults (both 4.0), EW fires within
+    /// the last 4% of real medium, while the driver over-reports ~4% of capacity as still free at hard EOM.
+    /// </para>
     /// </summary>
     public static VirtualTapeEwProfile Lto4Like(long capacity, double ewZonePercent = 4.0, double floorPercent = 4.0)
     {

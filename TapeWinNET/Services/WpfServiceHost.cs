@@ -430,7 +430,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                         Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
                         // InsertVirtualMedia runs on the worker thread that holds the
                         //  semaphore; this Invoke is on the UI thread, so no deadlock.
-                        mediaReady = svc.InsertVirtualMedia(request.Media, System.IO.FileMode.Open);
+                        mediaReady = svc.InsertVirtualMedia(request.Media, System.IO.FileMode.Open, request.EwProfile);
                     },
                     onCancel: () =>
                     {
@@ -440,7 +440,8 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                     prePopulate: prePopulate,
                     mediaMode: System.IO.FileMode.Open,
                     currentCapabilities: currentCaps,
-                    currentIoRate: _viewModel.SelectedIoSpeed);
+                    currentIoRate: _viewModel.SelectedIoSpeed,
+                    calibrations: App.Settings.Calibrations.LoadAll());
 
                 var window = new OpenVirtualDriveWindow(vm) { Owner = Application.Current.MainWindow };
                 window.ShowDialog();
@@ -636,7 +637,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                     request =>
                     {
                         Application.Current.Windows.OfType<OpenVirtualDriveWindow>().FirstOrDefault()?.Close();
-                        mediaReady = svc.InsertVirtualMedia(request.Media, System.IO.FileMode.Create);
+                        mediaReady = svc.InsertVirtualMedia(request.Media, System.IO.FileMode.Create, request.EwProfile);
                     },
                     () =>
                     {
@@ -646,7 +647,8 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                     prePopulate: prePopulate,
                     mediaMode: System.IO.FileMode.Create,
                     currentCapabilities: currentCaps,
-                    currentIoRate: ioSpeed);
+                    currentIoRate: ioSpeed,
+                    calibrations: App.Settings.Calibrations.LoadAll());
 
                 var window = new OpenVirtualDriveWindow(vm) { Owner = Application.Current.MainWindow };
                 window.ShowDialog();

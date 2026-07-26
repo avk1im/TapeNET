@@ -407,9 +407,14 @@ namespace TapeLibNET
 
         internal int WriteDirect(byte[] buffer, int offset, int count)
         {
-            var result = m_mgr.Drive.WriteDirect(buffer, offset, count, out bool tapemark, out bool _, out bool eom);
+            var result = m_mgr.Drive.WriteDirect(buffer, offset, count, out bool tapemark, out bool ew, out bool eom);
             TapemarkEncountered = tapemark;
-            EOFEncountered = eom;
+            // Phase 3: when writing a content set with the TOC co-located (TOC-in-set), a logical early
+            //  warning means "stop content, leave room for the TOC" -- surfaced here as end-of-media so
+            //  the caller wraps up exactly as it does for a hard EOM. While writing the TOC itself we
+            //  ignore EW (the TOC path reacts only to a real EOM); an Initiator partition needs no reserve.
+            bool ewStop = ew && m_mgr.ShouldStopContentOnEarlyWarning;
+            EOFEncountered = eom || ewStop;
             return result;
         }
 

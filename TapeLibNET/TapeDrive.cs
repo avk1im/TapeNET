@@ -231,6 +231,21 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     }
 
     /// <summary>
+    /// The authoritative estimate of bytes still actually writable — the figure the rest of the
+    /// library and the apps should consume for "remaining capacity". Calibrated when a calibration
+    /// (measured or a-priori) is available, otherwise the raw driver value.
+    /// <para>Delegates to <see cref="EstimateActualRemaining"/> (throttled/cached per its contract).</para>
+    /// </summary>
+    public long Remaining => EstimateActualRemaining();
+
+    /// <summary>
+    /// The raw remaining capacity as reported by the drive/backend, kept for diagnostics,
+    /// calibration, and "driver says vs. we estimate" UI display. Prefer <see cref="Remaining"/>
+    /// for capacity decisions.
+    /// </summary>
+    public long DriverReportedRemaining => GetRemainingContentCapacity();
+
+    /// <summary>
     /// True if the underlying backend is a Win32 tape drive and the drive is an LTO model.
     /// </summary>
     public bool IsLtoDrive => m_backend is TapeDriveWin32Backend wbe && wbe.IsLto

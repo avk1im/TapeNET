@@ -302,35 +302,18 @@
                 </Grid>
             </GroupBox>
 
-            <!-- Features + IO Speed -->
-            <Grid Margin="0,0,0,12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-
-                <!-- Features (left) -->
-                <GroupBox Grid.Column="0" Header="Features" Margin="0,0,12,0"
-                          IsEnabled="{Binding IsFeaturesEnabled}">
-                    <WrapPanel Margin="8" Orientation="Horizontal">
-                        <CheckBox Content="Supports Setmarks" 
-                                  IsChecked="{Binding SupportsSetmarks}"
-                                  Margin="0,0,24,4"/>
-                        <CheckBox Content="Supports Seq. Filemarks" 
-                                  IsChecked="{Binding SupportsSeqFilemarks}"
-                                  Margin="0,0,0,4"/>
-                    </WrapPanel>
-                </GroupBox>
-
-                <!-- IO Speed (right) -->
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                    <TextBlock Text="IO Speed:" Margin="0,0,0,4"/>
-                    <ComboBox ItemsSource="{Binding IoRateOptions}"
-                              SelectedItem="{Binding SelectedIoRate}"
-                              IsEnabled="{Binding IsIoRateEnabled}"
-                              Width="180"/>
-                </StackPanel>
-            </Grid>
+            <!-- Features (full width) -->
+            <GroupBox Header="Features" Margin="0,0,0,12"
+                      IsEnabled="{Binding IsFeaturesEnabled}">
+                <WrapPanel Margin="8" Orientation="Horizontal">
+                    <CheckBox Content="Supports Setmarks" 
+                              IsChecked="{Binding SupportsSetmarks}"
+                              Margin="0,0,24,0"/>
+                    <CheckBox Content="Supports Seq. Filemarks" 
+                              IsChecked="{Binding SupportsSeqFilemarks}"
+                              Margin="0,0,0,0"/>
+                </WrapPanel>
+            </GroupBox>
 
             <!-- Block Sizes -->
             <GroupBox Header="Block Sizes" Margin="0,0,0,12"
@@ -361,6 +344,82 @@
                     <ComboBox Grid.Row="1" Grid.Column="2" 
                               ItemsSource="{Binding BlockSizeOptions}"
                               SelectedItem="{Binding MaxBlockSize}"/>
+                </Grid>
+            </GroupBox>
+
+            <!-- Emulate IO Performance -->
+            <GroupBox Header="Emulate IO Performance" Margin="0,0,0,12">
+                <StackPanel Margin="8" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="IO Speed:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox ItemsSource="{Binding IoRateOptions}"
+                              SelectedItem="{Binding SelectedIoRate}"
+                              IsEnabled="{Binding IsIoRateEnabled}"
+                              Width="200"/>
+                </StackPanel>
+            </GroupBox>
+
+            <!-- Emulate End-of-Media Behavior (early warning zone + capacity overreport) -->
+            <GroupBox Header="Emulate End-of-Media Behavior" Margin="0,0,0,12">
+                <Grid Margin="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Profile -->
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Profile:"
+                               VerticalAlignment="Center" Margin="0,0,8,6"/>
+                    <ComboBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="2"
+                              ItemsSource="{Binding EwProfiles}"
+                              SelectedItem="{Binding SelectedEwProfile}"
+                              Width="200" HorizontalAlignment="Left" Margin="0,0,8,6"/>
+
+                    <!-- Early Warning Zone -->
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Early Warning Zone:"
+                               Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
+                               VerticalAlignment="Center" Margin="0,0,8,6"/>
+                    <TextBox Grid.Row="1" Grid.Column="1"
+                             Text="{Binding EwZoneValue, UpdateSourceTrigger=PropertyChanged}"
+                             IsEnabled="{Binding IsEwCustom}"
+                             Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
+                             Width="70" Margin="0,0,8,6"/>
+                    <ComboBox Grid.Row="1" Grid.Column="2"
+                              ItemsSource="{Binding EwCapacityUnits}"
+                              SelectedItem="{Binding EwZoneUnit}"
+                              IsEnabled="{Binding IsEwCustom}"
+                              Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
+                              Width="90" Margin="0,0,8,6"/>
+                    <TextBlock Grid.Row="1" Grid.Column="3"
+                               Text="{Binding EwZoneBytesDisplay}"
+                               Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
+                               VerticalAlignment="Center" Foreground="Gray"/>
+
+                    <!-- Capacity Overreport -->
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Capacity Overreport:"
+                               Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBox Grid.Row="2" Grid.Column="1"
+                             Text="{Binding OverreportValue, UpdateSourceTrigger=PropertyChanged}"
+                             IsEnabled="{Binding IsEwCustom}"
+                             Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
+                             Width="70" Margin="0,0,8,0"/>
+                    <ComboBox Grid.Row="2" Grid.Column="2"
+                              ItemsSource="{Binding EwCapacityUnits}"
+                              SelectedItem="{Binding OverreportUnit}"
+                              IsEnabled="{Binding IsEwCustom}"
+                              Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
+                              Width="90" Margin="0,0,8,0"/>
+                    <TextBlock Grid.Row="2" Grid.Column="3"
+                               Text="{Binding OverreportBytesDisplay}"
+                               Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
+                               VerticalAlignment="Center" Foreground="Gray"/>
                 </Grid>
             </GroupBox>
 
