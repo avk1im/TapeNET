@@ -289,6 +289,8 @@
                 <Separator/>
                 <MenuItem Header="_Eject" Command="{Binding EjectCommand}"/>
                 <Separator/>
+                <MenuItem Header="_Calibrate..." Command="{Binding CalibrateMediaCommand}"/>
+                <Separator/>
                 <MenuItem Header="_Delete Backup Sets..." Command="{Binding DeleteBackupSetsCommand}"/>
                 <MenuItem Header="_Format..." Command="{Binding FormatMediaCommand}"/>
             </MenuItem>

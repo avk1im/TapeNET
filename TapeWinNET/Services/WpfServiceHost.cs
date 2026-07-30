@@ -90,6 +90,22 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
             filesSuffix: " files");
 
     /// <summary>
+    /// Updates the calibration progress indicators on the bound <see cref="MainViewModel"/>.
+    /// Safe to call from any thread — marshals to the UI dispatcher internally.
+    /// </summary>
+    public void UpdateCalibrateProgress(int processed, int total, long bytesWritten, long estimatedCapacity, string phase)
+    {
+        _dispatcher.Invoke(() =>
+        {
+            _viewModel.CurrentCalibrationPhase = phase;
+            double progress = UpdateIOProgress(processed, total, bytesWritten, estimatedCapacity);
+            _viewModel.CalibrationProgressPercent = Math.Clamp(progress * 100.0, 0.0, 100.0);
+            _viewModel.CalibrationProgressText =
+                $"{Helpers.BytesToStringLong(bytesWritten)} of ~{Helpers.BytesToStringLong(estimatedCapacity)} written";
+        });
+    }
+
+    /// <summary>
     /// Shared implementation for <see cref="UpdateBackupProgress"/> and
     ///  <see cref="UpdateRestoreProgress"/> — both operations report the same shape
     ///  of progress data, differing only in which view-model properties they update.

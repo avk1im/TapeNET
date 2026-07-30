@@ -110,6 +110,43 @@ public sealed record RestoreResult : FileOperationResult
     public Dictionary<int, List<TapeFileInfo>> ProcessedFiles { get; init; } = [];
 }
 
+// ── Calibrate ────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Summary statistics returned by a calibration operation.
+/// </summary>
+/// <remarks>
+/// To preserve the established operation-triad shape, the inherited "file" counters map
+/// calibration chunks → files. <see cref="BytesTotal"/> / <see cref="BytesProcessed"/> remain
+/// the more meaningful quantities for callers and UI progress.
+/// </remarks>
+public sealed record CalibrateResult : FileOperationResult
+{
+    /// <summary>The calibration produced by the run, or <see langword="null"/> on failure/abort.</summary>
+    public ITapeCalibration? Calibration { get; init; }
+
+    /// <summary>Matched drive+media profile key for this run.</summary>
+    public string ProfileKey { get; init; } = string.Empty;
+
+    /// <summary>Driver-reported capacity at BOT (bytes).</summary>
+    public long CapacityReported { get; init; }
+
+    /// <summary>True raw capacity measured at hard EOM (bytes).</summary>
+    public long CapacityActual { get; init; }
+
+    /// <summary>Captured EW landmark, or <see langword="null"/> when none was observed.</summary>
+    public CalibrationPoint? EarlyWarning { get; init; }
+
+    /// <summary>Bytes still writable when EW fired, or 0 when no EW landmark was observed.</summary>
+    public long EwToEomDistance { get; init; }
+
+    /// <summary>Number of points in the calibrated curve.</summary>
+    public int CurvePointCount => Calibration?.Curve.Count ?? 0;
+
+    /// <inheritdoc/>
+    public override bool IsFullSuccess => base.IsFullSuccess && Calibration is not null;
+}
+
 // ── List ─────────────────────────────────────────────────────────────────────
 
 /// <summary>

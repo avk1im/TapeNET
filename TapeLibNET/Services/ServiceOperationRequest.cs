@@ -68,6 +68,19 @@ public sealed record RestoreRequest(
     bool EjectWhenDone,
     ITapeFileFilter? Filter = null) : ServiceOperationRequest;
 
+// ── Calibrate ────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Options for a destructive calibration run over the currently loaded medium.
+/// </summary>
+/// <remarks>
+/// Calibration works on fixed-size write chunks rather than user files, but it still
+/// follows the same service-operation pattern as backup and restore.
+/// </remarks>
+public sealed record CalibrateRequest(
+    bool EjectWhenDone,
+    TapeCalibrationOptions Options) : ServiceOperationRequest;
+
 // ── List ─────────────────────────────────────────────────────────────────────
 
 /// <summary>
@@ -130,5 +143,4 @@ public sealed record ListRequest(
     bool ShowFullPath = true,
     ITapeFileFilter? Filter = null,
     ListDepth Depth = ListDepth.Full) : ServiceOperationRequest;
-
 

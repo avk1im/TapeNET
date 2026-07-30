@@ -111,6 +111,9 @@ public partial class MainViewModel : ViewModelBase
         // Initialize backup commands (from MainViewModel.Backup.cs)
         InitializeBackupCommands();
 
+        // Initialize calibration commands (from MainViewModel.Calibration.cs)
+        InitializeCalibrationCommands();
+
         // Initialize restore commands (from MainViewModel.Restore.cs)
         InitializeRestoreCommands();
 
@@ -273,14 +276,14 @@ public partial class MainViewModel : ViewModelBase
     public bool IsTOCCancelEnabled => !_isTOCAbortPending;
 
     /// <summary>
-    /// True when busy with non-backup/restore/TOC-load operations (shows full-window overlay).
+    /// True when busy with non-backup/restore/calibration/TOC-load operations (shows full-window overlay).
     /// </summary>
-    public bool IsGeneralBusy => IsBusy && !IsBackupInProgress && !IsRestoreInProgress && !IsTOCLoadInProgress;
+    public bool IsGeneralBusy => IsBusy && !IsBackupInProgress && !IsRestoreInProgress && !IsCalibrateInProgress && !IsTOCLoadInProgress;
 
     /// <summary>
-    /// True when any tape operation (backup or restore/validate/verify) is in progress.
+    /// True when any tape operation (backup, calibration, or restore/validate/verify) is in progress.
     /// </summary>
-    public bool IsOperationInProgress => IsBackupInProgress || IsRestoreInProgress;
+    public bool IsOperationInProgress => IsBackupInProgress || IsCalibrateInProgress || IsRestoreInProgress;
 
     /// <summary>
     /// False whenever any operation/busy overlay is shown, so the TreeView and the media/property
@@ -297,6 +300,7 @@ public partial class MainViewModel : ViewModelBase
     public bool IsMediaBrowsingEnabled => !IsBusy && !IsOperationInProgress && !IsTOCLoadInProgress;
 
     // BackupProgressPercent, BackupProgressText, CurrentBackupFile properties are in MainViewModel.Backup.cs
+    // CalibrationProgressPercent, CalibrationProgressText, CurrentCalibrationPhase properties are in MainViewModel.Calibration.cs
     // RestoreProgressPercent, RestoreProgressText, CurrentRestoreFile, IsRestoreInProgress properties are in MainViewModel.Restore.cs
 
     // ── Unified Operation overlay ─────────────────────────────────────────────
@@ -305,23 +309,35 @@ public partial class MainViewModel : ViewModelBase
     //  bar, current file, IO sparkline, abort button). These properties pick the
     //  currently active operation's values, since only one operation runs at a time.
 
-    /// <summary>Progress percent of whichever operation (backup or restore) is currently active.</summary>
-    public double OperationProgressPercent => IsBackupInProgress ? BackupProgressPercent : RestoreProgressPercent;
+    /// <summary>Progress percent of whichever operation is currently active.</summary>
+    public double OperationProgressPercent => IsBackupInProgress ? BackupProgressPercent
+        : IsCalibrateInProgress ? CalibrationProgressPercent
+        : RestoreProgressPercent;
 
-    /// <summary>Progress text of whichever operation (backup or restore) is currently active.</summary>
-    public string OperationProgressText => IsBackupInProgress ? BackupProgressText : RestoreProgressText;
+    /// <summary>Progress text of whichever operation is currently active.</summary>
+    public string OperationProgressText => IsBackupInProgress ? BackupProgressText
+        : IsCalibrateInProgress ? CalibrationProgressText
+        : RestoreProgressText;
 
-    /// <summary>Current file name of whichever operation (backup or restore) is currently active.</summary>
-    public string CurrentOperationFile => IsBackupInProgress ? CurrentBackupFile : CurrentRestoreFile;
+    /// <summary>Current file name / phase text of whichever operation is currently active.</summary>
+    public string CurrentOperationFile => IsBackupInProgress ? CurrentBackupFile
+        : IsCalibrateInProgress ? CurrentCalibrationPhase
+        : CurrentRestoreFile;
 
-    /// <summary>Abort command of whichever operation (backup or restore) is currently active.</summary>
-    public ICommand AbortOperationCommand => IsBackupInProgress ? AbortBackupCommand : AbortRestoreCommand;
+    /// <summary>Abort command of whichever operation is currently active.</summary>
+    public ICommand AbortOperationCommand => IsBackupInProgress ? AbortBackupCommand
+        : IsCalibrateInProgress ? AbortCalibrationCommand
+        : AbortRestoreCommand;
 
-    /// <summary>Abort button IsEnabled state of whichever operation (backup or restore) is currently active.</summary>
-    public bool IsAbortOperationEnabled => IsBackupInProgress ? IsAbortBackupEnabled : IsAbortRestoreEnabled;
+    /// <summary>Abort button IsEnabled state of whichever operation is currently active.</summary>
+    public bool IsAbortOperationEnabled => IsBackupInProgress ? IsAbortBackupEnabled
+        : IsCalibrateInProgress ? IsAbortCalibrationEnabled
+        : IsAbortRestoreEnabled;
 
-    /// <summary>Abort button label — distinguishes the two operations for clarity.</summary>
-    public string AbortOperationButtonText => IsBackupInProgress ? "Abort Backup" : "Abort";
+    /// <summary>Abort button label — distinguishes the operations for clarity.</summary>
+    public string AbortOperationButtonText => IsBackupInProgress ? "Abort Backup"
+        : IsCalibrateInProgress ? "Abort Calibration"
+        : "Abort";
 
     /// <summary>
     /// Raises change notifications for all unified Operation-overlay properties.
@@ -666,6 +682,7 @@ public partial class MainViewModel : ViewModelBase
     public ICommand ImportTOCCommand { get; }
     public ICommand AbortTOCLoadCommand { get; private set; } = null!;
     // NewBackupCommand and AbortBackupCommand are in MainViewModel.Backup.cs
+    // CalibrateMediaCommand and AbortCalibrationCommand are in MainViewModel.Calibration.cs
     // RestoreCommand, ValidateCommand, VerifyCommand, AbortRestoreCommand are in MainViewModel.Restore.cs
     public ICommand NavigateToBackupSetCommand { get; }
 
@@ -2149,4 +2166,3 @@ public partial class MainViewModel : ViewModelBase
 
     #endregion
 }
-

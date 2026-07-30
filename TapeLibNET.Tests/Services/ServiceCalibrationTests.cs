@@ -1,0 +1,95 @@
+using TapeLibNET.Services;
+using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Virtual;
+
+namespace TapeLibNET.Tests.Services;
+
+public class ServiceCalibrationTests : ServiceTestBase
+{
+    private const long MB = 1024L * 1024;
+    private const long CalibrationCapacity = 64L * MB;
+
+    private static async Task<(TapeServiceBase service, TestTapeServiceHost host)> OpenCalibrationServiceAsync(
+        long capacity = CalibrationCapacity,
+        VirtualTapeDriveIoRate? ioRate = null)
+    {
+        var (service, host) = CreateService();
+
+        var vmd = new VirtualMediaDescriptor("memory-calibration", capacity, null, 0, InMemory: true);
+
+        Assert.True(await service.OpenVirtualDriveAsync(
+                VirtualTapeDriveCapabilities.WithFilemarksOnlyLargeBlocks,
+                vmd,
+                ioRate: ioRate,
+                ewProfile: VirtualTapeEwProfile.Lto4Like(capacity)),
+            $"OpenVirtualDriveAsync failed: {service.LastError}");
+
+        Assert.True(await service.LoadMediaAsync(),
+            $"LoadMediaAsync failed: {service.LastError}");
+
+        return (service, host);
+    }
+
+    [Fact]
+    public async Task ExecuteCalibrateAsync_ReturnsCalibrationAndLogsSummary()
+    {
+        var (service, host) = await OpenCalibrationServiceAsync();
+        using (service)
+        {
+            var result = await service.ExecuteCalibrateAsync(
+                new CalibrateRequest(
+                    EjectWhenDone: false,
+                    Options: new TapeCalibrationOptions
+                    {
+                        SampleCount = 20,
+                        MinSampleInterval = 1L * MB,
+                        ChunkBytesTarget = 1L * MB,
+                    }));
+
+            Assert.True(result.Success);
+            Assert.False(result.WasAborted);
+            Assert.NotNull(result.Calibration);
+            Assert.Equal(service.DriveProfileKey, result.ProfileKey);
+            Assert.True(result.CapacityActual > 0);
+            Assert.True(result.EwToEomDistance > 0);
+            Assert.Contains(ServiceStateChange.OperationStarted, host.StateChanges);
+            Assert.Contains(ServiceStateChange.OperationEnded, host.StateChanges);
+            Assert.True(host.ContainsMessage("Calibration summary"));
+            Assert.True(host.ContainsMessage("Calibration completed successfully"));
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteCalibrateAsync_HonorsAbortRequest()
+    {
+        var (service, host) = await OpenCalibrationServiceAsync(
+            capacity: 256L * MB,
+            ioRate: new VirtualTapeDriveIoRate { BytesPerSecond = 8L * MB });
+
+        using (service)
+        using (var cts = new CancellationTokenSource())
+        {
+            var task = service.ExecuteCalibrateAsync(
+                new CalibrateRequest(
+                    EjectWhenDone: false,
+                    Options: new TapeCalibrationOptions
+                    {
+                        SampleCount = 16,
+                        MinSampleInterval = 1L * MB,
+                        ChunkBytesTarget = 1L * MB,
+                    })
+                {
+                    Cancellation = cts.Token,
+                });
+
+            await Task.Delay(100);
+            cts.Cancel();
+
+            var result = await task;
+            Assert.True(result.WasAborted);
+            Assert.False(result.Success);
+            Assert.Null(result.Calibration);
+            Assert.True(host.ContainsMessage("Calibration abort requested"));
+        }
+    }
+}
