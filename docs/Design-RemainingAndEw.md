@@ -641,27 +641,55 @@ skipped as unconfigured). Key decisions, some diverging from the questions posed
   `Service.Remaining` (calibrated) instead of `AdjustRemainingContentCapacity`. In the `MainWindow` Properties
   ListView display in addition the "driver estimate" figure (`DriverReportedRemaining`).
   Finally, display the `EarlyWarningMechanism` so the user can see *why* the numbers differ.
-- **Log pane:** when a backup finalizes on logical EW, emit a `LogEntry` (`WarningLevel.Info`/`Completed`) —
+  Reproduce the same reporting in `TapeServiceBase.List.cs` (used by TapeConNET): `LogDriveInfo()` and `LogMediaInfoFull()`.
+- **Log pane:** when a backup finalizes on logical EW, emit a `LogEntry` (at the `WarningLevel.Info`) —
   e.g. *"Early warning: volume full at ~N GB (calibrated); writing table of contents."* — via the existing
   `LogMessageReceived` → `AddLog` path, so the user understands why the run wrapped up before the driver's
   optimistic figure.
+- **`MediaUsageBarPresenter`** (and derivates) also need an update since they employ the obsolete
+  `AdjustRemainingContentCapacity()`.
 - **Calibration persistence:** store `TapeCalibration` blobs via `TapeCalibrationStore` accessible via
-  `AppSettings.Calibrations` API.
+  `AppSettings.Calibrations` API (already used in Phase 1A).
 
 **Acceptance:** backup UI shows the calibrated figure; log pane explains the EW wrap-up; calibration profiles
 persist across app restarts and auto-apply to matching media.
 
-### Phase 5 — Calibration UI (`TapeWinNET`)
+### Phase 5 — Calibration UI (TapeWinNET)
 
 The largest UI addition. A dedicated calibration workflow dialog window plus operation progress overlay,
-consistent with existing backup/restore progress panels:
+consistent with existing backup/restore progress panels.
 
-- **Pre-flight:** explicit destructive-operation warning (scratch cartridge required), profile summary
-  (vendor/product/revision/capacity bucket), and a confirm gate.
-- **Progress:** percent bar, bytes-written / estimated-capacity, current phase (writing to EOM, capturing EW,
+**Preparation step: implement calibration serivce**. Since we must implement calibration UI for both TapeWinNET
+and TapeConNET, let's wrap it in a higher-level, threaded functionality on the level of `TapeLibNET.Services`,
+in the new file `TapeServiceBase.EW.cs`. Let's follow the same pattern `ServiceOperationRequest` -> operation ->
+`ServiceOperationResult` used by Backup, Restore, and List service operations, which we can mirror for the new
+methods `ExecuteCalibrateAsync()` (with optional media ejection at the end) -> `ExecuteCalibrateCore()`.
+
+With this approach we'll be able to reuse the progress reporting mechanism of `ServiceOpeartionProgressHandler` --
+which readily plugs in `MainWindow` progress overlay UI. From it, we can also reuse the Abort functionality.
+
+The only semantic gap to bridge: The existing operations (Backup / Restore / List) work on the level of files --
+whereas Calibarte works on the level of chunks. The "Calibrate" derived flavor of the operation classes and records
+will map chunks to files. To simplify things, Calibrate operation needs no agent sice it involves no TOC.
+
+UI:
+- **`CalibrateWindow`** with an explicit destructive-operation warning (scratch cartridge required), profile summary
+  (vendor/product/revision/capacity bucket), and a confirm gate -- much of the UI can be patterned after
+  `DeleteBackupSetsWindows`.
+- **Progress:** via `MainWindow` operation overaly -- to reuse what we already leverage for Backup and Restore:
+  percent bar, bytes-written / estimated-capacity, current phase (writing to EOM, capturing EW,
   finalizing), and an **Abort** button bound to the calibrator's cooperative `IsAbortRequested`.
-- **Result:** show measured `CapacityActual`, EW landmark, and `EwToEomDistance`; offer *Save profile* (into the
-  `CalibrationStore`) and immediate activation via `AddCalibration`.
+  Implementation: add a `UpdateCalibrateProgress()` to `WpfServiceHost`, patterned after Backup and Restore ones.
+- **Result:** The summary output from service layer to the log pane (similar to Backup / Restore summary). To visualize
+  the result, let's add `CalibrationWindow` that shows measured `CapacityActual`, EW landmark, and `EwToEomDistance`;
+  offers *Save Profile* (into the `CalibrationStore`) and immediate *Apply Profile* via `AddCalibration`.
+  - Bonus feature: How about also displaying a simple 2D graph to visualize Reported -> Actual remaining capacity
+    curve, with the EW and EOM points marked? We already employ a simple 2D graph for `IoRateSparklineControl` ->
+    can resue much of its code; even lift to a common base class if this will simpolify the two implementations.
+    It'll be more intuitive to flip the X-axis (Remaining): Full capacity on the left, down to EOM on the right.
+    The problem: the final section, between EW and EOM / misreported EOM, is the most interesting -- yet it'll show
+    up very small on the graph, e.g. on LTO-4: 50 GB / 780 GB ~ 6.5%. How can we elegantly magnify this area?
+
 - **MVVM:** a `CalibrationViewModel` owning the run on a background thread, marshaling progress/log to the UI via
   the established dispatch helpers; reuse `WarningLevel`/`LogEntry` styling for status.
 

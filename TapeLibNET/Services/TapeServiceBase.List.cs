@@ -2,7 +2,8 @@ using System.IO;
 
 using Windows.Win32.System.SystemServices; // Helpers
 
-using TapeLibNET; // TapeTOC, TapeFileInfo, ITapeFileFilter
+using TapeLibNET;
+using System.Diagnostics; // TapeTOC, TapeFileInfo, ITapeFileFilter
 
 namespace TapeLibNET.Services;
 
@@ -58,7 +59,7 @@ public partial class TapeServiceBase
                     {
                         LogInfo("Media information:");
                         if (_toc is not null)
-                            LogMediaInfoFull(_toc);
+                            LogMediaInfoFull();
                         else
                             LogMediaInfo(); // TOC not available, fall back to drive-level capacity info
                     }
@@ -79,17 +80,18 @@ public partial class TapeServiceBase
                 }
 
                 var toc = _toc;
+                Debug.Assert(toc is not null);
 
                 if (depth.HasFlag(ListDepth.Media))
                 {
                     LogInfo("Media information:");
-                    LogMediaInfoFull(toc);
+                    LogMediaInfoFull();
                 }
 
                 // ── Compact backup-sets table (SetTable only, no FileDetails) ─
                 if (depth.HasFlag(ListDepth.SetTable) && !depth.HasFlag(ListDepth.FileDetails))
                 {
-                    LogBackupSetsTable(toc);
+                    LogBackupSetsTable();
                     return ListResult.Ok(toc.Count, 0, 0);
                 }
 
@@ -115,7 +117,7 @@ public partial class TapeServiceBase
                 {
                     toc.CurrentSetIndex = setIndex;
                     LogInfo($"Backup set #{setIndex} | {toc.SetIndexToAlt(setIndex)}:");
-                    LogCurrentSetInfo(toc);
+                    LogCurrentSetInfo();
 
                     bool incremental = toc.CurrentSetTOC.Incremental;
                     int lastNonIncIndex = toc.LastNonIncSet;
@@ -261,9 +263,10 @@ public partial class TapeServiceBase
     /// Each row contains the set's dual index, description, file count, total size,
     ///  creation time, and flags (incremental, volume).
     /// </summary>
-    protected virtual void LogBackupSetsTable(TapeTOC toc)
+    protected virtual void LogBackupSetsTable()
     {
-        if (_drive is null) return;
+        if (_drive is null || _toc is not TapeTOC toc)
+            return;
 
         LogInfo($"Backup sets ({toc.Count} total):");
         for (int alt = 0; alt >= toc.MinSetIndex; alt--)
@@ -287,9 +290,10 @@ public partial class TapeServiceBase
     /// Base implementation logs the core media fields; subclasses may override to
     ///  add or reformat entries.
     /// </summary>
-    protected virtual void LogMediaInfoFull(TapeTOC toc)
+    protected virtual void LogMediaInfoFull()
     {
-        if (_drive is null) return;
+        if (_drive is null || _toc is not TapeTOC toc)
+            return;
 
         LogInfoSub($"Name: >{toc.Description}<");
         LogInfoSub($"Created on: {toc.CreationTime}");
@@ -309,9 +313,11 @@ public partial class TapeServiceBase
     /// Base implementation logs the full set fields; subclasses may override to
     ///  customise the output.
     /// </summary>
-    protected virtual void LogCurrentSetInfo(TapeTOC toc)
+    protected virtual void LogCurrentSetInfo()
     {
-        if (_drive is null) return;
+        if (_drive is null || _toc is not TapeTOC toc)
+            return;
+
         var setTOC = toc.CurrentSetTOC;
         LogInfoSub($"Name: >{setTOC.Description}<");
         LogInfoSub($"Files: {setTOC.Count}");
