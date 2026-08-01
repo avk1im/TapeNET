@@ -4,9 +4,9 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d"
-             d:DesignHeight="220"
+             d:DesignHeight="160"
              d:DesignWidth="420"
-             MinHeight="220"
+             MinHeight="160"
              ClipToBounds="True">
     <Grid ClipToBounds="True">
         <Grid.ColumnDefinitions>
