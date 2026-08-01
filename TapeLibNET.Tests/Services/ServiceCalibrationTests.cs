@@ -11,7 +11,8 @@ public class ServiceCalibrationTests : ServiceTestBase
 
     private static async Task<(TapeServiceBase service, TestTapeServiceHost host)> OpenCalibrationServiceAsync(
         long capacity = CalibrationCapacity,
-        VirtualTapeDriveIoRate? ioRate = null)
+        VirtualTapeDriveIoRate? ioRate = null,
+        VirtualTapeEwProfile? ewProfile = null)
     {
         var (service, host) = CreateService();
 
@@ -21,7 +22,7 @@ public class ServiceCalibrationTests : ServiceTestBase
                 VirtualTapeDriveCapabilities.WithFilemarksOnlyLargeBlocks,
                 vmd,
                 ioRate: ioRate,
-                ewProfile: VirtualTapeEwProfile.Lto4Like(capacity)),
+                ewProfile: ewProfile ?? VirtualTapeEwProfile.Lto4Like(capacity)),
             $"OpenVirtualDriveAsync failed: {service.LastError}");
 
         Assert.True(await service.LoadMediaAsync(),
@@ -50,6 +51,7 @@ public class ServiceCalibrationTests : ServiceTestBase
             Assert.False(result.WasAborted);
             Assert.NotNull(result.Calibration);
             Assert.Equal(service.DriveProfileKey, result.ProfileKey);
+            Assert.True(result.CapacityReported > result.CapacityActual);
             Assert.True(result.CapacityActual > 0);
             Assert.True(result.EwToEomDistance > 0);
             Assert.Contains(ServiceStateChange.OperationStarted, host.StateChanges);
@@ -90,6 +92,32 @@ public class ServiceCalibrationTests : ServiceTestBase
             Assert.False(result.Success);
             Assert.Null(result.Calibration);
             Assert.True(host.ContainsMessage("Calibration abort requested"));
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteCalibrateAsync_WithCustomOverreport_ExposesReportedCapacityGap()
+    {
+        var (service, _) = await OpenCalibrationServiceAsync(
+            ewProfile: VirtualTapeEwProfile.Lto4Like(CalibrationCapacity, ewZonePercent: 4.0, floorPercent: 10.0));
+
+        using (service)
+        {
+            var result = await service.ExecuteCalibrateAsync(
+                new CalibrateRequest(
+                    EjectWhenDone: false,
+                    Options: new TapeCalibrationOptions
+                    {
+                        SampleCount = 20,
+                        MinSampleInterval = 1L * MB,
+                        ChunkBytesTarget = 1L * MB,
+                    }));
+
+            Assert.True(result.Success);
+            Assert.True(result.CapacityReported > result.CapacityActual);
+            Assert.NotNull(result.Calibration);
+            Assert.True(result.Calibration!.Curve[0].ReportedRemaining > 0);
+            Assert.Equal(0L, result.Calibration.Curve[0].ActualRemaining);
         }
     }
 }

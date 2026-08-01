@@ -124,8 +124,6 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         // Hardware compression OFF so incompressible bytes map 1:1 to tape position.
         Drive.SetHardwareCompression(false);
 
-        long capacityReported = Drive.Capacity;
-
         // --- Position at BOT of the content partition ---
         if (!Drive.MoveToPartition(MediaPartition.Content) || !Drive.Rewind())
         {
@@ -133,6 +131,11 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
             LogErrorAsDebug("Calibration: failed to rewind content partition");
             return null;
         }
+
+        // The reported-capacity side of the run intentionally tracks the DRIVER-facing Remaining
+        //  figure, not the true physical capacity, so emulations that still claim phantom free
+        //  space at hard EOM remain visible in the resulting calibration.
+        long capacityReportedAtBot = Drive.GetRemainingCapacity();
 
         // --- Prepare an incompressible payload chunk (whole blocks) ---
         long targetChunk = Math.Max(blockSize, Options.ChunkBytesTarget);
@@ -143,13 +146,13 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         Random.Shared.NextBytes(buffer); // random ⇒ incompressible; reused every write (compression is off)
 
         // --- Sample cadence ---
-        long sampleInterval = capacityReported > 0
-            ? Math.Max(capacityReported / Math.Max(1, Options.SampleCount), Options.MinSampleInterval)
+        long sampleInterval = capacityReportedAtBot > 0
+            ? Math.Max(capacityReportedAtBot / Math.Max(1, Options.SampleCount), Options.MinSampleInterval)
             : Options.MinSampleInterval;
 
         m_logger.LogInformation(
             "{Prefix}: Calibration start — profile '{Key}', reportedCapacity {Cap}, blockSize {Bs}, chunk {Chunk}, sampleInterval {Int}",
-            LogPrefix, Drive.DriveProfileKey, capacityReported, blockSize, chunkBytes, sampleInterval);
+            LogPrefix, Drive.DriveProfileKey, capacityReportedAtBot, blockSize, chunkBytes, sampleInterval);
 
         // --- Write to hard EOM, sampling as we go ---
         var samples = new List<(long ActualWritten, long ReportedRemaining)>();
@@ -157,6 +160,8 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
 
         long bytesWritten = 0;
         long nextSample = 0;
+
+        samples.Add((ActualWritten: 0L, ReportedRemaining: capacityReportedAtBot));
 
         while (true)
         {
@@ -229,12 +234,12 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         }
 
         ITapeCalibration calibration = TapeCalibration.FromMeasurements(
-            Drive.DriveProfileKey, capacityReported, capacityActual, samples, ewPoint);
+            Drive.DriveProfileKey, capacityReportedAtBot, capacityActual, samples, ewPoint);
 
         m_logger.LogInformation(
             "{Prefix}: Calibration done — actualCapacity {Act} ({Pct:F1}% of reported), EW {Ew}, points {N}",
             LogPrefix, capacityActual,
-            capacityReported > 0 ? 100.0 * capacityActual / capacityReported : 0.0,
+            calibration.CapacityReported > 0 ? 100.0 * capacityActual / calibration.CapacityReported : 0.0,
             ewPoint is { } e ? $"{e.ActualWritten} bytes / RR {e.ReportedRemaining}" : "(none)",
             samples.Count);
 

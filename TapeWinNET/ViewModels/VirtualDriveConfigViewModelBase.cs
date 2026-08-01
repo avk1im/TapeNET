@@ -265,7 +265,11 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
     /// <summary>EW-zone size resolved to bytes against the current content capacity.</summary>
     public long EwZoneBytes => _ewZoneUnit.ToBytes(_ewZoneValue, ContentCapacityBytes);
 
-    /// <summary>Capacity-overreport (floor) size resolved to bytes against the current content capacity.</summary>
+    /// <summary>
+    /// Capacity-overreport size resolved to bytes against the current content capacity — i.e. the
+    /// phantom free space the emulated driver may still claim at hard EOM, not a reduction of the
+    /// medium's true writable capacity.
+    /// </summary>
     public long OverreportBytes => _overreportUnit.ToBytes(_overreportValue, ContentCapacityBytes);
 
     public string EwZoneBytesDisplay =>

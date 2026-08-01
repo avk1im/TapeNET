@@ -192,6 +192,8 @@ public sealed record EwProfileOption(string Display, bool EnableEw, ITapeCalibra
     /// Builds the emulation profile for a target <paramref name="capacityBytes"/>. For <see cref="Custom"/>
     /// the caller passes explicit <paramref name="ewZoneBytes"/> / <paramref name="overreportBytes"/>; for the
     /// LTO-4 preset those are derived as percentages; for calibration options they are taken from the profile.
+    /// <paramref name="overreportBytes"/> models phantom free space the driver still claims at hard EOM —
+    /// it does not reduce the medium's true writable capacity.
     /// Returns <see langword="null"/> when no meaningful emulation is configured (e.g. Custom with zero zone).
     /// </summary>
     public VirtualTapeEwProfile? BuildProfile(long capacityBytes, long ewZoneBytes, long overreportBytes)

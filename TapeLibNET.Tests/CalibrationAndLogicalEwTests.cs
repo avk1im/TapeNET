@@ -114,6 +114,35 @@ public class CalibrationAndLogicalEwTests
         Assert.Contains(preloaded, drive.Calibrations);
     }
 
+    [Fact]
+    public void CalibrationRun_WithOverreport_RecordsReportedCapacityAboveActualCapacity()
+    {
+        var profile = VirtualTapeEwProfile.Lto4Like(Capacity, ewZonePercent: 4.0, floorPercent: 10.0);
+        var (drive, _) = CreateDrive(profile);
+
+        var calibrator = new TapeCalibrator(drive)
+        {
+            Options = new TapeCalibrationOptions
+            {
+                SampleCount = 40,
+                MinSampleInterval = 1L * 1024 * 1024,
+                ChunkBytesTarget = 1L * 1024 * 1024,
+            },
+        };
+
+        ITapeCalibration? cal = calibrator.Run();
+        Assert.NotNull(cal);
+
+        // TrueRemaining still drives hard EOM at the cartridge's real capacity, while the emulated
+        //  driver continues to over-report phantom free space in the tail.
+        Assert.InRange(cal!.CapacityActual, (long)(Capacity * 0.98), Capacity);
+        Assert.True(cal.CapacityReported > cal.CapacityActual,
+            "Calibration should preserve the driver's optimistic reported-capacity side");
+        Assert.True(cal.Curve[0].ReportedRemaining > 0,
+            "Hard EOM should still leave a positive driver-reported remaining value when overreport is enabled");
+        Assert.Equal(0L, cal.Curve[0].ActualRemaining);
+    }
+
     #endregion
 
     #region *** Persistence ***

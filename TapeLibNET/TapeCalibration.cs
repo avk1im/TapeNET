@@ -33,7 +33,11 @@ public interface ITapeCalibration
     /// </summary>
     string ProfileKey { get; }
 
-    /// <summary>Driver-reported capacity at BOT (bytes).</summary>
+    /// <summary>
+    /// Effective driver-reported capacity (bytes): the largest total capacity implied by the driver's
+    /// reported remaining values during calibration, including any phantom free space it still claims
+    /// at hard EOM.
+    /// </summary>
     long CapacityReported { get; }
 
     /// <summary>True raw capacity measured as bytes written at hard EOM (bytes) — the ground truth.</summary>
@@ -121,18 +125,22 @@ public sealed class TapeCalibration : ITapeCalibration
     /// curve using <paramref name="capacityActual"/> (bytes at hard EOM): <c>ActualRemaining = CapacityActual − ActualWritten</c>.
     /// </summary>
     /// <param name="profileKey">Usually <see cref="TapeDrive.DriveProfileKey"/> so a fresh run always matches.</param>
-    /// <param name="capacityReported">Driver capacity at BOT.</param>
+    /// <param name="capacityReportedAtBot">Driver-reported remaining at BOT.</param>
     /// <param name="capacityActual">Bytes written at hard EOM (ground truth).</param>
     /// <param name="rawSamples">The <c>(ActualWritten, ReportedRemaining)</c> pairs, including the EOM point.</param>
     /// <param name="earlyWarning">The <c>(ActualWritten, ReportedRemaining)</c> at first EW, or null if none.</param>
     public static TapeCalibration FromMeasurements(
-        string profileKey, long capacityReported, long capacityActual,
+        string profileKey, long capacityReportedAtBot, long capacityActual,
         IEnumerable<(long ActualWritten, long ReportedRemaining)> rawSamples,
         (long ActualWritten, long ReportedRemaining)? earlyWarning)
     {
         var pts = new List<CalibrationPoint>();
+        long capacityReported = Math.Max(0L, capacityReportedAtBot);
         foreach (var (aw, rr) in rawSamples)
+        {
             pts.Add(new CalibrationPoint(rr, Math.Max(0L, capacityActual - aw)));
+            capacityReported = Math.Max(capacityReported, aw + rr);
+        }
 
         // Sort ascending by ReportedRemaining; on ties keep the CONSERVATIVE (smallest) ActualRemaining.
         pts.Sort(static (a, b) =>

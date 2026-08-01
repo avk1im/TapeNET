@@ -128,7 +128,11 @@ public sealed record CalibrateResult : FileOperationResult
     /// <summary>Matched drive+media profile key for this run.</summary>
     public string ProfileKey { get; init; } = string.Empty;
 
-    /// <summary>Driver-reported capacity at BOT (bytes).</summary>
+    /// <summary>
+    /// Effective driver-reported capacity (bytes): the largest total capacity implied by the driver's
+    /// reported remaining values during calibration, including any phantom free space it still claims
+    /// at hard EOM.
+    /// </summary>
     public long CapacityReported { get; init; }
 
     /// <summary>True raw capacity measured at hard EOM (bytes).</summary>
