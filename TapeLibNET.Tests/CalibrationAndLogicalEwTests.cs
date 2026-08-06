@@ -114,10 +114,18 @@ public class CalibrationAndLogicalEwTests
         Assert.Contains(preloaded, drive.Calibrations);
     }
 
-    [Fact]
-    public void CalibrationRun_WithOverreport_RecordsReportedCapacityAboveActualCapacity()
+    [Theory]
+    // phantomFreePercent, reportedBoostPercent — the two INDEPENDENT over-report axes.
+    [InlineData(10.0, 0.0)]   // faithful LTO shape: truthful at BOM, phantom free space at EOM
+    [InlineData(0.0, 10.0)]   // inflated capacity at BOM only: constant overshoot, honest at EOM
+    [InlineData(10.0, 5.0)]   // both axes at once
+    public void CalibrationRun_WithOverreport_CapturesBothBomAndEomAnchors(
+        double phantomFreePercent, double reportedBoostPercent)
     {
-        var profile = VirtualTapeEwProfile.Lto4Like(Capacity, ewZonePercent: 4.0, floorPercent: 10.0);
+        var profile = VirtualTapeEwProfile.Lto4Like(
+            Capacity, ewZonePercent: 4.0,
+            phantomFreePercent: phantomFreePercent,
+            reportedBoostPercent: reportedBoostPercent);
         var (drive, _) = CreateDrive(profile);
 
         var calibrator = new TapeCalibrator(drive)
@@ -133,13 +141,24 @@ public class CalibrationAndLogicalEwTests
         ITapeCalibration? cal = calibrator.Run();
         Assert.NotNull(cal);
 
-        // TrueRemaining still drives hard EOM at the cartridge's real capacity, while the emulated
-        //  driver continues to over-report phantom free space in the tail.
+        // TrueRemaining still drives hard EOM at the cartridge's real capacity.
         Assert.InRange(cal!.CapacityActual, (long)(Capacity * 0.98), Capacity);
-        Assert.True(cal.CapacityReported > cal.CapacityActual,
-            "Calibration should preserve the driver's optimistic reported-capacity side");
-        Assert.True(cal.Curve[0].ReportedRemaining > 0,
-            "Hard EOM should still leave a positive driver-reported remaining value when overreport is enabled");
+
+        // (a) BOM anchor — the driver's claim on the virgin cartridge, inflated by the boost only.
+        long expectedBom = Capacity + (long)(Capacity * reportedBoostPercent / 100.0);
+        Assert.InRange(cal.ReportedCapacityAtBom, (long)(expectedBom * 0.98), (long)(expectedBom * 1.02));
+
+        // (b) EOM anchor — the phantom free space still claimed at hard EOM, driven by the phantom knob only.
+        long expectedPhantom = (long)(Capacity * phantomFreePercent / 100.0);
+        Assert.InRange(cal.PhantomFreeAtEom,
+            (long)(expectedPhantom * 0.98), (long)(expectedPhantom * 1.02) + 1L);
+
+        // The two anchors are independent: neither knob may leak into the other's measurement.
+        if (reportedBoostPercent == 0.0)
+            Assert.InRange(cal.ReportedCapacityAtBom, (long)(Capacity * 0.98), (long)(Capacity * 1.02));
+        if (phantomFreePercent == 0.0)
+            Assert.InRange(cal.PhantomFreeAtEom, 0L, (long)(Capacity * 0.01));
+
         Assert.Equal(0L, cal.Curve[0].ActualRemaining);
     }
 
@@ -171,7 +190,8 @@ public class CalibrationAndLogicalEwTests
         Assert.NotNull(loaded);
         Assert.Equal(cal.FormatId, loaded!.FormatId);
         Assert.Equal(cal.ProfileKey, loaded.ProfileKey);
-        Assert.Equal(cal.CapacityReported, loaded.CapacityReported);
+        Assert.Equal(cal.ReportedCapacityAtBom, loaded.ReportedCapacityAtBom);
+        Assert.Equal(cal.PhantomFreeAtEom, loaded.PhantomFreeAtEom);
         Assert.Equal(cal.CapacityActual, loaded.CapacityActual);
         Assert.Equal(cal.EwToEomDistance, loaded.EwToEomDistance);
         Assert.Equal(cal.Curve.Count, loaded.Curve.Count);
@@ -181,7 +201,7 @@ public class CalibrationAndLogicalEwTests
         // A blob with an unrecognized FormatId must be rejected.
         using var bad = new MemoryStream();
         using (var writer = new StreamWriter(bad, leaveOpen: true))
-            writer.Write("""{"FormatId":"unknown/9","ProfileKey":"x","CapacityReported":1,"CapacityActual":1,"Curve":[],"EarlyWarning":null}""");
+            writer.Write("""{"FormatId":"unknown/9","ProfileKey":"x","ReportedCapacityAtBom":1,"PhantomFreeAtEom":0,"CapacityActual":1,"Curve":[],"EarlyWarning":null}""");
         bad.Position = 0;
         Assert.Null(TapeCalibration.LoadFrom(bad));
     }
@@ -317,7 +337,7 @@ public class CalibrationAndLogicalEwTests
                 break;
 
             // Track whether the physical EW was observed before logical EW fired.
-            physicalSeen |= drive.EstimateActualRemaining() < drive.GetRemainingCapacity();
+            physicalSeen |= drive.EstimateActualRemaining() < drive.GetReportedContentRemaining();
 
             if (ew)
             {

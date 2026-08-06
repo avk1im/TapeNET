@@ -51,7 +51,8 @@ public class ServiceCalibrationTests : ServiceTestBase
             Assert.False(result.WasAborted);
             Assert.NotNull(result.Calibration);
             Assert.Equal(service.DriveProfileKey, result.ProfileKey);
-            Assert.True(result.CapacityReported > result.CapacityActual);
+            Assert.True(result.ReportedCapacityTotal > result.CapacityActual);
+            Assert.True(result.PhantomFreeAtEom > 0);
             Assert.True(result.CapacityActual > 0);
             Assert.True(result.EwToEomDistance > 0);
             Assert.Contains(ServiceStateChange.OperationStarted, host.StateChanges);
@@ -96,10 +97,12 @@ public class ServiceCalibrationTests : ServiceTestBase
     }
 
     [Fact]
-    public async Task ExecuteCalibrateAsync_WithCustomOverreport_ExposesReportedCapacityGap()
+    public async Task ExecuteCalibrateAsync_WithCustomOverreport_ExposesBothOverreportAnchors()
     {
         var (service, _) = await OpenCalibrationServiceAsync(
-            ewProfile: VirtualTapeEwProfile.Lto4Like(CalibrationCapacity, ewZonePercent: 4.0, floorPercent: 10.0));
+            ewProfile: VirtualTapeEwProfile.Lto4Like(
+                CalibrationCapacity, ewZonePercent: 4.0,
+                phantomFreePercent: 10.0, reportedBoostPercent: 5.0));
 
         using (service)
         {
@@ -114,7 +117,9 @@ public class ServiceCalibrationTests : ServiceTestBase
                     }));
 
             Assert.True(result.Success);
-            Assert.True(result.CapacityReported > result.CapacityActual);
+            // (a) capacity inflated at BOM, and (b) phantom free space still claimed at hard EOM.
+            Assert.True(result.ReportedCapacityAtBom > result.CapacityActual);
+            Assert.True(result.PhantomFreeAtEom > 0);
             Assert.NotNull(result.Calibration);
             Assert.True(result.Calibration!.Curve[0].ReportedRemaining > 0);
             Assert.Equal(0L, result.Calibration.Curve[0].ActualRemaining);

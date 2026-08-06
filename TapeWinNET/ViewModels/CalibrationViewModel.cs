@@ -61,9 +61,9 @@ public sealed class CalibrationViewModel : ViewModelBase
     public string Revision => string.IsNullOrWhiteSpace(_tapeService.DeviceRevision) ? "Unknown" : _tapeService.DeviceRevision;
     public string ProfileKey => string.IsNullOrWhiteSpace(_tapeService.DriveProfileKey) ? "(unknown)" : _tapeService.DriveProfileKey;
     public string CapacityDisplay => Helpers.BytesToStringLong(_tapeService.Capacity);
-    public string CapacityBucketDisplay => $"{TapeCalibration.CapacityBucketGB(_tapeService.Capacity):N0} GB bucket";
-    public WarningLevel WarningLevel => WarningLevel.Error;
-    public string WarningMessage =>
+    public string CapacityBucketDisplay => $"{TapeCalibration.CapacityBucket(_tapeService.Capacity)} bucket";
+    public static WarningLevel WarningLevel => WarningLevel.Error;
+    public static string WarningMessage =>
         "Calibration writes the scratch cartridge to end-of-media and destroys any existing content.\r\n" +
         "Use only expendable media dedicated to calibration.";
 
@@ -80,7 +80,8 @@ public sealed class CalibrationViewModel : ViewModelBase
                 return;
 
             OnPropertyChanged(nameof(Calibration));
-            OnPropertyChanged(nameof(CapacityReportedDisplay));
+            OnPropertyChanged(nameof(ReportedCapacityAtBomDisplay));
+            OnPropertyChanged(nameof(PhantomFreeAtEomDisplay));
             OnPropertyChanged(nameof(CapacityActualDisplay));
             OnPropertyChanged(nameof(EarlyWarningDisplay));
             OnPropertyChanged(nameof(EwToEomDistanceDisplay));
@@ -91,8 +92,13 @@ public sealed class CalibrationViewModel : ViewModelBase
 
     public ITapeCalibration? Calibration => Result?.Calibration;
 
-    public string CapacityReportedDisplay =>
-        Result is not null ? Helpers.BytesToStringLong(Result.CapacityReported) : "—";
+    /// <summary>What the driver claimed was free on the virgin cartridge (quantity (4)).</summary>
+    public string ReportedCapacityAtBomDisplay =>
+        Result is not null ? Helpers.BytesToStringLong(Result.ReportedCapacityAtBom) : "—";
+
+    /// <summary>The headline result: phantom free space still claimed at hard EOM (quantity (5)).</summary>
+    public string PhantomFreeAtEomDisplay =>
+        Result is not null ? Helpers.BytesToStringLong(Result.PhantomFreeAtEom) : "—";
 
     public string CapacityActualDisplay =>
         Result is not null ? Helpers.BytesToStringLong(Result.CapacityActual) : "—";

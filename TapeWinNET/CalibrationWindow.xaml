@@ -45,6 +45,7 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
@@ -54,17 +55,20 @@
                     <TextBlock Grid.Row="0" Grid.Column="0" Text="Profile key:" Margin="0,0,8,4"/>
                     <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding ProfileKey}" TextWrapping="Wrap"/>
 
-                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Reported capacity:" Margin="0,0,8,4"/>
-                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding CapacityReportedDisplay}" TextWrapping="Wrap"/>
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Reported at BOM:" Margin="0,0,8,4"/>
+                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ReportedCapacityAtBomDisplay}" TextWrapping="Wrap"/>
 
                     <TextBlock Grid.Row="2" Grid.Column="0" Text="Measured capacity:" Margin="0,0,8,4"/>
                     <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding CapacityActualDisplay}" FontWeight="SemiBold" TextWrapping="Wrap"/>
 
-                    <TextBlock Grid.Row="3" Grid.Column="0" Text="EW landmark:" Margin="0,0,8,4"/>
-                    <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding EarlyWarningDisplay}" TextWrapping="Wrap"/>
+                    <TextBlock Grid.Row="3" Grid.Column="0" Text="Phantom free at EOM:" Margin="0,0,8,4"/>
+                    <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding PhantomFreeAtEomDisplay}" FontWeight="SemiBold" TextWrapping="Wrap"/>
 
-                    <TextBlock Grid.Row="4" Grid.Column="0" Text="EW → EOM:" Margin="0,0,8,0"/>
-                    <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding EwToEomDistanceDisplay}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                    <TextBlock Grid.Row="4" Grid.Column="0" Text="EW landmark:" Margin="0,0,8,4"/>
+                    <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding EarlyWarningDisplay}" TextWrapping="Wrap"/>
+
+                    <TextBlock Grid.Row="5" Grid.Column="0" Text="EW → EOM:" Margin="0,0,8,0"/>
+                    <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding EwToEomDistanceDisplay}" FontWeight="SemiBold" TextWrapping="Wrap"/>
                 </Grid>
             </GroupBox>
 

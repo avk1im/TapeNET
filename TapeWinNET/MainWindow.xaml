@@ -1192,6 +1192,10 @@
                 <TextBlock Text="{Binding StatusMessage}" />
             </StatusBarItem>
             <Separator />
+            <StatusBarItem Visibility="{Binding RemainingAndEw, Converter={StaticResource NullToVis}}">
+                <TextBlock Text="{Binding RemainingAndEw}" />
+            </StatusBarItem>
+            <Separator />
             <StatusBarItem Visibility="{Binding IsIoSpeedVisible, Converter={StaticResource BoolToVis}}">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="Virtual IO:" VerticalAlignment="Center" Margin="0,0,4,0"/>

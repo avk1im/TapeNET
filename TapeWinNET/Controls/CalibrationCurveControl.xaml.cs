@@ -63,7 +63,7 @@ public partial class CalibrationCurveControl : UserControl
         {
             Stroke = Brushes.DarkOrange,
             StrokeThickness = 1.5,
-            StrokeDashArray = new DoubleCollection { 4, 2 },
+            StrokeDashArray = [4, 2],
             IsHitTestVisible = false,
             Visibility = Visibility.Collapsed,
         };
@@ -115,7 +115,7 @@ public partial class CalibrationCurveControl : UserControl
         }
 
         ITapeCalibration calibration = Calibration;
-        long reportedMax = Math.Max(1L, calibration.CapacityReported);
+        long reportedMax = Math.Max(1L, calibration.ReportedCapacityTotal);
         long actualMax = Math.Max(1L, calibration.CapacityActual);
         long ewReported = calibration.EarlyWarning?.ReportedRemaining ?? 0L;
 

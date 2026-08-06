@@ -322,7 +322,13 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
     public override uint DriveNumber => m_driveNumber;
     public override string Vendor => Assembly.GetExecutingAssembly().GetName().Name ?? string.Empty;
     public override string Product => VTapePrefix; // GetType().Name;
-    public override string Revision => Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? string.Empty;
+
+    /// <summary>
+    /// Stable emulation identity — deliberately NOT the assembly version, which would change the
+    /// <see cref="TapeDriveBackend.ProfileKey"/> on every build and orphan every saved calibration
+    /// profile. Bump only when the emulation's capacity/EW behavior changes incompatibly.
+    /// </summary>
+    public override string Revision => "v1";
 
 
 /// <summary>

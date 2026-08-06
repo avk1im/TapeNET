@@ -47,6 +47,7 @@ public partial class MainViewModel : ViewModelBase
     private readonly MruFileList _virtualDriveMru;
     private string _windowTitle = "TapeWin - Tape Backup Manager";
     private string _statusMessage = "Ready";
+    private string? _remainingAndEw;
     private string _busyMessage = string.Empty;
     private string _propertiesHeader = "Properties";
     private string _tableHeader = "Content";
@@ -184,7 +185,30 @@ public partial class MainViewModel : ViewModelBase
     public string StatusMessage
     {
         get => _statusMessage;
-        set => SetProperty(ref _statusMessage, value);
+        set
+        {
+            SetProperty(ref _statusMessage, value);
+            // The remaining/EW indication is re-evaluated whenever the status changes,
+            //  since every status transition follows a drive/media/TOC operation.
+            RefreshRemainingAndEw();
+        }
+    }
+
+    /// <summary>
+    /// Status-bar and property-pane indication of the estimated remaining capacity plus the
+    ///  end-of-tape policy in force. Empty when no media is loaded (the field then hides).
+    /// </summary>
+    public string? RemainingAndEw
+    {
+        get => _remainingAndEw;
+        private set => SetProperty(ref _remainingAndEw, value);
+    }
+
+    /// <summary>Re-reads the remaining/EW indication from the service (null when unavailable, so the field hides).</summary>
+    private void RefreshRemainingAndEw()
+    {
+        string status = _tapeService.RemainingAndEwStatus;
+        RemainingAndEw = string.IsNullOrEmpty(status) ? null : status;
     }
 
     public string BusyMessage
@@ -1494,10 +1518,7 @@ public partial class MainViewModel : ViewModelBase
             {
                 PropertyList.Add(new PropertyItem("Partition Count", 
                     _tapeService.PartitionCount.ToString()));
-                PropertyList.Add(new PropertyItem("Capacity", 
-                    Helpers.BytesToStringLong(_tapeService.Capacity)));
-                PropertyList.Add(new PropertyItem("Remaining (est.)", 
-                    Helpers.BytesToStringLong(_tapeService.GetRemainingCapacityFromDrive())));
+                AddCapacityProperties();
             }
         }
 
@@ -1506,6 +1527,31 @@ public partial class MainViewModel : ViewModelBase
         // Append remote connection info section when a remote host is active (§2.6)
         if (IsRemoteConnected)
             AppendRemoteConnectionInfo();
+    }
+
+    /// <summary>
+    /// Appends the shared capacity block to <see cref="PropertyList"/>, using the strict semantics of
+    ///  docs/Design-RemainingAndEw.md §5.1: the driver's optimistic REPORTED figures are shown beside our
+    ///  corrected ESTIMATES, and the WRITABLE space — the number the user actually spends — is called out
+    ///  on its own row, followed by the provenance of the estimate.
+    /// <para>
+    /// Reported and estimated are never mixed within one row's arithmetic; each is quoted on its own axis.
+    /// </para>
+    /// </summary>
+    private void AddCapacityProperties()
+    {
+        static string pair(long reported, long estimated)
+            => $"{Helpers.BytesToStringLong(reported)} / {Helpers.BytesToStringLong(estimated)}";
+
+        PropertyList.Add(new PropertyItem("Capacity reported / estimated",
+            pair(_tapeService.Capacity, _tapeService.EstimatedCapacity)));
+        PropertyList.Add(new PropertyItem("Remaining reported / estimated",
+            pair(_tapeService.ReportedContentRemaining, _tapeService.EstimatedContentRemaining)));
+        // The headline figure — highlighted because it is the one the user plans a backup against.
+        PropertyList.Add(new PropertyItem("Writable",
+            Helpers.BytesToStringLong(_tapeService.WritableRemaining),
+            isHighlighted: true));
+        PropertyList.Add(new PropertyItem("Estimation by", _tapeService.RemainingEstimationSource));
     }
 
     private void LoadMediaInfo()
@@ -1530,14 +1576,8 @@ public partial class MainViewModel : ViewModelBase
         PropertyList.Add(new PropertyItem("Created On", toc.CreationTime.ToString("G")));
         PropertyList.Add(new PropertyItem("Last Saved", toc.LastSaveTime.ToString("G")));
         PropertyList.Add(new PropertyItem("Backup Sets", toc.Count.ToString()));
-        PropertyList.Add(new PropertyItem("Capacity", 
-            Helpers.BytesToStringLong(_tapeService.Capacity)));
-
-        var used = _tapeService.Used;
-        var remaining = _tapeService.Remaining;
-
-        PropertyList.Add(new PropertyItem("Used", Helpers.BytesToStringLong(used)));
-        PropertyList.Add(new PropertyItem("Remaining", Helpers.BytesToStringLong(remaining)));
+        PropertyList.Add(new PropertyItem("Used", Helpers.BytesToStringLong(_tapeService.Used)));
+        AddCapacityProperties();
         PropertyList.Add(new PropertyItem("TOC Placement", 
             _tapeService.IsTOCFromFile
                 ? $"File: {_tapeService.TOCFilePath}"

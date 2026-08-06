@@ -49,58 +49,6 @@ namespace TapeLibNET
             set => m_tocCapacityOverride = value;
         }
 
-        /// <summary>
-        /// Adjusts the remaining content capacity accounting for the drive reporting and TOC capacity.
-        /// <para>Do <b>not</b> deduct the TOC capacity; the method will do this.</para>
-        /// </summary>
-        /// <param name="remainingCapacity">
-        /// The remaining content capacity to adjust <b>without</b> deducted TOC capacity.
-        /// </param>
-        /// <returns>The adjusted remaining content capacity.</returns>
-        [Obsolete("Phase 3: superseded by TapeDrive.Remaining (calibrated estimate) plus early-warning " +
-            "enforcement via TapeDrive.SetEarlyWarning. Retained as a backstop for the legacy capacity checks.")]
-        public long AdjustRemainingContentCapacity(long remainingCapacity)
-        {
-            // Prefer the authoritative calibrated estimate; fall back to the raw driver figure.
-            var remainingFromDrive = Drive.Remaining;
-            // adjust down by 1% of drive capacity to account for drive reporting inaccuracies
-            remainingFromDrive -= Drive.Capacity / 100;
-
-            remainingCapacity = Math.Max(remainingCapacity, remainingFromDrive);
-
-            if (!Drive.HasInitiatorPartition)
-                remainingCapacity -= TOCCapacity;
-
-            remainingCapacity = Math.Max(remainingCapacity, 0); // don't return negative capacity
-            return remainingCapacity;
-        }
-
-        /// <summary>
-        /// Adjusts the remaining content capacity accounting for the drive reporting and TOC capacity.
-        /// <para>Do <b>not</b> deduct the TOC capacity; the method will do this.</para>
-        /// </summary>
-        /// <param name="drive">The tape drive to use for the adjustment.</param>
-        /// <param name="remainingCapacity">
-        /// The remaining content capacity to adjust <b>without</b> deducted TOC capacity.
-        /// </param>
-        /// <returns>The adjusted remaining content capacity.</returns>
-        [Obsolete("Phase 3: superseded by TapeDrive.Remaining (calibrated estimate) plus early-warning " +
-            "enforcement via TapeDrive.SetEarlyWarning. Retained as a backstop for the legacy capacity checks.")]
-        public static long AdjustRemainingContentCapacity(TapeDrive drive, long remainingCapacity)
-        {
-            var remainingFromDrive = drive.Remaining;
-            // adjust down by 1% of drive capacity to account for drive reporting inaccuracies
-            remainingFromDrive -= drive.Capacity / 100;
-            
-            remainingCapacity = Math.Max(remainingCapacity, remainingFromDrive);
-
-            if (!drive.HasInitiatorPartition)
-                remainingCapacity -= DefaultTOCCapacity(drive);
-
-            remainingCapacity = Math.Max(remainingCapacity, 0); // don't return negative capacity
-            return remainingCapacity;
-        }
-        
         private long? m_tocCapacityOverride = null;
 
         public virtual bool TOCInvalidated { get; protected set; } = false;

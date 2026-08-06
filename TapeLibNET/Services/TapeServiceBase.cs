@@ -168,49 +168,158 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     }
 
     /// <summary>
-    /// Estimated remaining capacity in bytes — the authoritative calibrated estimate from the drive,
-    /// with room reserved for the TOC when it is co-located with content (no Initiator partition).
+    /// Quantity (3) — the RAW remaining capacity as reported by the drive/backend, for diagnostics and
+    /// "driver says vs. we estimate" display. Optimistic; never spend it.
     /// </summary>
-    public long Remaining => _drive is not null
-            ? Math.Max(0L, _drive.Remaining - (HasInitiatorPartition ? 0L : DefaultTOCCapacity))
-            : 0;
+    public long ReportedContentRemaining => _drive?.ReportedContentRemaining ?? 0;
 
     /// <summary>
-    /// The raw remaining capacity as reported by the drive/backend, for diagnostics and
-    /// "driver says vs. we estimate" display. Prefer <see cref="Remaining"/> for capacity decisions.
+    /// Quantity (6) — the authoritative calibrated ESTIMATE of the bytes physically still writable on the
+    /// content partition. Includes the space the TOC will need; see <see cref="WritableRemaining"/>.
     /// </summary>
-    public long DriverReportedRemaining => _drive?.DriverReportedRemaining ?? 0;
+    public long EstimatedContentRemaining => _drive?.EstimatedContentRemaining ?? 0;
+
+    /// <summary>
+    /// Quantity (9) — <b>the number the user cares about</b>: the bytes a backup may actually spend on
+    /// content, i.e. <see cref="EstimatedContentRemaining"/> less the TOC reserve when the TOC shares the
+    /// content partition (no Initiator partition).
+    /// </summary>
+    public long WritableRemaining => ComputeWritableRemaining(EstimatedContentRemaining);
+
+    /// <summary>
+    /// Quantity (4') — the best available estimate of the content partition's TRUE total capacity:
+    /// the calibration's measured <see cref="ITapeCalibration.CapacityActual"/> when one is in force,
+    /// otherwise the driver-reported <see cref="Capacity"/>. Use this as the denominator in
+    /// "writable X of Y" displays so the ratio is expressed on a single, consistent axis.
+    /// </summary>
+    public long EstimatedCapacity
+    {
+        get
+        {
+            long actual = _drive?.Calibration?.CapacityActual ?? 0;
+            return actual > 0 ? actual : Capacity;
+        }
+    }
+
+    /// <summary>
+    /// The visible manifestation of over-reporting: quantity (3) − quantity (6). Zero when no calibration
+    /// is in force (the estimate then simply passes the raw figure through).
+    /// </summary>
+    public long RemainingOverreport => Math.Max(0L, ReportedContentRemaining - EstimatedContentRemaining);
 
     /// <summary>How the remaining-capacity estimate / logical early warning is currently realized.</summary>
-    public EarlyWarningMechanism EstimateMechanism => _drive?.EarlyWarningMechanism ?? EarlyWarningMechanism.None;
+    public EarlyWarningMechanism RemainingEstimateMechanism => _drive?.EarlyWarningMechanism ?? EarlyWarningMechanism.None;
 
     /// <summary>True once the drive has sensed a logical early-warning crossing this session.</summary>
     public bool IsEarlyWarning => _drive?.IsEarlyWarning ?? false;
 
-    /// <summary>
-    /// Adjusts the remaining content capacity accounting for the drive reporting and TOC capacity.
-    /// <para>Do <b>not</b> deduct the TOC capacity; the method will do this.</para>
-    /// <para>Delegates to <see cref="TapeNavigator.AdjustRemainingContentCapacity(TapeDrive, long)"/>.</para>
-    /// </summary>
-    /// <param name="remainingCapacity">
-    /// The remaining content capacity to adjust <b>without</b> deducted TOC capacity.
-    /// </param>
-    /// <returns>The adjusted remaining content capacity.</returns>
-    [Obsolete("Phase 3: superseded by Remaining (calibrated estimate). Retained as a backstop.")]
-    public long AdjustRemainingContentCapacity(long remainingCapacity) =>
-        _drive is not null
-            ? TapeNavigator.AdjustRemainingContentCapacity(_drive, remainingCapacity)
-            : 0;
+    /// <summary>Maximum number of characters of a calibration profile key shown in the status text.</summary>
+    private const int c_maxProfileKeyDisplay = 48;
 
     /// <summary>
-    /// Reads the remaining capacity directly from the drive hardware (thread-safe).
-    /// <para>Do NOT call this method while another operation that obtains the lock!</para>
+    /// One-line, user-facing summary for the status bar: the WRITABLE space (quantity (9)) against the
+    ///  ESTIMATED total capacity (quantity (4')), together with the end-of-tape policy actually in force.
+    /// <para>
+    /// Both figures are quoted on the ESTIMATED axis so the ratio is internally consistent — never mix a
+    ///  writable (corrected) numerator with a driver-reported (optimistic) denominator.
+    /// </para>
+    /// <para>
+    /// With the TOC in its own partition the content partition may be filled right up to the
+    ///  physical end of medium; with the TOC co-located with content we must wrap up at the
+    ///  logical early warning, whose quality depends on <see cref="RemainingEstimateMechanism"/>.
+    /// </para>
+    /// <para>Examples: <c>"Writable 597 GB of 780 GB, fill to EW - HW reported"</c>,
+    ///  <c>"Writable 1.2 TB of 1.5 TB, fill to EOM"</c>, <c>"… ⚠ EW reached - calibrated by …"</c>.</para>
     /// </summary>
-    public long GetRemainingCapacityFromDrive()
+    public string RemainingAndEwStatus
+    {
+        get
+        {
+            if (!IsDriveOpen || !IsMediaLoaded)
+                return string.Empty;
+
+            string writable = $"Writable {Helpers.BytesToString(WritableRemaining)}" +
+                              $" of {Helpers.BytesToString(EstimatedCapacity)}";
+
+            // TOC in its own partition: content may run to the hard end of medium.
+            if (HasInitiatorPartition)
+                return $"{writable}, fill to EOM";
+
+            // TOC co-located with content: we must stop at the logical early warning.
+            string policy = IsEarlyWarning ? "\u26a0 EW reached" : "fill to EW";
+            return $"{writable}, {policy}{EarlyWarningMechanismText}";
+        }
+    }
+
+    /// <summary>
+    /// The "Estimation by" figure for property panes: names the source of the remaining-capacity estimate
+    ///  and flags an early-warning crossing. Examples: <c>"none"</c>, <c>"apriori"</c>, <c>"Hardware"</c>,
+    ///  <c>"Calibration …|cap=780GB"</c>, <c>"Calibration … (⚠ EW reached)"</c>.
+    /// </summary>
+    public string RemainingEstimationSource
+    {
+        get
+        {
+            string source = RemainingEstimateMechanism switch
+            {
+                EarlyWarningMechanism.Uncalibrated => "apriori",
+                EarlyWarningMechanism.Calibrated =>
+                    $"Calibration {TruncateProfileKey(_drive?.Calibration?.ProfileKey)}",
+                EarlyWarningMechanism.HardwareEarlyWarning => "Hardware",
+                EarlyWarningMechanism.ProgrammableEarlyWarning => "Hardware (programmed)",
+                _ => "none",
+            };
+
+            return IsEarlyWarning ? $"{source} (\u26a0 EW reached)" : source;
+        }
+    }
+
+    /// <summary>
+    /// Suffix describing how the logical early warning is realized, e.g. <c>" - HW reported"</c>.
+    ///  Empty when no early-warning reserve is in force.
+    /// </summary>
+    protected string EarlyWarningMechanismText => RemainingEstimateMechanism switch
+    {
+        EarlyWarningMechanism.Uncalibrated => " - apriori",
+        EarlyWarningMechanism.Calibrated => $" - calibrated by {TruncateProfileKey(_drive?.Calibration?.ProfileKey)}",
+        EarlyWarningMechanism.HardwareEarlyWarning => " - HW reported",
+        EarlyWarningMechanism.ProgrammableEarlyWarning => " - HW programmed",
+        _ => string.Empty,   // None
+    };
+
+    /// <summary>Shortens a calibration profile key for display, keeping its tail (capacity bucket).</summary>
+    private static string TruncateProfileKey(string? profileKey)
+    {
+        if (string.IsNullOrEmpty(profileKey))
+            return "(unnamed profile)";
+        return profileKey.Length <= c_maxProfileKeyDisplay
+            ? profileKey
+            : "\u2026" + profileKey[^(c_maxProfileKeyDisplay - 1)..];
+    }
+
+    /// <summary>
+    /// Converts a hypothetical ESTIMATED free space (quantity (6)) into WRITABLE-for-content space
+    /// (quantity (9)) by deducting the TOC reserve when the TOC shares the content partition.
+    /// <para>
+    /// Pure and side-effect free, so callers may pass a <b>what-if</b> figure — e.g. the free space that
+    /// would exist if certain backup sets were added or removed — rather than the drive's current one.
+    /// Pass the free space <b>without</b> the TOC deducted; this method performs the deduction.
+    /// </para>
+    /// </summary>
+    /// <param name="estimatedFree">Hypothetical estimated free bytes, TOC reserve NOT yet deducted.</param>
+    /// <returns>The writable-for-content bytes, never negative.</returns>
+    public long ComputeWritableRemaining(long estimatedFree)
+        => Math.Max(0L, estimatedFree - (HasInitiatorPartition ? 0L : DefaultTOCCapacity));
+
+    /// <summary>
+    /// Reads the RAW driver-reported remaining capacity directly from the drive hardware (thread-safe).
+    /// <para>Do NOT call this method while another operation holds the lock!</para>
+    /// </summary>
+    public long GetReportedRemainingFromDrive()
     {
         // Brief lock — just reading a hardware register, never blocks long.
         _operationLock.Wait();
-        try   { return _drive?.GetRemainingContentCapacity() ?? 0; }
+        try   { return _drive?.GetReportedContentRemaining() ?? 0; }
         finally { _operationLock.Release(); }
     }
 
@@ -270,6 +379,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 DriveNumber = driveNumber;
                 LogOk($"Drive {driveNumber} opened successfully");
                 LogInfoSub($"Device name: {_drive.DriveDeviceName}");
+                AutoLoadCalibrations();
                 _host.OnServiceStateChanged(ServiceStateChange.DriveOpened);
                 return true;
             }
@@ -324,6 +434,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 LogOk("Media loaded successfully");
                 LogMediaInfo();
+                // The profile key depends on the medium's capacity bucket, so re-match on every load.
+                AutoLoadCalibrations();
                 _host.OnServiceStateChanged(ServiceStateChange.MediaLoaded);
                 return true;
             }
@@ -753,7 +865,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         if (_drive is null) return;
         LogInfoSub($"Partition count: {_drive.PartitionCount}");
         LogInfoSub($"Capacity: {Helpers.BytesToStringLong(_drive.ContentCapacity)}");
-        LogInfoSub($"Remaining (est.): {Helpers.BytesToStringLong(_drive.GetRemainingContentCapacity())}");
+        LogInfoSub($"Remaining (reported): {Helpers.BytesToStringLong(_drive.GetReportedContentRemaining())}");
     }
 
     /// <summary>

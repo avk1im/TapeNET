@@ -62,7 +62,8 @@ public partial class TapeServiceBase
                {
                    Calibration      = calibration,
                    ProfileKey       = calibration?.ProfileKey ?? _drive?.DriveProfileKey ?? string.Empty,
-                   CapacityReported = calibration?.CapacityReported ?? _drive?.Capacity ?? 0,
+                   ReportedCapacityAtBom = calibration?.ReportedCapacityAtBom ?? _drive?.Capacity ?? 0,
+                   PhantomFreeAtEom = calibration?.PhantomFreeAtEom ?? 0,
                    CapacityActual   = calibration?.CapacityActual ?? 0,
                    EarlyWarning     = calibration?.EarlyWarning,
                    EwToEomDistance  = calibration?.EwToEomDistance ?? 0,
@@ -198,5 +199,57 @@ public partial class TapeServiceBase
         if (_drive is null)
             return false;
         return _drive.AddCalibration(calibration);
+    }
+
+    // ── Calibration autoload ──────────────────────────────────────────────────
+
+    private TapeCalibrationStore? _calibrationStore;
+
+    /// <summary>
+    /// The shared, library-scoped calibration store (<c>%LocalAppData%\TapeLibNET\Calibrations</c>),
+    ///  created on first use. Every TapeLibNET consumer sees the same profiles.
+    /// </summary>
+    public TapeCalibrationStore CalibrationStore => _calibrationStore ??= new(_loggerFactory);
+
+    /// <summary>
+    /// Feeds every stored calibration profile to the drive, so the one matching this drive+media
+    ///  activates itself without any user action — a measured profile is worthless if the user has to
+    ///  remember to apply it. The drive matches on <see cref="TapeDrive.DriveProfileKey"/> and silently
+    ///  keeps the non-matching ones for when other media is loaded.
+    /// <para>
+    /// Non-throwing and non-fatal: a store that cannot be read simply leaves the drive uncalibrated,
+    ///  falling back to the a-priori estimate. Call after the drive is open AND media is loaded, since
+    ///  the profile key includes the media capacity bucket.
+    /// </para>
+    /// </summary>
+    /// <returns>The number of profiles offered, or 0 when none were available.</returns>
+    protected int AutoLoadCalibrations()
+    {
+        if (_drive is null)
+            return 0;
+
+        try
+        {
+            var calibrations = CalibrationStore.LoadAll();
+            if (calibrations.Count == 0)
+                return 0;
+
+            foreach (var cal in calibrations)
+                _drive.AddCalibration(cal);
+
+            if (_drive.Calibration is { } matched)
+                LogInfoSub($"Calibration applied: {matched.ProfileKey}");
+            else
+                LogInfoSub($"Calibration: {calibrations.Count} profile(s) loaded, none matching " +
+                           $"'{_drive.DriveProfileKey}' — using the a-priori estimate");
+
+            return calibrations.Count;
+        }
+        catch (Exception ex)
+        {
+            // Never let a calibration-store problem break opening a drive or loading media.
+            LogInfoSub($"Calibration profiles unavailable: {ex.Message}");
+            return 0;
+        }
     }
 }

@@ -129,13 +129,25 @@ public sealed record CalibrateResult : FileOperationResult
     public string ProfileKey { get; init; } = string.Empty;
 
     /// <summary>
-    /// Effective driver-reported capacity (bytes): the largest total capacity implied by the driver's
-    /// reported remaining values during calibration, including any phantom free space it still claims
-    /// at hard EOM.
+    /// Quantity (4) — the driver's remaining claim on a virgin cartridge, sampled at BOM at the start of
+    /// the run. Compare against <see cref="CapacityActual"/> to see whether the driver inflates capacity
+    /// from the first byte.
     /// </summary>
-    public long CapacityReported { get; init; }
+    public long ReportedCapacityAtBom { get; init; }
 
-    /// <summary>True raw capacity measured at hard EOM (bytes).</summary>
+    /// <summary>
+    /// Quantity (5) — the headline number of a calibration run: the phantom free space the driver still
+    /// claimed at the instant hard EOM fired. This space does not exist. LTO-4: ~28 GB.
+    /// </summary>
+    public long PhantomFreeAtEom { get; init; }
+
+    /// <summary>
+    /// The total capacity implied by the driver's own figures: <see cref="CapacityActual"/> plus the
+    /// <see cref="PhantomFreeAtEom"/> it still claims at hard EOM.
+    /// </summary>
+    public long ReportedCapacityTotal => CapacityActual + PhantomFreeAtEom;
+
+    /// <summary>True raw capacity measured at hard EOM (bytes) — quantity (1).</summary>
     public long CapacityActual { get; init; }
 
     /// <summary>Captured EW landmark, or <see langword="null"/> when none was observed.</summary>

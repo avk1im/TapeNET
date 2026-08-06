@@ -34,7 +34,7 @@ public class DeleteBackupSetsViewModel : ViewModelBase
         _onCancel = onCancel;
 
         _mediaCapacity = tapeService.Capacity;
-        _mediaRemaining = tapeService.Remaining;
+        _mediaRemaining = tapeService.WritableRemaining;
 
         PopulateDeleteOptions();
 

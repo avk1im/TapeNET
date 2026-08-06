@@ -211,19 +211,23 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     /// </summary>
     public long ContentCapacity => m_cachedContentCapacity >= 0 ? m_cachedContentCapacity : Capacity;
 
-    /// <summary>Queries remaining capacity of the current partition (refreshes media params). Returns −1 on failure.</summary>
-    public long GetRemainingCapacity() => EnsureMediaParams()?.Remaining ?? 0L;
+    /// <summary>
+    /// Quantity (3) — the RAW driver-reported remaining for the CURRENT partition (refreshes media
+    /// params). Optimistic on real hardware: it overshoots the truth and floors above zero at hard EOM.
+    /// Use <see cref="EstimateActualRemaining"/> for capacity decisions. Returns 0 on failure.
+    /// </summary>
+    public long GetReportedRemaining() => EnsureMediaParams()?.Remaining ?? 0L;
 
     /// <summary>
-    /// Remaining capacity of the Content partition, cached from the last time media params
-    /// were refreshed while on Content. If currently on Content, refreshes first.
+    /// Quantity (3) for the Content partition, cached from the last time media params were refreshed
+    /// while on Content. If currently on Content, refreshes first. Still the RAW driver figure.
     /// </summary>
-    public long GetRemainingContentCapacity()
+    public long GetReportedContentRemaining()
     {
         if (m_onContentPartition)
         {
             // On content — refresh to get the latest value and cache it
-            return GetRemainingCapacity();
+            return GetReportedRemaining();
         }
 
         // On another partition — return the cached content remaining
@@ -231,19 +235,19 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     }
 
     /// <summary>
-    /// The authoritative estimate of bytes still actually writable — the figure the rest of the
-    /// library and the apps should consume for "remaining capacity". Calibrated when a calibration
-    /// (measured or a-priori) is available, otherwise the raw driver value.
+    /// Quantity (6) — the authoritative ESTIMATE of bytes still actually writable on the Content
+    /// partition: the figure the rest of the library and the apps should consume. Calibrated when a
+    /// calibration (measured or a-priori) is available, otherwise the raw driver value.
     /// <para>Delegates to <see cref="EstimateActualRemaining"/> (throttled/cached per its contract).</para>
     /// </summary>
-    public long Remaining => EstimateActualRemaining();
+    public long EstimatedContentRemaining => EstimateActualRemaining();
 
     /// <summary>
-    /// The raw remaining capacity as reported by the drive/backend, kept for diagnostics,
-    /// calibration, and "driver says vs. we estimate" UI display. Prefer <see cref="Remaining"/>
-    /// for capacity decisions.
+    /// Quantity (3) — property form of <see cref="GetReportedContentRemaining"/>, kept for diagnostics,
+    /// calibration, and "driver says vs. we estimate" UI display. Prefer
+    /// <see cref="EstimatedContentRemaining"/> for capacity decisions.
     /// </summary>
-    public long DriverReportedRemaining => GetRemainingContentCapacity();
+    public long ReportedContentRemaining => GetReportedContentRemaining();
 
     /// <summary>
     /// True if the underlying backend is a Win32 tape drive and the drive is an LTO model.
@@ -602,7 +606,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return physicalEw;
         m_bytesSinceRemainingPoll = 0L;
 
-        long est = cal.TranslateRemaining(GetRemainingCapacity());
+        long est = cal.TranslateRemaining(GetReportedRemaining());
         return est <= m_desiredEarlyWarning || physicalEw;
     }
 
@@ -701,7 +705,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     /// </summary>
     public long EstimateActualRemaining()
     {
-        long reported = GetRemainingCapacity();
+        long reported = GetReportedRemaining();
         if (reported < 0L)
             return 0L;
         ITapeCalibration? cal = EffectiveCalibration;
