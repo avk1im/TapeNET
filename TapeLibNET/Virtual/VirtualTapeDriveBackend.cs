@@ -45,6 +45,11 @@ public readonly record struct VirtualTapeDriveCapabilities
         SupportsSeqFilemarks = true,
     };
 
+    /// <summary>A basic drive with filemarks support only.</summary>
+    public static VirtualTapeDriveCapabilities WithFilemarksOnly => Basic with
+    {
+    };
+
     /// <summary>Simulates a filemarks-only drive (like LTO-1..4) — no setmarks, no sequential filemark counting.</summary>
     public static VirtualTapeDriveCapabilities WithFilemarksOnlyLargeBlocks => new()
     {

@@ -333,17 +333,22 @@ public class CalibrationAndLogicalEwTests
         while (true)
         {
             int n = drive.WriteDirect(data, 0, block, out _, out bool ew, out bool eom);
-            if (eom || n == 0)
-                break;
 
-            // Track whether the physical EW was observed before logical EW fired.
-            physicalSeen |= drive.EstimateActualRemaining() < drive.GetReportedContentRemaining();
+            // Check the EW flags BEFORE the loop-exit guard: a write clamped down to zero bytes to
+            //  preserve the reserve still reports ew, and would otherwise be swallowed by n == 0.
+            //  IsPhysicalEarlyWarningSeen is the drive's actual physical landmark -- unlike comparing
+            //  the estimate to the reported value, which with an a-priori calibration is ALWAYS true
+            //  (the curve models actual ˜ reported - margin) and so detects nothing.
+            physicalSeen |= drive.IsPhysicalEarlyWarningSeen;
 
             if (ew)
             {
                 sawPhysicalEwBeforeLogical = physicalSeen;
                 break;
             }
+
+            if (eom || n == 0)
+                break;
         }
 
         Assert.True(drive.IsEarlyWarning, "Logical EW should have fired near the tail");

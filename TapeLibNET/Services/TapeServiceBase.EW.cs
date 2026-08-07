@@ -1,6 +1,8 @@
 using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices; // Helpers, Stopwatch
 
+using TapeLibNET.Virtual;
+
 using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
 
 namespace TapeLibNET.Services;
@@ -217,16 +219,29 @@ public partial class TapeServiceBase
     ///  remember to apply it. The drive matches on <see cref="TapeDrive.DriveProfileKey"/> and silently
     ///  keeps the non-matching ones for when other media is loaded.
     /// <para>
+    /// For a <see cref="VirtualTapeDriveBackend"/>, autoload only runs when EOM behavior emulation
+    ///  (<see cref="VirtualTapeDriveBackend.EmulatedEarlyWarning"/>) is actually active: a non-emulated
+    ///  virtual drive is truthful by construction, so applying a calibration measured against real (or
+    ///  differently emulated) hardware would misrepresent it. Physical and remote drives are unaffected.
+    /// </para>
+    /// <para>
     /// Non-throwing and non-fatal: a store that cannot be read simply leaves the drive uncalibrated,
     ///  falling back to the a-priori estimate. Call after the drive is open AND media is loaded, since
     ///  the profile key includes the media capacity bucket.
     /// </para>
     /// </summary>
-    /// <returns>The number of profiles offered, or 0 when none were available.</returns>
+    /// <returns>The number of profiles offered, or 0 when none were available or autoload was skipped.</returns>
     protected int AutoLoadCalibrations()
     {
         if (_drive is null)
             return 0;
+
+        // Virtual drives only warrant autoload when EOM behavior emulation is switched on for them.
+        if (_drive.Backend is VirtualTapeDriveBackend { EmulatedEarlyWarning: not { EarlyWarningZone: > 0 } })
+        {
+            LogInfoSub("Calibration autoload skipped: EOM behavior emulation is not active for this virtual drive");
+            return 0;
+        }
 
         try
         {
@@ -238,7 +253,7 @@ public partial class TapeServiceBase
                 _drive.AddCalibration(cal);
 
             if (_drive.Calibration is { } matched)
-                LogInfoSub($"Calibration applied: {matched.ProfileKey}");
+                LogOkSub($"Calibration applied: {matched.ProfileKey}");
             else
                 LogInfoSub($"Calibration: {calibrations.Count} profile(s) loaded, none matching " +
                            $"'{_drive.DriveProfileKey}' — using the a-priori estimate");

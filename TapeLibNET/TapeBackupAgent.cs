@@ -78,13 +78,12 @@ namespace TapeLibNET
         private long ComputeRemainingCapacity()
         {
             // The authoritative remaining-capacity figure is the drive's calibrated ESTIMATE
-            //  (quantity (6)), from which we reserve room for the TOC when it is co-located with content
-            //  (no Initiator partition) — yielding the WRITABLE remaining, quantity (9). Early-warning
-            //  enforcement (see BeginWriteContentForCurrentSet) is the real stop signal; this value is
-            //  only a backstop for the capacity pre-checks.
-            var remainingCapacity = Drive.EstimatedContentRemaining
-                - (Drive.HasInitiatorPartition ? 0L : Navigator.TOCCapacity);
-            return Math.Max(remainingCapacity, 0L);
+            //  (quantity (6)). The TOC reserve is NOT subtracted here: it is armed once, at the drive,
+            //  via SetEarlyWarning() in BeginWriteContentForCurrentSet(). Subtracting it again would
+            //  reserve room for the TOC twice and prematurely cut the set short (see the multi-volume
+            //  regression). Early warning is the real stop signal; this value only feeds the coarse
+            //  pre-checks on the (obsolete) aligned write path.
+            return Math.Max(Drive.EstimatedContentRemaining, 0L);
         }
 
         private bool BeginWriteContentForCurrentSet(bool newSet)
