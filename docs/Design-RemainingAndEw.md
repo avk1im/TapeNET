@@ -46,11 +46,17 @@ Design specification lives inline in `TapeDriveWin32Backend.lto-direct.cs`. Key 
   port/miniport IOCTL the class driver does not forward on a `\\.\TAPEn` handle (returns
   `ERROR_INVALID_FUNCTION`). The storage-property query **is** forwarded and yields
   `MaximumTransferLength` / `MaximumPhysicalPages` / `AlignmentMask`.
-- **Page-aligned scratch + SG budget** — the miniport locks the caller's buffer into a scatter/gather list
-  bounded by `MaximumPhysicalPages`. A pinned managed array is only 8-byte aligned, so a 64 KB payload spans
-  17 physical pages — the common adapter SG limit — hence unaligned SPTD writes fail above 64 KB. Routing the
-  payload through a reusable page-aligned native buffer (`NativeMemory.AlignedAlloc`, page size from
-  `Environment.SystemPageSize`) lifts the limit to `MaximumPhysicalPages × pageSize`.
+- - **Adaptive alignment + SG budget** — the miniport locks the caller's buffer into a scatter/gather list
+  bounded by MaximumPhysicalPages. A pinned managed array is only 8-byte aligned, so a 64 KB payload spans 17
+  physical pages — the common adapter SG limit — hence unaligned SPTD writes fail above 64 KB.
+  `SendScsiCommandDirect` therefore pins the caller's buffer and inspects its address: an **already
+  page-aligned** payload is DMA'd **directly with no copy**; a misaligned one is copied once into a reusable
+  page-aligned native scratch (`NativeMemory.AlignedAlloc`, page size from `Environment.SystemPageSize`).
+  Either way the driver receives a page-aligned DataBuffer, so a full-budget chunk occupies at most
+  MaximumPhysicalPages fragments (limit = MaximumPhysicalPages × pageSize) — no per-chunk headroom hack needed.
+  The alignment is **self-describing** from the pinned pointer, so no "isAligned" flag crosses the API boundary.
+  The zero-copy fast path is supplied by the packer via page-aligned buffers (see **Part 1A**);
+  the scratch-copy path remains the correct fallback for any misaligned caller.
 - **Automatic chunking** — a single SRB cannot exceed the adapter ceiling (~1 MB on the test rig despite the
   drive's 1 MB max block). `WriteFile` reaches multi-MB transfers because `tape.sys` splits into adapter-sized
   SRBs internally; `ScsiWriteDirect` replicates that by chunking a large fixed-block write into back-to-back
@@ -63,6 +69,34 @@ Design specification lives inline in `TapeDriveWin32Backend.lto-direct.cs`. Key 
 - **First-class SCSI identity** — `LtoDetect` parses the INQUIRY Product Revision Level (bytes 32–35)
   alongside vendor (8–15) and product (16–31); `Revision` joins `Vendor`/`Product` as a backend property,
   feeding the calibration profile key.
+
+---
+
+### Part 1A — Page-aligned write buffers (TapeWriteBuffer) [DONE]
+
+The SPTD path can DMA straight from the caller's buffer only when that buffer is page-aligned; otherwise it pays a per-chunk copy into the aligned scratch. Measurement showed the SPTD writer running slightly slower than a plain `WriteFile`, traced to two hot-path costs: (1) the per-write alignment **copy**, and (2) a per-chunk **heap allocation** of the SPTD control block. Both are now eliminated, closing the gap while preserving EW/PEW sensing. The chunking floor (N × `DeviceIoControl` per multi-MB write) is inherent to sensing and remains.
+
+#### TapeWriteBuffer / TapeWriteBufferPool (new file TapeWriteBuffer.cs)
+
+A pooled, page-aligned write buffer and its pool. Key design points:
+- **Pinned Object Heap, not NativeMemory.AlignedAlloc** — `GC.AllocateArray<byte>(size, pinned: true)` returns a **real `byte[]`** that never moves and is GC-reclaimed (no manual free, no leak on exception paths), so the packer keeps its `byte[]`-centric copy/clear logic. `AlignedAlloc` was rejected because it yields non-managed memory (loses `Buffer.BlockCopy`/`Array.Clear`) and needs manual `try/finally` freeing.
+- **Over-allocate by one page, expose an aligned window** — a POH array's element 0 is not page-aligned, so the pool allocates `bucket + pageSize`, computes the offset to the next page boundary once (stable for life, since POH never moves), and exposes a page-aligned window of `Capacity` bytes. The window's internal offset is **private** — callers address it with 0-based positions.
+- **Encapsulated mutation API** — `CopyFrom`, `Clear`, `CopyRegionTo`, `Data(length)`, `Return()`. The offset never leaks into the packer; there is no `Fill`-struct laundry. `Data(length)` yields the transient, already-aligned span for the write hand-off.
+- **Multiset pool, bucketed by page-rounded capacity** — supports several live rentals of one size (the packer's double-buffering) as a stack per bucket. Rent/Return are cheap and thread-safe; a disposed pool drops references (POH reclaimed by GC).
+
+#### SCSI-side adoption (TapeDriveWin32Backend.lto-direct.cs)
+
+- **Auto-detect, no flag** — `SendScsiCommandDirect` reads the pinned pointer's alignment and chooses zero-copy vs. scratch-copy itself; the separate `SendScsiCommandDirectAligned` transport and the `useAligned`/`bufferIsAligned` parameter are **gone**. The SCSI signature stays a clean `byte[]+offset+count` — `TapeWriteBuffer` never appears in the SCSI layer, fully preserving the WriteDirect→SCSI boundary.
+- **stackalloc control block** — the ~76-byte SPTD+sense control buffer is `stackalloc`'d per command instead of `new byte[]`, removing the per-chunk GC allocation.
+- **Full SRB budget** — because the driver always receives a page-aligned DataBuffer, the former one-page headroom reduction is dropped (`effectiveMax = MaxScsiDirectTransfer`).
+
+#### TapeFilePacker adoption (TapeFileWritePacker.cs)
+
+- **Fill buffers are pooled TapeWriteBuffers** — the packer holds a single `TapeWriteBuffer _fillBuffer`; the old `ArrayPool<byte>` path is removed. `WriteFromOpenFile`, the zero-pad in `Flush`, and the leftover-carry in `DoFlushFillBuffer` use `CopyFrom` / `Clear` / `CopyRegionTo`. Page alignment means every hand-off reaches the SPTD zero-copy fast path.
+- **Session-scoped pool ownership** — the packer takes an optional `TapeWriteBufferPool`: supplied → shared and **not** disposed (production: one per `TapeStreamManager`/session, amortized across any number of packers and released at session end — POH-friendly); omitted → a private pool it owns and disposes (unit tests need no wiring). A drive-lifetime pool was rejected: at steady state only ~2 buffers churn per session, so a session-scoped pool captures essentially all the benefit while avoiding pinned memory held across idle stretches.
+- **Backend contract widened to the buffer type** — `ITapeWriteBackend.StartWriting(TapeWriteBuffer, int)` and `AwaitCompletion() → (WriteResult, TapeWriteBuffer?)`, so ownership (and buffer identity, for `Assert.Same` in tests) round-trips as the raw handle; `TapeWriteSink` likewise takes `TapeWriteBuffer`.
+
+**Caveat.** The zero-copy fast path requires the block size to be a page multiple so every chunk start stays aligned; LTO's power-of-two sizes (16 KB … 1 MB) all satisfy this, and a non-conforming size simply falls back to the scratch copy. **Expectation:** removing the copy + per-chunk alloc closes most of the gap, landing SPTD *at* `WriteFile` speed — the residual N× `DeviceIoControl` chunking is the price of EW/PEW sensing.
 
 ---
 
@@ -254,6 +288,7 @@ Runtime (every session):
 | `Virtual/VirtualTapeEwProfile.cs` | Opt-in emulation profile (EW zone + reported-remaining model; `Lto4Like`/`FromCalibration`) — Part 4.1. |
 | `Virtual/VirtualTapeMedia.EW.cs` | Per-cartridge EW state: `TrueRemaining`, reported `Remaining`, `IsInEarlyWarningZone` — Part 4.1. |
 | `Virtual/VirtualTapeDriveBackend.EW.cs` | Backend EW config/surface: `EmulatedEarlyWarning`, mechanism overrides, `ew` in `Write` — Part 4.1. |
+| `TapeWriteBuffer.cs` | Pooled page-aligned POH write buffer + pool; SPTD zero-copy fast path (Part 1A). |
 
 ---
 
