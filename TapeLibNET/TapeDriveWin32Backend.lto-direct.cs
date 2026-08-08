@@ -62,11 +62,12 @@ namespace TapeLibNET;
 /// logical block) and still requires a single transfer within the SRB ceiling.
 /// </para>
 /// <para>
-/// The buffer should also be adapter/cache aligned. A pinned managed array is only 8-byte aligned, so
-/// a 64 KB payload spans 17 physical pages — exactly the common adapter SG limit — which is why
-/// unaligned SPTD writes fail above 64 KB. <see cref="ScsiWriteDirect"/> defaults to the page-aligned
-/// path (<c>useAligned: true</c>); pass <c>useAligned: false</c> to exercise the raw pinned-buffer path
-/// for small transfers or diagnostics.
+/// <b>Buffer alignment (zero-copy fast path):</b> the miniport locks the caller's buffer into a
+/// scatter/gather list, so a page-aligned buffer occupies the fewest fragments and can be DMA'd
+/// DIRECTLY. <see cref="SendScsiCommandDirect"/> auto-detects alignment from the pinned pointer: an
+/// already page-aligned payload (e.g. a <see cref="TapeWriteBuffer"/> POH window) is pinned and used
+/// in place with NO copy; a misaligned payload is copied once into a reusable page-aligned native
+/// scratch buffer. No "isAligned" flag has to cross the API boundary — the memory is self-describing.
 /// </para>
 /// </summary>
 public partial class TapeDriveWin32Backend
@@ -168,6 +169,7 @@ public partial class TapeDriveWin32Backend
             IsCheckCondition && Eom &&
             (SenseKey == c_senseKeyVolumeOverflow || (Asc == c_ascNoAdditionalSense && Ascq == c_ascqEndOfPartition));
         */
+
         /// <summary>
         /// Programmable Early Warning: drive reports the configured PEW trip point via
         /// ASC/ASCQ 00/07, sense key NO SENSE. Distinct from the built-in EW below and
@@ -207,18 +209,19 @@ public partial class TapeDriveWin32Backend
     /// Unlike <see cref="SendScsiCommand"/> (which appends the payload after the sense
     /// area in one buffered block), the payload here lives in its own pinned buffer
     /// referenced by <c>DataBuffer</c>. The control buffer passed to DeviceIoControl is
-    /// <c>[SCSI_PASS_THROUGH_DIRECT][sense]</c>.
+    /// <c>[SCSI_PASS_THROUGH_DIRECT][sense]</c> and is <c>stackalloc</c>'d (no per-call heap allocation).
+    /// </para>
+    /// <para>
+    /// <b>Adaptive alignment:</b> the caller's buffer is pinned and its address inspected. When it is
+    /// already page-aligned (e.g. a <see cref="TapeWriteBuffer"/> POH window) the data is DMA'd DIRECTLY
+    /// with no copy; otherwise it is copied once into the reusable page-aligned native scratch. This makes
+    /// large transfers succeed regardless of the caller's alignment while giving aligned callers the
+    /// zero-copy fast path — with no flag crossing the API.
     /// </para>
     /// <para>
     /// Sense is decoded on EVERY successful transport, including CHECK CONDITION — that is
     /// precisely how Early Warning is caught. This method does NOT set the backend error
     /// state; the caller decides what a given sense condition means (EW is not an error).
-    /// </para>
-    /// <para>
-    /// <b>Note:</b> this pins the caller's (managed) buffer directly, which is only 8-byte
-    /// aligned. That is fine for small transfers (INQUIRY-sized, and tape blocks up to ~64 KB)
-    /// but will fail for larger blocks on adapters with a tight scatter/gather budget. For large
-    /// payloads use <see cref="SendScsiCommandDirectAligned"/>.
     /// </para>
     /// </summary>
     /// <param name="cdb">Command Descriptor Block (up to 16 bytes).</param>
@@ -237,11 +240,26 @@ public partial class TapeDriveWin32Backend
         int sptdSize = sizeof(SCSI_PASS_THROUGH_DIRECT);
         int ctrlSize = sptdSize + c_senseBufferSize;
 
-        byte[] ctrl = new byte[ctrlSize];
+        // Control block (SPTD + sense) is tiny (~76 bytes) — stackalloc it to avoid a per-command
+        //  heap allocation on the hot write path.
+        Span<byte> ctrl = stackalloc byte[ctrlSize];
 
         fixed (byte* pCtrl = ctrl)
-        fixed (byte* pData = dataBuffer)   // null when dataBuffer is empty
+        fixed (byte* pManaged = dataBuffer)   // null when dataBuffer is empty; pins the POH window in place
         {
+            // Choose the DMA source. A page-aligned payload is used in place (zero copy); a misaligned
+            //  one is copied once into the reusable page-aligned scratch. The driver always receives a
+            //  page-aligned DataBuffer either way, so a full-budget chunk never over-runs the SG list.
+            byte* pData = pManaged;
+            bool needCopy = dataBuffer.Length > 0 && ((nint)pManaged & (c_pageSize - 1)) != 0;
+            if (needCopy)
+            {
+                byte* scratch = EnsureAlignedScratch(dataBuffer.Length);
+                if (!dataIn)
+                    dataBuffer.CopyTo(new Span<byte>(scratch, dataBuffer.Length)); // managed -> aligned
+                pData = scratch;
+            }
+
             var spt = (SCSI_PASS_THROUGH_DIRECT*)pCtrl;
             spt->Length = (ushort)sptdSize;
             spt->CdbLength = (byte)cdb.Length;
@@ -265,11 +283,19 @@ public partial class TapeDriveWin32Backend
             if (!ok)
             {
                 SetErrorFromPInvoke();
-                m_logger.LogDebug("{Prefix}: SPTD DeviceIoControl failed (transport)", LogPrefix);
+                m_logger.LogDebug("{Prefix}: SPTD DeviceIoControl failed (transport){Copied}",
+                    LogPrefix, needCopy ? " [copied]" : "");
                 return new ScsiDirectOutcome { TransportOk = false };
             }
 
-            return DecodeSptdSense(pCtrl, sptdSize, spt->ScsiStatus, spt->DataTransferLength, "SPTD");
+            ScsiDirectOutcome outcome =
+                DecodeSptdSense(pCtrl, sptdSize, spt->ScsiStatus, spt->DataTransferLength, "SPTD");
+
+            // Data-in via scratch: copy the result back into the caller's (misaligned) span.
+            if (needCopy && dataIn && dataBuffer.Length > 0 && outcome.TransportOk)
+                new Span<byte>(pData, dataBuffer.Length).CopyTo(dataBuffer);
+
+            return outcome;
         }
     }
 
@@ -297,18 +323,10 @@ public partial class TapeDriveWin32Backend
     /// refused with <c>ERROR_INSUFFICIENT_BUFFER</c>.
     /// </para>
     /// <para>
-    /// Transport per chunk is selected by <paramref name="useAligned"/>:
-    /// <list type="bullet">
-    /// <item><description>
-    /// <c>true</c> (default): route each chunk through a reusable <b>page-aligned</b> native buffer
-    /// (<see cref="SendScsiCommandDirectAligned"/>). Required for chunks larger than ~64 KB.
-    /// </description></item>
-    /// <item><description>
-    /// <c>false</c>: pin the caller's managed buffer directly (<see cref="SendScsiCommandDirect"/>).
-    /// Lower overhead, but limited to ~64 KB on adapters with a small scatter/gather budget; the
-    /// per-chunk budget is reduced by one page to tolerate the misaligned head.
-    /// </description></item>
-    /// </list>
+    /// Each chunk is transported by <see cref="SendScsiCommandDirect"/>, which auto-detects buffer
+    /// alignment: a page-aligned payload is DMA'd with no copy, a misaligned one is copied into the
+    /// page-aligned scratch. Callers wanting the zero-copy fast path should supply a
+    /// <see cref="TapeWriteBuffer"/>-backed, page-aligned array.
     /// </para>
     /// </summary>
     /// <param name="buffer">Source buffer.</param>
@@ -317,6 +335,7 @@ public partial class TapeDriveWin32Backend
     /// Byte count to write. In fixed-block mode this must be a whole multiple of the current
     /// <see cref="BlockSize"/>; it may exceed one SRB and will be chunked automatically.
     /// </param>
+    /// <param name="tapemark"><c>true</c> if a filemark condition was reported.</param>
     /// <param name="programmableEarlyWarning">
     /// <c>true</c> if the drive reported Programmable Early Warning (the earlier, host-configured
     /// trip point). The data up to the return value WAS written. LTO-5+ only; requires a PEWS to have
@@ -328,14 +347,12 @@ public partial class TapeDriveWin32Backend
     /// wrap-up. Not an error.
     /// </param>
     /// <param name="eom"><c>true</c> on hard physical EOM. The last chunk's data was NOT written.</param>
-    /// <param name="tapemark"><c>true</c> if a filemark condition was reported.</param>
-    /// <param name="useAligned">Use the page-aligned transport (default); required for large chunks.</param>
     /// <param name="forceVariable">Force variable-block mode regardless of <see cref="BlockSize"/>.</param>
     /// <returns>The total number of payload bytes the drive accepted across all chunks.</returns>
     internal int ScsiWriteDirect(
         byte[] buffer, int offset, int count,
         out bool tapemark, out bool programmableEarlyWarning, out bool earlyWarning, out bool eom,
-        bool useAligned = true, bool forceVariable = false)
+        bool forceVariable = false)
     {
         programmableEarlyWarning = false;
         earlyWarning = false;
@@ -370,13 +387,11 @@ public partial class TapeDriveWin32Backend
             return 0;
         }
 
-        // One SPTD command cannot exceed the adapter's per-SRB ceiling. The raw (unaligned) path
-        //  can lose one page to a misaligned head, so leave a page of headroom there. Also honor
-        //  the WRITE(6) 24-bit length field.
-        uint srbMax = MaxScsiDirectTransfer;
-        uint effectiveMax = useAligned
-            ? srbMax
-            : (srbMax > (uint)c_pageSize ? srbMax - (uint)c_pageSize : srbMax);
+        // One SPTD command cannot exceed the adapter's per-SRB ceiling. The transport always presents a
+        //  page-aligned DataBuffer (either the caller's aligned window or the aligned scratch), so a
+        //  full-budget chunk occupies at most MaximumPhysicalPages fragments — no headroom needed.
+        //  Also honor the WRITE(6) 24-bit length field.
+        uint effectiveMax = MaxScsiDirectTransfer;
 
         // Compute the per-command chunk size (bytes).
         int chunkBytes;
@@ -419,7 +434,7 @@ public partial class TapeDriveWin32Backend
         {
             int thisCount = Math.Min(remaining, chunkBytes);
 
-            ScsiDirectOutcome r = WriteScsiChunk(buffer, pos, thisCount, fixedBlock, blockSize, useAligned);
+            ScsiDirectOutcome r = WriteScsiChunk(buffer, pos, thisCount, fixedBlock, blockSize);
 
             if (!r.TransportOk)
             {
@@ -506,7 +521,7 @@ public partial class TapeDriveWin32Backend
     /// outcome so that chunk accounting (residual, EW/PEW/EOM latching) stays in one place.
     /// </summary>
     private ScsiDirectOutcome WriteScsiChunk(
-        byte[] buffer, int offset, int count, bool fixedBlock, uint blockSize, bool useAligned)
+        byte[] buffer, int offset, int count, bool fixedBlock, uint blockSize)
     {
         uint xferLen;
         byte flags;
@@ -523,7 +538,6 @@ public partial class TapeDriveWin32Backend
         }
 
         // xferLen is guaranteed within the WRITE(6) 24-bit field by the chunk sizing in the caller.
-
 #pragma warning disable IDE0302 // Simplify collection initialization -- for explicity
         Span<byte> cdb = stackalloc byte[6];
 #pragma warning restore IDE0302 // Simplify collection initialization
@@ -534,25 +548,24 @@ public partial class TapeDriveWin32Backend
         cdb[4] = (byte)(xferLen & 0xFF);
         cdb[5] = 0x00; // CONTROL
 
+        // The transport auto-detects page alignment: a POH-backed aligned slice is DMA'd directly,
+        //  otherwise it is copied into the page-aligned scratch.
         Span<byte> payload = buffer.AsSpan(offset, count);
-
-        return useAligned
-            ? SendScsiCommandDirectAligned(cdb, payload, dataIn: false)
-            : SendScsiCommandDirect(cdb, payload, dataIn: false);
+        return SendScsiCommandDirect(cdb, payload, dataIn: false);
     }
 
     /// <summary>
     /// Convenience wrapper matching the <see cref="TapeDriveWin32Backend.Write"/> override shape,
     /// so a caller can swap WriteFile for SPTD writes with minimal churn. Both early-warning kinds
-    /// are surfaced through dedicated out flags; a hard EOM surfaces through <paramref name="eof"/>
-    /// exactly like the WriteFile path. Uses the page-aligned transport.
+    /// are surfaced through dedicated out flags; a hard EOM surfaces through <paramref name="eom"/>.
+    /// Supply a <see cref="TapeWriteBuffer"/>-backed, page-aligned array for the zero-copy fast path.
     /// </summary>
     public int WriteDirect(byte[] buffer, int offset, int count,
         out bool tapemark, out bool programmableEarlyWarning, out bool earlyWarning, out bool eom)
     {
         int written = ScsiWriteDirect(buffer, offset, count,
             out tapemark, out programmableEarlyWarning, out earlyWarning, out eom,
-            useAligned: true, forceVariable: false);
+            forceVariable: false);
         return written;
     }
 
@@ -637,13 +650,11 @@ public partial class TapeDriveWin32Backend
     //  64 KB cliff. WriteFile avoids this because the tape class driver builds a page-aligned
     //  MDL for the full transfer AND splits it into adapter-sized SRBs internally.
     //
-    //  Fix: (1) probe adapter capabilities via IOCTL_STORAGE_QUERY_PROPERTY; (2) route each
-    //  chunk through a reusable page-aligned native scratch buffer; (3) CHUNK a large fixed-block
-    //  write across multiple SRB-sized WRITE(6) commands in ScsiWriteDirect (a tape logical block
-    //  itself cannot be split, so variable-block writes still must fit one SRB).
-    //
-    //  The non-aligned transport (SendScsiCommandDirect) is retained for small transfers
-    //  and diagnostics; ScsiWriteDirect selects between them via useAligned.
+    //  Fix: (1) probe adapter capabilities via IOCTL_STORAGE_QUERY_PROPERTY; (2) DMA directly
+    //  from an already page-aligned caller buffer (a TapeWriteBuffer POH window) or, for a
+    //  misaligned buffer, copy once through a reusable page-aligned native scratch; (3) CHUNK a
+    //  large fixed-block write across multiple SRB-sized WRITE(6) commands in ScsiWriteDirect
+    //  (a tape logical block itself cannot be split, so variable-block writes still must fit one SRB).
     // =========================================================================
 
     // =============================================================================
@@ -697,7 +708,8 @@ public partial class TapeDriveWin32Backend
     private uint m_maxPhysicalPages;
     private uint m_alignmentMask;
 
-    // Reusable page-aligned scratch for SPTD payloads. Allocated on demand, grown as needed.
+    // Reusable page-aligned scratch for MISALIGNED SPTD payloads (aligned callers skip this entirely).
+    //  Allocated on demand, grown as needed.
     //  IMPORTANT: call FreeAlignedScratch() from your existing Close(), and reset
     //  m_maxTransferLength = 0 there too so capabilities are re-probed on the next Open().
     private nint m_alignedScratch;      // native, page-aligned
@@ -840,82 +852,12 @@ public partial class TapeDriveWin32Backend
 
     #endregion
 
-    #region *** Aligned SPTD core ***
-
-    /// <summary>
-    /// Page-aligned variant of <see cref="SendScsiCommandDirect"/>. The payload is copied into a
-    /// reusable page-aligned native buffer before the IOCTL, and (for data-in) copied back after.
-    /// This is what makes transfers larger than 64 KB succeed. The scratch buffer only needs to be
-    /// as large as ONE chunk (<see cref="MaxScsiDirectTransfer"/>), not the caller's whole write.
-    /// </summary>
-    private unsafe ScsiDirectOutcome SendScsiCommandDirectAligned(
-        Span<byte> cdb,
-        Span<byte> dataBuffer,
-        bool dataIn,
-        uint timeoutSeconds = c_sptiDefaultTimeoutSec)
-    {
-        int sptdSize = sizeof(SCSI_PASS_THROUGH_DIRECT);
-        int ctrlSize = sptdSize + c_senseBufferSize;
-
-        byte[] ctrl = new byte[ctrlSize];
-
-        byte* pData = null;
-        if (dataBuffer.Length > 0)
-        {
-            pData = EnsureAlignedScratch(dataBuffer.Length);
-            if (!dataIn)
-                dataBuffer.CopyTo(new Span<byte>(pData, dataBuffer.Length)); // managed -> aligned
-        }
-
-        fixed (byte* pCtrl = ctrl)
-        {
-            var spt = (SCSI_PASS_THROUGH_DIRECT*)pCtrl;
-            spt->Length = (ushort)sptdSize;
-            spt->CdbLength = (byte)cdb.Length;
-            spt->SenseInfoLength = (byte)c_senseBufferSize;
-            spt->DataIn = dataIn ? c_scsiDataIn : c_scsiDataOut;
-            spt->DataTransferLength = (uint)dataBuffer.Length;
-            spt->TimeOutValue = timeoutSeconds;
-            spt->DataBuffer = dataBuffer.Length > 0 ? pData : null;
-            spt->SenseInfoOffset = (uint)sptdSize;
-
-            for (int i = 0; i < cdb.Length; i++)
-                spt->Cdb[i] = cdb[i];
-
-            bool ok = PInvoke.DeviceIoControl(
-                new HANDLE(m_driveHandle.DangerousGetHandle()),
-                c_ioctlScsiPassThroughDirect,
-                pCtrl, (uint)ctrlSize,
-                pCtrl, (uint)ctrlSize,
-                null, null);
-
-            if (!ok)
-            {
-                SetErrorFromPInvoke();
-                m_logger.LogDebug("{Prefix}: SPTD(aligned) DeviceIoControl failed (transport), Win32=0x{Err:X}",
-                    LogPrefix, (uint)LastErrorWin32);
-                return new ScsiDirectOutcome { TransportOk = false };
-            }
-
-            ScsiDirectOutcome outcome =
-                DecodeSptdSense(pCtrl, sptdSize, spt->ScsiStatus, spt->DataTransferLength, "SPTD(aligned)");
-
-            // Data-in: copy the aligned scratch back into the caller's span.
-            if (dataIn && dataBuffer.Length > 0 && outcome.TransportOk)
-                new Span<byte>(pData, dataBuffer.Length).CopyTo(dataBuffer);
-
-            return outcome;
-        }
-    }
-
-    #endregion
-
     #region *** SPTD sense decode (shared) ***
 
     /// <summary>
     /// Decodes the fixed-format sense buffer that immediately follows the SPTD control block,
-    /// building a <see cref="ScsiDirectOutcome"/>. Shared by the raw and aligned transports so
-    /// EW / PEW / EOM detection stays identical across both.
+    /// building a <see cref="ScsiDirectOutcome"/>. Shared by all SPTD commands so
+    /// EW / PEW / EOM detection stays identical everywhere.
     /// </summary>
     private unsafe ScsiDirectOutcome DecodeSptdSense(
         byte* pCtrl, int sptdSize, byte scsiStatus, uint dataTransferLength, string tag)

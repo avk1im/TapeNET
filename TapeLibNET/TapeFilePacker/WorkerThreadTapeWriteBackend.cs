@@ -31,9 +31,9 @@ internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
     // Protected by the lock; mutated only by the producer (under lock) before signaling
     //  _workAvailable, and by the worker (under lock) before signaling _workComplete.
     private readonly object _lock = new();
-    private byte[]? _pendingBuffer;
+    private TapeWriteBuffer? _pendingBuffer;
     private int _pendingValidBytes;
-    private byte[]? _completedBuffer;
+    private TapeWriteBuffer? _completedBuffer;
     private WriteResult _completedResult;
     private bool _hasCompletedResult;
     private bool _shutdownRequested;
@@ -50,7 +50,6 @@ internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
         _sink = sink;
         BlockSize = blockSize;
         _logger = logger ?? NullLogger.Instance;
-
         _worker = new Thread(WorkerLoop)
         {
             IsBackground = true,
@@ -59,12 +58,11 @@ internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
         _worker.Start();
     }
 
-    public void StartWriting(byte[] buffer, int validBytes)
+    public void StartWriting(TapeWriteBuffer buffer, int validBytes)
     {
         ArgumentNullException.ThrowIfNull(buffer);
         ArgumentOutOfRangeException.ThrowIfNegative(validBytes);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(validBytes, buffer.Length);
-
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(validBytes, buffer.Capacity);
         ThrowIfDisposed();
 
         // Block until the previous write (if any) has finished.
@@ -77,7 +75,6 @@ internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
         lock (_lock)
         {
             ThrowIfDisposed();
-
             Debug.Assert(_pendingBuffer is null, "Worker should be idle after _workComplete is set.");
 
             _pendingBuffer = buffer;
@@ -101,7 +98,7 @@ internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
         return _workComplete.IsSet ? WriteBackendStatus.Idle : WriteBackendStatus.Busy;
     }
 
-    public (WriteResult Result, byte[]? Buffer) AwaitCompletion()
+    public (WriteResult Result, TapeWriteBuffer? Buffer) AwaitCompletion()
     {
         if (_disposed)
             return (WriteResult.Empty, null);
@@ -115,11 +112,9 @@ internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
 
             var result = _completedResult;
             var buffer = _completedBuffer;
-
             _hasCompletedResult = false;
             _completedBuffer = null;
             _completedResult = default;
-
             return (result, buffer);
         }
     }
@@ -132,9 +127,8 @@ internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
             {
                 _workAvailable.Wait();
 
-                byte[] buffer;
+                TapeWriteBuffer buffer;
                 int validBytes;
-
                 lock (_lock)
                 {
                     if (_shutdownRequested)
@@ -202,7 +196,6 @@ internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
         }
 
         try { _worker.Join(); } catch { /* ignore */ }
-
         _workAvailable.Dispose();
         _workComplete.Dispose();
     }

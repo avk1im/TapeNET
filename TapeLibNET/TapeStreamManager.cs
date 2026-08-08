@@ -43,6 +43,7 @@ namespace TapeLibNET
         //  by EndWriteContent. Both remain null while the manager is not in
         //  TapeState.WritingContent.
         private WorkerThreadTapeWriteBackend? m_packerBackend;
+        private TapeWriteBufferPool? m_packerBufferPool;
         private TapeFileWritePacker? m_packer;
 
         // Bytes already handed off to the drive by the packer in the current content
@@ -797,7 +798,7 @@ namespace TapeLibNET
 
         // Sink that bridges the worker-thread backend to TapeDrive.WriteDirect.
         //  Captured once and passed to the backend; lives for the backend's lifetime.
-        private WriteResult PackerWriteSink(byte[] buffer, int validBytes)
+        private WriteResult PackerWriteSink(TapeWriteBuffer buffer, int validBytes)
         {
             try
             {
@@ -829,7 +830,7 @@ namespace TapeLibNET
                         int partialBlocks = 0;
                         if (writable > 0)
                         {
-                            int w = Drive.WriteDirect(buffer, 0, writable);
+                            int w = Drive.WriteDirect(buffer.Array, buffer.Offset, writable);
                             partialBlocks = w / (int)blockSize;
                             m_packerBytesWritten += w;
                         }
@@ -840,7 +841,7 @@ namespace TapeLibNET
                         DriveNumber, validBytes, m_packerBytesWritten, remaining);
                 }
 
-                int written = Drive.WriteDirect(buffer, 0, validBytes, out _, out bool ew, out bool eom);
+                int written = Drive.WriteDirect(buffer.Array, buffer.Offset, validBytes, out _, out bool ew, out bool eom);
 
                 int blocks = written / (int)Drive.BlockSize;
                 m_packerBytesWritten += written;
@@ -904,13 +905,16 @@ namespace TapeLibNET
             if (startBlock < 0)
                 startBlock = 0;
 
+            m_packerBufferPool = new(m_logger);
+
             m_packer = new TapeFileWritePacker(
                 backend: m_packerBackend,
                 rewindToBlock: b => Drive.MoveToBlock(b),
                 blockMultiplier: PackerBlockMultiplier,
                 sourceErrorMode: PackerSourceErrorMode,
                 logger: m_logger,
-                initialAbsBlock: startBlock);
+                initialAbsBlock: startBlock,
+                bufferPool: m_packerBufferPool);
 
             m_packer.FilesCommitted += OnPackerFilesCommitted;
 
@@ -960,6 +964,19 @@ namespace TapeLibNET
             finally
             {
                 m_packerBackend = null;
+            }
+
+            try
+            {
+                m_packerBackend?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                m_logger.LogWarning(ex, "Drive #{Drive}: Exception disposing packer buffer pool", DriveNumber);
+            }
+            finally
+            {
+                m_packerBufferPool = null;
             }
 
             m_logger.LogTrace("Drive #{Drive}: Packer disposed", DriveNumber);
