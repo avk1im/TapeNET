@@ -289,6 +289,8 @@
                 <Separator/>
                 <MenuItem Header="_Eject" Command="{Binding EjectCommand}"/>
                 <Separator/>
+                <MenuItem Header="_Calibrate..." Command="{Binding CalibrateMediaCommand}"/>
+                <Separator/>
                 <MenuItem Header="_Delete Backup Sets..." Command="{Binding DeleteBackupSetsCommand}"/>
                 <MenuItem Header="_Format..." Command="{Binding FormatMediaCommand}"/>
             </MenuItem>
@@ -1188,6 +1190,10 @@
         <StatusBar Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="3">
             <StatusBarItem>
                 <TextBlock Text="{Binding StatusMessage}" />
+            </StatusBarItem>
+            <Separator />
+            <StatusBarItem Visibility="{Binding RemainingAndEw, Converter={StaticResource NullToVis}}">
+                <TextBlock Text="{Binding RemainingAndEw}" />
             </StatusBarItem>
             <Separator />
             <StatusBarItem Visibility="{Binding IsIoSpeedVisible, Converter={StaticResource BoolToVis}}">

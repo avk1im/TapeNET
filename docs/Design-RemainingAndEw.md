@@ -1,4 +1,4 @@
-# TapeLibNET — Remaining-Capacity Estimation & Early Warning
+﻿# TapeLibNET — Remaining-Capacity Estimation & Early Warning
 
 Complete design specification for the capacity-estimation and early-warning subsystem of `TapeDrive`.
 This document complements the TapeNET Context Primer and follows its conventions.
@@ -46,11 +46,17 @@ Design specification lives inline in `TapeDriveWin32Backend.lto-direct.cs`. Key 
   port/miniport IOCTL the class driver does not forward on a `\\.\TAPEn` handle (returns
   `ERROR_INVALID_FUNCTION`). The storage-property query **is** forwarded and yields
   `MaximumTransferLength` / `MaximumPhysicalPages` / `AlignmentMask`.
-- **Page-aligned scratch + SG budget** — the miniport locks the caller's buffer into a scatter/gather list
-  bounded by `MaximumPhysicalPages`. A pinned managed array is only 8-byte aligned, so a 64 KB payload spans
-  17 physical pages — the common adapter SG limit — hence unaligned SPTD writes fail above 64 KB. Routing the
-  payload through a reusable page-aligned native buffer (`NativeMemory.AlignedAlloc`, page size from
-  `Environment.SystemPageSize`) lifts the limit to `MaximumPhysicalPages × pageSize`.
+- - **Adaptive alignment + SG budget** — the miniport locks the caller's buffer into a scatter/gather list
+  bounded by MaximumPhysicalPages. A pinned managed array is only 8-byte aligned, so a 64 KB payload spans 17
+  physical pages — the common adapter SG limit — hence unaligned SPTD writes fail above 64 KB.
+  `SendScsiCommandDirect` therefore pins the caller's buffer and inspects its address: an **already
+  page-aligned** payload is DMA'd **directly with no copy**; a misaligned one is copied once into a reusable
+  page-aligned native scratch (`NativeMemory.AlignedAlloc`, page size from `Environment.SystemPageSize`).
+  Either way the driver receives a page-aligned DataBuffer, so a full-budget chunk occupies at most
+  MaximumPhysicalPages fragments (limit = MaximumPhysicalPages × pageSize) — no per-chunk headroom hack needed.
+  The alignment is **self-describing** from the pinned pointer, so no "isAligned" flag crosses the API boundary.
+  The zero-copy fast path is supplied by the packer via page-aligned buffers (see **Part 1A**);
+  the scratch-copy path remains the correct fallback for any misaligned caller.
 - **Automatic chunking** — a single SRB cannot exceed the adapter ceiling (~1 MB on the test rig despite the
   drive's 1 MB max block). `WriteFile` reaches multi-MB transfers because `tape.sys` splits into adapter-sized
   SRBs internally; `ScsiWriteDirect` replicates that by chunking a large fixed-block write into back-to-back
@@ -63,6 +69,34 @@ Design specification lives inline in `TapeDriveWin32Backend.lto-direct.cs`. Key 
 - **First-class SCSI identity** — `LtoDetect` parses the INQUIRY Product Revision Level (bytes 32–35)
   alongside vendor (8–15) and product (16–31); `Revision` joins `Vendor`/`Product` as a backend property,
   feeding the calibration profile key.
+
+---
+
+### Part 1A — Page-aligned write buffers (TapeWriteBuffer) [DONE]
+
+The SPTD path can DMA straight from the caller's buffer only when that buffer is page-aligned; otherwise it pays a per-chunk copy into the aligned scratch. Measurement showed the SPTD writer running slightly slower than a plain `WriteFile`, traced to two hot-path costs: (1) the per-write alignment **copy**, and (2) a per-chunk **heap allocation** of the SPTD control block. Both are now eliminated, closing the gap while preserving EW/PEW sensing. The chunking floor (N × `DeviceIoControl` per multi-MB write) is inherent to sensing and remains.
+
+#### TapeWriteBuffer / TapeWriteBufferPool (new file TapeWriteBuffer.cs)
+
+A pooled, page-aligned write buffer and its pool. Key design points:
+- **Pinned Object Heap, not NativeMemory.AlignedAlloc** — `GC.AllocateArray<byte>(size, pinned: true)` returns a **real `byte[]`** that never moves and is GC-reclaimed (no manual free, no leak on exception paths), so the packer keeps its `byte[]`-centric copy/clear logic. `AlignedAlloc` was rejected because it yields non-managed memory (loses `Buffer.BlockCopy`/`Array.Clear`) and needs manual `try/finally` freeing.
+- **Over-allocate by one page, expose an aligned window** — a POH array's element 0 is not page-aligned, so the pool allocates `bucket + pageSize`, computes the offset to the next page boundary once (stable for life, since POH never moves), and exposes a page-aligned window of `Capacity` bytes. The window's internal offset is **private** — callers address it with 0-based positions.
+- **Encapsulated mutation API** — `CopyFrom`, `Clear`, `CopyRegionTo`, `Data(length)`, `Return()`. The offset never leaks into the packer; there is no `Fill`-struct laundry. `Data(length)` yields the transient, already-aligned span for the write hand-off.
+- **Multiset pool, bucketed by page-rounded capacity** — supports several live rentals of one size (the packer's double-buffering) as a stack per bucket. Rent/Return are cheap and thread-safe; a disposed pool drops references (POH reclaimed by GC).
+
+#### SCSI-side adoption (TapeDriveWin32Backend.lto-direct.cs)
+
+- **Auto-detect, no flag** — `SendScsiCommandDirect` reads the pinned pointer's alignment and chooses zero-copy vs. scratch-copy itself; the separate `SendScsiCommandDirectAligned` transport and the `useAligned`/`bufferIsAligned` parameter are **gone**. The SCSI signature stays a clean `byte[]+offset+count` — `TapeWriteBuffer` never appears in the SCSI layer, fully preserving the WriteDirect→SCSI boundary.
+- **stackalloc control block** — the ~76-byte SPTD+sense control buffer is `stackalloc`'d per command instead of `new byte[]`, removing the per-chunk GC allocation.
+- **Full SRB budget** — because the driver always receives a page-aligned DataBuffer, the former one-page headroom reduction is dropped (`effectiveMax = MaxScsiDirectTransfer`).
+
+#### TapeFilePacker adoption (TapeFileWritePacker.cs)
+
+- **Fill buffers are pooled TapeWriteBuffers** — the packer holds a single `TapeWriteBuffer _fillBuffer`; the old `ArrayPool<byte>` path is removed. `WriteFromOpenFile`, the zero-pad in `Flush`, and the leftover-carry in `DoFlushFillBuffer` use `CopyFrom` / `Clear` / `CopyRegionTo`. Page alignment means every hand-off reaches the SPTD zero-copy fast path.
+- **Session-scoped pool ownership** — the packer takes an optional `TapeWriteBufferPool`: supplied → shared and **not** disposed (production: one per `TapeStreamManager`/session, amortized across any number of packers and released at session end — POH-friendly); omitted → a private pool it owns and disposes (unit tests need no wiring). A drive-lifetime pool was rejected: at steady state only ~2 buffers churn per session, so a session-scoped pool captures essentially all the benefit while avoiding pinned memory held across idle stretches.
+- **Backend contract widened to the buffer type** — `ITapeWriteBackend.StartWriting(TapeWriteBuffer, int)` and `AwaitCompletion() → (WriteResult, TapeWriteBuffer?)`, so ownership (and buffer identity, for `Assert.Same` in tests) round-trips as the raw handle; `TapeWriteSink` likewise takes `TapeWriteBuffer`.
+
+**Caveat.** The zero-copy fast path requires the block size to be a page multiple so every chunk start stays aligned; LTO's power-of-two sizes (16 KB … 1 MB) all satisfy this, and a non-conforming size simply falls back to the scratch copy. **Expectation:** removing the copy + per-chunk alloc closes most of the gap, landing SPTD *at* `WriteFile` speed — the residual N× `DeviceIoControl` chunking is the price of EW/PEW sensing.
 
 ---
 
@@ -160,9 +194,11 @@ compares a profile key); the concrete type is JSON-serialized inside TapeLibNET.
 
 | Member | Role |
 |---|---|
-| `FormatId` | Format + version guard (`tapelibnet-cal/1`); loader rejects unknown ids. |
-| `ProfileKey` | `vendor\|product\|revision\|cap=NNNGB` — identifies the drive+media profile. |
-| `CapacityReported` | Driver capacity at BOT. |
+| `FormatId` | Format + version guard (`tapelibnet-cal/2`); loader rejects unknown ids. |
+| `ProfileKey` | `vendor\|product\|revision\|cap=<bucket>` — identifies the drive+media profile (see Part 5.3). |
+| `ReportedCapacityAtBom` | The driver's claimed capacity at beginning of media. |
+| `PhantomFreeAtEom` | Reported remaining at the instant hard EOM fires — space the driver claims but that does not exist. |
+| `ReportedCapacityTotal` | Derived: `CapacityActual + PhantomFreeAtEom`. |
 | `CapacityActual` | Bytes written at hard EOM — the ground truth. |
 | `Curve` | `ReportedRemaining → ActualRemaining` points, sorted ascending, conservative on ties. |
 | `EarlyWarning` | Nullable `(ReportedRemaining, ActualRemaining)` landmark; null if the drive never reported EW. |
@@ -252,6 +288,7 @@ Runtime (every session):
 | `Virtual/VirtualTapeEwProfile.cs` | Opt-in emulation profile (EW zone + reported-remaining model; `Lto4Like`/`FromCalibration`) — Part 4.1. |
 | `Virtual/VirtualTapeMedia.EW.cs` | Per-cartridge EW state: `TrueRemaining`, reported `Remaining`, `IsInEarlyWarningZone` — Part 4.1. |
 | `Virtual/VirtualTapeDriveBackend.EW.cs` | Backend EW config/surface: `EmulatedEarlyWarning`, mechanism overrides, `ew` in `Write` — Part 4.1. |
+| `TapeWriteBuffer.cs` | Pooled page-aligned POH write buffer + pool; SPTD zero-copy fast path (Part 1A). |
 
 ---
 
@@ -283,9 +320,8 @@ low-level `TapeDriveWin32Backend.lto-direct.cs`.
   round-trips. The plan adds a lightweight throttle/cache (reuse the existing `m_cachedContentRemaining` path)
   so Service-layer polling stays cheap. --> implemented caching `m_mediaParams` -- invalidate on every write.
   S. `EnsureMediaParams()`, `InvalidateMediaParams()`, `ReloadMediaParams()`. Additional block size caching to accelerate `BlockSize` getter.
-- [ ] WIP **`TapeDrive.Remaining` does not exist; callers use `GetRemainingCapacity()` + Navigator adjustment.** The
-  integration introduces a single authoritative property (see Phase 3) rather than leaving three competing
-  notions (`GetRemainingCapacity`, `GetContentRemainingCapacity`, `AdjustRemainingContentCapacity`) --> address during integration (Phase 3)
+- [v] DONE **A single authoritative remaining API.** The three competing notions were replaced by the
+  `Reported*` / `Estimated*` / `Writable*` naming rule described in Part 5.4.
 - [v] DONE **`EarlyWarning` setter silently no-ops without media.** `SetEarlyWarning` returns `false` and sets
   `ERROR_NO_MEDIA_IN_DRIVE`, but the property setter swallows the result. Document that the reserve is only
   applied once media is loaded, and have the Service layer (re)apply the desired reserve in `PrepareMedia`. -->
@@ -318,23 +354,20 @@ Phase 2 and only needs a stub so the `Write` signature stays honest.)
 - **New emulation profile on `VirtualTapeDriveBackend`** (opt-in, defaults preserve current exact behavior):
   - `EarlyWarningZone` (bytes before physical EOM at which built-in EW starts firing; e.g. `~4%` of capacity).
     Null/0 ⇒ no EW emulation (legacy behavior).
-  - `ReportedRemainingModel` — a delegate/curve mapping *true* `bytesWritten` → *reported* `Remaining` that
-    overshoots and floors near the tail (model the LTO-4 ~3.6% overshoot, monotonic, floored ≈ 32/50 of
-    capacity as in the doc). Default ⇒ the current exact `capacity − bytesWritten`.
-    - Consider leveraging the existing `ITapeCalibration` mechanism and, if necessary, `TapeCalibration`
-    implementation to implement `ReportedRemainingModel`. This way we can apply both synthetic (`Apriori`) or
-    real-life measured calibration data to exactly model the behavior. Effectively, we'll need to flip
-    `TranslateRemaining()` functionality to `TranslateActualToReported()`. A catch to address: The real-life
-    profiles originate from large-capacity media, 100s GB. Introduce a wrapper that maps the profile's
-    original capacity to any other, smaller, value -- to apply the profile to a generally much smaller virtual
-    drive. It's acceptable to unseal `TapeCalibration` if deriving proves more elegant than adding additional
-    methods.
+  - `Anchors` — the two endpoints of the actual→reported line (`ReportedCapacityBoost` at BOM,
+    `PhantomFreeAtEom` at hard EOM) mapping *true* `bytesWritten` → *reported* `Remaining`, so the reported
+    figure overshoots toward the tail as the real LTO-4 does. Truthful anchors ⇒ exact
+    `capacity − bytesWritten`.
+    - Leverage the existing `ITapeCalibration` mechanism so both synthetic (`Apriori`) and real-life measured
+    calibration data can drive the emulation, flipping `TranslateRemaining()` into
+    `TranslateActualToReported()`. A catch to address: real-life profiles originate from large-capacity media,
+    100s GB, so a wrapper maps the profile's original capacity onto the generally much smaller virtual drive.
 - **`WriteBlocks` / `Write` semantics:**
   - When `bytesWritten` enters the EW zone (but capacity remains) → set `ew = true`, data **is** written,
     no error (mirrors the real sense-key ⇒ EW mapping). EW keeps firing on every subsequent write to EOM.
   - When truly full → keep the existing `ERROR_END_OF_MEDIA` ⇒ `eom = true` (data rejected).
   - `pew` remains `false` (Phase-2 stub); leave a single `// Phase 2` marker replacing the current `FIXME`.
-- **`Remaining` property** returns the `ReportedRemainingModel` value (the "quirky" figure the driver would
+- **`Remaining` property** returns the anchored model value (the "quirky" figure the driver would
   report), while the drive / media internally still tracks true `bytesWritten` for capacity enforcement.
 - **`EarlyWarningMechanism`** on the virtual backend returns `HardwareEarlyWarning` when the EW zone is
   configured, else `None`. `ReportEarlyWarning(bool)` records the request and gates whether `ew` is surfaced.
@@ -370,12 +403,13 @@ An opt-in, immutable emulation profile — a `record` — carried by the media. 
 behavior. Key design points:
 
 - **Two knobs:** `EarlyWarningZone` (bytes before physical EOM at which built-in EW starts asserting) and
-  `ReportedRemainingModel` — a `Func<actualWritten, capacity, reportedRemaining>` that should be monotonic
-  non-increasing. Null model ⇒ exact `capacity − actualWritten` (legacy). Both are floored at zero.
-- **`Lto4Like(capacity, ewZonePercent = 4, floorPercent = 4)`** — a realistic preset independent of absolute
-  capacity (so it applies to tiny test cartridges too). A single linear map `reported = capacity −
-  actualWritten·(1 − floorFraction)` overshoots toward the tail and floors at `floorPercent` of capacity at
-  hard EOM (mirrors the documented ~3.6 % overshoot / ~4 % floor of the LTO-4).
+  `Anchors` — a `ReportedRemainingAnchors` record naming the two endpoints of the actual→reported line
+  (`ReportedCapacityBoost` at BOM, `PhantomFreeAtEom` at hard EOM; see Part 5.2), interpolated linearly and
+  monotonic non-increasing. Truthful anchors (both zero) ⇒ exact `capacity − actualWritten`. Both are
+  floored at zero.
+- **`Lto4Like(capacity, ewZonePercent = 4, phantomFreePercent = 4, reportedBoostPercent = 0)`** — a realistic
+  preset independent of absolute capacity (so it applies to tiny test cartridges too), mirroring the
+  documented ~3.6 % overshoot growing toward the tail with a truthful figure at BOM.
 - **`FromCalibration(ITapeCalibration, targetCapacity)`** — the elegant path the draft asked for: it derives
   the model from a real (or `Apriori`) calibration by **rescaling** the profile's large capacity onto the small
   virtual cartridge (`scale = targetCapacity / CapacityActual`). The reported figure is produced by
@@ -428,15 +462,18 @@ Goal: Extend `OpenVirtualDriveWindow` and `VirtualDriveConfigViewModelBase` to a
 emulation behavior -- implemented using the mechanism implemented in Phase 1.
 
 - **UI**: A new Groupbox "Emulate End-of-Media Behavior", placed under the "Emulate IO Performance" Groupbox:
-  - **Capacity Overreport**: a numeric input to specify the value in "% Capacity" or directly in MB / GB;
-    unit choosable by a small combobox similar to Capacity input. 4% by default. A textbox shows the value in bytes,
-    also similar to the Capacity input.
-  - **Early Warning Zone**: a numeric input similar to the above. 4% by default.
+  - **Early Warning Zone**: a numeric input to specify the value in "% Capacity" or directly in MB / GB;
+    unit choosable by a small combobox similar to the Capacity input. 4% by default. A textbox shows the value
+    in bytes, also similar to the Capacity input.
+  - **Phantom free at EOM**: a numeric input similar to the above — the space the emulated driver still claims
+    when hard EOM fires. 4% by default.
+  - **Capacity overreport (BOM)**: a numeric input similar to the above — the inflation of the driver's claimed
+    capacity at beginning of media. 0 by default, and listed last since it is usually left at 0.
   - **Profile**: Combobox populated by emulation profiles:
-    - 1st entry is `[Custom]` which allows the user to specify the above two values.
+    - 1st entry is `[Custom]` which allows the user to specify the above values.
     - 2nd entry is `[LTO-4]` generated by the `Lto4Like` factory.
     - The other entries are the calibration profiles loaded from the app's persistent storage.
-    Selecting a profile other than `[Custom]` disables **and blanks** the two value inputs (they are collapsed
+    Selecting a profile other than `[Custom]` disables **and blanks** the value inputs (they are collapsed
     via `BoolToVis`). Non-`[Custom]` profiles are opaque by design -- their internal reported-remaining curve is a
     set of samples, not a simple pair of values, so surfacing derived numbers would misrepresent them.
 
@@ -446,14 +483,15 @@ The updated spec was reviewed against the actual code before implementation; sev
 hold and were corrected in code:
 
 1. **No new TapeLibNET factory needed.** The `[Custom]` and `[LTO-4]` options both build via the existing
-   `VirtualTapeEwProfile.Lto4Like(capacity, ewZonePercent, floorPercent)`; calibration options build via
-   `VirtualTapeEwProfile.FromCalibration(cal, capacity)`. The UI resolves the two inputs (EW zone, overreport)
-   to *percentages of content capacity* and passes them as `ewZonePercent` / `floorPercent`.
+   `VirtualTapeEwProfile.Lto4Like(capacity, ewZonePercent, phantomFreePercent, reportedBoostPercent)`;
+   calibration options build via `VirtualTapeEwProfile.FromCalibration(cal, capacity)`. The UI resolves the
+   three inputs to *percentages of content capacity* and passes them through.
 
-2. **`Lto4Like` semantics clarified.** The EW zone and the floor (overreport) are **independent, non-overlapping**
-   axes: the EW zone is a *physical* distance before hard EOM (last `ewZonePercent%` of real medium), while the
-   floor is a *reported-remaining* figure (phantom free space still claimed at hard EOM). The EW zone therefore
-   **EXCLUDES** the floor. This is now documented on the `Lto4Like` factory.
+2. **`Lto4Like` semantics.** The EW zone and the two over-report anchors are **independent, non-overlapping**
+   axes: the EW zone is a *physical* distance before hard EOM (last `ewZonePercent%` of real medium), while
+   the anchors are *reported-remaining* figures (inflation at BOM and phantom free space still claimed at hard
+   EOM). The EW zone therefore **EXCLUDES** the phantom free space. This is documented on the `Lto4Like`
+   factory.
 
 3. **`% Capacity` is not a `CapacityUnit` multiplier.** A percentage has no constant byte multiplier, so it could
    not be added to `CapacityUnit.All`. Instead `CapacityUnit` gained a `Percent` sentinel (multiplier 0), an
@@ -567,15 +605,15 @@ Two test-only realities were also confirmed (and documented in the tests):
 Make the improved estimate the *default* remaining-capacity figure the rest of the library and apps consume, and
 retire the ad-hoc `AdjustRemainingContentCapacity` heuristic.
 
-- **New authoritative property `TapeDrive.Remaining`** ⇒ returns `EstimateActualRemaining()` (calibrated when
-  available, raw driver value otherwise), throttled/cached per Phase 0.
-- **`TapeDrive.DriverReportedRemaining`** ⇒ the raw `GetRemainingCapacity()` value, kept for diagnostics,
-  calibration, and UI "driver says vs. we estimate" display.
-- **Deprecate `TapeNavigator.AdjustRemainingContentCapacity`** (instance + static): mark `[Obsolete]` and route
-  its callers to the new estimate. The TOC-reservation deduction it performed (for TOC-in-set) is replaced by
+- **New authoritative property `TapeDrive.EstimatedContentRemaining`** ⇒ returns `EstimateActualRemaining()`
+  (calibrated when available, a-priori otherwise), throttled/cached per Phase 0.
+- **`TapeDrive.ReportedContentRemaining`** ⇒ the raw `GetReportedContentRemaining()` value, kept for
+  diagnostics, calibration, and the UI's paired "reported / estimated" display.
+- **Retire `TapeNavigator.AdjustRemainingContentCapacity`** (instance + static): its callers move to the new
+  estimate. The TOC-reservation deduction it performed (for TOC-in-set) is replaced by
   setting `TapeDrive.SetEarlyWarning`.
-  - `TapeBackupAgent.ComputeRemainingCapacity`: `Drive.Remaining − (HasInitiatorPartition ? 0 : TOCCapacity)`,
-    clamped ≥ 0.
+  - `TapeBackupAgent.ComputeRemainingCapacity`: `Drive.EstimatedContentRemaining −
+    (HasInitiatorPartition ? 0 : TOCCapacity)`, clamped ≥ 0.
 - **Two scenarios** using capacity estoimation we need to *both* address -- yet analyze *separately* -- in `TapeBackupAgent` and `TapeStreamManager` path:
   - The legacy "aligned" file / `TapeFileStream` storing -- still in use for TOC writing and in tests. The agent performs the writing directly to the stream produced by `TapeStreamManager`..
   - The mainstream "packed" file storing: `TapeStreamManager.PackerWriteSink` performs the writing on behalf of the packer (called by the packer).
@@ -584,8 +622,9 @@ retire the ad-hoc `AdjustRemainingContentCapacity` heuristic.
   In the legacy path, should add reaction to the EW when writing content streams -- the same way we react to EOM now. This will make the "fit" checking in `ProduceWriteContentStream` unnecessary! When writing TOC, we should still only react to EOM ignoring EW (maybe just trace it).
 - **Where to set the EW size, to what?** A natural place seems in `BeginWriteContentForCurrentSet`. The size itself should be the TOC size for TOC-in-set or 0 (EW not needed) for TOC-in-partition.
 - **Decide how to wire logical EW into the backup stop decision.** Should we introduce the special error code for the EW, e.g. "misappropriate" Win32 ERROR_DISK_FULL -- and a dedicated bool out flag? This will require updating the legacy path to deal with the new code / flag. *OR* should we just report EOM everywhere except when writing TOC streams?
-- **`TapeServiceBase`:** `Remaining` ⇒ `Drive.Remaining`; add `DriverReportedRemaining`,
-  `EstimateMechanism` (`EarlyWarningMechanism`), and `IsEarlyWarning` passthroughs. Re-apply the configured
+- **`TapeServiceBase`:** `WritableRemaining` ⇒ `Drive.EstimatedContentRemaining` less the TOC reserve; add
+  `ReportedContentRemaining`, `EstimatedContentRemaining`, `EstimatedCapacity`, `RemainingEstimateMechanism`
+  and `IsEarlyWarning` passthroughs. Re-apply the configured
   `EarlyWarning` reserve in `PrepareMedia` (fixes the "setter no-ops without media" gap).
 - **Service calibration surface:** `CalibrateAsync(IProgress/callback, ref bool abort)`, `AddCalibration`,
   `RemoveCalibration`, `LoadCalibration(stream)`, `SaveCalibration(cal, stream)`, and a
@@ -608,18 +647,17 @@ skipped as unconfigured). Key decisions, some diverging from the questions posed
    `WriteResult` / `TapePackerEndOfMediaException` / the aligned stream / the agent would be pure churn for no
    semantic gain. So **both write paths surface logical EW as EOM**, and the whole existing (heavily tested)
    EOM machinery drives the wrap-up and TOC write unchanged.
-2. **New authoritative surface on `TapeDrive`.** Added `Remaining` ⇒ `EstimateActualRemaining()` (calibrated
-   when available, raw driver value otherwise) and `DriverReportedRemaining` ⇒ `GetRemainingContentCapacity()`
-   for diagnostics/UI "driver says vs. we estimate".
-3. **`AdjustRemainingContentCapacity` deprecated, not deleted.** Both the instance and static overloads (and the
-   `TapeServiceBase` passthrough) are now `[Obsolete]` and internally route off `Drive.Remaining` instead of the
-   raw driver figure. Retained as a backstop so the diagnostic `ContentCapacityLimit` test knob and any external
-   callers keep compiling; the real stop signal is now EW.
+2. **New authoritative surface on `TapeDrive`.** Added `EstimatedContentRemaining` ⇒
+   `EstimateActualRemaining()` (calibrated when available, a-priori otherwise) and `ReportedContentRemaining`
+   ⇒ `GetReportedContentRemaining()` for the diagnostic/UI "reported / estimated" pairing.
+3. **`AdjustRemainingContentCapacity` retired.** It is replaced by the pure what-if helper
+   `TapeServiceBase.ComputeWritableRemaining(estimatedRemaining)`, which applies the same TOC-reserve rule as
+   the live `WritableRemaining` property; the real stop signal is EW.
 4. **Reserve is armed per set in `TapeBackupAgent.BeginWriteContentForCurrentSet`.**
    `Drive.SetEarlyWarning(HasInitiatorPartition ? 0 : Navigator.TOCCapacity)`. Because Phase 1/2 made
    `SetEarlyWarning` always honored (matching calibration → a-priori fallback), `WriteDirect` reliably raises
    `ew` ~one TOC-reserve before EOM regardless of whether a measured calibration is loaded.
-   `ComputeRemainingCapacity` now returns `Drive.Remaining − (HasInitiatorPartition ? 0 : TOCCapacity)`, clamped
+   `ComputeRemainingCapacity` now returns `Drive.EstimatedContentRemaining − (HasInitiatorPartition ? 0 : TOCCapacity)`, clamped
    ≥ 0, and is only a backstop for the legacy `CapacityForCurrentSet` / `ContentCapacityLimit` checks.
 5. **Aligned path:** `TapeWriteStream.WriteDirect` now reads the `ew` out-param and sets `EOFEncountered` when
    `TapeStreamManager.ShouldStopContentOnEarlyWarning` is true — i.e. state is `WritingContent` **and** there is
@@ -627,29 +665,28 @@ skipped as unconfigured). Key decisions, some diverging from the questions posed
    the write. The old capacity "fit" pre-check in `ProduceWriteContentStream` is left in place as a harmless
    backstop rather than removed, to avoid disturbing its dedicated tests.
 6. **Packed path:** `PackerWriteSink` reads the `ew` flag from `WriteDirect` and maps EW→EOM only when the TOC
-   is co-located (`!Drive.HasInitiatorPartition`), dropping the now-obsolete `AdjustRemainingContentCapacity`
-   call while preserving the `CapacityForCurrentSet` / `ContentCapacityLimit` reserve arithmetic as a backstop.
-7. **`TapeServiceBase`:** `Remaining` ⇒ `Drive.Remaining` (minus TOC reserve for TOC-in-set); added
-   `DriverReportedRemaining`, `EstimateMechanism` (`EarlyWarningMechanism`), and `IsEarlyWarning` passthroughs.
+   is co-located (`!Drive.HasInitiatorPartition`), so the packer's existing rollback/EOM continuation handles
+   the wrap-up with no capacity pre-check of its own.
+7. **`TapeServiceBase`:** `WritableRemaining` ⇒ `Drive.EstimatedContentRemaining` (minus the TOC reserve for
+   TOC-in-set); added `ReportedContentRemaining`, `EstimatedContentRemaining`, `EstimatedCapacity`,
+   `RemainingEstimateMechanism` and `IsEarlyWarning` passthroughs.
    No service-level `EarlyWarning` **setter** exists (the reserve is an agent-per-set concern), so the proposed
-   "re-apply reserve in `PrepareMedia`" step was unnecessary and skipped. The Service calibration surface
-   (`CalibrateAsync`, store, import/export) remains Phase 4+ work.
+   "re-apply reserve in `PrepareMedia`" step was unnecessary and skipped.
 
 ### Phase 4 — `TapeWinNET` (WPF) reporting + persistence
 
 - **Media-usage reporting:** `MediaUsageBarPresenter` / `BackupMediaUsageBarPresenter` consume
-  `Service.Remaining` (calibrated) instead of `AdjustRemainingContentCapacity`. In the `MainWindow` Properties
-  ListView display in addition the "driver estimate" figure (`DriverReportedRemaining`).
-  Finally, display the `EarlyWarningMechanism` so the user can see *why* the numbers differ.
+  `Service.WritableRemaining` / `ComputeWritableRemaining(...)` (calibrated). The `MainWindow` Properties
+  ListView shows the paired `reported / estimated` rows plus `Writable` and `Estimation by` (see Part 5.5),
+  so the user can see *why* the numbers differ.
   Reproduce the same reporting in `TapeServiceBase.List.cs` (used by TapeConNET): `LogDriveInfo()` and `LogMediaInfoFull()`.
 - **Log pane:** when a backup finalizes on logical EW, emit a `LogEntry` (at the `WarningLevel.Info`) —
   e.g. *"Early warning: volume full at ~N GB (calibrated); writing table of contents."* — via the existing
   `LogMessageReceived` → `AddLog` path, so the user understands why the run wrapped up before the driver's
   optimistic figure.
-- **`MediaUsageBarPresenter`** (and derivates) also need an update since they employ the obsolete
-  `AdjustRemainingContentCapacity()`.
 - **Calibration persistence:** store `TapeCalibration` blobs via `TapeCalibrationStore` accessible via
-  `AppSettings.Calibrations` API (already used in Phase 1A).
+  `AppSettings.Calibrations` API (already used in Phase 1A), and auto-apply matching profiles on drive open
+  and media load via `TapeServiceBase.AutoLoadCalibrations()`.
 
 **Acceptance:** backup UI shows the calibrated figure; log pane explains the EW wrap-up; calibration profiles
 persist across app restarts and auto-apply to matching media.
@@ -683,7 +720,7 @@ UI:
 - **Result:** The summary output from service layer to the log pane (similar to Backup / Restore summary). To visualize
   the result, let's add `CalibrationWindow` that shows measured `CapacityActual`, EW landmark, and `EwToEomDistance`;
   offers *Save Profile* (into the `CalibrationStore`) and immediate *Apply Profile* via `AddCalibration`.
-  - Bonus feature: How about also displaying a simple 2D graph to visualize Reported -> Actual remaining capacity
+  - Bonus feature: Displaying a simple 2D graph to visualize Reported -> Actual remaining capacity
     curve, with the EW and EOM points marked? We already employ a simple 2D graph for `IoRateSparklineControl` ->
     can resue much of its code; even lift to a common base class if this will simpolify the two implementations.
     It'll be more intuitive to flip the X-axis (Remaining): Full capacity on the left, down to EOM on the right.
@@ -696,9 +733,64 @@ UI:
 **Acceptance:** user can run, monitor, abort, and save a calibration entirely from the GUI; a saved profile
 immediately improves the remaining-capacity figure for matching media.
 
+**The PR created by GitHub Copilot**: a service-layer calibration operation in `TapeLibNET.Services` and a GUI workflow in `TapeWinNET` to run, monitor, abort, review, save, and apply a calibration profile. It builds on the shipped Phases 0–4 without touching the validated low-level SCSI direct-write path.
+
+- **Service operation: calibration**
+  - Adds `CalibrateRequest` / `CalibrateResult` to the existing `ServiceOperationRequest -> operation -> ServiceOperationResult` pattern.
+  - Adds `ExecuteCalibrateAsync()` / `ExecuteCalibrateCore()` in `TapeServiceBase.EW.cs`.
+  - Introduces `ServiceCalibrateProgressHandler` to bridge calibration’s chunk-oriented progress into the existing operation-progress model used by the WPF overlay.
+  - Reuses the established cooperative abort flow by wiring service cancellation into `TapeCalibrator.IsAbortRequested`.
+  - Exposes minimal calibration-facing service surface needed by the UI (`DriveProfileKey`, active calibration, `AddCalibration()`).
+
+- **WPF workflow: confirm -> run -> review**
+  - Adds `CalibrateWindow` as the destructive-operation gate, patterned after the existing dialog conventions.
+  - Adds `CalibrationViewModel` to own the run lifecycle, abort coordination, save/apply actions, and result state.
+  - Adds `CalibrationWindow` to review the measured capacity, EW landmark, and EW→EOM distance, then save/apply the profile immediately.
+
+- **MainWindow progress integration**
+  - Extends the shared operation overlay to handle calibration alongside backup/restore instead of introducing a new progress surface.
+  - Adds `WpfServiceHost.UpdateCalibrateProgress()` and calibration-specific `MainViewModel` state/commands.
+  - Reuses the existing IO sparkline, percent bar, phase text, and abort button plumbing.
+
+- **Calibration curve visualization**
+  - Adds `CalibrationCurveControl` to plot `ReportedRemaining -> ActualRemaining`.
+  - Marks EW and EOM explicitly.
+  - Uses a split X-axis to magnify the EW→EOM tail region while keeping the full-capacity shape visible:
+    - pre-EW span uses most of the width
+    - EW→EOM tail gets a dedicated magnified segment
+
+- **As-built notes**
+  - Calibration does not use `TapeFileAgent` or TOC state, so it does not literally reuse `ServiceOperationProgressHandler`; instead it follows the same operation triad with a dedicated calibration progress adapter.
+  - `IoRateSparklineControl` is a rolling throughput sparkline, not a reusable 2D plot base, so the calibration graph is implemented as a dedicated control rather than forcing a shared inheritance layer.
+
+Example of the new service-layer shape:
+
+```csharp
+var result = await tapeService.ExecuteCalibrateAsync(
+    new CalibrateRequest(
+        EjectWhenDone: false,
+        Options: new TapeCalibrationOptions())
+    {
+        Cancellation = cancellationToken,
+        OperationLabel = "Calibration",
+    });
+
+if (result.Calibration is { } calibration)
+{
+    App.Settings.Calibrations.Save(calibration);
+    tapeService.AddCalibration(calibration);
+}
+```
+
+- **Fixes:**
+
+The calibration chart keeps its plot/axis labels inside the GroupBox content area, and a calibration run
+records both over-report anchors of a virtual-media run — `ReportedCapacityAtBom` and `PhantomFreeAtEom` —
+with regression coverage over the non-zero cases of each.
+
 ### Phase 6 — `TapeConNET` (CLI)
 
-- **Reporting:** the calibrated `Remaining` flows automatically through the Service layer; ensure any status
+- **Reporting:** the calibrated `WritableRemaining` flows automatically through the Service layer; ensure any status
   output prints the estimate (and optionally `--verbose` shows driver-reported vs. calibrated + mechanism).
 - **Calibrate command:** `tapecon --calibrate [--force]` runs a destructive calibration with a text progress
   line and Ctrl-C ⇒ cooperative abort; on success saves the profile to the shared `CalibrationStore`.
@@ -715,3 +807,194 @@ landmark earlier than the fixed physical EW — converting the imprecise before-
 byte-counted regime — remains future work, confined to the `TapeDrive` / `TapeCalibration` layer. The model
 already reserves a nullable PEW curve (`LogicalPew → PewToSet`) and the `pew` write flag for it; no API changes
 above are required to add it later.
+
+---
+
+## Part 5 — Capacity, remaining & early warning: the semantics [DONE]
+
+This part is the **normative glossary and contract** for everything the subsystem reports. Capacity and
+remaining are not one number but a small family of genuinely different quantities, each with its own source
+of truth; every API name, log line and UI label in the solution is derived from the vocabulary below.
+
+### 5.1 Semantic map — the canonical vocabulary
+
+| # | Quantity | Definition | Owner / source of truth |
+|---|----------|------------|--------------------------|
+| 1 | **True capacity** (`CapacityActual`) | Bytes that physically fit on the content partition, BOT → hard EOM. Ground truth. | Cartridge; measured by `TapeCalibrator`; emulated by `VirtualTapeMedia.m_capacity` |
+| 2 | **True remaining** | `TrueCapacity − trueWritten`. Reaches 0 exactly when hard EOM fires. | Only knowable on a virtual medium (`VirtualTapeMedia.TrueRemaining`) or after calibration |
+| 3 | **Driver-reported remaining** | What the drive/driver claims is still free. Optimistic, non-linear, floors above zero. | `TapeDriveBackend.Remaining` → `TapeDrive.GetReportedRemaining()` / `GetReportedContentRemaining()` |
+| 4 | **Driver-reported capacity at BOM** (`ReportedCapacityAtBom`) | Value of (3) sampled at beginning of media — the drive's own idea of cartridge size. May exceed (1). | `TapeCalibrator`, first sample |
+| 5 | **Phantom free space at EOM** (`PhantomFreeAtEom`) | Value of (3) at the instant hard EOM fires — space the driver claims but that does not exist. LTO-4: ~28 GB. | `TapeCalibrator`, EOM sample; persisted on `ITapeCalibration` |
+| 6 | **Estimated (calibrated) remaining** | (3) translated through the calibration curve → best estimate of (2). | `TapeDrive.EstimateActualRemaining()` / `EstimatedContentRemaining` |
+| 7 | **Physical EW** | Drive-asserted landmark, a fixed physical distance before hard EOM. Data *is* written. | Backend `ew` out-flag; distance recorded as `EwToEomDistance` |
+| 8 | **Logical EW reserve** | Caller's request: "tell me when only N bytes of *true* capacity remain", N = TOC size. Means *stop content, write TOC* — **not** "EOM". | `TapeDrive.EarlyWarning` (setter), `IsEarlyWarning` (sticky) |
+| 9 | **Writable-for-content remaining** | (6) minus the TOC reserve when the TOC shares the content partition. The number a backup planner may spend, and the headline UI figure. | `TapeServiceBase.WritableRemaining` |
+| 10 | **Overreport emulation** | The virtual medium's *deliberate* divergence of (3) from (2), so (6) has something to correct. | `VirtualTapeEwProfile.Anchors` |
+
+**The two independent over-report axes.** A driver can over-report in two entirely different ways, and both
+are modelled, measured and emulated as first-class, independent quantities — they are the two endpoints of
+the actual→reported line, i.e. the first and last points of the curve calibration builds:
+
+- **(a) Inflated capacity at BOM** — the driver claims 550 MB free on a 500 MB cartridge at beginning of
+  media and then counts down 1:1. The overshoot is a *constant* 50 MB from the very first byte. Carried by
+  `ReportedCapacityAtBom` (quantity 4) and emulated by `ReportedRemainingAnchors.ReportedCapacityBoost`.
+- **(b) Phantom free space at EOM** — the driver claims a truthful 500 MB at BOM but *decrements too
+  slowly*, so the overshoot grows from 0 to 50 MB at hard EOM. This is the faithful model of real LTO
+  behavior. Carried by `PhantomFreeAtEom` (quantity 5) and emulated by
+  `ReportedRemainingAnchors.PhantomFreeAtEom`.
+
+Limited practical testing suggests (a) ≈ 0 on real LTO-4 hardware, though this is not yet thoroughly
+measured and may prove significant on other generations; it can be emulated freely on virtual drives
+regardless. **Defaults: the a-priori calibration assumes (a) = 0, and virtual-drive emulation defaults
+(a) = 0** while defaulting (b) to the LTO-4-like 4 %.
+
+**The economic value-add of calibration, for TOC-in-set.** Where content stops depends entirely on what is
+known about the tail:
+
+- *No calibration:* content stops at the **physical EW** if the drive has one — leaving the whole, unknown
+  EW→EOM stretch unused: safe but wasteful — otherwise at the **a-priori** logical EW.
+- *With calibration:* content deliberately continues **past** the physical EW, byte-counting down the
+  measured `EwToEomDistance`, and stops when exactly the TOC reserve remains.
+
+This is the entire justification of the calibration feature, and it is stated in the class documentation of
+`TapeDrive`, `TapeCalibration` and `TapeFileBackupAgent`.
+
+### 5.2 Emulation — two explicit anchors
+
+```csharp
+/// The two endpoints of the emulated driver's actual→reported line. Independent axes:
+///   reported(0)            = TrueCapacity + ReportedCapacityBoost   // (a) inflated capacity at BOM
+///   reported(TrueCapacity) = PhantomFreeAtEom                       // (b) phantom free at hard EOM
+/// reported() interpolates linearly (monotonic non-increasing) between them.
+public readonly record struct ReportedRemainingAnchors(long ReportedCapacityBoost, long PhantomFreeAtEom);
+```
+
+`VirtualTapeEwProfile.Lto4Like(capacity, ewZonePercent, phantomFreePercent, reportedBoostPercent = 0)`
+builds the anchors; the boost defaults to 0, matching both the observed LTO-4 shape and the a-priori
+calibration's assumption. `VirtualTapeMedia`'s occupancy counter (incremented on write, decremented on
+truncate) drives the model, so `TrueRemaining` answers "how full is the cartridge" — correct for the
+append-only usage the medium is designed for.
+
+The Open Virtual Drive dialog exposes both axes with the shared %/MB/GB unit selector and a byte read-out:
+**Phantom free at EOM** (default 4 %) and **Capacity overreport (BOM)** (default 0, listed last because it
+is usually left alone).
+
+`ITapeCalibration` is deliberately used in **two opposite directions**, and both are documented as such: as
+an *estimation* artifact (`TranslateRemaining`: reported → actual, at runtime) and as an *emulation* source
+(`VirtualTapeEwProfile.FromCalibration` / `TranslateActualToReported`: actual → reported, for replaying a
+measured drive on a virtual one).
+
+### 5.3 Calibration artifact — one field per quantity
+
+| Field | Meaning |
+|-------|---------|
+| `CapacityActual` | quantity (1), measured bytes written to hard EOM |
+| `ReportedCapacityAtBom` | quantity (4), the driver's claim at beginning of media |
+| `PhantomFreeAtEom` | quantity (5), reported remaining at the instant hard EOM fires |
+| `ReportedCapacityTotal` (derived) | `CapacityActual + PhantomFreeAtEom` — the total capacity implied by the driver's own arithmetic |
+| `EwToEomDistance` | quantity (7), the measured physical-EW → hard-EOM stretch |
+| `Curve` | the sampled reported→actual pairs between the two anchors |
+
+The persisted DTO carries `FormatId = "tapelibnet-cal/2"`; profiles written by any other format are not
+loaded. `TapeCalibrator` samples `GetReportedContentRemaining()` so the curve and the diagnostic display
+always share one axis, and records the BOM and EOM anchors explicitly rather than inferring them from the
+curve endpoints.
+
+**Profile identity.** A calibration is keyed by `vendor|product|revision|cap=<bucket>`.
+`TapeCalibration.CapacityBucket()` renders MB granularity below 2 GB and GB granularity above, so a 500 MB
+and a 900 MB cartridge never collide (`cap=500MB`). `VirtualTapeDriveBackend.Revision` is a **stable
+emulation identity** (`"v1"`) rather than the assembly version, so a saved virtual profile survives every
+build.
+
+**Autoload.** `TapeServiceBase.AutoLoadCalibrations()` feeds every profile from the shared
+`TapeCalibrationStore` (`%LocalAppData%\TapeLibNET\Calibrations`) to the drive on drive open **and** on
+media load — the profile key depends on the medium's capacity bucket, so it must be re-matched per medium.
+`TapeDrive` silently keeps the non-matching profiles for later media. The path is non-throwing: an
+unreadable store simply leaves the drive on the a-priori estimate. A measured profile is worthless if the
+user has to remember to apply it.
+
+### 5.4 The remaining-capacity API — one naming rule
+
+**`Reported*` is the raw driver figure; `Estimated*` is the calibrated one; `Writable*` has the TOC
+reserve deducted.**
+
+| Member | Quantity |
+|--------|----------|
+| `TapeDrive.GetReportedRemaining()` | (3), raw, current partition |
+| `TapeDrive.GetReportedContentRemaining()` / `ReportedContentRemaining` | (3), raw, content partition |
+| `TapeDrive.EstimateActualRemaining()` / `EstimatedContentRemaining` | (6) |
+| `TapeServiceBase.ReportedContentRemaining` | (3) |
+| `TapeServiceBase.EstimatedContentRemaining`, `EstimatedCapacity` | (6) and its capacity counterpart |
+| `TapeServiceBase.WritableRemaining` | (9) |
+| `TapeServiceBase.ComputeWritableRemaining(long estimatedRemaining)` | pure what-if form of (9) |
+
+`ComputeWritableRemaining` applies exactly the same TOC-reserve rule as the live `WritableRemaining`
+property to a *hypothetical* estimated remaining; `MediaUsageBarPresenter` and
+`BackupMediaUsageBarPresenter` use it for their "free space if these sets were added/removed" projections,
+so the what-if bar and the live figure can never disagree.
+
+`EarlyWarningMechanism` is the composed, display-oriented value covering both roles — how the estimate is
+derived (`Uncalibrated`, `Calibrated`) and how EW trips (`HardwareEarlyWarning`,
+`ProgrammableEarlyWarning`) — and drives `RemainingAndEwStatus` and the *Estimation by* row.
+`TapeDrive.EarlyWarning` is the byte reserve, `IsEarlyWarning` the sticky "reserve was crossed" flag, and
+`SetEarlyWarning(0)` additionally asks the backend to report its physical EW.
+
+### 5.5 UI — writable-first, with reported and estimated always paired
+
+`Writable` is the number the user actually cares about, so it is the most prominent figure everywhere.
+Drive and media property panes both show (illustrative figures):
+
+```
+Capacity  reported / estimated : 780 GB / 780 GB
+Remaining reported / estimated : 612 GB / 603 GB
+Writable                       : 597 GB
+Estimation by                  : Calibration <profile>        [+ "— early warning reached"]
+```
+
+- Paired rows share a single `reported / estimated` value cell, so the over-report gap is visible at a
+  glance without a separate "overreport" row.
+- *Estimation by* renders `none | apriori | Hardware | Calibration <profile>`, plus the
+  early-warning-reached marker, from the same mechanism-text logic as `RemainingAndEwStatus`.
+
+Status bar (2nd field):
+
+```
+Writable 597 GB of 780 GB
+```
+
+— the denominator is the **estimated** capacity; the fill-to-EOM / fill-to-EW and mechanism detail live in
+the property pane's *Estimation by* row and in the status-bar tooltip.
+
+The calibration result window leads with the two anchors: `PhantomFreeAtEom` as "your drive over-reports by
+X at EOM" and `ReportedCapacityAtBom` as "claims Y at BOM", alongside the measured capacity, the EW landmark
+and the EW→EOM distance.
+
+### 5.6 Test coverage
+
+All on a virtual drive, in `TapeLibNET.Tests`:
+
+1. `ReportedRemaining_AtBom_ReflectsCapacityBoost` — with `reportedBoostPercent: 10` on a 500 MB cartridge,
+   `backend.Remaining ≈ 550 MB` at BOM; with boost 0 it is exactly 500 MB. Pins the (a)/(b) split.
+2. `ReportedRemaining_AtHardEom_EqualsPhantomFree` — write to hard EOM with `phantomFreePercent: 10`;
+   `backend.Remaining ≈ 50 MB` while `TrueRemaining == 0`.
+3. `Calibration_MeasuresTrueCapacity` — `CapacityActual ∈ [0.99, 1.0] × trueCapacity`, asserted
+   *independent* of the over-report knobs (parameterized over boost/phantom ∈ {0, 10 %}).
+4. `Calibration_RecordsPhantomFreeAtEom` — `PhantomFreeAtEom ≈ 10 % × capacity ± 1 chunk`; with both knobs
+   at 0, `PhantomFreeAtEom ≈ 0`.
+5. `Calibration_RecordsReportedCapacityAtBom` — `ReportedCapacityAtBom ≈ capacity × (1 + boost)`.
+6. `EstimateActualRemaining_CorrectsInflatedReport` — after loading the calibration, at ≥ 5 sample points
+   `|estimate − trueRemaining| ≤ 2 % × capacity`, while `|reported − trueRemaining|` *exceeds* that bound at
+   the tail: the estimate is provably better than the raw report, not merely equal to it.
+7. `ProfileKey_IsStableAcrossReopen_AndDistinguishesCapacities` — the key is byte-identical after
+   close/reopen/version change, and differs between 500 MB and 900 MB cartridges.
+8. `StoredCalibration_IsAutoLoaded_OnDriveOpen` — save a profile to a temp store, open a matching virtual
+   drive through `TapeServiceBase`, assert `Calibration is not null` and a `Calibrated` mechanism without
+   any explicit `AddCalibration` call.
+9. `TocInSet_WithCalibration_WritesPastPhysicalEw` — the value-add test: with calibration loaded and a TOC
+   reserve of N bytes, the content phase stops with true remaining ≈ N, *past* the physical EW; without
+   calibration it stops at the physical EW. Guards the economics of the whole feature.
+10. `ReportedVsEstimatedRemaining_AreDistinct_UnderOverreport` — the service layer exposes both figures and
+    their difference ≈ the emulated over-report.
+
+Calibration JSON round-trips through `FormatId = "tapelibnet-cal/2"` and rejects unknown formats.
+

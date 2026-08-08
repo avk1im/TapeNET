@@ -529,13 +529,13 @@ public class VirtualDriveBasicTests
         var drive = fixture.Drive;
         int blockSize = (int)drive.BlockSize;
 
-        long remainingBefore = drive.GetRemainingCapacity();
+        long remainingBefore = drive.GetReportedContentRemaining();
 
         // Write some data
         byte[] data = new byte[blockSize * 10];
         drive.WriteDirect(data, 0, data.Length);
 
-        long remainingAfter = drive.GetRemainingCapacity();
+        long remainingAfter = drive.GetReportedContentRemaining();
         Assert.True(remainingAfter < remainingBefore,
             $"Remaining should decrease after write: {remainingBefore} → {remainingAfter}");
     }

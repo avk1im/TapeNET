@@ -70,7 +70,7 @@ internal sealed class MemoryTapeWriteBackend : ITapeWriteBackend
         lock (_stateLock) _perWriteDelay = delay;
     }
 
-    private WriteResult Sink(byte[] buffer, int validBytes)
+    private WriteResult Sink(TapeWriteBuffer buffer, int validBytes)
     {
         TimeSpan delay;
         long eomAfter;
@@ -113,7 +113,7 @@ internal sealed class MemoryTapeWriteBackend : ITapeWriteBackend
         if (acceptedBytes > 0)
         {
             var copy = new byte[acceptedBytes];
-            Buffer.BlockCopy(buffer, 0, copy, 0, acceptedBytes);
+            Buffer.BlockCopy(buffer.Array, buffer.Offset, copy, 0, acceptedBytes);
             lock (_stateLock)
             {
                 _written.Add(copy);
@@ -124,9 +124,9 @@ internal sealed class MemoryTapeWriteBackend : ITapeWriteBackend
         return new WriteResult(blocksAccepted, eom, error);
     }
 
-    public void StartWriting(byte[] buffer, int validBytes) => _inner.StartWriting(buffer, validBytes);
+    public void StartWriting(TapeWriteBuffer buffer, int validBytes) => _inner.StartWriting(buffer, validBytes);
     public WriteBackendStatus PollStatus() => _inner.PollStatus();
-    public (WriteResult Result, byte[]? Buffer) AwaitCompletion() => _inner.AwaitCompletion();
+    public (WriteResult Result, TapeWriteBuffer? Buffer) AwaitCompletion() => _inner.AwaitCompletion();
 
     public void Dispose() => _inner.Dispose();
 }

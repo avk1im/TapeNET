@@ -47,6 +47,7 @@ public partial class MainViewModel : ViewModelBase
     private readonly MruFileList _virtualDriveMru;
     private string _windowTitle = "TapeWin - Tape Backup Manager";
     private string _statusMessage = "Ready";
+    private string? _remainingAndEw;
     private string _busyMessage = string.Empty;
     private string _propertiesHeader = "Properties";
     private string _tableHeader = "Content";
@@ -110,6 +111,9 @@ public partial class MainViewModel : ViewModelBase
 
         // Initialize backup commands (from MainViewModel.Backup.cs)
         InitializeBackupCommands();
+
+        // Initialize calibration commands (from MainViewModel.Calibration.cs)
+        InitializeCalibrationCommands();
 
         // Initialize restore commands (from MainViewModel.Restore.cs)
         InitializeRestoreCommands();
@@ -181,7 +185,30 @@ public partial class MainViewModel : ViewModelBase
     public string StatusMessage
     {
         get => _statusMessage;
-        set => SetProperty(ref _statusMessage, value);
+        set
+        {
+            SetProperty(ref _statusMessage, value);
+            // The remaining/EW indication is re-evaluated whenever the status changes,
+            //  since every status transition follows a drive/media/TOC operation.
+            RefreshRemainingAndEw();
+        }
+    }
+
+    /// <summary>
+    /// Status-bar and property-pane indication of the estimated remaining capacity plus the
+    ///  end-of-tape policy in force. Empty when no media is loaded (the field then hides).
+    /// </summary>
+    public string? RemainingAndEw
+    {
+        get => _remainingAndEw;
+        private set => SetProperty(ref _remainingAndEw, value);
+    }
+
+    /// <summary>Re-reads the remaining/EW indication from the service (null when unavailable, so the field hides).</summary>
+    private void RefreshRemainingAndEw()
+    {
+        string status = _tapeService.RemainingAndEwStatus;
+        RemainingAndEw = string.IsNullOrEmpty(status) ? null : status;
     }
 
     public string BusyMessage
@@ -273,14 +300,14 @@ public partial class MainViewModel : ViewModelBase
     public bool IsTOCCancelEnabled => !_isTOCAbortPending;
 
     /// <summary>
-    /// True when busy with non-backup/restore/TOC-load operations (shows full-window overlay).
+    /// True when busy with non-backup/restore/calibration/TOC-load operations (shows full-window overlay).
     /// </summary>
-    public bool IsGeneralBusy => IsBusy && !IsBackupInProgress && !IsRestoreInProgress && !IsTOCLoadInProgress;
+    public bool IsGeneralBusy => IsBusy && !IsBackupInProgress && !IsRestoreInProgress && !IsCalibrateInProgress && !IsTOCLoadInProgress;
 
     /// <summary>
-    /// True when any tape operation (backup or restore/validate/verify) is in progress.
+    /// True when any tape operation (backup, calibration, or restore/validate/verify) is in progress.
     /// </summary>
-    public bool IsOperationInProgress => IsBackupInProgress || IsRestoreInProgress;
+    public bool IsOperationInProgress => IsBackupInProgress || IsCalibrateInProgress || IsRestoreInProgress;
 
     /// <summary>
     /// False whenever any operation/busy overlay is shown, so the TreeView and the media/property
@@ -297,6 +324,7 @@ public partial class MainViewModel : ViewModelBase
     public bool IsMediaBrowsingEnabled => !IsBusy && !IsOperationInProgress && !IsTOCLoadInProgress;
 
     // BackupProgressPercent, BackupProgressText, CurrentBackupFile properties are in MainViewModel.Backup.cs
+    // CalibrationProgressPercent, CalibrationProgressText, CurrentCalibrationPhase properties are in MainViewModel.Calibration.cs
     // RestoreProgressPercent, RestoreProgressText, CurrentRestoreFile, IsRestoreInProgress properties are in MainViewModel.Restore.cs
 
     // ── Unified Operation overlay ─────────────────────────────────────────────
@@ -305,23 +333,35 @@ public partial class MainViewModel : ViewModelBase
     //  bar, current file, IO sparkline, abort button). These properties pick the
     //  currently active operation's values, since only one operation runs at a time.
 
-    /// <summary>Progress percent of whichever operation (backup or restore) is currently active.</summary>
-    public double OperationProgressPercent => IsBackupInProgress ? BackupProgressPercent : RestoreProgressPercent;
+    /// <summary>Progress percent of whichever operation is currently active.</summary>
+    public double OperationProgressPercent => IsBackupInProgress ? BackupProgressPercent
+        : IsCalibrateInProgress ? CalibrationProgressPercent
+        : RestoreProgressPercent;
 
-    /// <summary>Progress text of whichever operation (backup or restore) is currently active.</summary>
-    public string OperationProgressText => IsBackupInProgress ? BackupProgressText : RestoreProgressText;
+    /// <summary>Progress text of whichever operation is currently active.</summary>
+    public string OperationProgressText => IsBackupInProgress ? BackupProgressText
+        : IsCalibrateInProgress ? CalibrationProgressText
+        : RestoreProgressText;
 
-    /// <summary>Current file name of whichever operation (backup or restore) is currently active.</summary>
-    public string CurrentOperationFile => IsBackupInProgress ? CurrentBackupFile : CurrentRestoreFile;
+    /// <summary>Current file name / phase text of whichever operation is currently active.</summary>
+    public string CurrentOperationFile => IsBackupInProgress ? CurrentBackupFile
+        : IsCalibrateInProgress ? CurrentCalibrationPhase
+        : CurrentRestoreFile;
 
-    /// <summary>Abort command of whichever operation (backup or restore) is currently active.</summary>
-    public ICommand AbortOperationCommand => IsBackupInProgress ? AbortBackupCommand : AbortRestoreCommand;
+    /// <summary>Abort command of whichever operation is currently active.</summary>
+    public ICommand AbortOperationCommand => IsBackupInProgress ? AbortBackupCommand
+        : IsCalibrateInProgress ? AbortCalibrationCommand
+        : AbortRestoreCommand;
 
-    /// <summary>Abort button IsEnabled state of whichever operation (backup or restore) is currently active.</summary>
-    public bool IsAbortOperationEnabled => IsBackupInProgress ? IsAbortBackupEnabled : IsAbortRestoreEnabled;
+    /// <summary>Abort button IsEnabled state of whichever operation is currently active.</summary>
+    public bool IsAbortOperationEnabled => IsBackupInProgress ? IsAbortBackupEnabled
+        : IsCalibrateInProgress ? IsAbortCalibrationEnabled
+        : IsAbortRestoreEnabled;
 
-    /// <summary>Abort button label — distinguishes the two operations for clarity.</summary>
-    public string AbortOperationButtonText => IsBackupInProgress ? "Abort Backup" : "Abort";
+    /// <summary>Abort button label — distinguishes the operations for clarity.</summary>
+    public string AbortOperationButtonText => IsBackupInProgress ? "Abort Backup"
+        : IsCalibrateInProgress ? "Abort Calibration"
+        : "Abort";
 
     /// <summary>
     /// Raises change notifications for all unified Operation-overlay properties.
@@ -666,6 +706,7 @@ public partial class MainViewModel : ViewModelBase
     public ICommand ImportTOCCommand { get; }
     public ICommand AbortTOCLoadCommand { get; private set; } = null!;
     // NewBackupCommand and AbortBackupCommand are in MainViewModel.Backup.cs
+    // CalibrateMediaCommand and AbortCalibrationCommand are in MainViewModel.Calibration.cs
     // RestoreCommand, ValidateCommand, VerifyCommand, AbortRestoreCommand are in MainViewModel.Restore.cs
     public ICommand NavigateToBackupSetCommand { get; }
 
@@ -1477,10 +1518,7 @@ public partial class MainViewModel : ViewModelBase
             {
                 PropertyList.Add(new PropertyItem("Partition Count", 
                     _tapeService.PartitionCount.ToString()));
-                PropertyList.Add(new PropertyItem("Capacity", 
-                    Helpers.BytesToStringLong(_tapeService.Capacity)));
-                PropertyList.Add(new PropertyItem("Remaining (est.)", 
-                    Helpers.BytesToStringLong(_tapeService.GetRemainingCapacityFromDrive())));
+                AddCapacityProperties();
             }
         }
 
@@ -1489,6 +1527,31 @@ public partial class MainViewModel : ViewModelBase
         // Append remote connection info section when a remote host is active (§2.6)
         if (IsRemoteConnected)
             AppendRemoteConnectionInfo();
+    }
+
+    /// <summary>
+    /// Appends the shared capacity block to <see cref="PropertyList"/>, using the strict semantics of
+    ///  docs/Design-RemainingAndEw.md §5.1: the driver's optimistic REPORTED figures are shown beside our
+    ///  corrected ESTIMATES, and the WRITABLE space — the number the user actually spends — is called out
+    ///  on its own row, followed by the provenance of the estimate.
+    /// <para>
+    /// Reported and estimated are never mixed within one row's arithmetic; each is quoted on its own axis.
+    /// </para>
+    /// </summary>
+    private void AddCapacityProperties()
+    {
+        static string pair(long reported, long estimated)
+            => $"{Helpers.BytesToStringLong(reported)} / {Helpers.BytesToStringLong(estimated)}";
+
+        PropertyList.Add(new PropertyItem("Capacity reported / estimated",
+            pair(_tapeService.Capacity, _tapeService.EstimatedCapacity)));
+        PropertyList.Add(new PropertyItem("Remaining reported / estimated",
+            pair(_tapeService.ReportedContentRemaining, _tapeService.EstimatedContentRemaining)));
+        // The headline figure — highlighted because it is the one the user plans a backup against.
+        PropertyList.Add(new PropertyItem("Writable",
+            Helpers.BytesToStringLong(_tapeService.WritableRemaining),
+            isHighlighted: true));
+        PropertyList.Add(new PropertyItem("Estimation by", _tapeService.RemainingEstimationSource));
     }
 
     private void LoadMediaInfo()
@@ -1513,14 +1576,8 @@ public partial class MainViewModel : ViewModelBase
         PropertyList.Add(new PropertyItem("Created On", toc.CreationTime.ToString("G")));
         PropertyList.Add(new PropertyItem("Last Saved", toc.LastSaveTime.ToString("G")));
         PropertyList.Add(new PropertyItem("Backup Sets", toc.Count.ToString()));
-        PropertyList.Add(new PropertyItem("Capacity", 
-            Helpers.BytesToStringLong(_tapeService.Capacity)));
-
-        var used = _tapeService.Used;
-        var remaining = _tapeService.Remaining;
-
-        PropertyList.Add(new PropertyItem("Used", Helpers.BytesToStringLong(used)));
-        PropertyList.Add(new PropertyItem("Remaining", Helpers.BytesToStringLong(remaining)));
+        PropertyList.Add(new PropertyItem("Used", Helpers.BytesToStringLong(_tapeService.Used)));
+        AddCapacityProperties();
         PropertyList.Add(new PropertyItem("TOC Placement", 
             _tapeService.IsTOCFromFile
                 ? $"File: {_tapeService.TOCFilePath}"
@@ -2149,4 +2206,3 @@ public partial class MainViewModel : ViewModelBase
 
     #endregion
 }
-

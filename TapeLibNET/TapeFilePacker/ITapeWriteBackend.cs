@@ -49,9 +49,12 @@ internal readonly record struct WriteResult(
 /// hard errors and will be packaged by the backend into
 /// <see cref="WriteResult.Exception"/>.
 /// </summary>
-/// <param name="buffer">Caller-owned buffer containing the bytes to write. Read-only for the sink.</param>
-/// <param name="validBytes">Block-aligned count of bytes to write from offset 0.</param>
-internal delegate WriteResult TapeWriteSink(byte[] buffer, int validBytes);
+/// <param name="buffer">
+///  Caller-owned, page-aligned write buffer containing the bytes to write. Read-only for the sink.
+///  Being page-aligned (a POH window), it lets the SPTD path DMA directly with no intermediate copy.
+/// </param>
+/// <param name="validBytes">Block-aligned count of bytes to write from the start of the buffer window.</param>
+internal delegate WriteResult TapeWriteSink(TapeWriteBuffer buffer, int validBytes);
 
 /// <summary>
 /// Low-layer tape write abstraction used by <c>TapeFileWritePacker</c>. Hides the
@@ -74,12 +77,12 @@ internal interface ITapeWriteBackend : IDisposable
     ///  of <paramref name="buffer"/> until it is returned by <see cref="AwaitCompletion"/>
     ///  (or by an internal completion harvested by the next <see cref="StartWriting"/>).
     /// </summary>
-    /// <param name="buffer">Buffer of bytes to write; ownership transfers to the backend.</param>
+    /// <param name="buffer">Page-aligned buffer to write; ownership transfers to the backend.</param>
     /// <param name="validBytes">
-    ///  Number of bytes from offset 0 to write. Should be a multiple of
+    ///  Number of bytes from the start of the buffer window to write. Should be a multiple of
     ///  <see cref="BlockSize"/>; the sink will round down if not.
     /// </param>
-    void StartWriting(byte[] buffer, int validBytes);
+    void StartWriting(TapeWriteBuffer buffer, int validBytes);
 
     /// <summary>Non-blocking snapshot. <see cref="WriteBackendStatus.Idle"/> when no write is in flight.</summary>
     WriteBackendStatus PollStatus();
@@ -90,5 +93,5 @@ internal interface ITapeWriteBackend : IDisposable
     ///  When no write is in flight, returns (<see cref="WriteResult.Empty"/>, <c>null</c>).
     ///  Idempotent.
     /// </summary>
-    (WriteResult Result, byte[]? Buffer) AwaitCompletion();
+    (WriteResult Result, TapeWriteBuffer? Buffer) AwaitCompletion();
 }

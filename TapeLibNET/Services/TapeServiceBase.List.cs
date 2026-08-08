@@ -252,7 +252,10 @@ public partial class TapeServiceBase
         {
             LogInfoSub($"Partition count: {PartitionCount}");
             LogInfoSub($"Capacity: {Helpers.BytesToStringLong(Capacity)}");
-            LogInfoSub($"Remaining (est. from drive): {Helpers.BytesToStringLong(_drive.GetRemainingContentCapacity())}");
+            LogInfoSub($"Remaining (reported): {Helpers.BytesToStringLong(ReportedContentRemaining)}");
+            LogInfoSub($"Remaining (estimated): {Helpers.BytesToStringLong(EstimatedContentRemaining)}");
+            LogInfoSub($"Writable: {Helpers.BytesToStringLong(WritableRemaining)}");
+            LogInfoSub($"Estimation by: {RemainingEstimationSource}");
         }
     }
 
@@ -301,8 +304,10 @@ public partial class TapeServiceBase
         LogInfoSub($"Backup sets: {toc.Count}");
         LogInfoSub($"Capacity: {Helpers.BytesToStringLong(Capacity)}");
         LogInfoSub($"Used: {Helpers.BytesToStringLong(Used)}");
-        LogInfoSub($"Remaining: {Helpers.BytesToStringLong(Remaining)}");
-        LogInfoSub($"Remaining (est. from drive): {Helpers.BytesToStringLong(_drive.GetRemainingContentCapacity())}");
+        LogInfoSub($"Remaining (reported): {Helpers.BytesToStringLong(ReportedContentRemaining)}");
+        LogInfoSub($"Remaining (estimated): {Helpers.BytesToStringLong(EstimatedContentRemaining)}");
+        LogInfoSub($"Writable: {Helpers.BytesToStringLong(WritableRemaining)}");
+        LogInfoSub($"Estimation by: {RemainingEstimationSource}");
         LogInfoSub($"TOC placement: {(HasInitiatorPartition ? "partition" : "set")}");
         LogInfoSub($"Volume: #{toc.Volume}");
         LogInfoSub($"Continued on next volume: {(toc.ContinuedOnNextVolume ? "Yes" : "No")}");

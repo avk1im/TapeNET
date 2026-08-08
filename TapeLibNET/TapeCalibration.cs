@@ -33,11 +33,28 @@ public interface ITapeCalibration
     /// </summary>
     string ProfileKey { get; }
 
-    /// <summary>Driver-reported capacity at BOT (bytes).</summary>
-    long CapacityReported { get; }
+    /// <summary>
+    /// Quantity (4) — the driver-reported remaining sampled at BOM (beginning of media), i.e. the
+    /// drive's own idea of the cartridge size. May exceed <see cref="CapacityActual"/> when the drive
+    /// inflates its capacity from the very first byte; observed ≈ equal on LTO-4.
+    /// </summary>
+    long ReportedCapacityAtBom { get; }
+
+    /// <summary>
+    /// Quantity (5) — the driver-reported remaining still claimed at the instant hard EOM fires:
+    /// phantom free space that does not physically exist (LTO-4: ~28 GB). The headline measure of how
+    /// much the drive over-reports.
+    /// </summary>
+    long PhantomFreeAtEom { get; }
 
     /// <summary>True raw capacity measured as bytes written at hard EOM (bytes) — the ground truth.</summary>
     long CapacityActual { get; }
+
+    /// <summary>
+    /// The total capacity implied by the driver's reporting: everything it ever claimed was writable,
+    /// including the phantom tail. Derived: <see cref="CapacityActual"/> + <see cref="PhantomFreeAtEom"/>.
+    /// </summary>
+    long ReportedCapacityTotal => CapacityActual + PhantomFreeAtEom;
 
     /// <summary>The calibrated curve, sorted ascending by <see cref="CalibrationPoint.ReportedRemaining"/>.</summary>
     IReadOnlyList<CalibrationPoint> Curve { get; }
@@ -84,7 +101,7 @@ public sealed class TapeCalibration : ITapeCalibration
     #region *** Constants ***
 
     /// <summary>Current on-disk format identifier.</summary>
-    public const string CurrentFormatId = "tapelibnet-cal/1";
+    public const string CurrentFormatId = "tapelibnet-cal/2";
 
     private const long c_bytesPerGB = 1024L * 1024 * 1024;
 
@@ -94,7 +111,8 @@ public sealed class TapeCalibration : ITapeCalibration
 
     public string FormatId { get; }
     public string ProfileKey { get; }
-    public long CapacityReported { get; }
+    public long ReportedCapacityAtBom { get; }
+    public long PhantomFreeAtEom { get; }
     public long CapacityActual { get; }
     public IReadOnlyList<CalibrationPoint> Curve { get; }
     public CalibrationPoint? EarlyWarning { get; }
@@ -104,12 +122,13 @@ public sealed class TapeCalibration : ITapeCalibration
     #region *** Construction ***
 
     private TapeCalibration(
-        string formatId, string profileKey, long capacityReported, long capacityActual,
-        IReadOnlyList<CalibrationPoint> curve, CalibrationPoint? earlyWarning)
+        string formatId, string profileKey, long reportedCapacityAtBom, long phantomFreeAtEom,
+        long capacityActual, IReadOnlyList<CalibrationPoint> curve, CalibrationPoint? earlyWarning)
     {
         FormatId = formatId;
         ProfileKey = profileKey;
-        CapacityReported = capacityReported;
+        ReportedCapacityAtBom = reportedCapacityAtBom;
+        PhantomFreeAtEom = phantomFreeAtEom;
         CapacityActual = capacityActual;
         Curve = curve;
         EarlyWarning = earlyWarning;
@@ -121,18 +140,32 @@ public sealed class TapeCalibration : ITapeCalibration
     /// curve using <paramref name="capacityActual"/> (bytes at hard EOM): <c>ActualRemaining = CapacityActual − ActualWritten</c>.
     /// </summary>
     /// <param name="profileKey">Usually <see cref="TapeDrive.DriveProfileKey"/> so a fresh run always matches.</param>
-    /// <param name="capacityReported">Driver capacity at BOT.</param>
-    /// <param name="capacityActual">Bytes written at hard EOM (ground truth).</param>
+    /// <param name="reportedCapacityAtBom">Driver-reported remaining at BOM — quantity (4).</param>
+    /// <param name="capacityActual">Bytes written at hard EOM (ground truth) — quantity (1).</param>
     /// <param name="rawSamples">The <c>(ActualWritten, ReportedRemaining)</c> pairs, including the EOM point.</param>
     /// <param name="earlyWarning">The <c>(ActualWritten, ReportedRemaining)</c> at first EW, or null if none.</param>
     public static TapeCalibration FromMeasurements(
-        string profileKey, long capacityReported, long capacityActual,
+        string profileKey, long reportedCapacityAtBom, long capacityActual,
         IEnumerable<(long ActualWritten, long ReportedRemaining)> rawSamples,
         (long ActualWritten, long ReportedRemaining)? earlyWarning)
     {
         var pts = new List<CalibrationPoint>();
+
+        // The phantom free space at EOM is the reported figure at the DEEPEST sample — the last thing
+        //  the driver claimed while the medium was already physically full. It is an independent
+        //  measurement, not derivable from the BOM anchor.
+        long deepestWritten = -1L;
+        long phantomFreeAtEom = 0L;
+
         foreach (var (aw, rr) in rawSamples)
+        {
             pts.Add(new CalibrationPoint(rr, Math.Max(0L, capacityActual - aw)));
+            if (aw > deepestWritten)
+            {
+                deepestWritten = aw;
+                phantomFreeAtEom = Math.Max(0L, rr);
+            }
+        }
 
         // Sort ascending by ReportedRemaining; on ties keep the CONSERVATIVE (smallest) ActualRemaining.
         pts.Sort(static (a, b) =>
@@ -150,7 +183,8 @@ public sealed class TapeCalibration : ITapeCalibration
             ? new CalibrationPoint(ew.ReportedRemaining, Math.Max(0L, capacityActual - ew.ActualWritten))
             : null;
 
-        return new TapeCalibration(CurrentFormatId, profileKey, capacityReported, capacityActual, curve, ewPoint);
+        return new TapeCalibration(CurrentFormatId, profileKey, Math.Max(0L, reportedCapacityAtBom),
+            phantomFreeAtEom, capacityActual, curve, ewPoint);
     }
 
     /// <summary>
@@ -172,7 +206,7 @@ public sealed class TapeCalibration : ITapeCalibration
         //
         //   ActualRemaining
         //     ^
-        //  741┤ capacityActual                                              ● BOT
+        //  741┤ capacityActual                                              ● BOM
         //  (GB)│  = capacity - margin                                   ╱     (reported=780, actual=741)
         //     │                                                     ╱
         //     │                                                 ╱
@@ -199,7 +233,7 @@ public sealed class TapeCalibration : ITapeCalibration
         
         // Curve (ascending by ReportedRemaining):
         //  at reported == margin       → actual == 0        (blind stop point)
-        //  at reported == capacity     → actual == capacity − margin (BOT)
+        //  at reported == capacity     → actual == capacity − margin (BOM)
         var curve = new List<CalibrationPoint>
         {
             new(margin, 0L),
@@ -208,7 +242,9 @@ public sealed class TapeCalibration : ITapeCalibration
 
         CalibrationPoint? ew = new CalibrationPoint(ewReported, Math.Max(0L, ewReported - margin));
 
-        return new TapeCalibration("tapelibnet-cal-apriori/1", profileKey, capacity, capacityActual, curve, ew);
+        // A-priori assumes NO capacity boost at BOM (quantity (4) == the nominal capacity) and treats the
+        //  whole margin as phantom free space still claimed at hard EOM (quantity (5)).
+        return new TapeCalibration("tapelibnet-cal-apriori/2", profileKey, capacity, margin, capacityActual, curve, ew);
     }
 
     #endregion
@@ -232,7 +268,7 @@ public sealed class TapeCalibration : ITapeCalibration
         if (reportedRemaining <= c[0].ReportedRemaining)
             return c[0].ActualRemaining;          // clamp low (near EOM → conservative)
         if (reportedRemaining >= c[^1].ReportedRemaining)
-            return c[^1].ActualRemaining;         // clamp high (near BOT)
+            return c[^1].ActualRemaining;         // clamp high (near BOM)
 
         // Binary-search the bracketing pair, then linearly interpolate.
         int lo = 0, hi = c.Count - 1;
@@ -265,7 +301,7 @@ public sealed class TapeCalibration : ITapeCalibration
         if (actualRemaining <= c[0].ActualRemaining)
             return c[0].ReportedRemaining;        // clamp low (near EOM)
         if (actualRemaining >= c[^1].ActualRemaining)
-            return c[^1].ReportedRemaining;       // clamp high (near BOT)
+            return c[^1].ReportedRemaining;       // clamp high (near BOM)
 
         // Binary-search the bracketing pair on the ActualRemaining axis, then linearly interpolate.
         int lo = 0, hi = c.Count - 1;
@@ -294,23 +330,28 @@ public sealed class TapeCalibration : ITapeCalibration
     /// exact string equality against <see cref="TapeDrive.DriveProfileKey"/>.
     /// </summary>
     public static string MakeProfileKey(string vendor, string product, string revision, long capacityBytes)
-        => $"{vendor}|{product}|{revision}|cap={CapacityBucketGB(capacityBytes)}GB";
+        => $"{vendor}|{product}|{revision}|cap={CapacityBucket(capacityBytes)}";
 
     /// <summary>
-    /// Coarse GB bucket (2 significant figures) matching the backend's bucketing, so a key made here
-    /// lines up with the backend-generated one. Absorbs cartridge-to-cartridge jitter while keeping
-    /// distinct media generations apart.
+    /// Coarse capacity bucket (2 significant figures) shared with the backend, so a key made here lines
+    /// up with the backend-generated one. Absorbs cartridge-to-cartridge jitter while keeping distinct
+    /// media generations apart. Media below 2 GB are bucketed in MB (<c>500MB</c>) rather than collapsing
+    /// to <c>0GB</c>, so small virtual test cartridges of different sizes stay distinguishable.
     /// </summary>
-    public static long CapacityBucketGB(long capacityBytes)
+    public static string CapacityBucket(long capacityBytes)
     {
         if (capacityBytes <= 0)
-            return 0;
+            return "0";
 
-        double gb = capacityBytes / (double)c_bytesPerGB;
-        double mag = Math.Pow(10, Math.Floor(Math.Log10(gb)) - 1);
+        const long bytesPerMB = 1024L * 1024;
+        bool useMB = capacityBytes < 2L * c_bytesPerGB;
+        double value = capacityBytes / (double)(useMB ? bytesPerMB : c_bytesPerGB);
+
+        // Keep 2 significant figures: round to the nearest 10^(floor(log10)-1), never below 1 unit.
+        double mag = Math.Pow(10, Math.Floor(Math.Log10(value)) - 1);
         if (mag < 1) mag = 1;
 
-        return (long)(Math.Round(gb / mag) * mag);
+        return $"{(long)(Math.Round(value / mag) * mag)}{(useMB ? "MB" : "GB")}";
     }
 
     #endregion
@@ -321,7 +362,8 @@ public sealed class TapeCalibration : ITapeCalibration
     private sealed record Dto(
         string FormatId,
         string ProfileKey,
-        long CapacityReported,
+        long ReportedCapacityAtBom,
+        long PhantomFreeAtEom,
         long CapacityActual,
         List<CalibrationPoint> Curve,
         CalibrationPoint? EarlyWarning);
@@ -334,7 +376,7 @@ public sealed class TapeCalibration : ITapeCalibration
     public void SaveTo(Stream stream)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        var dto = new Dto(FormatId, ProfileKey, CapacityReported, CapacityActual,
+        var dto = new Dto(FormatId, ProfileKey, ReportedCapacityAtBom, PhantomFreeAtEom, CapacityActual,
             [.. Curve], EarlyWarning);
         JsonSerializer.Serialize(stream, dto, s_json);
     }
@@ -354,12 +396,12 @@ public sealed class TapeCalibration : ITapeCalibration
                 return null;
 
             // Accept known format ids (run + apriori). Reject anything else.
-            if (dto.FormatId != CurrentFormatId && dto.FormatId != "tapelibnet-cal-apriori/1")
+            if (dto.FormatId != CurrentFormatId && dto.FormatId != "tapelibnet-cal-apriori/2")
                 return null;
 
             var curve = dto.Curve ?? [];
             return new TapeCalibration(dto.FormatId, dto.ProfileKey,
-                dto.CapacityReported, dto.CapacityActual, curve, dto.EarlyWarning);
+                dto.ReportedCapacityAtBom, dto.PhantomFreeAtEom, dto.CapacityActual, curve, dto.EarlyWarning);
         }
         catch (JsonException)
         {
