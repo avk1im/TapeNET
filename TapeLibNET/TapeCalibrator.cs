@@ -47,6 +47,17 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
 
     #region *** Run ***
 
+    private bool CheckForAbort()
+    {
+        if (IsAbortRequested)
+        {
+            SetError(WIN32_ERROR.ERROR_CANCELLED);
+            m_logger.LogWarning("{Prefix}: Calibration aborted by caller", LogPrefix);
+            return true;
+        }
+        return false;
+    }
+
     /// <summary>
     /// Executes the calibration. DESTRUCTIVE: overwrites the medium from BOT of the content partition.
     /// Leaves the tape at (or just past) EOM; the caller typically reformats/reloads afterward.
@@ -108,29 +119,61 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
 
         int chunkSize = plan.ChunkSize;
 
-        // Hardware compression OFF so incompressible bytes map 1:1 to tape position.
-        Drive.SetHardwareCompression(false);
+        // Now move to BOM and determine the capacity reported at BOM
+        long capacityReportedAtBom;
 
-        // --- Position at BOT of the content partition ---
-        if (!Drive.MoveToPartition(MediaPartition.Content) || !Drive.Rewind())
+        try
         {
-            SyncErrorFrom(Drive);
-            LogErrorAsDebug("Calibration: failed to rewind content partition");
-            return null;
-        }
+            // Hardware compression OFF so incompressible bytes map 1:1 to tape position.
+            Drive.SetHardwareCompression(false);
 
-        // The reported-capacity side of the run intentionally tracks the DRIVER-facing Remaining
-        //  figure, not the true physical capacity, so emulations that still claim phantom free
-        //  space at hard EOM remain visible in the resulting calibration.
-        long capacityReportedAtBom = Drive.GetReportedContentRemaining();
-        if (capacityReportedAtBom <= 0)
+            // --- Position at BOM of the content partition ---
+            if (!Drive.MoveToPartition(MediaPartition.Content) || !Drive.Rewind())
+            {
+                SyncErrorFrom(Drive);
+                LogErrorAsDebug("Calibration: failed to rewind content partition");
+                return null;
+            }
+
+            // To get correct reported remaining at BOM, we must first write a small block to the tape
+            //  -- otherwise, in case the media isn't empty, the drive will report partial remaining!
+            if (!Drive.WriteGapFile())
+            {
+                SyncErrorFrom(Drive);
+                LogErrorAsDebug("Calibration: failed to write gap file");
+                return null;
+            }
+
+            // Now rewind again
+            if (!Drive.Rewind())
+            {
+                SyncErrorFrom(Drive);
+                LogErrorAsDebug("Calibration: failed to rewind");
+                return null;
+            }
+
+            // The reported-capacity side of the run intentionally tracks the DRIVER-facing Remaining
+            //  figure, not the true physical capacity, so emulations that still claim phantom free
+            //  space at hard EOM remain visible in the resulting calibration.
+            capacityReportedAtBom = Drive.GetReportedContentRemaining();
+            if (capacityReportedAtBom <= 0)
+            {
+                if (Drive.LastErrorWin32 == WIN32_ERROR.NO_ERROR)
+                    SetError(WIN32_ERROR.ERROR_INVALID_PARAMETER);
+                else
+                    SyncErrorFrom(Drive);
+                LogErrorAsDebug("Calibration: drive reports zero capacity at BOM");
+                return null;
+            }
+        }
+        catch (Exception ex)
         {
             if (Drive.LastErrorWin32 == WIN32_ERROR.NO_ERROR)
-                SetError(WIN32_ERROR.ERROR_INVALID_PARAMETER);
+                SetError(WIN32_ERROR.ERROR_IO_DEVICE);
             else
                 SyncErrorFrom(Drive);
-            LogErrorAsDebug("Calibration: drive reports zero capacity at BOM");
-            return null;
+            m_logger.LogError(ex, "{Prefix}: Calibration: exception during setup", LogPrefix);
+            throw; // we don't catch exceptions here -- the caller is reposible for handling them
         }
 
         // --- Prepare an incompressible payload chunk (whole blocks) ---
@@ -158,12 +201,8 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         {
             while (true)
             {
-                if (IsAbortRequested)
-                {
-                    SetError(WIN32_ERROR.ERROR_CANCELLED);
-                    m_logger.LogWarning("{Prefix}: Calibration aborted by caller at {Bytes} bytes", LogPrefix, bytesWritten);
+                if (CheckForAbort())
                     return null;
-                }
 
                 int written = Drive.WriteDirect(buffer.Array, buffer.Offset, chunkSize,
                     out _ /* tapemark */, out _ /* ew (gated on reserve, unused here) */, out bool eom);
@@ -240,6 +279,15 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
 
             ResetError();
             return calibration;
+        }
+        catch (Exception ex)
+        {
+            if (Drive.LastErrorWin32 == WIN32_ERROR.NO_ERROR)
+                SetError(WIN32_ERROR.ERROR_IO_DEVICE);
+            else
+                SyncErrorFrom(Drive);
+            m_logger.LogError(ex, "{Prefix}: Calibration: exception during setup", LogPrefix);
+            throw; // we don't catch exceptions here -- the caller is reposible for handling them
         }
         finally
         {

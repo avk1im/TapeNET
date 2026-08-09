@@ -195,7 +195,7 @@ compares a profile key); the concrete type is JSON-serialized inside TapeLibNET.
 | Member | Role |
 |---|---|
 | `FormatId` | Format + version guard (`tapelibnet-cal/2`); loader rejects unknown ids. |
-| `ProfileKey` | `vendor\|product\|revision\|cap=<bucket>` — identifies the drive+media profile (see Part 5.3). |
+| `ProfileKey` | `vendor\|product\|revision\|<bucket>` — identifies the drive+media profile (see Part 5.3). |
 | `ReportedCapacityAtBom` | The driver's claimed capacity at beginning of media. |
 | `PhantomFreeAtEom` | Reported remaining at the instant hard EOM fires — space the driver claims but that does not exist. |
 | `ReportedCapacityTotal` | Derived: `CapacityActual + PhantomFreeAtEom`. |
@@ -900,9 +900,9 @@ loaded. `TapeCalibrator` samples `GetReportedContentRemaining()` so the curve an
 always share one axis, and records the BOM and EOM anchors explicitly rather than inferring them from the
 curve endpoints.
 
-**Profile identity.** A calibration is keyed by `vendor|product|revision|cap=<bucket>`.
+**Profile identity.** A calibration is keyed by `vendor|product|revision|<bucket>`.
 `TapeCalibration.CapacityBucket()` renders MB granularity below 2 GB and GB granularity above, so a 500 MB
-and a 900 MB cartridge never collide (`cap=500MB`). `VirtualTapeDriveBackend.Revision` is a **stable
+and a 900 MB cartridge never collide (`500MB`). `VirtualTapeDriveBackend.Revision` is a **stable
 emulation identity** (`"v1"`) rather than the assembly version, so a saved virtual profile survives every
 build.
 

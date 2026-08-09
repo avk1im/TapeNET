@@ -119,6 +119,7 @@ public partial class TapeServiceBase
             LogInfo($"Calibration profile: >{_drive.DriveProfileKey}<");
             LogInfoSub($"Reported capacity: {Helpers.BytesToStringLong(_drive.Capacity)}");
 
+            OnStatusUpdate("Calibrating...");
             timer.Restart();
             ITapeCalibration? calibration = calibrator.Run(progressHandler);
             timer.Stop();

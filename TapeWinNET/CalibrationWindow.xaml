@@ -75,35 +75,43 @@
             <GroupBox Grid.Row="2" Header="Reported → Actual Remaining Curve"
                       help:HelpControlNameAttachedProperty.ControlName="Calibration curve">
                 <Grid Margin="8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="8*"/>
-                        <ColumnDefinition Width="25*"/>
-                        <ColumnDefinition Width="107*"/>
-                        <ColumnDefinition Width="27*"/>
-                        <ColumnDefinition Width="393*"/>
-                    </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <controls:CalibrationCurveControl Grid.Row="0"
-                                                      Calibration="{Binding Calibration}"
-                                                      Margin="0,0,0,14" Grid.ColumnSpan="5" Grid.RowSpan="2"/>
+                                                      Calibration="{Binding Calibration}"/>
 
                     <TextBlock Grid.Row="1"
                                Text="The orange tail band magnifies the EW → EOM region with a split X-axis."
                                Foreground="Gray"
-                               TextWrapping="Wrap" Grid.ColumnSpan="5" Margin="0,128,0,0" TextAlignment="Right"/>
+                               TextWrapping="Wrap"
+                               Margin="0,6,0,0"
+                               TextAlignment="Right"/>
                 </Grid>
             </GroupBox>
+
 
             <TextBlock Grid.Row="3"
                        Text="{Binding StatusMessage}"
                        Foreground="{DynamicResource WarningFg.Info}"
                        Margin="0,12,0,0"
-                       TextWrapping="Wrap"/>
-
+                       TextWrapping="Wrap">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding StatusMessage}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding StatusMessage}" Value="">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+            
             <Grid Grid.Row="4" Margin="0,16,0,0">
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
                     <Button x:Name="HelpButton" Content="_Help ▶" Click="HelpButton_Click"

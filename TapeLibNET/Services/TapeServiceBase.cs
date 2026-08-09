@@ -254,7 +254,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// <summary>
     /// The "Estimation by" figure for property panes: names the source of the remaining-capacity estimate
     ///  and flags an early-warning crossing. Examples: <c>"none"</c>, <c>"apriori"</c>, <c>"Hardware"</c>,
-    ///  <c>"Calibration …|cap=780GB"</c>, <c>"Calibration … (⚠ EW reached)"</c>.
+    ///  <c>"Calibration …|780GB"</c>, <c>"Calibration … (⚠ EW reached)"</c>.
     /// </summary>
     public string RemainingEstimationSource
     {

@@ -170,7 +170,7 @@ public class VirtualDriveEarlyWarningTests
     {
         // A large a-priori LTO-like profile rescaled onto the tiny virtual cartridge.
         const long largeCapacity = 780L * 1024 * 1024 * 1024; // ~780 GB
-        var cal = TapeCalibration.Apriori("test|profile|rev|cap=780GB", largeCapacity);
+        var cal = TapeCalibration.Apriori("test|profile|rev|780GB", largeCapacity);
 
         var profile = VirtualTapeEwProfile.FromCalibration(cal, Capacity);
         using var backend = CreateBackend(profile, report: true);

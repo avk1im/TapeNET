@@ -126,7 +126,7 @@ public abstract class TapeDriveBackend : ErrorManageableBase, IDisposable
     /// </para>
     /// Backends may override to add density or other discriminators.
     /// </summary>
-    public virtual string ProfileKey => $"{Vendor}|{Product}|{Revision}|cap={TapeCalibration.CapacityBucket(Capacity)}";
+    public virtual string ProfileKey => $"{Vendor}|{Product}|{Revision}|{TapeCalibration.CapacityBucket(Capacity)}";
 
     /// <summary>
     /// Rounds a native capacity to a coarse bucket string (2 significant figures) so that

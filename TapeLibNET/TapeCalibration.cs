@@ -29,7 +29,7 @@ public interface ITapeCalibration
 
     /// <summary>
     /// Stable key identifying the drive+media profile this calibration applies to
-    /// (<c>vendor|product|revision|cap=NNNGB</c>). Compared against <see cref="TapeDrive.DriveProfileKey"/>.
+    /// (<c>vendor|product|revision|NNNGB</c>). Compared against <see cref="TapeDrive.DriveProfileKey"/>.
     /// </summary>
     string ProfileKey { get; }
 
@@ -326,11 +326,11 @@ public sealed class TapeCalibration : ITapeCalibration
 
     /// <summary>
     /// Produces a profile key identical in form to <see cref="TapeDriveBackend.ProfileKey"/>:
-    /// <c>vendor|product|revision|cap=NNNGB</c>. Provided as a convenience; matching relies on
+    /// <c>vendor|product|revision|NNNGB</c>. Provided as a convenience; matching relies on
     /// exact string equality against <see cref="TapeDrive.DriveProfileKey"/>.
     /// </summary>
     public static string MakeProfileKey(string vendor, string product, string revision, long capacityBytes)
-        => $"{vendor}|{product}|{revision}|cap={CapacityBucket(capacityBytes)}";
+        => $"{vendor}|{product}|{revision}|{CapacityBucket(capacityBytes)}";
 
     /// <summary>
     /// Coarse capacity bucket (2 significant figures) shared with the backend, so a key made here lines
