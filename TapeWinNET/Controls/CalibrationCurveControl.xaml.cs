@@ -4,7 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
 
-using Windows.Win32.System.SystemServices; // Helpers.BytesToStringLong
+using Windows.Win32.System.SystemServices; // Helpers.BytesToString
 
 using TapeLibNET;
 
@@ -144,9 +144,9 @@ public partial class CalibrationCurveControl : UserControl
 
         _curveLine.Points = [.. calibration.Curve.Select(MapPoint)];
 
-        ActualTopLabel.Text = Helpers.BytesToStringLong(actualMax);
+        ActualTopLabel.Text = Helpers.BytesToString(actualMax);
         ActualBottomLabel.Text = "0";
-        ReportedLeftLabel.Text = Helpers.BytesToStringLong(reportedMax);
+        ReportedLeftLabel.Text = Helpers.BytesToString(reportedMax);
         ReportedRightLabel.Text = "EOM";
 
         if (ewReported > 0 && calibration.EarlyWarning is { } ew)

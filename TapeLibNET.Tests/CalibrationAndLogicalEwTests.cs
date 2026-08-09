@@ -58,8 +58,8 @@ public class CalibrationAndLogicalEwTests
             Options = new TapeCalibrationOptions
             {
                 SampleCount = 40,
-                MinSampleInterval = 1L * 1024 * 1024,
-                ChunkBytesTarget = 1L * 1024 * 1024,
+                //MinSampleInterval = 1L * 1024 * 1024,
+                //ChunkBytesTarget = 1L * 1024 * 1024,
             },
         };
 
@@ -103,8 +103,8 @@ public class CalibrationAndLogicalEwTests
             Options = new TapeCalibrationOptions
             {
                 SampleCount = 20,
-                MinSampleInterval = 2L * 1024 * 1024,
-                ChunkBytesTarget = 1L * 1024 * 1024,
+                //MinSampleInterval = 2L * 1024 * 1024,
+                //ChunkBytesTarget = 1L * 1024 * 1024,
             },
         };
         Assert.NotNull(calibrator.Run());
@@ -133,8 +133,8 @@ public class CalibrationAndLogicalEwTests
             Options = new TapeCalibrationOptions
             {
                 SampleCount = 40,
-                MinSampleInterval = 1L * 1024 * 1024,
-                ChunkBytesTarget = 1L * 1024 * 1024,
+                //MinSampleInterval = 1L * 1024 * 1024,
+                //ChunkBytesTarget = 1L * 1024 * 1024,
             },
         };
 
@@ -175,8 +175,8 @@ public class CalibrationAndLogicalEwTests
             Options = new TapeCalibrationOptions
             {
                 SampleCount = 20,
-                MinSampleInterval = 2L * 1024 * 1024,
-                ChunkBytesTarget = 1L * 1024 * 1024,
+                //MinSampleInterval = 2L * 1024 * 1024,
+                //ChunkBytesTarget = 1L * 1024 * 1024,
             },
         };
         ITapeCalibration? cal = calibrator.Run();
@@ -370,8 +370,8 @@ public class CalibrationAndLogicalEwTests
             Options = new TapeCalibrationOptions
             {
                 SampleCount = 60,
-                MinSampleInterval = 512L * 1024,
-                ChunkBytesTarget = 1L * 1024 * 1024,
+                //MinSampleInterval = 512L * 1024,
+                //ChunkBytesTarget = 1L * 1024 * 1024,
             },
         }.Run();
         Assert.NotNull(cal);

@@ -38,7 +38,7 @@ internal sealed class PooledTestBuffers : IDisposable
     {
         int len = Bytes(blocks);
         TapeWriteBuffer buf = _pool.Rent(len);
-        buf.Data(len).Fill(fill);
+        buf.Data().Fill(fill);
         _live.Add(buf);
         return buf;
     }

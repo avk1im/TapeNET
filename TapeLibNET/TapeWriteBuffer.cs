@@ -78,6 +78,14 @@ public sealed class TapeWriteBuffer
     /// </summary>
     public Span<byte> Data(int length) => _array.AsSpan(_offset, length);
 
+    /// <summary>
+    /// The entire (page-aligned) window, as a span. Transient — do not store; the backing array is POH so it
+    /// never moves during the write. Provided for span-based consumers;
+    /// the byte[]-based write path uses the internal <see cref="Array"/>/<see cref="Offset"/> instead.
+    /// </summary>
+    /// <returns></returns>
+    public Span<byte> Data() => Data(Capacity);
+
     /// <summary>Returns this buffer to its owning pool for reuse.</summary>
     public void Return() => Owner.Return(this);
 }

@@ -43,8 +43,8 @@ public class ServiceCalibrationTests : ServiceTestBase
                     Options: new TapeCalibrationOptions
                     {
                         SampleCount = 20,
-                        MinSampleInterval = 1L * MB,
-                        ChunkBytesTarget = 1L * MB,
+                        //MinSampleInterval = 1L * MB,
+                        //ChunkBytesTarget = 1L * MB,
                     }));
 
             Assert.True(result.Success);
@@ -78,8 +78,8 @@ public class ServiceCalibrationTests : ServiceTestBase
                     Options: new TapeCalibrationOptions
                     {
                         SampleCount = 16,
-                        MinSampleInterval = 1L * MB,
-                        ChunkBytesTarget = 1L * MB,
+                        //MinSampleInterval = 1L * MB,
+                        //ChunkBytesTarget = 1L * MB,
                     })
                 {
                     Cancellation = cts.Token,
@@ -112,8 +112,8 @@ public class ServiceCalibrationTests : ServiceTestBase
                     Options: new TapeCalibrationOptions
                     {
                         SampleCount = 20,
-                        MinSampleInterval = 1L * MB,
-                        ChunkBytesTarget = 1L * MB,
+                        //MinSampleInterval = 1L * MB,
+                        //ChunkBytesTarget = 1L * MB,
                     }));
 
             Assert.True(result.Success);

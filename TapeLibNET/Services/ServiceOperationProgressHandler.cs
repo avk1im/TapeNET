@@ -337,15 +337,14 @@ public class ServiceCalibrateProgressHandler(
     /// <summary>The live calibrator driving the operation.</summary>
     protected readonly TapeCalibrator Calibrator = calibrator;
 
-    private readonly int _estimatedChunkBytes = checked((int)Math.Max(1L, calibrator.Options.ChunkBytesTarget));
+    private readonly int _estimatedChunkSize = calibrator.Options.ResolveFor(calibrator.Drive).ChunkSize;
     private bool _abortLogged;
     private bool _ewLogged;
 
     /// <summary>Estimated number of chunks needed to traverse the medium.</summary>
-    public int FilesTotal { get; private set; } =
+    public int FilesTotal =>
         capacityReported > 0
-            ? (int)Math.Min(int.MaxValue, (capacityReported + Math.Max(1L, calibrator.Options.ChunkBytesTarget) - 1L)
-                                            / Math.Max(1L, calibrator.Options.ChunkBytesTarget))
+            ? (int)Math.Min(int.MaxValue, (capacityReported + _estimatedChunkSize - 1L) / _estimatedChunkSize)
             : 0;
 
     /// <summary>Estimated media capacity reported by the drive at BOT.</summary>
@@ -399,8 +398,8 @@ public class ServiceCalibrateProgressHandler(
         ThrowIfAbortRequested();
 
         BytesProcessed = Math.Max(0L, progress.BytesWritten);
-        FilesProcessed = _estimatedChunkBytes > 0
-            ? (int)Math.Min(int.MaxValue, (BytesProcessed + _estimatedChunkBytes - 1L) / _estimatedChunkBytes)
+        FilesProcessed = _estimatedChunkSize > 0
+            ? (int)Math.Min(int.MaxValue, (BytesProcessed + _estimatedChunkSize - 1L) / _estimatedChunkSize)
             : 0;
         FilesSucceeded = FilesProcessed;
         CurrentPhase = FormatPhase(progress.Phase);
