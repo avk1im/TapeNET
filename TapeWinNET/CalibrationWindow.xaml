@@ -76,7 +76,8 @@
                       help:HelpControlNameAttachedProperty.ControlName="Calibration curve">
                 <Grid Margin="8">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="33*"/>
+                        <ColumnDefinition Width="8*"/>
+                        <ColumnDefinition Width="25*"/>
                         <ColumnDefinition Width="107*"/>
                         <ColumnDefinition Width="27*"/>
                         <ColumnDefinition Width="393*"/>
@@ -88,12 +89,12 @@
 
                     <controls:CalibrationCurveControl Grid.Row="0"
                                                       Calibration="{Binding Calibration}"
-                                                      Margin="0,0,0,14" Grid.ColumnSpan="4" Grid.RowSpan="2"/>
+                                                      Margin="0,0,0,14" Grid.ColumnSpan="5" Grid.RowSpan="2"/>
 
                     <TextBlock Grid.Row="1"
                                Text="The orange tail band magnifies the EW → EOM region with a split X-axis."
                                Foreground="Gray"
-                               TextWrapping="Wrap" Grid.ColumnSpan="4" Margin="0,96,0,0"/>
+                               TextWrapping="Wrap" Grid.ColumnSpan="5" Margin="0,128,0,0" TextAlignment="Right"/>
                 </Grid>
             </GroupBox>
 
