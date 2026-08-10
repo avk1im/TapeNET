@@ -429,6 +429,8 @@ public partial class TapeDriveWin32Backend
         int totalWritten = 0;
         int pos = offset;
         int remaining = count;
+        bool earlyWarningReported = false;
+        bool programmableEarlyWarningReported = false;
 
         while (remaining > 0)
         {
@@ -464,11 +466,25 @@ public partial class TapeDriveWin32Backend
             if (r.IsProgrammableEarlyWarning)
             {
                 totalWritten += acceptedInChunk;
-                programmableEarlyWarning = true;
-                ResetError(); // PEW is not an error
-                m_logger.LogInformation(
-                    "{Prefix}: PROGRAMMABLE EARLY WARNING on write (accepted {Written} of {Count} bytes)",
-                    LogPrefix, totalWritten, count);
+                if (!programmableEarlyWarningReported)
+                {
+                    programmableEarlyWarning = true;
+                    ResetError(); // PEW is not an error
+                    m_logger.LogInformation(
+                        "{Prefix}: PROGRAMMABLE EARLY WARNING on write (accepted {Written} of {Count} bytes)",
+                        LogPrefix, totalWritten, count);
+                    programmableEarlyWarningReported = true;
+                }
+
+                if (acceptedInChunk == thisCount)
+                {
+                    // things still going on ok, let's continue writing out
+                    pos += thisCount;
+                    remaining -= thisCount;
+                    continue;
+                }
+
+                // For some reason, PEW caused a shorter write-out. Let's report to the caller
                 return totalWritten;
             }
 
@@ -476,11 +492,25 @@ public partial class TapeDriveWin32Backend
             if (r.IsEarlyWarning)
             {
                 totalWritten += acceptedInChunk;
-                earlyWarning = true;
-                ResetError(); // EW is not an error
-                m_logger.LogInformation(
-                    "{Prefix}: EARLY WARNING on write (accepted {Written} of {Count} bytes) — approaching end of partition",
-                    LogPrefix, totalWritten, count);
+                if (!earlyWarningReported)
+                {
+                    earlyWarning = true;
+                    ResetError(); // EW is not an error
+                    m_logger.LogInformation(
+                        "{Prefix}: EARLY WARNING on write (accepted {Written} of {Count} bytes) — approaching end of partition",
+                        LogPrefix, totalWritten, count);
+                    earlyWarningReported = true;
+                }
+
+                if (acceptedInChunk == thisCount)
+                {
+                    // things still going on ok, let's continue writing out
+                    pos += thisCount;
+                    remaining -= thisCount;
+                    continue;
+                }
+
+                // For some reason, EW caused a shorter write-out. Let's report to the caller
                 return totalWritten;
             }
 
