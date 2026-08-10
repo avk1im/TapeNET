@@ -133,6 +133,13 @@ public partial class MainViewModel
         {
             var operationResult = await viewModel.RunAsync();
 
+            // Calibration overwrites the media from the moment PrepareMedia succeeds, regardless
+            //  of the eventual outcome, so the TOC the service (and this tree/view) previously held
+            //  is now stale. Drop back to the "media loaded, no TOC" (or, if EjectWhenDone ejected
+            //  the media, "no media") state to match reality.
+            if (_tapeService.TOC == null)
+                UpdateTreeForDriveOnly(_tapeService.DriveNumber);
+
             if (operationResult is { HasFailed: true })
             {
                 SimpleBox.Show("Calibration failed. See log for details.", "Calibration Failed",

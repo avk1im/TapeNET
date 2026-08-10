@@ -483,6 +483,20 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         });
     }
 
+    /// <summary>
+    /// Discards the cached TOC and running agent without touching the loaded media itself,
+    ///  leaving the service in the "media loaded, no TOC" state — the same state reached when
+    ///  <see cref="LoadMediaAsync"/> succeeds but no TOC has been read yet.
+    /// </summary>
+    private void ClearTocState()
+    {
+        _agent?.Dispose();
+        _agent = null;
+        _toc = null;
+        IsTOCFromFile = false;
+        TOCFilePath = null;
+    }
+
     // Helper method runs synchronously inside the semaphore  - no async / await needed here.
     private bool EjectMediaCore()
     {
@@ -492,11 +506,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
             LogInfo("Ejecting media...");
 
-            _agent?.Dispose();
-            _agent = null;
-            _toc = null;
-            IsTOCFromFile = false;
-            TOCFilePath = null;
+            ClearTocState();
 
             if (!_drive.UnloadMedia())
             {

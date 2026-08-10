@@ -100,6 +100,12 @@ public partial class TapeServiceBase
                 throw new InvalidOperationException($"Couldn't prepare media: {LastError}");
             }
 
+            // Calibration overwrites the medium from this point on regardless of the outcome
+            //  (success, abort, or failure), so the cached TOC is no longer valid. Drop it now
+            //  so the service/UI reflect "media loaded, no TOC" instead of a stale TOC.
+            ClearTocState();
+            _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
+
             calibrator = new TapeCalibrator(_drive)
             {
                 Options = request.Options,

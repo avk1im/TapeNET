@@ -22,6 +22,7 @@ public sealed class CalibrationViewModel : ViewModelBase
     private readonly CancellationTokenSource _abortCts = new();
 
     private bool _isConfirmChecked;
+    private bool _ejectWhenDone;
     private bool _isSaved;
     private bool _isApplied;
     private string _statusMessage = string.Empty;
@@ -54,6 +55,13 @@ public sealed class CalibrationViewModel : ViewModelBase
             if (SetProperty(ref _isConfirmChecked, value))
                 CommandManager.InvalidateRequerySuggested();
         }
+    }
+
+    /// <summary>Whether to eject the media once the calibration run completes.</summary>
+    public bool EjectWhenDone
+    {
+        get => _ejectWhenDone;
+        set => SetProperty(ref _ejectWhenDone, value);
     }
 
     public string Vendor => string.IsNullOrWhiteSpace(_tapeService.DeviceVendor) ? "Unknown" : _tapeService.DeviceVendor;
@@ -159,7 +167,7 @@ public sealed class CalibrationViewModel : ViewModelBase
     {
         Result = await _tapeService.ExecuteCalibrateAsync(
             new CalibrateRequest(
-                EjectWhenDone: false,
+                EjectWhenDone: EjectWhenDone,
                 Options: new TapeCalibrationOptions())
             {
                 Cancellation = _abortCts.Token,
