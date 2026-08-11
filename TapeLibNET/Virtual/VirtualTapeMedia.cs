@@ -323,6 +323,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
     }
     public uint MinBlockSize => m_minBlockSize;
     public uint MaxBlockSize => m_maxBlockSize;
+    public uint DefaultBlockSize => m_defaultBlockSize;
     public long Capacity => m_capacity;
     public long Remaining => ReportedRemaining();
     public long CurrentBlock => m_currentBlock;

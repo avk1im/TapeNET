@@ -97,7 +97,10 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
 
     #region *** Private Fields ***
 
-    private readonly VirtualTapeDriveCapabilities m_capabilities;
+    // Not readonly: block-size capabilities are reconciled against the actual loaded
+    //  media state in LoadMedia(), since existing media may have been created with
+    //  different block-size limits than the capabilities passed at construction time.
+    private VirtualTapeDriveCapabilities m_capabilities;
     private VirtualTapeMedia? m_contentMedia;
     private VirtualTapeMedia? m_initiatorMedia;
     private VirtualTapeMedia? m_currentMedia;
@@ -336,17 +339,17 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
     public override string Revision => "v1";
 
 
-/// <summary>
-/// Controls how LoadMedia() handles existing vs new media state:
-/// <list type="bullet">
-///   <item><see cref="FileMode.Open"/> — Require existing state; fail if not found.</item>
-///   <item><see cref="FileMode.Create"/> — Always create new media; truncate any existing state.</item>
-///   <item><see cref="FileMode.CreateNew"/> — Create new media; fail if valid state already exists.</item>
-///   <item><see cref="FileMode.OpenOrCreate"/> — Load existing state if available; otherwise create new.</item>
-/// </list>
-/// Default is <see cref="FileMode.OpenOrCreate"/>.
-/// </summary>
-public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
+    /// <summary>
+    /// Controls how LoadMedia() handles existing vs new media state:
+    /// <list type="bullet">
+    ///   <item><see cref="FileMode.Open"/> — Require existing state; fail if not found.</item>
+    ///   <item><see cref="FileMode.Create"/> — Always create new media; truncate any existing state.</item>
+    ///   <item><see cref="FileMode.CreateNew"/> — Create new media; fail if valid state already exists.</item>
+    ///   <item><see cref="FileMode.OpenOrCreate"/> — Load existing state if available; otherwise create new.</item>
+    /// </list>
+    /// Default is <see cref="FileMode.OpenOrCreate"/>.
+    /// </summary>
+    public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
 
     #endregion
 
@@ -472,6 +475,11 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
             }
 
             m_logger.LogTrace("{Prefix}: Loaded content media from existing state", LogPrefix);
+
+            // Reconcile capabilities' block-size limits with the actually loaded media,
+            //  which may have been created with different limits than currently configured
+            //  (e.g. a smaller MinBlockSize than the default capabilities provide).
+            ReconcileBlockSizeCapabilities(m_contentMedia);
         }
         else
         {
@@ -586,6 +594,32 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
 
         m_logger.LogTrace("{Prefix}: Media loaded", LogPrefix);
         return true;
+    }
+
+    /// <summary>
+    /// Reconciles the drive's block-size capabilities with the block-size limits actually
+    /// enforced by loaded media state. Existing media may have been created with different
+    /// MinBlockSize/MaxBlockSize/DefaultBlockSize than the capabilities passed to this
+    /// backend at construction time, so the reported capabilities must reflect what the
+    /// loaded media will actually accept.
+    /// </summary>
+    private void ReconcileBlockSizeCapabilities(VirtualTapeMedia media)
+    {
+        if (media.MinBlockSize == m_capabilities.MinBlockSize
+            && media.MaxBlockSize == m_capabilities.MaxBlockSize
+            && media.DefaultBlockSize == m_capabilities.DefaultBlockSize)
+            return;
+
+        m_logger.LogTrace(
+            "{Prefix}: Reconciling block-size capabilities from loaded media - min: {Min}, max: {Max}, default: {Default}",
+            LogPrefix, media.MinBlockSize, media.MaxBlockSize, media.DefaultBlockSize);
+
+        m_capabilities = m_capabilities with
+        {
+            MinBlockSize = media.MinBlockSize,
+            MaxBlockSize = media.MaxBlockSize,
+            DefaultBlockSize = media.DefaultBlockSize,
+        };
     }
 
     /// <summary>
