@@ -17,16 +17,17 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
+        <!-- Vertical (Y) axis = ReportedRemaining: full at the top, 0 at the bottom. -->
         <Grid Grid.Row="0"
               Grid.Column="0"
               Margin="0,4,8,4"
               IsHitTestVisible="False">
-            <TextBlock x:Name="ActualTopLabel"
+            <TextBlock x:Name="ReportedTopLabel"
                        HorizontalAlignment="Left"
                        VerticalAlignment="Top"
                        Foreground="Gray"
                        FontSize="11"/>
-            <TextBlock x:Name="ActualBottomLabel"
+            <TextBlock x:Name="ReportedBottomLabel"
                        HorizontalAlignment="Left"
                        VerticalAlignment="Bottom"
                        Foreground="Gray"
@@ -40,19 +41,32 @@
                 BorderThickness="1"
                 CornerRadius="4"
                 Background="White">
-            <Canvas x:Name="PlotCanvas"
-                    Margin="8"/>
+            <!-- The plot Canvas plus the hover readout overlay in the (free) top-right corner. -->
+            <Grid ClipToBounds="True">
+                <Canvas x:Name="PlotCanvas"
+                        Margin="8"
+                        Background="Transparent"/>
+                <TextBlock x:Name="HoverReadout"
+                           HorizontalAlignment="Right"
+                           VerticalAlignment="Top"
+                           Margin="0,6,10,0"
+                           Foreground="#404040"
+                           FontSize="11"
+                           IsHitTestVisible="False"
+                           Visibility="Collapsed"/>
+            </Grid>
         </Border>
 
+        <!-- Horizontal (X) axis = ActualRemaining: full capacity on the left, EOM (0) on the right. -->
         <Grid Grid.Row="1"
               Grid.Column="1"
               Margin="8,6,8,0"
               IsHitTestVisible="False">
-            <TextBlock x:Name="ReportedLeftLabel"
+            <TextBlock x:Name="ActualLeftLabel"
                        HorizontalAlignment="Left"
                        Foreground="Gray"
                        FontSize="11"/>
-            <TextBlock x:Name="ReportedRightLabel"
+            <TextBlock x:Name="ActualRightLabel"
                        HorizontalAlignment="Right"
                        Foreground="Gray"
                        FontSize="11"/>

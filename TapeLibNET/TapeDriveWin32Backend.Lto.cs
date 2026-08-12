@@ -1092,4 +1092,122 @@ public partial class TapeDriveWin32Backend
 
     #endregion
 
+    #region *** Tape Capacity — LOG SENSE (page 0x31) ***
+
+    // =============================================================================
+    //  The drive's OWN remaining/maximum capacity, read straight from the device via
+    //  LOG SENSE(10) + Tape Capacity log page (0x31), bypassing the tape class driver's
+    //  (tape.sys) GetTapeParameters().Remaining. Real runs showed the driver figure both
+    //  UNDER-reporting capacity at BOM and — on LTO-3 — COLLAPSING to 0 the instant EW
+    //  fires. This native figure lets us cross-check (and potentially replace) it.
+    //
+    //  >>> VERIFY THE UNITS (c_tapeCapBytesPerUnit) against your drive's SCSI reference.
+    //  >>> SSC nominally expresses these parameters in megabytes; some drives scale
+    //  >>> differently. GetLtoRemainingCapacity logs the raw parameter values at Trace.
+    // =============================================================================
+
+    private const byte c_scsiOpLogSense10 = 0x4D;
+    private const byte c_logPageTapeCapacity = 0x31;
+
+    // Tape Capacity page parameter codes (SSC): main partition remaining / maximum.
+    private const ushort c_tapeCapParamMainRemaining = 0x0001;
+    private const ushort c_tapeCapParamMainMaximum = 0x0003;
+
+    // Page values are in megabytes per SSC — VERIFY per drive (see note above).
+    private const long c_tapeCapBytesPerUnit = 1024L * 1024;
+
+    // Generous allocation for the page header + the four capacity parameters.
+    private const int c_logSenseAllocLen = 128;
+
+    /// <summary>
+    /// Reads the drive's own remaining- and maximum-capacity figures for the MAIN (content) partition
+    /// via SCSI <c>LOG SENSE(10)</c> on the Tape Capacity log page (0x31). This is the firmware figure,
+    /// NOT tape.sys's derived <c>Remaining</c> — useful to cross-check (and, if it proves more honest,
+    /// to substitute for) the driver figure near EW/EOM.
+    /// <para>
+    /// Returns <c>false</c> (gracefully) on drives that do not implement the page — the drive answers
+    /// CHECK CONDITION and <see cref="SendScsiCommand"/> reports failure.
+    /// </para>
+    /// </summary>
+    /// <param name="remainingBytes">Receives main-partition remaining capacity in BYTES (0 if absent).</param>
+    /// <param name="maxCapacityBytes">Receives main-partition maximum capacity in BYTES (0 if absent).</param>
+    internal bool GetLtoRemainingCapacity(out long remainingBytes, out long maxCapacityBytes)
+    {
+        remainingBytes = 0;
+        maxCapacityBytes = 0;
+
+        if (!HasMedia)
+        {
+            SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
+            return false;
+        }
+
+        Span<byte> cdb = stackalloc byte[10];
+        cdb[0] = c_scsiOpLogSense10;
+        cdb[2] = (byte)(0x40 | c_logPageTapeCapacity); // PC=01b (current values) | PAGE CODE 0x31
+        // bytes 3 (subpage) and 5-6 (parameter pointer) = 0
+        cdb[7] = (byte)((c_logSenseAllocLen >> 8) & 0xFF); // ALLOCATION LENGTH (BE)
+        cdb[8] = (byte)(c_logSenseAllocLen & 0xFF);
+        // byte 9 CONTROL = 0
+
+        Span<byte> data = stackalloc byte[c_logSenseAllocLen];
+        if (!SendScsiCommand(cdb, data, dataIn: true))
+        {
+            LogErrorAsTrace("Tape Capacity: LOG SENSE(10) page 0x31 failed (likely unsupported)");
+            return false;
+        }
+
+        // Log page header (SPC): byte 0 = page code, byte 1 = subpage, bytes 2-3 = PAGE LENGTH (BE),
+        //  counting the parameter bytes that follow. Then a run of log parameters, each:
+        //  bytes 0-1 = PARAMETER CODE (BE), byte 2 = control, byte 3 = PARAMETER LENGTH, bytes 4+ = value.
+        int pageLen = (data[2] << 8) | data[3];
+        int end = Math.Min(4 + pageLen, data.Length);
+
+        bool gotRemaining = false;
+        int p = 4;
+        while (p + 4 <= end)
+        {
+            ushort code = (ushort)((data[p] << 8) | data[p + 1]);
+            int paramLen = data[p + 3];
+            int valOff = p + 4;
+            if (valOff + paramLen > data.Length)
+                break;
+
+            long value = ReadBigEndian(data, valOff, paramLen);
+
+            if (code == c_tapeCapParamMainRemaining)
+            {
+                remainingBytes = value * c_tapeCapBytesPerUnit;
+                gotRemaining = true;
+            }
+            else if (code == c_tapeCapParamMainMaximum)
+            {
+                maxCapacityBytes = value * c_tapeCapBytesPerUnit;
+            }
+
+            p = valOff + paramLen;
+        }
+
+        if (!gotRemaining)
+        {
+            LogErrorAsTrace("Tape Capacity: main-partition remaining parameter (0x0001) not present in page");
+            return false;
+        }
+
+        m_logger.LogTrace("{Prefix}: Tape Capacity (LOG SENSE 0x31) — remaining {Rem} B, maximum {Max} B",
+            LogPrefix, remainingBytes, maxCapacityBytes);
+        ResetError();
+        return true;
+    }
+
+    // Reads a big-endian unsigned integer of 1..8 bytes from a span slice.
+    private static long ReadBigEndian(ReadOnlySpan<byte> data, int offset, int length)
+    {
+        long v = 0;
+        for (int i = 0; i < length && offset + i < data.Length; i++)
+            v = (v << 8) | data[offset + i];
+        return v;
+    }
+
+    #endregion
 }

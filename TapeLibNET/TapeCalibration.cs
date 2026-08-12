@@ -117,13 +117,23 @@ public sealed class TapeCalibration : ITapeCalibration
     public IReadOnlyList<CalibrationPoint> Curve { get; }
     public CalibrationPoint? EarlyWarning { get; }
 
+    /// <summary>
+    /// EXPERIMENTAL parallel series: the drive's OWN remaining figure (SCSI LOG SENSE, Tape Capacity
+    /// page 0x31) transformed to the same <c>reported → actual</c> shape as <see cref="Curve"/>. Null on
+    /// older blobs and on non-LTO runs. Kept ALONGSIDE (never replacing) <see cref="Curve"/> so the
+    /// runtime is unaffected while we compare the two offline — in particular to see whether the native
+    /// figure dodges the driver's tail quirks (e.g. the LTO-3 collapse, LTO-4 phantom).
+    /// </summary>
+    public IReadOnlyList<CalibrationPoint>? LtoRemainingCurve { get; }
+
     #endregion
 
     #region *** Construction ***
 
     private TapeCalibration(
         string formatId, string profileKey, long reportedCapacityAtBom, long phantomFreeAtEom,
-        long capacityActual, IReadOnlyList<CalibrationPoint> curve, CalibrationPoint? earlyWarning)
+        long capacityActual, IReadOnlyList<CalibrationPoint> curve, CalibrationPoint? earlyWarning,
+        IReadOnlyList<CalibrationPoint>? ltoRemainingCurve = null)
     {
         FormatId = formatId;
         ProfileKey = profileKey;
@@ -132,6 +142,7 @@ public sealed class TapeCalibration : ITapeCalibration
         CapacityActual = capacityActual;
         Curve = curve;
         EarlyWarning = earlyWarning;
+        LtoRemainingCurve = ltoRemainingCurve;
     }
 
     /// <summary>
@@ -147,7 +158,8 @@ public sealed class TapeCalibration : ITapeCalibration
     public static TapeCalibration FromMeasurements(
         string profileKey, long reportedCapacityAtBom, long capacityActual,
         IEnumerable<(long ActualWritten, long ReportedRemaining)> rawSamples,
-        (long ActualWritten, long ReportedRemaining)? earlyWarning)
+        (long ActualWritten, long ReportedRemaining)? earlyWarning,
+        IEnumerable<(long ActualWritten, long LtoRemaining)>? ltoSamples = null)
     {
         var pts = new List<CalibrationPoint>();
 
@@ -183,8 +195,29 @@ public sealed class TapeCalibration : ITapeCalibration
             ? new CalibrationPoint(ew.ReportedRemaining, Math.Max(0L, capacityActual - ew.ActualWritten))
             : null;
 
+        // Build the optional LTO (LOG SENSE) parallel series with the same reported→actual transform and
+        //  conservative-tie dedup as the main curve, so the two are directly comparable point-for-point.
+        List<CalibrationPoint>? ltoCurve = null;
+        if (ltoSamples is not null)
+        {
+            var lp = new List<CalibrationPoint>();
+            foreach (var (aw, lto) in ltoSamples)
+                if (lto >= 0)
+                    lp.Add(new CalibrationPoint(lto, Math.Max(0L, capacityActual - aw)));
+
+            lp.Sort(static (a, b) =>
+                a.ReportedRemaining != b.ReportedRemaining
+                    ? a.ReportedRemaining.CompareTo(b.ReportedRemaining)
+                    : a.ActualRemaining.CompareTo(b.ActualRemaining));
+
+            ltoCurve = new List<CalibrationPoint>(lp.Count);
+            foreach (var p in lp)
+                if (ltoCurve.Count == 0 || ltoCurve[^1].ReportedRemaining != p.ReportedRemaining)
+                    ltoCurve.Add(p);
+        }
+
         return new TapeCalibration(CurrentFormatId, profileKey, Math.Max(0L, reportedCapacityAtBom),
-            phantomFreeAtEom, capacityActual, curve, ewPoint);
+            phantomFreeAtEom, capacityActual, curve, ewPoint, ltoCurve);
     }
 
     /// <summary>
@@ -366,7 +399,9 @@ public sealed class TapeCalibration : ITapeCalibration
         long PhantomFreeAtEom,
         long CapacityActual,
         List<CalibrationPoint> Curve,
-        CalibrationPoint? EarlyWarning);
+        CalibrationPoint? EarlyWarning,
+        List<CalibrationPoint>? LtoRemainingCurve = null  // appended → older blobs read back as null
+    );
 
     private static readonly JsonSerializerOptions s_json = new()
     {
@@ -377,7 +412,7 @@ public sealed class TapeCalibration : ITapeCalibration
     {
         ArgumentNullException.ThrowIfNull(stream);
         var dto = new Dto(FormatId, ProfileKey, ReportedCapacityAtBom, PhantomFreeAtEom, CapacityActual,
-            [.. Curve], EarlyWarning);
+            [.. Curve], EarlyWarning, LtoRemainingCurve is null ? null : [.. LtoRemainingCurve]);
         JsonSerializer.Serialize(stream, dto, s_json);
     }
 
@@ -401,7 +436,8 @@ public sealed class TapeCalibration : ITapeCalibration
 
             var curve = dto.Curve ?? [];
             return new TapeCalibration(dto.FormatId, dto.ProfileKey,
-                dto.ReportedCapacityAtBom, dto.PhantomFreeAtEom, dto.CapacityActual, curve, dto.EarlyWarning);
+                dto.ReportedCapacityAtBom, dto.PhantomFreeAtEom, dto.CapacityActual, curve, dto.EarlyWarning,
+                dto.LtoRemainingCurve);
         }
         catch (JsonException)
         {
