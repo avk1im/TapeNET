@@ -452,8 +452,9 @@ public class ServiceCalibrateProgressHandler(
 
     private static string FormatPhase(string phase) => phase switch
     {
-        "sampling"      => "Writing to EOM",
-        "early-warning" => "Capturing EW landmark",
+        "sampling"      => "Writing to the main media section",
+        "sampling-tail" => "Writing to the final media section",
+        "early-warning" => "Capturing early-warning landmark",
         "eom"           => "Finalizing calibration",
         _               => string.IsNullOrWhiteSpace(phase) ? "Calibrating" : phase,
     };
