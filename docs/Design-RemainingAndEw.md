@@ -203,7 +203,7 @@ compares a profile key); the concrete type is JSON-serialized inside TapeLibNET.
 | `Curve` | `ReportedRemaining → ActualRemaining` points, sorted ascending, conservative on ties. |
 | `EarlyWarning` | Nullable `(ReportedRemaining, ActualRemaining)` landmark; null if the drive never reported EW. |
 | `EwToEomDistance` | The landmark's `ActualRemaining` — the stable per-profile constant for tail byte-counting. |
-| `TranslateRemaining(reported)` | Pure curve-only translation with end clamping (the before-EW / no-EW branch). |
+| `TranslateReportedToActual(reported)` | Pure curve-only translation with end clamping (the before-EW / no-EW branch). |
 | `SaveTo(stream)` | Writes the opaque JSON blob the app persists verbatim. |
 
 Factories: `FromMeasurements(...)` (a run), `Apriori(capacity, marginPercent=5, remainingAtEwPercent=7)`
@@ -359,7 +359,7 @@ Phase 2 and only needs a stub so the `Write` signature stays honest.)
     figure overshoots toward the tail as the real LTO-4 does. Truthful anchors ⇒ exact
     `capacity − bytesWritten`.
     - Leverage the existing `ITapeCalibration` mechanism so both synthetic (`Apriori`) and real-life measured
-    calibration data can drive the emulation, flipping `TranslateRemaining()` into
+    calibration data can drive the emulation, flipping `TranslateReportedToActual()` into
     `TranslateActualToReported()`. A catch to address: real-life profiles originate from large-capacity media,
     100s GB, so a wrapper maps the profile's original capacity onto the generally much smaller virtual drive.
 - **`WriteBlocks` / `Write` semantics:**
@@ -419,7 +419,7 @@ behavior. Key design points:
 
 #### `ITapeCalibration.TranslateActualToReported` (added to `TapeCalibration.cs`)
 
-The inverse of `TranslateRemaining`: given a true `ActualRemaining`, return the (optimistic) figure the driver
+The inverse of `TranslateReportedToActual`: given a true `ActualRemaining`, return the (optimistic) figure the driver
 would report, by interpolating the same curve on its `ActualRemaining` axis (monotonic non-decreasing), with
 end clamping. This is the one new library API the emulation needed; it is also generally useful (e.g. "what
 would the driver claim here?").
@@ -547,7 +547,7 @@ memory-backed virtual cartridge carrying an LTO-4-like EW profile.
   reproduces every field (format id, profile key, both capacities, `EwToEomDistance`, and every curve
   point); a blob with an unrecognized `FormatId` is rejected (`LoadFrom` returns `null`).
 - **`Apriori` baseline** — `Apriori_ProducesConservativeUsableCurve_WithoutRun`: produces a usable,
-  conservative curve with no run (`TranslateRemaining` never exceeds the reported figure).
+  conservative curve with no run (`TranslateReportedToActual` never exceeds the reported figure).
 - **Multi-profile auto-selection** — `MultiProfile_SelectsMatchingKey_AndTracksLoadUnload`: a
   non-matching key is not selected; a matching one is; a **snapshot round-trip** (`CaptureMemorySnapshot`
   → `UnloadMedia` → `InsertMemoryMedia` → `ReloadMedia` → `PrepareMedia`) re-runs `SelectCalibration` and
@@ -880,7 +880,7 @@ The Open Virtual Drive dialog exposes both axes with the shared %/MB/GB unit sel
 is usually left alone).
 
 `ITapeCalibration` is deliberately used in **two opposite directions**, and both are documented as such: as
-an *estimation* artifact (`TranslateRemaining`: reported → actual, at runtime) and as an *emulation* source
+an *estimation* artifact (`TranslateReportedToActual`: reported → actual, at runtime) and as an *emulation* source
 (`VirtualTapeEwProfile.FromCalibration` / `TranslateActualToReported`: actual → reported, for replaying a
 measured drive on a virtual one).
 

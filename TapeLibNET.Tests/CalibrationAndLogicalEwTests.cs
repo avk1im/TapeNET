@@ -222,8 +222,8 @@ public class CalibrationAndLogicalEwTests
 
         // Conservative: the translated actual never exceeds the reported figure at any point.
         long reported = drive.Capacity;
-        Assert.True(apriori.TranslateRemaining(reported) <= reported);
-        Assert.True(apriori.TranslateRemaining(0) <= 0 + 1); // clamps at/near zero near EOM
+        Assert.True(apriori.TranslateReportedToActual(reported) <= reported);
+        Assert.True(apriori.TranslateReportedToActual(0) <= 0 + 1); // clamps at/near zero near EOM
     }
 
     #endregion

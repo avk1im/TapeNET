@@ -106,6 +106,9 @@ public partial class TapeDriveWin32Backend
         m_ltoProduct = string.Empty;
         m_ltoRevision = string.Empty;
 
+        // Re-arm all one-shot write-run reports for the next open/session.
+        m_writeRunReports.ResetAll();
+
         FreeAlignedScratch();
     }
 
@@ -1194,8 +1197,9 @@ public partial class TapeDriveWin32Backend
             return false;
         }
 
-        m_logger.LogTrace("{Prefix}: Tape Capacity (LOG SENSE 0x31) — remaining {Rem} B, maximum {Max} B",
-            LogPrefix, remainingBytes, maxCapacityBytes);
+        if (m_writeRunReports.ThisLine().TryEnter())
+            m_logger.LogTrace("{Prefix}: Tape Capacity (LOG SENSE 0x31) — remaining {Rem} B, maximum {Max} B",
+                LogPrefix, remainingBytes, maxCapacityBytes);
         ResetError();
         return true;
     }

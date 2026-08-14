@@ -470,9 +470,12 @@ public partial class TapeDriveWin32Backend
                 {
                     programmableEarlyWarning = true;
                     ResetError(); // PEW is not an error
-                    m_logger.LogInformation(
-                        "{Prefix}: PROGRAMMABLE EARLY WARNING on write (accepted {Written} of {Count} bytes)",
-                        LogPrefix, totalWritten, count);
+
+                    if (m_writeRunReports.ThisLine().TryEnter())
+                        m_logger.LogInformation(
+                            "{Prefix}: PROGRAMMABLE EARLY WARNING on write (accepted {Written} of {Count} bytes)",
+                            LogPrefix, totalWritten, count);
+                    
                     programmableEarlyWarningReported = true;
                 }
 
@@ -496,9 +499,12 @@ public partial class TapeDriveWin32Backend
                 {
                     earlyWarning = true;
                     ResetError(); // EW is not an error
-                    m_logger.LogInformation(
-                        "{Prefix}: EARLY WARNING on write (accepted {Written} of {Count} bytes) — approaching end of partition",
-                        LogPrefix, totalWritten, count);
+
+                    if (m_writeRunReports.ThisLine().TryEnter())
+                        m_logger.LogInformation(
+                            "{Prefix}: EARLY WARNING on write (accepted {Written} of {Count} bytes) — approaching end of partition",
+                            LogPrefix, totalWritten, count);
+                    
                     earlyWarningReported = true;
                 }
 
@@ -654,8 +660,10 @@ public partial class TapeDriveWin32Backend
         if (r.IsProgrammableEarlyWarning || r.IsEarlyWarning)
         {
             earlyWarning = true;
-            ResetError();
-            m_logger.LogInformation("{Prefix}: EARLY WARNING while writing filemarks", LogPrefix);
+            ResetError(); // PEW / EW aren't an error
+
+            if (m_writeRunReports.ThisLine().TryEnter())
+                m_logger.LogInformation("{Prefix}: EARLY WARNING while writing filemarks", LogPrefix);
             return true;
         }
 
@@ -913,7 +921,7 @@ public partial class TapeDriveWin32Backend
                 : 0u,
         };
 
-        if (outcome.IsCheckCondition)
+        if (outcome.IsCheckCondition && m_writeRunReports.ThisLine().TryEnter())
         {
             m_logger.LogTrace(
                 "{Prefix}: {Tag} CHECK CONDITION key=0x{Key:X2} ASC=0x{Asc:X2} ASCQ=0x{Ascq:X2} " +

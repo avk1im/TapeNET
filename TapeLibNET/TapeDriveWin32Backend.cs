@@ -64,6 +64,10 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     // LTO partition usage flag — set during Open via ProbeForLtoInformation(), cleared in Close
     private bool m_useLtoPartitions;
 
+    // One-shot report latches for the LTO backend, keyed by call site and re-armed together in LtoClose().
+    //  Collapses per-chunk write-flow tracing (SCSI sense, early warning, LOG SENSE) to one line per session.
+    private readonly OnceLatchGroup m_writeRunReports = new();
+
     #endregion
 
 #if DEBUG

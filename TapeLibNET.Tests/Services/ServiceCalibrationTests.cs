@@ -42,7 +42,7 @@ public class ServiceCalibrationTests : ServiceTestBase
                     EjectWhenDone: false,
                     Options: new TapeCalibrationOptions
                     {
-                        SampleCount = 20,
+                        SampleCount = 40,
                         //MinSampleInterval = 1L * MB,
                         //ChunkBytesTarget = 1L * MB,
                     }));

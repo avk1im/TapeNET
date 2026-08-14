@@ -77,13 +77,13 @@ public interface ITapeCalibration
     /// clamping at the curve ends. This is the "EW-not-fired / no-EW-support" branch; the precise
     /// after-EW branch is applied by <see cref="TapeDrive"/> using live session state.
     /// </summary>
-    long TranslateRemaining(long reportedRemaining);
+    long TranslateReportedToActual(long reportedRemaining);
 
     /// <summary>
     /// Inverse, curve-only translation <c>ActualRemaining → ReportedRemaining</c> (bytes), with
     /// clamping at the curve ends. Answers "what would the driver report if the true remaining were
     /// <paramref name="actualRemaining"/>?" — used to REPRODUCE a drive's optimistic remaining figure
-    /// (e.g. by the virtual backend's emulation), the mirror image of <see cref="TranslateRemaining"/>.
+    /// (e.g. by the virtual backend's emulation), the mirror image of <see cref="TranslateReportedToActual"/>.
     /// </summary>
     long TranslateActualToReported(long actualRemaining);
 
@@ -185,11 +185,16 @@ public sealed class TapeCalibration : ITapeCalibration
                 ? a.ReportedRemaining.CompareTo(b.ReportedRemaining)
                 : a.ActualRemaining.CompareTo(b.ActualRemaining));
 
-        // De-duplicate identical ReportedRemaining values, keeping the first (conservative) one.
+        // Keep one point per distinct ReportedRemaining (conservative: smallest ActualRemaining on ties) —
+        //  EXCEPT the collapse tail, where ReportedRemaining pins to 0 across a real span of ActualRemaining
+        //  (LTO-3). Those points are a valid Actual→Reported function and plot directly on the flipped graph,
+        //  so we retain them all. The Reported→Actual lookup guards the resulting duplicate keys (see below).
         var curve = new List<CalibrationPoint>(pts.Count);
         foreach (var p in pts)
-            if (curve.Count == 0 || curve[^1].ReportedRemaining != p.ReportedRemaining)
-                curve.Add(p);
+            if (curve.Count == 0
+                || curve[^1].ReportedRemaining != p.ReportedRemaining
+                || p.ReportedRemaining == 0)      // do NOT dedup the reported==0 collapse run
+                curve.Add(p);   // De-duplicate identical ReportedRemaining values, keeping the first (conservative) one.
 
         CalibrationPoint? ewPoint = earlyWarning is { } ew
             ? new CalibrationPoint(ew.ReportedRemaining, Math.Max(0L, capacityActual - ew.ActualWritten))
@@ -289,17 +294,28 @@ public sealed class TapeCalibration : ITapeCalibration
     /// <summary>
     /// Translates a driver-reported remaining byte count into a more accurate actual remaining count
     /// estimation, based on the calibration curve.
+    /// <para>
+    /// Robust against the "collapse tail" some drives exhibit (LTO-3): a run of curve points that all
+    /// share <c>ReportedRemaining == 0</c> while <see cref="CalibrationPoint.ActualRemaining"/> still
+    /// spans a real range. Because the curve is sorted ascending by reported (ties broken by ascending
+    /// actual), that run sits at the head as <c>(0, 0) … (0, EwToEomDistance)</c>. A reported figure of 0
+    /// therefore clamps to the conservative (smallest) actual, and any positive reported brackets past
+    /// the whole run (lo on the last zero, hi on the first positive), so the interpolation below never
+    /// divides by a zero-width reported span.
+    /// </para>
     /// </summary>
     /// <param name="reportedRemaining">The remaining byte count reported by the driver.</param>
     /// <returns>The estimated actual remaining byte count.</returns>
-    public long TranslateRemaining(long reportedRemaining)
+    public long TranslateReportedToActual(long reportedRemaining)
     {
         var c = Curve;
+
         if (c.Count == 0)
             return reportedRemaining;             // no data → passthrough
 
         if (reportedRemaining <= c[0].ReportedRemaining)
-            return c[0].ActualRemaining;          // clamp low (near EOM → conservative)
+            return c[0].ActualRemaining;          // clamp low (at/near EOM, incl. a reported==0 collapse → conservative)
+
         if (reportedRemaining >= c[^1].ReportedRemaining)
             return c[^1].ActualRemaining;         // clamp high (near BOM)
 
@@ -312,27 +328,38 @@ public sealed class TapeCalibration : ITapeCalibration
         }
 
         CalibrationPoint a = c[lo], b = c[hi];
+
         long dr = b.ReportedRemaining - a.ReportedRemaining;
         if (dr <= 0)
-            return a.ActualRemaining;
+            return a.ActualRemaining;             // equal-reported bracket (defensive): conservative (smaller) actual
 
         double t = (double)(reportedRemaining - a.ReportedRemaining) / dr;
         return a.ActualRemaining + (long)Math.Round(t * (b.ActualRemaining - a.ActualRemaining));
     }
 
     /// <summary>
-    /// Inverse of <see cref="TranslateRemaining"/>: given a true <paramref name="actualRemaining"/>,
+    /// Inverse of <see cref="TranslateReportedToActual"/>: given a true <paramref name="actualRemaining"/>,
     /// returns the (typically optimistic) figure the driver would report, by interpolating the curve
     /// on its <see cref="CalibrationPoint.ActualRemaining"/> axis (monotonic non-decreasing).
+    /// <para>
+    /// Reproduces the "collapse tail" (LTO-3) faithfully: across the run of points that share
+    /// <c>ReportedRemaining == 0</c> but distinct actuals, both bracketing endpoints carry reported 0,
+    /// so this returns 0 for every actual inside the collapse zone — exactly what the drive reports
+    /// there. (Before those points were retained, this method wrongly ramped reported from 0 up to the
+    /// first post-collapse anchor.) ActualRemaining stays unique and ascending across the whole curve,
+    /// so the actual-axis span is strictly positive and never divides by zero.
+    /// </para>
     /// </summary>
     public long TranslateActualToReported(long actualRemaining)
     {
         var c = Curve;
+
         if (c.Count == 0)
             return actualRemaining;               // no data → passthrough
 
         if (actualRemaining <= c[0].ActualRemaining)
-            return c[0].ReportedRemaining;        // clamp low (near EOM)
+            return c[0].ReportedRemaining;        // clamp low (at/near EOM)
+
         if (actualRemaining >= c[^1].ActualRemaining)
             return c[^1].ReportedRemaining;       // clamp high (near BOM)
 
@@ -345,9 +372,10 @@ public sealed class TapeCalibration : ITapeCalibration
         }
 
         CalibrationPoint a = c[lo], b = c[hi];
+
         long da = b.ActualRemaining - a.ActualRemaining;
         if (da <= 0)
-            return a.ReportedRemaining;
+            return a.ReportedRemaining;           // equal-actual bracket (defensive)
 
         double t = (double)(actualRemaining - a.ActualRemaining) / da;
         return a.ReportedRemaining + (long)Math.Round(t * (b.ReportedRemaining - a.ReportedRemaining));

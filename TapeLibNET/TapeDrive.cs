@@ -656,7 +656,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return physicalEw;
         m_bytesSinceRemainingPoll = 0L;
 
-        long est = cal.TranslateRemaining(GetReportedContentRemaining());
+        long est = cal.TranslateReportedToActual(GetReportedContentRemaining());
         m_writableHeadroomAtLastPoll = est - m_desiredEarlyWarning; // paces the next poll
         return est <= m_desiredEarlyWarning || physicalEw;
     }
@@ -811,7 +811,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return reported;
         if (m_physicalEwSeen)
             return Math.Max(0L, cal.EwToEomDistance - BytesAfterPhysicalEw());
-        return cal.TranslateRemaining(reported);
+        return cal.TranslateReportedToActual(reported);
     }
 
     #endregion // *** Calibration ***

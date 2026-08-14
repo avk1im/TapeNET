@@ -36,8 +36,8 @@ public readonly record struct TapeCalibrationOptions
     /// <summary>Default value for <see cref="BlocksPerChunk"/>.</summary>
     public const int DefaultBlocksPerChunk = 8;
 
-    /// <summary>Default value for <see cref="TailSampleFraction"/> — 20% of the sample budget goes to the tail.</summary>
-    public const double DefaultTailSampleFraction = 0.20;
+    /// <summary>Default value for <see cref="TailSampleFraction"/> — 40% of the sample budget goes to the tail.</summary>
+    public const double DefaultTailSampleFraction = 0.40;
 
     /// <summary>Default value for <see cref="TailCapacityFraction"/> — the tail is the last 5% of capacity (or EW, whichever first).</summary>
     public const double DefaultTailCapacityFraction = 0.05;
@@ -46,7 +46,7 @@ public readonly record struct TapeCalibrationOptions
     {
         SampleCount = 1_000;                                // 1,000 proved good resolution for LTO drives
         BlocksPerChunk = DefaultBlocksPerChunk;
-        TailSampleFraction = DefaultTailSampleFraction;     // reserve 20% of the budget for the EW→EOM tail
+        TailSampleFraction = DefaultTailSampleFraction;     // reserve 40% of the budget for the EW→EOM tail
         TailCapacityFraction = DefaultTailCapacityFraction; // tail = last 5% of capacity (or EW, whichever first)
     }
 

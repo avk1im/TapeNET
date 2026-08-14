@@ -126,18 +126,36 @@ public sealed record VirtualTapeEwProfile
     }
 
     /// <summary>
+    /// Minimum size of the EMULATED early-warning zone produced by <see cref="FromCalibration"/>, no matter
+    /// how tiny the real tail scales to. Sized to one writer buffer (16 GB) so a full write operation lands
+    /// INSIDE the zone and the emulated EW / collapse / phantom behavior actually surfaces during a run.
+    /// On media smaller than this the zone is clamped to capacity — the whole cartridge becomes early warning,
+    /// which is quirky but exception-free (the user's problem to live with when emulating EW on a toy drive).
+    /// </summary>
+    public const long MinEmulatedEarlyWarningZone = 16L * 1024 * 1024 * 1024;
+
+    /// <summary>
     /// Builds an emulation profile from a real (or a-priori) <see cref="ITapeCalibration"/>, rescaling the
     /// profile's (typically large) capacity onto the virtual medium's <paramref name="targetCapacity"/> so a
     /// hundreds-of-GB LTO profile can drive a small test cartridge. The reported-remaining model is derived
     /// from <see cref="ITapeCalibration.TranslateActualToReported"/>; the EW zone from
-    /// <see cref="ITapeCalibration.EwToEomDistance"/>. Both are scaled by
-    /// <c>targetCapacity / calibration.CapacityActual</c>.
+    /// <see cref="ITapeCalibration.EwToEomDistance"/>.
     /// <para>
     /// NOTE the DUALITY: a calibration is normally an ESTIMATION artifact, translating reported → actual
     /// (<see cref="ITapeCalibration.TranslateRemaining"/>). Here it is used in the opposite direction, as an
     /// EMULATION source, translating actual → reported. Both directions ride the same curve, so scaling must
     /// stay on the <b>actual</b> axis — hence <see cref="ITapeCalibration.CapacityActual"/> is the scale
     /// reference, and the fallback is the curve's own top actual anchor, never a reported figure.
+    /// </para>
+    /// <para>
+    /// The EW/EOM tail is the ONLY interesting region, yet it is a physical CONSTANT (LTO-3: ~0.45 GB,
+    /// LTO-4: ~32 GB), independent of cartridge size. Scaled naively onto a small test cartridge it shrinks
+    /// to a few KB — well below one writer buffer — so the emulated behavior would never surface. We therefore
+    /// GUARANTEE the emulated EW zone spans at least <see cref="MinEmulatedEarlyWarningZone"/>, then map the
+    /// source's BODY and TAIL onto their two virtual segments INDEPENDENTLY (a piecewise-linear rescale — the
+    /// same "magnified tail" idea the calibration graph uses). Total capacity stays exact, the EW landmark and
+    /// the reported-curve shape stay consistent, and the tail is blown up enough to observe. Both actual- and
+    /// reported-remaining ride the SAME map, which is what preserves the (reported − actual) over-report.
     /// </para>
     /// </summary>
     public static VirtualTapeEwProfile FromCalibration(ITapeCalibration calibration, long targetCapacity)
@@ -150,17 +168,65 @@ public sealed record VirtualTapeEwProfile
             ? calibration.CapacityActual
             : calibration.Curve.Count > 0 ? calibration.Curve[^1].ActualRemaining : 0L;
 
-        double scale = sourceCapacity > 0 ? (double)targetCapacity / sourceCapacity : 1.0;
+        // The source's EW/EOM tail, clamped into [0, sourceCapacity].
+        long sourceEwZone = System.Math.Clamp(calibration.EwToEomDistance, 0L, sourceCapacity);
 
-        long ewZone = (long)System.Math.Round(calibration.EwToEomDistance * scale);
+        double capacityScale = sourceCapacity > 0 ? (double)targetCapacity / sourceCapacity : 1.0;
+
+        // Degenerate inputs (no source tail, or an empty medium) can't support a magnified tail — fall back to
+        //  the original single-scale linear model (which reduces to the legacy passthrough when the curve is flat).
+        if (sourceEwZone <= 0 || sourceCapacity <= 0 || targetCapacity <= 0)
+        {
+            long LinearModel(long actualWritten, long cap)
+            {
+                long targetActualRemaining = System.Math.Max(0L, cap - actualWritten);
+                long sourceActualRemaining = (long)System.Math.Round(targetActualRemaining / (capacityScale == 0 ? 1.0 : capacityScale));
+                long sourceReported = calibration.TranslateActualToReported(sourceActualRemaining);
+
+                return System.Math.Max(0L, (long)System.Math.Round(sourceReported * capacityScale));
+            }
+
+            return new VirtualTapeEwProfile
+            {
+                EarlyWarningZone = (long)System.Math.Round(sourceEwZone * capacityScale),
+                ReportedRemainingModel = LinearModel,
+            };
+        }
+
+        // Floor the emulated EW zone to one writer buffer so it is observable, but never past capacity (a
+        //  sub-buffer cartridge simply becomes all-EW). All four segment lengths below are >= 1, so the
+        //  piecewise maps can never divide by zero.
+        long ewZone = System.Math.Clamp(
+            System.Math.Max(
+                (long)System.Math.Round(sourceEwZone * capacityScale),
+                System.Math.Min(MinEmulatedEarlyWarningZone, targetCapacity)),
+            0L, targetCapacity);
+
+        long targetBody = System.Math.Max(1L, targetCapacity - ewZone);
+        long sourceBody = System.Math.Max(1L, sourceCapacity - sourceEwZone);
+
+        // Piecewise-linear remaining maps. Tail segment [0, ewZone] ↔ source [0, sourceEwZone] (magnified);
+        //  body segment the rest. Reported and actual are both byte counts on the SAME remaining axis, so BOTH
+        //  ride these maps — that is what keeps the (reported − actual) over-report faithful after rescaling.
+        long ToSource(long virtualRemaining)
+            => virtualRemaining <= ewZone
+                ? (long)System.Math.Round((double)virtualRemaining / ewZone * sourceEwZone)
+                : sourceEwZone + (long)System.Math.Round((double)(virtualRemaining - ewZone) / targetBody * sourceBody);
+
+        long ToVirtual(long sourceRemaining)
+            => sourceRemaining <= sourceEwZone
+                ? (long)System.Math.Round((double)sourceRemaining / sourceEwZone * ewZone)
+                : ewZone + (long)System.Math.Round((double)(sourceRemaining - sourceEwZone) / sourceBody * targetBody);
 
         long Model(long actualWritten, long cap)
         {
-            // Map the virtual position back onto the source profile's scale, translate, then scale back.
             long targetActualRemaining = System.Math.Max(0L, cap - actualWritten);
-            long sourceActualRemaining = (long)System.Math.Round(targetActualRemaining / (scale == 0 ? 1.0 : scale));
+
+            // Virtual → source (magnified tail), translate on the source curve, then source → virtual.
+            long sourceActualRemaining = ToSource(targetActualRemaining);
             long sourceReported = calibration.TranslateActualToReported(sourceActualRemaining);
-            return (long)System.Math.Round(sourceReported * scale);
+
+            return System.Math.Max(0L, ToVirtual(sourceReported));
         }
 
         return new VirtualTapeEwProfile
