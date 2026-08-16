@@ -218,8 +218,9 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         // EXPERIMENTAL: probe the drive's own remaining figure over SCSI (LOG SENSE 0x31), alongside the
         //  driver-reported one, so we can decide offline whether it dodges the tail quirks (esp. the LTO-3
         //  collapse). Only meaningful on a Win32 LTO backend; a no-op (−1) otherwise.
+        //  Proven redundant across LTO-3/4/6, so off by default in Options. Can re-enable for new models
         TapeDriveWin32Backend? ltoBackend = Drive.Backend as TapeDriveWin32Backend;
-        bool probeLto = ltoBackend?.IsLto == true;
+        bool probeLto = Options.CaptureLtoRemaining && ltoBackend?.IsLto == true;
 
         m_logger.LogInformation(
             "{Prefix}: Calibration start — profile '{Key}', reportedCapacityAtBom {Cap}, blockSize {Bs}, " +

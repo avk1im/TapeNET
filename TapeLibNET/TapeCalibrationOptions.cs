@@ -33,6 +33,14 @@ public readonly record struct TapeCalibrationOptions
     /// </summary>
     public double TailCapacityFraction { get; init; }
 
+    /// <summary>
+    /// EXPERIMENTAL: capture the drive's own LOG SENSE 0x31 remaining alongside the driver figure into
+    /// <see cref="ITapeCalibration.LtoRemainingCurve"/>. LTO-3/4/6 runs proved it EQUALS the driver value
+    /// (LTO-4/6) or collapses identically (LTO-3), so it carries no independent signal — hence default
+    /// <see langword="false"/>. Flip on only to re-verify on a new drive/generation.
+    /// </summary>
+    public bool CaptureLtoRemaining { get; init; }
+
     /// <summary>Default value for <see cref="BlocksPerChunk"/>.</summary>
     public const int DefaultBlocksPerChunk = 8;
 
@@ -48,6 +56,8 @@ public readonly record struct TapeCalibrationOptions
         BlocksPerChunk = DefaultBlocksPerChunk;
         TailSampleFraction = DefaultTailSampleFraction;     // reserve 40% of the budget for the EW→EOM tail
         TailCapacityFraction = DefaultTailCapacityFraction; // tail = last 5% of capacity (or EW, whichever first)
+
+        CaptureLtoRemaining = false; // proven redundant across LTO-3/4/6 — off by default
     }
 
     /// <summary>Turn caller intent into a concrete, always-valid plan for this drive.</summary>
