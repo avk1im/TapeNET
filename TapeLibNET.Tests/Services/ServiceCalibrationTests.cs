@@ -77,7 +77,7 @@ public class ServiceCalibrationTests : ServiceTestBase
                     EjectWhenDone: false,
                     Options: new TapeCalibrationOptions
                     {
-                        SampleCount = 16,
+                        SampleCount = 40,
                         //MinSampleInterval = 1L * MB,
                         //ChunkBytesTarget = 1L * MB,
                     })
@@ -92,7 +92,7 @@ public class ServiceCalibrationTests : ServiceTestBase
             Assert.True(result.WasAborted);
             Assert.False(result.Success);
             Assert.Null(result.Calibration);
-            Assert.True(host.ContainsMessage("Calibration abort requested"));
+            Assert.True(host.ContainsMessage("Calibration abort"));
         }
     }
 

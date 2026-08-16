@@ -19,7 +19,7 @@ public class VirtualDriveBasicTests
     /// <summary>
     /// Provides the three real-world drive profiles as <c>[Theory]</c> data.
     /// </summary>
-#pragma warning disable CA1825 // Avoid zero-length array allocations
+//#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> AllProfiles =>
     [
         DriveProfile.Setmarks,
@@ -27,7 +27,7 @@ public class VirtualDriveBasicTests
         DriveProfile.SeqFilemarks,
         DriveProfile.FilemarksOnly,
     ];
-#pragma warning restore CA1825 // Avoid zero-length array allocations
+//#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     /// <summary>
     /// Profiles that can save/restore TOC on an empty tape (no prior content).
@@ -35,13 +35,13 @@ public class VirtualDriveBasicTests
     ///  requires existing TOC markers on tape, which only exist after content has been written.
     ///  This matches real SDLT hardware behavior.
     /// </summary>
-#pragma warning disable CA1825 // Avoid zero-length array allocations
+//#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> ProfilesWithTOCOnEmptyTape =>
     [
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
     ];
-#pragma warning restore CA1825 // Avoid zero-length array allocations
+//#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     #endregion
 
@@ -555,6 +555,133 @@ public class VirtualDriveBasicTests
         Assert.Equal(0, fixture.Backend.IoRate.LocateBytesPerSecond);
         Assert.Equal(0, fixture.Backend.IoRate.SearchBytesPerSecond);
         Assert.False(fixture.Backend.IsMovementThrottled);
+    }
+
+    #endregion
+
+    #region *** Overwrite Near EOM (Resume Regression) ***
+
+    // These tests pin the two capacity-check bugs fixed for resumable calibration, where writing must
+    //  RESUME on an already-full tape after seeking BACKWARD in front of the last filemark. Both
+    //  VirtualTapeMedia.WriteBlocks and WriteMark used to test TrueRemaining BEFORE reclaiming the
+    //  trailing space via truncation, so an overwrite-in-front-of-tail wrongly failed with END_OF_MEDIA
+    //  even though it was about to free the whole tail. The fix truncates FIRST, then checks capacity —
+    //  an overwrite reclaims space (as real tape sets a new EOD) while a genuine EOD still refuses.
+
+    // Single-partition, large-block profile — mirrors the LTO single-partition calibration scenario.
+    private const DriveProfile ResumeProfile = DriveProfile.FilemarksOnly;
+
+    /// <summary>
+    /// Builds a fixture whose content capacity is an EXACT multiple of the (max) block size, so the tape
+    /// can be filled precisely to hard EOM (TrueRemaining == 0) — the state that exposed both bugs.
+    /// Asserts the content partition starts empty so the exact-fill accounting below holds.
+    /// </summary>
+    private static (VirtualTapeFixture Fixture, int BlockSize, int BlockCount) CreateExactlyFillableDrive(
+        int blockCount = 8)
+    {
+        var caps = VirtualTapeFixture.ProfileToCapabilities(ResumeProfile);
+        int blockSize = (int)caps.MaxBlockSize;
+        long capacity = (long)blockCount * blockSize;   // exact multiple ⇒ the tape fills precisely
+
+        var fixture = new VirtualTapeFixture(ResumeProfile, contentCapacity: capacity);
+        Assert.True(fixture.Drive.SetBlockSize((uint)blockSize));
+
+        Assert.True(fixture.Drive.MoveToPartition(MediaPartition.Content));
+        Assert.True(fixture.Drive.Rewind());
+        // Verify the drive is created empty, with whole capacity available:
+        Assert.Equal(capacity, fixture.Drive.GetReportedContentRemaining());
+
+        return (fixture, blockSize, blockCount);
+    }
+
+    [Fact]
+    public void WriteBlocks_OverwriteAfterBackwardSeek_OnFullTape_Succeeds()
+    {
+        var (fixture, blockSize, blockCount) = CreateExactlyFillableDrive();
+        using (fixture)
+        {
+            var drive = fixture.Drive;
+            var block = new byte[blockSize];
+
+            // Fill the content partition EXACTLY to hard EOM with full data blocks.
+            for (int i = 0; i < blockCount; i++)
+            {
+                Array.Fill(block, (byte)(0x40 + i));
+                int n = drive.WriteDirect(block, 0, blockSize, out _, out _, out bool eom);
+                Assert.Equal(blockSize, n);
+                Assert.False(eom, "should not hit EOM until the tape is exactly full");
+            }
+
+            // Exactly full: a further full block does not fit (genuine EOD is still refused — proving the
+            //  fix did not over-relax the capacity guard).
+            Assert.Equal(0L, drive.GetReportedContentRemaining());
+            int overflow = drive.WriteDirect(block, 0, blockSize, out _, out _, out bool eomFull);
+            Assert.Equal(0, overflow);
+            Assert.True(eomFull, "a full block past hard EOM must be refused");
+
+            // Seek BACKWARD into the middle and overwrite: truncation reclaims the tail, so the write
+            //  must now SUCCEED — the WriteBlocks half of the fix.
+            long midBlock = blockCount / 2;
+            Assert.True(drive.MoveToBlock(midBlock));
+
+            Array.Fill(block, (byte)0x99);
+            int rewritten = drive.WriteDirect(block, 0, blockSize, out _, out _, out bool eomMid);
+            Assert.Equal(blockSize, rewritten);
+            Assert.False(eomMid, "overwrite after a backward seek must not report EOM — the tail was reclaimed");
+
+            // The overwrite set a new EOD at midBlock+1, freeing the blocks that had followed.
+            Assert.Equal((long)(blockCount - (midBlock + 1)) * blockSize, drive.GetReportedContentRemaining());
+
+            // And the freshly written block reads back correctly.
+            Assert.True(drive.MoveToBlock(midBlock));
+            var readBack = new byte[blockSize];
+            int read = drive.ReadDirect(readBack, 0, blockSize);
+            Assert.Equal(blockSize, read);
+            Assert.Equal(block, readBack);
+        }
+    }
+
+    [Fact]
+    public void WriteFilemark_OverwriteAfterBackwardSeek_OnFullTape_Succeeds()
+    {
+        var (fixture, blockSize, blockCount) = CreateExactlyFillableDrive();
+        using (fixture)
+        {
+            var drive = fixture.Drive;
+            var block = new byte[blockSize];
+
+            // Lay down [block] FM [block]*(blockCount-1): one filemark after the first block, then fill
+            //  the rest with data so the tape ends EXACTLY full (marks consume no data capacity).
+            Array.Fill(block, (byte)0x11);
+            Assert.Equal(blockSize, drive.WriteDirect(block, 0, blockSize));
+            Assert.True(drive.WriteFilemark(1));
+
+            for (int i = 1; i < blockCount; i++)
+            {
+                Array.Fill(block, (byte)(0x20 + i));
+                Assert.Equal(blockSize, drive.WriteDirect(block, 0, blockSize, out _, out _, out bool eom));
+                Assert.False(eom);
+            }
+
+            Assert.Equal(0L, drive.GetReportedContentRemaining()); // exactly full
+
+            // A filemark at genuine EOD must still be refused (guard not over-relaxed).
+            Assert.True(drive.FastforwardToEnd(MediaPartition.Content));
+            Assert.False(drive.WriteFilemark(1), "a filemark at hard EOM must be refused");
+
+            // Now resume the way the calibrator does: seek back in front of the last filemark and rewrite
+            //  it. Truncation reclaims the trailing data, so the filemark write must SUCCEED — the
+            //  WriteMark half of the fix, the exact failure seen while resuming a calibration.
+            Assert.True(drive.FastforwardToEnd(MediaPartition.Content));
+            Assert.True(drive.MoveToNextFilemark(-1));
+            Assert.True(drive.WriteFilemark(1),
+                $"Filemark overwrite after a backward seek on a full tape must succeed: {drive.LastErrorMessage}");
+
+            // The reclaimed space is available again, and writing continues past the new mark.
+            Assert.True(drive.GetReportedContentRemaining() > 0);
+            Array.Fill(block, (byte)0x77);
+            Assert.Equal(blockSize, drive.WriteDirect(block, 0, blockSize));
+        }
     }
 
     #endregion

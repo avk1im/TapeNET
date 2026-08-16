@@ -22,7 +22,7 @@ public readonly record struct TapeCalibrationOptions
     /// Fraction of <see cref="SampleCount"/> reserved for the fine-grained TAIL phase (the EW → EOM
     /// region). Real LTO runs showed the default 100/1,000 uniform points far too coarse for that
     /// last stretch — LTO-3 in particular collapses its reported figure right at EW — so we spend a
-    /// dedicated slice of the budget there, at a proportionally finer chunk. Default 0.20 (20%).
+    /// dedicated slice of the budget there, at a proportionally finer chunk. Default 0.40 (40%).
     /// </summary>
     public double TailSampleFraction { get; init; }
 
@@ -41,6 +41,16 @@ public readonly record struct TapeCalibrationOptions
     /// </summary>
     public bool CaptureLtoRemaining { get; init; }
 
+    /// <summary>
+    /// Target number of resumable CHECKPOINTS to lay down across the body of the medium (the tail is
+    /// intentionally NOT checkpointed — a failure there has already written ~95%, so re-doing the small
+    /// tail is cheap). Each checkpoint is one filemark-delimited record block holding cumulative run
+    /// state, so a crashed run can be resumed from the last good one. Default 128 ⇒ ~1% granularity —
+    /// fine, yet few enough that the per-filemark flush cost stays negligible. For small VIRTUAL test
+    /// media set this low (e.g. 8) so the mechanism exercises without an enormous run.
+    /// </summary>
+    public int NumCheckpoints { get; init; }
+
     /// <summary>Default value for <see cref="BlocksPerChunk"/>.</summary>
     public const int DefaultBlocksPerChunk = 8;
 
@@ -50,14 +60,17 @@ public readonly record struct TapeCalibrationOptions
     /// <summary>Default value for <see cref="TailCapacityFraction"/> — the tail is the last 5% of capacity (or EW, whichever first).</summary>
     public const double DefaultTailCapacityFraction = 0.05;
 
+    /// <summary>Default value for <see cref="NumCheckpoints"/> — 128 body checkpoints (~1% granularity).</summary>
+    public const int DefaultNumCheckpoints = 128;
+
     public TapeCalibrationOptions()
     {
         SampleCount = 1_000;                                // 1,000 proved good resolution for LTO drives
         BlocksPerChunk = DefaultBlocksPerChunk;
         TailSampleFraction = DefaultTailSampleFraction;     // reserve 40% of the budget for the EW→EOM tail
         TailCapacityFraction = DefaultTailCapacityFraction; // tail = last 5% of capacity (or EW, whichever first)
-
-        CaptureLtoRemaining = false; // proven redundant across LTO-3/4/6 — off by default
+        CaptureLtoRemaining = false;                        // proven redundant across LTO-3/4/6 — off by default
+        NumCheckpoints = DefaultNumCheckpoints;             // 128 resumable body checkpoints (~1% granularity)
     }
 
     /// <summary>Turn caller intent into a concrete, always-valid plan for this drive.</summary>
@@ -70,6 +83,8 @@ public readonly record struct TapeCalibrationOptions
         int sampleCount = Math.Max(1, SampleCount);
         double tailSampleFraction = Math.Clamp(TailSampleFraction, 0.0, 0.9);
         double tailCapacityFraction = Math.Clamp(TailCapacityFraction, 0.0, 0.9);
+
+        int numCheckpoints = Math.Max(1, NumCheckpoints);
 
         // Split the sample budget: a reserved slice for the fine tail, the rest for the body.
         int tailSampleCount = Math.Max(1, (int)(sampleCount * tailSampleFraction));
@@ -108,7 +123,7 @@ public readonly record struct TapeCalibrationOptions
 
         return TapeCalibrationPlan.Create(
             sampleCount, bodySampleCount, tailSampleCount,
-            blockSize, blocksPerChunk, tailBlocksPerChunk, tailCapacityFraction);
+            blockSize, blocksPerChunk, tailBlocksPerChunk, tailCapacityFraction, numCheckpoints);
     }
 }
 
@@ -118,6 +133,7 @@ public readonly record struct TapeCalibrationOptions
 /// valid (no divide-by-zero path). The run has two phases: a coarse BODY (chunk <see cref="ChunkSize"/>,
 /// interval <see cref="BodySampleInterval"/>) and a fine TAIL (chunk <see cref="TailChunkSize"/>,
 /// interval <see cref="TailSampleInterval"/>) that begins at EW or the last <see cref="TailCapacityFraction"/>.
+/// Resumable checkpoints are laid down across the body at <see cref="CheckpointInterval"/>.
 /// </summary>
 public readonly record struct TapeCalibrationPlan(
     int SampleCount,
@@ -128,12 +144,14 @@ public readonly record struct TapeCalibrationPlan(
     int ChunkSize,
     int TailBlocksPerChunk,
     int TailChunkSize,
-    double TailCapacityFraction)
+    double TailCapacityFraction,
+    int NumCheckpoints)
 {
     /// <summary>Build a plan, deriving the two chunk sizes and clamping the counts to ≥ 1.</summary>
     internal static TapeCalibrationPlan Create(
         int sampleCount, int bodySampleCount, int tailSampleCount,
-        uint blockSize, int blocksPerChunk, int tailBlocksPerChunk, double tailCapacityFraction)
+        uint blockSize, int blocksPerChunk, int tailBlocksPerChunk, double tailCapacityFraction,
+        int numCheckpoints)
     {
         int chunkSize = checked((int)(blocksPerChunk * (long)blockSize));
         int tailChunkSize = checked((int)(tailBlocksPerChunk * (long)blockSize));
@@ -145,7 +163,8 @@ public readonly record struct TapeCalibrationPlan(
             blockSize,
             Math.Max(1, blocksPerChunk), chunkSize,
             Math.Max(1, tailBlocksPerChunk), tailChunkSize,
-            tailCapacityFraction);
+            tailCapacityFraction,
+            Math.Max(1, numCheckpoints));
     }
 
     /// <summary>
@@ -174,4 +193,10 @@ public readonly record struct TapeCalibrationPlan(
     ///  points across the last <see cref="TailCapacityFraction"/> of the medium.</summary>
     public long TailSampleInterval(long capacity)
         => Math.Max(TailChunkSize, (long)(capacity * TailCapacityFraction) / Math.Max(1, TailSampleCount));
+
+    /// <summary>Byte spacing between resumable checkpoints in the BODY: ~<see cref="NumCheckpoints"/> across
+    ///  <paramref name="capacity"/>, but never denser than one body chunk (so tiny media don't checkpoint
+    ///  every write). The tail is not checkpointed.</summary>
+    public long CheckpointInterval(long capacity)
+        => Math.Max(ChunkSize, capacity / Math.Max(1, NumCheckpoints));
 }

@@ -406,6 +406,13 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
             return 0;
         }
 
+        // Overwrite mode: truncate everything from the current position FIRST, so the capacity check
+        //  below measures the real remaining from HERE — not the stale full-media figure. Writing after
+        //  a backward seek (e.g. resuming a calibration in front of the last filemark) reclaims the space
+        //  the trailing data occupied, exactly as real tape sets a new EOD on overwrite. At EOD this is a
+        //  no-op, so the append/EOM path is unchanged.
+        TruncateFromCurrentPosition();
+
         // Check capacity — enforcement always uses the TRUE remaining, never the (possibly
         //  optimistic) reported figure, so hard EOM lands at the real capacity.
         if (TrueRemaining < count)
@@ -417,9 +424,6 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
             if (count == 0)
                 return 0;
         }
-
-        // Truncate any data after current position (overwrite mode)
-        TruncateFromCurrentPosition();
 
         int totalWritten = 0;
         long streamOffset = m_stream.Position;
@@ -471,13 +475,6 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
     {
         ResetError();
 
-        // Check capacity - marks should not be written when media is full
-        if (TrueRemaining <= 0)
-        {
-            SetError(WIN32_ERROR.ERROR_END_OF_MEDIA);
-            return false;
-        }
-
         // Check ResumeWriteFromMarkOnly constraint
         if (ResumeWriteFromMarkOnly && !CanResumeWrite())
         {
@@ -485,14 +482,24 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
             return false;
         }
 
+        // Overwrite mode: truncate from the current position FIRST (see WriteBlocks) so the capacity
+        //  check reflects the true remaining measured from HERE. A mark written after a backward seek
+        //  (resuming a calibration in front of the last filemark) reclaims the trailing space; at EOD
+        //  this is a no-op.
         TruncateFromCurrentPosition();
+
+        // Check capacity — a mark cannot be written when the medium is genuinely full at this position.
+        if (TrueRemaining <= 0)
+        {
+            SetError(WIN32_ERROR.ERROR_END_OF_MEDIA);
+            return false;
+        }
 
         var mark = VirtualTapeBlock.CreateMark(m_currentBlock, markType);
         m_virtualBlocks.Add(mark);
         m_currentVirtualBlockIndex = m_virtualBlocks.Count; // Point past end
         m_currentBlock++;
         m_stateDirty = true;
-
         return true;
     }
 
