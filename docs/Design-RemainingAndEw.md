@@ -788,6 +788,33 @@ The calibration chart keeps its plot/axis labels inside the GroupBox content are
 records both over-report anchors of a virtual-media run — `ReportedCapacityAtBom` and `PhantomFreeAtEom` —
 with regression coverage over the non-zero cases of each.
 
+- **Follow-up: Calibration Profiles browser (`Media | Calibration Profiles...`)**
+
+  Gap: `CalibrationWindow` only ever surfaces the profile just measured, from the one-shot Calibrate flow.
+  Once closed, a saved profile is invisible again — the user has no way to review, re-apply, or discard a
+  previously calibrated drive+media profile without re-running calibration. Fixed by adding a standalone
+  browser, reachable independently of the destructive Calibrate workflow:
+
+  - **`CalibrationProfilesViewModel`** loads every persisted profile via `TapeCalibrationStore.LoadAll()`
+    (the same shared, library-scoped store used by Save/Apply in `CalibrationViewModel`) into an
+    `ObservableCollection<ITapeCalibration>`. Selecting a profile drives the same display properties
+    (`CapacityActualDisplay`, `EarlyWarningDisplay`, `EwToEomDistanceDisplay`, etc.) used by the
+    result window, so the curve control and stat layout are visually consistent.
+  - **`ApplyCommand`** calls `TapeService.AddCalibration()` on the selected profile — identical to the
+    result window's *Apply Profile* action — but is gated on `!IsBusy && IsMediaLoaded` (passed in as a
+    `Func<bool> isBusy` delegate from `MainViewModel`, since the VM only holds a `TapeService`, not the
+    main VM's busy state) so it is disabled whenever no media is loaded or another operation is running.
+  - **`RemoveCommand`** confirms via `SimpleBox` (Yes/No, Warning icon) before calling
+    `TapeCalibrationStore.Delete()`, then reloads the list and clears the selection.
+  - **`CalibrationProfilesWindow`** reuses the `CalibrationWindow` layout almost verbatim — same
+    "Measured Result" group box and `CalibrationCurveControl` — but replaces the single profile summary
+    with a `ComboBox` bound to `Profiles`/`SelectedProfile` at the top, and swaps *Save Profile* / *Apply
+    Profile* for *Apply* / *Remove*. Same help-pane wiring pattern as the other dialogs (own topic id,
+    `dialog.calibration-profiles`).
+  - **Entry point:** a new `ShowCalibrationProfilesCommand` on `MainViewModel` (always enabled — browsing
+    and removal don't require loaded media, only Apply does) opens the window from a new
+    "Calibration _Profiles..." item on the `_Media` menu, right after "_Calibrate...".
+
 ### Phase 6 — `TapeConNET` (CLI)
 
 - **Reporting:** the calibrated `WritableRemaining` flows automatically through the Service layer; ensure any status
