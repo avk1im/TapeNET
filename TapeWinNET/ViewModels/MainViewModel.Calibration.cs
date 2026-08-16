@@ -86,11 +86,13 @@ public partial class MainViewModel
 
     public ICommand CalibrateMediaCommand { get; private set; } = null!;
     public ICommand AbortCalibrationCommand { get; private set; } = null!;
+    public ICommand ShowCalibrationProfilesCommand { get; private set; } = null!;
 
     private void InitializeCalibrationCommands()
     {
         CalibrateMediaCommand = new RelayCommand(ShowCalibrationWindow, _ => !IsBusy && _tapeService.IsMediaLoaded);
         AbortCalibrationCommand = new RelayCommand(AbortCalibration, _ => IsCalibrateInProgress);
+        ShowCalibrationProfilesCommand = new RelayCommand(ShowCalibrationProfilesWindow);
     }
 
     #endregion
@@ -106,6 +108,17 @@ public partial class MainViewModel
             onApplied: RefreshCurrentView);
 
         var window = new CalibrateWindow(viewModel)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        window.ShowDialog();
+    }
+
+    private void ShowCalibrationProfilesWindow(object? parameter)
+    {
+        var viewModel = new CalibrationProfilesViewModel(_tapeService, () => IsBusy);
+
+        var window = new CalibrationProfilesWindow(viewModel)
         {
             Owner = Application.Current.MainWindow
         };

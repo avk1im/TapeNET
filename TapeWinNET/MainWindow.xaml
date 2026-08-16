@@ -290,6 +290,7 @@
                 <MenuItem Header="_Eject" Command="{Binding EjectCommand}"/>
                 <Separator/>
                 <MenuItem Header="_Calibrate..." Command="{Binding CalibrateMediaCommand}"/>
+                <MenuItem Header="Calibration _Profiles..." Command="{Binding ShowCalibrationProfilesCommand}"/>
                 <Separator/>
                 <MenuItem Header="_Delete Backup Sets..." Command="{Binding DeleteBackupSetsCommand}"/>
                 <MenuItem Header="_Format..." Command="{Binding FormatMediaCommand}"/>
