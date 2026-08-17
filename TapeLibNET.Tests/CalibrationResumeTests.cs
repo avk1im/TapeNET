@@ -89,6 +89,40 @@ public class CalibrationResumeTests
         }
     }
 
+    /// <summary>
+    /// Corrupts the LAST checkpoint block on the trail in place, simulating a run torn while writing its
+    /// final checkpoint. Navigates to the block the last filemark precedes and overwrites it with random
+    /// bytes (no valid signature/CRC), which also truncates any trailing payload — leaving
+    /// <c>… FM_{N-1} cp_{N-1} … FM_N [garbage] EOD</c>. The header at BOM is untouched, so a resume still
+    /// finds a valid header, then must step back past the garbage (the <c>-2</c> walk) to <c>cp_{N-1}</c>.
+    /// </summary>
+    private static void CorruptLastCheckpointBlocks(TapeDrive drive, int count = 1)
+    {
+        Assert.InRange(count, 1, int.MaxValue);
+        Assert.True(drive.SetBlockSize(drive.MaximumBlockSize));
+        int blk = (int)drive.BlockSize;
+
+        Assert.True(drive.FastforwardToEnd(MediaPartition.Content));
+
+        Assert.True(drive.MoveToNextFilemark(-1),
+            $"expected at least one checkpoint filemark on the aborted trail");
+
+        for (int i = 1; ; )
+        {
+            Assert.True(drive.MoveToNextFilemark(1)); // over the FM → start of the last checkpoint block
+
+            var garbage = new byte[blk];
+            new Random(4242).NextBytes(garbage);      // random ⇒ no valid record signature/CRC
+            Assert.Equal(blk, drive.WriteDirect(garbage, 0, blk));
+
+            if (++i > count)
+                break;
+
+            Assert.True(drive.MoveToNextFilemark(-2),
+                $"expected at least {i} checkpoint filemarks on the aborted trail");
+        }
+    }
+
     #endregion
 
     #region *** Record framing (backend-independent) ***
@@ -276,6 +310,54 @@ public class CalibrationResumeTests
 
         Assert.Equal(reserve, drive.EarlyWarning);
         Assert.Contains(preloaded, drive.Calibrations);
+    }
+
+    [Fact]
+    public void Resume_RecoversFromTornLastCheckpoint()
+    {
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+
+        // Abort mid-body so SEVERAL body checkpoints are on tape (16 checkpoints, aborted at ~50% ⇒ ~8).
+        var run = new TapeCalibrator(drive) { Options = FastOptions() };
+        Assert.Null(run.Run(new AbortAfterBytes(run, Capacity / 2)));
+
+        // Tear the LAST checkpoint(s). The resume walk must reject it (CRC/signature fail) and step back one
+        //  more checkpoint — the n≥2 (-2) path. The fact that this test COMPLETES also proves termination.
+        CorruptLastCheckpointBlocks(drive, count: 2); // corrupt 2 last of ~8 checkpoints
+
+        var resumer = new TapeCalibrator(drive) { Options = FastOptions() };
+        ITapeCalibration? resumed = resumer.Resume();
+
+        Assert.NotNull(resumed);
+        Assert.InRange(resumed!.CapacityActual, (long)(Capacity * 0.98), Capacity);
+        Assert.NotNull(resumed.EarlyWarning);
+        AssertCurveWellFormed(resumed);
+    }
+
+    [Fact]
+    public void Resume_OnForeignCartridgeWithRegularData_ReturnsNull()
+    {
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+
+        // The user's mix-up: a cartridge carrying ordinary filemark-delimited data (backup-like sets) but
+        //  NO calibration header at BOM. Resume must reject it cleanly — caught by the header-at-BOM check
+        //  in O(1), before any backward walk — returning null rather than misreading foreign blocks.
+        Assert.True(drive.MoveToPartition(MediaPartition.Content));
+        Assert.True(drive.Rewind());
+        Assert.True(drive.SetBlockSize(drive.MaximumBlockSize));
+
+        int blk = (int)drive.BlockSize;
+        var data = new byte[blk];
+        new Random(99).NextBytes(data);
+
+        for (int seg = 0; seg < 5; seg++)
+        {
+            Assert.Equal(blk, drive.WriteDirect(data, 0, blk));
+            Assert.True(drive.WriteFilemark(1));
+        }
+
+        ITapeCalibration? resumed = new TapeCalibrator(drive) { Options = FastOptions() }.Resume();
+        Assert.Null(resumed);
     }
 
     #endregion

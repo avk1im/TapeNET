@@ -20,6 +20,11 @@ the table of contents). Solving this properly required a three-part journey: **d
 sense interpretation**, an **early-warning capability** (physical and logical), and a **calibration**
 feature that measures each drive+media profile empirically.
 
+**CORRECTION** upon real measurements **"~28 GB / ~32 GB phantom at EOM" figure is wrong.** Real
+   `PhantomFreeAtEom` is 0–2.4 GB; the 28–32 GB number was the **EW→EOM runway** (`EwToEomDistance`,
+   quantity 7), not phantom (quantity 5). LTO-4: ~0.4 GB phantom, ~32 GB EW→EOM runway; LTO-3: 448 MB EW→EOM
+   runway, yet the reported remaining immediately collapses to 0 at EW.
+
 ---
 
 ## Part 1 — Low-level SCSI direct write + sensing [DONE]
@@ -154,6 +159,10 @@ crossed. Key design points:
   poll counter are cleared in `ResetEarlyWarningRuntime()` on media load, unload, and close, so a stale latch
   can never fake a landmark at BOT.
 
+**NOTE: SCSI `LOG SENSE` 0x31 is not an independent signal.** The direct `GetLtoRemainingCapacity()` probe returns the same value as the driver figure
+   (LTO-4/6) or collapses identically (LTO-3), so it carries no independent information; retained as an
+   off-by-default diagnostic (`CaptureLtoRemaining`).
+
 ---
 
 ## Part 3 — Calibration [DONE]
@@ -187,6 +196,11 @@ EW fires) is a stable *physical-position* constant for the profile, even though 
 percent per cartridge. At runtime, when *this* cartridge's EW fires, we anchor there and count forward — no
 dependence on the calibration cartridge's exact capacity.
 
+**CORRECTION** upon real measurements **"~28 GB / ~32 GB phantom at EOM" figure is wrong.** Real
+   `PhantomFreeAtEom` is 0–2.4 GB; the 28–32 GB number was the **EW→EOM runway** (`EwToEomDistance`,
+   quantity 7), not phantom (quantity 5). LTO-4: ~0.4 GB phantom, ~32 GB EW→EOM runway; LTO-3: 448 MB EW→EOM
+   runway, yet the reported remaining immediately collapses to 0 at EW.
+
 ### `ITapeCalibration` / `TapeCalibration`
 
 New file `TapeCalibration.cs`. The interface is opaque to the application (it only ever streams bytes and
@@ -219,6 +233,11 @@ points:
 - **Conservative inversion** — because `ReportedRemaining` is many-to-one near the tail, ties keep the
   smallest `ActualRemaining`; the curve simply does not extend below its floor, and EW covers below it.
 
+**NOTE on `EarlyWarning` field — add the collapse case.** Note that some drives (of LTO-3 generation and
+   earlier) collapse reported-remaining to 0 the instant EW fires while still accepting data; the runtime's
+   after-EW byte-count branch already handles this, and the curve now retains the collapse run for the
+   graph.
+
 ### `TapeCalibrator`
 
 New file `TapeCalibrator.cs`, deriving from `TapeDriveHolder<TapeCalibrator>` for built-in error handling and
@@ -228,8 +247,8 @@ logging. Create-use-discard: `new TapeCalibrator(drive).Run()`. Backend-agnostic
 - **Cooperative cancellation via `IsAbortRequested`** — a plain bool polled between writes (matching
   `TapeFileAgent`), not a `CancellationToken`; async/await is the caller's concern.
 - **Deterministic measurement** — sets max block size, disables hardware compression, writes a reused
-  incompressible random chunk to hard EOM, samples `ReportedRemaining` against bytes-written at ~100 points
-  across the medium (with a 256 MB floor), and captures the EW landmark at first occurrence.
+  incompressible random chunk to hard EOM, samples `ReportedRemaining` against bytes-written at ~`SampleCount` (default 1000) points split `TailSampleFraction` (default 0.40) into a fine tail over the
+   last `TailCapacityFraction` (default 0.05), entered at physical EW or the capacity mark, whichever first; and captures the EW landmark at first occurrence.
 - **No calibration-run mode flag** — the calibrator simply **removes all loaded calibrations** for the
   duration (restoring them in a `finally`) and resets EW runtime state, so `WriteDirect` naturally surfaces the
   **raw physical** EW the run needs. One fewer piece of state on `TapeDrive`.
@@ -279,7 +298,7 @@ Runtime (every session):
 | File | Role |
 |---|---|
 | `TapeDriveWin32Backend.lto-direct.cs` | SPTD write path, sense decode, chunking, adapter-capability probe, PEW. |
-| `TapeDriveWin32Backend.Lto.cs` | INQUIRY (vendor/product/**revision**), PEWS MODE SENSE/SELECT, READ POSITION EW status. |
+| `TapeDriveWin32Backend.Lto.cs` | INQUIRY (vendor/product/**revision**), PEWS MODE SENSE/SELECT, READ POSITION EW status, `GetLtoRemainingCapacity` / LOG SENSE 0x31. |
 | `TapeDriveBackend.cs` | `Write(... pew, ew, eom)`; `SetEarlyWarning(bool)`; `Revision`; capacity-bucketed `ProfileKey`. |
 | `TapeDrive.cs` | Logical EW mapping, block-anchored tail counting, multi-calibration set, `EstimateActualRemaining`. |
 | `TapeCalibration.cs` | `ITapeCalibration` + JSON-backed `TapeCalibration` (`FromMeasurements`/`Apriori`/`LoadFrom`); `TranslateActualToReported` (Part 4.1). |
@@ -289,6 +308,10 @@ Runtime (every session):
 | `Virtual/VirtualTapeMedia.EW.cs` | Per-cartridge EW state: `TrueRemaining`, reported `Remaining`, `IsInEarlyWarningZone` — Part 4.1. |
 | `Virtual/VirtualTapeDriveBackend.EW.cs` | Backend EW config/surface: `EmulatedEarlyWarning`, mechanism overrides, `ew` in `Write` — Part 4.1. |
 | `TapeWriteBuffer.cs` | Pooled page-aligned POH write buffer + pool; SPTD zero-copy fast path (Part 1A). |
+| `TapeCalibrationOptions.cs` | Calibration-run specifying and tuning knobs; `TapeCalibrationPlan` parameter instantiation for the run. |
+| `TapeCalibrationCheckpoint.cs` | `TapeCalibrationRunHeader`/`TapeCalibrationCheckpoint`/`TapeCalibrationRecord`/`TapeRecalibrationDelta` Enable resume calibration / recalibrate features (Part 6.4). |
+| `OnceLatch.cs` | `OnceLatch`/`OnceLatchGroup` — one-shot per-run trace latches for the LTO write path |
+| `TapeServiceBase.Calibrate.cs` | Calibration mode dispatch + recalibrate verdict policy (Part 6.6) |
 
 ---
 
@@ -698,7 +721,7 @@ consistent with existing backup/restore progress panels.
 
 **Preparation step: implement calibration serivce**. Since we must implement calibration UI for both TapeWinNET
 and TapeConNET, let's wrap it in a higher-level, threaded functionality on the level of `TapeLibNET.Services`,
-in the new file `TapeServiceBase.EW.cs`. Let's follow the same pattern `ServiceOperationRequest` -> operation ->
+in the new file `TapeServiceBase.Calibrate.cs`. Let's follow the same pattern `ServiceOperationRequest` -> operation ->
 `ServiceOperationResult` used by Backup, Restore, and List service operations, which we can mirror for the new
 methods `ExecuteCalibrateAsync()` (with optional media ejection at the end) -> `ExecuteCalibrateCore()`.
 
@@ -737,7 +760,7 @@ immediately improves the remaining-capacity figure for matching media.
 
 - **Service operation: calibration**
   - Adds `CalibrateRequest` / `CalibrateResult` to the existing `ServiceOperationRequest -> operation -> ServiceOperationResult` pattern.
-  - Adds `ExecuteCalibrateAsync()` / `ExecuteCalibrateCore()` in `TapeServiceBase.EW.cs`.
+  - Adds `ExecuteCalibrateAsync()` / `ExecuteCalibrateCore()` in `TapeServiceBase.Calibrate.cs`.
   - Introduces `ServiceCalibrateProgressHandler` to bridge calibration’s chunk-oriented progress into the existing operation-progress model used by the WPF overlay.
   - Reuses the established cooperative abort flow by wiring service cancellation into `TapeCalibrator.IsAbortRequested`.
   - Exposes minimal calibration-facing service surface needed by the UI (`DriveProfileKey`, active calibration, `AddCalibration()`).
@@ -886,6 +909,10 @@ known about the tail:
 This is the entire justification of the calibration feature, and it is stated in the class documentation of
 `TapeDrive`, `TapeCalibration` and `TapeFileBackupAgent`.
 
+**CORRECTION: The "Inflated capacity at BOM ≥ 0" assumption is disproved.** Note that the BOM error is
+   generation-dependent and can be **negative** (LTO-3 −3.8%, LTO-6 +0.19%); the "inflated capacity at BOM"
+   axis should read "capacity mis-report at BOM (may be negative = under-report)".
+
 ### 5.2 Emulation — two explicit anchors
 
 ```csharp
@@ -904,7 +931,7 @@ append-only usage the medium is designed for.
 
 The Open Virtual Drive dialog exposes both axes with the shared %/MB/GB unit selector and a byte read-out:
 **Phantom free at EOM** (default 4 %) and **Capacity overreport (BOM)** (default 0, listed last because it
-is usually left alone).
+is usually left alone). (S. CORRECTION above in 5.1.)
 
 `ITapeCalibration` is deliberately used in **two opposite directions**, and both are documented as such: as
 an *estimation* artifact (`TranslateReportedToActual`: reported → actual, at runtime) and as an *emulation* source
@@ -1025,3 +1052,227 @@ All on a virtual drive, in `TapeLibNET.Tests`:
 
 Calibration JSON round-trips through `FormatId = "tapelibnet-cal/2"` and rejects unknown formats.
 
+---
+
+## Part 6 — Real-hardware calibration campaign + Resumable/Recalibratable runs [DONE]
+
+Parts 1–5 were validated entirely against the virtual backend. This part records what changed once the
+calibrator met **real LTO-3, LTO-4 and LTO-6 drives**, and the resumability feature those multi-hour runs
+made necessary.
+
+### 6.1 What the real drives taught us — and where the design doc was wrong
+
+Three findings overturned assumptions baked into earlier parts:
+
+- **The driver UNDER-reports at BOM at least as often as it over-reports.** The "inflated capacity at BOM"
+  axis (quantity 4 / `ReportedCapacityBoost`) was expected to be ≥ 0. Measured reality:
+  | Drive | Actual capacity | BOM error (reported − actual) | Phantom @ EOM | EW→EOM runway |
+  |---|---|---|---|---|
+  | LTO-3 (`QUANTUM ULTRIUM 3`) | 426 GB | **−16 GB (−3.8%)** under | 0 | **448 MB** |
+  | LTO-4 (`QUANTUM ULTRIUM 4`) | 845 GB | −6.4 GB (−0.76%) under | 383 MB | 31.8 GB |
+  | LTO-6 (`HP Ultrium 6`) | 2 539 GB | **+4.7 GB (+0.19%) OVER** | 2.39 GB | 110 GB |
+
+  The sign is generation-dependent and even flips (LTO-6 over-reports). **The curve model already handles
+  this natively** — `CapacityActual` is ground truth and the curve maps reported→actual, so an under-report
+  is simply points where actual > reported. No model change was needed; but the a-priori/emulation
+  assumption "boost ≥ 0" is now known to be wrong (see Part 7).
+
+- **The "~28 GB phantom at EOM" in earlier parts was a misread runway.** Real `PhantomFreeAtEom` is tiny
+  (0–2.4 GB). The 28–32 GB figure quoted throughout Parts 3/5 was actually the **EW→EOM runway**
+  (`EwToEomDistance`), i.e. quantity (7), mislabelled as phantom (quantity 5). The two are distinct: phantom
+  is *reported remaining still claimed at hard EOM*; runway is *actual bytes still writable after EW fires*.
+  Correction noted in §C below.
+
+- **LTO-3 COLLAPSES its reported-remaining to 0 the instant EW fires**, while still accepting ~448 MB of
+  data. LTO-4/6 decrement smoothly with a large runway. So the tail has **two shapes**: a smooth runway
+  (LTO-4/6) and a hard collapse (LTO-3 and, presumably, earlier generations). The runtime already tolerates
+  both — after physical EW it byte-counts from `EwToEomDistance` and ignores reported — but the calibration
+  *curve* and *graph* needed to represent the collapse (see §6.3).
+
+- **SCSI `LOG SENSE` 0x31 remaining ≡ the driver figure.** We added a direct `GetLtoRemainingCapacity()`
+  probe (LOG SENSE, Tape Capacity page 0x31) hoping the drive's own figure would dodge the driver quirks.
+  Across LTO-3/4/6 it proved **byte-identical to the driver value** (LTO-4/6) or **collapses in the same
+  instant** (LTO-3). Verdict: SCSI offers no independent signal and no escape from the collapse — the
+  driver figure *is* the drive's own figure. The probe is retained but gated **off by default**
+  (`CalibrationOptions.CaptureLtoRemaining`, default false); the parallel `LtoRemainingCurve` is only
+  serialized when captured.
+
+### 6.2 Two-phase, tail-weighted sampling [DONE]
+
+A uniform ~100–1000 point cadence proved far too coarse in the EW→EOM tail — the one region where accuracy
+matters. `TapeCalibrationOptions`/`TapeCalibrationPlan` now split the sample budget:
+
+- **BODY** — coarse cadence across the first `(1 − TailCapacityFraction)` of capacity.
+- **TAIL** — a reserved `TailSampleFraction` of the budget (default **0.40**) spent over the last
+  `TailCapacityFraction` (default **0.05**) of capacity, at a proportionally finer chunk. The tail is
+  entered at **whichever comes first**: the drive's physical EW, or the last-few-percent capacity mark. The
+  capacity trigger guarantees a dense tail even on LTO-3, whose physical EW fires only ~0.1% before EOM.
+- Small (virtual) media floor the tail chunk to a single default block, as before.
+
+`SampleCount` default raised 100 → 1000. On LTO-6 the tail trigger fired at 127 GB remaining (before
+physical EW at 110 GB), densely sampling the whole runway.
+
+### 6.3 Collapse handling in the curve, translations, and graph [DONE]
+
+- **`FromMeasurements`** no longer dedups the `reported == 0` collapse run out of existence. The
+  reported→actual curve is a function *of reported*, so a run of points all at `reported = 0` is many-to-one
+  and was previously collapsed to the single `(0,0)` EOM point — silently discarding the LTO-3 tail. The
+  dedup now retains every `reported == 0` point.
+- **`TranslateReportedToActual`** (formerly `TranslateRemaining`) and **`TranslateActualToReported`** were
+  hardened against equal-key brackets (return the conservative endpoint; never divide by zero). Retaining
+  the collapse run also *fixed a latent bug* in `TranslateActualToReported`: it previously ramped reported
+  from 0 up to the first post-collapse anchor across the collapse zone; it now correctly returns 0 there,
+  which in turn makes `VirtualTapeEwProfile.FromCalibration` reproduce the collapse faithfully.
+- **`VirtualTapeEwProfile.FromCalibration`** gained a floored, magnified EW zone
+  (`MinEmulatedEarlyWarningZone`, default 16 GB) with a piecewise body/tail rescale, so the (physically
+  constant, ~0.5 GB) collapse/EW region is observable on tiny test cartridges instead of shrinking to a few
+  KB. Both actual- and reported-remaining ride the same map, preserving the over-report shape after rescale.
+- **`CalibrationCurveControl`** was flipped to **X = ActualRemaining** (full capacity left → EOM right),
+  **Y = ReportedRemaining**, with a dashed identity line so under/over-report, the LTO-3 collapse (vertical
+  plunge to 0 at EW), and the phantom (step at EOM) are all directly visible. EW is marked warning-orange,
+  EOM error-red; a blue "current point" tracks the cursor with an Actual · Reported readout in the free
+  top-right corner. The old reported-remaining X-axis hid the collapse (it piled up at X=0).
+
+### 6.4 Resumable & recalibratable runs [DONE]
+
+Multi-hour runs made a transport fault (a real bus reset ended the first LTO-6 attempt at ~530 GB) too
+expensive to restart from BOM. The calibrator now lays down a **self-describing on-tape trail** and can
+**resume** from it, or **recalibrate** a complete cartridge cheaply after a firmware update / drive swap.
+The cartridge is the single source of truth — **no host-side sidecar** (rejected as redundant: the tape
+already survives a reboot, and the fastest reposition is EOD→back-space regardless of any host index).
+
+- **On-tape layout (single filemark before each checkpoint):**
+  ```
+  <BOM>[header][payload]<FM>[checkpoint 0][payload]<FM>[checkpoint 1][payload]<FM>…<EOD>
+  ```
+  A filemark immediately *precedes* each checkpoint block, so the resume walk always lands at a
+  checkpoint-block start — never inside payload gibberish, even if a checkpoint write was torn.
+- **Records** (`TapeCalibrationRunHeader`, `TapeCalibrationCheckpoint`) are `ITapeSerializable`, framed with
+  a **CRC-32 trailer** (reusing `HashingStream`/`Crc32`) so a torn record is detected and the resume walk
+  steps back. Each record occupies one full calibration block (framed record at the front, random padding
+  for the rest — compression is off, so padding content is immaterial; the whole block is counted in
+  `bytesWritten`, faithfully reflecting real set-delimited overhead). Checkpoints are **cumulative and
+  self-contained**: one valid read fully restores run state.
+- **Checkpoints are BODY-ONLY.** `NumCheckpoints` (default **128**, ~1% granularity; set low, e.g. 8, for
+  virtual-drive tests) are laid across the body; the tail is never checkpointed (a failure there has already
+  written ~95%). This invariant is what lets the runtime recompute `inTail` on resume from position alone —
+  a restored checkpoint is always strictly pre-tail.
+- **API** — three verbs over a shared private `RunLoop`:
+  - `Run()` — fresh from BOM (header + body checkpoints).
+  - `Resume()` — read header, walk back EOD → `−n/+1` filemarks to the last CRC-valid checkpoint of this
+    `RunId`, restore state, rewrite the boundary checkpoint, continue to EOM. Returns null if no resumable
+    run is found. **Resume is itself resumable** (fail → resume → fail → resume converges).
+  - `Recalibrate(existing)` — resume from the last (pre-tail) checkpoint, re-measure only the tail, and
+    return `(ITapeCalibration?, TapeRecalibrationDelta)`. The body curve is *reused* from the trail and
+    auto-translates to the freshly measured EOM (`FromMeasurements` recomputes `actual = newCapacity −
+    written`); `CapacityActual`, the tail curve, the EW landmark and `PhantomFreeAtEom` are re-measured;
+    `ReportedCapacityAtBom` (a BOM quantity) is carried over from the header.
+- **The calibrator stays verdict-free and match-free.** `Recalibrate` reports a raw `TapeRecalibrationDelta`
+  (old/new EW-distance, capacity, phantom + signed fractions); it does **not** judge the result, and it does
+  **not** perform drive-profile matching — both are the caller's/service's concern (Part 3's layering).
+
+### 6.5 A genuine `VirtualTapeMedia` bug, surfaced by resume [DONE]
+
+Resume repositions **in front of the last filemark on a full tape** and overwrites. `WriteBlocks` and
+`WriteMark` checked `TrueRemaining` **before** `TruncateFromCurrentPosition()` reclaimed the trailing
+space, so an overwrite-in-front-of-tail wrongly failed with `END_OF_MEDIA` even though it was about to free
+the entire tail. This latent bug had lain dormant because nothing before ever overwrote near a full tape.
+**Fix: truncate first, then check capacity** — so the check measures the true room *from the current
+position*, exactly as real tape sets a new EOD on overwrite; at EOD truncation is a no-op, so the append/EOM
+path (and all ~1700 legacy tests) is unchanged. Pinned by two dedicated `VirtualDriveBasicTests` (a
+genuine-EOD write/mark still refused; an overwrite-after-backward-seek now succeeds).
+
+### 6.6 Service integration [DONE]
+
+`CalibrateRequest` gained `Mode` (`CalibrationMode.New | Resume | Recalibrate`, default New) and an optional
+`ExistingCalibration`. `CalibrateResult` gained `Mode`, `RecalibrationDelta`, and `RecalibrationVerdict`.
+`ExecuteCalibrateCore` dispatches to the three calibrator verbs and, for Recalibrate, applies the
+**verdict policy** (which the calibrator deliberately does not): threshold constants (EW 1%, capacity 1%,
+phantom 5%) → `RecalibrationVerdict.{Holds, FullRecalibrationAdvised}`, logs a before/after assessment to
+the host pane, and on breach asks `ITapeServiceHost.Confirm(...)` before chaining a fresh full run. A
+non-interactive host returns the safe default (false), so a quiet/CLI host never launches a destructive
+multi-hour run unattended.
+
+### 6.7 Test coverage added this session
+
+- `CalibrationResumeTests` — record CRC framing round-trips + corruption detection; resume completes an
+  aborted run; resume ≈ uninterrupted run; **fail→resume→fail→resume convergence**; resume on blank →
+  null; reserve/calibration restoration; recalibrate delta small on a stable drive; recalibrate reports a
+  **large EW shift after a live `EmulatedEarlyWarning` profile swap** (emulating post-firmware drift).
+- `VirtualDriveBasicTests` — the two overwrite-near-EOM regressions (§6.5).
+- `ServiceCalibrationResumeTests` — New/Resume/Recalibrate dispatch + result tagging; mode-appropriate
+  failure messages; the **confirm-chain capstone** (breach via a divergent stored baseline; host `Confirm`
+  scripted true → chains a full run; empty queue → declines and keeps the reassessed calibration).
+
+---
+
+## Part 7 — Remaining tasks
+
+### 7.1 UI for Resume & Recalibrate — TapeWinNET (WPF) and TapeConNET (CLI)
+
+Surface the new `CalibrationMode` in both apps, matching the service extension.
+
+- **WPF (`CalibrateWindow`):** replace the implicit New-only flow with a mode selector — a radio group:
+  ```
+  Calibration mode:
+    (•) New (default)
+    ( ) Resume previous run        [requires cartridge with a resumable run that matches this drive]
+    ( ) Recalibrate (tail check)   [requires cartridge with a saved calibration run that matches this drive]
+  ```
+  Offer a button ("Inspect media") to quickly validate the two media-dependent options by probing the cartridge header via a lightweight service call
+  and inspecting the `CalibrationStore` for a matching profile; show a one-line result ("Resumable run found: 41%
+  written, HP Ultrium 6, firmware 35GD→35GE"). Wire the selection to `CalibrateRequest.Mode`; on a
+  `FullRecalibrationAdvised` verdict, route the service's `Confirm` to a WPF dialog; render
+  `RecalibrationDelta`/`RecalibrationVerdict` in `CalibrationWindow` (before/after rows + verdict banner).
+- **CLI (`TapeConNET`):** add `--calibrate-resume` and `--calibrate-recheck` (or `--calibrate
+  --mode=resume|recalibrate`); map `ITapeServiceHost.Confirm` to a Y/N prompt (or `--yes` for
+  non-interactive); print the recalibration assessment table and verdict.
+
+### 7.2 Update a-priori and "LTO-4-like" profiles from the real-hardware data
+
+The `Apriori` factory (`marginPercent 5`, `remainingAtEwPercent 7`) and `Lto4Like` defaults predate the real
+measurements and are now known to be off:
+
+- **Runway (`EwToEomDistance`)** is ~4% of capacity on LTO-4/6, not 7%; on LTO-3 it is ~0.1%.
+- **Phantom** is < 0.1% on real drives, not the 4–5% assumed.
+- **BOM error is small and generation-dependent, and can be NEGATIVE** (LTO-3 −3.8%, LTO-6 +0.19%). The
+  "boost ≥ 0" assumption in `ReportedRemainingAnchors`/`Apriori` should be relaxed to allow a negative
+  boost (under-report), and virtual emulation should be able to reproduce it.
+- **Preferred direction:** rather than hand-tuning synthetic constants, **ship measured per-generation
+  reference calibrations** (LTO-3/4/6 now in hand) as embedded resources, loaded through the same
+  `TapeCalibration.LoadFrom` path; a fresh run overrides. Retune the synthetic `Apriori`/`Lto4Like` only as
+  a last-resort fallback for unmeasured generations.
+
+### 7.3 Rework how an a-priori profile is assigned when no calibration exists
+
+Today `SelectEarlyWarningMechanism` synthesizes an `Apriori` from nominal capacity whenever no measured
+profile matches. With real data available, revisit the whole a-priori story:
+
+- Prefer a **shipped per-generation reference profile** (7.2) matched by vendor/product/generation over the
+  blind linear `Apriori`, so an un-calibrated-but-known drive still gets realistic EW behavior.
+- Fall back to the synthetic `Apriori` only for genuinely unknown drives, with corrected defaults (7.2).
+- Decide the matching granularity for reference profiles (generation-level, ignoring firmware and exact
+  capacity bucket) versus the exact-key matching used for measured calibrations — likely a looser
+  `IgnoreFirmware`/generation match for reference profiles, exact for measured ones.
+
+### 7.4 Evaluate pre-LTO drives for EW support — "LTO generation 0" (future)
+
+Investigate whether older linear/helical drives that TapeNET already supports — **AIT, DAT-320, SDLT /
+DLT-V4** — expose an early-warning mechanism and tolerate SCSI pass-through control/direct commands the same
+way LTO does. If any do, the whole EW / `EstimateActualRemaining` machinery could be extended to them,
+a real value-add for those users. Scope:
+
+- **Probe for EW capability** per drive family: does a `WRITE(6)` over SPTD surface an EOM-bit/early-warning
+  sense before hard EOM? Do `LOG SENSE`/`READ POSITION` behave? Some of these are helical-scan (AIT/DAT) and
+  may not have an LTO-style EW zone at all.
+- **If EW works:** treat the family as **"LTO generation 0"** — reuse `ScsiWriteDirect` sensing, the
+  physical/logical EW mapping, and calibration unchanged, keyed by its own vendor/product/generation. This
+  needs a small generalization of the LTO-gated code paths (currently `IsLto`-gated) to an "EW-capable via
+  SPTD" predicate.
+- **If EW does not work** (likely for pure helical-scan or drives that reject SPTD): still provide a
+  **meaningful a-priori profile** so the estimate improves over the raw driver figure — measured margins for
+  these families if we can calibrate them, or conservative synthetic defaults otherwise.
+- **Deliverable either way:** an a-priori/reference profile per supported pre-LTO family, plus a documented
+  determination of which families can and cannot participate in EW/estimation.
+
+---

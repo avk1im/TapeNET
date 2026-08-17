@@ -300,12 +300,12 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         state.Samples.AddRange(checkpoint.Samples);
 
         m_logger.LogInformation(
-            "{Prefix}: Resume — run {RunId}, from checkpoint {Idx} at {Bytes} bytes ({Samples} samples restored, EW {Ew})",
-            LogPrefix, state.RunId, checkpoint.Index, state.BytesWritten, state.Samples.Count,
+            "{Prefix}: Resume — run {RunId}, from checkpoint {Idx} ({Back} filemarks from EOD) at {Bytes} bytes ({Samples} samples restored, EW {Ew})",
+            LogPrefix, state.RunId, checkpoint.Index, nBack, state.BytesWritten, state.Samples.Count,
             state.EwPoint is { } e ? $"{e.ActualWritten}/{e.ReportedRemaining}" : "(none)");
 
-        // --- Reposition BOP-side of the FM preceding the good checkpoint and re-establish the boundary. ---
-        if (!Drive.FastforwardToEnd(MediaPartition.Content) || !Drive.MoveToNextFilemark(-nBack))
+        // --- Reposition BOP-side of the FM preceding the good checkpoint (FindLastCheckpoint() brought us right after it) and re-establish the boundary. ---
+        if (!Drive.MoveToNextFilemark(-1))
         {
             SyncErrorFrom(Drive);
             LogErrorAsDebug("Resume: failed to reposition for continuation");
@@ -687,22 +687,23 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
     {
         filemarksBack = 0;
 
+        // Seek to EOD ONCE, then walk backward checkpoint-by-checkpoint — a SINGLE reverse pass, so a
+        //  wrong cartridge (ordinary backup sets, no calibration trail) is rejected in one traversal
+        if (!Drive.FastforwardToEnd(MediaPartition.Content))
+        {
+            SyncErrorFrom(Drive);
+            return null;
+        }
+
+        // Back up before the last filemark; none present ⇒ no resumable run (header-only / blank).
+        if (!Drive.MoveToNextFilemark(-1))
+        {
+            ResetError();   // BEGINNING_OF_PARTITION ⇒ nothing to resume
+            return null;
+        }
+
         for (int n = 1; ; n++)
         {
-            if (!Drive.FastforwardToEnd(MediaPartition.Content))
-            {
-                SyncErrorFrom(Drive);
-                return null;
-            }
-
-            // Step back n filemarks; failing that, we have run out of checkpoints (hit BOP).
-            if (!Drive.MoveToNextFilemark(-n))
-            {
-                // BEGINNING_OF_PARTITION (or any positioning failure) ⇒ no more checkpoints to try.
-                ResetError();
-                return null;
-            }
-
             // Forward over that filemark lands at the start of the checkpoint block it precedes.
             if (!Drive.MoveToNextFilemark(1))
             {
@@ -719,6 +720,14 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
 
             // Torn, foreign, or non-record block ⇒ step back one more filemark and retry.
             m_logger.LogTrace("{Prefix}: Resume — checkpoint at -{N} FM invalid; stepping back", LogPrefix, n);
+
+            // Reading advanced the head into this checkpoint's payload, so stepping back to the PREVIOUS
+            //  checkpoint crosses TWO filemarks (this checkpoint's own FM + the previous one).
+            if (!Drive.MoveToNextFilemark(-2))
+            {
+                ResetError();   // BEGINNING_OF_PARTITION ⇒ no more checkpoints to try
+                return null;
+            }
         }
     }
 
