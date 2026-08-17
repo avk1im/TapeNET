@@ -200,7 +200,7 @@ public partial class MainViewModel
             {
                 LogErr("Backup failed");
                 SimpleBox.Show("Backup failed. See log for details.", "Backup Failed",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBoxButton.OK, SimpleBox.ImageFailed);
             }
             else if (operationResult is { WasAborted: true })
             {
@@ -216,7 +216,7 @@ public partial class MainViewModel
             else
             {
                 SimpleBox.Show("Backup completed successfully!", "Backup Complete",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBoxButton.OK, SimpleBox.ImageComplete);
             }
         }
         catch (Exception ex)

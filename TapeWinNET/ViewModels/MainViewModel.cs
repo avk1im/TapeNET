@@ -908,7 +908,7 @@ public partial class MainViewModel : ViewModelBase
         if (!success)
         {
             SimpleBox.Show($"Failed to open drive {driveNumber}.\n\n{_tapeService.LastError}",
-                "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                "Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
         }
         return success;
     }
@@ -950,7 +950,7 @@ public partial class MainViewModel : ViewModelBase
             $"Failed to read TOC from media.\n\n{_tapeService.LastError}\n\n" +
             "If you have a saved TOC file (.tapetoc), you can load it to access the media content.\n\n" +
             "Would you like to load a TOC from file?",
-            "TOC Read Failed", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            "TOC Read Failed", MessageBoxButton.YesNo, SimpleBox.ImageFailed);
 
         return result == MessageBoxResult.Yes && await ImportTOCFromFileAsync();
     }
@@ -1075,7 +1075,7 @@ public partial class MainViewModel : ViewModelBase
             if (!success)
             {
                 SimpleBox.Show($"Failed to eject media.\n\n{_tapeService.LastError}",
-                    "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    "Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
             }
             else
             {
@@ -1119,12 +1119,12 @@ public partial class MainViewModel : ViewModelBase
             if (success)
             {
                 SimpleBox.Show($"TOC exported successfully to:\n{dialog.FileName}",
-                    "Export TOC", MessageBoxButton.OK, MessageBoxImage.Information);
+                    "Export TOC", MessageBoxButton.OK, SimpleBox.ImageComplete);
             }
             else
             {
                 SimpleBox.Show($"Failed to export TOC.\n\n{_tapeService.LastError}",
-                    "Export TOC", MessageBoxButton.OK, MessageBoxImage.Error);
+                    "Export TOC", MessageBoxButton.OK, SimpleBox.ImageFailed);
             }
         }
         finally
@@ -1179,7 +1179,7 @@ public partial class MainViewModel : ViewModelBase
             if (!success)
             {
                 SimpleBox.Show($"Failed to import TOC from file.\n\n{_tapeService.LastError}",
-                    "Import TOC", MessageBoxButton.OK, MessageBoxImage.Error);
+                    "Import TOC", MessageBoxButton.OK, SimpleBox.ImageFailed);
             }
             return success;
         }
@@ -1226,7 +1226,7 @@ public partial class MainViewModel : ViewModelBase
         Settings.ResetHelpPaneLayout();
 
         SimpleBox.Show("Window positions have been reset to defaults.",
-            "Reset Window Positions", MessageBoxButton.OK, MessageBoxImage.Information);
+            "Reset Window Positions", MessageBoxButton.OK, SimpleBox.ImageComplete);
     }
 
     private void Exit(object? parameter)
@@ -1403,7 +1403,7 @@ public partial class MainViewModel : ViewModelBase
             else if (_tapeService.LastError is not null)
             {
                 SimpleBox.Show($"Failed to rename media.\n\n{_tapeService.LastError}",
-                    "Rename Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+                    "Rename Failed", MessageBoxButton.OK, SimpleBox.ImageFailed);
             }
         }
         finally
@@ -1466,7 +1466,7 @@ public partial class MainViewModel : ViewModelBase
             else if (_tapeService.LastError is not null)
             {
                 SimpleBox.Show($"Failed to rename backup set.\n\n{_tapeService.LastError}",
-                    "Rename Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+                    "Rename Failed", MessageBoxButton.OK, SimpleBox.ImageFailed);
             }
         }
         finally
@@ -1873,7 +1873,7 @@ public partial class MainViewModel : ViewModelBase
             {
                 SimpleBox.Show(
                     $"Failed to create virtual drive.\n\n{_tapeService.LastError}",
-                    "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    "Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
                 UpdateTreeForDriveOnly(0);
             }
             return;
@@ -2031,10 +2031,10 @@ public partial class MainViewModel : ViewModelBase
 
             if (success)
                 SimpleBox.Show("Media formatted successfully!", "Format Complete",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBoxButton.OK, SimpleBox.ImageComplete);
             else
                 SimpleBox.Show($"Failed to format media.\n\n{_tapeService.LastError}",
-                    "Format Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    "Format Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
         }
         catch (Exception ex)
         {
@@ -2085,7 +2085,7 @@ public partial class MainViewModel : ViewModelBase
             if (!success)
             {
                 SimpleBox.Show($"Failed to delete backup sets.\n\n{_tapeService.LastError}",
-                    "Delete Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    "Delete Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
                 return;
             }
 
@@ -2163,7 +2163,7 @@ public partial class MainViewModel : ViewModelBase
             if (!_tapeService.InsertVirtualMedia(newVmd, FileMode.Create, newEwProfile))
             {
                 SimpleBox.Show($"Failed to create virtual media files.\n\n{_tapeService.LastError}",
-                    "Format Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    "Format Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
                 return;
             }
 
@@ -2177,7 +2177,7 @@ public partial class MainViewModel : ViewModelBase
             if (!await _tapeService.FormatMediaAsync(initiatorPartitionSize, formatViewModel.MediaName))
             {
                 SimpleBox.Show($"Failed to format media.\n\n{_tapeService.LastError}",
-                    "Format Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    "Format Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
                 return;
             }
 
@@ -2189,7 +2189,7 @@ public partial class MainViewModel : ViewModelBase
                 AddToVirtualDriveMru(newVmd.ContentPath);
 
             SimpleBox.Show("Virtual media formatted successfully!", "Format Complete",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBoxButton.OK, SimpleBox.ImageComplete);
         }
         catch (Exception ex)
         {

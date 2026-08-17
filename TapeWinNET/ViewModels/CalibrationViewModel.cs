@@ -190,7 +190,7 @@ public sealed class CalibrationViewModel : ViewModelBase
                 $"Failed to save the calibration profile.\n\n{App.Settings.Calibrations.LastErrorMessage}",
                 "Save Calibration",
                 MessageBoxButton.OK,
-                MessageBoxImage.Error);
+                SimpleBox.ImageFailed);
             return;
         }
 

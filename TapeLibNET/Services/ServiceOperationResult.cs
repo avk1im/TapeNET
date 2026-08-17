@@ -113,6 +113,21 @@ public sealed record RestoreResult : FileOperationResult
 // ── Calibrate ────────────────────────────────────────────────────────────────
 
 /// <summary>
+/// Service-level judgment of a <see cref="CalibrationMode.Recalibrate"/> run: whether the reassessed
+/// calibration is close enough to the previous one to keep using, or the drive has shifted enough that a
+/// full re-run is advised. This is policy (threshold-based), computed by <c>TapeServiceBase</c> from the
+/// raw <see cref="TapeRecalibrationDelta"/> that <see cref="TapeCalibrator.Recalibrate"/> reports.
+/// </summary>
+public enum RecalibrationVerdict
+{
+    /// <summary>The reassessed calibration is within tolerance of the existing one — keep using it.</summary>
+    Holds,
+
+    /// <summary>The drive's behavior shifted beyond tolerance — a full recalibration is advised.</summary>
+    FullRecalibrationAdvised,
+}
+
+/// <summary>
 /// Summary statistics returned by a calibration operation.
 /// </summary>
 /// <remarks>
@@ -122,6 +137,9 @@ public sealed record RestoreResult : FileOperationResult
 /// </remarks>
 public sealed record CalibrateResult : FileOperationResult
 {
+    /// <summary>Which calibration mode produced this result.</summary>
+    public CalibrationMode Mode { get; init; } = CalibrationMode.New;
+
     /// <summary>The calibration produced by the run, or <see langword="null"/> on failure/abort.</summary>
     public ITapeCalibration? Calibration { get; init; }
 
@@ -158,6 +176,14 @@ public sealed record CalibrateResult : FileOperationResult
 
     /// <summary>Number of points in the calibrated curve.</summary>
     public int CurvePointCount => Calibration?.Curve.Count ?? 0;
+
+    /// <summary>For <see cref="CalibrationMode.Recalibrate"/>: how the key figures moved versus the
+    ///  existing calibration, or <see langword="null"/> for New/Resume.</summary>
+    public TapeRecalibrationDelta? RecalibrationDelta { get; init; }
+
+    /// <summary>For <see cref="CalibrationMode.Recalibrate"/>: the service's threshold-based verdict, or
+    ///  <see langword="null"/> for New/Resume.</summary>
+    public RecalibrationVerdict? RecalibrationVerdict { get; init; }
 
     /// <inheritdoc/>
     public override bool IsFullSuccess => base.IsFullSuccess && Calibration is not null;

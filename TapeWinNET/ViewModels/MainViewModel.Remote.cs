@@ -263,7 +263,7 @@ public partial class MainViewModel
         {
             SimpleBox.Show(
                 $"Failed to open remote drive {driveNumber} on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
-                "Open Remote Drive", MessageBoxButton.OK, MessageBoxImage.Error);
+                "Open Remote Drive", MessageBoxButton.OK, SimpleBox.ImageFailed);
             UpdateTreeForRemoteDriveOnly(driveNumber, settings);
             return;
         }
@@ -341,7 +341,7 @@ public partial class MainViewModel
             {
                 SimpleBox.Show(
                     $"Failed to create remote virtual drive on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
-                    "Create Remote Virtual Drive", MessageBoxButton.OK, MessageBoxImage.Error);
+                    "Create Remote Virtual Drive", MessageBoxButton.OK, SimpleBox.ImageFailed);
                 UpdateTreeForRemoteDriveOnly(0, settings);
                 return;
             }
@@ -378,7 +378,7 @@ public partial class MainViewModel
             {
                 SimpleBox.Show(
                     $"Failed to open remote virtual volume on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
-                    "Open Remote Virtual Drive", MessageBoxButton.OK, MessageBoxImage.Error);
+                    "Open Remote Virtual Drive", MessageBoxButton.OK, SimpleBox.ImageFailed);
                 UpdateTreeForRemoteDriveOnly(0, settings);
                 return;
             }
@@ -436,7 +436,7 @@ public partial class MainViewModel
         {
             SimpleBox.Show(
                 $"Failed to recreate remote virtual drive on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
-                "Format Remote Drive", MessageBoxButton.OK, MessageBoxImage.Error);
+                "Format Remote Drive", MessageBoxButton.OK, SimpleBox.ImageFailed);
             UpdateTreeForRemoteDriveOnly(0, settings);
             return;
         }
@@ -465,7 +465,7 @@ public partial class MainViewModel
         SelectMostRecentSet();
 
         SimpleBox.Show("Remote virtual media formatted successfully!", "Format Complete",
-            MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxButton.OK, SimpleBox.ImageComplete);
     }
 
     // ── Remote tree helpers ───────────────────────────────────────────────────

@@ -156,7 +156,7 @@ public partial class MainViewModel
             if (operationResult is { HasFailed: true })
             {
                 SimpleBox.Show("Calibration failed. See log for details.", "Calibration Failed",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBoxButton.OK, SimpleBox.ImageFailed);
                 return;
             }
 

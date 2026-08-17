@@ -336,5 +336,35 @@ public class CalibrationResumeTests
         Assert.Null(reassessed);
     }
 
+    [Fact]
+    public void Recalibrate_AfterDriveBehaviorChange_ReportsLargeEwShift()
+    {
+        // Original drive behavior: a wide 8% early-warning zone.
+        var (drive, backend) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity, ewZonePercent: 8.0));
+
+        ITapeCalibration? original = new TapeCalibrator(drive) { Options = FastOptions() }.Run();
+        Assert.NotNull(original);
+        Assert.True(original!.EwToEomDistance > 0);
+
+        // Emulate a firmware update that SHRINKS the EW zone to 2%. ApplyEwProfileToMedia only reassigns
+        //  the profile (it does not wipe content), so the resumable trail survives and the tail
+        //  re-measurement now sees the new, later early warning. Shrinking (not growing) the zone keeps
+        //  the new EW point AHEAD of the resume position, so it is measured cleanly rather than truncated.
+        backend.EmulatedEarlyWarning = VirtualTapeEwProfile.Lto4Like(Capacity, ewZonePercent: 2.0);
+
+        (ITapeCalibration? reassessed, TapeRecalibrationDelta delta) =
+            new TapeCalibrator(drive) { Options = FastOptions() }.Recalibrate(original!);
+
+        Assert.NotNull(reassessed);
+        AssertCurveWellFormed(reassessed!);
+
+        // The EW landmark moved substantially closer to EOM — the calibrator surfaces the behavior change
+        //  as a large, verdict-free delta (the service layer, not the calibrator, judges it).
+        Assert.True(delta.NewEwToEomDistance < delta.OldEwToEomDistance,
+            $"EW→EOM should shrink after the zone shrank: {delta.OldEwToEomDistance} → {delta.NewEwToEomDistance}");
+        Assert.True(Math.Abs(delta.EwShiftFraction) > 0.10,
+            $"EW shift {delta.EwShiftFraction:P1} should be large after a drive-behavior change");
+    }
+    
     #endregion
 }

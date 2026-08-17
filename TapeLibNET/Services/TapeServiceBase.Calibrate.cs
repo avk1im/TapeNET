@@ -1,18 +1,26 @@
 using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices; // Helpers, Stopwatch
-
 using TapeLibNET.Virtual;
-
 using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
 
 namespace TapeLibNET.Services;
 
 public partial class TapeServiceBase
 {
-    // ── Calibration ───────────────────────────────────────────────────────────
+    // ── Recalibration verdict thresholds ──────────────────────────────────────
+    // Beyond these SIGNED relative shifts (new vs. old) the reassessed calibration is deemed no longer
+    //  trustworthy and a full re-run is advised. EW→EOM distance is the most critical figure, so it and
+    //  capacity use a tight 1% band; the phantom figure is coarser and less critical, so 5%.
+    //  These are POLICY constants — the calibrator itself stays verdict-free.
+    private const double c_recalEwShiftTolerance = 0.01;        // 1%
+    private const double c_recalCapacityShiftTolerance = 0.01;  // 1%
+    private const double c_recalPhantomShiftTolerance = 0.05;   // 5%
 
+    // ── Calibration ───────────────────────────────────────────────────────────
     /// <summary>
-    /// Executes a destructive calibration run against the currently loaded medium.
+    /// Executes a destructive calibration run against the currently loaded medium. The
+    /// <see cref="CalibrateRequest.Mode"/> selects a fresh run, a resume of an interrupted run, or a
+    /// fast recalibration of a complete calibration cartridge.
     /// </summary>
     public Task<CalibrateResult> ExecuteCalibrateAsync(CalibrateRequest request)
     {
@@ -52,8 +60,12 @@ public partial class TapeServiceBase
             bool aborted = false,
             bool failed = false,
             string? message = null,
-            Exception? error = null)
-            => progressHandler?.GenerateResult(
+            Exception? error = null,
+            CalibrationMode mode = CalibrationMode.New,
+            TapeRecalibrationDelta? delta = null,
+            RecalibrationVerdict? verdict = null)
+        {
+            CalibrateResult baseResult = progressHandler?.GenerateResult(
                     calibration,
                     aborted: aborted,
                     failed: failed,
@@ -81,6 +93,15 @@ public partial class TapeServiceBase
                    Message          = message,
                    Error            = error,
                };
+
+            // Tag the mode/recalibration fields uniformly, regardless of which branch built baseResult.
+            return baseResult with
+            {
+                Mode                 = mode,
+                RecalibrationDelta   = delta,
+                RecalibrationVerdict = verdict,
+            };
+        }
 
         if (_drive is null || !_drive.IsMediaLoaded)
         {
@@ -110,7 +131,6 @@ public partial class TapeServiceBase
             {
                 Options = request.Options,
             };
-
             progressHandler = CreateCalibrateProgressHandler(calibrator, request, _drive.Capacity);
 
             using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
@@ -125,29 +145,82 @@ public partial class TapeServiceBase
             LogInfo($"Calibration profile: >{_drive.DriveProfileKey}<");
             LogInfoSub($"Reported capacity: {Helpers.BytesToStringLong(_drive.Capacity)}");
 
-            OnStatusUpdate("Calibrating...");
+            // --- Dispatch the requested mode. New/Resume both yield an ITapeCalibration?; Recalibrate
+            //     additionally yields a delta versus the supplied (or resolved) existing calibration. ---
+            ITapeCalibration? calibration;
+            TapeRecalibrationDelta? recalDelta = null;
+
             timer.Restart();
-            ITapeCalibration? calibration = calibrator.Run(progressHandler);
+            switch (request.Mode)
+            {
+                case CalibrationMode.Resume:
+                    LogInfo("Resuming calibration from the last checkpoint on the cartridge...");
+                    OnStatusUpdate("Resuming calibration...");
+                    calibration = calibrator.Resume(progressHandler);
+                    break;
+
+                case CalibrationMode.Recalibrate:
+                {
+                    // Resolve the baseline to compare against: explicit → drive's active match → store.
+                    ITapeCalibration? existing = request.ExistingCalibration
+                        ?? _drive.Calibration
+                        ?? CalibrationStore.Load(_drive.DriveProfileKey);
+
+                    if (existing is null)
+                    {
+                        timer.Stop();
+                        LastError = "Recalibrate needs an existing calibration to compare against";
+                        LogErr(LastError);
+                        OnStatusUpdate("Recalibration failed");
+                        return MakeResult(failed: true, message: LastError, mode: CalibrationMode.Recalibrate);
+                    }
+
+                    LogInfo("Recalibrating: re-measuring the tail against the existing calibration...");
+                    OnStatusUpdate("Recalibrating...");
+
+                    (calibration, TapeRecalibrationDelta delta) = calibrator.Recalibrate(existing, progressHandler);
+                    if (calibration is not null)
+                        recalDelta = delta;
+                    break;
+                }
+
+                case CalibrationMode.New:
+                default:
+                    OnStatusUpdate("Calibrating...");
+                    calibration = calibrator.Run(progressHandler);
+                    break;
+            }
             timer.Stop();
 
             if (calibration is null)
             {
                 LastError = calibrator.LastErrorMessage;
+
                 if (calibrator.LastError == (uint)WIN32_ERROR.ERROR_CANCELLED || calibrator.IsAbortRequested)
                 {
                     OnStatusUpdate("Calibration aborted");
                     LogFail("Calibration aborted");
-                    return MakeResult(aborted: true, message: "Calibration aborted");
+                    return MakeResult(aborted: true, message: "Calibration aborted", mode: request.Mode);
                 }
 
+                // Resume/Recalibrate can legitimately fail to find a resumable trail on the cartridge;
+                //  surface a mode-appropriate message so the caller can offer a fresh run instead.
+                string failMsg = request.Mode switch
+                {
+                    CalibrationMode.Resume      => $"Resume failed: no resumable run found on this cartridge ({LastError})",
+                    CalibrationMode.Recalibrate => $"Recalibration failed: no calibration trail on this cartridge ({LastError})",
+                    _                           => LastError,
+                };
+
                 OnStatusUpdate("Calibration failed");
-                LogErr($"Calibration failed: {LastError}");
-                return MakeResult(failed: true, message: LastError);
+                LogErr($"Calibration failed: {failMsg}");
+                return MakeResult(failed: true, message: failMsg, mode: request.Mode);
             }
 
             OnStatusUpdate("Calibration complete");
             LogInfo("Calibration summary:");
             LogInfoSub($"Actual capacity: {Helpers.BytesToStringLong(calibration.CapacityActual)}");
+
             if (calibration.EarlyWarning is { } ew)
             {
                 LogInfoSub($"EW landmark: reported {Helpers.BytesToStringLong(ew.ReportedRemaining)}, " +
@@ -158,11 +231,52 @@ public partial class TapeServiceBase
             {
                 LogInfoSub("EW landmark: not observed during calibration");
             }
-            LogInfoSub($"Curve points: {calibration.Curve.Count:N0}");
-            LogOk("Calibration completed successfully");
 
+            LogInfoSub($"Curve points: {calibration.Curve.Count:N0}");
+
+            // --- Recalibration: judge the shift, log it, and (if advised) offer a full re-run via host. ---
+            if (request.Mode == CalibrationMode.Recalibrate && recalDelta is { } d)
+            {
+                RecalibrationVerdict verdict = JudgeRecalibration(d);
+                LogRecalibrationDelta(d, verdict);
+
+                if (verdict == RecalibrationVerdict.FullRecalibrationAdvised)
+                {
+                    // Ask the host to confirm a destructive full re-run. Non-interactive hosts return the
+                    //  default (false), so a quiet/CLI host never launches a multi-hour run unattended.
+                    bool runFull = _host.Confirm(
+                        "The drive's remaining-space behavior has shifted beyond tolerance since the last " +
+                        "calibration. Run a FULL recalibration now? This is destructive and may take a long time.",
+                        defaultAnswer: false);
+
+                    if (runFull)
+                    {
+                        LogWarn("Full recalibration confirmed — running a fresh calibration from BOM...");
+
+                        // Chain into the New path (fresh progress handler, timer, logging) with zero
+                        //  duplication, then re-tag the result as a recalibration outcome so the caller
+                        //  still sees the delta/verdict that triggered the re-run.
+                        CalibrateResult full = ExecuteCalibrateCore(request with { Mode = CalibrationMode.New });
+                        return full with
+                        {
+                            Mode                 = CalibrationMode.Recalibrate,
+                            RecalibrationDelta   = recalDelta,
+                            RecalibrationVerdict = verdict,
+                        };
+                    }
+
+                    LogWarn("Full recalibration declined — keeping the reassessed calibration; treat with caution");
+                }
+
+                LogOk("Recalibration completed");
+                progressHandler.CompleteProgress();
+                return MakeResult(calibration, message: "Recalibration completed",
+                    mode: CalibrationMode.Recalibrate, delta: recalDelta, verdict: verdict);
+            }
+
+            LogOk("Calibration completed successfully");
             progressHandler.CompleteProgress();
-            return MakeResult(calibration, message: "Calibration completed");
+            return MakeResult(calibration, message: "Calibration completed", mode: request.Mode);
         }
         catch (TapeAbortRequestedException)
         {
@@ -170,7 +284,7 @@ public partial class TapeServiceBase
             LastError = "Calibration aborted";
             OnStatusUpdate("Calibration aborted");
             LogFail("Calibration aborted");
-            return MakeResult(aborted: true, message: LastError);
+            return MakeResult(aborted: true, message: LastError, mode: request.Mode);
         }
         catch (Exception ex)
         {
@@ -178,12 +292,42 @@ public partial class TapeServiceBase
             LastError = ex.Message;
             OnStatusUpdate("Calibration failed");
             LogErr($"Calibration failed: {ex.Message}");
-            return MakeResult(failed: true, message: ex.Message, error: ex);
+            return MakeResult(failed: true, message: ex.Message, error: ex, mode: request.Mode);
         }
         finally
         {
             progressHandler?.DisposeProgress();
         }
+    }
+
+    // ── Recalibration judgment (policy) ───────────────────────────────────────
+    /// <summary>
+    /// Threshold-based verdict on a recalibration delta: whether the existing calibration still holds or
+    /// a full re-run is advised. Kept in the SERVICE layer (not the calibrator) because it is policy;
+    /// the thresholds are the <c>c_recal*</c> constants above.
+    /// </summary>
+    private static RecalibrationVerdict JudgeRecalibration(in TapeRecalibrationDelta delta)
+        => Math.Abs(delta.EwShiftFraction) > c_recalEwShiftTolerance
+           || Math.Abs(delta.CapacityShiftFraction) > c_recalCapacityShiftTolerance
+           || Math.Abs(delta.PhantomShiftFraction) > c_recalPhantomShiftTolerance
+            ? RecalibrationVerdict.FullRecalibrationAdvised
+            : RecalibrationVerdict.Holds;
+
+    /// <summary>Logs the before/after figures and the verdict of a recalibration to the host log pane.</summary>
+    private void LogRecalibrationDelta(in TapeRecalibrationDelta d, RecalibrationVerdict verdict)
+    {
+        LogInfo("Recalibration assessment:");
+        LogInfoSub($"EW→EOM distance: {Helpers.BytesToStringLong(d.OldEwToEomDistance)} → " +
+                   $"{Helpers.BytesToStringLong(d.NewEwToEomDistance)} ({d.EwShiftFraction:+0.0%;-0.0%})");
+        LogInfoSub($"Actual capacity: {Helpers.BytesToStringLong(d.OldCapacityActual)} → " +
+                   $"{Helpers.BytesToStringLong(d.NewCapacityActual)} ({d.CapacityShiftFraction:+0.0%;-0.0%})");
+        LogInfoSub($"Phantom @ EOM: {Helpers.BytesToStringLong(d.OldPhantomFreeAtEom)} → " +
+                   $"{Helpers.BytesToStringLong(d.NewPhantomFreeAtEom)} ({d.PhantomShiftFraction:+0.0%;-0.0%})");
+
+        if (verdict == RecalibrationVerdict.Holds)
+            LogOk("Recalibration verdict: the existing calibration still holds");
+        else
+            LogWarn("Recalibration verdict: a full recalibration is advised");
     }
 
     /// <summary>
@@ -211,7 +355,6 @@ public partial class TapeServiceBase
     }
 
     // ── Calibration autoload ──────────────────────────────────────────────────
-
     private TapeCalibrationStore? _calibrationStore;
 
     /// <summary>

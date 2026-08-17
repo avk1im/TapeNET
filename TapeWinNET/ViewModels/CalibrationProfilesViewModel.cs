@@ -144,7 +144,7 @@ public sealed class CalibrationProfilesViewModel : ViewModelBase
                 $"Failed to remove the calibration profile.\n\n{App.Settings.Calibrations.LastErrorMessage}",
                 "Remove Calibration Profile",
                 MessageBoxButton.OK,
-                MessageBoxImage.Error);
+                SimpleBox.ImageFailed);
             return;
         }
 

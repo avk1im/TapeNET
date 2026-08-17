@@ -70,6 +70,22 @@ public sealed record RestoreRequest(
 
 // ── Calibrate ────────────────────────────────────────────────────────────────
 
+/// <summary>Which calibration operation a <see cref="CalibrateRequest"/> performs.</summary>
+public enum CalibrationMode
+{
+    /// <summary>A fresh, full calibration from BOM (destructive). The default.</summary>
+    New,
+
+    /// <summary>Continue a calibration interrupted by a transport fault, from the last on-tape checkpoint
+    ///  on the currently loaded cartridge. Requires the (partially written) calibration cartridge.</summary>
+    Resume,
+
+    /// <summary>Fast re-measurement of the tail from the last checkpoint on a COMPLETE calibration
+    ///  cartridge (e.g. after a firmware update / drive swap), producing a reassessed calibration and a
+    ///  verdict on whether it still holds. Requires the calibration cartridge.</summary>
+    Recalibrate,
+}
+
 /// <summary>
 /// Options for a destructive calibration run over the currently loaded medium.
 /// </summary>
@@ -79,7 +95,9 @@ public sealed record RestoreRequest(
 /// </remarks>
 public sealed record CalibrateRequest(
     bool EjectWhenDone,
-    TapeCalibrationOptions Options) : ServiceOperationRequest;
+    TapeCalibrationOptions Options,
+    CalibrationMode Mode = CalibrationMode.New,
+    ITapeCalibration? ExistingCalibration = null) : ServiceOperationRequest;
 
 // ── List ─────────────────────────────────────────────────────────────────────
 

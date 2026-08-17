@@ -42,10 +42,10 @@ public static class WarningLevelHelper
     /// </summary>
     public static string GetIcon(WarningLevel level) => level switch
     {
-        WarningLevel.Error => "⚠",
+        WarningLevel.Error => "✖",
         WarningLevel.Failed => "✗",
-        WarningLevel.Warning => "⚠",
-        WarningLevel.Info => "ℹ",
+        WarningLevel.Warning => "⚠\uFE0E", // gurantee monochrome glyph
+        WarningLevel.Info => "ℹ\uFE0E", // gurantee monochrome glyph
         WarningLevel.Completed => "✓",
         _ => string.Empty
     };
