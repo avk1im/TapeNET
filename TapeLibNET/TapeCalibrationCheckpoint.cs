@@ -278,3 +278,66 @@ public readonly record struct TapeRecalibrationDelta(
     public double PhantomShiftFraction
         => OldPhantomFreeAtEom > 0 ? (double)(NewPhantomFreeAtEom - OldPhantomFreeAtEom) / OldPhantomFreeAtEom : 0.0;
 }
+
+/// <summary>
+/// Read-only snapshot of what a cartridge holds, produced by <see cref="TapeCalibrator.InspectMedia"/>
+/// WITHOUT writing anything. Lets a UI (or service) decide whether to offer <see cref="TapeCalibrator.Resume"/>
+/// / <see cref="TapeCalibrator.Recalibrate"/> and show run identity + progress, before committing to a
+/// destructive operation. Present ⇒ a valid calibration header was found; <see cref="IsResumable"/> ⇒ a
+/// CRC-valid checkpoint of that run also exists.
+/// </summary>
+public sealed record TapeCalibrationMediaInfo(
+    TapeCalibrationRunHeader Header,
+    TapeCalibrationCheckpoint? LastCheckpoint)
+{
+    /// <summary>The run's unique id (from the header).</summary>
+    public Guid RunId => Header.RunId;
+
+    /// <summary>The drive+media profile key the run was recorded against.</summary>
+    public string ProfileKey => Header.ProfileKey;
+
+    /// <summary>Driver-reported capacity at BOM captured at the start of the run.</summary>
+    public long CapacityReportedAtBom => Header.CapacityReportedAtBom;
+
+    /// <summary>When the run started (UTC).</summary>
+    public DateTime StartedUtc => Header.StartedUtc;
+
+    /// <summary>True when a CRC-valid checkpoint of this run exists — i.e. <see cref="TapeCalibrator.Resume"/>
+    ///  / <see cref="TapeCalibrator.Recalibrate"/> can proceed. False when the run died before its first
+    ///  checkpoint (or every checkpoint is torn): the cartridge is inspectable but not resumable.</summary>
+    public bool IsResumable => LastCheckpoint is not null;
+
+    /// <summary>Bytes written as of the last good checkpoint (0 when none) — the resume restart point.</summary>
+    public long CheckpointedBytes => LastCheckpoint?.BytesWritten ?? 0L;
+
+    /// <summary>Index of the last good checkpoint, or -1 when none.</summary>
+    public int CheckpointIndex => LastCheckpoint?.Index ?? -1;
+
+    /// <summary>Whether the EW landmark was already captured by the last checkpoint.</summary>
+    public bool EarlyWarningCaptured => LastCheckpoint?.EarlyWarning is not null;
+
+    /// <summary>
+    /// Progress hint in 0..1 = last-checkpoint bytes / BOM-reported capacity. Because checkpoints are
+    /// BODY-ONLY (they stop just before the tail), a COMPLETED run reads ≈ (1 − TailCapacityFraction)
+    /// (~0.95), and an interrupted one reads proportionally less — a good "how far did it get" figure.
+    /// </summary>
+    public double ProgressFraction =>
+        Header.CapacityReportedAtBom > 0
+            ? Math.Clamp((double)CheckpointedBytes / Header.CapacityReportedAtBom, 0.0, 1.0)
+            : 0.0;
+
+    /// <summary>
+    /// Heuristic (no extra tape I/O): the last checkpoint is within one checkpoint-interval of the tail
+    /// start, so the run most likely REACHED the tail and COMPLETED — favor Recalibrate. Otherwise it was
+    /// interrupted mid-body — favor Resume. Fuzzy near the very end, by nature.
+    /// </summary>
+    public bool AppearsComplete
+    {
+        get
+        {
+            long cap = Math.Max(1L, Header.CapacityReportedAtBom);
+            return LastCheckpoint is not null
+                && CheckpointedBytes >= Header.Plan.TailStartBytes(cap) - Header.Plan.CheckpointInterval(cap);
+        }
+    }
+}

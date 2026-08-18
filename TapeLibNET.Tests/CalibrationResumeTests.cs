@@ -447,6 +447,130 @@ public class CalibrationResumeTests
         Assert.True(Math.Abs(delta.EwShiftFraction) > 0.10,
             $"EW shift {delta.EwShiftFraction:P1} should be large after a drive-behavior change");
     }
-    
+
+    #endregion
+
+    #region *** Media inspection (read-only) ***
+
+    [Fact]
+    public void InspectMedia_AfterCompleteRun_ReportsResumableAndComplete()
+    {
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+
+        ITapeCalibration? cal = new TapeCalibrator(drive) { Options = FastOptions() }.Run();
+        Assert.NotNull(cal);
+
+        TapeCalibrationMediaInfo? info = new TapeCalibrator(drive) { Options = FastOptions() }.InspectMedia();
+
+        Assert.NotNull(info);
+        Assert.True(info!.IsResumable, "a completed run leaves a resumable trail");
+        Assert.True(info.AppearsComplete, "a run that reached the tail should read as complete");
+        Assert.Equal(drive.DriveProfileKey, info.ProfileKey);
+        Assert.NotEqual(Guid.Empty, info.RunId);
+        Assert.True(info.CheckpointedBytes > 0);
+        Assert.True(info.CheckpointIndex >= 0);
+        // Checkpoints are BODY-ONLY (they stop just before the tail), so a complete run reads ≈ 0.95.
+        Assert.InRange(info.ProgressFraction, 0.5, 1.0);
+    }
+
+    [Fact]
+    public void InspectMedia_AfterAbortedRun_ReportsResumableButNotComplete()
+    {
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+
+        var run = new TapeCalibrator(drive) { Options = FastOptions() };
+        Assert.Null(run.Run(new AbortAfterBytes(run, Capacity / 2)));   // interrupted ~halfway
+
+        TapeCalibrationMediaInfo? info = new TapeCalibrator(drive) { Options = FastOptions() }.InspectMedia();
+
+        Assert.NotNull(info);
+        Assert.True(info!.IsResumable, "an aborted run past its first checkpoint is resumable");
+        Assert.False(info.AppearsComplete, "a mid-body interruption should not read as complete");
+        Assert.Equal(drive.DriveProfileKey, info.ProfileKey);
+        Assert.InRange(info.ProgressFraction, 0.10, 0.90);   // stopped mid-body, well short of the tail
+    }
+
+    [Fact]
+    public void InspectMedia_OnBlankCartridge_ReturnsNull()
+    {
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+
+        // No run performed ⇒ no header at BOM ⇒ nothing to inspect.
+        Assert.Null(new TapeCalibrator(drive) { Options = FastOptions() }.InspectMedia());
+    }
+
+    [Fact]
+    public void InspectMedia_OnForeignCartridgeWithRegularData_ReturnsNull()
+    {
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+
+        // Ordinary filemark-delimited data, but NO calibration header at BOM — a mixed-up cartridge.
+        Assert.True(drive.MoveToPartition(MediaPartition.Content));
+        Assert.True(drive.Rewind());
+        Assert.True(drive.SetBlockSize(drive.MaximumBlockSize));
+
+        int blk = (int)drive.BlockSize;
+        var data = new byte[blk];
+        new Random(123).NextBytes(data);
+        for (int seg = 0; seg < 4; seg++)
+        {
+            Assert.Equal(blk, drive.WriteDirect(data, 0, blk));
+            Assert.True(drive.WriteFilemark(1));
+        }
+
+        Assert.Null(new TapeCalibrator(drive) { Options = FastOptions() }.InspectMedia());
+    }
+
+    [Fact]
+    public void InspectMedia_IsNonDestructive_ResumeStillSucceeds()
+    {
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+
+        var run = new TapeCalibrator(drive) { Options = FastOptions() };
+        Assert.Null(run.Run(new AbortAfterBytes(run, Capacity / 2)));
+
+        // Inspect TWICE — the read must be idempotent and must not consume the trail.
+        var inspector = new TapeCalibrator(drive) { Options = FastOptions() };
+        TapeCalibrationMediaInfo? info1 = inspector.InspectMedia();
+        TapeCalibrationMediaInfo? info2 = inspector.InspectMedia();
+        Assert.NotNull(info1);
+        Assert.NotNull(info2);
+        Assert.Equal(info1!.RunId, info2!.RunId);            // same run identified both times
+        Assert.Equal(info1.CheckpointedBytes, info2.CheckpointedBytes);
+
+        // The crucial contract: inspection wrote nothing, so a real Resume still completes.
+        ITapeCalibration? resumed = new TapeCalibrator(drive) { Options = FastOptions() }.Resume();
+        Assert.NotNull(resumed);
+        Assert.InRange(resumed!.CapacityActual, (long)(Capacity * 0.98), Capacity);
+        AssertCurveWellFormed(resumed);
+
+        // After a completed resume the SAME run is still identifiable and now reads as complete.
+        TapeCalibrationMediaInfo? after = new TapeCalibrator(drive) { Options = FastOptions() }.InspectMedia();
+        Assert.NotNull(after);
+        Assert.Equal(info1.RunId, after!.RunId);             // RunId preserved across resume
+        Assert.True(after.AppearsComplete);
+    }
+
+    [Fact]
+    public void InspectMedia_DoesNotDisturbLoadedCalibrationsOrReserve()
+    {
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+
+        // Leave a resumable trail so InspectMedia has a header to read.
+        Assert.NotNull(new TapeCalibrator(drive) { Options = FastOptions() }.Run());
+
+        // A pre-existing reserve + loaded calibration the read-only inspect must NOT touch (it uses no
+        //  RunGuard, unlike Run/Resume/Recalibrate).
+        var preloaded = TapeCalibration.Apriori(drive.DriveProfileKey, Capacity);
+        Assert.True(drive.AddCalibration(preloaded));
+        const long reserve = 2L * 1024 * 1024;
+        Assert.True(drive.SetEarlyWarning(reserve));
+
+        Assert.NotNull(new TapeCalibrator(drive) { Options = FastOptions() }.InspectMedia());
+
+        Assert.Equal(reserve, drive.EarlyWarning);
+        Assert.Contains(preloaded, drive.Calibrations);
+    }
+
     #endregion
 }

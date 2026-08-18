@@ -1171,6 +1171,66 @@ already survives a reboot, and the fastest reposition is EOD→back-space regard
   (old/new EW-distance, capacity, phantom + signed fractions); it does **not** judge the result, and it does
   **not** perform drive-profile matching — both are the caller's/service's concern (Part 3's layering).
 
+### 6.4.1 Read-only media inspection — `InspectMedia()` [DONE]
+
+Before a UI offers **Resume** or **Recalibrate**, it must know what the loaded cartridge actually holds —
+*without* committing to a destructive operation. `TapeCalibrator.InspectMedia()` provides exactly that: a
+**pure read** of the on-tape trail that writes nothing and never invalidates the medium.
+
+```csharp
+public TapeCalibrationMediaInfo? InspectMedia();
+```
+
+- **What it reads.** It positions on the content partition, sets the calibration block size / compression
+  (via the shared `PrepareDrive` — these change drive parameters but write no tape), rewinds, reads the
+  **run header** (File 0 at BOM), then walks back from EOD to locate the **last CRC-valid checkpoint** of
+  that run (the same `FindLastCheckpoint` the resume path uses). Returns `null` (with the error state set,
+  per convention — `ERROR_INVALID_DATA` / `ERROR_NO_MEDIA_IN_DRIVE`) when no valid calibration header is
+  present, so a blank or foreign cartridge is rejected in O(1) at the header read, before any backward walk.
+
+- **Writes nothing, disturbs nothing.** Unlike `Run` / `Resume` / `Recalibrate`, `InspectMedia` does **not**
+  wrap itself in `RunGuard` — a read has no reason to strip and restore the caller's loaded calibrations or
+  EW reserve, so that state is left untouched. It is idempotent: inspecting twice yields the same result,
+  and a subsequent `Resume` still succeeds because the trail was never consumed.
+
+- **Shared header read.** The header-read-and-parse block previously inlined in `ResumeCore` is factored
+  into a private `ReadRunHeader(out blockSize, out recordBuffer)` used by both `InspectMedia` and
+  `ResumeCore`, so the two can never drift.
+
+#### `TapeCalibrationMediaInfo`
+
+A read-only snapshot returned by `InspectMedia`, carrying the header plus the last good checkpoint and a few
+derived, UI-facing convenience values:
+
+| Member | Meaning |
+|---|---|
+| `Header` | The parsed `TapeCalibrationRunHeader` (RunId, ProfileKey, BOM capacity, plan, start time). |
+| `LastCheckpoint` | The last CRC-valid `TapeCalibrationCheckpoint`, or `null` when the run died before its first checkpoint (or every checkpoint is torn). |
+| `RunId` / `ProfileKey` / `CapacityReportedAtBom` / `StartedUtc` | Convenience passthroughs from `Header`. |
+| `IsResumable` | `true` when a CRC-valid checkpoint exists — i.e. `Resume` / `Recalibrate` can proceed. |
+| `CheckpointedBytes` / `CheckpointIndex` | Bytes written / index at the last good checkpoint (0 / −1 when none) — the resume restart point. |
+| `EarlyWarningCaptured` | Whether the EW landmark was already captured by the last checkpoint. |
+| `ProgressFraction` | `CheckpointedBytes / CapacityReportedAtBom`, clamped 0..1 — a "how far did it get" hint. |
+| `AppearsComplete` | Heuristic (no extra tape I/O): the last checkpoint is within one checkpoint-interval of the tail start, so the run most likely reached the tail and completed. |
+
+Because checkpoints are **body-only** (they stop just before the tail), a *completed* run's last checkpoint
+sits near `(1 − TailCapacityFraction)` (~0.95) of capacity, while an *interrupted* one sits wherever it
+stopped. This lets a UI distinguish the two states — and pick a sensible default (Recalibrate for an
+apparently-complete cartridge, Resume for an interrupted one) — from a single read, with **no** EOD-seek or
+byte-position measurement. `AppearsComplete` is deliberately documented as a heuristic (fuzzy right at the
+tail boundary); if a future workflow needs certainty, the clean upgrade is a tiny "final" trailer record
+written at EOM that `InspectMedia` would read deterministically — deferred until a caller requires it.
+
+The verb is **advisory only**: like `Recalibrate`, it makes no policy decision and performs no drive-profile
+matching. The service / UI layer decides what to offer based on `IsResumable`, `AppearsComplete`, and its
+own match of `ProfileKey` against the current drive.
+
+> **Files touched:** `TapeCalibrator.cs` (new `InspectMedia` + shared `ReadRunHeader`; `ResumeCore`
+> refactored onto it); `TapeCalibrationCheckpoint.cs` (new `TapeCalibrationMediaInfo` record).
+> Covered by `CalibrationResumeTests` (complete/aborted/blank/foreign cases; the non-destructive
+> "inspect-twice-then-resume-still-succeeds" contract; and the "does not disturb loaded calibrations /
+> reserve" guarantee).
+
 ### 6.5 A genuine `VirtualTapeMedia` bug, surfaced by resume [DONE]
 
 Resume repositions **in front of the last filemark on a full tape** and overwrites. `WriteBlocks` and

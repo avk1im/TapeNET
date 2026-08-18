@@ -245,32 +245,10 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
     /// </summary>
     private TapeCalibration? ResumeCore(IProgress<TapeCalibrationProgress>? progress)
     {
-        if (!Drive.IsMediaLoaded)
-        {
-            SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
-            LogErrorAsDebug("Resume: no media loaded");
-            return null;
-        }
-
-        if (!PrepareDrive(out TapeCalibrationPlan _, out uint blockSize))
-            return null;
-
-        // --- Read the header block (File 0 at BOM) to recover RunId, plan, and BOM capacity. ---
-        if (!Drive.Rewind())
-        {
-            SyncErrorFrom(Drive);
-            LogErrorAsDebug("Resume: failed to rewind to header");
-            return null;
-        }
-
-        var recordBuffer = new byte[blockSize];
-        TapeCalibrationRunHeader? header = ReadRecord<TapeCalibrationRunHeader>(recordBuffer);
+        // Position at BOM and read the run header (read-only; shared with InspectMedia).
+        TapeCalibrationRunHeader? header = ReadRunHeader(out uint blockSize, out byte[] recordBuffer);
         if (header is null)
-        {
-            SetError(WIN32_ERROR.ERROR_INVALID_DATA);
-            LogErrorAsDebug("Resume: no valid calibration header on this cartridge — not resumable");
-            return null;
-        }
+            return null;   // no media / no valid header — error state already set
 
         // Prefer the ORIGINAL plan (identical cadence/chunking); re-derive chunks if the drive now rounds
         //  the block size differently than when the run started.
@@ -326,6 +304,81 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         state.CheckpointIndex++;
 
         return RunLoop(plan, capacityReportedAtBom, state, records, progress);
+    }
+
+    #endregion
+
+    #region *** Media inspection (read-only) ***
+
+    /// <summary>
+    /// Reads the on-tape run header (File 0 at BOM) and, when present, the last CRC-valid checkpoint,
+    /// WITHOUT writing anything — safe to call speculatively (e.g. from a UI on media load, to decide
+    /// whether to offer Resume / Recalibrate). Returns a <see cref="TapeCalibrationMediaInfo"/> describing
+    /// the run and its resumability, or <see langword="null"/> (error state set, per convention) when no
+    /// valid calibration header is present on the loaded cartridge.
+    /// <para>
+    /// Non-destructive: like the run verbs it positions on the content partition and sets the drive's block
+    /// size / compression via <see cref="PrepareDrive"/>, but it never writes to tape, so the calibration
+    /// trail is preserved. Unlike the run verbs it does NOT neutralize the caller's loaded calibrations or
+    /// EW reserve (no <c>RunGuard</c>) — a pure read leaves that state untouched.
+    /// </para>
+    /// </summary>
+    public TapeCalibrationMediaInfo? InspectMedia()
+    {
+        ResetError();
+
+        TapeCalibrationRunHeader? header = ReadRunHeader(out _, out byte[] recordBuffer);
+        if (header is null)
+            return null;   // no media / no valid header — error state already set
+
+        // Locate the last CRC-valid checkpoint of this run (read-only; null ⇒ header-only / all torn).
+        TapeCalibrationCheckpoint? last = FindLastCheckpoint(header.RunId, recordBuffer, out _);
+
+        ResetError();
+        return new TapeCalibrationMediaInfo(header, last);
+    }
+
+    /// <summary>
+    /// Positions at BOM and reads + CRC-parses the run header (File 0). Shared by <see cref="ResumeCore"/>
+    /// and <see cref="InspectMedia"/>. On success the tape sits just past the header block and
+    /// <paramref name="recordBuffer"/> is sized to one calibration block for reuse by
+    /// <see cref="FindLastCheckpoint"/>. Returns <see langword="null"/> (error state set) when the drive
+    /// cannot be prepared or no valid header is present. WRITES NOTHING.
+    /// </summary>
+    private TapeCalibrationRunHeader? ReadRunHeader(out uint blockSize, out byte[] recordBuffer)
+    {
+        blockSize = 0;
+        recordBuffer = [];
+
+        if (!Drive.IsMediaLoaded)
+        {
+            SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
+            LogErrorAsDebug("Calibration inspect: no media loaded");
+            return null;
+        }
+
+        if (!PrepareDrive(out _, out blockSize))
+            return null;
+
+        // Rewind to and read the header block (File 0 at BOM). PrepareDrive already positions at BOM;
+        //  the explicit rewind is belt-and-suspenders and matches the original resume path.
+        if (!Drive.Rewind())
+        {
+            SyncErrorFrom(Drive);
+            LogErrorAsDebug("Calibration inspect: failed to rewind to header");
+            return null;
+        }
+
+        recordBuffer = new byte[blockSize];
+        TapeCalibrationRunHeader? header = ReadRecord<TapeCalibrationRunHeader>(recordBuffer);
+        if (header is null)
+        {
+            SetError(WIN32_ERROR.ERROR_INVALID_DATA);
+            LogErrorAsDebug("Calibration inspect: no valid calibration header on this cartridge");
+            return null;
+        }
+
+        return header;
     }
 
     #endregion
