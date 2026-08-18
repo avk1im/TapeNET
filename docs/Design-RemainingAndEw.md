@@ -1284,9 +1284,37 @@ Surface the new `CalibrationMode` in both apps, matching the service extension.
   written, HP Ultrium 6, firmware 35GD→35GE"). Wire the selection to `CalibrateRequest.Mode`; on a
   `FullRecalibrationAdvised` verdict, route the service's `Confirm` to a WPF dialog; render
   `RecalibrationDelta`/`RecalibrationVerdict` in `CalibrationWindow` (before/after rows + verdict banner).
+
+  **[DONE — WPF half]** As-built, this landed as follows:
+  - **`TapeCalibrator.InspectMedia()`** (read-only, `TapeCalibrator.cs`) and the service-level
+    **`TapeServiceBase.ExecuteInspectCalibrationMediaAsync()`** (`TapeServiceBase.Calibrate.cs`) pair
+    back the "Inspect media" button. The service method combines the on-tape header/checkpoint
+    (calibrator) with a `CalibrationStore.Exists(ProfileKey)` lookup to recommend New/Resume/Recalibrate,
+    returned as `InspectCalibrationMediaResult` (`ServiceOperationResult.cs`).
+  - **Inspection is an optional convenience, never a gate** — all three modes stay enabled at all times;
+    a wrong cartridge is already reported by the service with mode-appropriate text. The Inspect Media
+    area is collapsed while "New run" is selected (`CalibrationRunViewModel.IsInspectAvailable`).
+  - **`Confirm` was already WPF-routed** before this work — `WpfServiceHost.Confirm`
+    (`TapeWinNET/Services/WpfServiceHost.cs`) marshals to a `SimpleBox` YesNo on the dispatcher, so no
+    additional wiring was needed for the breach-confirm chain.
+  - **VM split three ways:** `CalibrationRunViewModel` (mode radios, Inspect Media, the destructive run
+    itself — renamed from the old overloaded `CalibrationViewModel`), `CalibrationResultViewModel`
+    (Save/Apply, verdict banner, recalibration delta, the user-driven "Run Full Calibration..." follow-up),
+    and `CalibrationResultViewModelBase` (shared display surface, also the base of
+    `CalibrationProfilesViewModel` so the profiles browser reuses the same figures/verdict members
+    without duplicating them).
+  - **`CalibrationResultView`** (`TapeWinNET/Controls/`) is the extracted shared result `UserControl` —
+    verdict banner, measured-result figures, before/after recalibration delta, and the reported→actual
+    curve — dropped into both `CalibrationWindow.xaml` and `CalibrationProfilesWindow.xaml`, which just
+    inherit its DataContext.
+  - **"Run Full Calibration..."** does not launch a run itself; it closes the result window with
+    `CalibrationResultViewModel.FullCalibrationRequested`, and `MainViewModel.Calibration.cs` re-opens
+    `CalibrateWindow` (New preselected) — keeping run orchestration in one place, in addition to (not
+    instead of) the service's own mid-operation `Confirm`-chain.
 - **CLI (`TapeConNET`):** add `--calibrate-resume` and `--calibrate-recheck` (or `--calibrate
   --mode=resume|recalibrate`); map `ITapeServiceHost.Confirm` to a Y/N prompt (or `--yes` for
-  non-interactive); print the recalibration assessment table and verdict.
+  non-interactive); print the recalibration assessment table and verdict. **[Not yet done — CLI half remains.]**
+
 
 ### 7.2 Update a-priori and "LTO-4-like" profiles from the real-hardware data
 

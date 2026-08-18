@@ -189,7 +189,49 @@ public sealed record CalibrateResult : FileOperationResult
     public override bool IsFullSuccess => base.IsFullSuccess && Calibration is not null;
 }
 
-// ── List ─────────────────────────────────────────────────────────────────────
+/// <summary>
+/// Result of a non-destructive <see cref="TapeCalibrator.InspectMedia"/> probe, enriched with the
+/// service-layer policy (store lookup) that the calibrator itself stays free of. Lets a UI decide
+/// which mode to recommend WITHOUT gating anything — inspection is always an optional convenience.
+/// </summary>
+public sealed record InspectCalibrationMediaResult : ServiceOperationResult
+{
+    /// <summary>True when a valid calibration run header was found on the loaded cartridge.</summary>
+    public bool HasRunHeader { get; init; }
+
+    /// <summary>The drive+media profile key recorded in the header, or empty when no header was found.</summary>
+    public string ProfileKey { get; init; } = string.Empty;
+
+    /// <summary>When the inspected run started (UTC), or <see langword="default"/> when no header was found.</summary>
+    public DateTime StartedUtc { get; init; }
+
+    /// <summary>Driver-reported capacity at BOM, captured at the start of the inspected run.</summary>
+    public long CapacityReportedAtBom { get; init; }
+
+    /// <summary>True when a CRC-valid checkpoint of the run exists — i.e. Resume can proceed.</summary>
+    public bool HasCheckpoint { get; init; }
+
+    /// <summary>Bytes written as of the last good checkpoint.</summary>
+    public long BytesWritten { get; init; }
+
+    /// <summary>Progress hint in 0..1 — see <see cref="TapeCalibrationMediaInfo.ProgressFraction"/>.</summary>
+    public double ProgressFraction { get; init; }
+
+    /// <summary>True when the header's profile key matches the currently loaded drive+media.</summary>
+    public bool MatchesCurrentDrive { get; init; }
+
+    /// <summary>True when a calibration profile for this run's key is already in the shared store —
+    ///  the strongest signal that the run reached the tail and completed.</summary>
+    public bool HasStoredCalibration { get; init; }
+
+    /// <summary>The mode the service recommends offering, or <see langword="null"/> when no header was found.</summary>
+    public CalibrationMode? RecommendedMode { get; init; }
+
+    /// <summary>Ready-to-display summary of the inspection, for the UI's inspect-result pane.</summary>
+    public string Summary { get; init; } = string.Empty;
+}
+
+// ── List ──────
 
 /// <summary>
 /// Summary result of a list / contents-display operation.

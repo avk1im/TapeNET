@@ -8,11 +8,14 @@ namespace TapeWinNET;
 public partial class CalibrateWindow : Window, IHelpPaneHost
 {
     private readonly DialogHelpPaneController _help;
+    private readonly CalibrationRunViewModel _viewModel;
 
-    public CalibrateWindow(CalibrationViewModel viewModel)
+    public CalibrateWindow(CalibrationRunViewModel viewModel)
     {
         InitializeComponent();
         DataContext = viewModel;
+        _viewModel = viewModel;
+        _viewModel.PropertyChanged += ViewModel_PropertyChanged;
 
         var icon = TapeIcons.GetTapeMediaIcon(large: true);
         if (icon != null)
@@ -24,6 +27,16 @@ public partial class CalibrateWindow : Window, IHelpPaneHost
         _help = new DialogHelpPaneController(
             this, this, HelpPaneColumn, HelpPaneSplitter, HelpPaneControl,
             defaultTopicId: "dialog.calibrate-media", helpButton: HelpButton);
+    }
+
+    private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(CalibrationRunViewModel.HasInspectionResult) or
+                               nameof(CalibrationRunViewModel.InspectionSummary))
+        {
+            // Ensure the inspection result banner is visible even if the scroll region is scrolled elsewhere.
+            Dispatcher.BeginInvoke(() => InspectionResultBorder.BringIntoView());
+        }
     }
 
     private void HelpButton_Click(object sender, RoutedEventArgs e)

@@ -18,7 +18,7 @@ public partial class MainViewModel
     private string _currentCalibrationPhase = string.Empty;
     private bool _isCalibrateInProgress;
     private bool _isAbortCalibrationEnabled = true;
-    private CalibrationViewModel? _activeCalibrationViewModel;
+    private CalibrationRunViewModel? _activeCalibrationViewModel;
 
     #endregion
 
@@ -101,11 +101,10 @@ public partial class MainViewModel
 
     private void ShowCalibrationWindow(object? parameter)
     {
-        var viewModel = new CalibrationViewModel(
+        var viewModel = new CalibrationRunViewModel(
             _tapeService,
             OnStartCalibration,
-            () => Application.Current.Windows.OfType<CalibrateWindow>().FirstOrDefault()?.Close(),
-            onApplied: RefreshCurrentView);
+            () => Application.Current.Windows.OfType<CalibrateWindow>().FirstOrDefault()?.Close());
 
         var window = new CalibrateWindow(viewModel)
         {
@@ -125,13 +124,13 @@ public partial class MainViewModel
         window.ShowDialog();
     }
 
-    private void OnStartCalibration(CalibrationViewModel viewModel)
+    private void OnStartCalibration(CalibrationRunViewModel viewModel)
     {
         Application.Current.Windows.OfType<CalibrateWindow>().FirstOrDefault()?.Close();
         _ = ExecuteCalibrationAsync(viewModel);
     }
 
-    private async Task ExecuteCalibrationAsync(CalibrationViewModel viewModel)
+    private async Task ExecuteCalibrationAsync(CalibrationRunViewModel viewModel)
     {
         IsBusy = true;
         IsCalibrateInProgress = true;
@@ -175,11 +174,20 @@ public partial class MainViewModel
             CalibrationProgressText = string.Empty;
             CurrentCalibrationPhase = string.Empty;
 
-            var resultWindow = new CalibrationWindow(viewModel)
+            var resultViewModel = new CalibrationResultViewModel(_tapeService, operationResult, onApplied: RefreshCurrentView);
+            var resultWindow = new CalibrationWindow(resultViewModel)
             {
                 Owner = Application.Current.MainWindow
             };
             resultWindow.ShowDialog();
+
+            // The "Run Full Calibration..." follow-up (offered only when a recalibration was found
+            //  unreliable) re-opens CalibrateWindow with New preselected, rather than launching a run
+            //  directly, so run orchestration stays in one place.
+            if (resultWindow.FullCalibrationRequested)
+            {
+                ShowCalibrationWindow(parameter: null);
+            }
         }
         catch (Exception ex)
         {

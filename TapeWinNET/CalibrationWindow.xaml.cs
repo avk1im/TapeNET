@@ -9,7 +9,7 @@ public partial class CalibrationWindow : Window, IHelpPaneHost
 {
     private readonly DialogHelpPaneController _help;
 
-    public CalibrationWindow(CalibrationViewModel viewModel)
+    public CalibrationWindow(CalibrationResultViewModel viewModel)
     {
         InitializeComponent();
         DataContext = viewModel;
@@ -21,10 +21,21 @@ public partial class CalibrationWindow : Window, IHelpPaneHost
             Icon = icon;
         }
 
+        viewModel.CloseRequested += (_, _) =>
+        {
+            DialogResult = true;
+            Close();
+        };
+
         _help = new DialogHelpPaneController(
             this, this, HelpPaneColumn, HelpPaneSplitter, HelpPaneControl,
             defaultTopicId: "dialog.calibration-result", helpButton: HelpButton);
     }
+
+    /// <summary>True when the user requested a follow-up full calibration via the result window's
+    ///  "Run Full Calibration..." button (only offered when a recalibration was found unreliable).</summary>
+    public bool FullCalibrationRequested => DataContext is CalibrationResultViewModel { FullCalibrationRequested: true };
+
 
     private void HelpButton_Click(object sender, RoutedEventArgs e)
         => _help.ToggleHelpPane();

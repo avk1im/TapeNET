@@ -2,8 +2,6 @@ using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Input;
 
-using Windows.Win32.System.SystemServices; // Helpers.BytesToStringLong
-
 using TapeLibNET;
 using TapeWinNET.Services;
 
@@ -14,12 +12,11 @@ namespace TapeWinNET.ViewModels;
 /// calibration profile previously persisted to <see cref="AppSettings.Calibrations"/>, lets the
 /// user inspect one, apply it to the currently loaded media, or remove it from the store.
 /// </summary>
-public sealed class CalibrationProfilesViewModel : ViewModelBase
+public sealed class CalibrationProfilesViewModel : CalibrationResultViewModelBase
 {
     private readonly TapeService _tapeService;
     private readonly Func<bool> _isBusy;
     private ITapeCalibration? _selectedProfile;
-    private string _statusMessage = string.Empty;
 
     public CalibrationProfilesViewModel(TapeService tapeService, Func<bool> isBusy)
     {
@@ -36,6 +33,9 @@ public sealed class CalibrationProfilesViewModel : ViewModelBase
 
     public ObservableCollection<ITapeCalibration> Profiles { get; } = [];
 
+    /// <inheritdoc/>
+    public override ITapeCalibration? Calibration => SelectedProfile;
+
     public ITapeCalibration? SelectedProfile
     {
         get => _selectedProfile;
@@ -45,46 +45,13 @@ public sealed class CalibrationProfilesViewModel : ViewModelBase
                 return;
 
             OnPropertyChanged(nameof(HasSelection));
-            OnPropertyChanged(nameof(ReportedCapacityAtBomDisplay));
-            OnPropertyChanged(nameof(PhantomFreeAtEomDisplay));
-            OnPropertyChanged(nameof(CapacityActualDisplay));
-            OnPropertyChanged(nameof(EarlyWarningDisplay));
-            OnPropertyChanged(nameof(EwToEomDistanceDisplay));
-            OnPropertyChanged(nameof(CurvePointCountDisplay));
+            RaiseResultPropertiesChanged();
             StatusMessage = string.Empty;
             CommandManager.InvalidateRequerySuggested();
         }
     }
 
     public bool HasSelection => SelectedProfile is not null;
-
-    public string ReportedCapacityAtBomDisplay =>
-        SelectedProfile is not null ? Helpers.BytesToStringLong(SelectedProfile.ReportedCapacityAtBom) : "—";
-
-    public string PhantomFreeAtEomDisplay =>
-        SelectedProfile is not null ? Helpers.BytesToStringLong(SelectedProfile.PhantomFreeAtEom) : "—";
-
-    public string CapacityActualDisplay =>
-        SelectedProfile is not null ? Helpers.BytesToStringLong(SelectedProfile.CapacityActual) : "—";
-
-    public string EarlyWarningDisplay =>
-        SelectedProfile?.EarlyWarning is { } ew
-            ? $"{Helpers.BytesToStringLong(ew.ActualRemaining)} remaining (reported {Helpers.BytesToStringLong(ew.ReportedRemaining)})"
-            : "Not observed";
-
-    public string EwToEomDistanceDisplay =>
-        SelectedProfile is not null && SelectedProfile.EwToEomDistance > 0
-            ? Helpers.BytesToStringLong(SelectedProfile.EwToEomDistance)
-            : "—";
-
-    public string CurvePointCountDisplay =>
-        SelectedProfile is not null ? SelectedProfile.Curve.Count.ToString("N0") : "0";
-
-    public string StatusMessage
-    {
-        get => _statusMessage;
-        private set => SetProperty(ref _statusMessage, value);
-    }
 
     #endregion
 

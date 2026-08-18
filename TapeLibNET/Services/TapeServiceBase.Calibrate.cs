@@ -354,6 +354,108 @@ public partial class TapeServiceBase
         return _drive.AddCalibration(calibration);
     }
 
+    // ── Media inspection (read-only, optional convenience) ──────────────────────────────────────
+    /// <summary>
+    /// Non-destructively probes the loaded cartridge for an existing calibration trail, combining the
+    /// on-tape header/checkpoint (<see cref="TapeCalibrator.InspectMedia"/>) with a
+    /// <see cref="CalibrationStore"/> lookup by profile key to recommend a <see cref="CalibrationMode"/>.
+    /// This is a pure convenience for the UI — it never gates New/Resume/Recalibrate, which all remain
+    /// available regardless of the result.
+    /// </summary>
+    public Task<InspectCalibrationMediaResult> ExecuteInspectCalibrationMediaAsync()
+    {
+        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
+
+        return Task.Run(() =>
+        {
+            try
+            {
+                LogInfo("Starting media inspection for recalibration");
+
+                if (_drive is null || !_drive.IsMediaLoaded)
+                {
+                    LastError = "Media not loaded";
+                    return new InspectCalibrationMediaResult
+                    {
+                        Success = false,
+                        Outcome = ServiceReportLevel.Error,
+                        Message = LastError,
+                    };
+                }
+
+                var calibrator = new TapeCalibrator(_drive);
+                TapeCalibrationMediaInfo? info = calibrator.InspectMedia();
+
+                if (info is null)
+                {
+                    LogInfo("Media inspection: no calibration trail found on this cartridge");
+                    return new InspectCalibrationMediaResult
+                    {
+                        Success = true,
+                        Outcome = ServiceReportLevel.Info,
+                        HasRunHeader = false,
+                        Summary = "No calibration trail found on this cartridge — a New run is required.",
+                    };
+                }
+
+                bool matchesDrive = string.Equals(info.ProfileKey, _drive.DriveProfileKey, StringComparison.Ordinal);
+                bool hasStored = CalibrationStore.Exists(info.ProfileKey);
+
+                CalibrationMode recommended = hasStored
+                    ? CalibrationMode.Recalibrate
+                    : info.IsResumable
+                        ? CalibrationMode.Resume
+                        : CalibrationMode.New;
+
+                string summary = hasStored
+                    ? $"A complete, stored calibration exists for this cartridge (started {info.StartedUtc:u}) — Recalibrate recommended."
+                    : info.IsResumable
+                        ? $"An interrupted run was found ({info.ProgressFraction:P0} written, started {info.StartedUtc:u}) — Resume recommended."
+                        : "A calibration header was found, but no valid checkpoint — the run cannot be resumed.";
+
+                if (!matchesDrive)
+                    summary += " Note: this trail belongs to a different drive/media profile.";
+
+                LogInfo("Media inspection:");
+                LogInfoSub($"Profile key: >{info.ProfileKey}<");
+                LogInfoSub($"Started: {info.StartedUtc:u}, resumable: {info.IsResumable}, stored: {hasStored}");
+
+                return new InspectCalibrationMediaResult
+                {
+                    Success = true,
+                    Outcome = ServiceReportLevel.Completed,
+                    HasRunHeader = true,
+                    ProfileKey = info.ProfileKey,
+                    StartedUtc = info.StartedUtc,
+                    CapacityReportedAtBom = info.CapacityReportedAtBom,
+                    HasCheckpoint = info.IsResumable,
+                    BytesWritten = info.CheckpointedBytes,
+                    ProgressFraction = info.ProgressFraction,
+                    MatchesCurrentDrive = matchesDrive,
+                    HasStoredCalibration = hasStored,
+                    RecommendedMode = recommended,
+                    Summary = summary,
+                };
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                LogErr($"Media inspection failed: {ex.Message}");
+                return new InspectCalibrationMediaResult
+                {
+                    Success = false,
+                    Outcome = ServiceReportLevel.Error,
+                    Message = ex.Message,
+                    Error = ex,
+                };
+            }
+            finally
+            {
+                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
+            }
+        });
+    }
+
     // ── Calibration autoload ──────────────────────────────────────────────────
     private TapeCalibrationStore? _calibrationStore;
 
