@@ -134,7 +134,7 @@
                                                   Calibration="{Binding Calibration}"/>
 
                 <TextBlock Grid.Row="1"
-                           Text="The orange tail band magnifies the EW → EOM region with a split X-axis."
+                           Text="The blue band magnifies the tail region with a split X-axis.&#10;Left click to select a new region, right click to reset to EW → EOM."
                            Foreground="Gray"
                            TextWrapping="Wrap"
                            Margin="0,6,0,0"
