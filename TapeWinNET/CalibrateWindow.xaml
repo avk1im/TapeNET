@@ -93,18 +93,18 @@
                               help:HelpTopicIdAttachedProperty.TopicId="dialog.calibrate"
                               help:HelpControlNameAttachedProperty.ControlName="Operation">
                         <StackPanel Margin="8">
-                            <RadioButton Content="New run — calibrate from the beginning of the cartridge"
+                            <RadioButton Content="New run — calibrate fully from the beginning of the cartridge"
                                          IsChecked="{Binding IsNewRunMode}"
                                          Margin="0,0,0,6"/>
-                            <RadioButton Content="Resume — continue an interrupted calibration run"
+                            <RadioButton Content="Resume — continue an interrupted calibration run to the end"
                                          IsChecked="{Binding IsResumeMode}"
                                          Margin="0,0,0,6"/>
-                            <RadioButton Content="Recalibrate — re-measure a completed profile and compare"
+                            <RadioButton Content="Recalibrate — re-measure only the tail of a completed run and compare"
                                          IsChecked="{Binding IsRecalibrateMode}"/>
 
                             <StackPanel Margin="0,10,0,0"
                                         Visibility="{Binding IsInspectAvailable, Converter={StaticResource BoolToVis}}">
-                                <TextBlock Text="Not sure what's on this cartridge? Inspect it first — this is read-only and never required."
+                                <TextBlock Text="Inspect the cartridge to determine if it allows Resume or Recalibrate (this is read-only!)"
                                            Foreground="Gray"
                                            TextWrapping="Wrap"
                                            Margin="0,0,0,6"/>
