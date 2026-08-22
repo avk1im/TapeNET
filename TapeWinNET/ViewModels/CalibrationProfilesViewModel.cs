@@ -61,7 +61,7 @@ public sealed class CalibrationProfilesViewModel : CalibrationResultViewModelBas
     public ICommand RemoveCommand { get; }
 
     private bool CanApply =>
-        SelectedProfile is not null && !_isBusy() && _tapeService.IsMediaLoaded;
+        SelectedProfile is not null && !_isBusy() && _tapeService.IsMediaLoaded && !_tapeService.HasInitiatorPartition;
 
     #endregion
 

@@ -746,8 +746,11 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         //  wrong cartridge (ordinary backup sets, no calibration trail) is rejected in one traversal
         if (!Drive.FastforwardToEnd(MediaPartition.Content))
         {
-            SyncErrorFrom(Drive);
-            return null;
+            m_logger.LogInformation(
+                "{Prefix}: Resume — seek-to-EOD failed ({Err}); cartridge is likely full to EOM w/o EOD mark, " +
+                    "proceeding from the current (end-of-data) position",
+                LogPrefix, Drive.LastErrorMessage);
+            ResetError();
         }
 
         // Back up before the last filemark; none present ⇒ no resumable run (header-only / blank).

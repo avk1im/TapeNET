@@ -156,12 +156,26 @@ public sealed class CalibrationRunViewModel : ViewModelBase
             InspectionSummary = result.Success
                 ? result.Summary
                 : $"Inspection failed: {result.Message}";
-            InspectionLevel = result.Success
-                ? (result.HasRunHeader ? WarningLevel.Info : WarningLevel.Warning)
-                : WarningLevel.Failed;
+
+            // Severity mirrors the cartridge state the service resolved, not merely "has a header":
+            //  - failure                         → Failed
+            //  - no trail (New required)         → Info   (normal — a scratch cartridge)
+            //  - header present but no checkpoint→ Warning (a trail exists but is unusable)
+            //  - trail from a different drive    → Warning (usable, but worth flagging)
+            //  - resumable/complete on this drive→ Info
+            InspectionLevel = !result.Success
+                ? WarningLevel.Failed
+                : !result.HasRunHeader
+                    ? WarningLevel.Info
+                    : (!result.HasCheckpoint || !result.MatchesCurrentDrive)
+                        ? WarningLevel.Warning
+                        : WarningLevel.Info;
+
             HasInspectionResult = true;
 
-            if (result.RecommendedMode is { } recommended)
+            // Default the mode selector to the recommendation — but only on a successful read, so a failed
+            //  inspection never silently flips the user's chosen mode (e.g. back to New).
+            if (result.Success && result.RecommendedMode is { } recommended)
                 SelectedMode = recommended;
         }
         finally

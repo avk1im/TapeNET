@@ -32,7 +32,7 @@
             </Grid.RowDefinitions>
 
             <TextBlock Grid.Row="0"
-                       Text="Every calibration profile ever saved is listed below. Select one to review it, apply it to the currently loaded media, or remove it."
+                       Text="Every calibration profile ever saved is listed below. Select one to review it, apply it to the currently loaded media (single-partition only), or remove it."
                        TextWrapping="Wrap"
                        Margin="0,0,0,12"/>
 

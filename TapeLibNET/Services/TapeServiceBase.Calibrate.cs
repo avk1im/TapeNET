@@ -109,6 +109,15 @@ public partial class TapeServiceBase
             throw new InvalidOperationException("Media not loaded");
         }
 
+        // If the drive has multiple partitions, check with the user and break if negative
+        if (_drive.HasInitiatorPartition)
+        {
+            if (!host.Confirm(
+                    "Calibrating a multi-partition media will have no effect.\nWould you still like to continue?",
+                    defaultAnswer: false))
+                return MakeResult(aborted: true, message: "For calibration, use a single-partition media", mode: request.Mode);
+        }
+
         try
         {
             LogWarn("Calibration is destructive — use a scratch cartridge only");
@@ -358,9 +367,26 @@ public partial class TapeServiceBase
     /// <summary>
     /// Non-destructively probes the loaded cartridge for an existing calibration trail, combining the
     /// on-tape header/checkpoint (<see cref="TapeCalibrator.InspectMedia"/>) with a
-    /// <see cref="CalibrationStore"/> lookup by profile key to recommend a <see cref="CalibrationMode"/>.
-    /// This is a pure convenience for the UI — it never gates New/Resume/Recalibrate, which all remain
-    /// available regardless of the result.
+    /// <see cref="CalibrationStore"/> lookup to recommend a <see cref="CalibrationMode"/>.
+    /// This is a pure convenience for the UI — it doesn't gate New/Resume/Recalibrate, which all remain
+    /// available regardless of the result, since Resume/Recalibrate will fail gracefully if the cartridge
+    /// is unsuitable.
+    /// <remarks>
+    /// <para>
+    /// Recommendation logic. Resume AND Recalibrate both require a valid ON-TAPE checkpoint — no stored
+    /// profile can substitute for a checkpoint that is not physically on the cartridge. Recalibrate
+    /// additionally needs a COMPLETE run plus a baseline to compare against.
+    /// </para>
+    /// <code>
+    ///  Cartridge state            | IsResumable | AppearsComplete | hasBaseline | Recommend
+    ///  ---------------------------+-------------+-----------------+-------------+-----------
+    ///  No header (blank/foreign)  |     —       |       —         |     —       | New
+    ///  Header only, no checkpoint |   false     |       —         |     —       | New
+    ///  Interrupted run            |   true      |     false       |     —       | Resume
+    ///  Complete run, no baseline  |   true      |     true        |   false     | Resume
+    ///  Complete run + baseline    |   true      |     true        |   true      | Recalibrate
+    /// </code>
+    /// </remarks>
     /// </summary>
     public Task<InspectCalibrationMediaResult> ExecuteInspectCalibrationMediaAsync()
     {
@@ -370,7 +396,7 @@ public partial class TapeServiceBase
         {
             try
             {
-                LogInfo("Starting media inspection for recalibration");
+                LogInfo("Starting media inspection for recalibration...");
 
                 if (_drive is null || !_drive.IsMediaLoaded)
                 {
@@ -381,6 +407,20 @@ public partial class TapeServiceBase
                         Outcome = ServiceReportLevel.Error,
                         Message = LastError,
                     };
+                }
+
+                // If the drive has multiple partitions, check with the user and break if negative
+                if (_drive.HasInitiatorPartition)
+                {
+                    if (!host.Confirm(
+                            "Calibrating a multi-partition media will have no effect.\nWould you still like to continue?",
+                            defaultAnswer: false))
+                        return new InspectCalibrationMediaResult
+                        {
+                            Success = false,
+                            Outcome = ServiceReportLevel.Warning,
+                            Message = "For calibration, use a single-partition media",
+                        };
                 }
 
                 var calibrator = new TapeCalibrator(_drive);
@@ -394,31 +434,61 @@ public partial class TapeServiceBase
                         Success = true,
                         Outcome = ServiceReportLevel.Info,
                         HasRunHeader = false,
+                        RecommendedMode = CalibrationMode.New,
                         Summary = "No calibration trail found on this cartridge — a New run is required.",
                     };
                 }
 
                 bool matchesDrive = string.Equals(info.ProfileKey, _drive.DriveProfileKey, StringComparison.Ordinal);
-                bool hasStored = CalibrationStore.Exists(info.ProfileKey);
 
-                CalibrationMode recommended = hasStored
-                    ? CalibrationMode.Recalibrate
-                    : info.IsResumable
-                        ? CalibrationMode.Resume
-                        : CalibrationMode.New;
+                // The baseline that makes Recalibrate MEANINGFUL is resolved exactly as ExecuteCalibrateCore
+                //  does — the drive's active calibration, else the store keyed by the CURRENT drive
+                //  (NOT the trail's recorded key, which may differ if the cartridge came from another drive).
+                bool hasBaseline = _drive.Calibration is not null
+                                || CalibrationStore.Exists(_drive.DriveProfileKey);
 
-                string summary = hasStored
-                    ? $"A complete, stored calibration exists for this cartridge (started {info.StartedUtc:u}) — Recalibrate recommended."
-                    : info.IsResumable
-                        ? $"An interrupted run was found ({info.ProgressFraction:P0} written, started {info.StartedUtc:u}) — Resume recommended."
-                        : "A calibration header was found, but no valid checkpoint — the run cannot be resumed.";
+                // Gate on the actual ON-TAPE state first (IsResumable), then completeness + baseline.
+                //  See the table in the method summary.
+                CalibrationMode recommended;
+                string summary;
+
+                if (!info.IsResumable)
+                {
+                    // Header present but no valid checkpoint (run died before the first checkpoint, or all
+                    //  checkpoints are torn) — nothing to resume from and nothing to recalibrate.
+                    recommended = CalibrationMode.New;
+                    summary = "A calibration header is present, but no valid checkpoint could be read from "
+                            + "this cartridge — it cannot be resumed or recalibrated. Run a New calibration.";
+                }
+                else if (info.AppearsComplete && hasBaseline)
+                {
+                    recommended = CalibrationMode.Recalibrate;
+                    summary = $"A completed calibration is on this cartridge (started {info.StartedUtc:u}). "
+                            + "Recalibrate quickly re-measures the tail and compares it against the existing profile.";
+                }
+                else if (info.AppearsComplete)
+                {
+                    // Complete trail, but no stored profile to compare — resuming re-measures the tail into
+                    //  a fresh profile (equivalent work; there is simply nothing to diff against).
+                    recommended = CalibrationMode.Resume;
+                    summary = $"A completed calibration run is on this cartridge (started {info.StartedUtc:u}), "
+                            + "but no stored profile to compare against. Resume re-measures the tail into a fresh profile.";
+                }
+                else
+                {
+                    recommended = CalibrationMode.Resume;
+                    summary = $"An interrupted run was found ({info.ProgressFraction:P0} written, started "
+                            + $"{info.StartedUtc:u}). Resume continues it to completion.";
+                }
 
                 if (!matchesDrive)
-                    summary += " Note: this trail belongs to a different drive/media profile.";
+                    summary += " Note: this trail was recorded on a different drive/media profile.";
 
                 LogInfo("Media inspection:");
-                LogInfoSub($"Profile key: >{info.ProfileKey}<");
-                LogInfoSub($"Started: {info.StartedUtc:u}, resumable: {info.IsResumable}, stored: {hasStored}");
+                LogInfoSub($">{info.ProfileKey}<");
+                LogInfoSub($"Started: {info.StartedUtc:u}, resumable: {info.IsResumable}, " +
+                           $"complete: {info.AppearsComplete}, baseline: {hasBaseline}");
+                LogInfoSub($"Recommended mode: {recommended}");
 
                 return new InspectCalibrationMediaResult
                 {
@@ -432,7 +502,7 @@ public partial class TapeServiceBase
                     BytesWritten = info.CheckpointedBytes,
                     ProgressFraction = info.ProgressFraction,
                     MatchesCurrentDrive = matchesDrive,
-                    HasStoredCalibration = hasStored,
+                    HasStoredCalibration = hasBaseline,
                     RecommendedMode = recommended,
                     Summary = summary,
                 };
@@ -492,6 +562,12 @@ public partial class TapeServiceBase
         if (_drive.Backend is VirtualTapeDriveBackend { EmulatedEarlyWarning: not { EarlyWarningZone: > 0 } })
         {
             LogInfoSub("Calibration autoload skipped: EOM behavior emulation is not active for this virtual drive");
+            return 0;
+        }
+
+        if (_drive.HasInitiatorPartition)
+        {
+            LogInfoSub("Calibration autoload skipped: multi-partition media");
             return 0;
         }
 

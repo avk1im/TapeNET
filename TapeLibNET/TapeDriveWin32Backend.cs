@@ -141,7 +141,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     public override string Product => string.IsNullOrEmpty(m_ltoProduct) ? "[unknown]" : m_ltoProduct;
     public override string Revision => m_ltoRevision; // SCSI INQUIRY Product Revision Level; empty when unknown
 
-    public bool IsLto => m_ltoGeneration >= 1;
+    public bool IsLto => m_ltoGeneration >= 0; // FIXME: To experiment with SCSI support on pre-LTO drives, set to 0. Otherwise, to 1
     public bool IsLto5Plus => m_ltoGeneration >= 5;
 
     #endregion
