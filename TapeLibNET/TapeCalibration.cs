@@ -415,6 +415,38 @@ public sealed class TapeCalibration : ITapeCalibration
         return $"{(long)(Math.Round(value / mag) * mag)}{(useMB ? "MB" : "GB")}";
     }
 
+#if ALTERNATIVE_VERSION_WITH_ROUNDING
+    public static string CapacityBucket(long capacityBytes)
+    {
+        if (capacityBytes <= 0)
+            return "0";
+
+        const long bytesPerMB = 1024L * 1024;
+        bool useMB = capacityBytes < 2L * c_bytesPerGB;
+        double value = capacityBytes / (double)(useMB ? bytesPerMB : c_bytesPerGB);
+
+        // Base granularity: nearest 10^(floor(log10)-1) keeps 2 significant figures.
+        double step = Math.Pow(10, Math.Floor(Math.Log10(value)) - 1);
+        if (step < 1) step = 1;
+
+        double fine   = Math.Round(value / step) * step;               // 2 sig figs (default)
+        double coarse = Math.Round(value / (step * 10)) * (step * 10);  // trailing sig fig -> 0
+
+        // Snap to the rounder label only when it stays within relative tolerance.
+        double chosen = (coarse > 0 && Math.Abs(coarse - value) <= c_bucketSnapTolerance * value)
+            ? coarse
+            : fine;
+
+        return $"{(long)chosen}{(useMB ? "MB" : "GB")}";
+    }
+
+    /// <summary>
+    /// Relative jitter a capacity may show before it counts as a distinct bucket.
+    /// ~2%: snaps 79.2 GB to 80GB, keeps 76 GB at 76GB, keeps 780 GB at 780GB.
+    /// </summary>
+    private const double c_bucketSnapTolerance = 0.02;
+#endif
+
     #endregion
 
     #region *** Persistence (JSON) ***

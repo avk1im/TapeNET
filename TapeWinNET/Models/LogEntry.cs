@@ -1,6 +1,9 @@
 // WarningLevel is an alias for ServiceReportLevel — same enum, single definition in TapeLibNET.
 global using WarningLevel = TapeLibNET.Services.ServiceReportLevel;
 
+using System.Windows;
+using System.Windows.Media;
+
 namespace TapeWinNET.Models;
 
 /// <summary>
@@ -49,4 +52,61 @@ public static class WarningLevelHelper
         WarningLevel.Completed => "✓",
         _ => string.Empty
     };
+
+    /// <summary>
+    /// Returns the application-defined forderground brush for the given warning level.
+    /// </summary>
+    /// <param name="level">The warning level</param>
+    /// <returns>The corresponding brush loaded from the application resource; <c>null</c> if not found</returns>
+    public static Brush? GetBrush(WarningLevel level)
+    {
+        var key = level switch
+        {
+            WarningLevel.Info => "WarningFg.Info",
+            WarningLevel.Completed => "WarningFg.Completed",
+            WarningLevel.Warning => "WarningFg.Warning",
+            WarningLevel.Failed => "WarningFg.Failed",
+            WarningLevel.Error => "WarningFg.Error",
+            _ => null,   // None → no override
+        };
+
+        return key is null ? null : Application.Current.TryFindResource(key) as Brush;
+    }
+
+    /// <summary>
+    /// Translates a normalized double value into a <see cref="WarningLevel"/> based on severity thresholds.
+    /// </summary>
+    /// <param name="percentage">A normalized value representing a percentage (typically between 0.0 and 1.0).</param>
+    /// <returns>The corresponding <see cref="WarningLevel"/> based on the threshold ranges.</returns>
+    /// <remarks>
+    /// <para>The mapping is evaluated sequentially as follows:</para>
+    /// <list type="bullet">
+    /// <item><description>Values &lt;= 0.025 (2.5%) map to <see cref="WarningLevel.Error"/>.</description></item>
+    /// <item><description>Values &lt;= 0.05 (5.0%) map to <see cref="WarningLevel.Failed"/>.</description></item>
+    /// <item><description>Values &lt;= 0.25 (25.0%) map to <see cref="WarningLevel.Warning"/>.</description></item>
+    /// <item><description>Values &lt;= 0.50 (50.0%) map to <see cref="WarningLevel.Completed"/>.</description></item>
+    /// <item><description>Values &lt;= 1.00 (100.0%) map to <see cref="WarningLevel.Info"/>.</description></item>
+    /// <item><description>Any values greater than 1.00 map to <see cref="WarningLevel.None"/>.</description></item>
+    /// </list>
+    /// </remarks>
+    public static WarningLevel Translate(double percentage) => percentage switch
+    {
+        <= 0.025 => WarningLevel.Error,
+        <= 0.05 => WarningLevel.Failed,
+        <= 0.25 => WarningLevel.Warning,
+        <= 0.50 => WarningLevel.Completed,
+        <= 1.00 => WarningLevel.Info,
+        _ => WarningLevel.None // Discard pattern handles any value > 1.0 (or negative inputs)
+    };
+
+    /// <summary>
+    /// Translates an integer percentage value (0 to 100) into a <see cref="WarningLevel"/>.
+    /// </summary>
+    /// <param name="percentage">An integer percentage value (typically 0 to 100).</param>
+    /// <returns>The corresponding <see cref="WarningLevel"/>.</returns>
+    /// <remarks>
+    /// This method converts the integer to a normalized double (0.0 to 1.0) and delegates to <see cref="Translate(double)"/>.
+    /// </remarks>
+    public static WarningLevel Translate(int percentage) => Translate(percentage / 100.0);
+
 }

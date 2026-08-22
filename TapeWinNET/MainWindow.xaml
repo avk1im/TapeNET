@@ -611,16 +611,14 @@
                                 <MenuItem Header="Re_name..." Command="{Binding RenameSelectedCommand}"/>
                             </ContextMenu>
                         </ListView.ContextMenu>
-                        <ListView.ItemContainerStyle>
-                            <Style TargetType="ListViewItem">
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsHighlighted}" Value="True">
-                                        <Setter Property="Foreground" Value="{StaticResource WarningFg.Failed}" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </ListView.ItemContainerStyle>
-                        <ListView.View>
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="Foreground"
+                                            Value="{Binding HighlightLevel,
+                                            Converter={x:Static converters:WarningLevelToBrushConverter.Instance}}" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
+                            <ListView.View>
                             <GridView>
                                 <GridViewColumn Header="Property" Width="180"
                                                 DisplayMemberBinding="{Binding Property}" />

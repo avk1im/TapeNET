@@ -1550,7 +1550,7 @@ public partial class MainViewModel : ViewModelBase
         // The headline figure — highlighted because it is the one the user plans a backup against.
         PropertyList.Add(new PropertyItem("Writable",
             Helpers.BytesToStringLong(_tapeService.WritableRemaining),
-            isHighlighted: true));
+            highlightLevel: WarningLevelHelper.Translate(_tapeService.WritableRemaining / (double)_tapeService.EstimatedCapacity)));
         PropertyList.Add(new PropertyItem("Estimation by", _tapeService.RemainingEstimationSource));
     }
 
@@ -1582,7 +1582,7 @@ public partial class MainViewModel : ViewModelBase
             _tapeService.IsTOCFromFile
                 ? $"File: {_tapeService.TOCFilePath}"
                 : _tapeService.HasInitiatorPartition ? "Partition" : "Set",
-            isHighlighted: _tapeService.IsTOCFromFile));
+            highlightLevel: _tapeService.IsTOCFromFile? WarningLevel.Warning : WarningLevel.None));
         PropertyList.Add(new PropertyItem("Volume", $"#{toc.Volume}"));
         PropertyList.Add(new PropertyItem("Continued on Next Volume", 
             toc.ContinuedOnNextVolume ? "Yes" : "No"));

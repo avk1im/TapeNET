@@ -31,6 +31,7 @@ public readonly record struct TapeCalibrationProgress(
 /// <c>ReportedRemaining</c> against the true bytes-written, and captures the EW landmark. Produces an
 /// <see cref="ITapeCalibration"/> the application can persist and later hand to
 /// <see cref="TapeDrive.SetCalibration"/>.
+/// <reamrks>
 /// <para>
 /// Sampling is TWO-PHASE (see <see cref="TapeCalibrationPlan"/>): a coarse BODY across most of the
 /// medium, then a fine TAIL over the EW → EOM region (entered at physical EW or the last few percent
@@ -53,6 +54,7 @@ public readonly record struct TapeCalibrationProgress(
 /// via <see cref="IsAbortRequested"/>. This class does NOT judge drive-profile matching — that is the
 /// caller's / service layer's responsibility.
 /// </para>
+/// </reamrks>
 /// </summary>
 public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibrator>(drive)
 {

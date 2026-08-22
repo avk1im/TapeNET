@@ -33,7 +33,6 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
 
     #region *** Test Data ***
 
-#pragma warning disable CA1825
     public static TheoryData<DriveProfile> AllProfiles =>
     [
         DriveProfile.Setmarks,
@@ -41,7 +40,6 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         DriveProfile.SeqFilemarks,
         DriveProfile.FilemarksOnly,
     ];
-#pragma warning restore CA1825
 
     #endregion
 
