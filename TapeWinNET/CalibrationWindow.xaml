@@ -32,7 +32,7 @@
             </Grid.RowDefinitions>
 
             <TextBlock Grid.Row="0"
-                       Text="The calibration profile below can be saved as well as applied immediately to the current media."
+                       Text="The calibration profile below can be saved as well as applied immediately to the current media (single-partition only)."
                        TextWrapping="Wrap"
                        Margin="0,0,0,12"/>
 

@@ -90,7 +90,7 @@ public partial class MainViewModel
 
     private void InitializeCalibrationCommands()
     {
-        CalibrateMediaCommand = new RelayCommand(ShowCalibrationWindow, _ => !IsBusy && _tapeService.IsMediaLoaded);
+        CalibrateMediaCommand = new RelayCommand(ShowCalibrationWindow, _ => !IsBusy && _tapeService.IsMediaLoaded && !_tapeService.HasInitiatorPartition);
         AbortCalibrationCommand = new RelayCommand(AbortCalibration, _ => IsCalibrateInProgress);
         ShowCalibrationProfilesCommand = new RelayCommand(ShowCalibrationProfilesWindow);
     }

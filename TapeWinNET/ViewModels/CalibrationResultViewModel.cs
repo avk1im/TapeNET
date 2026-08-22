@@ -27,7 +27,7 @@ public sealed class CalibrationResultViewModel : CalibrationResultViewModelBase
         _onApplied = onApplied;
 
         SaveProfileCommand = new RelayCommand(_ => SaveProfile(), _ => Calibration is not null && !IsSaved);
-        ApplyProfileCommand = new RelayCommand(_ => ApplyProfile(), _ => Calibration is not null && !IsApplied);
+        ApplyProfileCommand = new RelayCommand(_ => ApplyProfile(), _ => Calibration is not null && !IsApplied && !_tapeService.HasInitiatorPartition);
 
         if (_result is { RecalibrationVerdict: RecalibrationVerdict.FullRecalibrationAdvised })
             RunFullCalibrationCommand = new RelayCommand(_ => RequestFullCalibration());

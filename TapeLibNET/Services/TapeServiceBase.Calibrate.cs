@@ -109,6 +109,15 @@ public partial class TapeServiceBase
             throw new InvalidOperationException("Media not loaded");
         }
 
+        // If the drive has multiple partitions, check with the user and break if negative
+        if (_drive.HasInitiatorPartition)
+        {
+            if (!host.Confirm(
+                    "Calibrating a multi-partition media will have no effect.\nWould you still like to continue?",
+                    defaultAnswer: false))
+                return MakeResult(aborted: true, message: "For calibration, use a single-partition media", mode: request.Mode);
+        }
+
         try
         {
             LogWarn("Calibration is destructive — use a scratch cartridge only");
@@ -362,6 +371,7 @@ public partial class TapeServiceBase
     /// This is a pure convenience for the UI — it doesn't gate New/Resume/Recalibrate, which all remain
     /// available regardless of the result, since Resume/Recalibrate will fail gracefully if the cartridge
     /// is unsuitable.
+    /// <remarks>
     /// <para>
     /// Recommendation logic. Resume AND Recalibrate both require a valid ON-TAPE checkpoint — no stored
     /// profile can substitute for a checkpoint that is not physically on the cartridge. Recalibrate
@@ -376,6 +386,7 @@ public partial class TapeServiceBase
     ///  Complete run, no baseline  |   true      |     true        |   false     | Resume
     ///  Complete run + baseline    |   true      |     true        |   true      | Recalibrate
     /// </code>
+    /// </remarks>
     /// </summary>
     public Task<InspectCalibrationMediaResult> ExecuteInspectCalibrationMediaAsync()
     {
@@ -385,7 +396,7 @@ public partial class TapeServiceBase
         {
             try
             {
-                LogInfo("Starting media inspection for recalibration");
+                LogInfo("Starting media inspection for recalibration...");
 
                 if (_drive is null || !_drive.IsMediaLoaded)
                 {
@@ -396,6 +407,20 @@ public partial class TapeServiceBase
                         Outcome = ServiceReportLevel.Error,
                         Message = LastError,
                     };
+                }
+
+                // If the drive has multiple partitions, check with the user and break if negative
+                if (_drive.HasInitiatorPartition)
+                {
+                    if (!host.Confirm(
+                            "Calibrating a multi-partition media will have no effect.\nWould you still like to continue?",
+                            defaultAnswer: false))
+                        return new InspectCalibrationMediaResult
+                        {
+                            Success = false,
+                            Outcome = ServiceReportLevel.Warning,
+                            Message = "For calibration, use a single-partition media",
+                        };
                 }
 
                 var calibrator = new TapeCalibrator(_drive);
@@ -537,6 +562,12 @@ public partial class TapeServiceBase
         if (_drive.Backend is VirtualTapeDriveBackend { EmulatedEarlyWarning: not { EarlyWarningZone: > 0 } })
         {
             LogInfoSub("Calibration autoload skipped: EOM behavior emulation is not active for this virtual drive");
+            return 0;
+        }
+
+        if (_drive.HasInitiatorPartition)
+        {
+            LogInfoSub("Calibration autoload skipped: multi-partition media");
             return 0;
         }
 
