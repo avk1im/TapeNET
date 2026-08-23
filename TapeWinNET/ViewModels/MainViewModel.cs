@@ -1,22 +1,19 @@
-﻿using System.Collections.ObjectModel;
+﻿using FclNET;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
-
-using Windows.Win32.System.SystemServices; // for Helpers
-
 using TapeLibNET;
-using TapeLibNET.Virtual;
 using TapeLibNET.Services;
-using TapeWinNET.Converters;
-
-using FclNET;
-
+using TapeLibNET.Virtual;
 using TapeWinNET.Controls;
+using TapeWinNET.Converters;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
 using TapeWinNET.Utils;
+using Windows.Win32.System.SystemServices; // for Helpers
 
 
 namespace TapeWinNET.ViewModels;
@@ -37,7 +34,10 @@ public enum ContentPaneType
 /// <summary>
 /// Represents a menu item for opening a specific tape drive.
 /// </summary>
-public record DriveMenuItem(string Header, int DriveNumber, ICommand Command);
+public record DriveMenuItem(string Header, int DriveNumber, ICommand Command)
+{
+    public ImageSource? Icon { get; init; } // init suffices for `with`
+}
 
 public partial class MainViewModel : ViewModelBase
 {
@@ -141,7 +141,7 @@ public partial class MainViewModel : ViewModelBase
             DriveNumber: 0,
             Command: OpenDriveCommand);
         DriveMenuItems.Add(drive0Item);
-        ToolbarDriveItems.Add(drive0Item/* with { Header = "Drive 0" }*/); // mirrored — toolbar excludes "Specify..."
+        ToolbarDriveItems.Add(drive0Item with { Icon = TapeIcons.GetNumberedTapeDriveIcon(0) });
 
         // "Specify..." lets the user enter a device name directly (menu only, not toolbar)
         DriveMenuItems.Add(new DriveMenuItem(
@@ -166,8 +166,8 @@ public partial class MainViewModel : ViewModelBase
                             DriveNumber: driveNum,
                             Command: OpenDriveCommand);
                         DriveMenuItems.Insert(insertIndex, driveItem);
-                        // Mirror to toolbar: insert at end (all physical drives are appended)
-                        ToolbarDriveItems.Add(driveItem/* with { Header = $"Drive {driveNum}" }*/);
+                        // Mirror to toolbar with the numbered badge
+                        ToolbarDriveItems.Add(driveItem with { Icon = TapeIcons.GetNumberedTapeDriveIcon(driveNum) });
                     });
                 }
             }

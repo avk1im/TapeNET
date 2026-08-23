@@ -367,8 +367,7 @@
                             Visibility="{Binding IsRemoteConnected,
                                                  Converter={StaticResource InverseBoolToVis}}">
                     <!-- Dynamic per-drive buttons, one per physical drive found at startup.
-                         The Image source is a frozen BitmapSource registered as ToolbarDriveIcon
-                          in MainWindow.xaml.cs so it is loaded once via P/Invoke.
+                         The Image source is Icon property, set in MainViewModel.InitializeDriveMenu().
                           Notice we strip the command texts of underscores for tooltips -->
                     <ItemsControl ItemsSource="{Binding ToolbarDriveItems}">
                         <ItemsControl.ItemsPanel>
@@ -386,8 +385,7 @@
                                         Style="{DynamicResource {x:Static ToolBar.ButtonStyleKey}}"
                                         Width="30" Height="28" Padding="4,2"
                                         Margin="0,0,1,0">
-                                    <Image Source="{Binding RelativeSource={RelativeSource AncestorType=Window},
-                                                            Path=Resources[ToolbarDriveIcon]}"
+                                    <Image Source="{Binding Icon}"
                                            Width="16" Height="16"
                                            IsHitTestVisible="False"/>
                                 </Button>
@@ -408,7 +406,7 @@
                             Visibility="{Binding IsRemoteConnected,
                                                  Converter={StaticResource BoolToVis}}">
                     <!-- One button per probed remote physical drive (Drive 0 always present).
-                         Icon: tape-drive with globe badge (ToolbarRemoteDriveIcon). -->
+                         Icon: tape-drive with globe badge (Icon property, set in MainViewModel.ProbeRemoteDrivesAsync()). -->
                     <ItemsControl ItemsSource="{Binding ToolbarRemoteDriveItems}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
@@ -426,8 +424,7 @@
                                         Style="{DynamicResource {x:Static ToolBar.ButtonStyleKey}}"
                                         Width="30" Height="28" Padding="4,2"
                                         Margin="0,0,1,0">
-                                    <Image Source="{Binding RelativeSource={RelativeSource AncestorType=Window},
-                                                            Path=Resources[ToolbarRemoteDriveIcon]}"
+                                    <Image Source="{Binding Icon}"
                                            Width="16" Height="16"
                                            IsHitTestVisible="False"/>
                                 </Button>

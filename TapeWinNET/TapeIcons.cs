@@ -1,19 +1,16 @@
-﻿using System.Windows;
+﻿using System.Collections.Concurrent;
+using System.Globalization;
+using System.Runtime.InteropServices;
+using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Media.TextFormatting;
-
-using System.Collections.Concurrent;
-using System.Globalization;
-
-using Windows.Win32;
-using Windows.Win32.UI.Shell;
-
-using System.Runtime.InteropServices;
-using Windows.Win32.System.SystemServices;
-
 using TapeWinNET.Models;
+using TapeWinNET.Utils;
+using Windows.Win32;
+using Windows.Win32.System.SystemServices;
+using Windows.Win32.UI.Shell;
 
 
 namespace TapeWinNET;
@@ -90,7 +87,7 @@ internal static class IconLoader
     }
 }
 
-// helpers to extract tape drive related icons
+/// <summary>Helpers to extract tape drive related icons</summary>
 public static class TapeIcons
 {
     private static readonly Guid GUID_DEVCLASS_TAPEDRIVE =
@@ -115,7 +112,88 @@ public static class TapeIcons
     {
         return IconLoader.LoadStockIcon(SHSTOCKICONID.SIID_DOCNOASSOC, large);
     }
+
+    // Caches key on (number, large): the two sizes render different bitmaps
+    private static readonly Dictionary<(int number, bool large), ImageSource> _numberedDriveIcons = [];
+    private static readonly Dictionary<(int number, bool large), ImageSource> _numberedRemoteDriveIcons = [];
+    private static readonly Dictionary<bool, ImageSource> _remoteDriveIcons = [];
+
+    /// <summary>Tape drive with a drive number badge (subscript, bottom-right).</summary>
+    public static ImageSource? GetNumberedTapeDriveIcon(int number, bool large = false)
+    {
+        if (_numberedDriveIcons.TryGetValue((number, large), out var cached))
+            return cached;
+
+        var baseIcon = GetTapeDriveIcon(large);
+        if (baseIcon is null)
+            return null;
+
+        var badge = IconComposer.RenderDigitBadge(number);   // already frozen
+        var composed = IconComposer.ComposeWithOverlay(baseIcon, badge); // freezes result
+        _numberedDriveIcons[(number, large)] = composed;
+        return composed;
+    }
+
+    // Globe overlay — blue glyph on a white disc, rendered once for legibility
+    private static BitmapSource? _globeOverlay;
+
+    private static BitmapSource? GlobeOverlay =>
+        _globeOverlay ??= CreateGlobeOverlay();
+
+    private static BitmapSource? CreateGlobeOverlay()
+    {
+        var overlay = IconComposer.RenderGlyph(
+            ToolbarIconHelper.GlyphConnectRemote,
+            pixelSize: 32,                       // 4× target for a crisp downscale
+            color: Color.FromRgb(0, 80, 160),
+            backgroundColor: Colors.White);
+        overlay?.Freeze();
+        return overlay;
+    }
+
+    /// <summary>Tape drive with a globe badge (superscript, top-right).</summary>
+    public static ImageSource? GetRemoteTapeDriveIcon(bool large = false)
+    {
+        if (_remoteDriveIcons.TryGetValue(large, out var cached))
+            return cached;
+
+        var baseIcon = GetTapeDriveIcon(large);
+        if (baseIcon is null || GlobeOverlay is null)
+            return null;
+
+        // Globe rides top-right, leaving the bottom-right slot free for a number
+        var composed = IconComposer.ComposeWithOverlay(
+            baseIcon, GlobeOverlay, OverlayCorner.TopRight);
+        _remoteDriveIcons[large] = composed;
+        return composed;
+    }
+
+    /// <summary>Tape drive with globe (superscript) + drive number (subscript).</summary>
+    public static ImageSource? GetNumberedRemoteTapeDriveIcon(int number, bool large = false)
+    {
+        if (_numberedRemoteDriveIcons.TryGetValue((number, large), out var cached))
+            return cached;
+
+        var baseIcon = GetTapeDriveIcon(large);
+        if (baseIcon is null || GlobeOverlay is null)
+            return null;
+
+        // 1. Globe superscript (top-right)
+        var withGlobe = IconComposer.ComposeWithOverlay(
+            baseIcon, GlobeOverlay, OverlayCorner.TopRight);
+
+        // 2. Number subscript (bottom-right)
+        var badge = IconComposer.RenderDigitBadge(number);
+        var composed = IconComposer.ComposeWithOverlay(
+            withGlobe, badge, OverlayCorner.BottomRight);
+
+        _numberedRemoteDriveIcons[(number, large)] = composed;
+        return composed;
+    }
 }
+
+/// <summary>Corner of the output canvas where an overlay badge sits.</summary>
+public enum OverlayCorner { TopLeft, TopRight, BottomLeft, BottomRight }
 
 /// <summary>
 /// Utilities for composing toolbar icons from a main image and a small overlay badge.
@@ -172,7 +250,7 @@ internal static class IconComposer
                 }
 
                 // Center the glyph within the square
-                double x = (pixelSize - text.Width)  / 2.0;
+                double x = (pixelSize - text.Width) / 2.0;
                 double y = (pixelSize - text.Height) / 2.0;
                 ctx.DrawText(text, new Point(x, y));
             }
@@ -186,14 +264,55 @@ internal static class IconComposer
         }
     }
 
+    public static BitmapSource RenderDigitBadge(
+    int digit,
+    int pixelSize = 32,
+    Color? discColor = null,
+    Color? textColor = null)
+    {
+        discColor ??= Color.FromRgb(0, 80, 160);   // same blue as the globe
+        textColor ??= Colors.White;
+
+        var dv = new DrawingVisual();
+        using (var dc = dv.RenderOpen())
+        {
+            double r = pixelSize / 2.0;
+            var center = new Point(r, r);
+
+            // Filled disc backdrop — reads as a count badge, legible on any icon
+            dc.DrawEllipse(new SolidColorBrush(discColor.Value), null, center, r, r);
+
+            var ft = new FormattedText(
+                digit.ToString(CultureInfo.InvariantCulture),
+                CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight,
+                new Typeface(new FontFamily("Segoe UI"),
+                             FontStyles.Normal, FontWeights.Bold, FontStretches.Normal),
+                pixelSize * 0.72,           // fill most of the disc
+                new SolidColorBrush(textColor.Value),
+                1.0)
+            { TextAlignment = TextAlignment.Center };
+
+            // x = r centers horizontally; shift up by half the glyph height
+            dc.DrawText(ft, new Point(r, r - ft.Height / 2.0));
+        }
+
+        var rtb = new RenderTargetBitmap(pixelSize, pixelSize, 96, 96, PixelFormats.Pbgra32);
+        rtb.Render(dv);
+        rtb.Freeze();
+        return rtb;
+    }
+
     /// <summary>
     /// Composes a <paramref name="main"/> icon with a smaller <paramref name="overlay"/>
-    ///  badge placed in its lower-right corner.
+    ///  badge placed in the specified <paramref name="corner"/> (default lower-right).
     /// </summary>
     /// <param name="main">The base icon.</param>
     /// <param name="overlay">The badge icon, scaled to <paramref name="overlayFraction"/>
     ///  of the output canvas.</param>
-    /// <param name="overlayFraction">Fraction of the canvas size used for the overlay (default 0.45).</param>
+    /// <param name="corner">Which corner receives the badge. Defaults to
+    ///  <see cref="OverlayCorner.BottomRight"/> to preserve existing single-badge behavior.</param>
+    /// <param name="overlayFraction">Fraction of the canvas size used for the overlay (default 0.5).</param>
     /// <param name="outputSize">
     ///  Pixel dimensions of the output bitmap (default 32). Rendering at 2× the display size
     ///  (the <see cref="Image"/> element will use <c>Width/Height=16</c>) gives WPF enough
@@ -204,15 +323,21 @@ internal static class IconComposer
     ///  or <paramref name="main"/> unchanged if <paramref name="overlay"/> is <see langword="null"/>.
     /// </returns>
     public static BitmapSource ComposeWithOverlay(BitmapSource main, BitmapSource? overlay,
+        OverlayCorner corner = OverlayCorner.BottomRight,
         double overlayFraction = 0.5, int outputSize = 32)
     {
         if (overlay is null)
             return main;
 
-        // Overlay size and position — lower-right corner of the output canvas
+        // Overlay size, then position it in the requested corner of the output canvas
         double oSize = Math.Round(outputSize * overlayFraction);
-        double oX    = outputSize - oSize;
-        double oY    = outputSize - oSize;
+
+        double oX = corner is OverlayCorner.TopRight or OverlayCorner.BottomRight
+            ? outputSize - oSize
+            : 0;
+        double oY = corner is OverlayCorner.BottomLeft or OverlayCorner.BottomRight
+            ? outputSize - oSize
+            : 0;
 
         var target = new RenderTargetBitmap(outputSize, outputSize, 96, 96, PixelFormats.Pbgra32);
         var visual = new DrawingVisual();
@@ -220,8 +345,8 @@ internal static class IconComposer
         using (var ctx = visual.RenderOpen())
         {
             // Scale main icon to fill the entire canvas (2× for a 16px source → crisp downscale)
-            ctx.DrawImage(main,    new Rect(0,  0,       outputSize, outputSize));
-            ctx.DrawImage(overlay, new Rect(oX, oY,      oSize,      oSize));
+            ctx.DrawImage(main, new Rect(0, 0, outputSize, outputSize));
+            ctx.DrawImage(overlay, new Rect(oX, oY, oSize, oSize));
         }
 
         target.Render(visual);

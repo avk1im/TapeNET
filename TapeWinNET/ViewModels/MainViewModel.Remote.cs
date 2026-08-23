@@ -159,14 +159,14 @@ public partial class MainViewModel
 
         var drive0Item = new DriveMenuItem("Drive _0", 0, OpenRemoteDriveCommand);
         RemoteDriveMenuItems.Add(drive0Item);
-        ToolbarRemoteDriveItems.Add(drive0Item); // mirrored to toolbar
+        ToolbarRemoteDriveItems.Add(drive0Item with { Icon = TapeIcons.GetNumberedRemoteTapeDriveIcon(0) }); // mirrored to toolbar
 
         RemoteDriveMenuItems.Add(new DriveMenuItem("Scanning drives…", RemoteScanningNumber, OpenRemoteDriveCommand));
-        RemoteDriveMenuItems.Add(new DriveMenuItem("_Specify...",       RemoteSpecifyDriveNumber, OpenRemoteDriveCommand));
+        RemoteDriveMenuItems.Add(new DriveMenuItem("_Specify...", RemoteSpecifyDriveNumber, OpenRemoteDriveCommand));
         RemoteDriveMenuItems.Add(new Separator());
         RemoteDriveMenuItems.Add(new DriveMenuItem("_Open Remote Virtual Drive...", 0, OpenRemoteVirtualDriveCommand));
         RemoteDriveMenuItems.Add(new Separator());
-        RemoteDriveMenuItems.Add(new DriveMenuItem("_Disconnect",                     0, DisconnectRemoteHostCommand));
+        RemoteDriveMenuItems.Add(new DriveMenuItem("_Disconnect", 0, DisconnectRemoteHostCommand));
     }
 
     /// <summary>
@@ -216,7 +216,7 @@ public partial class MainViewModel
             {
                 var driveItem = new DriveMenuItem($"Drive _{driveNum}", (int)driveNum, OpenRemoteDriveCommand);
                 RemoteDriveMenuItems.Insert(insertAt, driveItem);
-                ToolbarRemoteDriveItems.Add(driveItem); // mirror to toolbar
+                ToolbarRemoteDriveItems.Add(driveItem with { Icon = TapeIcons.GetNumberedRemoteTapeDriveIcon((int)driveNum) }); // mirror to toolbar
                 insertAt++;
             }
         }
