@@ -185,6 +185,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     public override string Revision => _state.Revision ?? string.Empty;
     public bool IsLto => _state.IsLto;
     public bool IsLto5Plus => _state.IsLto5Plus;
+    public int LtoGeneration => _state.LtoGeneration;
     public override uint DriveNumber => _state.DriveNumber;
 
     #endregion
@@ -202,6 +203,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     public override bool HasInitiatorPartition => _state.HasInitiatorPartition;
     public override bool SupportsSetmarks => _state.SupportsSetmarks;
     public override bool SupportsSeqFilemarks => _state.SupportsSeqFilemarks;
+    public override bool ReportsExactRemaining => _state.ReportsExactRemaining;
 
     #endregion
 

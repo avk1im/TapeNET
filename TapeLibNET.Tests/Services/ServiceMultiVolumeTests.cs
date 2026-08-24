@@ -37,9 +37,8 @@ public class ServiceMultiVolumeTests : ServiceTestBase
     ///  Must be larger than <see cref="TapeNavigator.DefaultTOCCapacity"/> (32 MiB) because
     ///  the backup agent reserves that space for the in-tape TOC on setmarks drives.
     ///  36 MiB → 4 MiB usable per volume; 22 MiB total content overflows trivially.
-    /// +5% capacity (1.8 MiB) for EW estimation margin → 38 MiB
     /// </summary>
-    private const long MultiVolumeCapacity_Setmarks = 38L * 1024 * 1024;
+    private const long MultiVolumeCapacity_Setmarks = 36L * 1024 * 1024;
 
     /// <summary>
     /// Content-partition capacity for initiator-partition multi-volume test volumes.

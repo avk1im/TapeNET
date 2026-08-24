@@ -143,6 +143,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
 
     public bool IsLto => m_ltoGeneration >= 0; // FIXME: To experiment with SCSI support on pre-LTO drives, set to 0. Otherwise, to 1
     public bool IsLto5Plus => m_ltoGeneration >= 5;
+    public int LtoGeneration => m_ltoGeneration;
 
     #endregion
 

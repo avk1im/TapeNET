@@ -50,6 +50,9 @@ public partial class VirtualTapeDriveBackend
     #region *** Early Warning Overrides ***
 
     /// <inheritdoc/>
+    public override bool ReportsExactRemaining => m_ewProfileForNew is null;
+    
+    /// <inheritdoc/>
     public override EarlyWarningMechanism EarlyWarningMechanism
         => m_ewProfileForNew is { EarlyWarningZone: > 0 }
             ? EarlyWarningMechanism.HardwareEarlyWarning

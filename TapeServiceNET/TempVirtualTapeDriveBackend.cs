@@ -51,6 +51,7 @@ internal sealed class TempVirtualTapeDriveBackend(
     public override bool HasInitiatorPartition => _inner.HasInitiatorPartition;
     public override bool SupportsSetmarks => _inner.SupportsSetmarks;
     public override bool SupportsSeqFilemarks => _inner.SupportsSeqFilemarks;
+    public override bool ReportsExactRemaining => _inner.ReportsExactRemaining;
 
     public override bool Open(uint driveNumber) => _inner.Open(driveNumber);
     public override void Close() => _inner.Close();

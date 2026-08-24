@@ -287,6 +287,13 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
                 || m_backend is RemoteTapeDriveBackend rbe && rbe.IsLto5Plus;
 
     /// <summary>
+    /// Positive value if the drive is a true LTO drive; 0 if pre-LTO SCSI-adressable drive; -1 otherwise
+    /// </summary>
+    public int LtoGeneration => m_backend is TapeDriveWin32Backend wbe? wbe.LtoGeneration
+                : m_backend is RemoteTapeDriveBackend rbe? rbe.LtoGeneration
+                : -1;
+
+    /// <summary>
     /// Desired LOGICAL early-warning reserve, in bytes before physical EOM (0 = none). TapeDrive maps
     /// the backend's physical EW/PEW and driver ReportedRemaining — through the active
     /// <see cref="Calibration"/> — onto this logical threshold, so <see cref="WriteDirect"/> raises
@@ -604,20 +611,55 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         bool backendHasEw = backendMech is EarlyWarningMechanism.ProgrammableEarlyWarning
                                          or EarlyWarningMechanism.HardwareEarlyWarning;
 
+        // A pre-LTO / LTO-1..3 physical EW fires far too late to be the real mechanism — the a-priori curve is.
+        bool ewIsUseful = backendHasEw && LtoGeneration >= 4;
         long capacity = Capacity;
         if (capacity > 0L)
         {
-            // Synthesize an a-priori baseline so the reserve is honored even with no measured data.
-            //  A backend physical EW, when present, opportunistically sharpens the tail estimate —
-            //  hence the higher (Hardware/Programmable) precision label in that case.
-            m_aprioriCalibration = TapeCalibration.Apriori(DriveProfileKey, capacity);
-            m_ewMechanism = backendHasEw ? backendMech : EarlyWarningMechanism.Uncalibrated;
+            if (m_backend.ReportsExactRemaining)
+            {
+                // Honest backend (un-emulated virtual): identity calibration — no margin, so the reserve
+                // fires exactly at TOC size and "space remaining" is the truth. This is what lets the
+                // multivolume tests tune to exact capacities, immune to a-priori constant changes.
+                m_aprioriCalibration = TapeCalibration.Ideal(DriveProfileKey, capacity);
+                m_ewMechanism = EarlyWarningMechanism.Uncalibrated; // FIXME: Consider introducing EarlyWarningMechanism.Exact
+            }
+            else
+            {
+                // Synthesize an a-priori baseline so the reserve is honored even with no measured data.
+                //  A backend physical EW, when present, opportunistically sharpens the tail estimate —
+                //  hence the higher (Hardware/Programmable) precision label in that case.
+                m_aprioriCalibration = TapeCalibration.Apriori(DriveProfileKey, capacity, LtoGeneration);
+                m_ewMechanism = ewIsUseful ? backendMech : EarlyWarningMechanism.Uncalibrated;
+            }
         }
         else
         {
             // Capacity unknown: rely solely on the backend's physical EW if it has one.
-            m_ewMechanism = backendHasEw ? backendMech : EarlyWarningMechanism.None;
+            m_ewMechanism = ewIsUseful ? backendMech : EarlyWarningMechanism.None;
         }
+    }
+
+    /// <summary>
+    /// The pure estimate logic shared by <see cref="EstimateActualRemaining"/> and
+    /// <see cref="EvaluateLogicalEarlyWarning"/>, given an already-fetched <paramref name="reported"/>
+    /// value — so callers can control (and throttle) the device poll themselves.
+    /// <para>
+    /// Before physical EW → the calibrated <c>ReportedRemaining → ActualRemaining</c> curve.
+    /// After physical EW → the precise, self-anchored per-cartridge byte-count from the EW landmark
+    /// (<c>EwToEomDistance − bytesSinceEw</c>). We TRUST the byte-count in the tail rather than combine it
+    /// with the curve: the curve is unreliable there — on collapse drives (LTO-0..3) it has already
+    /// dropped to ~0 while real capacity remains, so a min() would wrongly abandon the writable tail; the
+    /// byte-count can never OVER-estimate (measured landmarks are exact; a-priori landmarks are set ≤ the
+    /// real runway), so it never risks an overrun. <paramref name="reported"/> is IGNORED post-EW.
+    /// </para>
+    /// </summary>
+    private long EstimateActualRemainingCore(ITapeCalibration cal, long reported)
+    {
+        if (m_physicalEwSeen)
+            return Math.Max(0L, cal.EwToEomDistance - BytesAfterPhysicalEw());
+
+        return cal.TranslateReportedToActual(reported);
     }
 
     /// <summary>
@@ -641,11 +683,14 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return physicalEw;   // capacity-unknown fallback: physical EW only
 
         // Precise tail regime: after physical EW, byte-count down from the (measured or a-priori)
-        //  EW→EOM distance using the drive's authoritative block position. No Remaining query needed.
+        //  EW→EOM distance. No Remaining query needed. Refresh the pacing hint so ClampWriteToEarlyWarning
+        //  stays correct in the post-physical-EW / pre-logical-EW window (where a stale, large headroom
+        //  would otherwise suppress clamping of a big final write near the reserve).
         if (m_physicalEwSeen)
         {
-            long actualRemaining = Math.Max(0L, cal.EwToEomDistance - BytesAfterPhysicalEw());
-            return actualRemaining <= m_desiredEarlyWarning;
+            long est = EstimateActualRemainingCore(cal, 0L /* reported ignored post-EW */);
+            m_writableHeadroomAtLastPoll = est - m_desiredEarlyWarning;
+            return est <= m_desiredEarlyWarning;
         }
 
         // Before physical EW: consult the curve on ReportedRemaining, throttling the costly query,
@@ -656,9 +701,9 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return physicalEw;
         m_bytesSinceRemainingPoll = 0L;
 
-        long est = cal.TranslateReportedToActual(GetReportedContentRemaining());
-        m_writableHeadroomAtLastPoll = est - m_desiredEarlyWarning; // paces the next poll
-        return est <= m_desiredEarlyWarning || physicalEw;
+        long est2 = EstimateActualRemainingCore(cal, GetReportedContentRemaining());
+        m_writableHeadroomAtLastPoll = est2 - m_desiredEarlyWarning; // paces the next poll
+        return est2 <= m_desiredEarlyWarning || physicalEw;
     }
 
     /// <summary>
@@ -806,12 +851,12 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         long reported = GetReportedContentRemaining();
         if (reported < 0L)
             return 0L;
+
         ITapeCalibration? cal = EffectiveCalibration;
         if (cal is null)
             return reported;
-        if (m_physicalEwSeen)
-            return Math.Max(0L, cal.EwToEomDistance - BytesAfterPhysicalEw());
-        return cal.TranslateReportedToActual(reported);
+
+        return EstimateActualRemainingCore(cal, reported);
     }
 
     #endregion // *** Calibration ***

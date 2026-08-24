@@ -35,9 +35,8 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
     /// <summary>
     /// Content-partition capacity for setmarks multi-volume test volumes (36 MiB).
     ///  TOC reserve is 32 MiB → 4 MiB usable; total content ~5.6 MiB overflows trivially.
-    ///  +5% capacity (1.8 MiB) for EW estimation margin → 38 MiB
     /// </summary>
-    private const long MultiVolumeCapacity_Setmarks = 38L * 1024 * 1024;
+    private const long MultiVolumeCapacity_Setmarks = 36L * 1024 * 1024;
 
     /// <summary>
     /// Content-partition capacity for initiator-partition multi-volume test volumes (3 MiB).
@@ -365,10 +364,9 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
     /// Capacity used for the catalog-driven test volumes: matches <see cref="MultiVolumeCapacity_Setmarks"/>
     /// (36 MiB) so that the setmarks TOC overhead (32 MiB) leaves 4 MiB of usable data space, forcing
     /// at least one volume swap when writing 16 × 350 KiB files (~5.6 MiB total).
-    /// +5% capacity (1.8 MiB) for EW estimation margin → 38 MiB
     /// No initiator partition — <c>CreateTempVirtual</c> does not support one.
     /// </summary>
-    private const long CatalogDrivenVolumeCapacity = 38L * 1024 * 1024;
+    private const long CatalogDrivenVolumeCapacity = 36L * 1024 * 1024;
 
     // ── 8.10: catalog-driven multi-volume backup + restore ────────────────────
 

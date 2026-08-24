@@ -159,13 +159,22 @@ public abstract class TapeDriveBackend : ErrorManageableBase, IDisposable
     #region *** Early Warning ***
 
     /// <summary>
+    /// True when this backend reports EXACT remaining capacity (no over/under-report to compensate for), so
+    /// <see cref="TapeDrive"/> should hold NO pessimistic a-priori margin. False for all real/emulated
+    /// hardware. Only an un-emulated virtual drive is honest by construction.
+    /// </summary>
+    public virtual bool ReportsExactRemaining => false;
+
+    /// <summary>
     /// If early warnings are being reported. This is what the drive actually does — which may differ
     /// from what was requested via <see cref="ReportEarlyWarning"/>, exactly like block size.
     /// Default: <c>false</c> since not supported.
     /// </summary>
     public virtual bool ReportsEarlyWarning => false;
 
-    /// <summary>How <see cref="ReportsEarlyWarning"/> is currently realized (best available mechanism).</summary>
+    /// <summary>
+    /// How <see cref="ReportsEarlyWarning"/> is currently realized (best available mechanism).
+    /// </summary>
     public virtual EarlyWarningMechanism EarlyWarningMechanism => EarlyWarningMechanism.None;
 
     /// <summary>

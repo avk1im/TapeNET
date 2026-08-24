@@ -220,7 +220,7 @@ compares a profile key); the concrete type is JSON-serialized inside TapeLibNET.
 | `TranslateReportedToActual(reported)` | Pure curve-only translation with end clamping (the before-EW / no-EW branch). |
 | `SaveTo(stream)` | Writes the opaque JSON blob the app persists verbatim. |
 
-Factories: `FromMeasurements(...)` (a run), `Apriori(capacity, marginPercent=5, remainingAtEwPercent=7)`
+Factories: `FromMeasurements(...)` (a run), `Apriori(profileKey, capacity, ltoGeneration)`
 (a blind-guess baseline usable before any run, so estimates improve day one), `LoadFrom(stream)`. Key design
 points:
 
@@ -913,6 +913,10 @@ This is the entire justification of the calibration feature, and it is stated in
    generation-dependent and can be **negative** (LTO-3 −3.8%, LTO-6 +0.19%); the "inflated capacity at BOM"
    axis should read "capacity mis-report at BOM (may be negative = under-report)".
 
+**Note on the after-physical-EW estimate**: It now flows
+   through `EstimateActualRemainingCore` and **trusts the byte-count** (not a min with the curve); s.
+   the rejected-alternative note in 7.2.1.
+
 ### 5.2 Emulation — two explicit anchors
 
 ```csharp
@@ -992,6 +996,8 @@ derived (`Uncalibrated`, `Calibrated`) and how EW trips (`HardwareEarlyWarning`,
 `ProgrammableEarlyWarning`) — and drives `RemainingAndEwStatus` and the *Estimation by* row.
 `TapeDrive.EarlyWarning` is the byte reserve, `IsEarlyWarning` the sticky "reserve was crossed" flag, and
 `SetEarlyWarning(0)` additionally asks the backend to report its physical EW.
+Notice that on LTO generations 0–3 (incl. pre-LTO drives) the mechanism is reported as
+*Uncalibrated* (a-priori), not *Hardware*, because the late physical EW is pre-empted by the curve (s. 7.2.2).
 
 ### 5.5 UI — writable-first, with reported and estimated always paired
 
@@ -1266,101 +1272,138 @@ multi-hour run unattended.
 
 ---
 
-## Part 7 — Remaining tasks
+## Part 7 — Multi-generation calibration & the differentiated a-priori model
 
-### 7.1 UI for Resume & Recalibrate — TapeWinNET (WPF) and TapeConNET (CLI)
+### 7.1 The cross-drive calibration campaign [DONE]
 
-Surface the new `CalibrationMode` in both apps, matching the service extension.
+The estimator was validated against **eight real cartridges across six drives and three behavioral
+classes**, by forcing pre-LTO drives to be treated as "LTO generation 0" whenever SCSI INQUIRY
+(vendor/product/revision) succeeds — which held for every AIT, DAT-320 and DLT-V4 unit tested. Every run
+used the 40%-tail two-phase sampler.
 
-- **WPF (`CalibrateWindow`):** replace the implicit New-only flow with a mode selector — a radio group:
-  ```
-  Calibration mode:
-    (•) New (default)
-    ( ) Resume previous run        [requires cartridge with a resumable run that matches this drive]
-    ( ) Recalibrate (tail check)   [requires cartridge with a saved calibration run that matches this drive]
-  ```
-  Offer a button ("Inspect media") to quickly validate the two media-dependent options by probing the cartridge header via a lightweight service call
-  and inspecting the `CalibrationStore` for a matching profile; show a one-line result ("Resumable run found: 41%
-  written, HP Ultrium 6, firmware 35GD→35GE"). Wire the selection to `CalibrateRequest.Mode`; on a
-  `FullRecalibrationAdvised` verdict, route the service's `Confirm` to a WPF dialog; render
-  `RecalibrationDelta`/`RecalibrationVerdict` in `CalibrationWindow` (before/after rows + verdict banner).
+| Drive | Class (gen) | Reported @ BOM | Actual capacity | **BOM error (reported − actual)** | Phantom @ EOM | **EW → EOM (actual runway)** | Reported collapse near EOM? |
+|---|---|---|---|---|---|---|---|
+| AIT-2 40 GB (SONY SDX-560V) | 0 | 42.60 GB | 41.87 GB | **+0.72 GB (+1.73%)** over | 0 | **1.5 MB (0.004%)** | yes |
+| AIT-2 79 GB (SONY SDX-560V) | 0 | 85.04 GB | 83.21 GB | **+1.83 GB (+2.20%)** over | 0 | **0.38 MB (0.0005%)** | yes |
+| DAT-320 76 GB (HP DAT320) | 0 | 82.03 GB | 81.95 GB | +0.08 GB (+0.10%) over | 0 | 240 MB (0.29%) | yes |
+| DAT-320 150 GB (HP DAT320) | 0 | 166.21 GB | 165.95 GB | +0.26 GB (+0.16%) over | 0 | 499 MB (0.30%) | yes |
+| DLT-V4 160 GB (QUANTUM) | 0 | 167.70 GB | 165.24 GB | **+2.46 GB (+1.49%)** over | **12.5 MB** | 1.6 MB (0.001%) | **no** |
+| LTO-3 (QUANTUM ULTRIUM 3) | 1–3 | 410.15 GB | 426.49 GB | **−16.34 GB (−3.83%)** UNDER | 0 | 437 MB (0.10%) | yes (abrupt cliff) |
+| LTO-4 (QUANTUM ULTRIUM 4) | 4+ | 839.10 GB | 845.49 GB | −6.40 GB (−0.76%) under | 383 MB | **31.8 GB (3.76%)** | no |
+| LTO-6 (HP Ultrium 6) | 4+ | 2543.4 GB | 2538.6 GB | **+4.70 GB (+0.19%)** over | 2.39 GB | **110 GB (4.34%)** | no |
 
-  **[DONE — WPF half]** As-built, this landed as follows:
-  - **`TapeCalibrator.InspectMedia()`** (read-only, `TapeCalibrator.cs`) and the service-level
-    **`TapeServiceBase.ExecuteInspectCalibrationMediaAsync()`** (`TapeServiceBase.Calibrate.cs`) pair
-    back the "Inspect media" button. The service method combines the on-tape header/checkpoint
-    (calibrator) with a `CalibrationStore.Exists(ProfileKey)` lookup to recommend New/Resume/Recalibrate,
-    returned as `InspectCalibrationMediaResult` (`ServiceOperationResult.cs`).
-  - **Inspection is an optional convenience, never a gate** — all three modes stay enabled at all times;
-    a wrong cartridge is already reported by the service with mode-appropriate text. The Inspect Media
-    area is collapsed while "New run" is selected (`CalibrationRunViewModel.IsInspectAvailable`).
-  - **`Confirm` was already WPF-routed** before this work — `WpfServiceHost.Confirm`
-    (`TapeWinNET/Services/WpfServiceHost.cs`) marshals to a `SimpleBox` YesNo on the dispatcher, so no
-    additional wiring was needed for the breach-confirm chain.
-  - **VM split three ways:** `CalibrationRunViewModel` (mode radios, Inspect Media, the destructive run
-    itself — renamed from the old overloaded `CalibrationViewModel`), `CalibrationResultViewModel`
-    (Save/Apply, verdict banner, recalibration delta, the user-driven "Run Full Calibration..." follow-up),
-    and `CalibrationResultViewModelBase` (shared display surface, also the base of
-    `CalibrationProfilesViewModel` so the profiles browser reuses the same figures/verdict members
-    without duplicating them).
-  - **`CalibrationResultView`** (`TapeWinNET/Controls/`) is the extracted shared result `UserControl` —
-    verdict banner, measured-result figures, before/after recalibration delta, and the reported→actual
-    curve — dropped into both `CalibrationWindow.xaml` and `CalibrationProfilesWindow.xaml`, which just
-    inherit its DataContext.
-  - **"Run Full Calibration..."** does not launch a run itself; it closes the result window with
-    `CalibrationResultViewModel.FullCalibrationRequested`, and `MainViewModel.Calibration.cs` re-opens
-    `CalibrateWindow` (New preselected) — keeping run orchestration in one place, in addition to (not
-    instead of) the service's own mid-operation `Confirm`-chain.
-- **CLI (`TapeConNET`):** add `--calibrate-resume` and `--calibrate-recheck` (or `--calibrate
-  --mode=resume|recalibrate`); map `ITapeServiceHost.Confirm` to a Y/N prompt (or `--yes` for
-  non-interactive); print the recalibration assessment table and verdict. **[Not yet done — CLI half remains.]**
+Five findings drive the model:
 
+1. **The physical EW landmark is UNUSABLE for capacity on LTO-0..3.** It fires 0.38 MB … 499 MB before
+   EOM — frequently *below* the TOC reserve it is supposed to protect. The EW-anchored byte-count that is
+   the whole game on LTO-4+ cannot anchor the reserve here; the **reported-remaining curve must, stopping
+   before the collapse**.
 
-### 7.2 Update a-priori and "LTO-4-like" profiles from the real-hardware data
+2. **BOM error swings both ways and by generation.** LTO-3 UNDER-reports 3.8%; AIT/DLT OVER-report
+   1.5–2.2%; DAT is nearly truthful; LTO-6 over-reports 0.19%. The old single-shape a-priori (a benign
+   linear margin) is simply wrong. **No fixed sign or magnitude may be assumed.**
 
-The `Apriori` factory (`marginPercent 5`, `remainingAtEwPercent 7`) and `Lto4Like` defaults predate the real
-measurements and are now known to be off:
+3. **The tail collapse is generally SAFE, with one dangerous exception.** On AIT/DAT/LTO-3 the reported
+   figure collapses toward 0 in the tail — it UNDER-states actual near EOM (conservative). **DLT-V4 is the
+   trap:** it does *not* collapse, carries a 12.5 MB phantom, and OVER-reports in the tail (claims 37 MB
+   when 1.5 MB truly remains). A naïve "stop when reported ≤ TOC reserve" would stop DLT-V4 with ~1 MB left.
 
-- **Runway (`EwToEomDistance`)** is ~4% of capacity on LTO-4/6, not 7%; on LTO-3 it is ~0.1%.
-- **Phantom** is < 0.1% on real drives, not the 4–5% assumed.
-- **BOM error is small and generation-dependent, and can be NEGATIVE** (LTO-3 −3.8%, LTO-6 +0.19%). The
-  "boost ≥ 0" assumption in `ReportedRemainingAnchors`/`Apriori` should be relaxed to allow a negative
-  boost (under-report), and virtual emulation should be able to reproduce it.
-- **Preferred direction:** rather than hand-tuning synthetic constants, **ship measured per-generation
-  reference calibrations** (LTO-3/4/6 now in hand) as embedded resources, loaded through the same
-  `TapeCalibration.LoadFrom` path; a fresh run overrides. Retune the synthetic `Apriori`/`Lto4Like` only as
-  a last-resort fallback for unmeasured generations.
+4. **Phantom is 0 everywhere except DLT-V4 (12.5 MB).** For pre-LTO the phantom concept is a red herring
+   apart from that one unit.
 
-### 7.3 Rework how an a-priori profile is assigned when no calibration exists
+5. **LTO-3's collapse is a CLIFF, not a slide:** reported jumps 3.68 GB → 0 across the last ~50 MB, so the
+   usable reported floor is ~0.9% of capacity — content must stop while reported is still well above it.
 
-Today `SelectEarlyWarningMechanism` synthesizes an `Apriori` from nominal capacity whenever no measured
-profile matches. With real data available, revisit the whole a-priori story:
+### 7.2 The generation-differentiated a-priori model [DONE]
 
-- Prefer a **shipped per-generation reference profile** (7.2) matched by vendor/product/generation over the
-  blind linear `Apriori`, so an un-calibrated-but-known drive still gets realistic EW behavior.
-- Fall back to the synthetic `Apriori` only for genuinely unknown drives, with corrected defaults (7.2).
-- Decide the matching granularity for reference profiles (generation-level, ignoring firmware and exact
-  capacity bucket) versus the exact-key matching used for measured calibrations — likely a looser
-  `IgnoreFirmware`/generation match for reference profiles, exact for measured ones.
+`TapeCalibration.Apriori(profileKey, capacity, ltoGeneration)` replaces the old
+`Apriori(profileKey, capacity, marginPercent, remainingAtEwPercent)`. It resolves the (possibly forced)
+generation into one of three **safety envelopes**, chosen to dominate every observed error with a wide
+margin — err pessimistic, always:
 
-### 7.4 Evaluate pre-LTO drives for EW support — "LTO generation 0" (future)
+| Generation | `marginPct` (capacity fraction) | Margin floor | `EwToEomDistance` (a-priori) | Rationale |
+|---|---|---|---|---|
+| **≥ 4** (LTO-4+) | 1.0% | 64 MB | **3.0% of capacity** (a real, under-estimated runway) | small BOM error; reliable ~4% physical-EW runway |
+| **1–3** (LTO-1..3) | 2.0% | 16 MB | **1 MB** (emergency backstop) | ±4% BOM error; abrupt 0.9% collapse cliff; EW ≈ EOM |
+| **0 / unknown** (pre-LTO forced-LTO) | 2.0% | 8 MB | **1 MB** (emergency backstop) | heterogeneous; covers DLT-V4 phantom + tail over-report; EW ≈ EOM |
 
-Investigate whether older linear/helical drives that TapeNET already supports — **AIT, DAT-320, SDLT /
-DLT-V4** — expose an early-warning mechanism and tolerate SCSI pass-through control/direct commands the same
-way LTO does. If any do, the whole EW / `EstimateActualRemaining` machinery could be extended to them,
-a real value-add for those users. Scope:
+The runtime stops content when `reported ≤ margin + reserve`, so `margin` is a **capacity-fraction upper
+bound on the driver's tail over-report** — guaranteeing actual remaining ≥ the TOC reserve. `margin` is a
+fraction (the over-report envelope scales with tape length) while the TOC **reserve** stays the fixed
+`DefaultTOCCapacity` floor (1 GB / 512 MB / 32 MB); the two combine at the stop point.
 
-- **Probe for EW capability** per drive family: does a `WRITE(6)` over SPTD surface an EOM-bit/early-warning
-  sense before hard EOM? Do `LOG SENSE`/`READ POSITION` behave? Some of these are helical-scan (AIT/DAT) and
-  may not have an LTO-style EW zone at all.
-- **If EW works:** treat the family as **"LTO generation 0"** — reuse `ScsiWriteDirect` sensing, the
-  physical/logical EW mapping, and calibration unchanged, keyed by its own vendor/product/generation. This
-  needs a small generalization of the LTO-gated code paths (currently `IsLto`-gated) to an "EW-capable via
-  SPTD" predicate.
-- **If EW does not work** (likely for pure helical-scan or drives that reject SPTD): still provide a
-  **meaningful a-priori profile** so the estimate improves over the raw driver figure — measured margins for
-  these families if we can calibrate them, or conservative synthetic defaults otherwise.
-- **Deliverable either way:** an a-priori/reference profile per supported pre-LTO family, plus a documented
-  determination of which families can and cannot participate in EW/estimation.
+The `int ltoGeneration` parameter (surfaced by `TapeDriveWin32Backend.LtoGeneration`, `-1`/`0` for
+non-LTO/unknown → the most pessimistic envelope) keeps the door open to per-generation refinement later via
+a simple relational `switch`. The three findings above live verbatim in the method's `<remarks>`.
 
+**Honest cost.** On collapse drives the a-priori deliberately wastes 1–2% of tape (e.g. ~8 GB on LTO-3,
+~2.85 GB on DAT-320) by stopping before the cliff. That is the correct trade — a wasted 2% beats an overrun
+that destroys the backup — and measured/shipped profiles reclaim most of it (7.3).
+
+### 7.2.1 The unified estimate core & the "trust the byte-count" tail rule [DONE]
+
+Both the reporting path (`EstimateActualRemaining`) and the decision path
+(`EvaluateLogicalEarlyWarning`) now share one private `EstimateActualRemainingCore(cal, reported)`, so they
+can never disagree:
+
+- **Before physical EW** → the calibrated `ReportedRemaining → ActualRemaining` curve.
+- **After physical EW** → the precise, self-anchored per-cartridge byte-count `EwToEomDistance − bytesSinceEw`;
+  `reported` is IGNORED.
+
+> **Design note — rejected alternative.** An earlier proposal took `min(curveEstimate, byteCount)` after
+> EW ("tighten only"). This is WRONG for **measured collapse profiles**: on LTO-3 the curve retains the
+> `reported == 0` tail so `TranslateReportedToActual(0) = 0`, and physical EW fires *at* the collapse, so
+> `min(0, 437 MB) = 0` — abandoning the 437 MB of writable tail the byte-count exists to protect. And it
+> helps nowhere: on LTO-4+ the byte-count is already the smaller figure (min ≡ replace), and on a-priori
+> collapse drives the curve trips logical EW long before physical EW (sticky). So the tail rule is simply
+> **trust the byte-count**, which can never over-estimate: measured landmarks are exact, and a-priori
+> landmarks are set ≤ the real runway.
+
+One correctness fix accompanied the refactor: the **post-physical-EW / pre-logical-EW window** (the ~31 GB
+stretch on LTO-4+ with a small reserve). There `IsEarlyWarning` is still false so `ClampWriteToEarlyWarning`
+is active, but `m_writableHeadroomAtLastPoll` was stale (huge) from the last pre-EW poll, suppressing the
+clamp of a large final write near the reserve. `EvaluateLogicalEarlyWarning` now refreshes the headroom in
+its post-EW branch (free — the byte-count needs no device poll).
+
+### 7.2.2 Honest mechanism labeling [DONE]
+
+On generations 0–3 the backend *does* advertise a hardware EW, but it fires far too late to be the real
+mechanism — the a-priori curve trips logical EW well before it (e.g. DAT-320: content stops ~3.3 GB early,
+versus the drive's own ~0.5 GB EW, which is never reached). `SelectEarlyWarningMechanism` therefore labels
+the mechanism honestly:
+
+```csharp
+// A pre-LTO / LTO-1..3 physical EW fires too late to be the real mechanism — the a-priori curve is.
+bool ewIsUseful = backendHasEw && LtoGeneration >= 4;
+m_ewMechanism = ewIsUseful ? backendMech : EarlyWarningMechanism.Uncalibrated;
+```
+
+This is a labeling change only (the estimate is unaffected): the UI's *"Estimation by"* now reads
+*Uncalibrated* rather than overstating *Hardware* on a drive whose hardware EW we provably pre-empt.
+
+### 7.3 Ship measured reference profiles per generation [PLANNED]
+
+The campaign produced **eight real curves** (AIT-2 ×2, DAT-320 ×2, DLT-V4, LTO-3/4/6). These should ship as
+embedded per-generation **reference calibrations**, loaded through the normal `TapeCalibration.LoadFrom`
+path and matched by **vendor/product/generation** (looser than the exact `vendor|product|revision|bucket`
+key used for user-measured profiles); a fresh user calibration still overrides. This is what turns "DAT-320
+wastes ~1.7%" into "DAT-320 is precise" and "we tested one AIT once" into shipped data — WITHOUT
+over-fitting the blind a-priori envelope (which must stay pessimistic to keep AIT-like sub-reserve EW drives
+safe). Remaining work: choose the embedding format, the matcher granularity, and the a-priori↔reference
+precedence, then wire the loader into `AutoLoadCalibrations`.
+
+### 7.4 Evaluate more pre-LTO families & sharpen the classes [FUTURE]
+
+The forced-"LTO generation 0" path is validated for AIT / DAT-320 / DLT-V4, all of which accept SCSI
+INQUIRY and SPTD direct writes and surface a usable (if late) EOM/EW sense. Remaining exploration:
+
+- **Widen the family sweep** — SDLT and other DLT variants, further AIT/DAT generations, LTO-1/2 — to
+  confirm the gen-0 / gen-1..3 envelopes hold or to justify a finer split (the `int` generation parameter
+  already supports adding envelopes without touching call sites).
+- **Per-family reference profiles** for every family that calibrates cleanly, so DLT-V4's phantom and
+  DAT-320's honest EW are exploited precisely rather than buried under the pessimistic blind envelope.
+- **Generalize the `IsLto`-gated code paths** to an "EW-capable via SPTD" predicate, so a newly qualified
+  pre-LTO family joins the estimation/EW machinery by data, not by code change.
+- **Determination table** — a documented list of which families can and cannot participate in
+  EW/estimation, with the measured margins (or conservative synthetic defaults) for each.
 ---

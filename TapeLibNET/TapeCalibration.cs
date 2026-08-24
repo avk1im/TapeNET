@@ -146,6 +146,30 @@ public sealed class TapeCalibration : ITapeCalibration
     }
 
     /// <summary>
+    /// Builds an IDENTITY baseline: actual remaining == reported remaining everywhere, with NO margin and NO
+    /// EW landmark. For a backend that reports EXACT capacity (a virtual drive with no EW emulation), so the
+    /// estimator neither compensates for over-report nor holds any pessimistic buffer — the logical-EW reserve
+    /// then fires precisely when reported drops to the requested TOC size, and the "space remaining" figure is
+    /// the honest truth. NOT for real hardware, which always over- or under-reports (use <see cref="Apriori"/>).
+    /// </summary>
+    /// <remarks>Synthesized per session, never persisted — its <c>FormatId</c> is internal-only.</remarks>
+    public static ITapeCalibration Ideal(string profileKey, long capacity)
+    {
+        if (capacity < 0) capacity = 0;
+
+        // Identity curve: actual == reported at both anchors ⇒ TranslateReportedToActual is the identity.
+        var curve = new List<CalibrationPoint>
+        {
+            new(0L, 0L),
+            new(capacity, capacity),
+        };
+
+        // No EW landmark: an honest drive has no phantom/collapse tail to byte-count against.
+        return new TapeCalibration(
+            "tapelibnet-cal-ideal/2", profileKey, capacity, /*phantom*/ 0L, /*capacityActual*/ capacity, curve, null);
+    }
+
+    /// <summary>
     /// Builds a calibration from a completed run. Raw samples are <c>(ActualWritten, ReportedRemaining)</c>
     /// captured while writing; they are transformed here into the <c>ReportedRemaining → ActualRemaining</c>
     /// curve using <paramref name="capacityActual"/> (bytes at hard EOM): <c>ActualRemaining = CapacityActual − ActualWritten</c>.
@@ -226,65 +250,82 @@ public sealed class TapeCalibration : ITapeCalibration
     }
 
     /// <summary>
-    /// Builds a blind-guess baseline calibration (no run required): a simple linear curve that
-    /// treats <paramref name="marginPercent"/> of capacity as an unusable reserve, and synthesizes an
-    /// EW landmark at <paramref name="remainingAtEwPercent"/> of reported capacity. Lets the runtime
-    /// estimate improve on raw reported remaining until a real calibration replaces it.
+    /// Builds a conservative blind-guess baseline calibration (no run required), DIFFERENTIATED by LTO
+    /// generation. The runtime stops content when <c>reported ≤ margin + reserve</c>, so <c>margin</c> is a
+    /// capacity-fraction upper bound on the driver's tail over-report — guaranteeing actual remaining ≥ the
+    /// TOC reserve. The EW landmark is a real (deliberately under-estimated) runway on LTO-4+, and a tiny
+    /// emergency backstop on the older collapse-prone drives (where the physical EW fires uselessly late).
+    /// Lets the runtime estimate improve on raw reported remaining until a measured calibration replaces it.
     /// </summary>
-    public static ITapeCalibration Apriori(
-        string profileKey, long capacity, double marginPercent = 5.0, double remainingAtEwPercent = 7.0)
+    /// <remarks>
+    /// The three behavioral envelopes below were derived from real AIT/DAT/DLT/LTO-3/4/6 calibration runs:
+    /// <list type="bullet">
+    ///   <item>
+    ///     <b>Generation 0</b> (pre-LTO forced-LTO: AIT/DAT/DLT/SDLT). Reported COLLAPSES near EOM and the
+    ///     physical EW fires uselessly late (&lt; ~1.5 MB … 0.5 GB before EOM); one member (DLT-V4) even
+    ///     OVER-reports in the tail with a small phantom. So the reserve MUST come from the curve, well
+    ///     before the collapse — a 2%-of-capacity margin covers the worst observed case. BOM error swings
+    ///     both ways (AIT/DLT over-report ~1.5–2.2%, DAT is nearly truthful).
+    ///   </item>
+    ///   <item>
+    ///     <b>Generations 1–3</b> (LTO-1..3). Reported collapses to 0 at EW (LTO-3: an abrupt cliff at
+    ///     ~0.9% of capacity); BOM error up to ~4% in EITHER direction (LTO-3 UNDER-reports 3.8%); the
+    ///     physical EW fires ~0.1% before EOM — a backstop only. A 2% margin clears the cliff with ~2× safety.
+    ///   </item>
+    ///   <item>
+    ///     <b>Generations 4+</b> (LTO-4+). Smooth, reliable physical EW ~4% before EOM with a large
+    ///     phantom-free runway; small BOM error (LTO-4 −0.76%, LTO-6 +0.19%). The physical-EW byte-count is
+    ///     the primary mechanism, so we store a REAL runway (under-estimated to ~3% for safety) and only a
+    ///     ~1% margin.
+    ///   </item>
+    /// </list>
+    /// The stored EW landmark cooperates with the runtime's "tighten-only" rule
+    /// (<c>estimate = min(curveEstimate, EwToEomDistance − bytesAfterPhysicalEw)</c>): on LTO-4+ the real
+    /// runway sharpens the estimate once the hardware EW fires, while on the collapse drives the tiny
+    /// backstop can only ever STOP the caller, never inflate remaining — so a late/stale hardware EW can
+    /// never cause an overrun.
+    /// </remarks>
+    /// <param name="profileKey">The drive+media profile key this baseline is for.</param>
+    /// <param name="capacity">Nominal content capacity in bytes.</param>
+    /// <param name="ltoGeneration">The (possibly forced) LTO generation: 0 = pre-LTO SCSI-addressabele forced-LTO,
+    ///  1..3 = LTO-1..3, ≥ 4 = LTO-4+. Negative is treated as 0 (unknown/pre-LTO, most pessimistic).</param>
+    public static ITapeCalibration Apriori(string profileKey, long capacity, int ltoGeneration = -1)
     {
         if (capacity < 0) capacity = 0;
-        long margin = (long)(capacity * marginPercent / 100.0);
-        long ewReported = (long)(capacity * remainingAtEwPercent / 100.0);
-        long capacityActual = Math.Max(0L, capacity - margin);
 
-        // A-priori calibration curve: ReportedRemaining -> ActualRemaining
-        // (blind linear model; example numbers for an ~780 GB LTO-4 at margin=5%, ewAt=7%)
-        //
-        //   ActualRemaining
-        //     ^
-        //  741┤ capacityActual                                              ● BOM
-        //  (GB)│  = capacity - margin                                   ╱     (reported=780, actual=741)
-        //     │                                                     ╱
-        //     │                                                 ╱
-        //     │                                             ╱   slope ≈ 1
-        //     │                                         ╱       (actual ≈ reported - margin)
-        //     │                                     ╱
-        //     │                                 ╱
-        //     │                             ╱
-        //   16┤ - - - - - - - - - - - - -◆   EW landmark (fake / synthesized)
-        //     │                       ╱ :    reported = ewReported (7%)  = 54.6 GB
-        //     │                   ╱     :    actual   = ewReported-margin = 15.6 GB
-        //     │               ╱         :    → EwToEomDistance
-        //     │           ╱             :
-        //    0┤───────●─────────────────┼───────────────────────────────────→ ReportedRemaining
-        //     0     margin              54.6                                780   (GB)
-        //     │    (39 GB)            (ewReported)                       (capacity)
-        //     │       ↑
-        //     │  blind stop point: driver still reports `margin` free,
-        //     │  but real writable space is already 0 (curve clamps below here)
-        //
-        //   Anchors stored in curve[]:  (margin, 0)  and  (capacity, capacityActual)
-        //   EW point (nullable):        (ewReported, ewReported - margin)
-        //   Model:  ActualRemaining ≈ ReportedRemaining - margin,  floored at 0
-        
-        // Curve (ascending by ReportedRemaining):
-        //  at reported == margin       → actual == 0        (blind stop point)
-        //  at reported == capacity     → actual == capacity − margin (BOM)
+        // Resolve the generation into a safety envelope:
+        //  marginPct : conservative over-report/collapse envelope as a fraction of capacity (drives the stop).
+        //  ewActual  : a-priori EwToEomDistance — a real (under-estimated) runway on LTO-4+, ~0 backstop below.
+        //  floor     : absolute lower bound on the margin so tiny cartridges still get a sane buffer.
+        (double marginPct, long ewActual, long floor) = ltoGeneration switch
+        {
+            // LTO-4+ : ~1% envelope (LTO-4 −0.76%, LTO-6 +0.19% observed); 3% runway UNDER-estimates the ~4% real.
+            >= 4 => (0.010, (long)(capacity * 0.030), 64L * 1024 * 1024),
+            // LTO-1..3 : 2% envelope clears LTO-3's 0.9% cliff with ~2× safety; EW ≈ EOM ⇒ 1 MB backstop only.
+            >= 1 => (0.020, 1L * 1024 * 1024, 16L * 1024 * 1024),
+            // Generation 0 / unknown : 2% envelope covers DLT-V4's phantom + tail over-report; 1 MB backstop only.
+            _ => (0.020, 1L * 1024 * 1024, 8L * 1024 * 1024),
+        };
+
+        long margin = Math.Max(floor, (long)(capacity * marginPct));
+        long capacityActual = Math.Max(0L, capacity - margin);
+        ewActual = Math.Min(ewActual, capacityActual);
+
+        // Conservative linear curve: actual ≈ reported − margin, clamped. Because margin ≥ the worst tail
+        //  over-report, TranslateReportedToActual never overestimates actual (see design doc §5.1).
         var curve = new List<CalibrationPoint>
         {
             new(margin, 0L),
             new(capacity, capacityActual),
         };
 
-        CalibrationPoint? ew = new CalibrationPoint(ewReported, Math.Max(0L, ewReported - margin));
+        // EW landmark: reported = ewActual + margin (matches the over-report), actual = ewActual.
+        CalibrationPoint? ew = new CalibrationPoint(ewActual + margin, ewActual);
 
-        // A-priori assumes NO capacity boost at BOM (quantity (4) == the nominal capacity) and treats the
-        //  whole margin as phantom free space still claimed at hard EOM (quantity (5)).
-        return new TapeCalibration("tapelibnet-cal-apriori/2", profileKey, capacity, margin, capacityActual, curve, ew);
+        return new TapeCalibration(
+            "tapelibnet-cal-apriori/2", profileKey, capacity, margin, capacityActual, curve, ew);
     }
-
+    
     #endregion
 
     #region *** Translation ***

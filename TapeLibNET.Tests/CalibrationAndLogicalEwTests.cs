@@ -312,6 +312,7 @@ public class CalibrationAndLogicalEwTests
         Assert.True(firedBeforePhysical, "Logical EW should trip from the curve before the physical EW zone");
     }
 
+    /*
     [Fact]
     public void LogicalEw_AfterPhysicalEw_FiresFromByteCountWithSmallReserve()
     {
@@ -347,6 +348,56 @@ public class CalibrationAndLogicalEwTests
                 break;
             }
 
+            if (eom || n == 0)
+                break;
+        }
+
+        Assert.True(drive.IsEarlyWarning, "Logical EW should have fired near the tail");
+        Assert.True(sawPhysicalEwBeforeLogical,
+            "With a tiny reserve, logical EW should fire only after the physical EW landmark");
+    }
+    */
+
+    [Fact]
+    public void LogicalEw_AfterPhysicalEw_FiresFromByteCountWithSmallReserve()
+    {
+        // Measure a real calibration first, so the loaded curve accurately models the emulated drive
+        //  (a small, true over-report margin). The pessimistic A-PRIORI cannot be used here: on this tiny
+        //  64 MB cartridge its margin FLOOR (8 MB = 12.5%) dwarfs the 4% physical-EW zone (2.56 MB), so the
+        //  curve trips logical EW well before physical EW is ever seen — correct pessimism, but not the
+        //  after-EW byte-count regime under test.
+        var (calDrive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        ITapeCalibration? cal = new TapeCalibrator(calDrive)
+        {
+            Options = new TapeCalibrationOptions { SampleCount = 60 },
+        }.Run();
+        Assert.NotNull(cal);
+
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+
+        // A SMALL reserve so logical EW only trips in the precise after-physical-EW byte-count regime.
+        long reserve = 256L * 1024;
+        Assert.True(drive.AddCalibration(cal!));
+        Assert.True(drive.SetEarlyWarning(reserve));
+
+        int block = (int)drive.MaximumBlockSize;
+        var data = IncompressibleBlock(block, seed: 12);
+
+        Assert.True(drive.MoveToPartition(MediaPartition.Content));
+        Assert.True(drive.Rewind());
+
+        bool sawPhysicalEwBeforeLogical = false;
+        bool physicalSeen = false;
+        while (true)
+        {
+            int n = drive.WriteDirect(data, 0, block, out _, out bool ew, out bool eom);
+            physicalSeen |= drive.IsPhysicalEarlyWarningSeen;
+
+            if (ew)
+            {
+                sawPhysicalEwBeforeLogical = physicalSeen;
+                break;
+            }
             if (eom || n == 0)
                 break;
         }

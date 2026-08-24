@@ -49,6 +49,9 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
         Vendor = b.Vendor,
         Product = b.Product,
         IsLto = b is TapeDriveWin32Backend wbe && wbe.IsLto,
+        IsLto5Plus = b is TapeDriveWin32Backend wbe2 && wbe2.IsLto5Plus,
+        LtoGeneration = b is TapeDriveWin32Backend wbe3 ? wbe3.LtoGeneration : -1,
+        ReportsExactRemaining = b.ReportsExactRemaining,
     };
 
     /// <summary>

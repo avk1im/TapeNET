@@ -213,11 +213,31 @@ public class ServiceCalibrationResumeTests : ServiceTestBase
     //  needing only public API. The drive-level profile-swap test proves the calibrator itself surfaces
     //  a real behavior shift as a large delta.
 
-    private static ITapeCalibration StaleBaseline(TapeServiceBase service) =>
-        // EW→EOM ≈ 22 MB and capacity/phantom both off — comfortably past every recalibration tolerance
-        //  versus the drive's actual ~2.5 MB EW→EOM on the emulated LTO-4 profile.
-        TapeCalibration.Apriori(service.DriveProfileKey, CalibrationCapacity,
-            marginPercent: 5.0, remainingAtEwPercent: 40.0);
+    private static TapeCalibration StaleBaseline(TapeServiceBase service)
+    {
+        // Hand-craft a plausible PRE-firmware-change baseline via the public FromMeasurements factory:
+        //  a normal measured-shape calibration whose EW→EOM distance (~22 MB) is an order of magnitude
+        //  larger than the drive's actual ~2.5 MB, so recalibration's EW-shift comfortably breaches every
+        //  service tolerance and drives FullRecalibrationAdvised.
+        //  (Replaces the removed Apriori(marginPercent, remainingAtEwPercent) overload the test abused.)
+        const long capacityActual = CalibrationCapacity;            // 64 MB — matches the emulated drive
+        const long ewToEomDistance = 22L * 1024 * 1024;             // 22 MB, vs the drive's ~2.5 MB
+        const long reportedAtBom = capacityActual;                  // truthful BOM (no boost)
+
+        // Samples as (ActualWritten, ReportedRemaining): BOM, the EW landmark, hard EOM.
+        var samples = new List<(long ActualWritten, long ReportedRemaining)>
+        {
+            (0L,                             reportedAtBom),        // BOM
+            (capacityActual - ewToEomDistance, ewToEomDistance),    // EW landmark (42 MB written)
+            (capacityActual,                 0L),                   // hard EOM
+        };
+
+        (long ActualWritten, long ReportedRemaining) ew =
+            (capacityActual - ewToEomDistance, ewToEomDistance);
+
+        return TapeCalibration.FromMeasurements(
+            service.DriveProfileKey, reportedAtBom, capacityActual, samples, ew);
+    }
 
     [Fact]
     public async Task ExecuteCalibrateAsync_Recalibrate_Breach_Confirmed_ChainsFullRun()
