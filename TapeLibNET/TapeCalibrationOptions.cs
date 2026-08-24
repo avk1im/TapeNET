@@ -38,6 +38,7 @@ public readonly record struct TapeCalibrationOptions
     /// <see cref="ITapeCalibration.LtoRemainingCurve"/>. LTO-3/4/6 runs proved it EQUALS the driver value
     /// (LTO-4/6) or collapses identically (LTO-3), so it carries no independent signal — hence default
     /// <see langword="false"/>. Flip on only to re-verify on a new drive/generation.
+    /// <para>Not supported on DLT-V4.</para>
     /// </summary>
     public bool CaptureLtoRemaining { get; init; }
 
@@ -69,7 +70,7 @@ public readonly record struct TapeCalibrationOptions
         BlocksPerChunk = DefaultBlocksPerChunk;
         TailSampleFraction = DefaultTailSampleFraction;     // reserve 40% of the budget for the EW→EOM tail
         TailCapacityFraction = DefaultTailCapacityFraction; // tail = last 5% of capacity (or EW, whichever first)
-        CaptureLtoRemaining = false;                        // proven redundant across LTO-3/4/6 — off by default
+        CaptureLtoRemaining = false;                        // proven redundant across LTO-3/4/6; not supported on DLVT-V4 — off by default
         NumCheckpoints = DefaultNumCheckpoints;             // 128 resumable body checkpoints (~1% granularity)
     }
 

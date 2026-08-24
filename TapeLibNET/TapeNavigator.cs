@@ -867,7 +867,7 @@ namespace TapeLibNET
                 if (WentOK)
                     SeekForwardPastTOCMark();
                 */
-        }
+            }
             else // we're somewhere in the content
             {
                 SeekForwardPastTOCMark();
