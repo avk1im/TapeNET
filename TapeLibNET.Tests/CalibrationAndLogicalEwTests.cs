@@ -366,14 +366,14 @@ public class CalibrationAndLogicalEwTests
         //  64 MB cartridge its margin FLOOR (8 MB = 12.5%) dwarfs the 4% physical-EW zone (2.56 MB), so the
         //  curve trips logical EW well before physical EW is ever seen — correct pessimism, but not the
         //  after-EW byte-count regime under test.
-        var (calDrive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (calDrive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
         ITapeCalibration? cal = new TapeCalibrator(calDrive)
         {
             Options = new TapeCalibrationOptions { SampleCount = 60 },
         }.Run();
         Assert.NotNull(cal);
 
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // A SMALL reserve so logical EW only trips in the precise after-physical-EW byte-count regime.
         long reserve = 256L * 1024;
@@ -491,6 +491,86 @@ public class CalibrationAndLogicalEwTests
         Assert.True(drive.ReloadMedia());
         Assert.False(drive.IsEarlyWarning);
         Assert.False(drive.IsProgrammableEarlyWarning);
+    }
+
+    #endregion
+
+    #region *** Re-evaluate Early Warning on Reposition ***
+
+    [Fact]
+    public void EarlyWarning_ClearsOnReposition_OutsideZone()
+    {
+        // Measured calibration so physical EW is actually reached (a-priori's 8 MB margin would pre-empt it).
+        var (calDrive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
+        ITapeCalibration? cal = new TapeCalibrator(calDrive) { Options = new() { SampleCount = 60 } }.Run();
+        Assert.NotNull(cal);
+
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
+        Assert.True(drive.AddCalibration(cal!));
+        Assert.True(drive.SetEarlyWarning(256L * 1024));
+
+        int block = (int)drive.MaximumBlockSize;
+        var data = IncompressibleBlock(block, seed: 41);
+        Assert.True(drive.MoveToPartition(MediaPartition.Content));
+        Assert.True(drive.Rewind());
+
+        while (!drive.IsEarlyWarning)
+        {
+            int n = drive.WriteDirect(data, 0, block, out _, out _, out bool eom);
+            if (eom || n == 0) break;
+        }
+        Assert.True(drive.IsEarlyWarning, "Precondition: EW should latch");
+        Assert.True(drive.IsPhysicalEarlyWarningSeen, "Precondition: physical EW should have fired");
+
+        // Rewind to BOT — before the zone. Sticky + physical anchor clear, and Remaining is now ~full.
+        Assert.True(drive.Rewind());
+        Assert.False(drive.IsEarlyWarning);
+        Assert.False(drive.IsPhysicalEarlyWarningSeen);
+
+        // A fresh overwrite from BOM proceeds a full block — no stale EW, no clamp-to-zero.
+        int written = drive.WriteDirect(data, 0, block, out _, out bool ew, out bool eom2);
+        Assert.Equal(block, written);
+        Assert.False(ew);
+        Assert.False(eom2);
+        Assert.False(drive.IsEarlyWarning);
+    }
+
+    [Fact]
+    public void EarlyWarning_PersistsOnReposition_InsideZone()
+    {
+        var (calDrive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
+        ITapeCalibration? cal = new TapeCalibrator(calDrive) { Options = new() { SampleCount = 60 } }.Run();
+        Assert.NotNull(cal);
+
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
+        Assert.True(drive.AddCalibration(cal!));
+        Assert.True(drive.SetEarlyWarning(256L * 1024));
+
+        int block = (int)drive.MaximumBlockSize;
+        var data = IncompressibleBlock(block, seed: 42);
+        Assert.True(drive.MoveToPartition(MediaPartition.Content));
+        Assert.True(drive.Rewind());
+
+        while (!drive.IsEarlyWarning)
+        {
+            int n = drive.WriteDirect(data, 0, block, out _, out _, out bool eom);
+            if (eom || n == 0) break;
+        }
+        Assert.True(drive.IsEarlyWarning, "Precondition: EW should latch");
+        Assert.True(drive.IsPhysicalEarlyWarningSeen, "Precondition: physical EW should have fired");
+
+        // Reposition back a couple of blocks — still deep in the zone (a file-write retry).
+        long backTarget = Math.Max(drive.GetCurrentBlock() - 2, 0);
+        Assert.True(drive.MoveToBlock(backTarget));
+
+        // Derived sticky drops, but the physical anchor is KEPT (we are still past zone entry).
+        Assert.True(drive.IsPhysicalEarlyWarningSeen,
+            "A within-zone reposition must keep the physical EW anchor");
+
+        // Still in the tail ⇒ the next write re-fires logical EW immediately.
+        drive.WriteDirect(data, 0, block, out _, out bool ew, out _);
+        Assert.True(drive.IsEarlyWarning, "Within the zone, the next write must re-fire logical EW");
+        Assert.True(ew);
     }
 
     #endregion

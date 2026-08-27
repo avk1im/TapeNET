@@ -20,24 +20,26 @@ public partial class VirtualTapeMedia
     internal VirtualTapeEwProfile? EwProfile { get; set; }
 
     /// <summary>
-    /// The TRUE bytes still writable before hard EOM (<c>capacity − bytesWritten</c>, floored at zero).
+    /// The TRUE bytes still writable before hard EOM (<c>capacity − current_position_bytes</c>, floored at zero).
     /// This is the authoritative figure for capacity enforcement, independent of any reporting model.
     /// </summary>
-    public long TrueRemaining => System.Math.Max(0L, m_capacity - m_bytesWritten);
+    public long TrueRemaining => Math.Max(0L, m_capacity - CurrentPositionBytes());
 
     /// <summary>
     /// The remaining figure the emulated driver reports — the (optionally optimistic) model value when an
     /// <see cref="EwProfile"/> is configured, otherwise the exact <see cref="TrueRemaining"/>.
     /// </summary>
     private long ReportedRemaining()
-        => EwProfile?.ReportedRemaining(m_bytesWritten, m_capacity) ?? TrueRemaining;
+        => EwProfile?.ReportedRemaining(CurrentPositionBytes(), m_capacity) ?? TrueRemaining;
 
     /// <summary>
-    /// Whether the current true position lies within the configured early-warning zone. False when no
-    /// profile (or a zero-width zone) is configured. Monotonic: once entered, stays true up to hard EOM.
+    /// Whether the current true POSITION lies within the configured early-warning zone. False when no
+    /// profile (or a zero-width zone) is configured. Position-based (not odometer-based): re-reads false
+    /// after a backward seek out of the zone, and true again once the head re-enters the tail — matching
+    /// real drive behavior and the position-based <see cref="TrueRemaining"/>.
     /// </summary>
     public bool IsInEarlyWarningZone
-        => EwProfile?.IsInEarlyWarningZone(m_bytesWritten, m_capacity) ?? false;
+        => EwProfile?.IsInEarlyWarningZone(CurrentPositionBytes(), m_capacity) ?? false;
 
     #endregion
 }

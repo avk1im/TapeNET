@@ -44,6 +44,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     // Logical early-warning runtime state, mapped from the backend's physical EW/PEW + calibration.
     private bool m_physicalEwSeen = false;          // backend reported built-in EW this pass
     private long m_ewAnchorBlock = -1L;             // drive logical block where physical EW first fired
+    private long m_ewZoneEntryBlock = -1L;          // immovable LBA where physical EW first fired (membership test)
     private long m_bytesAfterPhysicalEwCarry = 0L;  // bytes-after-EW frozen across block-size changes
     private long m_bytesSinceRemainingPoll = 0L;    // paces the ReportedRemaining poll (approx ok)
     // Writable headroom (estimate minus reserve) observed at the last poll. Paces the NEXT poll so the
@@ -446,6 +447,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         {
             m_physicalEwSeen = true;
             m_ewAnchorBlock = GetCurrentBlock();
+            m_ewZoneEntryBlock = m_ewAnchorBlock; // ← the fixed zone start (m_ewAnchorBlock may later re-anchor; this does not)
             m_bytesAfterPhysicalEwCarry = 0L;
             m_logger.LogTrace("{Prefix}: Physical early warning at block {Block}", LogPrefix, m_ewAnchorBlock);
         }
@@ -534,9 +536,45 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         IsProgrammableEarlyWarning = false;
         m_physicalEwSeen = false;
         m_ewAnchorBlock = -1L;
+        m_ewZoneEntryBlock = -1L;   
         m_bytesAfterPhysicalEwCarry = 0L;
         m_bytesSinceRemainingPoll = 0L;
         m_writableHeadroomAtLastPoll = long.MaxValue;
+    }
+
+    /// <summary>
+    /// Re-evaluates EW state after a tape REPOSITION, since early warning is a property of physical
+    /// position, not a permanent latch. The logical sticky is derived per-write, so it is always dropped
+    /// here — it re-fires on the next write if we are still in the tail (e.g. a file-write retry a few
+    /// blocks back), and correctly stays clear once the caller has repositioned out of the zone (e.g. a
+    /// rewind to overwrite earlier sets). The PHYSICAL anchor is kept unless we have moved before the
+    /// zone-entry landmark, because losing it would let a later re-detection re-anchor DEEPER and
+    /// over-estimate remaining. Only meaningful on the content partition.
+    /// </summary>
+    /// <param name="newBlock">The content-partition logical block the tape was repositioned to.</param>
+    private void ReevaluateEarlyWarningAfterReposition(long newBlock)
+    {
+        // Drop the derived logical sticky on ANY reposition; it is recomputed on the next write.
+        IsEarlyWarning = false;
+        IsProgrammableEarlyWarning = false;
+
+        // Physical zone membership: only when we have moved BEFORE where physical EW first fired do we
+        //  leave the zone and shed the anchor + accounting. A within-zone move (retry) keeps them, so
+        //  BytesAfterPhysicalEw() recomputes correctly from the new, earlier-but-still-in-zone position.
+        //  The zone-entry LBA is immovable across block-size changes, so this comparison is robust.
+        if (m_physicalEwSeen && m_ewZoneEntryBlock >= 0L && newBlock < m_ewZoneEntryBlock)
+        {
+            m_physicalEwSeen = false;
+            m_ewAnchorBlock = -1L;
+            m_ewZoneEntryBlock = -1L;
+            m_bytesAfterPhysicalEwCarry = 0L;
+
+            // Left the zone → reset the pre-EW curve-poll pacing to a clean state. (A within-zone move
+            //  deliberately KEEPS the cached headroom so ClampWriteToEarlyWarning stays armed for the
+            //  very next write, and keeps the poll counter high so that write re-polls immediately.)
+            m_bytesSinceRemainingPoll = 0L;
+            m_writableHeadroomAtLastPoll = long.MaxValue;
+        }
     }
 
     /// <summary>
@@ -1112,7 +1150,10 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         InvalidateMediaParams(keepBlockSize: false);
 
         if (m_onContentPartition)
+        {
             CacheContentMediaParams(EnsureMediaParams()); // refresh content capacity cache asap
+            ReevaluateEarlyWarningAfterReposition(block);
+        }
 
         m_logger.LogTrace("{Prefix}: Moved to partition {Partition}", LogPrefix, partition);
         return true;
@@ -1254,6 +1295,10 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return false;
         }
 
+        InvalidateMediaParams(keepBlockSize: true); // position changed ⇒ Remaining must be re-read
+        if (m_onContentPartition)
+            ReevaluateEarlyWarningAfterReposition(0L);
+
         m_logger.LogTrace("{Prefix}: Rewound", LogPrefix);
         return true;
     }
@@ -1270,6 +1315,10 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             LogErrorAsDebug("Failed to fast forward");
             return false;
         }
+
+        InvalidateMediaParams(keepBlockSize: true); // position changed ⇒ Remaining must be re-read
+        // No need to call ReevaluateEarlyWarningAfterReposition(): moving toward EOM never leaves the zone;
+        //  and if it re-enters, the next write senses it!
 
         m_logger.LogTrace("{Prefix}: Fast forwarded to end", LogPrefix);
         return true;
@@ -1296,6 +1345,10 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             LogErrorAsDebug("Failed to move to block");
             return false;
         }
+
+        InvalidateMediaParams(keepBlockSize: true); // position changed ⇒ Remaining must be re-read
+        if (m_onContentPartition)
+            ReevaluateEarlyWarningAfterReposition(block);
 
         m_logger.LogTrace("{Prefix}: Moved to block {Block}", LogPrefix, block);
         return true;
