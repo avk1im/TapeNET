@@ -212,7 +212,7 @@ public class CalibrationResumeTests
     [Fact]
     public void Resume_ContinuesAbortedRun_ToCompletion()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // Simulate an interruption ~halfway — several body checkpoints are on tape by then.
         var run = new TapeCalibrator(drive) { Options = FastOptions() };
@@ -238,12 +238,12 @@ public class CalibrationResumeTests
     public void Resume_ProducesEquivalentCalibration_ToAnUninterruptedRun()
     {
         // Baseline: a clean, uninterrupted run.
-        var (driveA, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (driveA, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
         ITapeCalibration? clean = new TapeCalibrator(driveA) { Options = FastOptions() }.Run();
         Assert.NotNull(clean);
 
         // Interrupted-then-resumed run on an equivalent cartridge.
-        var (driveB, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (driveB, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
         var run = new TapeCalibrator(driveB) { Options = FastOptions() };
         Assert.Null(run.Run(new AbortAfterBytes(run, Capacity / 2)));
         ITapeCalibration? resumed = new TapeCalibrator(driveB) { Options = FastOptions() }.Resume();
@@ -260,7 +260,7 @@ public class CalibrationResumeTests
     [Fact]
     public void Resume_IsItselfResumable_ConvergesAfterRepeatedFailures()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // 1) Fresh run, interrupted early (~35%).
         var r0 = new TapeCalibrator(drive) { Options = FastOptions() };
@@ -284,7 +284,7 @@ public class CalibrationResumeTests
     [Fact]
     public void Resume_OnBlankCartridge_ReturnsNull()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // No run has been performed: there is no header on the medium, so nothing to resume.
         ITapeCalibration? resumed = new TapeCalibrator(drive) { Options = FastOptions() }.Resume();
@@ -294,7 +294,7 @@ public class CalibrationResumeTests
     [Fact]
     public void Resume_RestoresPriorReserveAndCalibrations()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // Interrupt a fresh run first so there is something to resume.
         var run = new TapeCalibrator(drive) { Options = FastOptions() };
@@ -315,7 +315,7 @@ public class CalibrationResumeTests
     [Fact]
     public void Resume_RecoversFromTornLastCheckpoint()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // Abort mid-body so SEVERAL body checkpoints are on tape (16 checkpoints, aborted at ~50% ⇒ ~8).
         var run = new TapeCalibrator(drive) { Options = FastOptions() };
@@ -337,7 +337,7 @@ public class CalibrationResumeTests
     [Fact]
     public void Resume_OnForeignCartridgeWithRegularData_ReturnsNull()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // The user's mix-up: a cartridge carrying ordinary filemark-delimited data (backup-like sets) but
         //  NO calibration header at BOM. Resume must reject it cleanly — caught by the header-at-BOM check
@@ -367,7 +367,7 @@ public class CalibrationResumeTests
     [Fact]
     public void Recalibrate_AfterCompleteRun_ReassessesTail_WithSmallDelta()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // A full run to completion leaves the resumable trail (header + body checkpoints) on tape.
         var run = new TapeCalibrator(drive) { Options = FastOptions() };
@@ -408,7 +408,7 @@ public class CalibrationResumeTests
     [Fact]
     public void Recalibrate_OnBlankCartridge_ReturnsNullReassessed()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // No trail on the medium ⇒ nothing to re-measure from.
         var existing = TapeCalibration.Apriori(drive.DriveProfileKey, Capacity);
@@ -422,7 +422,7 @@ public class CalibrationResumeTests
     public void Recalibrate_AfterDriveBehaviorChange_ReportsLargeEwShift()
     {
         // Original drive behavior: a wide 8% early-warning zone.
-        var (drive, backend) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity, ewZonePercent: 8.0));
+        var (drive, backend) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity, ewZonePercent: 8.0));
 
         ITapeCalibration? original = new TapeCalibrator(drive) { Options = FastOptions() }.Run();
         Assert.NotNull(original);
@@ -432,7 +432,7 @@ public class CalibrationResumeTests
         //  the profile (it does not wipe content), so the resumable trail survives and the tail
         //  re-measurement now sees the new, later early warning. Shrinking (not growing) the zone keeps
         //  the new EW point AHEAD of the resume position, so it is measured cleanly rather than truncated.
-        backend.EmulatedEarlyWarning = VirtualTapeEwProfile.Lto4Like(Capacity, ewZonePercent: 2.0);
+        backend.EmulatedEarlyWarning = VirtualTapeEwProfile.EmulatedOverreport(Capacity, ewZonePercent: 2.0);
 
         (ITapeCalibration? reassessed, TapeRecalibrationDelta delta) =
             new TapeCalibrator(drive) { Options = FastOptions() }.Recalibrate(original!);
@@ -455,7 +455,7 @@ public class CalibrationResumeTests
     [Fact]
     public void InspectMedia_AfterCompleteRun_ReportsResumableAndComplete()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         ITapeCalibration? cal = new TapeCalibrator(drive) { Options = FastOptions() }.Run();
         Assert.NotNull(cal);
@@ -476,7 +476,7 @@ public class CalibrationResumeTests
     [Fact]
     public void InspectMedia_AfterAbortedRun_ReportsResumableButNotComplete()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         var run = new TapeCalibrator(drive) { Options = FastOptions() };
         Assert.Null(run.Run(new AbortAfterBytes(run, Capacity / 2)));   // interrupted ~halfway
@@ -493,7 +493,7 @@ public class CalibrationResumeTests
     [Fact]
     public void InspectMedia_OnBlankCartridge_ReturnsNull()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // No run performed ⇒ no header at BOM ⇒ nothing to inspect.
         Assert.Null(new TapeCalibrator(drive) { Options = FastOptions() }.InspectMedia());
@@ -502,7 +502,7 @@ public class CalibrationResumeTests
     [Fact]
     public void InspectMedia_OnForeignCartridgeWithRegularData_ReturnsNull()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // Ordinary filemark-delimited data, but NO calibration header at BOM — a mixed-up cartridge.
         Assert.True(drive.MoveToPartition(MediaPartition.Content));
@@ -524,7 +524,7 @@ public class CalibrationResumeTests
     [Fact]
     public void InspectMedia_IsNonDestructive_ResumeStillSucceeds()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         var run = new TapeCalibrator(drive) { Options = FastOptions() };
         Assert.Null(run.Run(new AbortAfterBytes(run, Capacity / 2)));
@@ -554,7 +554,7 @@ public class CalibrationResumeTests
     [Fact]
     public void InspectMedia_DoesNotDisturbLoadedCalibrationsOrReserve()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // Leave a resumable trail so InspectMedia has a header to read.
         Assert.NotNull(new TapeCalibrator(drive) { Options = FastOptions() }.Run());

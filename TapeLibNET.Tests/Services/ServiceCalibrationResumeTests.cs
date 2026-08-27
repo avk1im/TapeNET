@@ -38,7 +38,7 @@ public class ServiceCalibrationResumeTests : ServiceTestBase
                 VirtualTapeDriveCapabilities.WithFilemarksOnlyLargeBlocks,
                 vmd,
                 ioRate: ioRate,
-                ewProfile: ewProfile ?? VirtualTapeEwProfile.Lto4Like(capacity)),
+                ewProfile: ewProfile ?? VirtualTapeEwProfile.EmulatedOverreport(capacity)),
             $"OpenVirtualDriveAsync failed: {service.LastError}");
 
         Assert.True(await service.LoadMediaAsync(),

@@ -88,7 +88,7 @@ public sealed record VirtualTapeEwProfile
     #region *** Factories ***
 
     /// <summary>
-    /// A realistic LTO-4-like preset: an EW zone of <paramref name="ewZonePercent"/> of capacity, and a
+    /// An emulated overreport preset: an EW zone of <paramref name="ewZonePercent"/> of capacity, and a
     /// reported-remaining line pinned by the two independent over-report anchors
     /// (<see cref="ReportedRemainingAnchors"/>).
     /// <para>
@@ -110,7 +110,7 @@ public sealed record VirtualTapeEwProfile
     /// the EW zone is orthogonal to them.
     /// </para>
     /// </summary>
-    public static VirtualTapeEwProfile Lto4Like(
+    public static VirtualTapeEwProfile EmulatedOverreport(
         long capacity, double ewZonePercent = 4.0, double phantomFreePercent = 4.0,
         double reportedBoostPercent = 0.0)
     {

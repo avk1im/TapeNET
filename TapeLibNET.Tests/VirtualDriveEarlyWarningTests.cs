@@ -77,7 +77,7 @@ public class VirtualDriveEarlyWarningTests
     [Fact]
     public void Lto4LikeProfile_RemainingOvershootsThenFloors_EwStickyBeforeEom()
     {
-        var profile = VirtualTapeEwProfile.Lto4Like(Capacity);
+        var profile = VirtualTapeEwProfile.EmulatedOverreport(Capacity);
         using var backend = CreateBackend(profile, report: true);
 
         Assert.Equal(EarlyWarningMechanism.HardwareEarlyWarning, backend.EarlyWarningMechanism);
@@ -140,7 +140,7 @@ public class VirtualDriveEarlyWarningTests
     [Fact]
     public void ReportEarlyWarningFalse_SuppressesEwFlag()
     {
-        var profile = VirtualTapeEwProfile.Lto4Like(Capacity);
+        var profile = VirtualTapeEwProfile.EmulatedOverreport(Capacity);
         using var backend = CreateBackend(profile, report: false);
 
         // Mechanism still advertises the zone, but the flag is gated off until reporting is requested.

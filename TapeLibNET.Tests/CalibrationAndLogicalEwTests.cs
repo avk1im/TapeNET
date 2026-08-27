@@ -50,7 +50,7 @@ public class CalibrationAndLogicalEwTests
     [Fact]
     public void CalibrationRun_ProducesUsableMonotonicCurve_WithEwLandmark()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // Faster run: fewer samples, small interval so a 64 MB cartridge still yields several points.
         var calibrator = new TapeCalibrator(drive)
@@ -90,7 +90,7 @@ public class CalibrationAndLogicalEwTests
     [Fact]
     public void CalibrationRun_RestoresPriorReserveAndCalibrations()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // Pre-existing reserve + a matching loaded calibration that the run must NOT taint or discard.
         var preloaded = TapeCalibration.Apriori(drive.DriveProfileKey, Capacity);
@@ -122,7 +122,7 @@ public class CalibrationAndLogicalEwTests
     public void CalibrationRun_WithOverreport_CapturesBothBomAndEomAnchors(
         double phantomFreePercent, double reportedBoostPercent)
     {
-        var profile = VirtualTapeEwProfile.Lto4Like(
+        var profile = VirtualTapeEwProfile.EmulatedOverreport(
             Capacity, ewZonePercent: 4.0,
             phantomFreePercent: phantomFreePercent,
             reportedBoostPercent: reportedBoostPercent);
@@ -169,7 +169,7 @@ public class CalibrationAndLogicalEwTests
     [Fact]
     public void CalibrationJson_RoundTrips_AndRejectsUnknownFormat()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
         var calibrator = new TapeCalibrator(drive)
         {
             Options = new TapeCalibrationOptions
@@ -233,7 +233,7 @@ public class CalibrationAndLogicalEwTests
     [Fact]
     public void MultiProfile_SelectsMatchingKey_AndTracksLoadUnload()
     {
-        var (drive, backend) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, backend) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         string matchingKey = drive.DriveProfileKey;
         var matching = TapeCalibration.Apriori(matchingKey, Capacity);
@@ -273,7 +273,7 @@ public class CalibrationAndLogicalEwTests
         // Capacity must exceed the internal ReportedRemaining poll interval (64 MB) so the throttled
         //  before-EW curve poll fires at least once before the physical EW zone near the tail.
         const long largeCapacity = 256L * 1024 * 1024;
-        var profile = VirtualTapeEwProfile.Lto4Like(largeCapacity);
+        var profile = VirtualTapeEwProfile.EmulatedOverreport(largeCapacity);
         var (drive, _) = CreateDrive(profile, capacity: largeCapacity);
 
         // A LARGE reserve so the calibrated curve trips logical EW well before the physical EW zone.
@@ -315,7 +315,7 @@ public class CalibrationAndLogicalEwTests
     [Fact]
     public void LogicalEw_AfterPhysicalEw_FiresFromByteCountWithSmallReserve()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // A SMALL reserve so logical EW only trips in the precise after-physical-EW byte-count regime.
         long reserve = 256L * 1024;
@@ -364,7 +364,7 @@ public class CalibrationAndLogicalEwTests
     public void EstimateActualRemaining_TracksTrueRemaining_AcrossRegimes()
     {
         // Calibrate first so the drive has a measured curve to translate with.
-        var (calDrive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (calDrive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
         ITapeCalibration? cal = new TapeCalibrator(calDrive)
         {
             Options = new TapeCalibrationOptions
@@ -377,7 +377,7 @@ public class CalibrationAndLogicalEwTests
         Assert.NotNull(cal);
 
         // Fresh cartridge, load the measured calibration, then write and compare estimate vs ground truth.
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
         Assert.True(drive.AddCalibration(cal!));
         Assert.True(drive.SetEarlyWarning(1L * 1024 * 1024));
 
@@ -418,7 +418,7 @@ public class CalibrationAndLogicalEwTests
     [Fact]
     public void EarlyWarningRuntime_ResetsOnMediaReload()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
         Assert.True(drive.SetEarlyWarning(256L * 1024));
 
         int block = (int)drive.MaximumBlockSize;
