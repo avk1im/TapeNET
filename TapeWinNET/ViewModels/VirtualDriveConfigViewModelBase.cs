@@ -201,7 +201,7 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
     /// calibration profiles are appended by the owning view-model.
     /// </summary>
     public ObservableCollection<EwProfileOption> EwProfiles { get; } =
-        new([EwProfileOption.None, EwProfileOption.Custom, EwProfileOption.Lto4]);
+        new([EwProfileOption.None, EwProfileOption.Custom, EwProfileOption.Overreport]);
 
     public EwProfileOption SelectedEwProfile
     {

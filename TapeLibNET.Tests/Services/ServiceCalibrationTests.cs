@@ -22,7 +22,7 @@ public class ServiceCalibrationTests : ServiceTestBase
                 VirtualTapeDriveCapabilities.WithFilemarksOnlyLargeBlocks,
                 vmd,
                 ioRate: ioRate,
-                ewProfile: ewProfile ?? VirtualTapeEwProfile.Lto4Like(capacity)),
+                ewProfile: ewProfile ?? VirtualTapeEwProfile.EmulatedOverreport(capacity)),
             $"OpenVirtualDriveAsync failed: {service.LastError}");
 
         Assert.True(await service.LoadMediaAsync(),
@@ -100,7 +100,7 @@ public class ServiceCalibrationTests : ServiceTestBase
     public async Task ExecuteCalibrateAsync_WithCustomOverreport_ExposesBothOverreportAnchors()
     {
         var (service, _) = await OpenCalibrationServiceAsync(
-            ewProfile: VirtualTapeEwProfile.Lto4Like(
+            ewProfile: VirtualTapeEwProfile.EmulatedOverreport(
                 CalibrationCapacity, ewZonePercent: 4.0,
                 phantomFreePercent: 10.0, reportedBoostPercent: 5.0));
 

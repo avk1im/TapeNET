@@ -387,7 +387,7 @@ public partial class TapeServiceBase
                                 if (!emergencySaved)
                                 {
                                     throw new InvalidOperationException(
-                                        "TOC backup failed — media TOC is lost. " +
+                                        "TOC backup failed. It is strongly advised to immediately export TOC to file (Media | Export TOC to file). " +
                                         "The backed-up files are on the media but cannot be accessed without a TOC.");
                                 }
                             }

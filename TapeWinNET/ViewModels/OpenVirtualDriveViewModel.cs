@@ -164,7 +164,7 @@ public record IoRateOption(long BytesPerSecond, long LocateBytesPerSecond, long 
 /// <list type="bullet">
 ///   <item><see cref="None"/> — no profile specified -> do not emulate EW functionality.</item>
 ///   <item><see cref="Custom"/> — the user supplies the EW-zone and capacity-overreport values directly.</item>
-///   <item><see cref="Lto4"/> — the built-in LTO-4-like preset.</item>
+///   <item><see cref="Overreport"/> — the built-in emulated overreport preset.</item>
 ///   <item>Calibration-backed — derived from a stored <see cref="ITapeCalibration"/> profile.</item>
 /// </list>
 /// The <see cref="Custom"/> option leaves the two value inputs editable; all others are opaque and blank the
@@ -182,8 +182,8 @@ public sealed record EwProfileOption(string Display, bool EnableEw, ITapeCalibra
     /// <summary>The editable "[Custom]" option — values come from the UI, not from this option.</summary>
     public static EwProfileOption Custom { get; } = new("[Custom]", EnableEw: true, IsCustom: true);
 
-    /// <summary>The built-in LTO-4-like preset.</summary>
-    public static EwProfileOption Lto4 { get; } = new("[LTO-4]", EnableEw: true);
+    /// <summary>The built-in emulated overreport preset.</summary>
+    public static EwProfileOption Overreport { get; } = new("[Overreport]", EnableEw: true);
 
     /// <summary>True when this option carries a stored calibration profile.</summary>
     public bool IsCalibration => Calibration is not null;
@@ -220,7 +220,7 @@ public sealed record EwProfileOption(string Display, bool EnableEw, ITapeCalibra
             if (ewZoneBytes <= 0 && phantomFreeAtEomBytes <= 0 && reportedCapacityBoostBytes <= 0)
                 return null;
 
-            return VirtualTapeEwProfile.Lto4Like(
+            return VirtualTapeEwProfile.EmulatedOverreport(
                 capacityBytes,
                 ewZonePercent: 100.0 * ewZoneBytes / capacityBytes,
                 phantomFreePercent: 100.0 * phantomFreeAtEomBytes / capacityBytes,
@@ -228,7 +228,7 @@ public sealed record EwProfileOption(string Display, bool EnableEw, ITapeCalibra
         }
 
         // Built-in LTO-4 preset (4% EW zone, 4% phantom free at EOM, no BOM boost).
-        return VirtualTapeEwProfile.Lto4Like(capacityBytes);
+        return VirtualTapeEwProfile.EmulatedOverreport(capacityBytes);
     }
 }
 
