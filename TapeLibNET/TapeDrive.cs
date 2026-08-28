@@ -1176,6 +1176,8 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return false;
         }
 
+        OnPositionChanged(backwards: count < 0);
+
         m_logger.LogTrace("{Prefix}: Moved by {Count} filemark(s)", LogPrefix, count);
         return true;
     }
@@ -1193,8 +1195,6 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return false;
         }
 
-        InvalidateMediaParams(keepBlockSize: true); // filemark may have changed the position
-
         m_logger.LogTrace("{Prefix}: Wrote {Count} filemark(s)", LogPrefix, count);
         return true;
     }
@@ -1211,6 +1211,8 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             LogErrorAsDebug("Failed to move past seq filemarks");
             return false;
         }
+
+        OnPositionChanged(backwards: count < 0);
 
         m_logger.LogTrace("{Prefix}: Moved past {Count} seq filemark(s)", LogPrefix, count);
         return true;
@@ -1235,6 +1237,8 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return false;
         }
 
+        OnPositionChanged(backwards: count < 0);
+
         m_logger.LogTrace("{Prefix}: Moved by {Count} setmark(s)", LogPrefix, count);
         return true;
     }
@@ -1251,8 +1255,6 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             LogErrorAsDebug("Failed to write setmark(s)");
             return false;
         }
-
-        InvalidateMediaParams(keepBlockSize: true); // setmark may have changed the position
 
         m_logger.LogTrace("{Prefix}: Wrote {Count} setmark(s)", LogPrefix, count);
         return true;
@@ -1295,9 +1297,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return false;
         }
 
-        InvalidateMediaParams(keepBlockSize: true); // position changed ⇒ Remaining must be re-read
-        if (m_onContentPartition)
-            ReevaluateEarlyWarningAfterReposition(0L);
+        OnPositionChanged(backwards: true);
 
         m_logger.LogTrace("{Prefix}: Rewound", LogPrefix);
         return true;
@@ -1316,9 +1316,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return false;
         }
 
-        InvalidateMediaParams(keepBlockSize: true); // position changed ⇒ Remaining must be re-read
-        // No need to call ReevaluateEarlyWarningAfterReposition(): moving toward EOM never leaves the zone;
-        //  and if it re-enters, the next write senses it!
+        OnPositionChanged(backwards: false);
 
         m_logger.LogTrace("{Prefix}: Fast forwarded to end", LogPrefix);
         return true;
@@ -1330,7 +1328,9 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         if (!IsMediaLoaded)
             return false;
 
-        if (block == BlockCounter)
+        long currBlock = BlockCounter;
+
+        if (block == currBlock)
             return true;
 
         if (block < 0)
@@ -1346,9 +1346,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return false;
         }
 
-        InvalidateMediaParams(keepBlockSize: true); // position changed ⇒ Remaining must be re-read
-        if (m_onContentPartition)
-            ReevaluateEarlyWarningAfterReposition(block);
+        OnPositionChanged(backwards: block < currBlock, toBlock: block);
 
         m_logger.LogTrace("{Prefix}: Moved to block {Block}", LogPrefix, block);
         return true;
@@ -1433,6 +1431,17 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         m_onContentPartition = false;
     }
 
+    private void OnPositionChanged(bool backwards, long toBlock = -1)
+    {
+        InvalidateMediaParams(keepBlockSize: true); // position changed ⇒ Remaining must be re-read
+        if (m_onContentPartition && backwards) // we moved backwards ⇒ might've left the EW zone!
+        {
+            if (toBlock < 0)
+                toBlock = BlockCounter;
+            ReevaluateEarlyWarningAfterReposition(toBlock);
+        }
+    }
+
     /// <summary>
     /// Ensures the drive is on the Content partition and the capacity cache is populated.
     /// For multi-partition media, checks actual position first to avoid an unnecessary move.
@@ -1514,4 +1523,5 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     }
 
     #endregion // *** Private Helpers ***
+
 } // class TapeDrive
