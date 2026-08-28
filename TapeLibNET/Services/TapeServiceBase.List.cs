@@ -299,6 +299,8 @@ public partial class TapeServiceBase
             return;
 
         LogInfoSub($"Name: >{toc.Description}<");
+        if (toc.MediaId != Guid.Empty)
+            LogInfoSub($"Media ID: {toc.MediaId}");
         LogInfoSub($"Created on: {toc.CreationTime}");
         LogInfoSub($"Last saved: {toc.LastSaveTime}");
         LogInfoSub($"Backup sets: {toc.Count}");

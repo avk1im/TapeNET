@@ -887,6 +887,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     {
         if (_toc is null) return;
         LogInfoSub($"Media name: {_toc.Description}");
+        if (_toc.MediaId != Guid.Empty)
+            LogInfoSub($"Media ID: {_toc.MediaId}");
         LogInfoSub($"Created: {_toc.CreationTime}");
         LogInfoSub($"Last saved: {_toc.LastSaveTime}");
         LogInfoSub($"Volume: #{_toc.Volume}");

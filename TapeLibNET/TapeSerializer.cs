@@ -54,6 +54,14 @@ namespace TapeLibNET
         public void Serialize(FileAttributes attr) => Serialize((uint)attr);
         public void Serialize(TapeAddress addr) { Serialize(addr.Block); Serialize(addr.Offset); }
         public void Serialize(DateTime dt) => Serialize(dt.Ticks);
+        /// <summary>
+        /// Serializes a <see cref="Guid"/> as its canonical 16-byte representation.
+        /// <remarks>
+        ///  Uses <see cref="Guid.ToByteArray"/> (not the generic unmanaged path) so the on-tape
+        ///  layout stays defined and stable across runtimes.
+        /// </remarks>
+        /// </summary>
+        public void Serialize(Guid guid) => Serialize(guid.ToByteArray());
         public void Serialize(TapeFileDescriptor fileDescr)
         {
             // serialize all settable public properties
@@ -133,6 +141,19 @@ namespace TapeLibNET
 
         public FileAttributes DeserializeFileAttributes() => (FileAttributes)DeserializeUInt32();
         public DateTime DeserializeDateTime() => new(DeserializeInt64());
+        /// <summary>
+        /// Deserializes a <see cref="Guid"/> written by <see cref="TapeSerializer.Serialize(Guid)"/>
+        ///  — a fixed 16-byte block.
+        /// </summary>
+        /// <exception cref="FormatException">Thrown when fewer than 16 bytes remain.</exception>
+        public Guid DeserializeGuid()
+        {
+            var bytes = DeserializeBytes(16);
+
+            return (bytes != null)
+                ? new Guid(bytes)
+                : throw new FormatException("Error deserializing Guid");
+        }
         public TapeAddress DeserializeTapeAddress() => new(DeserializeInt64(), DeserializeUInt32());
         public TapeFileDescriptor DeserializeFileDescriptor()
         {

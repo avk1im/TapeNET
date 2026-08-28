@@ -1573,6 +1573,8 @@ public partial class MainViewModel : ViewModelBase
 
         // Populate media properties
         PropertyList.Add(new PropertyItem("Description", toc.Description ?? "(unnamed)"));
+        if (toc.MediaId != Guid.Empty)
+            PropertyList.Add(new PropertyItem("Media ID", toc.MediaId.ToString()));
         PropertyList.Add(new PropertyItem("Created On", toc.CreationTime.ToString("G")));
         PropertyList.Add(new PropertyItem("Last Saved", toc.LastSaveTime.ToString("G")));
         PropertyList.Add(new PropertyItem("Backup Sets", toc.Count.ToString()));
