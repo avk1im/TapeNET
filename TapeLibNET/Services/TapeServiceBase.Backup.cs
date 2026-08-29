@@ -134,7 +134,7 @@ public partial class TapeServiceBase
                 ? request.FileList.Count : 0;
 
             // Mode 1: Append after specific set — save TOC copy for rollback
-            if (append && appendAfterSetIndex > toc.FirstSetOnVolume && appendAfterSetIndex < toc.LastSetOnVolume)
+            if (append && appendAfterSetIndex >= toc.FirstSetOnVolume && appendAfterSetIndex < toc.LastSetOnVolume)
             {
                 LogInfo($"Appending after backup set #{appendAfterSetIndex} | {toc.SetIndexToAlt(appendAfterSetIndex)}");
                 backupTOC = new TapeTOC(toc);
@@ -270,7 +270,7 @@ public partial class TapeServiceBase
                             //  Keep the (empty) new set; trim trailing sets if mode 1.
                             if (appendAfterSetUsed)
                                 toc.RemoveSetsAfterCurrent();
-                            LogErr("No files backed up — previous set data may be lost");
+                            LogErr("No files backed up — previous set data may still be overwritten");
                         }
                     }
                     else
@@ -419,17 +419,25 @@ public partial class TapeServiceBase
                 if (progressHandler.FilesFailed > 0)
                 {
                     headlineLevel = ServiceReportLevel.Failed;
-                    headlineMsg = $"Backed up {progressHandler.FilesTotal:N0} file(s) with {progressHandler.FilesFailed:N0} failed";
+                    headlineMsg = $"Backed up {progressHandler.FilesSucceeded:N0} of {progressHandler.FilesTotal:N0} file(s), " +
+                                  $"{progressHandler.FilesFailed:N0} failed";
                 }
                 else if (progressHandler.FilesSkipped > 0)
                 {
                     headlineLevel = ServiceReportLevel.Warning;
-                    headlineMsg = $"Backed up {progressHandler.FilesTotal:N0} file(s) with {progressHandler.FilesSkipped:N0} skipped";
+                    headlineMsg = $"Backed up {progressHandler.FilesSucceeded:N0} of {progressHandler.FilesTotal:N0} file(s), " +
+                                  $"{progressHandler.FilesSkipped:N0} skipped";
+                }
+                else if (progressHandler.FilesSucceeded > 0)
+                {
+                    headlineLevel = ServiceReportLevel.Completed;
+                    headlineMsg = $"Backed up {progressHandler.FilesSucceeded:N0} file(s) successfully";
                 }
                 else
                 {
-                    headlineLevel = ServiceReportLevel.Completed;
-                    headlineMsg = $"Backed up {progressHandler.FilesTotal:N0} file(s) successfully";
+                    // Nothing completed (e.g. early EW / volume full with in-flight rollback) — don't claim success.
+                    headlineLevel = ServiceReportLevel.Info;
+                    headlineMsg = "No files were backed up";
                 }
                 _host.Report(headlineLevel, headlineMsg);
 

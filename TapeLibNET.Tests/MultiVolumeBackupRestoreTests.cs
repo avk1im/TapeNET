@@ -22,7 +22,6 @@ public class MultiVolumeBackupRestoreTests
     #region *** Test Data ***
 
     /// <summary>All three drive profiles for parameterized theories.</summary>
-#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> AllProfiles =>
     [
         DriveProfile.Setmarks,
@@ -30,7 +29,6 @@ public class MultiVolumeBackupRestoreTests
         DriveProfile.SeqFilemarks,
         DriveProfile.FilemarksOnly,
     ];
-#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     /// <summary>
     /// Content capacity per volume — small enough to trigger volume overflow with

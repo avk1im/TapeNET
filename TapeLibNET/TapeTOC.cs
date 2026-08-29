@@ -1516,6 +1516,21 @@ namespace TapeLibNET
             return totalSize;
         }
 
+        /// <summary>
+        /// Cumulative on-tape size of the sets on the current volume that PRECEDE the current set — i.e.
+        /// the approximate byte offset from the start of the volume's content to where the current set
+        /// begins. Used to anchor <see cref="TapeDrive.NotifyNextContentWritePosition"/> when overwriting
+        /// an existing set. Per-set block-size and software-compression aware, but oblivious to hardware
+        /// compression and setmark/gap overhead — sufficient as a rough, temporary anchor.
+        /// </summary>
+        public long ComputeContentSizeOnTapeBeforeCurrentSet(uint defaultBlockSize = 0)
+        {
+            long total = 0L;
+            for (int i = FirstSetInternalOnVolume; i < m_currSetInternal; i++)
+                total += m_setTOCs[i].ComputeTotalFileSizeOnTape(defaultBlockSize);
+            return total;
+        }
+
         #endregion // File selection methods
 
     } // class TapeTOC

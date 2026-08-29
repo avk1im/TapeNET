@@ -1,10 +1,10 @@
-using TapeLibNET.Tests.Helpers;
+﻿using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
 
 /// <summary>
-/// Focused tests for <see cref="TapeFileBackupAgent"/> � the middle layer between
+/// Focused tests for <see cref="TapeFileBackupAgent"/> — the middle layer between
 /// low-level tape stream/navigator tests and full backup?restore round-trips.
 /// <para>
 /// These tests verify that the backup agent correctly:
@@ -24,7 +24,6 @@ public class TapeBackupAgentTests
     #region *** Test Data ***
 
     /// <summary>All three drive profiles for parameterized theories.</summary>
-#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> AllProfiles =>
     [
         DriveProfile.Setmarks,
@@ -32,10 +31,9 @@ public class TapeBackupAgentTests
         DriveProfile.SeqFilemarks,
         DriveProfile.FilemarksOnly,
     ];
-#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     /// <summary>
-    /// Cross-product of drive profile � hash algorithm for backup theories.
+    /// Cross-product of drive profile × hash algorithm for backup theories.
     /// </summary>
     public static TheoryData<DriveProfile, TapeHashAlgorithm> ProfilesAndHashes
     {
@@ -56,7 +54,7 @@ public class TapeBackupAgentTests
 
     /// <summary>
     /// Backs up a file list to a new set using the given agent, with common defaults.
-    /// Does NOT save the TOC � caller controls when TOC is written.
+    /// Does NOT save the TOC — caller controls when TOC is written.
     /// </summary>
     private static bool BackupFileList(
         TapeFileBackupAgent agent,
@@ -172,7 +170,7 @@ public class TapeBackupAgentTests
     #endregion
 
 
-    #region *** Multiple Sets � Sequential Backup ***
+    #region *** Multiple Sets — Sequential Backup ***
 
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -520,7 +518,7 @@ public class TapeBackupAgentTests
     [MemberData(nameof(AllProfiles))]
     public void TwoSets_SameAgent_BackupAndSaveTOC(DriveProfile profile)
     {
-        // Uses a single agent session for both sets � mirrors real-world usage
+        // Uses a single agent session for both sets — mirrors real-world usage
         using var tree1 = new TempFileTree(seed: 100);
         tree1.AddFiles("set1", count: 5, minSize: 100, maxSize: 8 * 1024);
 
@@ -556,7 +554,7 @@ public class TapeBackupAgentTests
     [MemberData(nameof(AllProfiles))]
     public void ThreeSets_FreshAgentPerSet_TOCAccumulates(DriveProfile profile)
     {
-        // Uses separate agent sessions per set � mirrors the VirtualTapeFixture.BackupFiles pattern
+        // Uses separate agent sessions per set — mirrors the VirtualTapeFixture.BackupFiles pattern
         using var tree1 = new TempFileTree(seed: 10);
         tree1.AddFiles("a", count: 3, minSize: 100, maxSize: 4 * 1024);
 
@@ -613,4 +611,155 @@ public class TapeBackupAgentTests
     }
 
     #endregion
+
+    #region *** Soft Early Warning (TOC-in-set) ***
+
+    [Fact]
+    public void Backup_SoftEarlyWarning_StopsSetLeavingTocRoom()
+    {
+        // Honest small cartridge + small TOC reserve ⇒ soft EW fires (reported ≤ reserve) well before hard
+        //  EOM, stopping the set and reserving room for the TOC. FilemarksOnly = TOC-in-set (LTO-like).
+        const long capacity = 2L * 1024 * 1024;
+        using var fixture = new VirtualTapeFixture(DriveProfile.FilemarksOnly, contentCapacity: capacity);
+        using var agent = fixture.CreateBackupAgent();
+
+        agent.Manager.Navigator.TOCCapacity = 256L * 1024; // small reserve so EW precedes EOM cleanly
+
+        using var tree = new TempFileTree();
+        tree.AddFiles("ew", count: 80, minSize: 24 * 1024, maxSize: 48 * 1024); // ~2.9 MB ≫ capacity
+
+        var toc = fixture.TOC;
+        toc.AddNewSetTOC(0);
+        toc.CurrentSetTOC.Description = "Soft EW";
+        toc.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc32;
+        toc.CurrentSetTOC.BlockSize = 16 * 1024; // fine granularity so the reserve spans several blocks
+
+        agent.BackupFileListToCurrentSet(newSet: true, tree.Files, ignoreFailures: true);
+
+        // Soft EW stopped the set: a continuation is pending, and only SOME files fit — the fix is that
+        //  it stops SHORT of EOM (reserving TOC room), not that it fails to write anything.
+        Assert.True(agent.CanResumeToNextVolume,
+            "Soft early warning should trigger a volume-continuation stop");
+        Assert.InRange(toc.CurrentSetTOC.Count, 1, tree.Files.Count - 1);
+    }
+
+    #endregion
+
+    #region *** Overwrite After Full (Write-Position Notification) ***
+
+    // Reproduces the real-world "overwrite a full cartridge" scenario end-to-end through the backup agent.
+    //  A real drive reports Remaining = capacity − EOD, which stays stale-small after repositioning before
+    //  existing content. Without NotifyNextContentWritePosition (armed by BeginWriteContentForCurrentSet)
+    //  the drive would trip a premature logical early warning and clamp every write to zero — the bug that
+    //  produced a "0 files" backup set. This test proves the agent path now writes the files.
+
+    [Fact]
+    public void OverwriteFullTape_FromBeginning_WritesAllFilesAndRestores()
+    {
+        // Honest drive (no EW emulation) ⇒ identity calibration, so logical EW fires precisely when
+        //  reported remaining ≤ the TOC reserve — deterministic, no a-priori margin to reason about.
+        const long capacity = 4L * 1024 * 1024;
+        using var fixture = new VirtualTapeFixture(DriveProfile.FilemarksOnly, contentCapacity: capacity);
+        var drive = fixture.Drive;
+
+        // --- Phase 1: raw-fill the cartridge to hard EOM with SMALL blocks, then rewind. The drive now
+        //     reports < one block remaining (capacity − EOD) — the "previously full tape" the user
+        //     overwrites. Small fill blocks keep the leftover < the reserve so the precondition is exact. ---
+        Assert.True(drive.SetEarlyWarning(0));                       // no reserve ⇒ fill to hard EOM
+        Assert.True(drive.MoveToPartition(MediaPartition.Content));
+        Assert.True(drive.Rewind());
+
+        uint fillBs = Math.Max(drive.MinimumBlockSize, 16u * 1024);
+        Assert.True(drive.SetBlockSize(fillBs));
+        int fillBlock = (int)drive.BlockSize;
+        long reserve = Math.Max(64L * 1024, 4L * fillBlock);
+
+        var junk = new byte[fillBlock];
+        new Random(71).NextBytes(junk);
+        while (true)
+        {
+            int n = drive.WriteDirect(junk, 0, fillBlock, out _, out _, out bool eom);
+            if (n == 0 || eom) break;
+        }
+        Assert.True(drive.Rewind());
+
+        Assert.True(drive.GetReportedContentRemaining() < reserve,
+            "Precondition: after fill the drive should report less than the TOC reserve remaining");
+
+        // --- Phase 2: a fresh backup overwriting the whole tape from the beginning. ---
+        using var tree = new TempFileTree();
+        tree.AddFiles("overwrite", count: 6, minSize: 8 * 1024, maxSize: 24 * 1024); // ~100 KB total ≪ capacity
+
+        var toc = new TapeTOC("Overwrite media");
+        using var agent = new TapeFileBackupAgent(drive, toc);
+        agent.Navigator.TOCCapacity = reserve;                      // small reserve fits the small cartridge
+
+        toc.AddNewSetTOC(0);
+        toc.CurrentSetTOC.Description = "Fresh over full";
+        toc.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc32;
+        toc.CurrentSetTOC.BlockSize = 16 * 1024;
+
+        // First set on volume ⇒ the agent writes from beginning of content and calls
+        //  NotifyNextContentWritePosition(0), so the stale ~0 reported remaining does NOT clamp the write.
+        bool ok = agent.BackupFileListToCurrentSet(newSet: true, tree.Files, ignoreFailures: true);
+
+        Assert.True(ok, "Overwrite backup should succeed");
+        Assert.False(agent.CanResumeToNextVolume, "The small overwrite fits — no volume continuation");
+        Assert.Equal(tree.Files.Count, toc.CurrentSetTOC.Count);    // ← the bug produced 0 files here
+
+        // The first write reset EOD (truncating the old fill), so reported remaining recovered far above
+        //  the reserve — proving the overwrite actually reclaimed the tape, not just squeezed in.
+        Assert.True(drive.GetReportedContentRemaining() > reserve,
+            "After overwriting from the beginning, reported remaining should recover");
+
+        Assert.True(agent.BackupTOC(), "TOC save after overwrite should succeed");
+
+        // --- Phase 3: restore proves the overwritten content is intact byte-for-byte. ---
+        string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_OW_{Guid.NewGuid():N}");
+        try
+        {
+            toc.MakeLastSetCurrent();
+            using var restore = new TapeFileRestoreAgentEx(
+                drive, restoreDir, recurseSubdirs: true, TapeHowToHandleExisting.Overwrite, toc);
+            restore.Navigator.TOCCapacity = reserve;
+
+            Assert.True(restore.RestoreAllFilesFromCurrentSet(ignoreFailures: true),
+                "Restore of the overwritten set should succeed");
+
+            FileComparer.AssertFilesMatch(
+                tree.RootPath, tree.Files, RestoreEquivalentRoot(restoreDir, tree.RootPath));
+        }
+        finally
+        {
+            TryDeleteDirectory(restoreDir);
+        }
+    }
+
+    // --- local helpers (mirrors MultiVolumeBackupRestoreTests) ---
+
+    private static string RestoreEquivalentRoot(string restoreDir, string originalRoot)
+    {
+        string pathRoot = Path.GetPathRoot(originalRoot)!;
+        string relative = Path.GetRelativePath(pathRoot, originalRoot);
+        return Path.Combine(restoreDir, relative);
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (!Directory.Exists(path)) return;
+            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+            {
+                var attrs = File.GetAttributes(file);
+                if ((attrs & FileAttributes.ReadOnly) != 0)
+                    File.SetAttributes(file, attrs & ~FileAttributes.ReadOnly);
+            }
+            Directory.Delete(path, recursive: true);
+        }
+        catch { /* best effort */ }
+    }
+
+    #endregion
+
 }

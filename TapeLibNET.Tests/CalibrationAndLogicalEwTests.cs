@@ -498,7 +498,7 @@ public class CalibrationAndLogicalEwTests
     #region *** Re-evaluate Early Warning on Reposition ***
 
     [Fact]
-    public void EarlyWarning_ClearsOnReposition_OutsideZone()
+    public void EarlyWarning_ClearsOnReposition_OutsideZone_OnlyWithNotification()
     {
         // Measured calibration so physical EW is actually reached (a-priori's 8 MB margin would pre-empt it).
         var (calDrive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
@@ -524,11 +524,23 @@ public class CalibrationAndLogicalEwTests
 
         // Rewind to BOT — before the zone. Sticky + physical anchor clear, and Remaining is now ~full.
         Assert.True(drive.Rewind());
-        Assert.False(drive.IsEarlyWarning);
-        Assert.False(drive.IsPhysicalEarlyWarningSeen);
+        Assert.False(drive.IsEarlyWarning); // Reposition clears EW flag...
+        Assert.False(drive.IsPhysicalEarlyWarningSeen); // ...and physical EW
 
-        // A fresh overwrite from BOM proceeds a full block — no stale EW, no clamp-to-zero.
+        // But the drive still shows little remaining capacity
+        Assert.True(drive.EstimateActualRemaining() < block);
+        // ...hence we cannot write anything...
         int written = drive.WriteDirect(data, 0, block, out _, out bool ew, out bool eom2);
+        Assert.Equal(0, written);
+        Assert.True(ew); // ...the drive still signals EW...
+        Assert.False(eom2); // ...even though there's no EOM of course
+
+        // Now advise the drive
+        drive.NotifyNextContentWritePosition(0L);
+        Assert.True(drive.IsEarlyWarning); // NotifyNextContentWritePosition doesn't reset the EW latch
+
+        // Now we can write a full block — no stale EW, no clamp-to-zero.
+        written = drive.WriteDirect(data, 0, block, out _, out ew, out eom2);
         Assert.Equal(block, written);
         Assert.False(ew);
         Assert.False(eom2);
@@ -574,4 +586,95 @@ public class CalibrationAndLogicalEwTests
     }
 
     #endregion
+
+    #region *** Write-Position Notification (overwrite reposition) ***
+
+    // Fills the loaded cartridge to hard EOM (no reserve), then rewinds — leaving the drive reporting
+    //  ~0 remaining (EOD-based), the exact "full cartridge, repositioned to overwrite" state.
+    private static void FillToEomThenRewind(TapeDrive drive, int block, byte[] data)
+    {
+        Assert.True(drive.SetEarlyWarning(0));            // no reserve → fill freely to hard EOM
+        Assert.True(drive.MoveToPartition(MediaPartition.Content));
+        Assert.True(drive.Rewind());
+
+        while (true)
+        {
+            int n = drive.WriteDirect(data, 0, block, out _, out _, out bool eom);
+            if (n == 0 || eom) break;
+        }
+
+        Assert.True(drive.Rewind());                      // reposition to overwrite from BOM
+        Assert.True(drive.GetReportedContentRemaining() < block,
+            "After fill+rewind the drive should report ~0 remaining (EOD-based)");
+    }
+
+    [Fact]
+    public void Overwrite_WithoutNotification_ClampsWriteToZero()
+    {
+        var (drive, _) = CreateDrive(profile: null);      // honest drive, identity calibration
+        int block = (int)drive.MaximumBlockSize;
+        var data = IncompressibleBlock(block, seed: 51);
+
+        FillToEomThenRewind(drive, block, data);
+
+        // Arm a reserve but DON'T notify: the stale EOD-based Remaining (~0) makes the EW logic believe
+        //  no room is left, so the overwrite is clamped to zero — the bug the notification exists to fix.
+        Assert.True(drive.SetEarlyWarning(1L * 1024 * 1024));
+        int w = drive.WriteDirect(data, 0, block, out _, out bool ew, out _);
+
+        Assert.Equal(0, w);
+        Assert.True(ew);
+        Assert.True(drive.IsEarlyWarning);
+    }
+
+    [Fact]
+    public void Overwrite_WithNotification_AllowsWrite()
+    {
+        var (drive, _) = CreateDrive(profile: null);
+        int block = (int)drive.MaximumBlockSize;
+        var data = IncompressibleBlock(block, seed: 52);
+
+        FillToEomThenRewind(drive, block, data);
+
+        Assert.True(drive.SetEarlyWarning(1L * 1024 * 1024));
+        drive.NotifyNextContentWritePosition(0);          // overwriting from BOM ⇒ ~0 bytes precede the head
+
+        // The notification lets the EW logic use capacity − 0 (full) instead of the stale figure.
+        int w1 = drive.WriteDirect(data, 0, block, out _, out bool ew1, out _);
+        Assert.Equal(block, w1);
+        Assert.False(ew1);
+        Assert.False(drive.IsEarlyWarning);
+
+        // First write reset EOD (overwrite truncated the old data), so the drive figure is accurate again
+        //  and the notification is cleared — a second write proceeds on the real figure, not re-clamped.
+        int w2 = drive.WriteDirect(data, 0, block, out _, out bool ew2, out _);
+        Assert.Equal(block, w2);
+        Assert.False(ew2);
+    }
+
+    [Fact]
+    public void Notification_DoesNotAffectPublicEstimate()
+    {
+        var (drive, _) = CreateDrive(profile: null);
+        int block = (int)drive.MaximumBlockSize;
+        var data = IncompressibleBlock(block, seed: 53);
+
+        FillToEomThenRewind(drive, block, data);
+
+        long estBefore = drive.EstimateActualRemaining();
+        drive.NotifyNextContentWritePosition(0);
+        long estAfter = drive.EstimateActualRemaining();
+
+        // The notification is EW-DECISION-only: the public estimate (and thus service-level Writable)
+        //  must stay on the drive figure, unchanged by the notification.
+        Assert.Equal(estBefore, estAfter);
+
+        // Yet the EW-decision path DOES honor it — an overwrite proceeds.
+        Assert.True(drive.SetEarlyWarning(1L * 1024 * 1024));
+        int w = drive.WriteDirect(data, 0, block, out _, out _, out _);
+        Assert.Equal(block, w);
+    }
+
+    #endregion
+
 }
