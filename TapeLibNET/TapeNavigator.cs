@@ -32,12 +32,35 @@ namespace TapeLibNET
         #region *** Properties ***
 
         /// <summary>Default TOC capacity used when no override is specified.</summary>
+        /// <summary>Default TOC capacity used when no override is specified.</summary>
+        /// <remarks>
+        /// Scales with the media's physical <see cref="TapeDrive.Capacity"/> when known — TOC size
+        /// tracks file count, which tracks capacity — clamped to a floor/ceiling. Falls back to
+        /// generation buckets when capacity is not yet available (e.g. before media is loaded, as in
+        /// <c>SetOptimalDriveParams</c> during drive open).
+        /// </remarks>
         public static long DefaultTOCCapacity(TapeDrive? drive)
-            => drive?.IsLto5PlusDrive == true
-                ? 1024 * 1024 * 1024 // 1 GB for LTO-5+
-                : drive?.IsLtoDrive == true
-                    ? 512 * 1024 * 1024 // 512 MB for LTO-1..4
-                    : 32 * 1024 * 1024; // 32 MB for non-LTO drives (default if no drive specified)
+        {
+            const long MB = 1024L * 1024;
+            const long GB = 1024L * MB;
+
+            const long Floor = 32 * MB;   // smallest useful TOC reserve
+            const long Ceiling = 1 * GB;  // enough for a huge TOC; caps waste on LTO-5+
+            const long Divisor = 400;     // ~0.25% of physical capacity
+
+            long capacity = drive?.Capacity ?? 0L;
+            if (capacity > 0L)
+                return Math.Clamp(capacity / Divisor, Floor, Ceiling);
+
+            // Capacity unknown (media not loaded yet) → fall back to generation buckets.
+            return (drive?.LtoGeneration ?? -1) switch
+            {
+                >= 5 => 1 * GB,      // LTO-5+
+                >= 1 => 512 * MB,    // LTO-1..4
+                0 => 64 * MB,     // pre-LTO SCSI (AIT, DAT, …) — no longer 512 MB
+                _ => 32 * MB,     // unknown / no drive
+            };
+        }
 
         /// <summary>
         /// Maximum space reserved for the TOC area on this tape.
