@@ -616,8 +616,9 @@ public partial class TapeDriveWin32Backend
 
     #endregion
 
-    #region *** SPTD Write Filemarks ***
+    #region *** SPTD Write Tapemarks ***
 
+    /*
     /// <summary>
     /// Writes <paramref name="count"/> filemarks via SCSI <c>WRITE FILEMARKS(6)</c> (opcode 0x10)
     /// using SPTD, so the final TOC / flush logic never has to bounce back through tape.sys.
@@ -671,6 +672,76 @@ public partial class TapeDriveWin32Backend
         m_logger.LogDebug(
             "{Prefix}: WRITE FILEMARKS(6) failed key=0x{Key:X2} ASC=0x{Asc:X2} ASCQ=0x{Ascq:X2}",
             LogPrefix, r.SenseKey, r.Asc, r.Ascq);
+        return false;
+    }
+    */
+
+    /// <summary>
+    /// Writes <paramref name="count"/> tape marks via SCSI <c>WRITE FILEMARKS(6)</c> (opcode 0x10) using
+    /// SPTD. The <c>WSMK</c> bit (byte 1, bit 1) selects SETMARKS when <paramref name="setmarks"/> is true,
+    /// else filemarks — so a single command covers both, with identical EW/EOM sense handling and without
+    /// bouncing through the tape class driver (whose WriteTapemark spuriously returns EOM inside the
+    /// early-warning zone on LTO/AIT/DAT). Early Warning is treated as SUCCESS (the marks WERE written).
+    /// <para>
+    /// <remarks>
+    /// Setmarks must only be requested on drives that actually support them (AIT/DAT etc.); LTO/DLT are
+    /// filemark-only. <see cref="TapeNavigator"/> already gates this via
+    /// <c><see cref="TapeNavigator.UseSmks"/> &amp;&amp; <see cref="Drive.SupportsSetmarks"/></c>,
+    /// so by the time a setmark reaches here the drive supports it. A drive that nonetheless rejects WSMK
+    /// answers CHECK CONDITION (INVALID FIELD IN CDB) and surfaces as a normal failure.
+    /// </remarks>
+    /// </para>
+    /// </summary>
+    /// <param name="setmarks"><c>true</c> to write setmarks; <c>false</c> to write filemarks.</param>
+    /// <param name="count">Number of tape marks to write.</param>
+    /// <param name="immediate">
+    /// When <c>true</c>, sets the IMMED bit and returns as soon as the command is accepted
+    /// (caller must poll). When <c>false</c> (default), waits for physical completion.
+    /// </param>
+    /// <param name="earlyWarning">Set to <c>true</c> if the drive reported (any) Early Warning.</param>
+    internal bool ScsiWriteTapemarksDirect(bool setmarks, int count, bool immediate, out bool earlyWarning)
+    {
+        earlyWarning = false;
+
+#pragma warning disable IDE0302 // Simplify collection initialization -- for explicity
+        Span<byte> cdb = stackalloc byte[6];
+#pragma warning restore IDE0302 // Simplify collection initialization
+        cdb[0] = c_scsiOpWriteFilemarks6;
+        cdb[1] = (byte)((setmarks ? 0x02 : 0x00) | (immediate ? 0x01 : 0x00)); // WSMK | IMMED
+        cdb[2] = (byte)((count >> 16) & 0xFF);
+        cdb[3] = (byte)((count >> 8) & 0xFF);
+        cdb[4] = (byte)(count & 0xFF);
+        cdb[5] = 0x00; // CONTROL
+
+        ScsiDirectOutcome r = SendScsiCommandDirect(cdb, [], dataIn: false);
+
+        if (!r.TransportOk)
+        {
+            LogErrorAsDebug("ScsiWriteTapemarksDirect transport failure");
+            return false;
+        }
+
+        if (r.IsGood)
+        {
+            ResetError();
+            return true;
+        }
+
+        if (r.IsProgrammableEarlyWarning || r.IsEarlyWarning)
+        {
+            earlyWarning = true;
+            ResetError(); // PEW / EW aren't an error — the mark(s) were written
+
+            if (m_writeRunReports.ThisLine().TryEnter())
+                m_logger.LogInformation("{Prefix}: EARLY WARNING while writing {Mark}s",
+                    LogPrefix, setmarks ? "setmark" : "filemark");
+            return true;
+        }
+
+        SetError(WIN32_ERROR.ERROR_IO_DEVICE);
+        m_logger.LogDebug(
+            "{Prefix}: WRITE {Mark}S(6) failed key=0x{Key:X2} ASC=0x{Asc:X2} ASCQ=0x{Ascq:X2}",
+            LogPrefix, setmarks ? "SETMARK" : "FILEMARK", r.SenseKey, r.Asc, r.Ascq);
         return false;
     }
 
