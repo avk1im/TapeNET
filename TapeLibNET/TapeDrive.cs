@@ -448,14 +448,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         //  EstimateActualRemaining()'s precise tail path even when NO logical reserve was requested
 
         IsProgrammableEarlyWarning = pew;
-        if (physicalEw && !m_physicalEwSeen)
-        {
-            m_physicalEwSeen = true;
-            m_ewAnchorBlock = GetCurrentBlock();
-            m_ewZoneEntryBlock = m_ewAnchorBlock; // ← the fixed zone start (m_ewAnchorBlock may later re-anchor; this does not)
-            m_bytesAfterPhysicalEwCarry = 0L;
-            m_logger.LogTrace("{Prefix}: Physical early warning at block {Block}", LogPrefix, m_ewAnchorBlock);
-        }
+        CapturePhysicalEarlyWarning(physicalEw);
 
         // Map physical EW/PEW + calibrated ReportedRemaining onto the caller's LOGICAL early warning.
         //  With NO reserve requested this surfaces the drive's physical EW 1:1 (v1.0 behavior, and exactly
@@ -546,6 +539,18 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         m_bytesAfterPhysicalEwCarry = 0L;
         m_bytesSinceRemainingPoll = 0L;
         m_writableHeadroomAtLastPoll = long.MaxValue;
+    }
+
+    private void CapturePhysicalEarlyWarning(bool physicalEw)
+    {
+        if (physicalEw && !m_physicalEwSeen)
+        {
+            m_physicalEwSeen = true;
+            m_ewAnchorBlock = GetCurrentBlock();
+            m_ewZoneEntryBlock = m_ewAnchorBlock; // ← the fixed zone start (m_ewAnchorBlock may later re-anchor; this does not)
+            m_bytesAfterPhysicalEwCarry = 0L;
+            m_logger.LogTrace("{Prefix}: Physical early warning at block {Block}", LogPrefix, m_ewAnchorBlock);
+        }
     }
 
     /// <summary>
@@ -1228,7 +1233,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         if (!IsMediaLoaded)
             return false;
 
-        if (!m_backend.WriteFilemarks(count))
+        if (!m_backend.WriteFilemarks(count, out bool physicalEw))
         {
             SyncErrorFrom(m_backend);
             LogErrorAsDebug("Failed to write filemark(s)");
@@ -1236,6 +1241,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         }
 
         OnWritten(); // writing a mark resets EOD → notification no longer needed, and MediaParams.Remaining needs to be refreshed
+        CapturePhysicalEarlyWarning(physicalEw);
 
         m_logger.LogTrace("{Prefix}: Wrote {Count} filemark(s)", LogPrefix, count);
         return true;
@@ -1291,7 +1297,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         if (!IsMediaLoaded)
             return false;
 
-        if (!m_backend.WriteSetmarks(count))
+        if (!m_backend.WriteSetmarks(count, out bool physicalEw))
         {
             SyncErrorFrom(m_backend);
             LogErrorAsDebug("Failed to write setmark(s)");
@@ -1299,6 +1305,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         }
 
         OnWritten(); // writing a mark resets EOD → notification no longer needed, and MediaParams.Remaining needs to be refreshed
+        CapturePhysicalEarlyWarning(physicalEw);
 
         m_logger.LogTrace("{Prefix}: Wrote {Count} setmark(s)", LogPrefix, count);
         return true;

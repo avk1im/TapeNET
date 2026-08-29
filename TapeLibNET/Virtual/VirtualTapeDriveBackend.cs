@@ -1214,8 +1214,9 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
 
     #region *** Tapemark Operations ***
 
-    public override bool WriteFilemarks(uint count)
+    public override bool WriteFilemarks(uint count, out bool ew)
     {
+        ew = false;
         ResetError();
 
         if (m_currentMedia == null)
@@ -1231,13 +1232,15 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
                 SetError(m_currentMedia.LastError);
                 return false;
             }
+            ew = ew || m_reportEarlyWarning && m_currentMedia.IsInEarlyWarningZone;
         }
 
         return true;
     }
 
-    public override bool WriteSetmarks(uint count)
+    public override bool WriteSetmarks(uint count, out bool ew)
     {
+        ew = false;
         ResetError();
 
        if (!m_capabilities.SupportsSetmarks)
@@ -1259,6 +1262,7 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
                 SetError(m_currentMedia.LastError);
                 return false;
             }
+            ew = ew || m_reportEarlyWarning && m_currentMedia.IsInEarlyWarningZone;
         }
 
         return true;

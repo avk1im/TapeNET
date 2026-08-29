@@ -285,10 +285,10 @@ public abstract class TapeDriveBackend : ErrorManageableBase, IDisposable
     #region *** Abstract Tapemark Operations ***
 
     /// <summary>Writes <paramref name="count"/> filemarks at the current position.</summary>
-    public abstract bool WriteFilemarks(uint count);
+    public abstract bool WriteFilemarks(uint count, out bool ew);
 
     /// <summary>Writes <paramref name="count"/> setmarks at the current position.</summary>
-    public abstract bool WriteSetmarks(uint count);
+    public abstract bool WriteSetmarks(uint count, out bool ew);
 
     #endregion
 

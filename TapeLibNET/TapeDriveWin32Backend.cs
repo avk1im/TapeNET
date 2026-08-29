@@ -765,39 +765,53 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
 
     #region *** Tapemark Operations ***
 
-    public override bool WriteFilemarks(uint count)
+    public override bool WriteFilemarks(uint count, out bool ew)
     {
+        ew = false;
         if (!HasMedia)
         {
             SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
             return false;
         }
 
-        Op(() => InvokeWriteTapemark(TAPEMARK_TYPE.TAPE_FILEMARKS, count)).WithRetry().WithPoll().Run();
+        // Notice ewLocal is an ordinary local the Op(...) closure captures and passes
+        //  as `out` to InvokeWriteTapemark. Read it back after the pipeline runs.
+        bool ewLocal = false;
+        Op(() => InvokeWriteTapemark(TAPEMARK_TYPE.TAPE_FILEMARKS, count, out ewLocal))
+            .WithRetry().WithPoll().Run();
+
+        ew = ewLocal && m_reportEw; // gate exactly like Write(): surface EW only when the caller asked
 
         if (WentOK)
-            m_logger.LogTrace("{Prefix}: Wrote {Count} filemark(s)", LogPrefix, count);
+            m_logger.LogTrace("{Prefix}: Wrote {Count} filemark(s){Ew}",
+                LogPrefix, count, ew ? " — early warning" : "");
         else
             LogErrorAsDebug("Failed to write filemarks");
-
         return WentOK;
     }
 
-    public override bool WriteSetmarks(uint count)
+    public override bool WriteSetmarks(uint count, out bool ew)
     {
+        ew = false;
         if (!HasMedia)
         {
             SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
             return false;
         }
 
-        Op(() => InvokeWriteTapemark(TAPEMARK_TYPE.TAPE_SETMARKS, count)).WithRetry().WithPoll().Run();
+        // Notice ewLocal is an ordinary local the Op(...) closure captures and passes
+        //  as `out` to InvokeWriteTapemark. Read it back after the pipeline runs.
+        bool ewLocal = false;
+        Op(() => InvokeWriteTapemark(TAPEMARK_TYPE.TAPE_SETMARKS, count, out ewLocal))
+            .WithRetry().WithPoll().Run();
+
+        ew = ewLocal && m_reportEw;
 
         if (WentOK)
-            m_logger.LogTrace("{Prefix}: Wrote {Count} setmark(s)", LogPrefix, count);
+            m_logger.LogTrace("{Prefix}: Wrote {Count} setmark(s){Ew}",
+                LogPrefix, count, ew ? " — early warning" : "");
         else
             LogErrorAsDebug("Failed to write setmarks");
-
         return WentOK;
     }
 
@@ -1122,17 +1136,39 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         return WentOK;
     }
 
-    /// <summary>Invokes WriteTapemark with automatic immediate-to-blocking fallback.</summary>
-    private bool InvokeWriteTapemark(TAPEMARK_TYPE type, uint count) =>
-        InvokeImmediateOrBlocking(type, m_blockingTapemarkOps, immediate =>
+    /// <summary>Invokes WriteTapemark with automatic immediate-to-blocking fallback, surfacing any
+    ///  physical early warning the SCSI path reports (filemarks OR setmarks). EW is NOT an error — the
+    ///  mark was written.</summary>
+    private bool InvokeWriteTapemark(TAPEMARK_TYPE type, uint count, out bool ew)
+    {
+        // ewInner is an ORDINARY local (not an out param) so the immediate/blocking closure below may
+        //  capture it and pass it as `out` to ScsiWriteTapemarksDirect. A lambda cannot capture an out
+        //  parameter directly, hence the local + copy-out after dispatch. On an immediate→blocking
+        //  fallback the closure runs twice; ewInner then reflects the last (accepted) invocation.
+        bool ewInner = false;
+
+        bool result = InvokeImmediateOrBlocking(type, m_blockingTapemarkOps, immediate =>
         {
             if (IsLto)
+            {
+                // SCSI direct path (real LTO + forced "LTO-0" AIT/DAT/DLT): avoids the tape.sys
+                //  WriteTapemark false-EOM inside the EW zone AND surfaces physical EW. WSMK picks
+                //  setmarks vs filemarks.
                 ScsiWriteTapemarksDirect(setmarks: type == TAPEMARK_TYPE.TAPE_SETMARKS,
-                    (int)count, immediate, out _ /*ew*/);
+                    (int)count, immediate, out ewInner);
+            }
             else
+            {
+                // Non-SCSI fallback: the Win32 API can't distinguish EW from a real EOM here.
                 SetError(PInvoke.WriteTapemark(m_driveHandle, type, count, immediate));
+                ewInner = false;
+            }
             return WentOK;
         });
+
+        ew = ewInner;
+        return result;
+    }
 
     /// <summary>
     /// Queries tape position with automatic retry for drives that return

@@ -444,16 +444,29 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
 
     #region *** Tapemarks ***
 
-    public override Task<OperationResponse> WriteFilemarks(WriteMarksRequest request, ServerCallContext context)
+    // server handler sketch
+    public override Task<WriteMarksResponse> WriteFilemarks(WriteMarksRequest request, ServerCallContext context)
     {
         using var scope = GetScope(context); var b = scope.Backend;
-        return Task.FromResult(MakeResponse(b, b.WriteFilemarks(request.Count)));
+        bool ok = b.WriteFilemarks(request.Count, out bool ew);
+        return Task.FromResult(new WriteMarksResponse
+        {
+            Ew = ew,
+            Error = CaptureError(b),
+            State = CaptureState(b),
+        });
     }
 
-    public override Task<OperationResponse> WriteSetmarks(WriteMarksRequest request, ServerCallContext context)
+    public override Task<WriteMarksResponse> WriteSetmarks(WriteMarksRequest request, ServerCallContext context)
     {
         using var scope = GetScope(context); var b = scope.Backend;
-        return Task.FromResult(MakeResponse(b, b.WriteSetmarks(request.Count)));
+        bool ok = b.WriteSetmarks(request.Count, out bool ew);
+        return Task.FromResult(new WriteMarksResponse
+        {
+            Ew = ew,
+            Error = CaptureError(b),
+            State = CaptureState(b),
+        });
     }
 
     #endregion

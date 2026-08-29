@@ -762,17 +762,24 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
 
     #region *** Tapemarks ***
 
-    public override bool WriteFilemarks(uint count)
+    public override bool WriteFilemarks(uint count, out bool ew)
     {
         var response = _client.WriteFilemarks(new WriteMarksRequest { Count = count }, WithSession());
-        return Sync(response);
+        SyncState(response.State);
+        SyncError(response.Error);
+        ew = response.Ew;
+        return WentOK;   // error already synced; success iff no error (mirrors data-op convention)
     }
 
-    public override bool WriteSetmarks(uint count)
+    public override bool WriteSetmarks(uint count, out bool ew)
     {
         var response = _client.WriteSetmarks(new WriteMarksRequest { Count = count }, WithSession());
-        return Sync(response);
+        SyncState(response.State);
+        SyncError(response.Error);
+        ew = response.Ew;
+        return WentOK;
     }
+
 
     #endregion
 

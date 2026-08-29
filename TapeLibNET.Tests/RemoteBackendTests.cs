@@ -246,7 +246,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         Array.Fill(block1, (byte)0xAA);
         drive.WriteDirect(block1, 0, blockSize);
 
-        Assert.True(fixture.Backend.WriteFilemarks(1));
+        Assert.True(fixture.Backend.WriteFilemarks(1, out _));
 
         byte[] block2 = new byte[blockSize];
         Array.Fill(block2, (byte)0xBB);
@@ -278,7 +278,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         Array.Fill(block1, (byte)0x11);
         drive.WriteDirect(block1, 0, blockSize);
 
-        Assert.True(fixture.Backend.WriteSetmarks(1));
+        Assert.True(fixture.Backend.WriteSetmarks(1, out _));
 
         byte[] block2 = new byte[blockSize];
         Array.Fill(block2, (byte)0x22);

@@ -289,7 +289,7 @@ public class VirtualDriveBasicTests
         Array.Fill(block1, (byte)0xAA);
         drive.WriteDirect(block1, 0, blockSize);
 
-        Assert.True(fixture.Backend.WriteFilemarks(1));
+        Assert.True(fixture.Backend.WriteFilemarks(1, out _));
 
         byte[] block2 = new byte[blockSize];
         Array.Fill(block2, (byte)0xBB);
@@ -324,7 +324,7 @@ public class VirtualDriveBasicTests
         Array.Fill(block1, (byte)0x11);
         drive.WriteDirect(block1, 0, blockSize);
 
-        Assert.True(fixture.Backend.WriteSetmarks(1));
+        Assert.True(fixture.Backend.WriteSetmarks(1, out _));
 
         byte[] block2 = new byte[blockSize];
         Array.Fill(block2, (byte)0x22);
@@ -355,7 +355,7 @@ public class VirtualDriveBasicTests
         Array.Fill(block1, (byte)0x33);
         drive.WriteDirect(block1, 0, blockSize);
 
-        Assert.True(fixture.Backend.WriteFilemarks(1));
+        Assert.True(fixture.Backend.WriteFilemarks(1, out _));
 
         byte[] block2 = new byte[blockSize];
         Array.Fill(block2, (byte)0x44);
@@ -382,7 +382,7 @@ public class VirtualDriveBasicTests
 
         // SeqFilemarks profile should NOT support setmarks
         Assert.False(fixture.Drive.SupportsSetmarks);
-        Assert.False(fixture.Backend.WriteSetmarks(1));
+        Assert.False(fixture.Backend.WriteSetmarks(1, out _));
     }
 
     [Theory]
