@@ -1551,7 +1551,8 @@ public partial class MainViewModel : ViewModelBase
         PropertyList.Add(new PropertyItem("Writable",
             Helpers.BytesToStringLong(_tapeService.WritableRemaining),
             highlightLevel: WarningLevelHelper.Translate(_tapeService.WritableRemaining / (double)_tapeService.EstimatedCapacity)));
-        PropertyList.Add(new PropertyItem("Estimation by", _tapeService.RemainingEstimationSource));
+        PropertyList.Add(new PropertyItem("Estimation by", _tapeService.RemainingEstimationSource,
+            highlightLevel: _tapeService.IsEarlyWarning? WarningLevel.Warning : WarningLevel.None));
     }
 
     private void LoadMediaInfo()

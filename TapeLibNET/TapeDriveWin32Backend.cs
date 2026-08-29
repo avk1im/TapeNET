@@ -1126,7 +1126,10 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     private bool InvokeWriteTapemark(TAPEMARK_TYPE type, uint count) =>
         InvokeImmediateOrBlocking(type, m_blockingTapemarkOps, immediate =>
         {
-            SetError(PInvoke.WriteTapemark(m_driveHandle, type, count, immediate));
+            if (IsLto && type == TAPEMARK_TYPE.TAPE_FILEMARKS)
+                ScsiWriteFilemarksDirect((int)count, immediate, out _ /*ew*/);
+            else
+                SetError(PInvoke.WriteTapemark(m_driveHandle, type, count, immediate));
             return WentOK;
         });
 
