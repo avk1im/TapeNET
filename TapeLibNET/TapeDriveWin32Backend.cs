@@ -1263,9 +1263,10 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
             // QUIRK on AIT drives: Capacity may be smaller than Remaining. Check & fix
             if (mediaParams.Capacity < mediaParams.Remaining)
             {
-                m_logger.LogTrace("Media parameters quirk detected: Remaining ({Remaining}) > Capacity ({Capacity}) - adjusted Capcity",
+                m_logger.LogTrace("Media parameters quirk detected: Remaining ({Remaining}) > Capacity ({Capacity}) → swapping",
                     Helpers.BytesToStringLong(mediaParams.Remaining), Helpers.BytesToStringLong(mediaParams.Capacity));
-                mediaParams.Capacity = mediaParams.Remaining;
+                (mediaParams.Capacity, mediaParams.Remaining) = (mediaParams.Remaining, mediaParams.Capacity);
+                Debug.Assert(mediaParams.Capacity >= mediaParams.Remaining);
             }
 
             m_mediaParams = mediaParams;
