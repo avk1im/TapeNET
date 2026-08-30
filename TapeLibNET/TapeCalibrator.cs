@@ -432,7 +432,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
             if (!probeLto || ltoBackend is null)
                 return -1L;
 
-            if (!ltoBackend.GetLtoRemainingCapacity(out long ltoRem, out _))
+            if (!ltoBackend.GetLtoCapacity(out long ltoRem, out _))
                 return -1L;
 
             state.LtoSamples.Add((actualWritten, ltoRem));

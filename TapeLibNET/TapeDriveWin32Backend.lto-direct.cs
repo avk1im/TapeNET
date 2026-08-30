@@ -471,7 +471,7 @@ public partial class TapeDriveWin32Backend
                     programmableEarlyWarning = true;
                     ResetError(); // PEW is not an error
 
-                    if (m_writeRunReports.ThisLine().TryEnter())
+                    if (m_traceOnce.ThisLine().TryEnter())
                         m_logger.LogInformation(
                             "{Prefix}: PROGRAMMABLE EARLY WARNING on write (accepted {Written} of {Count} bytes)",
                             LogPrefix, totalWritten, count);
@@ -500,7 +500,7 @@ public partial class TapeDriveWin32Backend
                     earlyWarning = true;
                     ResetError(); // EW is not an error
 
-                    if (m_writeRunReports.ThisLine().TryEnter())
+                    if (m_traceOnce.ThisLine().TryEnter())
                         m_logger.LogInformation(
                             "{Prefix}: EARLY WARNING on write (accepted {Written} of {Count} bytes) — approaching end of partition",
                             LogPrefix, totalWritten, count);
@@ -663,7 +663,7 @@ public partial class TapeDriveWin32Backend
             earlyWarning = true;
             ResetError(); // PEW / EW aren't an error
 
-            if (m_writeRunReports.ThisLine().TryEnter())
+            if (m_traceOnce.ThisLine().TryEnter())
                 m_logger.LogInformation("{Prefix}: EARLY WARNING while writing filemarks", LogPrefix);
             return true;
         }
@@ -732,7 +732,7 @@ public partial class TapeDriveWin32Backend
             earlyWarning = true;
             ResetError(); // PEW / EW aren't an error — the mark(s) were written
 
-            if (m_writeRunReports.ThisLine().TryEnter())
+            if (m_traceOnce.ThisLine().TryEnter())
                 m_logger.LogInformation("{Prefix}: EARLY WARNING while writing {Mark}s",
                     LogPrefix, setmarks ? "setmark" : "filemark");
             return true;
@@ -992,7 +992,7 @@ public partial class TapeDriveWin32Backend
                 : 0u,
         };
 
-        if (outcome.IsCheckCondition && m_writeRunReports.ThisLine().TryEnter())
+        if (outcome.IsCheckCondition && m_traceOnce.ThisLine().TryEnter())
         {
             m_logger.LogTrace(
                 "{Prefix}: {Tag} CHECK CONDITION key=0x{Key:X2} ASC=0x{Asc:X2} ASCQ=0x{Ascq:X2} " +

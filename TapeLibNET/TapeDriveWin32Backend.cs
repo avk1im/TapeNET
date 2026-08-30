@@ -61,12 +61,24 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     private string m_ltoProduct = string.Empty;
     private string m_ltoRevision = string.Empty;
 
-    // LTO partition usage flag — set during Open via ProbeForLtoInformation(), cleared in Close
+    // LTO partition usage flag — set during Open via ProbeForLtoInformation(), cleared in LtoClose().
     private bool m_useLtoPartitions;
+
+    // Does the drive answer LOG SENSE 0x31 at all? null = unprobed, true = works, false = unsupported.
+    //  DRIVE-level capability, decoupled from RefreshMediaParams use — calibration may call it too.
+    //  Reset in LtoClose (session), NOT in UnloadMedia.
+    private bool? m_ltoCapacitySupported;
+    // Set once Capacity < Remaining (classic AIT transposition) OR Capacity collapses below the
+    //  anchored physical max. Latches the correction schema on for the rest of the mount, so we
+    //  never trust tape.sys's raw figures again on this cartridge. Reset in UnloadMedia + Close.
+    private bool m_capacityQuirkDrive;
+    // Largest credible physical capacity seen this mount (-1 = unset). Reset in UnloadMedia + Close.
+    private long m_anchoredCapacity = -1;
+    private const double c_capacityCollapseFactor = 0.5; // reject capacity below half the anchor
 
     // One-shot report latches for the LTO backend, keyed by call site and re-armed together in LtoClose().
     //  Collapses per-chunk write-flow tracing (SCSI sense, early warning, LOG SENSE) to one line per session.
-    private readonly OnceLatchGroup m_writeRunReports = new();
+    private readonly OnceLatchGroup m_traceOnce = new();
 
     #endregion
 
@@ -230,11 +242,16 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         m_driveHandle.Close();
         m_driveParams = null;
         m_mediaParams = null;
+
         m_blockingPositionOps.Clear();
         m_blockingPrepareOps.Clear();
         m_blockingTapemarkOps.Clear();
+
         m_positionQueryNeedsRetry = false;
         m_setPositionNeedsBlocking = false;
+
+        m_capacityQuirkDrive = false; // reset capacity quirk on drive close
+        m_anchoredCapacity = -1L; // reset anchored capacity on drive close
 
         LtoClose();
     }
@@ -313,11 +330,15 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
             return false;
         }
 
+
         SetError(PInvoke.PrepareTape(m_driveHandle, PREPARE_TAPE_OPERATION.TAPE_UNLOAD, false));
 
         if (WentOK)
         {
             m_mediaParams = null;
+            m_capacityQuirkDrive = false; // reset capacity quirk on media change
+            m_anchoredCapacity = -1L; // reset anchored capacity on media change
+            
             m_logger.LogTrace("{Prefix}: Media unloaded", LogPrefix);
         }
         else
@@ -1250,7 +1271,6 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
 
         TAPE_GET_MEDIA_PARAMETERS mediaParams;
         uint retSize;
-
         unsafe
         {
             retSize = (uint)sizeof(TAPE_GET_MEDIA_PARAMETERS);
@@ -1258,29 +1278,88 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
                 ref retSize, new Span<byte>(&mediaParams, (int)retSize)));
         }
 
-        if (WentOK)
+        if (!WentOK)
         {
-            // QUIRK on AIT drives: Capacity may be smaller than Remaining. Check & fix
-            if (mediaParams.Capacity < mediaParams.Remaining)
-            {
-                m_logger.LogTrace("Media parameters quirk detected: Remaining ({Remaining}) > Capacity ({Capacity}) → swapping",
-                    Helpers.BytesToStringLong(mediaParams.Remaining), Helpers.BytesToStringLong(mediaParams.Capacity));
-                (mediaParams.Capacity, mediaParams.Remaining) = (mediaParams.Remaining, mediaParams.Capacity);
-                Debug.Assert(mediaParams.Capacity >= mediaParams.Remaining);
-            }
-
-            m_mediaParams = mediaParams;
-
-            // trace media capacity and remaining
-            m_logger.LogTrace("Refreshed media parmeters: Capacity {Capacity}, Remaining {Remaining}",
-                Helpers.BytesToString(m_mediaParams?.Capacity ?? 0L), Helpers.BytesToString(m_mediaParams?.Remaining ?? 0L));
-        }
-        else
             LogErrorAsDebug("Failed to get media parameters");
+            return false;
+        }
 
+        long cap = mediaParams.Capacity;
+        long rem = mediaParams.Remaining;
 
+        // --- AIT QUIRK detection: two cheap, SCSI-free tells ---
+        //  transposed : the classic AIT field swap (Capacity < Remaining)
+        //  collapsed  : Capacity fell far below the anchored physical maximum
+        //  Either one, once seen, marks the drive quirky for the rest of the mount.
+        bool transposed = cap < rem;
+        bool collapsed = IsCapacityCollapsed(cap);
+        if ((transposed || collapsed) && !m_capacityQuirkDrive)
+        {
+            m_capacityQuirkDrive = true;
+            m_logger.LogTrace("{Prefix}: Capacity quirk detected ({Why}) → correction engaged for this mount",
+                LogPrefix, transposed ? "transposed pair" : "collapse below anchor");
+        }
 
+        if (m_capacityQuirkDrive)
+            (cap, rem) = CorrectQuirkyCapacity(cap, rem);
+        else if (cap > m_anchoredCapacity)
+            m_anchoredCapacity = cap; // healthy: keep the anchor current — ~free, and arms collapse detection
+
+        mediaParams.Capacity = cap;
+        mediaParams.Remaining = Math.Min(rem, cap); // remaining can never exceed capacity
+        Debug.Assert(mediaParams.Capacity >= mediaParams.Remaining);
+        m_mediaParams = mediaParams;
+
+        m_logger.LogTrace("Refreshed media parameters: Capacity {Capacity}, Remaining {Remaining}",
+            Helpers.BytesToString(mediaParams.Capacity), Helpers.BytesToString(mediaParams.Remaining));
         return WentOK;
+    }
+
+    // Shared predicate so detection and the correction's restore branch agree exactly.
+    private bool IsCapacityCollapsed(long cap)
+        => m_anchoredCapacity > 0L && cap < m_anchoredCapacity * c_capacityCollapseFactor;
+
+    /// <summary>
+    /// Reconstructs a trustworthy (Capacity, Remaining) pair on a drive known to misreport them.
+    /// Priority: the drive's own LOG SENSE 0x31 figures (each trusted only when present), then a
+    /// transposition fix applied to WHATEVER source we ended up with (we don't trust 0x31 blindly
+    /// either), then the anti-collapse anchor. With no LTO and no anchor yet, this degrades to a
+    /// plain swap.
+    /// </summary>
+    private (long cap, long rem) CorrectQuirkyCapacity(long cap, long rem)
+    {
+        // 1) Authoritative source first. Decoupled from the healthy path — we only reach here
+        //    because the drive is quirky. Trust each field only when present (>= 0).
+        if (m_ltoCapacitySupported != false && GetLtoCapacity(out long lrem, out long lcap))
+        {
+            if (lcap >= 0) cap = lcap;
+            if (lrem >= 0) rem = lrem;
+        }
+
+        // 2) Order the pair — applied to BOTH tape.sys AND LOG SENSE output, since a drive that
+        //    confused tape.sys may hand us a swapped 0x31 page too.
+        if (cap < rem)
+        {
+            m_logger.LogTrace("Capacity/Remaining transposed ({Cap} < {Rem}) → swapping",
+                Helpers.BytesToStringLong(cap), Helpers.BytesToStringLong(rem));
+            (cap, rem) = (rem, cap);
+        }
+
+        // 3) Anchor defense: grow to the largest credible capacity, or restore from a collapse.
+        if (cap > m_anchoredCapacity)
+        {
+            m_logger.LogTrace("Capacity anchor {Old} → {New}",
+                Helpers.BytesToStringLong(m_anchoredCapacity), Helpers.BytesToStringLong(cap));
+            m_anchoredCapacity = cap;
+        }
+        else if (IsCapacityCollapsed(cap))
+        {
+            m_logger.LogTrace("Capacity collapse ignored: reported {Cap} << anchor {Anchor} → using anchor",
+                Helpers.BytesToStringLong(cap), Helpers.BytesToStringLong(m_anchoredCapacity));
+            cap = m_anchoredCapacity;
+        }
+
+        return (cap, rem);
     }
 
     #endregion // *** Private Helpers ***

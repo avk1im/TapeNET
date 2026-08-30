@@ -106,8 +106,10 @@ public partial class TapeDriveWin32Backend
         m_ltoProduct = string.Empty;
         m_ltoRevision = string.Empty;
 
+        m_ltoCapacitySupported = null;
+
         // Re-arm all one-shot write-run reports for the next open/session.
-        m_writeRunReports.ResetAll();
+        m_traceOnce.ResetAll();
 
         FreeAlignedScratch();
     }
@@ -1106,7 +1108,7 @@ public partial class TapeDriveWin32Backend
     //
     //  >>> VERIFY THE UNITS (c_tapeCapBytesPerUnit) against your drive's SCSI reference.
     //  >>> SSC nominally expresses these parameters in megabytes; some drives scale
-    //  >>> differently. GetLtoRemainingCapacity logs the raw parameter values at Trace.
+    //  >>> differently. GetLtoCapacity logs the raw parameter values at Trace.
     // =============================================================================
 
     private const byte c_scsiOpLogSense10 = 0x4D;
@@ -1132,9 +1134,69 @@ public partial class TapeDriveWin32Backend
     /// CHECK CONDITION and <see cref="SendScsiCommand"/> reports failure.
     /// </para>
     /// </summary>
-    /// <param name="remainingBytes">Receives main-partition remaining capacity in BYTES (0 if absent).</param>
-    /// <param name="maxCapacityBytes">Receives main-partition maximum capacity in BYTES (0 if absent).</param>
-    internal bool GetLtoRemainingCapacity(out long remainingBytes, out long maxCapacityBytes)
+    /// <returns>True if LOG SENSE 0x31 was answered (regardless of which parameters it carried).</returns>
+    /// <param name="remainingBytes">Main-partition remaining in BYTES; -1 if the parameter was absent.</param>
+    /// <param name="maxCapacityBytes">Main-partition maximum in BYTES; -1 if the parameter was absent.</param>
+    private bool GetScsiCapacity(out long remainingBytes, out long maxCapacityBytes)
+    {
+        remainingBytes = -1;
+        maxCapacityBytes = -1;
+
+        if (!HasMedia)
+        {
+            SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
+            return false;
+        }
+
+        Span<byte> cdb = stackalloc byte[10];
+        cdb[0] = c_scsiOpLogSense10;
+        cdb[2] = (byte)(0x40 | c_logPageTapeCapacity); // PC=01b (current) | PAGE CODE 0x31
+        // bytes 3 (subpage) and 5-6 (parameter pointer) = 0
+        cdb[7] = (byte)((c_logSenseAllocLen >> 8) & 0xFF); // ALLOCATION LENGTH (BE)
+        cdb[8] = (byte)(c_logSenseAllocLen & 0xFF);
+        // byte 9 CONTROL = 0
+
+        Span<byte> data = stackalloc byte[c_logSenseAllocLen];
+        if (!SendScsiCommand(cdb, data, dataIn: true))
+        {
+            LogErrorAsTrace("Tape Capacity: LOG SENSE(10) page 0x31 failed (likely unsupported)");
+            return false;
+        }
+
+        // Log page header (SPC): byte 0 = page code, byte 1 = subpage, bytes 2-3 = PAGE LENGTH (BE),
+        //  counting the parameter bytes that follow. Then a run of log parameters, each:
+        //  bytes 0-1 = PARAMETER CODE (BE), byte 2 = control, byte 3 = PARAMETER LENGTH, bytes 4+ = value.
+        int pageLen = (data[2] << 8) | data[3];
+        int end = Math.Min(4 + pageLen, data.Length);
+
+        int p = 4;
+        while (p + 4 <= end)
+        {
+            ushort code = (ushort)((data[p] << 8) | data[p + 1]);
+            int paramLen = data[p + 3];
+            int valOff = p + 4;
+            if (valOff + paramLen > data.Length)
+                break;
+
+            long value = ReadBigEndian(data, valOff, paramLen); // unsigned ⇒ always >= 0
+
+            if (code == c_tapeCapParamMainRemaining)
+                remainingBytes = value * c_tapeCapBytesPerUnit;   // 0 = full tape, legitimately
+            else if (code == c_tapeCapParamMainMaximum)
+                maxCapacityBytes = value * c_tapeCapBytesPerUnit;
+
+            p = valOff + paramLen;
+        }
+
+        if (m_traceOnce.ThisLine().TryEnter())
+            m_logger.LogTrace("{Prefix}: Tape Capacity (LOG SENSE 0x31) — remaining {Rem} B, maximum {Max} B",
+                LogPrefix, remainingBytes, maxCapacityBytes);
+        ResetError();
+        return true; // the page answered; presence of each field is signalled by -1
+    }
+
+    /*
+    private bool GetScsiCapacityOLD(out long remainingBytes, out long maxCapacityBytes)
     {
         remainingBytes = 0;
         maxCapacityBytes = 0;
@@ -1197,10 +1259,47 @@ public partial class TapeDriveWin32Backend
             return false;
         }
 
-        if (m_writeRunReports.ThisLine().TryEnter())
+        if (m_traceOnce.ThisLine().TryEnter())
             m_logger.LogTrace("{Prefix}: Tape Capacity (LOG SENSE 0x31) — remaining {Rem} B, maximum {Max} B",
                 LogPrefix, remainingBytes, maxCapacityBytes);
         ResetError();
+        return true;
+    }
+    */
+
+    /// <summary>
+    /// Drive's own remaining/maximum capacity via LOG SENSE 0x31, latching page support at most
+    /// once per session. -1 in either out-param means that field was absent from the page.
+    /// A "no media" condition is transient and does NOT latch the path off.
+    /// </summary>
+    /// <returns>True if succeeded (regardless of which parameters it carried).</returns>
+    /// <param name="remainingBytes">Main-partition remaining in BYTES; -1 if the parameter was absent.</param>
+    /// <param name="maxCapacityBytes">Main-partition maximum in BYTES; -1 if the parameter was absent.</param>
+    internal bool GetLtoCapacity(out long remainingBytes, out long maxCapacityBytes)
+    {
+        remainingBytes = -1;
+        maxCapacityBytes = -1;
+
+        if (m_ltoCapacitySupported == false)
+            return false; // known unsupported — never touch the bus again this session
+
+        if (!HasMedia)
+        {
+            SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
+            return false; // transient — leave the latch unprobed
+        }
+
+        if (!GetScsiCapacity(out long rem, out long max))
+        {
+            // Failed WITH media present → treat the page as unsupported and latch off.
+            m_ltoCapacitySupported = false;
+            m_logger.LogTrace("{Prefix}: Tape Capacity page 0x31 unsupported — method latched off", LogPrefix);
+            return false;
+        }
+
+        m_ltoCapacitySupported = true; // the page answers — usable elsewhere (e.g. calibration)
+        remainingBytes = rem;
+        maxCapacityBytes = max;
         return true;
     }
 
