@@ -1188,7 +1188,7 @@ public partial class TapeDriveWin32Backend
             p = valOff + paramLen;
         }
 
-        if (m_traceOnce.ThisLine().TryEnter())
+        // if (m_traceOnce.ThisLine().TryEnter())
             m_logger.LogTrace("{Prefix}: Tape Capacity (LOG SENSE 0x31) — remaining {Rem} B, maximum {Max} B",
                 LogPrefix, remainingBytes, maxCapacityBytes);
         ResetError();

@@ -316,6 +316,9 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
             }
         }
 
+        m_capacityQuirkDrive = false; // reset capacity quirk on media change
+        m_anchoredCapacity = -1L; // reset anchored capacity on media change
+
         RefreshMediaParams();
         m_logger.LogTrace("{Prefix}: Media loaded", LogPrefix);
         return true;
@@ -336,6 +339,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         if (WentOK)
         {
             m_mediaParams = null;
+
             m_capacityQuirkDrive = false; // reset capacity quirk on media change
             m_anchoredCapacity = -1L; // reset anchored capacity on media change
             
