@@ -1365,6 +1365,9 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     /// </summary>
     private (long cap, long rem) CorrectQuirkyCapacity(long cap, long rem)
     {
+        m_logger.LogTrace("{Prefix}: attempt to correct Capacity {Capacity}, Remaining {Remaining}; anchor at {Anchor}",
+            LogPrefix, Helpers.BytesToStringLong(cap), Helpers.BytesToStringLong(rem), Helpers.BytesToStringLong(m_anchoredCapacity));
+
         // 1) Capacity from the authoritative source. LOG SENSE 0x31 exposes the MAXIMUM as its own
         //    parameter — stable regardless of head position OR EOD, so it needs no ordering fix. We take
         //    ONLY its capacity; its EOD-based 'remaining' is intentionally ignored here (Remaining stays
