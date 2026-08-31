@@ -87,9 +87,10 @@ public sealed class AiInteractionWpf : IAiInteraction
     public async Task<AiProviderConfig?> ChooseProviderAsync(
         IReadOnlyList<AiProviderProbeResult> probes, CancellationToken ct)
     {
-        // Sentinel item shown at the bottom of every provider list.
-        const string AddLanChoice = "➕  Add OpenAI-compatible provider…";
-        const string NoneChoice   = "✗  none — disable AI assistance";
+        // Sentinel items shown at the bottom of every provider list.
+        const string AddLanChoice   = "➕  Add OpenAI-compatible provider…";
+        const string AddCloudChoice = "☁  Add cloud provider (OpenAI, Azure, Anthropic)…";
+        const string NoneChoice     = "✗  none — disable AI assistance";
 
         // Add-LAN prompt text with correct port examples.
         const string AddLanPrompt =
@@ -112,13 +113,14 @@ public sealed class AiInteractionWpf : IAiInteraction
             //  InvokeAsync returns an awaitable without blocking the caller.
             AiProviderConfig? result = null;
             bool              addLan = false;
+            bool              addCloud = false;
 
             if (_dispatcher is not null)
             {
                 await _dispatcher.InvokeAsync(() =>
                 {
                     // Build the choice list:
-                    //  None · healthy providers · ⚠ unreachable providers · Add LAN
+                    //  None · healthy providers · ⚠ unreachable providers · Add LAN · Add cloud
                     var allSelectable = healthy.Concat(unhealthy).ToList();
                     var providerChoices = allSelectable
                         .Select(p => p.IsHealthy
@@ -126,10 +128,11 @@ public sealed class AiInteractionWpf : IAiInteraction
                             : $"⚠  {p.Descriptor.DisplayName}  ({p.Endpoint})  — not responding")
                         .Prepend(NoneChoice)
                         .Append(AddLanChoice)
+                        .Append(AddCloudChoice)
                         .ToList();
 
                     string prompt = healthy.Count == 0 && unhealthy.Count == 0
-                        ? "No AI providers were found. Add an OpenAI-compatible LAN host, or select None:"
+                        ? "No AI providers were found. Add a LAN or cloud provider, or select None:"
                         : "The following AI providers were discovered. Select one to use for Help:";
 
                 SELECT_PROVIDER:
@@ -147,7 +150,14 @@ public sealed class AiInteractionWpf : IAiInteraction
 
                     var idx = providerDialog.SelectedIndex;
 
+                    // The two trailing entries are the "add" sentinels.
                     if (idx == providerChoices.Count - 1)
+                    {
+                        addCloud = true;
+                        return;
+                    }
+
+                    if (idx == providerChoices.Count - 2)
                     {
                         addLan = true;
                         return;
@@ -231,8 +241,174 @@ public sealed class AiInteractionWpf : IAiInteraction
                 continue;
             }
 
+            // ── Handle "Add cloud provider…" ──────────────────────────────────
+            if (addCloud)
+            {
+                var cloudConfig = await ConfigureCloudProviderAsync(ct).ConfigureAwait(false);
+                if (cloudConfig is null)
+                    continue;   // user cancelled — re-show provider list
+
+                return cloudConfig;
+            }
+
             return result;
         }
+    }
+
+    // ── Cloud-provider helpers ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Walks the user through configuring a cloud provider: pick the service,
+    /// supply the endpoint (Azure only), enter the API key, then validate it
+    /// with a live probe and let the user pick a model.
+    /// </summary>
+    /// <returns>
+    /// A ready-to-use config, or <c>null</c> if the user cancelled at any point.
+    /// </returns>
+    private async Task<AiProviderConfig?> ConfigureCloudProviderAsync(CancellationToken ct)
+    {
+        if (_dispatcher is null || _catalog is null)
+            return null;
+
+        // Offer every registered cloud provider, in catalog order.
+        var cloudProviders = _catalog.Providers
+            .Where(p => p.Descriptor.Location == AiProviderLocation.Cloud)
+            .ToList();
+
+        if (cloudProviders.Count == 0)
+            return null;
+
+        // ── 1. Choose which cloud service ────────────────────────────────────
+        var chosen = await _dispatcher.InvokeAsync(() =>
+        {
+            var choices = cloudProviders
+                .Select(p => p.Descriptor.Capabilities.HasFlag(AiCapabilities.Embeddings)
+                    ? p.Descriptor.DisplayName
+                    : $"{p.Descriptor.DisplayName}  — chat only, no embeddings")
+                .ToList();
+
+            var dlg = new SelectDialog(
+                "Add Cloud AI Provider",
+                "Select the cloud service to configure:",
+                choices,
+                defaultIndex: 0)
+            {
+                Owner = Application.Current.MainWindow
+            };
+
+            return dlg.ShowDialog() == true ? cloudProviders[dlg.SelectedIndex] : null;
+        });
+
+        if (chosen is null)
+            return null;
+
+        var descriptor = chosen.Descriptor;
+
+        // ── 2. Resolve the endpoint ──────────────────────────────────────────
+        //  Providers without a fixed endpoint (Azure OpenAI) must be told which
+        //  resource to talk to.
+        var endpoint = descriptor.DefaultEndpoint;
+        if (endpoint is null)
+        {
+            endpoint = await PromptEndpointAsync(descriptor, suggested: null, ct)
+                .ConfigureAwait(false);
+            if (endpoint is null)
+                return null;
+        }
+
+        // ── 3. Prompt for the API key ────────────────────────────────────────
+        var apiKey = await PromptApiKeyAsync(descriptor, ct).ConfigureAwait(false);
+        if (string.IsNullOrEmpty(apiKey))
+            return null;
+
+        // ── 4. Validate with a live probe (off the dispatcher) ───────────────
+        LogInfo($"Verifying {descriptor.DisplayName}…");
+        await Task.Yield();
+        var probe = await chosen.ProbeAsync(endpoint, apiKey, ct).ConfigureAwait(false);
+
+        if (!probe.IsHealthy)
+        {
+            var reason = probe.ErrorMessage ?? "connection failed";
+            LogWarn($"{descriptor.DisplayName}: {reason}");
+            await _dispatcher.InvokeAsync(() => SimpleBox.Show(
+                $"Could not connect to {descriptor.DisplayName}.\n\n{reason}",
+                "Cloud Provider Not Available",
+                MessageBoxButton.OK, MessageBoxImage.Warning));
+            return null;
+        }
+
+        LogOk($"{descriptor.DisplayName} verified.");
+
+        // ── 5. Choose the chat model / Azure deployment ──────────────────────
+        var chatModel = await ChooseCloudModelAsync(descriptor, probe).ConfigureAwait(false);
+        if (chatModel is null)
+            return null;
+
+        // Only pick an embedding model when the provider actually supports it.
+#pragma warning disable CA1826 // Do not use Enumerable methods on indexable collections — or default case!
+        var embeddingModel = descriptor.Capabilities.HasFlag(AiCapabilities.Embeddings)
+            ? probe.DiscoveredEmbeddingModels.FirstOrDefault()
+            : null;
+#pragma warning restore CA1826 // Do not use Enumerable methods on indexable collections
+
+        return new AiProviderConfig(
+            Descriptor:       descriptor,
+            Endpoint:         probe.Endpoint,
+            ApiKey:           apiKey,
+            ChatModelId:      chatModel,
+            EmbeddingModelId: embeddingModel);
+    }
+
+    /// <summary>
+    /// Lets the user pick a chat model from those the probe discovered. When
+    /// the account exposes none (some Azure resources hide the deployment
+    /// list), falls back to asking for the name directly.
+    /// </summary>
+    private async Task<string?> ChooseCloudModelAsync(
+        AiProviderDescriptor descriptor, AiProviderProbeResult probe)
+    {
+        // Azure names deployments, not models — reflect that in the wording.
+        bool isAzure = descriptor.Kind == AiProviderKind.AzureOpenAi;
+        string noun  = isAzure ? "deployment" : "model";
+
+        if (probe.DiscoveredChatModels.Count == 0)
+        {
+            // Nothing discovered — ask the user to type the name.
+            string? typed = null;
+            await _dispatcher!.InvokeAsync(() =>
+            {
+                var dlg = new AskDialog(
+                    $"Choose {descriptor.DisplayName} {noun}",
+                    $"No {noun}s could be listed for this account.\n" +
+                    $"Enter the {noun} name to use:",
+                    defaultValue: null)
+                {
+                    Owner = Application.Current.MainWindow
+                };
+                if (dlg.ShowDialog() == true && !string.IsNullOrWhiteSpace(dlg.Answer))
+                    typed = dlg.Answer.Trim();
+            });
+            return typed;
+        }
+
+        if (probe.DiscoveredChatModels.Count == 1)
+            return probe.DiscoveredChatModels[0];
+
+        return await _dispatcher!.InvokeAsync(() =>
+        {
+            var dlg = new SelectDialog(
+                $"Choose {descriptor.DisplayName} {noun}",
+                $"Select the {noun} to use:",
+                [.. probe.DiscoveredChatModels],
+                defaultIndex: 0)
+            {
+                Owner = Application.Current.MainWindow
+            };
+
+            return dlg.ShowDialog() == true
+                ? probe.DiscoveredChatModels[dlg.SelectedIndex]
+                : null;
+        });
     }
 
     /// <summary>

@@ -19,8 +19,19 @@ namespace AiNET;
 /// Timeout applied to each individual endpoint probe.
 /// Defaults to 5 seconds when <see cref="TimeSpan.Zero"/> is passed.
 /// </param>
+/// <param name="SecretStore">
+/// Optional credential store. When supplied, cloud providers with a
+///  previously saved API key are probed too, so a returning user sees them
+///  without needing environment variables set.
+/// </param>
+/// <param name="KnownCloudEndpoints">
+/// Endpoints for cloud providers that have no fixed default (Azure OpenAI).
+///  Probed only when <paramref name="SecretStore"/> holds a matching key.
+/// </param>
 public sealed record AiProviderDiscoveryOptions(
     bool ProbeLocalhost = true,
     IReadOnlyList<Uri>? LanEndpoints = null,
     bool CheckEnvironmentVariables = true,
-    TimeSpan PerProbeTimeout = default);
+    TimeSpan PerProbeTimeout = default,
+    IAiSecretStore? SecretStore = null,
+    IReadOnlyDictionary<AiProviderKind, Uri>? KnownCloudEndpoints = null);

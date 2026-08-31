@@ -16,6 +16,10 @@ public sealed class AppAiSessionHost : IAsyncDisposable
     private bool _disposed;
     private bool _userDeclinedSetup;   // set when user chose "no AI for now"
 
+    // Persists cloud API keys in the Windows Credential Manager so the user is
+    //  not re-prompted on every launch. Falls back to in-memory off-Windows.
+    private readonly IAiSecretStore _secretStore = AiSecretStore.CreateDefault();
+
     // UI-context objects injected by MainWindow after construction
     // (set before any EnsureAsync call that prompts the user).
     private AiInteractionWpf? _interaction;
@@ -84,7 +88,7 @@ public sealed class AppAiSessionHost : IAsyncDisposable
 
             var logger = App.LoggerFactory.CreateLogger<AppAiSessionHost>();
 
-            _current = await AiSessionFactory.BuildAsync(autouseLast: !promptUser, catalog, interaction, prefs, ct, logger);
+            _current = await AiSessionFactory.BuildAsync(autouseLast: !promptUser, catalog, interaction, prefs, ct, logger, _secretStore);
 
             if (_current == null)
                 _userDeclinedSetup = true;
@@ -157,6 +161,7 @@ public sealed class AppAiSessionHost : IAsyncDisposable
     /// Disposes the current session and resets all state without triggering
     /// re-discovery. Used by "Help → Reset AI Providers" to clear persisted
     /// settings and start fresh.
+    /// Also erases every stored API key, so no credential survives the reset.
     /// Raises <see cref="SessionChanged"/> so consumers (HelpPane, etc.) rebind.
     /// </summary>
     public async Task SignOutAsync(CancellationToken ct = default)
@@ -170,6 +175,18 @@ public sealed class AppAiSessionHost : IAsyncDisposable
                 _current = null;
             }
             _userDeclinedSetup = false;   // allow future EnsureAsync calls to prompt again
+
+            // Erase persisted credentials — a "sign out" that left keys behind
+            //  would be misleading. Only AiNET-owned entries are removed.
+            try
+            {
+                _secretStore.Clear();
+            }
+            catch (Exception ex)
+            {
+                App.LoggerFactory.CreateLogger<AppAiSessionHost>()
+                   .LogWarning(ex, "Could not clear stored AI credentials.");
+            }
         }
         finally
         {

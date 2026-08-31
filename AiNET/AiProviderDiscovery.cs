@@ -16,6 +16,7 @@ public sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? log
     private const string EnvOpenAiApiKey        = "OPENAI_API_KEY";
     private const string EnvAzureOpenAiApiKey   = "AZURE_OPENAI_API_KEY";
     private const string EnvAzureOpenAiEndpoint = "AZURE_OPENAI_ENDPOINT";
+    private const string EnvAnthropicApiKey     = "ANTHROPIC_API_KEY";
 
     private static readonly TimeSpan DefaultPerProbeTimeout = TimeSpan.FromSeconds(5);
 
@@ -81,6 +82,10 @@ public sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? log
         }
 
         // ── Environment-variable-based providers ─────────────────────────────
+        //  Tracks which cloud kinds were already queued so the stored-credential
+        //  sweep below does not probe the same provider twice.
+        var queuedCloudKinds = new HashSet<AiProviderKind>();
+
         if (options.CheckEnvironmentVariables)
         {
             // GitHub Models
@@ -89,7 +94,10 @@ public sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? log
             {
                 var provider = catalog.Find(AiProviderKind.GitHubModels);
                 if (provider?.Descriptor.DefaultEndpoint is { } ep)
+                {
                     tasks.Add(Probe(provider, ep, githubToken));
+                    queuedCloudKinds.Add(AiProviderKind.GitHubModels);
+                }
             }
 
             // OpenAI
@@ -98,7 +106,22 @@ public sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? log
             {
                 var provider = catalog.Find(AiProviderKind.OpenAi);
                 if (provider?.Descriptor.DefaultEndpoint is { } ep)
+                {
                     tasks.Add(Probe(provider, ep, openAiKey));
+                    queuedCloudKinds.Add(AiProviderKind.OpenAi);
+                }
+            }
+
+            // Anthropic
+            var anthropicKey = Environment.GetEnvironmentVariable(EnvAnthropicApiKey);
+            if (!string.IsNullOrEmpty(anthropicKey))
+            {
+                var provider = catalog.Find(AiProviderKind.Anthropic);
+                if (provider?.Descriptor.DefaultEndpoint is { } ep)
+                {
+                    tasks.Add(Probe(provider, ep, anthropicKey));
+                    queuedCloudKinds.Add(AiProviderKind.Anthropic);
+                }
             }
 
             // Azure OpenAI
@@ -109,7 +132,41 @@ public sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? log
             {
                 var provider = catalog.Find(AiProviderKind.AzureOpenAi);
                 if (provider is not null)
+                {
                     tasks.Add(Probe(provider, azureEp, azureKey));
+                    queuedCloudKinds.Add(AiProviderKind.AzureOpenAi);
+                }
+            }
+        }
+
+        // ── Cloud providers with a previously stored credential ──────────────
+        //  Lets a returning user's configured cloud provider reappear in the
+        //  picker without any environment variable being set.
+        if (options.SecretStore is { } store)
+        {
+            foreach (var provider in catalog.Providers)
+            {
+                var descriptor = provider.Descriptor;
+                if (descriptor.Location != AiProviderLocation.Cloud ||
+                    queuedCloudKinds.Contains(descriptor.Kind))
+                {
+                    continue;
+                }
+
+                // Azure has no fixed endpoint — fall back to a caller-supplied one.
+                var ep = descriptor.DefaultEndpoint;
+                if (ep is null &&
+                    options.KnownCloudEndpoints?.TryGetValue(descriptor.Kind, out var knownEp) == true)
+                {
+                    ep = knownEp;
+                }
+                if (ep is null) continue;
+
+                var storedKey = store.Load(AiSecretKey.For(descriptor.Kind, ep));
+                if (string.IsNullOrEmpty(storedKey)) continue;
+
+                tasks.Add(Probe(provider, ep, storedKey));
+                queuedCloudKinds.Add(descriptor.Kind);
             }
         }
 

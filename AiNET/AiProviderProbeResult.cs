@@ -32,4 +32,17 @@ public sealed record AiProviderProbeResult(
     IReadOnlyList<string> DiscoveredChatModels,
     IReadOnlyList<string> DiscoveredEmbeddingModels,
     TimeSpan Latency,
-    string? ErrorMessage);
+    string? ErrorMessage)
+{
+    /// <summary>
+    /// <c>true</c> when the probe failed specifically because the supplied
+    /// credentials were rejected (HTTP 401/403) — as opposed to a network or
+    /// endpoint failure.
+    /// </summary>
+    /// <remarks>
+    /// Lets the credential loop in <see cref="AiSessionFactory"/> re-prompt for
+    ///  a corrected API key only when re-prompting can actually help; a
+    ///  connection failure is not retried.
+    /// </remarks>
+    public bool IsAuthFailure { get; init; }
+}

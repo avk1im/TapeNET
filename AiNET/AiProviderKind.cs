@@ -26,6 +26,9 @@ public enum AiProviderKind
     /// <summary>Azure OpenAI Service (user-supplied endpoint).</summary>
     AzureOpenAi,
 
+    /// <summary>Anthropic Claude cloud API (<c>https://api.anthropic.com</c>). Chat only — no embeddings.</summary>
+    Anthropic,
+
     /// <summary>GitHub Models marketplace (<c>https://models.inference.ai.azure.com</c>).</summary>
     GitHubModels,
 
