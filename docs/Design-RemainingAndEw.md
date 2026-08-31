@@ -1381,16 +1381,144 @@ m_ewMechanism = ewIsUseful ? backendMech : EarlyWarningMechanism.Uncalibrated;
 This is a labeling change only (the estimate is unaffected): the UI's *"Estimation by"* now reads
 *Uncalibrated* rather than overstating *Hardware* on a drive whose hardware EW we provably pre-empt.
 
-### 7.3 Ship measured reference profiles per generation [PLANNED]
+---
 
-The campaign produced **eight real curves** (AIT-2 ×2, DAT-320 ×2, DLT-V4, LTO-3/4/6). These should ship as
-embedded per-generation **reference calibrations**, loaded through the normal `TapeCalibration.LoadFrom`
-path and matched by **vendor/product/generation** (looser than the exact `vendor|product|revision|bucket`
-key used for user-measured profiles); a fresh user calibration still overrides. This is what turns "DAT-320
-wastes ~1.7%" into "DAT-320 is precise" and "we tested one AIT once" into shipped data — WITHOUT
-over-fitting the blind a-priori envelope (which must stay pessimistic to keep AIT-like sub-reserve EW drives
-safe). Remaining work: choose the embedding format, the matcher granularity, and the a-priori↔reference
-precedence, then wire the loader into `AutoLoadCalibrations`.
+## 7.3 Calibration profiles: provenance, versioning, storage & file exchange [PLANNED]
+
+Calibration profiles are **community data, not app data**: a profile measures *hardware the user owns*, is
+valid across every TapeNET version, and should flow user→user and machine→machine. So the primary
+distribution model is **file exchange**, and even the author's pre-measured reference curves ship as a
+plain file a user imports — the same path any shared profile takes. Nothing is embedded in the binary.
+
+### 7.3.1 Two new profile fields — provenance & version key
+
+`TapeCalibration` / its DTO gain two backward-compatible, nullable fields:
+
+| Field | Type | Role |
+|---|---|---|
+| `MeasuredUtc` | `DateTime?` (UTC) | When the run completed. Doubles as the **version discriminator** (see 7.3.2) and provenance ("measured 2026-08-14"). **UTC**, not local: it is a sort/compare key that travels between machines in exported files, so local time (DST, timezones) would mis-order it. Rendered `.ToLocalTime()` in the UI. `null` = a legacy profile measured before this field existed. |
+| `Comment` | `string?` | Optional free text: "author's reference — HP Ultrium 6", "the good drive in rack B". Also how a shipped bundle self-labels. |
+
+Both default to `null` in the DTO, so profiles already in the store load unchanged. Convention:
+**at most one `null`-`MeasuredUtc` (legacy) profile per drive+capacity** — no `MinValue` sentinel needed.
+
+### 7.3.2 Versioning — owned by the store, "newest auto-wins"
+
+A drive+media may hold **several dated measurements**; the user can review and apply an older one, while the
+runtime silently uses the newest. This lives at the **`TapeCalibrationStore`** layer — NOT the drive (which
+stays "here is *the* active calibration", matched by `ProfileKey`, oblivious to versions) and NOT the app
+(so TapeWin/TapeCon can't diverge).
+
+- **Store key = `ProfileKey` + `MeasuredUtc`** (a `null` date collapses to just `ProfileKey`). Re-calibrating
+  therefore *adds a dated version* instead of overwriting.
+- `LoadLatest(profileKey)` → newest by `MeasuredUtc`; this is what `AutoLoadCalibrations` feeds the drive, so
+  users who never open the browser always get their most recent measurement — behavior unchanged.
+- `LoadAll()` → every version, for the browser.
+- `Delete(profileKey, measuredUtc)` → a specific version.
+
+**Consequence — import is collision-free and prompt-free.** Because the key includes `MeasuredUtc`, an
+imported profile is either a *new* version (added) or an *exact* duplicate (skipped). No overwrite, no
+"replace?" dialog: import just reports "imported N, skipped M (already present)."
+
+### 7.3.3 Storage rename — kill "blob", friendlier filenames
+
+The `KeyedBlobStore` name is misleading (it stores JSON, not opaque binary) and `blob.bin` on disk looks
+risky to users. Changes:
+
+- **`KeyedBlobStore` → `KeyedStreamStore`** — it stores keyed streams and legitimately doesn't know they're
+  JSON. It gains an optional **data-file name** parameter (calibration passes `profile.tapecal.json`); the
+  **key sidecar** is derived by swapping the extension to `.key` (single convention, fewest params; an
+  explicit override is allowed for the rare two-name caller). It stays a **directory** store (key → sanitized
+  subfolder + `.key` sidecar to recover the original key string) — unchanged model.
+- **Human-readable data filename.** The readable part lands in the data filename the calibration store
+  supplies, e.g. `QUANTUM_ULTRIUM-4_U52F_780GB@2026-08-14.tapecal.json`, inside the per-key folder. No more
+  `blob.bin`; the `.json` reassures.
+- **Legacy read path (mandatory).** `Open`/`Keys` fall back to `blob.bin` when the new-named file is absent,
+  so existing users' profiles are never "lost". Opportunistic rename-on-next-`Save` is a nice-to-have, not
+  required.
+- In-code terminology: drop "blob" everywhere (`SaveTo`/`LoadFrom` doc text → "profile"/"serialize";
+  `TapeCalibrationStore` keeps its good name).
+
+### 7.3.4 File formats — single vs bundle, both JSON, no framing
+
+Two on-disk shapes, deliberately kept as plain JSON (inspectable, non-scary, and truncation ⇒ parse failure,
+so **no CRC envelope is needed** — these are file exchanges, not torn-tape records):
+
+| Purpose | Extension | Shape |
+|---|---|---|
+| One profile (store file **and** a raw single-profile export) | `.tapecal.json` | Exactly today's `TapeCalibration` JSON — legacy-compatible, unchanged. |
+| Multi-profile export bundle | `.tapecals.json` | A thin JSON wrapper `{ "FormatId": "tapenet-calibration-bundle/1", "Profiles": [ …, … ] }` around the same per-profile JSON. |
+
+So the bundle is just `List<TapeCalibration>` serialized to one JSON file — **no `MultiStreamStore`, no
+recursive store, no binary framing.** `Export`/`Import` are methods on `TapeCalibrationStore` that read/write a
+single bundle file and iterate profiles; the directory `KeyedStreamStore` is untouched by them.
+
+Import accepts **both** extensions and detects structure: a `Profiles` array ⇒ bundle (loop-add); a
+`FormatId` starting `tapelibnet-cal` ⇒ a bare single profile (add). A user can thus share either a bundle or a
+raw store file directly.
+
+Library API (also gives TapeConNET `--calibration-import/-export` for free):
+- `TapeCalibrationStore.Export(Stream, IEnumerable<string>? keys = null)` — all, or a subset, to a bundle.
+- `TapeCalibrationStore.Import(Stream, out int imported, out int skipped)` — additive, collision-free.
+
+### 7.3.5 UI/UX — everything under the "Calibration Profiles" window
+
+All profile management consolidates in `CalibrationProfilesWindow` (reached via `Media ▸ Calibration
+Profiles…`); no new top-level Media items. Additions to the existing browser:
+
+- **Filter checkbox "Only for this drive" (checked by default).** Filters the profile combobox to the loaded
+  drive by the **`vendor|product|revision` prefix** (same physical drive, any media capacity) — matching how
+  a user thinks ("show my LTO-4's profiles"). When no drive/media is loaded, the checkbox is disabled and all
+  profiles show.
+- **Auto-select the active profile on open.** If `TapeDrive.Calibration` matches a listed profile
+  (`ProfileKey` + `MeasuredUtc`), select it; else the newest for the loaded media; else the first listed.
+- **Apply enablement** is distinct from the filter: enabled only when the selected profile's **full key**
+  matches the *loaded media* AND it is **not already the active one** (tooltips: "Already applied to the
+  loaded media" / "Doesn't match the loaded media"). This also teaches users why a borrowed LTO-3 profile
+  won't apply to their LTO-6.
+- **Import…** → file picker (`.tapecal.json` / `.tapecals.json`) → `Import` → reload list → info line
+  "Imported N, skipped M (already present)". Optional: drag-and-drop a profile file onto the main window
+  routes to the same import (how users will "install" a downloaded profile).
+- **Export** → two choices, scoped to the **combobox contents** (so "listed" honors the filter checkbox):
+  *Current profile* and *All listed (N)…*, where the live `N` is the explanation of "listed". A split
+  **`Export ▾`** button (items `Current profile`, `All listed (N)`) keeps the row to four buttons; two plain
+  buttons (`Export Current…`, `Export Listed (N)…`) are an equally clean alternative. Label the multi option
+  **"listed"** rather than "all" — with the filter on, "all" would be misleading.
+- **Empty-state nudge:** when the store is empty on startup, a one-line Log/info-bar entry — "No calibration
+  profiles yet. Import shared profiles via Media ▸ Calibration Profiles ▸ Import, or run Calibrate." — is
+  where the shipped reference bundle gets discovered.
+
+### 7.3.6 Reference-profile distribution
+
+Ship the author's measured curves (LTO-3/4/6 + AIT-2 ×2, DAT-320 ×2, DLT-V4 from the §7.1 campaign) as a
+single **`tapenet-reference-profiles.tapecals.json`** bundle alongside the installer and on GitHub — a plain
+file, imported through the normal path, not embedded in the binary. First run offers to import it.
+
+**Honest framing in the import copy:** a shipped profile is *measured on the author's drive of that model*;
+it matches by vendor/product/capacity bucket, but firmware/unit variance means the user's own `Calibrate`
+still wins (and, per 7.3.2, simply adds a newer version that auto-supersedes). Bundled profiles are a
+**better-than-a-priori head start**, not a substitute for measuring your own drive — consistent with the
+"measured profile always overrides a-priori" precedence already built.
+
+### 7.3.7 What we deliberately avoid
+
+- **No cloud sync / profile marketplace.** Files + the shared `%LocalAppData%\TapeLibNET\Calibrations` store
+  cover on-machine cross-app sharing; export files cover cross-machine. A GitHub folder of `.tapecals.json`
+  *is* the marketplace.
+- **No per-profile signing/trust.** A calibration cannot be malicious — worst case is a conservative
+  over-reserve of *the user's own* tape. Keep import frictionless; parse-failure is the only real risk and is
+  self-detecting.
+
+---
+
+## Corrections and updates to earlier parts (apply in place)
+
+- **Part 5.3 "Autoload".** Note it now feeds `TapeCalibrationStore.LoadLatest(profileKey)` (newest version)
+  rather than a single blob per key, and reads legacy `blob.bin` via the store's fallback path.
+- **Files table.** `KeyedBlobStore.cs` → `KeyedStreamStore.cs`; add the export/import bundle methods on
+  `TapeCalibrationStore`; note the `MeasuredUtc`/`Comment` additions to `TapeCalibration`.
+
+---
 
 ### 7.4 Evaluate more pre-LTO families & sharpen the classes [FUTURE]
 

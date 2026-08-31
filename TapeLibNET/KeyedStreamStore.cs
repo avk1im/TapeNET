@@ -9,9 +9,10 @@ using Microsoft.Extensions.Logging;
 namespace TapeLibNET;
 
 /// <summary>
-/// Generic, root-agnostic keyed blob store. Each blob lives in its OWN sub-folder
-/// (named from a sanitized key + a short stable hash) under the supplied root; the
-/// blob bytes sit in <c>blob.bin</c>, the raw key in <c>key.txt</c>.
+/// Generic, root-agnostic keyed stream store. Each stream lives in its OWN sub-folder
+/// (named from a sanitized key + a short stable hash) under the supplied root; the payload
+/// sits in a data file (by default the legacy <c>blob.bin</c>, or an optionally supplied
+/// human-readable name such as <c>profile.tapecal.json</c>), and the raw key in <c>key.txt</c>.
 /// <para>
 /// The store stays deliberately opaque: it moves <see cref="Stream"/>s keyed by
 /// <see cref="string"/> and never interprets the payload. Scope (app-private vs.
@@ -38,14 +39,15 @@ namespace TapeLibNET;
 /// <c>writer</c> argument (a caller contract violation), which throws.
 /// </para>
 /// </summary>
-public sealed class KeyedBlobStore : ErrorManageableBase
+public sealed class KeyedStreamStore : ErrorManageableBase
 {
     #region *** Constants ***
 
-    private const string c_blobFile   = "blob.bin";
-    private const string c_tempFile   = "blob.tmp";
-    private const string c_keyFile    = "key.txt";
-    private const string c_mutexScope = "TapeLibNET.KeyedBlobStore";
+    // Legacy on-disk data filename, kept as the default and as the read fallback so
+    //  existing profiles are never "lost" when a caller opts into a human-readable name.
+    private const string c_legacyDataFile = "blob.bin";
+    private const string c_keyFile        = "key.txt";
+    private const string c_mutexScope     = "TapeLibNET.KeyedStreamStore";
 
     #endregion
 
@@ -57,22 +59,37 @@ public sealed class KeyedBlobStore : ErrorManageableBase
     // Stable hash of the root, so two stores at different roots never share a mutex.
     private readonly uint m_rootTag;
 
-    // Log prefix derived from the leaf folder, e.g. "BlobStore[Calibrations]".
+    // Log prefix derived from the leaf folder, e.g. "StreamStore[Calibrations]".
     private readonly string m_prefix;
+
+    // Optional human-readable data filename (e.g. "profile.tapecal.json"). When null, the
+    //  legacy "blob.bin" name is used both for writing and reading — unchanged behavior.
+    private readonly string? m_dataFileName;
 
     #endregion
 
     #region *** Construction ***
 
-    /// <summary>Creates a store rooted at <paramref name="root"/> (created lazily on first save).</summary>
-    public KeyedBlobStore(string root, ILogger logger)
+    /// <summary>
+    /// Creates a store rooted at <paramref name="root"/> (created lazily on first save).
+    /// </summary>
+    /// <param name="root">The category folder this store manages.</param>
+    /// <param name="logger">Logger for tracing + error reporting.</param>
+    /// <param name="dataFileName">
+    /// Optional human-readable data filename (e.g. <c>profile.tapecal.json</c>) written for NEW
+    /// saves. When <see langword="null"/>, the legacy <c>blob.bin</c> name is used — unchanged
+    /// behavior. Either way, <see cref="Open"/> falls back to <c>blob.bin</c> when the named file
+    /// is absent, so profiles saved before a caller opted into a human-readable name are never lost.
+    /// </param>
+    public KeyedStreamStore(string root, ILogger logger, string? dataFileName = null)
         : base(logger)
     {
         m_root = root ?? throw new ArgumentNullException(nameof(root));
         m_rootTag = Fnv1a(m_root);
+        m_dataFileName = dataFileName;
 
         string leaf = Path.GetFileName(m_root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        m_prefix = $"BlobStore[{(string.IsNullOrEmpty(leaf) ? m_root : leaf)}]";
+        m_prefix = $"StreamStore[{(string.IsNullOrEmpty(leaf) ? m_root : leaf)}]";
     }
 
     /// <summary>The category folder this store manages.</summary>
@@ -85,20 +102,20 @@ public sealed class KeyedBlobStore : ErrorManageableBase
     #region *** Query ***
 
     /// <summary>
-    /// True when a blob for <paramref name="key"/> exists. On an access error returns
-    /// <see langword="false"/> and sets the error state (check <c>WentBad</c> to distinguish
-    /// "absent" from "could not probe").
+    /// True when a stream for <paramref name="key"/> exists (either under the configured data
+    /// filename or the legacy <c>blob.bin</c>). On an access error returns <see langword="false"/>
+    /// and sets the error state (check <c>WentBad</c> to distinguish "absent" from "could not probe").
     /// </summary>
     public bool Exists(string key)
     {
         ResetError();
         try
         {
-            return WithKeyLock(key, () => File.Exists(BlobPath(key)));
+            return WithKeyLock(key, () => File.Exists(DataPath(key)) || File.Exists(LegacyPath(key)));
         }
         catch (Exception ex)
         {
-            RecordError(ex, $"cannot probe blob for key '{key}'");
+            RecordError(ex, $"cannot probe stream for key '{key}'");
             return false;
         }
     }
@@ -121,7 +138,7 @@ public sealed class KeyedBlobStore : ErrorManageableBase
         }
         catch (Exception ex)
         {
-            RecordError(ex, "cannot enumerate blob store");
+            RecordError(ex, "cannot enumerate stream store");
             yield break;
         }
 
@@ -138,13 +155,20 @@ public sealed class KeyedBlobStore : ErrorManageableBase
     #region *** Read / Write / Delete ***
 
     /// <summary>
-    /// Writes a blob via callback so the caller streams straight in (e.g. an object's
+    /// Writes a stream via callback so the caller streams straight in (e.g. an object's
     /// own <c>SaveTo(Stream)</c>). Runs under the per-key lock, writes to a temp file
     /// first, then swaps atomically — so neither a crash nor a rival writer ever leaves
-    /// a half-blob behind. Returns <see langword="true"/> on success; on failure records
+    /// a half-written file behind. Returns <see langword="true"/> on success; on failure records
     /// the error, logs it, and returns <see langword="false"/>.
     /// </summary>
-    public bool Save(string key, Action<Stream> writer)
+    /// <param name="key">The stream's key (folder identity).</param>
+    /// <param name="writer">Callback that writes the payload to the supplied stream.</param>
+    /// <param name="dataFileName">
+    /// Optional PER-CALL override of the data filename (e.g. a caller that wants a filename derived
+    /// from the payload itself, such as <c>QUANTUM_ULTRIUM-4_U52F_780GB@2026-08-14.tapecal.json</c>).
+    /// Falls back to the constructor's <c>dataFileName</c>, then to the legacy <c>blob.bin</c>.
+    /// </param>
+    public bool Save(string key, Action<Stream> writer, string? dataFileName = null)
     {
         ArgumentNullException.ThrowIfNull(writer);   // caller contract violation → throw
         ResetError();
@@ -161,29 +185,36 @@ public sealed class KeyedBlobStore : ErrorManageableBase
                 if (!File.Exists(keyFile))
                     File.WriteAllText(keyFile, key);
 
-                string tmp = Path.Combine(dir, c_tempFile);
+                string effectiveDataFileName = dataFileName ?? m_dataFileName ?? c_legacyDataFile;
+                string tmp = Path.Combine(dir, effectiveDataFileName + ".tmp");
                 using (var s = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
                     writer(s);
 
-                File.Move(tmp, Path.Combine(dir, c_blobFile), overwrite: true);
+                File.Move(tmp, Path.Combine(dir, effectiveDataFileName), overwrite: true);
             });
 
-            m_logger.LogTrace("{Prefix}: saved blob for key '{Key}'", LogPrefix, key);
+            m_logger.LogTrace("{Prefix}: saved stream for key '{Key}'", LogPrefix, key);
             return true;
         }
         catch (Exception ex)
         {
-            RecordError(ex, $"cannot save blob for key '{key}'");
+            RecordError(ex, $"cannot save stream for key '{key}'");
             return false;
         }
     }
 
     /// <summary>
-    /// Returns a DETACHED, seekable copy of the blob (position 0), or <see langword="null"/>.
+    /// Returns a DETACHED, seekable copy of the stream (position 0), or <see langword="null"/>.
     /// A null result means EITHER the key is absent (<c>WentOK</c> stays true) OR the read
     /// failed (<c>WentBad</c>, error state set). The bytes are read under the per-key lock and
     /// handed back as an in-memory stream, so the caller's read never races a concurrent
     /// replace. Caller disposes.
+    /// <para>
+    /// LEGACY FALLBACK: when the named data file (constructor-supplied or the legacy <c>blob.bin</c>)
+    /// is absent, the folder is probed for ANY other file next to <c>key.txt</c> — so a folder that
+    /// only carries an older per-call filename (e.g. a prior <see cref="MeasuredUtc"/>-stamped name)
+    /// or the legacy <c>blob.bin</c> is still read.
+    /// </para>
     /// </summary>
     public Stream? Open(string key)
     {
@@ -192,12 +223,20 @@ public sealed class KeyedBlobStore : ErrorManageableBase
         {
             return WithKeyLock(key, () =>
             {
-                string path = BlobPath(key);
+                string? path = DataPath(key);
                 if (!File.Exists(path))
-                    return (Stream?)null;
+                {
+                    path = LegacyPath(key);
+                    if (!File.Exists(path))
+                    {
+                        path = FindAnyDataFile(key);
+                        if (path is null)
+                            return (Stream?)null;
+                    }
+                }
 
                 byte[] bytes = File.ReadAllBytes(path);
-                m_logger.LogTrace("{Prefix}: loaded blob for key '{Key}' ({Bytes} bytes)",
+                m_logger.LogTrace("{Prefix}: loaded stream for key '{Key}' ({Bytes} bytes)",
                     LogPrefix, key, bytes.Length);
 
                 return new MemoryStream(bytes, writable: false);
@@ -205,13 +244,13 @@ public sealed class KeyedBlobStore : ErrorManageableBase
         }
         catch (Exception ex)
         {
-            RecordError(ex, $"cannot open blob for key '{key}'");
+            RecordError(ex, $"cannot open stream for key '{key}'");
             return null;
         }
     }
 
     /// <summary>
-    /// Removes the blob (and its sub-folder) under the per-key lock. Returns <see langword="true"/>
+    /// Removes the stream (and its sub-folder) under the per-key lock. Returns <see langword="true"/>
     /// on success (including the no-op when the key is absent); on failure records the error and
     /// returns <see langword="false"/>.
     /// </summary>
@@ -227,12 +266,12 @@ public sealed class KeyedBlobStore : ErrorManageableBase
                     Directory.Delete(dir, recursive: true);
             });
 
-            m_logger.LogTrace("{Prefix}: deleted blob for key '{Key}'", LogPrefix, key);
+            m_logger.LogTrace("{Prefix}: deleted stream for key '{Key}'", LogPrefix, key);
             return true;
         }
         catch (Exception ex)
         {
-            RecordError(ex, $"cannot delete blob for key '{key}'");
+            RecordError(ex, $"cannot delete stream for key '{key}'");
             return false;
         }
     }
@@ -304,7 +343,36 @@ public sealed class KeyedBlobStore : ErrorManageableBase
 
     #region *** Path Mapping ***
 
-    private string BlobPath(string key) => Path.Combine(FolderFor(key), c_blobFile);
+    // The current data filename this store writes/reads primarily (human-readable when supplied,
+    //  else the legacy name — so a store never configured with one behaves exactly as before).
+    private string DataPath(string key) => Path.Combine(FolderFor(key), m_dataFileName ?? c_legacyDataFile);
+
+    // The legacy "blob.bin" path, always probed as a fallback on read.
+    private string LegacyPath(string key) => Path.Combine(FolderFor(key), c_legacyDataFile);
+
+    // Last-resort fallback: the folder's only non-key, non-temp file — covers a per-call
+    //  filename (e.g. an older MeasuredUtc-stamped name) that no longer matches the current
+    //  DataPath/LegacyPath candidates. Returns null when none or ambiguous (more than one).
+    private string? FindAnyDataFile(string key)
+    {
+        string dir = FolderFor(key);
+        if (!Directory.Exists(dir))
+            return null;
+
+        string? found = null;
+        foreach (var file in Directory.EnumerateFiles(dir))
+        {
+            string name = Path.GetFileName(file);
+            if (name == c_keyFile || name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (found is not null)
+                return null;   // ambiguous — more than one candidate, refuse to guess
+            found = file;
+        }
+
+        return found;
+    }
 
     private string FolderFor(string key) => Path.Combine(m_root, SafeName(key));
 

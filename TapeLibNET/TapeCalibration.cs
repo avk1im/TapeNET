@@ -89,6 +89,17 @@ public interface ITapeCalibration
 
     /// <summary>Writes the opaque representation to <paramref name="stream"/>. The app saves this verbatim.</summary>
     void SaveTo(Stream stream);
+
+    /// <summary>
+    /// When this run completed, in UTC, or <see langword="null"/> for a legacy profile measured before this
+    /// field existed. Doubles as the version discriminator used by <see cref="TapeCalibrationStore"/> (newest
+    /// wins) and as provenance ("measured 2026-08-14"). UTC, not local: it is a sort/compare key that travels
+    /// between machines in exported files, so local time (DST, timezones) would mis-order it.
+    /// </summary>
+    DateTime? MeasuredUtc { get; }
+
+    /// <summary>Optional free-text provenance, e.g. "author's reference — HP Ultrium 6".</summary>
+    string? Comment { get; }
 }
 
 /// <summary>
@@ -126,6 +137,10 @@ public sealed class TapeCalibration : ITapeCalibration
     /// </summary>
     public IReadOnlyList<CalibrationPoint>? LtoRemainingCurve { get; }
 
+    public DateTime? MeasuredUtc { get; }
+
+    public string? Comment { get; }
+
     #endregion
 
     #region *** Construction ***
@@ -133,11 +148,14 @@ public sealed class TapeCalibration : ITapeCalibration
     private TapeCalibration(
         string formatId, string profileKey, long reportedCapacityAtBom, long phantomFreeAtEom,
         long capacityActual, IReadOnlyList<CalibrationPoint> curve, CalibrationPoint? earlyWarning,
-        IReadOnlyList<CalibrationPoint>? ltoRemainingCurve = null)
+        IReadOnlyList<CalibrationPoint>? ltoRemainingCurve = null,
+        DateTime? measuredUtc = null, string? comment = null)
     {
         FormatId = formatId;
         ProfileKey = profileKey;
         ReportedCapacityAtBom = reportedCapacityAtBom;
+        MeasuredUtc = measuredUtc;
+        Comment = comment;
         PhantomFreeAtEom = phantomFreeAtEom;
         CapacityActual = capacityActual;
         Curve = curve;
@@ -183,7 +201,8 @@ public sealed class TapeCalibration : ITapeCalibration
         string profileKey, long reportedCapacityAtBom, long capacityActual,
         IEnumerable<(long ActualWritten, long ReportedRemaining)> rawSamples,
         (long ActualWritten, long ReportedRemaining)? earlyWarning,
-        IEnumerable<(long ActualWritten, long LtoRemaining)>? ltoSamples = null)
+        IEnumerable<(long ActualWritten, long LtoRemaining)>? ltoSamples = null,
+        DateTime? measuredUtc = null, string? comment = null)
     {
         var pts = new List<CalibrationPoint>();
 
@@ -246,7 +265,8 @@ public sealed class TapeCalibration : ITapeCalibration
         }
 
         return new TapeCalibration(CurrentFormatId, profileKey, Math.Max(0L, reportedCapacityAtBom),
-            phantomFreeAtEom, capacityActual, curve, ewPoint, ltoCurve);
+            phantomFreeAtEom, capacityActual, curve, ewPoint, ltoCurve,
+            measuredUtc ?? DateTime.UtcNow, comment);
     }
 
     /// <summary>
@@ -501,7 +521,9 @@ public sealed class TapeCalibration : ITapeCalibration
         long CapacityActual,
         List<CalibrationPoint> Curve,
         CalibrationPoint? EarlyWarning,
-        List<CalibrationPoint>? LtoRemainingCurve = null  // appended → older blobs read back as null
+        List<CalibrationPoint>? LtoRemainingCurve = null,  // appended → older blobs read back as null
+        DateTime? MeasuredUtc = null,                      // appended → older blobs read back as null (legacy)
+        string? Comment = null                             // appended → older blobs read back as null
     );
 
     private static readonly JsonSerializerOptions s_json = new()
@@ -513,7 +535,8 @@ public sealed class TapeCalibration : ITapeCalibration
     {
         ArgumentNullException.ThrowIfNull(stream);
         var dto = new Dto(FormatId, ProfileKey, ReportedCapacityAtBom, PhantomFreeAtEom, CapacityActual,
-            [.. Curve], EarlyWarning, LtoRemainingCurve is null ? null : [.. LtoRemainingCurve]);
+            [.. Curve], EarlyWarning, LtoRemainingCurve is null ? null : [.. LtoRemainingCurve],
+            MeasuredUtc, Comment);
         JsonSerializer.Serialize(stream, dto, s_json);
     }
 
@@ -538,7 +561,7 @@ public sealed class TapeCalibration : ITapeCalibration
             var curve = dto.Curve ?? [];
             return new TapeCalibration(dto.FormatId, dto.ProfileKey,
                 dto.ReportedCapacityAtBom, dto.PhantomFreeAtEom, dto.CapacityActual, curve, dto.EarlyWarning,
-                dto.LtoRemainingCurve);
+                dto.LtoRemainingCurve, dto.MeasuredUtc, dto.Comment);
         }
         catch (JsonException)
         {

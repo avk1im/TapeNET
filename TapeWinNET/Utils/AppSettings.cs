@@ -247,7 +247,7 @@ public class AppSettings
     #region Logging (injected once at startup; never serialized)
 
     /// <summary>
-    /// Logger factory used by settings-owned helpers that trace/report (blob stores).
+    /// Logger factory used by settings-owned helpers that trace/report (stream stores).
     /// Set this once after loading settings; unset ⇒ <see cref="NullLoggerFactory"/>.
     /// </summary>
     [JsonIgnore]
@@ -278,23 +278,23 @@ public class AppSettings
     #endregion // Calibrations
 
 
-    // ---- OPTIONAL: app-PRIVATE blobs (same mechanism, app-scoped root) ----
-    // In case we ever need blobs that belong to THIS app alone.
-    //  It reuses the very same KeyedBlobStore, rooted under the app folder next
+    // ---- OPTIONAL: app-PRIVATE streams (same mechanism, app-scoped root) ----
+    // In case we ever need data that belongs to THIS app alone.
+    //  It reuses the very same KeyedStreamStore, rooted under the app folder next
     //  to Settings.json — demonstrating "scope decides the root, not the class".
 
-    #region App-private blobs (optional)
+    #region App-private streams (optional)
 
-    private KeyedBlobStore? _appBlobs;
+    private KeyedStreamStore? _appStreans;
 
     /// <summary>
-    /// App-private keyed blob store, rooted at <c>...\TapeWinNET\Blobs</c> (next to
+    /// App-private keyed stream store, rooted at <c>...\TapeWinNET\Streams</c> (next to
     /// Settings.json). Use for artifacts that must NOT be shared across apps.
     /// </summary>
     [JsonIgnore]
-    public KeyedBlobStore AppBlobs => _appBlobs ??= new KeyedBlobStore(
-        Path.Combine(Path.GetDirectoryName(DefaultFilePath)!, "Blobs"),
-        EffectiveLoggerFactory.CreateLogger<KeyedBlobStore>());
+    public KeyedStreamStore AppStreams => _appStreans ??= new KeyedStreamStore(
+        Path.Combine(Path.GetDirectoryName(DefaultFilePath)!, "Streams"),
+        EffectiveLoggerFactory.CreateLogger<KeyedStreamStore>());
 
-    #endregion // App-private blobs
+    #endregion // App-private streams
 }

@@ -9,6 +9,19 @@ using TapeWinNET.ViewModels;
 namespace TapeWinNET.Converters;
 
 /// <summary>
+/// Converts a nullable <see cref="DateTime"/> (assumed UTC, e.g. a calibration's <c>MeasuredUtc</c>)
+/// to a local-time, user-friendly display string, or "legacy" for <see langword="null"/>.
+/// </summary>
+public class MeasuredUtcDisplayConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        => value is DateTime dt ? $"measured {dt.ToLocalTime():g}" : "legacy";
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+}
+
+/// <summary>
 /// Converts an <see cref="FclField"/> enum value to a user-friendly display name.
 /// </summary>
 public class FclFieldDisplayNameConverter : IValueConverter

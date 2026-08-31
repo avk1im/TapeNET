@@ -6,6 +6,7 @@
         xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
         xmlns:controls="clr-namespace:TapeWinNET.Controls"
         xmlns:help="clr-namespace:TapeWinNET.Help"
+        xmlns:converters="clr-namespace:TapeWinNET.Converters"
         d:DataContext="{d:DesignInstance Type=vm:CalibrationProfilesViewModel}"
         mc:Ignorable="d"
         Title="Calibration Profiles"
@@ -15,6 +16,9 @@
         ShowInTaskbar="False"
         PreviewKeyDown="Window_PreviewKeyDown">
 
+    <Window.Resources>
+        <converters:MeasuredUtcDisplayConverter x:Key="MeasuredUtcDisplayConverter"/>
+    </Window.Resources>
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*"/>
@@ -24,6 +28,7 @@
 
         <Grid x:Name="HelpOverlayRoot" Grid.Column="0" Margin="16">
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
@@ -36,7 +41,14 @@
                        TextWrapping="Wrap"
                        Margin="0,0,0,12"/>
 
-            <Grid Grid.Row="1" Margin="0,0,0,12"
+            <StackPanel Grid.Row="1" Margin="0,0,0,8"
+                        help:HelpControlNameAttachedProperty.ControlName="Drive filter">
+                <CheckBox Content="Only for this drive"
+                          IsChecked="{Binding OnlyForThisDrive}"
+                          IsEnabled="{Binding CanFilterByDrive}"/>
+            </StackPanel>
+
+            <Grid Grid.Row="2" Margin="0,0,0,12"
                   help:HelpControlNameAttachedProperty.ControlName="Profile selector">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
@@ -46,14 +58,26 @@
                 <TextBlock Grid.Column="0" Text="Profile:" VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <ComboBox Grid.Column="1"
                           ItemsSource="{Binding Profiles}"
-                          SelectedItem="{Binding SelectedProfile}"
-                          DisplayMemberPath="ProfileKey"/>
+                          SelectedItem="{Binding SelectedProfile}">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock>
+                                <TextBlock.Text>
+                                    <MultiBinding StringFormat="{}{0} — {1}">
+                                        <Binding Path="ProfileKey"/>
+                                        <Binding Path="MeasuredUtc" Converter="{StaticResource MeasuredUtcDisplayConverter}"/>
+                                    </MultiBinding>
+                                </TextBlock.Text>
+                            </TextBlock>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
             </Grid>
 
-            <controls:CalibrationResultView Grid.Row="2"
+            <controls:CalibrationResultView Grid.Row="3"
                                             help:HelpControlNameAttachedProperty.ControlName="Calibration Result"/>
 
-            <TextBlock Grid.Row="3"
+            <TextBlock Grid.Row="4"
                        Text="{Binding StatusMessage}"
                        Foreground="{DynamicResource WarningFg.Info}"
                        Margin="0,12,0,0"
@@ -72,11 +96,19 @@
                 </TextBlock.Style>
             </TextBlock>
 
-            <Grid Grid.Row="4" Margin="0,16,0,0">
+            <Grid Grid.Row="5" Margin="0,16,0,0">
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
                     <Button x:Name="HelpButton" Content="_Help ▶" Click="HelpButton_Click"
                             MinWidth="60" Padding="10,1"
                             ToolTip="Open help for this dialog (F1)"/>
+                    <Button Content="Import…" Command="{Binding ImportCommand}"
+                            Width="90" Margin="12,0,0,0"
+                            ToolTip="Import a shared calibration profile or bundle file"/>
+                    <controls:SplitButton ButtonContent="Export…"
+                                          ButtonToolTip="Export the selected profile to a file"
+                                          Command="{Binding ExportCurrentCommand}"
+                                          MenuItems="{Binding ExportMenuItems}"
+                                          Width="110" Margin="8,0,0,0"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <Button Content="Apply" Command="{Binding ApplyCommand}"

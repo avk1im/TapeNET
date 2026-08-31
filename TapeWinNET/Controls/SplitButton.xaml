@@ -1,0 +1,58 @@
+<UserControl x:Class="TapeWinNET.Controls.SplitButton"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d"
+             x:Name="Root">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="20"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Main button: performs the default (primary) action. -->
+        <Button Grid.Column="0"
+                Content="{Binding ButtonContent, ElementName=Root}"
+                Command="{Binding Command, ElementName=Root}"
+                CommandParameter="{Binding CommandParameter, ElementName=Root}"
+                ToolTip="{Binding ButtonToolTip, ElementName=Root}"
+                Padding="10,1"/>
+
+        <!-- Dropdown toggle: reveals the menu of alternative actions. -->
+        <Button x:Name="DropDownButton"
+                Grid.Column="1"
+                Content="▾"
+                Margin="1,0,0,0"
+                Padding="2,1"
+                Click="DropDownButton_Click"
+                ToolTip="More export options"/>
+
+        <Popup x:Name="PopupMenu"
+               PlacementTarget="{Binding ElementName=DropDownButton}"
+               Placement="Bottom"
+               StaysOpen="False"
+               AllowsTransparency="True">
+
+            <Border BorderBrush="Gray"
+                    BorderThickness="1"
+                    Background="White">
+
+                <ItemsControl ItemsSource="{Binding MenuItems, ElementName=Root}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Button HorizontalContentAlignment="Left"
+                                    Padding="10,4"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    Content="{Binding Header}"
+                                    Command="{Binding Command}"
+                                    Click="MenuItemButton_Click"/>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+            </Border>
+        </Popup>
+    </Grid>
+</UserControl>

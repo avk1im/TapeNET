@@ -173,7 +173,7 @@ public partial class TapeServiceBase
                     // Resolve the baseline to compare against: explicit → drive's active match → store.
                     ITapeCalibration? existing = request.ExistingCalibration
                         ?? _drive.Calibration
-                        ?? CalibrationStore.Load(_drive.DriveProfileKey);
+                        ?? CalibrationStore.LoadLatest(_drive.DriveProfileKey);
 
                     if (existing is null)
                     {
@@ -577,7 +577,10 @@ public partial class TapeServiceBase
             if (calibrations.Count == 0)
                 return 0;
 
-            foreach (var cal in calibrations)
+            // Feed oldest-first: TapeDrive.AddCalibration replaces same-ProfileKey entries (last wins),
+            //  so ordering ascending by MeasuredUtc (nulls/legacy first) makes the newest version of
+            //  each profile key the one that ends up active — "newest auto-wins" per the store contract.
+            foreach (var cal in calibrations.OrderBy(c => c.MeasuredUtc ?? DateTime.MinValue))
                 _drive.AddCalibration(cal);
 
             if (_drive.Calibration is { } matched)

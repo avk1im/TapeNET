@@ -49,4 +49,5 @@ public partial class CalibrationProfilesWindow : Window, IHelpPaneHost
     public string? GetDefaultTopicId() => _help.GetDefaultTopicId();
 
     #endregion
+
 }
