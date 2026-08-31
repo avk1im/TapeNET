@@ -747,8 +747,8 @@ namespace TapeLibNET
 
         private void MoveToEndOfContentInternal()
         {
-            // QUIRK in Quantum SDLT: it seems necessary to rewind before going to the end of the data
-            if (!Drive.IsLtoDrive)
+            // QUIRK in DLT-V4: it seems necessary to rewind before going to the end of the data
+            if (!Drive.IsLtoDrive && Drive.LtoGeneration < 1)
                 Drive.Rewind();
 
             // First move to the end of the data in the partition. Notice the following will produce an error if TOC hasn't been written yet
@@ -882,7 +882,7 @@ namespace TapeLibNET
                     SeekForwardPastTOCMark();
 
                 /*
-                // The following doesn't work on Quantum SDLT
+                // The following doesn't work on DLT-V4
                 // First go to the end. Notice this will fail on an empty tape
                 FastforwardToEnd(partition: 1);
                 if (WentOK)
