@@ -1268,6 +1268,37 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         return WentOK;
     }
 
+    /// <summary>
+    /// Refreshes the cached media parameters (<see cref="m_mediaParams"/>) from the tape class driver,
+    /// correcting the CAPACITY field on drives that misreport it (notably Sony AIT).
+    /// <para>
+    /// <b>Healthy drives (common case):</b> the tape.sys figures pass through untouched (two comparisons).
+    /// The largest capacity seen is tracked in <see cref="m_anchoredCapacity"/> to arm the collapse guard
+    /// should the drive later prove quirky.
+    /// </para>
+    /// <para>
+    /// <b>Quirky drives (AIT):</b> only the <c>Capacity</c> field is unreliable — it collapses far below the
+    /// physical maximum after positioning (a 40 GB cartridge reads 21.56 MB). We reconstruct it from the
+    /// drive's own stable LOG SENSE 0x31 maximum (<see cref="GetLtoCapacity"/>), falling back to the
+    /// anti-collapse <see cref="m_anchoredCapacity"/> anchor, or the larger of the two tape.sys fields.
+    /// </para>
+    /// <para>
+    /// <b>Remaining is left to tape.sys.</b> Physically, remaining is the EOD→EOM distance — invariant under
+    /// head repositioning, changing only when a write establishes a new EOD. tape.sys reports a
+    /// position-relative figure that equals this EOD→EOM truth exactly on the append path (head at EOD while
+    /// writing) — which is the only place capacity decisions are made — and is what the drive's existing
+    /// calibration was built against. It drifts during pure reads/repositions, but that is non-critical and
+    /// the precise EOD/EW-landmark estimation lives one layer up in <c>EstimateActualRemaining</c>. We never
+    /// swap it: <c>Capacity &lt; Remaining</c> signals a bad CAPACITY, not a transposed pair.
+    /// </para>
+    /// <para>
+    /// <b>Note:</b> LOG SENSE 0x31 also exposes an EOD-based <c>remaining</c> that stayed constant across
+    /// read-only motion in testing (unlike tape.sys) — a candidate to adopt as the Remaining source too,
+    /// but it needs recalibration and reports "full" until the drive locates EOD. Deferred pending
+    /// validation beyond the single AIT-2 under test.
+    /// </para>
+    /// </summary>
+    /// <returns>True if the underlying <c>GetTapeParameters</c> query succeeded.</returns>
     private bool RefreshMediaParams()
     {
         if (!IsOpen)
@@ -1291,17 +1322,18 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         long cap = mediaParams.Capacity;
         long rem = mediaParams.Remaining;
 
-        // --- AIT QUIRK detection: two cheap, SCSI-free tells ---
-        //  transposed : the classic AIT field swap (Capacity < Remaining)
-        //  collapsed  : Capacity fell far below the anchored physical maximum
+        // --- AIT QUIRK detection: two cheap, SCSI-free tells that the CAPACITY reading is bogus ---
+        //  capBelowRem : Capacity < Remaining — physically impossible (free can't exceed total),
+        //                so the Capacity field, not the pair, is wrong. NOT a transposition.
+        //  collapsed   : Capacity fell far below the anchored physical maximum.
         //  Either one, once seen, marks the drive quirky for the rest of the mount.
-        bool transposed = cap < rem;
+        bool capBelowRem = cap < rem;
         bool collapsed = IsCapacityCollapsed(cap);
-        if ((transposed || collapsed) && !m_capacityQuirkDrive)
+        if ((capBelowRem || collapsed) && !m_capacityQuirkDrive)
         {
             m_capacityQuirkDrive = true;
             m_logger.LogTrace("{Prefix}: Capacity quirk detected ({Why}) → correction engaged for this mount",
-                LogPrefix, transposed ? "transposed pair" : "collapse below anchor");
+                LogPrefix, capBelowRem ? "capacity below remaining" : "collapse below anchor");
         }
 
         if (m_capacityQuirkDrive)
@@ -1324,45 +1356,50 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         => m_anchoredCapacity > 0L && cap < m_anchoredCapacity * c_capacityCollapseFactor;
 
     /// <summary>
-    /// Reconstructs a trustworthy (Capacity, Remaining) pair on a drive known to misreport them.
-    /// Priority: the drive's own LOG SENSE 0x31 figures (each trusted only when present), then a
-    /// transposition fix applied to WHATEVER source we ended up with (we don't trust 0x31 blindly
-    /// either), then the anti-collapse anchor. With no LTO and no anchor yet, this degrades to a
-    /// plain swap.
+    /// Reconstructs a trustworthy CAPACITY on a drive known to misreport it; Remaining is returned
+    /// UNCHANGED (tape.sys owns it — see <see cref="RefreshMediaParams"/> remarks). Capacity priority:
+    /// the drive's own LOG SENSE 0x31 maximum (stable, position- and EOD-independent); else the
+    /// anti-collapse anchor; else the larger of the two tape.sys fields (equals true capacity at BOT and
+    /// seeds the anchor). We never swap — <c>Capacity &lt; Remaining</c> means a bad Capacity, not a
+    /// transposed pair.
     /// </summary>
     private (long cap, long rem) CorrectQuirkyCapacity(long cap, long rem)
     {
-        // 1) Authoritative source first. Decoupled from the healthy path — we only reach here
-        //    because the drive is quirky. Trust each field only when present (>= 0).
+        // 1) Capacity from the authoritative source. LOG SENSE 0x31 exposes the MAXIMUM as its own
+        //    parameter — stable regardless of head position OR EOD, so it needs no ordering fix. We take
+        //    ONLY its capacity; its EOD-based 'remaining' is intentionally ignored here (Remaining stays
+        //    on tape.sys for calibration compatibility).
+        long ltoCap = -1L;
         if (m_ltoCapacitySupported != false && GetLtoCapacity(out long lrem, out long lcap))
         {
-            if (lcap >= 0) cap = lcap;
-            if (lrem >= 0) rem = lrem;
+            m_logger.LogTrace("{Prefix}: LTO capacity reports: Capacity {Capacity}, Remaining {Remaining}",
+                LogPrefix, Helpers.BytesToStringLong(lcap), Helpers.BytesToStringLong(lrem));
+            ltoCap = lcap;
         }
 
-        // 2) Order the pair — applied to BOTH tape.sys AND LOG SENSE output, since a drive that
-        //    confused tape.sys may hand us a swapped 0x31 page too.
-        if (cap < rem)
-        {
-            m_logger.LogTrace("Capacity/Remaining transposed ({Cap} < {Rem}) → swapping",
-                Helpers.BytesToStringLong(cap), Helpers.BytesToStringLong(rem));
-            (cap, rem) = (rem, cap);
-        }
+        if (ltoCap >= 0L)
+            cap = ltoCap;
+        else
+            // No firmware figure: the larger of the two tape.sys fields is the best capacity guess
+            //  (at BOT it equals the true capacity), used to seed / refresh the anchor below.
+            cap = Math.Max(cap, rem);
 
-        // 3) Anchor defense: grow to the largest credible capacity, or restore from a collapse.
+        // 2) Anchor defense: grow to the largest credible capacity, or restore from a collapse.
         if (cap > m_anchoredCapacity)
         {
-            m_logger.LogTrace("Capacity anchor {Old} → {New}",
-                Helpers.BytesToStringLong(m_anchoredCapacity), Helpers.BytesToStringLong(cap));
+            m_logger.LogTrace("{Prefix}: Capacity anchor {Old} → {New}",
+                LogPrefix, Helpers.BytesToStringLong(m_anchoredCapacity), Helpers.BytesToStringLong(cap));
             m_anchoredCapacity = cap;
         }
         else if (IsCapacityCollapsed(cap))
         {
-            m_logger.LogTrace("Capacity collapse ignored: reported {Cap} << anchor {Anchor} → using anchor",
-                Helpers.BytesToStringLong(cap), Helpers.BytesToStringLong(m_anchoredCapacity));
+            m_logger.LogTrace("{Prefix}: Capacity collapse ignored: reported {Cap} << anchor {Anchor} → using anchor",
+                LogPrefix, Helpers.BytesToStringLong(cap), Helpers.BytesToStringLong(m_anchoredCapacity));
             cap = m_anchoredCapacity;
         }
 
+        // 3) Remaining: returned as tape.sys reported it. Position-relative, but equal to the true
+        //    EOD→EOM distance on the append path (head at EOD) — the only place it drives decisions.
         return (cap, rem);
     }
 
