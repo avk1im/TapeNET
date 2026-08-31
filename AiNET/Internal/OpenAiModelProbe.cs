@@ -81,6 +81,16 @@ internal static class OpenAiModelProbe
                     isAuthFailure: true);
             }
 
+            // HTTP 410 Gone means the service itself is retired — re-prompting for
+            //  a key cannot help, so say so plainly rather than blaming the token.
+            if (response.StatusCode == HttpStatusCode.Gone)
+            {
+                return Unhealthy(descriptor, endpoint, sw.Elapsed,
+                    $"{descriptor.DisplayName} is no longer available at this endpoint " +
+                    "(HTTP 410 Gone) — the service appears to have been retired.",
+                    isAuthFailure: false);
+            }
+
             if (!response.IsSuccessStatusCode)
             {
                 return Unhealthy(descriptor, endpoint, sw.Elapsed,
@@ -118,8 +128,15 @@ internal static class OpenAiModelProbe
         using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var doc    = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
 
-        if (!doc.RootElement.TryGetProperty("data", out var data) ||
-            data.ValueKind != JsonValueKind.Array)
+        // OpenAI-style payloads wrap the list in "data"; some services return
+        //  a bare array instead. Accept both shapes.
+        JsonElement data;
+        if (doc.RootElement.ValueKind == JsonValueKind.Array)
+        {
+            data = doc.RootElement;
+        }
+        else if (!doc.RootElement.TryGetProperty("data", out data) ||
+                 data.ValueKind != JsonValueKind.Array)
         {
             return [];
         }
@@ -127,7 +144,10 @@ internal static class OpenAiModelProbe
         List<string> ids = [];
         foreach (var item in data.EnumerateArray())
         {
-            if (item.TryGetProperty("id", out var idEl) &&
+            // "id" is the OpenAI/Anthropic field; "name" is accepted as a
+            //  fallback for services that label their models that way.
+            if ((item.TryGetProperty("id", out var idEl) ||
+                 item.TryGetProperty("name", out idEl)) &&
                 idEl.GetString() is { Length: > 0 } id)
             {
                 ids.Add(id);

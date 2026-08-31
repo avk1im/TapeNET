@@ -12,7 +12,7 @@ namespace AiNET;
 /// <see cref="LanHostsRegistry"/> at call time.
 /// </param>
 /// <param name="CheckEnvironmentVariables">
-/// Whether to inspect environment variables such as <c>GITHUB_TOKEN</c>,
+/// Whether to inspect environment variables such as <c>OPENAI_API_KEY</c>,
 ///  <c>OPENAI_API_KEY</c>, and <c>AZURE_OPENAI_API_KEY</c>.
 /// </param>
 /// <param name="PerProbeTimeout">

@@ -83,6 +83,20 @@ public static class AiSessionFactory
                 var probeResult = await provider.ProbeAsync(config.Endpoint, config.ApiKey, ct);
                 if (probeResult.IsHealthy)
                 {
+                    // Guard against a saved model id the provider no longer offers
+                    //  (e.g. after a service renames or retires a model).
+                    //  Falling back to a discovered model beats failing on first use.
+                    if (chatModelId is not null &&
+                        probeResult.DiscoveredChatModels.Count > 0 &&
+                        !probeResult.DiscoveredChatModels.Contains(chatModelId))
+                    {
+                        var replacement = probeResult.DiscoveredChatModels[0];
+                        logger.LogWarning(
+                            "Last-used chat model '{ChatModel}' is no longer offered by '{Provider}' — falling back to '{Replacement}'.",
+                            chatModelId, provider.Descriptor.DisplayName, replacement);
+                        config = config with { ChatModelId = replacement };
+                    }
+
                     logger.LogInformation(
                         "Last-used provider '{Provider}' is healthy — skipping discovery.",
                         provider.Descriptor.DisplayName);

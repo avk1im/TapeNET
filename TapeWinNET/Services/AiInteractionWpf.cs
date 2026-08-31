@@ -228,15 +228,38 @@ public sealed class AiInteractionWpf : IAiInteraction
                 if (newUri is null)
                     continue;   // user cancelled — re-show provider list
 
-                // Re-probe on a background thread (ConfigureAwait(false) ensures
-                //  we never resume on the dispatcher, so no deadlock is possible).
-                LogInfo($"Added LAN host {newUri}; re-probing…");
+                // Probe BEFORE persisting, so a mistyped address never ends up
+                //  polluting the registry (and every future discovery sweep).
+                //  ConfigureAwait(false) ensures we never resume on the
+                //  dispatcher, so no deadlock is possible.
+                LogInfo($"Probing LAN host {newUri}…");
                 var freshProbes = await ReprobeWithNewLanHostAsync(newUri, ct).ConfigureAwait(false);
+
+                bool responded = freshProbes.Any(
+                    p => p.IsHealthy &&
+                         string.Equals(p.Endpoint.GetLeftPart(UriPartial.Authority),
+                                       newUri.GetLeftPart(UriPartial.Authority),
+                                       StringComparison.OrdinalIgnoreCase));
+
+                if (responded)
+                {
+                    if (_lanRegistry?.Add(newUri) ?? false)
+                        LogOk($"LAN host {newUri} responded and was saved.");
+                }
+                else if (await ConfirmSaveUnreachableHostAsync(newUri))
+                {
+                    _lanRegistry?.Add(newUri);
+                    LogWarn($"LAN host {newUri} did not respond but was saved on request.");
+                }
+                else
+                {
+                    LogWarn($"LAN host {newUri} did not respond — not saved.");
+                    continue;   // re-show provider list without the dead entry
+                }
 
                 // Merge the fresh results with allProbes, replacing any existing entry
                 //  for a given endpoint. If the new host didn't respond, inject a
-                //  synthetic unhealthy entry so the user can still select it —
-                //  it is already persisted in LanHostsRegistry for future sessions.
+                //  synthetic unhealthy entry so the user can still select it.
                 allProbes = MergeProbes(allProbes, freshProbes, newUri);
                 continue;
             }
@@ -412,6 +435,28 @@ public sealed class AiInteractionWpf : IAiInteraction
     }
 
     /// <summary>
+    /// Asks the user whether an unreachable LAN host should still be saved.
+    /// </summary>
+    /// <remarks>
+    /// A host may legitimately be offline at the moment it is added, so we offer
+    ///  the choice rather than silently discarding it. Declining keeps the
+    ///  registry free of typos, which is the common case.
+    /// </remarks>
+    private async Task<bool> ConfirmSaveUnreachableHostAsync(Uri host)
+    {
+        if (_dispatcher is null)
+            return true; // default yes, save
+
+        var answer = await _dispatcher.InvokeAsync(() => SimpleBox.Show(
+            $"No AI provider responded at {host}.\n\n" +
+            "Save it anyway? Choose No if you mistyped the address.",
+            "LAN Host Did Not Respond",
+            MessageBoxButton.YesNo, MessageBoxImage.Warning));
+
+        return answer == MessageBoxResult.Yes;
+    }
+
+    /// <summary>
     /// Merges <paramref name="fresh"/> probe results into <paramref name="existing"/>,
     /// replacing any entry whose endpoint matches. If <paramref name="newHost"/> is
     /// not present in <paramref name="fresh"/> (probe timed out / refused), appends a
@@ -523,11 +568,10 @@ public sealed class AiInteractionWpf : IAiInteraction
                     input = "http://" + input;
                 }
 
+                // NOTE: deliberately NOT persisted here — the caller probes the
+                //  host first and only then decides whether to save it.
                 if (Uri.TryCreate(input, UriKind.Absolute, out var parsed))
-                {
-                    _lanRegistry?.Add(parsed);
                     return parsed;
-                }
 
                 // Invalid — warn and loop back to the AskDialog.
                 SimpleBox.Show(
@@ -549,7 +593,12 @@ public sealed class AiInteractionWpf : IAiInteraction
         if (_catalog is null)
             return [];
 
-        var lanHosts = _lanRegistry?.GetAll() ?? (IReadOnlyList<Uri>)[newHost];
+        // The new host is not in the registry yet (it is saved only after a
+        //  successful probe), so union it in explicitly for this sweep.
+        var lanHosts = _lanRegistry is null
+            ? (IReadOnlyList<Uri>)[newHost]
+            : [.. _lanRegistry.GetAll().Append(newHost).Distinct()];
+
         var options = new AiProviderDiscoveryOptions(
             ProbeLocalhost:            true,
             LanEndpoints:              lanHosts,

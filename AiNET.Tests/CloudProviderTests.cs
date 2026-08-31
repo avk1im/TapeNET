@@ -42,7 +42,7 @@ public class CloudProviderTests
         Assert.NotNull(catalog.Find(AiProviderKind.OpenAi));
         Assert.NotNull(catalog.Find(AiProviderKind.AzureOpenAi));
         Assert.NotNull(catalog.Find(AiProviderKind.Anthropic));
-        Assert.NotNull(catalog.Find(AiProviderKind.GitHubModels));
+        Assert.NotNull(catalog.Find(AiProviderKind.Anthropic));
     }
 
     // ── Probing without a credential ─────────────────────────────────────────

@@ -40,14 +40,14 @@ public class DescriptorRoundTripTests
     public void AiProviderConfig_RoundTrips()
     {
         var descriptor = new AiProviderDescriptor(
-            AiProviderKind.GitHubModels, AiProviderLocation.Cloud,
-            "GitHub Models", new Uri("https://models.inference.ai.azure.com"),
+            AiProviderKind.Anthropic, AiProviderLocation.Cloud,
+            "Anthropic", new Uri("https://api.anthropic.com"),
             true, AiCapabilities.Chat);
 
         var original = new AiProviderConfig(
             Descriptor:       descriptor,
-            Endpoint:         new Uri("https://models.inference.ai.azure.com"),
-            ApiKey:           "ghp_testtoken",
+            Endpoint:         new Uri("https://api.anthropic.com"),
+            ApiKey:           "sk-ant-testtoken",
             ChatModelId:      "gpt-4o-mini",
             EmbeddingModelId: null,
             Options:          new Dictionary<string, string> { ["timeout"] = "30" });
@@ -100,7 +100,7 @@ public class DescriptorRoundTripTests
     [InlineData(AiProviderKind.Ollama)]
     [InlineData(AiProviderKind.LmStudio)]
     [InlineData(AiProviderKind.OpenAi)]
-    [InlineData(AiProviderKind.GitHubModels)]
+    [InlineData(AiProviderKind.Anthropic)]
     [InlineData(AiProviderKind.AzureOpenAi)]
     [InlineData(AiProviderKind.Onnx)]
     [InlineData(AiProviderKind.OpenAiCompatible)]

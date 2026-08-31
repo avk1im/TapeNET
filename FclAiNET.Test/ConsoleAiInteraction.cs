@@ -6,14 +6,13 @@ namespace FclAiNET.Test;
 /// Console-based implementation of <see cref="IAiInteraction"/>.
 /// Displays provider discovery status and prompts for credentials
 /// interactively. Supports reading API keys from environment variables
-/// to avoid pasting long tokens (e.g. GitHub PATs) into the console.
+/// to avoid pasting long tokens into the console.
 /// </summary>
 internal sealed class ConsoleAiInteraction : IAiInteraction
 {
     // ── Well-known environment variable names (mirrors AiNET provider defaults) ──
     private static readonly Dictionary<AiProviderKind, string> EnvVars = new()
     {
-        [AiProviderKind.GitHubModels] = "GITHUB_TOKEN",
         [AiProviderKind.OpenAi]       = "OPENAI_API_KEY",
         [AiProviderKind.AzureOpenAi]  = "AZURE_OPENAI_API_KEY",
     };

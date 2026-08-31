@@ -71,7 +71,7 @@ public static class AiSecretStore
 
     // Isolated so the Windows-only construction is never analysed on other platforms.
     [System.Runtime.Versioning.SupportedOSPlatform("windows5.1.2600")]
-    private static IAiSecretStore CreateWindowsStore() => new CredentialManagerSecretStore();
+    private static CredentialManagerSecretStore CreateWindowsStore() => new();
 }
 
 /// <summary>

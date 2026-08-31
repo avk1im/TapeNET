@@ -131,7 +131,7 @@ public class SessionLifecycleTests
         Assert.Contains(AiProviderKind.OpenAiCompatible, kinds);
         Assert.Contains(AiProviderKind.OpenAi,           kinds);
         Assert.Contains(AiProviderKind.AzureOpenAi,      kinds);
-        Assert.Contains(AiProviderKind.GitHubModels,     kinds);
+        Assert.Contains(AiProviderKind.Anthropic,        kinds);
     }
 
     [Fact]

@@ -12,8 +12,7 @@ public sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? log
     : IAiProviderDiscovery
 {
     // ── Well-known environment variable names ────────────────────────────────
-    private const string EnvGitHubToken         = "GITHUB_TOKEN";
-    private const string EnvOpenAiApiKey        = "OPENAI_API_KEY";
+    private const string EnvOpenAiApiKey         = "OPENAI_API_KEY";
     private const string EnvAzureOpenAiApiKey   = "AZURE_OPENAI_API_KEY";
     private const string EnvAzureOpenAiEndpoint = "AZURE_OPENAI_ENDPOINT";
     private const string EnvAnthropicApiKey     = "ANTHROPIC_API_KEY";
@@ -88,18 +87,6 @@ public sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? log
 
         if (options.CheckEnvironmentVariables)
         {
-            // GitHub Models
-            var githubToken = Environment.GetEnvironmentVariable(EnvGitHubToken);
-            if (!string.IsNullOrEmpty(githubToken))
-            {
-                var provider = catalog.Find(AiProviderKind.GitHubModels);
-                if (provider?.Descriptor.DefaultEndpoint is { } ep)
-                {
-                    tasks.Add(Probe(provider, ep, githubToken));
-                    queuedCloudKinds.Add(AiProviderKind.GitHubModels);
-                }
-            }
-
             // OpenAI
             var openAiKey = Environment.GetEnvironmentVariable(EnvOpenAiApiKey);
             if (!string.IsNullOrEmpty(openAiKey))
