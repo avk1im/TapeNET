@@ -2,6 +2,8 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using Windows.Win32.Foundation;
+using Windows.Win32.System.SystemServices;
+
 
 namespace TapeLibNET;
 
@@ -64,6 +66,21 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
     //  COLLAPSE (driver 0 while the drive's own LOG SENSE still claims capacity) is ALWAYS logged at
     //  Information regardless of this threshold, since it is the exact quirk the tail phase exists to tame.
     private const long c_ltoDivergenceTraceThreshold = 1L * 1024 * 1024 * 1024; // 1 GB
+
+    /// <summary>
+    /// True for write faults that, past EW, mean the drive ran off the medium rather than a genuine
+    /// mid-tape transport error. Drives that raise a clean 0x0D VOLUME OVERFLOW never reach this path;
+    /// the ones that stall (helical-scan AIT-3Ex) surface one of these instead.
+    /// </summary>
+    private static readonly HashSet<WIN32_ERROR> c_transportEndErrors = 
+    [
+        WIN32_ERROR.ERROR_SEM_TIMEOUT,           // 0x79  — SPTD aborted a write the drive never completed
+        WIN32_ERROR.ERROR_IO_DEVICE,             // 0x45D — generic device I/O fault at physical end
+        WIN32_ERROR.ERROR_GEN_FAILURE,           // 0x1F  — "device is not functioning" after running off tape
+        WIN32_ERROR.ERROR_NOT_READY,             // 0x15  — drive briefly not-ready recovering from the stall
+        WIN32_ERROR.ERROR_DEV_NOT_EXIST,         // 0x1B1 — the reset already surprise-removed the device
+        WIN32_ERROR.ERROR_DEVICE_NOT_CONNECTED,  // 0x4E7 — ditto (Win10+)
+    ];
 
     #endregion
 
@@ -441,15 +458,17 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
             if (reportedRemaining <= 0 && ltoRem > 0)
                 m_logger.LogInformation(
                     "{Prefix}: Reported COLLAPSE — driver 0, LOG SENSE {Lto} still remaining (actualWritten {Aw})",
-                    LogPrefix, ltoRem, actualWritten);
+                    LogPrefix, Helpers.BytesToStringLong(ltoRem), Helpers.BytesToStringLong(actualWritten));
             else if (Math.Abs(divergence) > c_ltoDivergenceTraceThreshold)
                 m_logger.LogInformation(
                     "{Prefix}: Reported/LOG SENSE divergence {Div} (driver {Rep}, LOG SENSE {Lto}, actualWritten {Aw})",
-                    LogPrefix, divergence, reportedRemaining, ltoRem, actualWritten);
+                    LogPrefix, divergence, Helpers.BytesToStringLong(reportedRemaining), Helpers.BytesToStringLong(ltoRem),
+                    Helpers.BytesToStringLong(actualWritten));
             else
                 m_logger.LogTrace(
                     "{Prefix}: LOG SENSE remaining {Lto} vs driver {Rep} (actualWritten {Aw})",
-                    LogPrefix, ltoRem, reportedRemaining, actualWritten);
+                    LogPrefix, Helpers.BytesToStringLong(ltoRem), Helpers.BytesToStringLong(reportedRemaining),
+                    Helpers.BytesToStringLong(actualWritten));
 
             return ltoRem;
         }
@@ -480,7 +499,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
                         { LtoReportedRemaining = ltoEw });
 
                     m_logger.LogInformation("{Prefix}: Calibration EW at {Bytes} bytes (reportedRemaining {RR})",
-                        LogPrefix, state.BytesWritten, rrEw);
+                        LogPrefix, Helpers.BytesToStringLong(state.BytesWritten), Helpers.BytesToStringLong(rrEw));
                 }
 
                 // Enter the fine-grained TAIL phase at whichever comes first: the drive's physical EW, or
@@ -495,7 +514,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
 
                     m_logger.LogInformation(
                         "{Prefix}: Calibration entering TAIL at {Bytes} bytes (chunk {Chunk}, interval {Int}) — {Reason}",
-                        LogPrefix, state.BytesWritten, currentChunk, sampleInterval,
+                        LogPrefix, Helpers.BytesToStringLong(state.BytesWritten), currentChunk, Helpers.BytesToString(sampleInterval),
                         Drive.IsPhysicalEarlyWarningSeen ? "physical early warning" : "last capacity fraction");
                 }
 
@@ -510,17 +529,37 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
                         { LtoReportedRemaining = ltoEom });
 
                     m_logger.LogInformation("{Prefix}: Calibration EOM at {Bytes} bytes (reportedRemaining {RR}) — actual capacity",
-                        LogPrefix, state.BytesWritten, rrEom);
+                        LogPrefix, Helpers.BytesToStringLong(state.BytesWritten), Helpers.BytesToStringLong(rrEom));
                     break;
                 }
 
                 // No progress and no EOM ⇒ a genuine write error; stop. Prior checkpoints stay on tape,
-                //  so this run remains resumable from the last one.
+                //  so this run remains resumable from the last one. Check for special error coditions as "surrogate EOM"
                 if (written == 0)
                 {
                     SyncErrorFrom(Drive);
                     if (WentBad)
                     {
+                        // Drives that might not raise a clean 0x0D at physical EOM (e.g. helical-scan AIT-3Ex) stall on
+                        //  the write past EW; SPTD aborts it as a transport fault and often takes the device down. But we
+                        //  already own the EW landmark AND the full tail curve, so we accept the last good position as a
+                        //  "SURROGATE EOM" and finish from in-memory state — NO further tape I/O (the device may be gone).
+                        //  The cartridge keeps its checkpoints for a later Recalibrate.
+                        if (state.EwPoint is not null && inTail && c_transportEndErrors.Contains(Drive.LastErrorWin32))
+                        {
+                            long rrFault = state.Samples.Count > 0 ? state.Samples[^1].ReportedRemaining : 0;
+                            state.Samples.Add((state.BytesWritten, rrFault));
+                            progress?.Report(new TapeCalibrationProgress(
+                                state.BytesWritten, rrFault, -1, EarlyWarning: true, EndOfMedium: true, "eom-inferred"));
+
+                            m_logger.LogWarning(
+                                "{Prefix}: Calibration EOM inferred at {Bytes} bytes — drive faulted past EW ({Err}) instead " +
+                                "of a clean overflow; accepting last position as physical EOM",
+                                LogPrefix, Helpers.BytesToStringLong(state.BytesWritten), Drive.LastErrorMessage);
+
+                            return FinalizeCalibration(capacityReportedAtBom, state, eomInferred: true);
+                        }
+
                         LogErrorAsDebug("Calibration: write failed before EOM");
                         return null;
                     }
@@ -562,36 +601,14 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
                     }
 
                     m_logger.LogTrace("{Prefix}: Calibration checkpoint {Idx} at {Bytes} bytes ({N} samples)",
-                        LogPrefix, state.CheckpointIndex, checkpoint.BytesWritten, state.Samples.Count);
+                        LogPrefix, state.CheckpointIndex, Helpers.BytesToStringLong(checkpoint.BytesWritten), state.Samples.Count);
 
                     state.CheckpointIndex++;
                     nextCheckpoint = state.BytesWritten + checkpointInterval;
                 }
             }
 
-            long capacityActual = state.BytesWritten;
-            if (capacityActual <= 0)
-            {
-                SetError(WIN32_ERROR.ERROR_IO_DEVICE);
-                LogErrorAsDebug("Calibration: reached EOM with zero bytes written");
-                return null;
-            }
-
-            TapeCalibration calibration = TapeCalibration.FromMeasurements(
-                Drive.DriveProfileKey, capacityReportedAtBom, capacityActual, state.Samples, state.EwPoint,
-                state.LtoSamples.Count > 0 ? state.LtoSamples : null);
-
-            m_logger.LogInformation(
-                "{Prefix}: Calibration done — actualCapacity {Act} ({Pct:F1}% of reported at BOM), " +
-                "phantomFreeAtEom {Phantom}, EW {Ew}, points {N} (LOG SENSE points {Lto})",
-                LogPrefix, capacityActual,
-                calibration.ReportedCapacityAtBom > 0 ? 100.0 * capacityActual / calibration.ReportedCapacityAtBom : 0.0,
-                calibration.PhantomFreeAtEom,
-                state.EwPoint is { } e ? $"{e.ActualWritten} bytes / RR {e.ReportedRemaining}" : "(none)",
-                state.Samples.Count, state.LtoSamples.Count);
-
-            ResetError();
-            return calibration;
+            return FinalizeCalibration(capacityReportedAtBom, state, eomInferred: false);
         }
         catch (Exception ex)
         {
@@ -607,6 +624,38 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         {
             pool.Return(buffer);
         }
+    }
+
+    /// <summary>
+    /// Builds the calibration from purely IN-MEMORY run state — issues NO tape I/O, because a surrogate-EOM
+    /// transport fault may already have reset and re-enumerated the device. Shared by the clean-EOM exit and
+    /// the inferred-EOM exit; <paramref name="eomInferred"/> only colors the log line.
+    /// </summary>
+    private TapeCalibration? FinalizeCalibration(long capacityReportedAtBom, RunState state, bool eomInferred)
+    {
+        long capacityActual = state.BytesWritten;
+        if (capacityActual <= 0)
+        {
+            SetError(WIN32_ERROR.ERROR_IO_DEVICE);
+            LogErrorAsDebug("Calibration: reached EOM with zero bytes written");
+            return null;
+        }
+
+        TapeCalibration calibration = TapeCalibration.FromMeasurements(
+            Drive.DriveProfileKey, capacityReportedAtBom, capacityActual, state.Samples, state.EwPoint,
+            state.LtoSamples.Count > 0 ? state.LtoSamples : null);
+
+        m_logger.LogInformation(
+            "{Prefix}: Calibration done{How} — actualCapacity {Act} ({Pct:F1}% of reported at BOM), " +
+            "phantomFreeAtEom {Phantom}, EW {Ew}, points {N} (LOG SENSE points {Lto})",
+            LogPrefix, eomInferred ? " (EOM INFERRED from transport fault)" : "", Helpers.BytesToStringLong(capacityActual),
+            calibration.ReportedCapacityAtBom > 0 ? 100.0 * capacityActual / calibration.ReportedCapacityAtBom : 0.0,
+            calibration.PhantomFreeAtEom,
+            state.EwPoint is { } e ? $"{Helpers.BytesToStringLong(e.ActualWritten)} bytes / RR {Helpers.BytesToStringLong(e.ReportedRemaining)}" : "(none)",
+            state.Samples.Count, state.LtoSamples.Count);
+
+        ResetError();
+        return calibration;
     }
 
     #endregion
@@ -654,7 +703,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         if (blockSize != plan.BlockSize)
         {
             m_logger.LogWarning("{Prefix}: Calibration — drive adjusted block size {Requested} → {Effective}; re-deriving chunks",
-                LogPrefix, plan.BlockSize, blockSize);
+                LogPrefix, Helpers.BytesToStringLong(plan.BlockSize), Helpers.BytesToStringLong(blockSize));
 
             plan = plan.WithBlockSize(blockSize);
         }
@@ -829,8 +878,8 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
                 if (!m_tooLargeWarned)
                 {
                     m_cal.m_logger.LogWarning(
-                        "{Prefix}: Calibration record ({Len} B) exceeds block size ({Bs} B) — skipping checkpoints; run will not be resumable",
-                        m_cal.LogPrefix, frame.Length, m_blockSize);
+                        "{Prefix}: Calibration record ({Len}) exceeds block size ({Bs}) — skipping checkpoints; run will not be resumable",
+                        m_cal.LogPrefix, Helpers.BytesToStringLong(frame.Length), Helpers.BytesToStringLong(m_blockSize));
                     m_tooLargeWarned = true;
                 }
                 return true; // non-fatal: keep calibrating, just don't checkpoint

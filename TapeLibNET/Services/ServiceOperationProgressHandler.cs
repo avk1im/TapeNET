@@ -455,6 +455,7 @@ public class ServiceCalibrateProgressHandler(
         "sampling"      => "Writing to the main media section",
         "sampling-tail" => "Writing to the final media section",
         "early-warning" => "Capturing early-warning landmark",
+        "eom-inferred"  => "Inferred end-of-media; finalizing calibration",
         "eom"           => "Finalizing calibration",
         _               => string.IsNullOrWhiteSpace(phase) ? "Calibrating" : phase,
     };
