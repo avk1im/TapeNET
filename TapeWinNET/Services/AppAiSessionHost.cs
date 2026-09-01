@@ -24,6 +24,10 @@ public sealed class AppAiSessionHost : IAsyncDisposable
     // (set before any EnsureAsync call that prompts the user).
     private AiInteractionWpf? _interaction;
 
+    // Authoritative provider list (enabled state, order, endpoints, pinned models).
+    // Created in SetInteraction and shared with the interaction layer.
+    private IAiProviderRegistry? _providerRegistry;
+
     // ── Public API ─────────────────────────────────────────────────────────
 
     /// <summary>
@@ -48,11 +52,31 @@ public sealed class AppAiSessionHost : IAsyncDisposable
     {
         _interaction = interaction;
 
-        // Give the interaction layer access to the catalog and LAN registry so it
-        //  can re-probe after the user adds an OpenAI-compatible LAN host.
-        var catalog  = AiProviderCatalog.CreateDefault();
-        var registry = new LanHostsRegistry();
-        interaction.SetDiscoveryContext(catalog, registry);
+        // Give the interaction layer access to the catalog and registries so it
+        //  can manage providers and re-probe after the user edits the list.
+        var catalog          = AiProviderCatalog.CreateDefault();
+        var lanRegistry      = new LanHostsRegistry();
+        var providerRegistry = new AiProviderRegistry(catalog, _secretStore);
+        _providerRegistry = providerRegistry;
+        interaction.SetDiscoveryContext(catalog, lanRegistry, providerRegistry);
+    }
+
+    /// <summary>
+    /// Opens the provider-management dialog directly (no picker in front of it),
+    /// then rebuilds the session so the edited list takes effect immediately.
+    /// Called from "Help → Manage AI Providers…".
+    /// </summary>
+    public async Task ManageProvidersAsync(CancellationToken ct = default)
+    {
+        if (_interaction is null || _providerRegistry is null)
+            return;
+
+        await _interaction.ManageProvidersAsync(_providerRegistry, ct);
+
+        // The list may have changed in ways that invalidate the live session
+        //  (its provider disabled, removed, or re-pointed), so rebuild. Adopt an
+        //  unambiguous result silently — the user just made their choice.
+        await ReconfigureAsync(autoUseIfSingle: true, ct);
     }
 
     /// <summary>
@@ -122,6 +146,9 @@ public sealed class AppAiSessionHost : IAsyncDisposable
     /// Called from "Help → AI Provider settings…".
     /// </summary>
     public async Task ReconfigureAsync(CancellationToken ct = default)
+        => await ReconfigureAsync(autoUseIfSingle: false, ct);
+
+    private async Task ReconfigureAsync(bool autoUseIfSingle, CancellationToken ct)
     {
         await _lock.WaitAsync(ct);
         try
@@ -143,7 +170,12 @@ public sealed class AppAiSessionHost : IAsyncDisposable
         //  (autoUseIfSingle: false) — the user explicitly asked to reconfigure.
         //  Suppress the EnsureAsync-internal raise so we fire SessionChanged
         //  exactly once below, regardless of outcome.
-        await EnsureAsync(promptUser: true, autoUseIfSingle: false, raiseChanged: false, ct);
+        // Re-build with a full UI prompt
+        //  provider list, autoUseIfSingle lets an unambiguous result be adopted
+        //  silently instead of stacking another dialog on top of the manager.
+        //  Suppress the EnsureAsync-internal raise so we fire SessionChanged
+        //  exactly once below, regardless of outcome.
+        await EnsureAsync(promptUser: true, autoUseIfSingle, raiseChanged: false, ct);
 
         // Always notify consumers — even if the user chose "None" — so they
         //  can update their state (e.g. rebuild the help session without AI).

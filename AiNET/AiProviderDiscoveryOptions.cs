@@ -28,10 +28,16 @@ namespace AiNET;
 /// Endpoints for cloud providers that have no fixed default (Azure OpenAI).
 ///  Probed only when <paramref name="SecretStore"/> holds a matching key.
 /// </param>
+/// <param name="Registry">
+/// Optional provider registry. When supplied it becomes authoritative for
+///  <i>what</i> is probed: disabled entries are skipped entirely and user-added
+///  entries replace <paramref name="LanEndpoints"/> as the LAN source.
+/// </param>
 public sealed record AiProviderDiscoveryOptions(
     bool ProbeLocalhost = true,
     IReadOnlyList<Uri>? LanEndpoints = null,
     bool CheckEnvironmentVariables = true,
     TimeSpan PerProbeTimeout = default,
     IAiSecretStore? SecretStore = null,
-    IReadOnlyDictionary<AiProviderKind, Uri>? KnownCloudEndpoints = null);
+    IReadOnlyDictionary<AiProviderKind, Uri>? KnownCloudEndpoints = null,
+    IAiProviderRegistry? Registry = null);

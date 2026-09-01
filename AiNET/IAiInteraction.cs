@@ -57,4 +57,24 @@ public interface IAiInteraction
     /// </summary>
     Task<Uri?> PromptEndpointAsync(
         AiProviderDescriptor descriptor, Uri? suggested, CancellationToken ct);
+
+    /// <summary>
+    /// Hands the host the full provider registry so the user can add, remove,
+    /// enable, disable, reorder, test and re-credential providers.
+    /// </summary>
+    /// <remarks>
+    /// This single member is deliberately the only management entry point.
+    ///  Adding one interface method per operation would force every host to
+    ///  implement UI it may not want and would leak workflow into the library;
+    ///  instead the library owns the model (<see cref="IAiProviderRegistry"/>)
+    ///  and the host owns the presentation.
+    /// <para>
+    /// The default implementation is a no-op, so console and headless hosts
+    ///  need not provide management UI. Mutations persist as they are made,
+    ///  so there is no result to return: the caller simply re-reads the
+    ///  registry after this task completes.
+    /// </para>
+    /// </remarks>
+    Task ManageProvidersAsync(IAiProviderRegistry registry, CancellationToken ct)
+        => Task.CompletedTask;
 }

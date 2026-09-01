@@ -728,16 +728,16 @@ public partial class MainViewModel : ViewModelBase
     public ICommand ResetAiProvidersCommand { get; set; } = new RelayCommand(() => { });
 
     /// <summary>
-    /// Header text for the "AI Provider Settings" menu item.
+    /// Header text for the "Manage AI Providers" menu item.
     /// Updated whenever the active AI session changes to reflect the current provider
-    ///  and model, e.g. "AI Provider Settings (current: Ollama / phi3.mini)…".
+    ///  and model, e.g. "Manage AI Providers (current: Ollama / phi3.mini)…".
     /// </summary>
     public string AiProviderMenuHeader
     {
         get => _aiProviderMenuHeader;
         set { _aiProviderMenuHeader = value; OnPropertyChanged(); }
     }
-    private string _aiProviderMenuHeader = "AI _Provider Settings\u2026";
+    private string _aiProviderMenuHeader = "Manage AI _Providers\u2026";
 
     #endregion
 

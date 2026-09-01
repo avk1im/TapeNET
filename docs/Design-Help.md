@@ -249,8 +249,9 @@ The retry loop re-prompts **only** when `AiProviderProbeResult.IsAuthFailure` is
 1. interaction.ShowStatusAsync("Discovering AI providers…")
 2. discovery.DiscoverAsync(opts)
 	 - probe localhost (Ollama 11434, LM Studio 1234)
-	 - probe each LAN endpoint from LanHostsRegistry
-	 - check env vars: GITHUB_TOKEN / OPENAI_API_KEY / AZURE_OPENAI_API_KEY
+	 - probe each user entry from the provider registry (§ 2.8)
+	 - check env vars: OPENAI_API_KEY / AZURE_OPENAI_API_KEY / ANTHROPIC_API_KEY
+	 - skip every provider whose registry entry is disabled; order results by registry priority
 3. if probes contain exactly one healthy + preferences.AutoUseIfSingle → use it (no prompt)
    else interaction.ChooseProviderAsync(probes) → user picks
 4. if RequiresApiKey && ApiKey is null → interaction.PromptApiKeyAsync
@@ -290,6 +291,54 @@ Returning `null` from `ChooseProviderAsync` is legitimate: it means "no AI for n
 **Infrastructure additions (Phase 1):**
 - `AiNET.Tests/remote-test-settings.json` (gitignored) + `remote-test-settings.template.json` — mirrors the TapeLibNET remote-settings pattern for LAN integration tests.
 - `Helpers/OpenAiRemoteTestSettings.cs` — reads endpoint/model from JSON or `AINET_REMOTE_*` env vars, strips `//` line comments before parsing.
+
+### 2.8 Provider management — the registry model
+
+Early builds treated user-supplied providers as a bare list of LAN URIs (`LanHostsRegistry` → `lan-hosts.json`). That worked for “add one host” but could not express *disabled*, *reordered*, or *pinned* providers, and it had no way to remove a stale entry — which is how a first live test ended up with a dozen unreachable `10.0.0.*` rows in the picker.
+
+Provider state is now owned by a first-class registry.
+
+**`AiProviderEntry`** — the persisted unit of provider state:
+
+| Member | Meaning |
+|---|---|
+| `Kind` | Which adapter serves this entry (`Ollama`, `OpenAiCompatible`, `OpenAi`, `AzureOpenAi`, `Anthropic`, `Onnx`…). |
+| `Endpoint` | Explicit endpoint, or `null` to fall back to the descriptor default. |
+| `DisplayName` | User-chosen label; falls back to the descriptor display name. |
+| `IsBuiltIn` | Seeded from the catalog — may be **disabled** but never **removed**. |
+| `IsEnabled` | Discovery skips disabled entries entirely (no probe, no network cost). |
+| `SortOrder` | User priority; discovery results are ordered by it. |
+| `PinnedChatModelId` | Optional model pin, so a known-good model survives re-probing. |
+
+`Identity` compares *kind + endpoint origin* (scheme/host/port), which is what prevents duplicate rows when a probe returns a versioned endpoint (`…/v3`) for a host stored as a bare URI.
+
+**`IAiProviderRegistry` / `AiProviderRegistry`** — the façade and its implementation:
+
+- Persists to `%LocalAppData%\AiNET\providers.json`; every mutation writes through immediately under a lock, so the store is always consistent with what the user sees.
+- **Seeds** built-in entries from `IAiProviderCatalog` on first load, and **migrates** any legacy `lan-hosts.json` once (recorded via a persisted `Migrated` flag). `LanHostsRegistry` survives purely as that migration source.
+- Operations: `Add`, `Remove` (bulk-capable), `SetEnabled`, `SetEndpoint`, `SetPinnedChatModel`, `Reorder`, `ProbeAsync`, `ClearCredential`, `HasCredential`, `ResetToDefaults`.
+- `DescriptorFor` tolerates entries whose kind is no longer in the catalog — a retired provider stays *visible and removable* instead of vanishing or throwing. (The GitHub Models retirement is exactly this case; see the generic HTTP 410 handling in `OpenAiModelProbe`.)
+- Credential operations delegate to `IAiSecretStore` keyed by `AiSecretKey`, so removing a provider can also drop its stored key.
+
+**Discovery integration.** `AiProviderDiscoveryOptions` gained an optional `Registry`. When supplied it is authoritative: `AiProviderDiscovery` filters disabled kinds, probes registry user entries instead of the bare `LanEndpoints` list (which remains a fallback for headless callers), and sorts the final probe list by registry priority.
+
+**Host contract.** Rather than growing `IAiInteraction` with a dozen UI-shaped methods, the interface gained a *single* defaulted callback:
+
+```csharp
+Task ManageProvidersAsync(IAiProviderRegistry registry, CancellationToken ct) => Task.CompletedTask;
+```
+
+The library hands the host a rich façade and lets it decide how much UI to build; console and headless hosts simply inherit the no-op. This mirrors the `ITapeFileNotifiable` philosophy used elsewhere in the solution — minimal surface, maximal host freedom.
+
+**WPF realisation.** `ProviderManagerWindow` (root of `TapeWinNET`, matching the existing dialog convention) presents a multi-select `ListView` — enabled checkbox, name, endpoint, type, status — with Add / Edit / Remove / Move Up / Move Down / Test / Clear Key commands plus Reset-to-defaults. An `EntryRow` wrapper (`INotifyPropertyChanged`) carries live probe status; every action writes through the registry and then reloads the snapshot, so the dialog never holds divergent state.
+
+`AiInteractionWpf` still offers a “⚙ Manage providers…” sentinel inside the first-run picker, so a user who discovers *nothing* can fix the list without leaving the flow; choosing it opens the dialog, re-runs discovery (`RediscoverAsync`) against the updated registry and re-shows the picker.
+
+The **primary** entry point, however, is the menu item **Help → Manage AI Providers…** (header augmented with the live provider, e.g. *“Manage AI Providers (current: Ollama / phi3.mini)…”*). It binds to `AppAiSessionHost.ManageProvidersAsync`, which opens `ProviderManagerWindow` **directly** — no picker in front of it — and then rebuilds the session via `ReconfigureAsync(autoUseIfSingle: true)`. The auto-adopt flag matters: after the user has just curated the list, stacking a second selection dialog on top of the manager would be redundant, so an unambiguous result is taken silently. `ReconfigureAsync()` without arguments still forces the picker for the genuine “let me re-choose” case.
+
+The former ad-hoc *add-LAN-host* prompt, its probe-merging helper, and the unreachable-host confirmation were all removed — the registry plus the dialog subsume them.
+
+`AppAiSessionHost` constructs the `AiProviderRegistry` (catalog + secret store) at wire-up time and passes it, alongside the legacy LAN registry, into `AiInteractionWpf.SetDiscoveryContext`.
 
 ---
 

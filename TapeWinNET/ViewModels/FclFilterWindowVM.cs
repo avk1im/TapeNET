@@ -401,7 +401,7 @@ public class FclFilterWindowVM : ViewModelBase
             {
                 AiStatusLevel = WarningLevel.Warning;
                 AiStatusMessage = "No AI provider is configured. "
-                    + "Set one up via Help → AI Provider settings.";
+                    + "Set one up via Help → Manage AI Providers.";
                 return;
             }
 

@@ -24,4 +24,4 @@ A quick map of the main menu bar:
 | **Restore** | [Restore / Validate / Verify](help://topic/dialog.restore), Rename, Abort Operation |
 | **View** | Refresh (F5), Show Full Pathname, Show Incremental Sets, Show Usage Bar |
 | **[Log](help://topic/ui.log-pane)** | Auto-scroll, Timestamps, Filter, Save, Mirror, Clear |
-| **Help** | Help Topics (F1), AI Provider settings, Reset AI Providers, [About](help://topic/dialog.about) |
+| **Help** | Help Topics (F1), Manage AI Providers, Reset AI Providers, [About](help://topic/dialog.about) |

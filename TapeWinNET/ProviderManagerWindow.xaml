@@ -1,0 +1,78 @@
+<Window x:Class="TapeWinNET.ProviderManagerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Manage AI Providers"
+        Width="720" Height="480"
+        MinWidth="600" MinHeight="360"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Grid.Row="0" Grid.ColumnSpan="2" Margin="0,0,0,8" TextWrapping="Wrap"
+                   Text="Providers are probed in the order listed. Uncheck a provider to skip it during discovery. Built-in providers can be disabled but not removed."/>
+
+        <!-- Provider list -->
+        <ListView x:Name="EntryList" Grid.Row="1" Grid.Column="0"
+                  SelectionMode="Extended"
+                  SelectionChanged="EntryList_SelectionChanged">
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Width="34">
+                        <GridViewColumn.CellTemplate>
+                            <DataTemplate>
+                                <CheckBox IsChecked="{Binding IsEnabled, Mode=TwoWay}"
+                                          Checked="EnabledBox_Changed"
+                                          Unchecked="EnabledBox_Changed"
+                                          ToolTip="Include this provider in discovery"/>
+                            </DataTemplate>
+                        </GridViewColumn.CellTemplate>
+                    </GridViewColumn>
+                    <GridViewColumn Header="Provider" Width="180"
+                                    DisplayMemberBinding="{Binding DisplayName}"/>
+                    <GridViewColumn Header="Endpoint" Width="230"
+                                    DisplayMemberBinding="{Binding EndpointText}"/>
+                    <GridViewColumn Header="Type" Width="80"
+                                    DisplayMemberBinding="{Binding OriginText}"/>
+                    <GridViewColumn Header="Status" Width="150"
+                                    DisplayMemberBinding="{Binding StatusText}"/>
+                </GridView>
+            </ListView.View>
+        </ListView>
+
+        <!-- Side commands -->
+        <StackPanel Grid.Row="1" Grid.Column="1" Margin="8,0,0,0">
+            <Button x:Name="AddButton"      Content="_Add..."    Margin="0,0,0,6" Padding="8,3" Click="AddButton_Click"/>
+            <Button x:Name="EditButton"     Content="_Edit..."   Margin="0,0,0,6" Padding="8,3" Click="EditButton_Click"/>
+            <Button x:Name="RemoveButton"   Content="_Remove"    Margin="0,0,0,6" Padding="8,3" Click="RemoveButton_Click"/>
+            <Separator Margin="0,6"/>
+            <Button x:Name="UpButton"       Content="Move _Up"   Margin="0,0,0,6" Padding="8,3" Click="UpButton_Click"/>
+            <Button x:Name="DownButton"     Content="Move _Down" Margin="0,0,0,6" Padding="8,3" Click="DownButton_Click"/>
+            <Separator Margin="0,6"/>
+            <Button x:Name="TestButton"     Content="_Test"      Margin="0,0,0,6" Padding="8,3" Click="TestButton_Click"/>
+            <Button x:Name="ClearKeyButton" Content="Clear _Key" Margin="0,0,0,6" Padding="8,3" Click="ClearKeyButton_Click"/>
+        </StackPanel>
+
+        <TextBlock x:Name="StatusLine" Grid.Row="2" Grid.ColumnSpan="2"
+                   Margin="0,8,0,0" TextWrapping="Wrap" Foreground="Gray"/>
+
+        <!-- Dialog buttons -->
+        <StackPanel Grid.Row="3" Grid.ColumnSpan="2" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="Reset to Defaults" Width="130" Margin="0,0,8,0"
+                    Padding="8,3" Click="ResetButton_Click"/>
+            <Button Content="Close" Width="90" Padding="8,3"
+                    IsDefault="True" IsCancel="True" Click="CloseButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>
