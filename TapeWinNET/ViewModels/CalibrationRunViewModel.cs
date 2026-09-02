@@ -202,7 +202,11 @@ public sealed class CalibrationRunViewModel : ViewModelBase
             new CalibrateRequest(
                 EjectWhenDone: EjectWhenDone,
                 Options: new TapeCalibrationOptions(),
-                Mode: SelectedMode)
+                Mode: SelectedMode,
+                // WPF presents the verdict/delta via CalibrationResultViewModel's banner and lets the
+                //  user trigger a follow-up full run themselves — don't have the service prompt/chain
+                //  into one inline (that's the CLI's interactive model).
+                ConfirmFullRecalibrationInline: false)
             {
                 Cancellation = _abortCts.Token,
                 OperationLabel = "Calibration",

@@ -11,12 +11,22 @@
              mc:Ignorable="d"
              d:DesignHeight="480" d:DesignWidth="560">
 
+    <!--
+      The whole surface is wrapped in a ScrollViewer so that once the host window shrinks below the
+       combined natural (minimum) height of the banner + its two or three GroupBoxes (Measured Result,
+       the optional Recalibration delta, and the curve), the content scrolls instead of the GroupBoxes
+       being squeezed and the curve graph ending up clipped. Star-sizing the curve row (as before) only
+       works while there is enough room to spare — inside a ScrollViewer, which offers effectively
+       unlimited height, a "*" row collapses to zero, so the last row is "Auto" here and the curve
+       GroupBox instead carries a MinHeight to give it a sensible floor size.
+    -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- Verdict banner (Recalibrate only) -->
@@ -122,7 +132,8 @@
             </Grid>
         </GroupBox>
 
-        <GroupBox Grid.Row="3" Header="Reported → Actual Remaining Curve"
+        <GroupBox Grid.Row="3" Header="Actual → Reported Remaining Curve"
+                  MinHeight="220"
                   help:HelpControlNameAttachedProperty.ControlName="Calibration curve">
             <Grid Margin="8">
                 <Grid.RowDefinitions>
@@ -142,4 +153,5 @@
             </Grid>
         </GroupBox>
     </Grid>
+    </ScrollViewer>
 </UserControl>

@@ -234,7 +234,8 @@ public partial class TapeServiceBase
             {
                 LogInfoSub($"EW landmark: reported {Helpers.BytesToStringLong(ew.ReportedRemaining)}, " +
                            $"actual remaining {Helpers.BytesToStringLong(ew.ActualRemaining)}");
-                LogInfoSub($"EW→EOM distance: {Helpers.BytesToStringLong(calibration.EwToEomDistance)}");
+                LogInfoSub($"EW→EOM distance: {Helpers.BytesToStringLong(calibration.EwToEomDistance)}" +
+                    (calibration.EomInferred ? " (EOM inferred)" : string.Empty));
             }
             else
             {
@@ -251,30 +252,40 @@ public partial class TapeServiceBase
 
                 if (verdict == RecalibrationVerdict.FullRecalibrationAdvised)
                 {
-                    // Ask the host to confirm a destructive full re-run. Non-interactive hosts return the
-                    //  default (false), so a quiet/CLI host never launches a multi-hour run unattended.
-                    bool runFull = _host.Confirm(
-                        "The drive's remaining-space behavior has shifted beyond tolerance since the last " +
-                        "calibration. Run a FULL recalibration now? This is destructive and may take a long time.",
-                        defaultAnswer: false);
-
-                    if (runFull)
+                    if (!request.ConfirmFullRecalibrationInline)
                     {
-                        LogWarn("Full recalibration confirmed — running a fresh calibration from BOM...");
-
-                        // Chain into the New path (fresh progress handler, timer, logging) with zero
-                        //  duplication, then re-tag the result as a recalibration outcome so the caller
-                        //  still sees the delta/verdict that triggered the re-run.
-                        CalibrateResult full = ExecuteCalibrateCore(request with { Mode = CalibrationMode.New });
-                        return full with
-                        {
-                            Mode                 = CalibrationMode.Recalibrate,
-                            RecalibrationDelta   = recalDelta,
-                            RecalibrationVerdict = verdict,
-                        };
+                        // The host presents its own verdict/delta UI and lets the user trigger a follow-up
+                        //  run itself (e.g. TapeWinNET's CalibrationResultViewModel banner) — do not prompt
+                        //  or chain here, just surface the reassessed result and verdict below.
+                        LogWarn("Full recalibration advised — deferring the decision");
                     }
+                    else
+                    {
+                        // Ask the host to confirm a destructive full re-run. Non-interactive hosts return the
+                        //  default (false), so a quiet/CLI host never launches a multi-hour run unattended.
+                        bool runFull = _host.Confirm(
+                            "The drive's remaining-space behavior has shifted beyond tolerance since the last " +
+                            "calibration. Run a FULL recalibration now? This is destructive and may take a long time.",
+                            defaultAnswer: false);
 
-                    LogWarn("Full recalibration declined — keeping the reassessed calibration; treat with caution");
+                        if (runFull)
+                        {
+                            LogInfo("Full recalibration confirmed — running a fresh calibration from BOM...");
+
+                            // Chain into the New path (fresh progress handler, timer, logging) with zero
+                            //  duplication, then re-tag the result as a recalibration outcome so the caller
+                            //  still sees the delta/verdict that triggered the re-run.
+                            CalibrateResult full = ExecuteCalibrateCore(request with { Mode = CalibrationMode.New });
+                            return full with
+                            {
+                                Mode                 = CalibrationMode.Recalibrate,
+                                RecalibrationDelta   = recalDelta,
+                                RecalibrationVerdict = verdict,
+                            };
+                        }
+
+                        LogWarn("Full recalibration declined — keeping the reassessed calibration; treat with caution");
+                    }
                 }
 
                 LogOk("Recalibration completed");

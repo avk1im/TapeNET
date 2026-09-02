@@ -36,13 +36,6 @@ public sealed class CalibrationProfilesViewModel : CalibrationResultViewModelBas
         ExportDriveProfilesCommand = new RelayCommand(_ => ExportDriveProfiles(), _ => CanFilterByDrive);
         ExportAllProfilesCommand = new RelayCommand(_ => ExportAllProfiles());
 
-        ExportMenuItems =
-        [
-            new() { Header = "Current profile", Command = ExportCurrentCommand },
-            new() { Header = "All for this drive", Command = ExportDriveProfilesCommand },
-            new() { Header = "All on this system", Command = ExportAllProfilesCommand },
-        ];
-
         Reload();
     }
 
@@ -101,9 +94,6 @@ public sealed class CalibrationProfilesViewModel : CalibrationResultViewModelBas
     public ICommand ExportCurrentCommand { get; }
     public ICommand ExportDriveProfilesCommand { get; }
     public ICommand ExportAllProfilesCommand { get; }
-
-    /// <summary>Entries for the "Export…" split button's dropdown menu.</summary>
-    public ObservableCollection<SplitButtonMenuItem> ExportMenuItems { get; }
 
     private bool CanApply =>
         SelectedProfile is not null && !_isBusy()

@@ -291,13 +291,16 @@ public static class WindowPlacementApplicator
     {
         if (sender is not Window window) return;
 
-        var visibility = window.Visibility;
-        window.Visibility = Visibility.Hidden;
+        // No visibility toggle! Writing Visibility during the ShowDialog
+        //  show-pass re-enters WPF's show state machine and cancels the
+        //  owner-disable step, silently turning the dialog non-modal.
+        // var visibility = window.Visibility;  // do NOT do this
+        // window.Visibility = Visibility.Hidden;  // do NOT do this
 
         var manager = new WindowPlacementManager(App.Settings);
         manager.Restore(window);
 
-        window.Visibility = visibility;
+        // window.Visibility = visibility; // do NOT do this
     }
 
     private static void OnLoaded(object? sender, RoutedEventArgs e)

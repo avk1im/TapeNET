@@ -33,6 +33,33 @@ public sealed class CalibrationResultViewModel : CalibrationResultViewModelBase
             RunFullCalibrationCommand = new RelayCommand(_ => RequestFullCalibration());
     }
 
+    /// <summary>
+    /// Returns whether the result window may close without user confirmation.
+    /// <para>
+    /// A follow-up full calibration closes the window without prompting.
+    /// A generated recalibration verdict "holds" also allows closing without prompting.
+    /// Otherwise, an unsaved calibration requires explicit confirmation.
+    /// </para>
+    /// </summary>
+    public bool CanClose()
+    {
+        if (FullCalibrationRequested || IsSaved
+                || _result.RecalibrationVerdict is RecalibrationVerdict.Holds)
+            return true;
+
+        MessageBoxResult result = SimpleBox.Show(
+            "The new calibration profile has not been saved.\n\n" +
+            "Keep this window open so you can save it?\n\n" +
+            "Yes to keep the window open.\n" +
+            "No to close the window without saving.",
+            "Unsaved Calibration Profile",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.Yes);
+
+        return result == MessageBoxResult.No;
+    }
+
     /// <inheritdoc/>
     public override ITapeCalibration? Calibration => _result.Calibration;
 

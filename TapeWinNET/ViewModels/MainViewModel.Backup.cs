@@ -116,8 +116,8 @@ public partial class MainViewModel
     }
 
     /// <summary>
-    /// Opens the BackupWindow, optionally pre-populated with the given paths
-    ///  (e.g. from a drag-drop onto the MainWindow).
+    /// Creates <see cref="BackupViewModel"/>, opens the <see cref="BackupWindow"/>, optionally pre-populated
+    /// with the given paths (e.g. from a drag-drop onto the <see cref="MainWindow"/>).    
     /// </summary>
     internal void ShowBackupWindow(string[]? paths)
     {

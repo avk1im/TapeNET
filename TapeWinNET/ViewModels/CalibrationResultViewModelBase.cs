@@ -44,8 +44,8 @@ public abstract class CalibrationResultViewModelBase : ViewModelBase
             : "Not observed";
 
     public string EwToEomDistanceDisplay =>
-        Calibration is not null && Calibration.EwToEomDistance > 0
-            ? Helpers.BytesToStringLong(Calibration.EwToEomDistance)
+        Calibration is not null && Calibration.EwToEomDistance >= 0
+            ? Helpers.BytesToStringLong(Calibration.EwToEomDistance) + (Calibration.EomInferred ? " (EOM inferred)" : string.Empty)
             : "—";
 
     public string CurvePointCountDisplay =>

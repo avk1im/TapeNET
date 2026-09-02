@@ -270,7 +270,8 @@ public partial class TapeServiceBase
                             //  Keep the (empty) new set; trim trailing sets if mode 1.
                             if (appendAfterSetUsed)
                                 toc.RemoveSetsAfterCurrent();
-                            LogErr("No files backed up — previous set data may still be overwritten");
+                            LogWarn("No files backed up — empty backup set added to preserve media structure");
+                            LogWarnSub("The empty backup set may be removed (Backup | Delete Backup Sets)");
                         }
                     }
                     else

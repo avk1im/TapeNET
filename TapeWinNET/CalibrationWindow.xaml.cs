@@ -1,4 +1,7 @@
+using Microsoft.Extensions.AI;
+using System.ComponentModel;
 using System.Windows;
+using System.Windows.Input;
 
 using TapeWinNET.Help;
 using TapeWinNET.ViewModels;
@@ -42,6 +45,24 @@ public partial class CalibrationWindow : Window, IHelpPaneHost
 
     private void Window_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
         => _help.HandleF1(e);
+
+    private void Window_Closing(object? sender, CancelEventArgs e)
+    {
+        if (DataContext is not CalibrationResultViewModel viewModel)
+            return;
+
+        if (viewModel.CanClose())
+            return;
+
+        e.Cancel = true;
+
+        Dispatcher.BeginInvoke(() =>
+        {
+            SaveProfileButton.BringIntoView();
+            SaveProfileButton.Focus();
+            Keyboard.Focus(SaveProfileButton);
+        });
+    }
 
     #region IHelpPaneHost
 

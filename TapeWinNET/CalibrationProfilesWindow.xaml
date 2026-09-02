@@ -101,20 +101,28 @@
                     <Button x:Name="HelpButton" Content="_Help ▶" Click="HelpButton_Click"
                             MinWidth="60" Padding="10,1"
                             ToolTip="Open help for this dialog (F1)"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <Button Content="Import…" Command="{Binding ImportCommand}"
-                            Width="90" Margin="12,0,0,0"
+                            Width="80" Margin="0,0,8,0"
                             ToolTip="Import a shared calibration profile or bundle file"/>
                     <controls:SplitButton ButtonContent="Export…"
                                           ButtonToolTip="Export the selected profile to a file"
+                                          DropDownToolTip="Select export scope"
                                           Command="{Binding ExportCurrentCommand}"
-                                          MenuItems="{Binding ExportMenuItems}"
-                                          Width="110" Margin="8,0,0,0"/>
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                          Width="90" Margin="0,0,12,0">
+                        <MenuItem Header="Current profile…"
+                                  Command="{Binding ExportCurrentCommand}"/>
+                        <MenuItem Header="All for this drive…"
+                                  Command="{Binding ExportDriveProfilesCommand}"/>
+                        <MenuItem Header="All on this system…"
+                                  Command="{Binding ExportAllProfilesCommand}"/>
+                    </controls:SplitButton>
                     <Button Content="Apply" Command="{Binding ApplyCommand}"
-                            Width="100" Margin="0,0,8,0"/>
+                            Width="80" Margin="0,0,8,0"/>
                     <Button Content="Remove" Command="{Binding RemoveCommand}"
-                            Width="100" Margin="0,0,8,0"/>
+                            Foreground="{DynamicResource WarningFg.Error}"
+                            Width="80" Margin="0,0,12,0"/>
                     <Button Content="Close" Width="80" IsCancel="True"/>
                 </StackPanel>
             </Grid>

@@ -643,7 +643,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
 
         TapeCalibration calibration = TapeCalibration.FromMeasurements(
             Drive.DriveProfileKey, capacityReportedAtBom, capacityActual, state.Samples, state.EwPoint,
-            state.LtoSamples.Count > 0 ? state.LtoSamples : null);
+            state.LtoSamples.Count > 0 ? state.LtoSamples : null, eomInferred: eomInferred);
 
         m_logger.LogInformation(
             "{Prefix}: Calibration done{How} — actualCapacity {Act} ({Pct:F1}% of reported at BOM), " +

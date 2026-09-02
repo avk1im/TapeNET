@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+
 
 namespace TapeLibNET;
 
@@ -100,6 +102,14 @@ public interface ITapeCalibration
 
     /// <summary>Optional free-text provenance, e.g. "author's reference — HP Ultrium 6".</summary>
     string? Comment { get; }
+
+    /// <summary>
+    /// True when hard EOM was NOT observed as a clean overflow but INFERRED from a transport fault past EW —
+    /// helical-scan drives (AIT-3Ex) that stall at physical end instead of raising VOLUME OVERFLOW. The
+    /// capacity then reflects the last good write position (within one tail chunk of true PEOM), not a
+    /// drive-confirmed EOM. Absent/<see langword="false"/> ⇒ a genuine measured EOM. Serialized only when true.
+    /// </summary>
+    bool EomInferred { get; }
 }
 
 /// <summary>
@@ -141,6 +151,8 @@ public sealed class TapeCalibration : ITapeCalibration
 
     public string? Comment { get; }
 
+    public bool EomInferred { get; }
+
     #endregion
 
     #region *** Construction ***
@@ -149,7 +161,7 @@ public sealed class TapeCalibration : ITapeCalibration
         string formatId, string profileKey, long reportedCapacityAtBom, long phantomFreeAtEom,
         long capacityActual, IReadOnlyList<CalibrationPoint> curve, CalibrationPoint? earlyWarning,
         IReadOnlyList<CalibrationPoint>? ltoRemainingCurve = null,
-        DateTime? measuredUtc = null, string? comment = null)
+        DateTime? measuredUtc = null, string? comment = null, bool eomInferred = false)
     {
         FormatId = formatId;
         ProfileKey = profileKey;
@@ -160,6 +172,7 @@ public sealed class TapeCalibration : ITapeCalibration
         CapacityActual = capacityActual;
         Curve = curve;
         EarlyWarning = earlyWarning;
+        EomInferred = eomInferred;
         LtoRemainingCurve = ltoRemainingCurve;
     }
 
@@ -202,7 +215,7 @@ public sealed class TapeCalibration : ITapeCalibration
         IEnumerable<(long ActualWritten, long ReportedRemaining)> rawSamples,
         (long ActualWritten, long ReportedRemaining)? earlyWarning,
         IEnumerable<(long ActualWritten, long LtoRemaining)>? ltoSamples = null,
-        DateTime? measuredUtc = null, string? comment = null)
+        DateTime? measuredUtc = null, string? comment = null, bool eomInferred = false)
     {
         var pts = new List<CalibrationPoint>();
 
@@ -266,7 +279,7 @@ public sealed class TapeCalibration : ITapeCalibration
 
         return new TapeCalibration(CurrentFormatId, profileKey, Math.Max(0L, reportedCapacityAtBom),
             phantomFreeAtEom, capacityActual, curve, ewPoint, ltoCurve,
-            measuredUtc ?? DateTime.UtcNow, comment);
+            measuredUtc ?? DateTime.UtcNow, comment, eomInferred);
     }
 
     /// <summary>
@@ -521,9 +534,11 @@ public sealed class TapeCalibration : ITapeCalibration
         long CapacityActual,
         List<CalibrationPoint> Curve,
         CalibrationPoint? EarlyWarning,
-        List<CalibrationPoint>? LtoRemainingCurve = null,  // appended → older blobs read back as null
-        DateTime? MeasuredUtc = null,                      // appended → older blobs read back as null (legacy)
-        string? Comment = null                             // appended → older blobs read back as null
+        List<CalibrationPoint>? LtoRemainingCurve = null,   // appended → older blobs read back as null
+        DateTime? MeasuredUtc = null,                       // appended → older blobs read back as null (legacy)
+        string? Comment = null,                             // appended → older blobs read back as null
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        bool? EomInferred = null                            // appended; absent/null ⇒ NOT inferred (legacy = genuine EOM)
     );
 
     private static readonly JsonSerializerOptions s_json = new()
@@ -536,7 +551,7 @@ public sealed class TapeCalibration : ITapeCalibration
         ArgumentNullException.ThrowIfNull(stream);
         var dto = new Dto(FormatId, ProfileKey, ReportedCapacityAtBom, PhantomFreeAtEom, CapacityActual,
             [.. Curve], EarlyWarning, LtoRemainingCurve is null ? null : [.. LtoRemainingCurve],
-            MeasuredUtc, Comment);
+            MeasuredUtc, Comment, EomInferred ? true : null);
         JsonSerializer.Serialize(stream, dto, s_json);
     }
 
@@ -561,7 +576,7 @@ public sealed class TapeCalibration : ITapeCalibration
             var curve = dto.Curve ?? [];
             return new TapeCalibration(dto.FormatId, dto.ProfileKey,
                 dto.ReportedCapacityAtBom, dto.PhantomFreeAtEom, dto.CapacityActual, curve, dto.EarlyWarning,
-                dto.LtoRemainingCurve, dto.MeasuredUtc, dto.Comment);
+                dto.LtoRemainingCurve, dto.MeasuredUtc, dto.Comment, dto.EomInferred ?? false);
         }
         catch (JsonException)
         {

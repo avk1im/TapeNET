@@ -13,7 +13,8 @@
         ResizeMode="CanResizeWithGrip"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
-        PreviewKeyDown="Window_PreviewKeyDown">
+        PreviewKeyDown="Window_PreviewKeyDown"
+        Closing="Window_Closing">
 
     <Grid>
         <Grid.ColumnDefinitions>
@@ -66,7 +67,8 @@
                             ToolTip="Open help for this dialog (F1)"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                    <Button Content="Save Profile" Command="{Binding SaveProfileCommand}"
+                    <Button x:Name="SaveProfileButton"
+                            Content="Save Profile" Command="{Binding SaveProfileCommand}"
                             Width="100" Margin="0,0,8,0"/>
                     <Button Content="Apply Profile" Command="{Binding ApplyProfileCommand}"
                             Width="100" Margin="0,0,8,0"/>

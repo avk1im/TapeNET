@@ -1,16 +1,20 @@
-using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Markup;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace TapeWinNET.Controls;
 
 /// <summary>
-/// A button with an attached dropdown menu of alternative actions — the primary (left) segment
-/// invokes <see cref="Command"/> directly, while the narrow (right) segment opens a popup listing
-/// <see cref="MenuItems"/> as secondary actions. Used e.g. for "Export…" with a "Current profile /
-/// All for this drive / All on this system" scope choice.
+/// A button with an attached dropdown menu of alternative actions.
+///
+/// The primary left segment invokes <see cref="Command"/> directly.
+/// The narrow right segment opens a context menu containing the secondary
+/// actions declared inside the control.
 /// </summary>
+[ContentProperty(nameof(MenuItems))]
 public partial class SplitButton : UserControl
 {
     public SplitButton()
@@ -18,8 +22,10 @@ public partial class SplitButton : UserControl
         InitializeComponent();
     }
 
-    /// <summary>Content of the primary (left) button, e.g. "Export…".</summary>
-    public object ButtonContent
+    /// <summary>
+    /// Content displayed by the primary left button, e.g. "Export...".
+    /// </summary>
+    public object? ButtonContent
     {
         get => GetValue(ButtonContentProperty);
         set => SetValue(ButtonContentProperty, value);
@@ -31,20 +37,40 @@ public partial class SplitButton : UserControl
             typeof(object),
             typeof(SplitButton));
 
-    /// <summary>Tooltip shown on the primary (left) button.</summary>
-    public string? ButtonToolTip
+    /// <summary>
+    /// Tooltip shown on the primary left button.
+    /// </summary>
+    public object? ButtonToolTip
     {
-        get => (string?)GetValue(ButtonToolTipProperty);
+        get => GetValue(ButtonToolTipProperty);
         set => SetValue(ButtonToolTipProperty, value);
     }
 
     public static readonly DependencyProperty ButtonToolTipProperty =
         DependencyProperty.Register(
             nameof(ButtonToolTip),
-            typeof(string),
+            typeof(object),
             typeof(SplitButton));
 
-    /// <summary>Command invoked by the primary (left) button — the default/most common action.</summary>
+    /// <summary>
+    /// Tooltip shown on the dropdown button.
+    /// </summary>
+    public object? DropDownToolTip
+    {
+        get => GetValue(DropDownToolTipProperty);
+        set => SetValue(DropDownToolTipProperty, value);
+    }
+
+    public static readonly DependencyProperty DropDownToolTipProperty =
+        DependencyProperty.Register(
+            nameof(DropDownToolTip),
+            typeof(object),
+            typeof(SplitButton),
+            new PropertyMetadata("More options"));
+
+    /// <summary>
+    /// Command invoked by the primary left button.
+    /// </summary>
     public ICommand? Command
     {
         get => (ICommand?)GetValue(CommandProperty);
@@ -57,7 +83,9 @@ public partial class SplitButton : UserControl
             typeof(ICommand),
             typeof(SplitButton));
 
-    /// <summary>Parameter passed to <see cref="Command"/>.</summary>
+    /// <summary>
+    /// Parameter passed to <see cref="Command"/>.
+    /// </summary>
     public object? CommandParameter
     {
         get => GetValue(CommandParameterProperty);
@@ -70,35 +98,71 @@ public partial class SplitButton : UserControl
             typeof(object),
             typeof(SplitButton));
 
-    /// <summary>Secondary actions listed in the dropdown popup.</summary>
-    public ObservableCollection<SplitButtonMenuItem> MenuItems
-    {
-        get => (ObservableCollection<SplitButtonMenuItem>)GetValue(MenuItemsProperty);
-        set => SetValue(MenuItemsProperty, value);
-    }
-
-    public static readonly DependencyProperty MenuItemsProperty =
-        DependencyProperty.Register(
-            nameof(MenuItems),
-            typeof(ObservableCollection<SplitButtonMenuItem>),
-            typeof(SplitButton),
-            new PropertyMetadata(new ObservableCollection<SplitButtonMenuItem>()));
+    /// <summary>
+    /// Native WPF menu items displayed in the dropdown menu.
+    ///
+    /// The <see cref="ContentPropertyAttribute"/> allows callers to declare
+    /// MenuItem and Separator elements directly inside the SplitButton.
+    /// </summary>
+    public ItemCollection MenuItems => DropDownMenu.Items;
 
     private void DropDownButton_Click(object sender, RoutedEventArgs e)
     {
-        PopupMenu.IsOpen = true;
+        // Keep access to the owning SplitButton for default-command detection.
+        DropDownMenu.Tag = this;
+
+        // The custom placement callback positions the menu relative to the
+        // arrow button and lets WPF select the candidate that fits the screen...
+        DropDownMenu.PlacementTarget = DropDownButton;
+        DropDownMenu.IsOpen = true;
+        // ...which makes the fixed placement like below unnecessary
+        // DropDownMenu.HorizontalOffset = 120;
     }
 
-    private void MenuItemButton_Click(object sender, RoutedEventArgs e)
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "CodeQuality",
+        "IDE0051", // unused method
+        Justification = "Referenced from SplitButton.xaml via CustomPopupPlacementCallback.")]
+#pragma warning disable CA1822 // Mark members as static -- referenced from XAML as instance method
+    private CustomPopupPlacement[] DropDownMenu_CustomPopupPlacement(
+#pragma warning restore CA1822 // Mark members as static
+        Size popupSize,
+        Size targetSize,
+        Point offset)
     {
-        PopupMenu.IsOpen = false;
+        return
+        [
+            // Preferred: menu's upper-left corner directly below the arrow's
+            //  lower-left corner:
+            // +----------------+---+
+            // | Export...      | ▼ |
+            // +----------------+---+
+            //                  +----------------------+
+            //                  | Default menu item    |
+            //                  | Another menu item    |
+            //                  | And another one      |
+            //                  +----------------------+
+            new CustomPopupPlacement(
+                new Point(offset.X, targetSize.Height + offset.Y),
+                PopupPrimaryAxis.Horizontal),
+
+            // Horizontal fallback: align the menu's right edge with the
+            // arrow's right edge if the preferred placement crosses the
+            // right screen edge. This also gives WPF a viable candidate near
+            // either the left or right screen edge.
+            //       +----------------+---+
+            //       | Export...      | ▼ |
+            //       +----------------+---+
+            //     +----------------------+
+            //     | Default menu item    |
+            //     | Another menu item    |
+            //     | And another one      |
+            //     +----------------------+
+            new CustomPopupPlacement(
+                new Point(
+                    targetSize.Width - popupSize.Width + offset.X,
+                    targetSize.Height + offset.Y),
+                PopupPrimaryAxis.Horizontal)
+        ];
     }
-}
-
-/// <summary>A single entry in a <see cref="SplitButton"/>'s dropdown menu.</summary>
-public sealed class SplitButtonMenuItem
-{
-    public string Header { get; set; } = string.Empty;
-
-    public ICommand? Command { get; set; }
 }

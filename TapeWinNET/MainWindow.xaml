@@ -28,6 +28,7 @@
         <converters:BoolToOpacityConverter x:Key="BoolToOpacityIcon" DimmedOpacity="0.4"/>
         <converters:BoolToOpacityConverter x:Key="BoolToOpacityText" DimmedOpacity="0.6"/>
         <converters:RemoveUnderscoreConverter x:Key="RemoveUnderscoreConverter" />
+        <converters:EqualityConverter x:Key="EqualityConverter" />
         
         <!-- Context menu: Drive node (DataContext is TapeTreeItemViewModel, so bind to window) -->
         <ContextMenu x:Key="DriveContextMenu" x:Shared="False"
@@ -266,7 +267,7 @@
                             <Setter Property="IsCheckable" Value="True"/>
                             <Setter Property="IsChecked">
                                 <Setter.Value>
-                                    <MultiBinding Converter="{x:Static converters:EqualityConverter.Instance}" Mode="OneWay">
+                                    <MultiBinding Converter="{StaticResource EqualityConverter}" Mode="OneWay">
                                         <Binding/>
                                         <Binding Path="DataContext.SelectedIoSpeed" RelativeSource="{RelativeSource AncestorType=Window}"/>
                                     </MultiBinding>
