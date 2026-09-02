@@ -330,7 +330,6 @@
                 <ColumnDefinition Width="Auto"/>  <!-- AI Generate -->
                 <ColumnDefinition Width="*"/>     <!-- spacer -->
                 <ColumnDefinition Width="Auto"/>  <!-- Clear Filter -->
-                <ColumnDefinition Width="Auto"/>  <!-- all sets checkbox -->
                 <ColumnDefinition Width="Auto"/>  <!-- Cancel -->
                 <ColumnDefinition Width="Auto"/>  <!-- Apply -->
             </Grid.ColumnDefinitions>
@@ -358,34 +357,37 @@
             </Button>
 
             <!-- Right-aligned action buttons -->
-            <Button Grid.Column="4"
-                    Content="Clear Filter"
-                    Command="{Binding ClearFilterCommand}"
-                    Width="76" Margin="0,0,6,0"
-                    ToolTip="Remove the filter definition entirely"/>
+            <controls:SplitButton Grid.Column="4"
+                                  ButtonContent="Clear Filter"
+                                  ButtonToolTip="Remove the filter definition entirely"
+                                  DropDownToolTip="Select clear scope"
+                                  Command="{Binding ClearFilterCommand}"
+                                  Width="100" Margin="0,0,6,0">
+                <MenuItem Header="for this set"
+                          Command="{Binding ClearFilterCommand}"/>
+                <MenuItem Header="for all sets"
+                          Command="{Binding ClearFilterAllSetsCommand}"
+                          Visibility="{Binding HasMultipleSets, Converter={StaticResource BoolToVis}}"/>
+            </controls:SplitButton>
 
-            <!-- "All sets" checkbox — visible only when multiple sets exist -->
-            <CheckBox Grid.Column="5"
-                      Content="all sets"
-                      IsChecked="{Binding ApplyToAll}"
-                      VerticalAlignment="Center"
-                      Margin="0,0,6,0"
-                      ToolTip="Apply or disable the filter for all backup sets on this tape"
-                      Visibility="{Binding HasMultipleSets,
-                                   Converter={StaticResource BoolToVis}}"/>
-
-            <Button Grid.Column="6"
+            <Button Grid.Column="5"
                     Content="Cancel"
                     Command="{Binding CancelCommand}"
                     IsCancel="True"
                     Width="76" Margin="0,0,6,0"/>
 
-            <Button Grid.Column="7"
-                    Content="Apply"
-                    Command="{Binding ApplyFilterCommand}"
-                    IsDefault="True"
-                    Width="76"
-                    help:HelpControlNameAttachedProperty.ControlName="Apply button"/>
+            <controls:SplitButton Grid.Column="6"
+                                  ButtonContent="Apply"
+                                  DropDownToolTip="Select apply scope"
+                                  Command="{Binding ApplyFilterCommand}"
+                                  Width="90"
+                                  help:HelpControlNameAttachedProperty.ControlName="Apply button">
+                <MenuItem Header="for this set"
+                          Command="{Binding ApplyFilterCommand}"/>
+                <MenuItem Header="for all sets"
+                          Command="{Binding ApplyFilterAllSetsCommand}"
+                          Visibility="{Binding HasMultipleSets, Converter={StaticResource BoolToVis}}"/>
+            </controls:SplitButton>
         </Grid>
             </Grid><!-- end dialog content Grid (column 0) -->
 

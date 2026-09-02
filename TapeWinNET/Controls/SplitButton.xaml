@@ -33,6 +33,13 @@
                 Click="DropDownButton_Click"
                 ToolTip="{Binding DropDownToolTip, ElementName=Root}">
 			<Button.ContextMenu>
+				<!--
+					ContextMenu runs in a detached popup tree and cannot resolve ElementName
+					or ancestor bindings from the caller's visual tree. Forward the arrow
+					button's DataContext so menu items share the SplitButton's binding source.
+					If commands live on a containing UserControl, set the SplitButton itself:
+						DataContext="{Binding ElementName=Root}"
+				-->
 				<ContextMenu x:Name="DropDownMenu"
                              Placement="Custom"
                              CustomPopupPlacementCallback="DropDownMenu_CustomPopupPlacement"

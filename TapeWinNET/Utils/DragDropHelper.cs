@@ -130,7 +130,7 @@ internal static class DragDropHelper
         window.Closed += (_, _) => _dropEnabledWindows.Remove(hwnd);
 
         // Toggle DragAcceptFiles when command availability changes
-        EventHandler reqHandler = (_, _) =>
+        void reqHandler(object? _1, EventArgs _2)
         {
             bool enabled = canDrop();
             if (enabled != lastEnabled)
@@ -140,7 +140,7 @@ internal static class DragDropHelper
                 if (enabled) _dropEnabledWindows.Add(hwnd);
                 else _dropEnabledWindows.Remove(hwnd);
             }
-        };
+        }
         CommandManager.RequerySuggested += reqHandler;
 
         // Root the handler reference and unsubscribe on window close

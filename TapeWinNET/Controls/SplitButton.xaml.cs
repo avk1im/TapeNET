@@ -13,6 +13,22 @@ namespace TapeWinNET.Controls;
 /// The primary left segment invokes <see cref="Command"/> directly.
 /// The narrow right segment opens a context menu containing the secondary
 /// actions declared inside the control.
+/// <remarks>
+/// <para>
+/// Menu items bind against the <see cref="FrameworkElement.DataContext"/>
+/// inherited by this SplitButton. The dropdown uses a ContextMenu hosted in
+/// a separate popup tree and explicitly forwards the placement target's
+/// DataContext to that menu.
+/// When commands live on a containing UserControl rather than its view model,
+/// assign that control as the SplitButton's DataContext:
+///
+/// <c>DataContext="{Binding ElementName=Root}"</c>
+///
+/// MenuItem bindings can then use normal paths such as:
+///
+/// <c>Command="{Binding ApplyFilterCommand}"</c>
+/// </para>
+/// </remarks>
 /// </summary>
 [ContentProperty(nameof(MenuItems))]
 public partial class SplitButton : UserControl

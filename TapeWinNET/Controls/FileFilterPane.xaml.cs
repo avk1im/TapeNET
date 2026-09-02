@@ -90,8 +90,9 @@ public partial class FileFilterPane : UserControl
 
     /// <summary>
     /// Optional callback invoked (in addition to the single-set path) when
-    ///  <see cref="ApplyToAll"/> is checked. The host applies the evaluator to
-    ///  every backup set and updates <see cref="Models.TOCView.PendingGlobalFilter"/>.
+    ///  the "for all sets" scope is selected via the toggle SplitButton's
+    ///  dropdown menu. The host applies the evaluator to every backup set
+    ///  and updates <see cref="Models.TOCView.PendingGlobalFilter"/>.
     /// <list type="bullet">
     ///   <item><c>evaluator</c> — ready-to-use FCL evaluator, or null to disable for all.</item>
     ///   <item><c>restoreAction</c> — opaque delegate for the current set's pane state.</item>
@@ -102,10 +103,13 @@ public partial class FileFilterPane : UserControl
     public FileFilterPane()
     {
         ToggleFilterCommand = new RelayCommand(
-            async _ => await ToggleFilterAsync(),
+            async _ => await ToggleFilterAsync(applyToAll: false),
+            _ => !IsBusy && (IsFilterActive || CanApplyFilter));
+        ToggleFilterAllSetsCommand = new RelayCommand(
+            async _ => await ToggleFilterAsync(applyToAll: true),
             _ => !IsBusy && (IsFilterActive || CanApplyFilter));
         ApplyFilterCommand = new RelayCommand(
-            async _ => await ApplyFilterAsync(),
+            async _ => await ApplyFilterAsync(applyToAll: false),
             _ => !IsBusy && CanApplyFilter);
         AdvancedFilterCommand = new RelayCommand(
             _ => OpenAdvancedFilter(),
@@ -150,10 +154,6 @@ public partial class FileFilterPane : UserControl
 
     public static readonly DependencyProperty HasMultipleSetsProperty =
         DependencyProperty.Register(nameof(HasMultipleSets), typeof(bool), typeof(FileFilterPane),
-            new PropertyMetadata(false));
-
-    public static readonly DependencyProperty ApplyToAllProperty =
-        DependencyProperty.Register(nameof(ApplyToAll), typeof(bool), typeof(FileFilterPane),
             new PropertyMetadata(false));
 
     public string FilterText
@@ -215,18 +215,6 @@ public partial class FileFilterPane : UserControl
     }
 
     /// <summary>
-    /// Whether the filter should be applied to / disabled for all sets.
-    /// Bound to the "all sets" checkbox. When true and
-    ///  <see cref="AllSetsFilterRequested"/> is wired, the apply/disable
-    ///  operations also fan out to every backup set.
-    /// </summary>
-    public bool ApplyToAll
-    {
-        get => (bool)GetValue(ApplyToAllProperty);
-        set => SetValue(ApplyToAllProperty, value);
-    }
-
-    /// <summary>
     /// Whether the control is busy performing a filter operation.
     /// While true, all commands are disabled.
     /// </summary>
@@ -246,6 +234,12 @@ public partial class FileFilterPane : UserControl
 
     public ICommand ToggleFilterCommand { get; }
     /// <summary>
+    /// Same toggle behavior as <see cref="ToggleFilterCommand"/> but fans the
+    ///  apply/disable operation out to every backup set. Bound to the "for
+    ///  all sets" menu item of the toggle SplitButton.
+    /// </summary>
+    public ICommand ToggleFilterAllSetsCommand { get; }
+    /// <summary>
     /// Always (re-)applies the current filter. Used by the text box Enter key
     ///  so that editing patterns and pressing Enter updates the active filter
     ///  instead of toggling it off.
@@ -264,7 +258,6 @@ public partial class FileFilterPane : UserControl
     public void Reset()
     {
         FilterText = string.Empty;
-        ApplyToAll = false;
         ClearAdvancedFilter();
     }
 
@@ -288,12 +281,16 @@ public partial class FileFilterPane : UserControl
     /// <summary>
     /// Toggles the filter: if active → disable; if inactive → apply.
     /// </summary>
-    private async Task ToggleFilterAsync()
+    /// <param name="applyToAll">
+    /// Whether the operation should also fan out to every other backup set
+    ///  (via <see cref="AllSetsFilterRequested"/>).
+    /// </param>
+    private async Task ToggleFilterAsync(bool applyToAll)
     {
         if (IsFilterActive)
-            await DisableFilterAsync();
+            await DisableFilterAsync(applyToAll);
         else
-            await ApplyFilterAsync();
+            await ApplyFilterAsync(applyToAll);
     }
 
     /// <summary>
@@ -301,7 +298,11 @@ public partial class FileFilterPane : UserControl
     /// Uses direct mode (<see cref="FilterTarget"/>) when available,
     ///  otherwise falls back to <see cref="FilterRequested"/> callback mode.
     /// </summary>
-    private async Task ApplyFilterAsync()
+    /// <param name="applyToAll">
+    /// Whether the filter should also fan out to every other backup set
+    ///  (via <see cref="AllSetsFilterRequested"/>).
+    /// </param>
+    private async Task ApplyFilterAsync(bool applyToAll)
     {
         bool directMode = FilterTarget is not null;
         if (!directMode && FilterRequested is null)
@@ -348,7 +349,7 @@ public partial class FileFilterPane : UserControl
             }
 
             // "Apply to all sets" fan-out — propagate filter to every other set
-            if (ApplyToAll && AllSetsFilterRequested is not null)
+            if (applyToAll && AllSetsFilterRequested is not null)
                 await AllSetsFilterRequested(evaluator, reapplyAction);
         }
         finally
@@ -362,7 +363,11 @@ public partial class FileFilterPane : UserControl
     /// The user can re-apply later without rebuilding the filter.
     /// The filter state is still saved so it survives backup-set navigation.
     /// </summary>
-    private async Task DisableFilterAsync()
+    /// <param name="applyToAll">
+    /// Whether the disable should also fan out to every other backup set
+    ///  (via <see cref="AllSetsFilterRequested"/>).
+    /// </param>
+    private async Task DisableFilterAsync(bool applyToAll)
     {
         bool directMode = FilterTarget is not null;
         if (!directMode && FilterRequested is null)
@@ -386,7 +391,7 @@ public partial class FileFilterPane : UserControl
             }
 
             // "Disable for all sets" fan-out
-            if (ApplyToAll && AllSetsFilterRequested is not null)
+            if (applyToAll && AllSetsFilterRequested is not null)
                 await AllSetsFilterRequested(null, restoreAction);
         }
         finally
@@ -419,7 +424,7 @@ public partial class FileFilterPane : UserControl
             FilterText = savedText ?? string.Empty;
             UpdateCanApply();
             UpdateAdvancedUI();
-            return reapply ? ApplyFilterAsync() : Task.CompletedTask;
+            return reapply ? ApplyFilterAsync(applyToAll: false) : Task.CompletedTask;
         };
     }
 
@@ -436,13 +441,15 @@ public partial class FileFilterPane : UserControl
     {
         FclExpression? dialogResult = null;
         bool wasCleared = false;
+        bool dialogApplyToAll = false;
 
         var vm = new FclFilterWindowVM(
-            expression =>
+            (expression, applyToAll) =>
             {
                 // Apply callback — expression is null when "Clear" is clicked
                 dialogResult = expression;
                 wasCleared = expression is null;
+                dialogApplyToAll = applyToAll;
                 Window.GetWindow(this)?.OwnedWindows
                     .OfType<FclFilterWindow>().FirstOrDefault()?.Close();
             },
@@ -462,7 +469,6 @@ public partial class FileFilterPane : UserControl
 
         // Pass "all sets" context to the dialog
         vm.HasMultipleSets = HasMultipleSets;
-        vm.ApplyToAll = ApplyToAll;
 
         // Restore saved user-edited FCL text (preserves comments, formatting)
         if (_windowState is { SavedFclText: { } savedText })
@@ -497,9 +503,6 @@ public partial class FileFilterPane : UserControl
             dialog.ProgramColumnWidth,
             vm.AppliedFclText);
 
-        // Sync the "apply to all sets" checkbox back from the dialog
-        ApplyToAll = vm.ApplyToAll;
-
         // Process result
         if (wasCleared)
         {
@@ -507,13 +510,13 @@ public partial class FileFilterPane : UserControl
             ClearAdvancedFilter();
             FilterText = string.Empty;
             if (IsFilterActive)
-                _ = DisableFilterAsync();
+                _ = DisableFilterAsync(dialogApplyToAll);
         }
         else if (dialogResult is not null)
         {
             // User applied a new advanced filter
             SetAdvancedFilter(dialogResult);
-            _ = ApplyFilterAsync();
+            _ = ApplyFilterAsync(dialogApplyToAll);
         }
         // else: cancelled — no changes
     }
