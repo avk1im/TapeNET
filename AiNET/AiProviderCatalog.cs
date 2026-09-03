@@ -48,7 +48,7 @@ public sealed class AiProviderCatalog : IAiProviderCatalog
         catalog.Register(new Providers.OpenAiCompatibleProvider());
         catalog.Register(new Providers.OpenAiProvider());
         catalog.Register(new Providers.AzureOpenAiProvider());
-        catalog.Register(new Providers.GitHubModelsProvider());
+        catalog.Register(new Providers.AnthropicProvider());
         return catalog;
     }
 }

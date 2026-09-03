@@ -606,16 +606,16 @@
                         ToolTip="Open help for this dialog (F1)"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Content="Load _Defaults"
-                        Command="{Binding LoadDefaultsCommand}"
-                        Padding="8,1"
-                        Margin="0,0,8,0"
-                        ToolTip="Reset backup options to their defaults"/>
-                <Button Content="Load from _Last"
-                        Command="{Binding LoadFromLastBackupCommand}"
-                        Padding="8,1"
-                        Margin="0,0,24,0"
-                        ToolTip="Copy backup options from the last backup set on this media"/>
+                <controls:SplitButton ButtonContent="Load _Defaults"
+                                      ButtonToolTip="Reset backup options to their defaults"
+                                      DropDownToolTip="Select load option"
+                                      Command="{Binding LoadDefaultsCommand}"
+                                      Width="120" Margin="0,0,24,0">
+                    <MenuItem Header="Load default settings"
+                              Command="{Binding LoadDefaultsCommand}"/>
+                    <MenuItem Header="Load settings from last backup set"
+                              Command="{Binding LoadFromLastBackupCommand}"/>
+                </controls:SplitButton>
                 <Button Content="Cancel"
                         Command="{Binding CancelCommand}"
                         IsCancel="True"

@@ -1,6 +1,10 @@
 using System.ClientModel;
 
+using AiNET.Internal;
+
 using Microsoft.Extensions.AI;
+
+using OpenAI;
 
 namespace AiNET.Providers;
 
@@ -9,10 +13,9 @@ namespace AiNET.Providers;
 /// (<c>https://api.openai.com</c>).
 /// </summary>
 /// <remarks>
-/// <b>Phase 1 status:</b> Stub — probe returns a static unhealthy result
-/// (environment-variable detection in <see cref="AiProviderDiscovery"/> is
-/// sufficient for auto-discovery). Client construction is implemented but
-/// not yet tested end-to-end.
+/// Probing performs a real authenticated <c>GET /v1/models</c> call, so an
+///  invalid key is rejected up front and the model picker is populated from
+///  the account's actual entitlements.
 /// </remarks>
 public sealed class OpenAiProvider : IAiProvider
 {
@@ -30,34 +33,23 @@ public sealed class OpenAiProvider : IAiProvider
     public AiProviderDescriptor Descriptor => _descriptor;
 
     /// <inheritdoc/>
-    /// <remarks>
-    /// Discovery for cloud providers is driven by environment variables;
-    /// network probing is not performed here. Returns unhealthy so that
-    /// <see cref="AiProviderDiscovery"/> skips the network probe for this
-    /// provider type.
-    /// </remarks>
     public Task<AiProviderProbeResult> ProbeAsync(
-        Uri endpoint, string? apiKey, CancellationToken ct)
-    {
-        // We don't do a live network call here — env-var detection is handled
-        // by AiProviderDiscovery. Return a synthetic "healthy" result when a
-        // key is present so the session can be built without an extra roundtrip.
-        bool healthy = !string.IsNullOrEmpty(apiKey);
-        return Task.FromResult(new AiProviderProbeResult(
-            _descriptor, endpoint, healthy,
-            healthy ? ["gpt-4o-mini", "gpt-4o"] : [],
-            healthy ? ["text-embedding-3-small"] : [],
-            TimeSpan.Zero,
-            healthy ? null : "No OPENAI_API_KEY found."));
-    }
+        Uri endpoint, string? apiKey, CancellationToken ct) =>
+        OpenAiModelProbe.ProbeAsync(
+            _descriptor,
+            endpoint,
+            new Uri(endpoint, "/v1/models"),
+            headers => headers.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey),
+            missingKeyMessage: "No OpenAI API key supplied.",
+            hasCredential: !string.IsNullOrEmpty(apiKey),
+            ct);
 
     /// <inheritdoc/>
     public IChatClient? CreateChatClient(AiProviderConfig config)
     {
         if (config.ChatModelId is null || config.ApiKey is null) return null;
-        var credential = new ApiKeyCredential(config.ApiKey);
-        return new OpenAI.Chat.ChatClient(config.ChatModelId, credential)
-            .AsIChatClient();
+        return CreateClient(config).GetChatClient(config.ChatModelId).AsIChatClient();
     }
 
     /// <inheritdoc/>
@@ -65,8 +57,19 @@ public sealed class OpenAiProvider : IAiProvider
         AiProviderConfig config)
     {
         if (config.EmbeddingModelId is null || config.ApiKey is null) return null;
-        var credential = new ApiKeyCredential(config.ApiKey);
-        return new OpenAI.Embeddings.EmbeddingClient(config.EmbeddingModelId, credential)
+        return CreateClient(config)
+            .GetEmbeddingClient(config.EmbeddingModelId)
             .AsIEmbeddingGenerator();
+    }
+
+    // Honours a non-default endpoint (proxy / gateway) while keeping the
+    //  official default when the user did not override it.
+    private static OpenAIClient CreateClient(AiProviderConfig config)
+    {
+        var credential = new ApiKeyCredential(config.ApiKey!);
+        if (config.Endpoint == DefaultEndpoint)
+            return new OpenAIClient(credential);
+
+        return new OpenAIClient(credential, new OpenAIClientOptions { Endpoint = config.Endpoint });
     }
 }

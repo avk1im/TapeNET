@@ -671,7 +671,7 @@ public partial class MainViewModel
             {
                 LogErr($"{modeName} failed");
                 SimpleBox.Show($"{modeName} failed. See log for details.", $"{modeName} Failed",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBoxButton.OK, SimpleBox.ImageFailed);
             }
             else if (operationResult is { WasAborted: true })
             {
@@ -691,7 +691,7 @@ public partial class MainViewModel
                 else
                 {
                     SimpleBox.Show($"{modeName} completed successfully!",
-                        $"{modeName} Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+                        $"{modeName} Complete", MessageBoxButton.OK, SimpleBox.ImageComplete);
                 }
             }
         }

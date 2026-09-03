@@ -318,3 +318,145 @@ public class ServiceRestoreProgressHandler(
         list.Add(fileInfo);
     }
 }
+
+// ── Calibrate ────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Progress adapter for destructive calibration runs. Mirrors the service-operation pattern used
+/// by backup and restore, but maps calibration chunks → pseudo-files so existing overlays can
+/// reuse their file-progress shape.
+/// </summary>
+public class ServiceCalibrateProgressHandler(
+    ITapeServiceHost host,
+    TapeCalibrator calibrator,
+    long capacityReported)
+    : IProgress<TapeCalibrationProgress>
+{
+    private readonly ITapeServiceHost _host = host;
+
+    /// <summary>The live calibrator driving the operation.</summary>
+    protected readonly TapeCalibrator Calibrator = calibrator;
+
+    private readonly int _estimatedChunkSize = calibrator.Options.ResolveFor(calibrator.Drive).ChunkSize;
+    private bool _abortLogged;
+    private bool _ewLogged;
+
+    /// <summary>Estimated number of chunks needed to traverse the medium.</summary>
+    public int FilesTotal =>
+        capacityReported > 0
+            ? (int)Math.Min(int.MaxValue, (capacityReported + _estimatedChunkSize - 1L) / _estimatedChunkSize)
+            : 0;
+
+    /// <summary>Estimated media capacity reported by the drive at BOT.</summary>
+    public long BytesTotal { get; private set; } = Math.Max(0L, capacityReported);
+
+    /// <summary>Chunks written so far (pseudo-file count).</summary>
+    public int FilesProcessed { get; private set; }
+
+    /// <summary>Chunks successfully written so far (pseudo-file count).</summary>
+    public int FilesSucceeded { get; private set; }
+
+    /// <summary>No per-chunk failures are surfaced separately for calibration.</summary>
+    public int FilesFailed { get; private set; }
+
+    /// <summary>No per-chunk skips are surfaced separately for calibration.</summary>
+    public int FilesSkipped { get; private set; }
+
+    /// <summary>Bytes written so far.</summary>
+    public long BytesProcessed { get; private set; }
+
+    /// <summary>Current calibration phase, humanised for UI display.</summary>
+    public string CurrentPhase { get; private set; } = "Preparing calibration";
+
+    /// <summary>Finalises any host-specific progress display. No-op in the base implementation.</summary>
+    public virtual void CompleteProgress() { }
+
+    /// <summary>Releases any host-specific progress resources. No-op in the base implementation.</summary>
+    public virtual void DisposeProgress() { }
+
+    /// <summary>Hook for app-specific progress UI updates.</summary>
+    protected virtual void ReportProgress(TapeCalibrationProgress progress) { }
+
+    /// <summary>
+    /// Throws <see cref="TapeAbortRequestedException"/> when the calibrator has been asked to abort,
+    /// logging that state transition exactly once.
+    /// </summary>
+    protected void ThrowIfAbortRequested()
+    {
+        if (!Calibrator.IsAbortRequested) return;
+        if (!_abortLogged)
+        {
+            _abortLogged = true;
+            _host.Report(ServiceReportLevel.Warning, "Calibration abort requested");
+        }
+        throw new TapeAbortRequestedException("User requested abort");
+    }
+
+    /// <inheritdoc/>
+    public void Report(TapeCalibrationProgress progress)
+    {
+        ThrowIfAbortRequested();
+
+        BytesProcessed = Math.Max(0L, progress.BytesWritten);
+        FilesProcessed = _estimatedChunkSize > 0
+            ? (int)Math.Min(int.MaxValue, (BytesProcessed + _estimatedChunkSize - 1L) / _estimatedChunkSize)
+            : 0;
+        FilesSucceeded = FilesProcessed;
+        CurrentPhase = FormatPhase(progress.Phase);
+
+        if (progress.EarlyWarning && !_ewLogged)
+        {
+            _ewLogged = true;
+            _host.Report(ServiceReportLevel.Info, "Calibration captured the physical early-warning landmark");
+        }
+
+        ReportProgress(progress);
+    }
+
+    /// <summary>
+    /// Builds a <see cref="CalibrateResult"/> from the accumulated progress state and an optional
+    /// completed calibration artifact.
+    /// </summary>
+    public CalibrateResult GenerateResult(
+        ITapeCalibration? calibration,
+        bool aborted = false,
+        bool failed = false,
+        TimeSpan duration = default,
+        string? message = null,
+        Exception? error = null) => new()
+    {
+        FilesTotal      = FilesTotal,
+        BytesTotal      = BytesTotal,
+        FilesProcessed  = FilesProcessed,
+        FilesSucceeded  = FilesSucceeded,
+        FilesFailed     = FilesFailed,
+        FilesSkipped    = FilesSkipped,
+        BytesProcessed  = calibration?.CapacityActual ?? BytesProcessed,
+        WasAborted      = aborted,
+        HasFailed       = failed,
+        Success         = !aborted && !failed && calibration is not null,
+        Outcome         = aborted ? ServiceReportLevel.Failed
+                        : failed  ? ServiceReportLevel.Error
+                        :           ServiceReportLevel.Completed,
+        Duration        = duration,
+        Message         = message,
+        Error           = error,
+        Calibration     = calibration,
+        ProfileKey      = calibration?.ProfileKey ?? string.Empty,
+        ReportedCapacityAtBom = calibration?.ReportedCapacityAtBom ?? BytesTotal,
+        PhantomFreeAtEom = calibration?.PhantomFreeAtEom ?? 0,
+        CapacityActual  = calibration?.CapacityActual ?? BytesProcessed,
+        EarlyWarning    = calibration?.EarlyWarning,
+        EwToEomDistance = calibration?.EwToEomDistance ?? 0L,
+    };
+
+    private static string FormatPhase(string phase) => phase switch
+    {
+        "sampling"      => "Writing to the main media section",
+        "sampling-tail" => "Writing to the final media section",
+        "early-warning" => "Capturing early-warning landmark",
+        "eom-inferred"  => "Inferred end-of-media; finalizing calibration",
+        "eom"           => "Finalizing calibration",
+        _               => string.IsNullOrWhiteSpace(phase) ? "Calibrating" : phase,
+    };
+}

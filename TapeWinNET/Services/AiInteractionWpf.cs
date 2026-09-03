@@ -22,9 +22,10 @@ public sealed class AiInteractionWpf : IAiInteraction
     private MainViewModel? _viewModel;
     private Dispatcher?    _dispatcher;
 
-    // Used to support "Add OpenAI-compatible provider…" re-discovery inside ChooseProviderAsync.
-    private IAiProviderCatalog? _catalog;
-    private LanHostsRegistry?   _lanRegistry;
+    // Used to support re-discovery inside ChooseProviderAsync.
+    private IAiProviderCatalog?  _catalog;
+    private LanHostsRegistry?    _lanRegistry;
+    private IAiProviderRegistry? _providerRegistry;
 
     /// <summary>
     /// Provides the dispatcher and ViewModel needed for log-pane feedback.
@@ -37,14 +38,18 @@ public sealed class AiInteractionWpf : IAiInteraction
     }
 
     /// <summary>
-    /// Provides the catalog and LAN registry needed to re-probe after the user
-    /// adds a new OpenAI-compatible LAN host inside <see cref="ChooseProviderAsync"/>.
+    /// Provides the catalog and registries needed to re-probe after the user
+    /// edits the provider list inside <see cref="ChooseProviderAsync"/>.
     /// Called once from <see cref="AppAiSessionHost"/> right after construction.
     /// </summary>
-    public void SetDiscoveryContext(IAiProviderCatalog catalog, LanHostsRegistry lanRegistry)
+    public void SetDiscoveryContext(
+        IAiProviderCatalog catalog,
+        LanHostsRegistry lanRegistry,
+        IAiProviderRegistry? providerRegistry = null)
     {
-        _catalog     = catalog;
-        _lanRegistry = lanRegistry;
+        _catalog          = catalog;
+        _lanRegistry      = lanRegistry;
+        _providerRegistry = providerRegistry;
     }
 
     // ── Logging helpers ───────────────────────────────────────────────────
@@ -87,18 +92,12 @@ public sealed class AiInteractionWpf : IAiInteraction
     public async Task<AiProviderConfig?> ChooseProviderAsync(
         IReadOnlyList<AiProviderProbeResult> probes, CancellationToken ct)
     {
-        // Sentinel item shown at the bottom of every provider list.
-        const string AddLanChoice = "➕  Add OpenAI-compatible provider…";
-        const string NoneChoice   = "✗  none — disable AI assistance";
+        // Sentinel items shown at the bottom of every provider list.
+        const string ManageChoice   = "⚙  Manage providers…";
+        const string AddCloudChoice = "☁  Add cloud provider (OpenAI, Azure, Anthropic)…";
+        const string NoneChoice     = "✗  none — disable AI assistance";
 
-        // Add-LAN prompt text with correct port examples.
-        const string AddLanPrompt =
-            "Specify the address and port of an OpenAI-compatible provider.\n\n" +
-            "Examples:\n" +
-            "  http://192.168.1.42:11434 — Ollama on a LAN machine\n" +
-            "  http://localhost:8000     — OpenVINO Model Server running locally";
-
-        // Keep re-showing the dialog after a successful LAN-host add + re-probe.
+        // Keep re-showing the dialog after the user edits the provider list.
         // allProbes includes both healthy and unreachable entries; the latter are
         //  shown with a ⚠ prefix so the user can still select them for a later start.
         var allProbes = probes.ToList();
@@ -111,25 +110,27 @@ public sealed class AiInteractionWpf : IAiInteraction
             // ── Show the provider SelectDialog on the UI thread ───────────────
             //  InvokeAsync returns an awaitable without blocking the caller.
             AiProviderConfig? result = null;
-            bool              addLan = false;
+            bool              manage = false;
+            bool              addCloud = false;
 
             if (_dispatcher is not null)
             {
                 await _dispatcher.InvokeAsync(() =>
                 {
                     // Build the choice list:
-                    //  None · healthy providers · ⚠ unreachable providers · Add LAN
+                    //  None · healthy providers · ⚠ unreachable providers · Manage · Add cloud
                     var allSelectable = healthy.Concat(unhealthy).ToList();
                     var providerChoices = allSelectable
                         .Select(p => p.IsHealthy
                             ? $"✓ {p.Descriptor.DisplayName}  ({p.Endpoint})"
                             : $"⚠  {p.Descriptor.DisplayName}  ({p.Endpoint})  — not responding")
                         .Prepend(NoneChoice)
-                        .Append(AddLanChoice)
+                        .Append(ManageChoice)
+                        .Append(AddCloudChoice)
                         .ToList();
 
                     string prompt = healthy.Count == 0 && unhealthy.Count == 0
-                        ? "No AI providers were found. Add an OpenAI-compatible LAN host, or select None:"
+                        ? "No AI providers were found. Manage the provider list, add a cloud provider, or select None:"
                         : "The following AI providers were discovered. Select one to use for Help:";
 
                 SELECT_PROVIDER:
@@ -147,9 +148,16 @@ public sealed class AiInteractionWpf : IAiInteraction
 
                     var idx = providerDialog.SelectedIndex;
 
+                    // The two trailing entries are the "add" sentinels.
                     if (idx == providerChoices.Count - 1)
                     {
-                        addLan = true;
+                        addCloud = true;
+                        return;
+                    }
+
+                    if (idx == providerChoices.Count - 2)
+                    {
+                        manage = true;
                         return;
                     }
 
@@ -212,172 +220,213 @@ public sealed class AiInteractionWpf : IAiInteraction
             }
 
             // ── Handle "Add OpenAI-compatible provider…" ──────────────────────
-            if (addLan)
+            if (manage)
             {
-                var newUri = await PromptAndAddLanHostAsync(AddLanPrompt);
-                if (newUri is null)
+                if (_providerRegistry is null)
+                {
+                    LogWarn("Provider management is unavailable in this session.");
+                    continue;
+                }
+
+                await ManageProvidersAsync(_providerRegistry, ct);
+
+                // The user may have added, removed, enabled or reordered
+                //  entries, so the previous probe results are stale. Re-run a
+                //  full sweep. ConfigureAwait(false) keeps us off the
+                //  dispatcher, so no deadlock is possible.
+                LogInfo("Re-discovering AI providers…");
+                allProbes = [.. await RediscoverAsync(ct).ConfigureAwait(false)];
+                continue;
+            }
+
+            // ── Handle "Add cloud provider…" ──────────────────────────────────
+            if (addCloud)
+            {
+                var cloudConfig = await ConfigureCloudProviderAsync(ct).ConfigureAwait(false);
+                if (cloudConfig is null)
                     continue;   // user cancelled — re-show provider list
 
-                // Re-probe on a background thread (ConfigureAwait(false) ensures
-                //  we never resume on the dispatcher, so no deadlock is possible).
-                LogInfo($"Added LAN host {newUri}; re-probing…");
-                var freshProbes = await ReprobeWithNewLanHostAsync(newUri, ct).ConfigureAwait(false);
-
-                // Merge the fresh results with allProbes, replacing any existing entry
-                //  for a given endpoint. If the new host didn't respond, inject a
-                //  synthetic unhealthy entry so the user can still select it —
-                //  it is already persisted in LanHostsRegistry for future sessions.
-                allProbes = MergeProbes(allProbes, freshProbes, newUri);
-                continue;
+                return cloudConfig;
             }
 
             return result;
         }
     }
 
-    /// <summary>
-    /// Merges <paramref name="fresh"/> probe results into <paramref name="existing"/>,
-    /// replacing any entry whose endpoint matches. If <paramref name="newHost"/> is
-    /// not present in <paramref name="fresh"/> (probe timed out / refused), appends a
-    /// synthetic unhealthy entry so the user can still select it in the dialog.
-    /// </summary>
-    private static List<AiProviderProbeResult> MergeProbes(
-        List<AiProviderProbeResult> existing,
-        IReadOnlyList<AiProviderProbeResult> fresh,
-        Uri newHost)
-    {
-        // Build a lookup of fresh results by endpoint, keeping the healthy entry
-        //  when multiple providers respond on the same endpoint (e.g. OllamaProvider
-        //  and OpenAiCompatibleProvider both probe http://localhost:11434/).
-        var freshByEndpoint = new Dictionary<Uri, AiProviderProbeResult>();
-        foreach (var p in fresh)
-        {
-            if (!freshByEndpoint.TryGetValue(p.Endpoint, out var current) ||
-                (p.IsHealthy && !current.IsHealthy))
-            {
-                freshByEndpoint[p.Endpoint] = p;
-            }
-        }
-
-        // Replace any existing entry whose endpoint origin (scheme+host+port) appears
-        //  in the fresh set. A probe may return a versioned endpoint (e.g. /v3) while
-        //  the existing entry was stored with the bare host URI — match on origin only.
-        var freshByOrigin = freshByEndpoint.ToDictionary(
-            kvp => kvp.Key.GetLeftPart(UriPartial.Authority),
-            kvp => kvp.Value,
-            StringComparer.OrdinalIgnoreCase);
-
-        var merged = existing
-            .Select(p => freshByOrigin.TryGetValue(
-                p.Endpoint.GetLeftPart(UriPartial.Authority), out var updated) ? updated : p)
-            .ToList();
-
-        // Add genuinely new entries from the fresh set.
-        var existingOrigins = existing
-            .Select(p => p.Endpoint.GetLeftPart(UriPartial.Authority))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var p in fresh)
-            if (!existingOrigins.Contains(p.Endpoint.GetLeftPart(UriPartial.Authority)))
-                merged.Add(p);
-
-        // If newHost still has no entry (probe returned nothing), inject a synthetic
-        //  unhealthy result so the user can select the host for a deferred start.
-        // Note: a successful probe may return a versioned endpoint (e.g. /v3) while
-        //  newHost is the bare host URI, so we match on origin (scheme+host+port) only.
-        bool hasEntry = merged.Any(p =>
-            string.Equals(p.Endpoint.GetLeftPart(UriPartial.Authority),
-                          newHost.GetLeftPart(UriPartial.Authority),
-                          StringComparison.OrdinalIgnoreCase));
-        if (!hasEntry)
-        {
-            var descriptor = new AiProviderDescriptor(
-                Kind:            AiProviderKind.OpenAiCompatible,
-                Location:        AiProviderLocation.LocalNetwork,
-                DisplayName:     "OpenAI-compatible (LAN)",
-                DefaultEndpoint: null,
-                RequiresApiKey:  false,
-                Capabilities:    AiCapabilities.Chat | AiCapabilities.Embeddings);
-
-            merged.Add(new AiProviderProbeResult(
-                Descriptor:              descriptor,
-                Endpoint:                newHost,
-                IsHealthy:               false,
-                DiscoveredChatModels:    [],
-                DiscoveredEmbeddingModels: [],
-                Latency:                 TimeSpan.Zero,
-                ErrorMessage:            "Host did not respond"));
-        }
-
-        return merged;
-    }
-
-    // ── LAN-host helpers ──────────────────────────────────────────────────────
+    // ── Cloud-provider helpers ───────────────────────────────────────────────
 
     /// <summary>
-    /// Shows the "Add LAN host" <see cref="AskDialog"/> on the UI thread,
-    /// validates and normalises the URI, adds it to the registry, and returns
-    /// the parsed <see cref="Uri"/> (or <c>null</c> on cancel).
+    /// Walks the user through configuring a cloud provider: pick the service,
+    /// supply the endpoint (Azure only), enter the API key, then validate it
+    /// with a live probe and let the user pick a model.
     /// </summary>
-    private async Task<Uri?> PromptAndAddLanHostAsync(string prompt)
+    /// <returns>
+    /// A ready-to-use config, or <c>null</c> if the user cancelled at any point.
+    /// </returns>
+    private async Task<AiProviderConfig?> ConfigureCloudProviderAsync(CancellationToken ct)
     {
-        if (_dispatcher is null)
+        if (_dispatcher is null || _catalog is null)
             return null;
 
-        return await _dispatcher.InvokeAsync(() =>
+        // Offer every registered cloud provider, in catalog order.
+        var cloudProviders = _catalog.Providers
+            .Where(p => p.Descriptor.Location == AiProviderLocation.Cloud)
+            .ToList();
+
+        if (cloudProviders.Count == 0)
+            return null;
+
+        // ── 1. Choose which cloud service ────────────────────────────────────
+        var chosen = await _dispatcher.InvokeAsync(() =>
         {
-            while (true)
+            var choices = cloudProviders
+                .Select(p => p.Descriptor.Capabilities.HasFlag(AiCapabilities.Embeddings)
+                    ? p.Descriptor.DisplayName
+                    : $"{p.Descriptor.DisplayName}  — chat only, no embeddings")
+                .ToList();
+
+            var dlg = new SelectDialog(
+                "Add Cloud AI Provider",
+                "Select the cloud service to configure:",
+                choices,
+                defaultIndex: 0)
+            {
+                Owner = Application.Current.MainWindow
+            };
+
+            return dlg.ShowDialog() == true ? cloudProviders[dlg.SelectedIndex] : null;
+        });
+
+        if (chosen is null)
+            return null;
+
+        var descriptor = chosen.Descriptor;
+
+        // ── 2. Resolve the endpoint ──────────────────────────────────────────
+        //  Providers without a fixed endpoint (Azure OpenAI) must be told which
+        //  resource to talk to.
+        var endpoint = descriptor.DefaultEndpoint;
+        if (endpoint is null)
+        {
+            endpoint = await PromptEndpointAsync(descriptor, suggested: null, ct)
+                .ConfigureAwait(false);
+            if (endpoint is null)
+                return null;
+        }
+
+        // ── 3. Prompt for the API key ────────────────────────────────────────
+        var apiKey = await PromptApiKeyAsync(descriptor, ct).ConfigureAwait(false);
+        if (string.IsNullOrEmpty(apiKey))
+            return null;
+
+        // ── 4. Validate with a live probe (off the dispatcher) ───────────────
+        LogInfo($"Verifying {descriptor.DisplayName}…");
+        await Task.Yield();
+        var probe = await chosen.ProbeAsync(endpoint, apiKey, ct).ConfigureAwait(false);
+
+        if (!probe.IsHealthy)
+        {
+            var reason = probe.ErrorMessage ?? "connection failed";
+            LogWarn($"{descriptor.DisplayName}: {reason}");
+            await _dispatcher.InvokeAsync(() => SimpleBox.Show(
+                $"Could not connect to {descriptor.DisplayName}.\n\n{reason}",
+                "Cloud Provider Not Available",
+                MessageBoxButton.OK, MessageBoxImage.Warning));
+            return null;
+        }
+
+        LogOk($"{descriptor.DisplayName} verified.");
+
+        // ── 5. Choose the chat model / Azure deployment ──────────────────────
+        var chatModel = await ChooseCloudModelAsync(descriptor, probe).ConfigureAwait(false);
+        if (chatModel is null)
+            return null;
+
+        // Only pick an embedding model when the provider actually supports it.
+#pragma warning disable CA1826 // Do not use Enumerable methods on indexable collections — or default case!
+        var embeddingModel = descriptor.Capabilities.HasFlag(AiCapabilities.Embeddings)
+            ? probe.DiscoveredEmbeddingModels.FirstOrDefault()
+            : null;
+#pragma warning restore CA1826 // Do not use Enumerable methods on indexable collections
+
+        return new AiProviderConfig(
+            Descriptor:       descriptor,
+            Endpoint:         probe.Endpoint,
+            ApiKey:           apiKey,
+            ChatModelId:      chatModel,
+            EmbeddingModelId: embeddingModel);
+    }
+
+    /// <summary>
+    /// Lets the user pick a chat model from those the probe discovered. When
+    /// the account exposes none (some Azure resources hide the deployment
+    /// list), falls back to asking for the name directly.
+    /// </summary>
+    private async Task<string?> ChooseCloudModelAsync(
+        AiProviderDescriptor descriptor, AiProviderProbeResult probe)
+    {
+        // Azure names deployments, not models — reflect that in the wording.
+        bool isAzure = descriptor.Kind == AiProviderKind.AzureOpenAi;
+        string noun  = isAzure ? "deployment" : "model";
+
+        if (probe.DiscoveredChatModels.Count == 0)
+        {
+            // Nothing discovered — ask the user to type the name.
+            string? typed = null;
+            await _dispatcher!.InvokeAsync(() =>
             {
                 var dlg = new AskDialog(
-                    "Add OpenAI-compatible Provider",
-                    prompt,
-                    defaultValue: "http://")
+                    $"Choose {descriptor.DisplayName} {noun}",
+                    $"No {noun}s could be listed for this account.\n" +
+                    $"Enter the {noun} name to use:",
+                    defaultValue: null)
                 {
                     Owner = Application.Current.MainWindow
                 };
+                if (dlg.ShowDialog() == true && !string.IsNullOrWhiteSpace(dlg.Answer))
+                    typed = dlg.Answer.Trim();
+            });
+            return typed;
+        }
 
-                if (dlg.ShowDialog() != true)
-                    return (Uri?)null;   // cancelled
+        if (probe.DiscoveredChatModels.Count == 1)
+            return probe.DiscoveredChatModels[0];
 
-                var input = dlg.Answer.Trim();
+        return await _dispatcher!.InvokeAsync(() =>
+        {
+            var dlg = new SelectDialog(
+                $"Choose {descriptor.DisplayName} {noun}",
+                $"Select the {noun} to use:",
+                [.. probe.DiscoveredChatModels],
+                defaultIndex: 0)
+            {
+                Owner = Application.Current.MainWindow
+            };
 
-                // Normalise: prepend scheme if the user omitted it.
-                if (!input.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
-                    !input.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                {
-                    input = "http://" + input;
-                }
-
-                if (Uri.TryCreate(input, UriKind.Absolute, out var parsed))
-                {
-                    _lanRegistry?.Add(parsed);
-                    return parsed;
-                }
-
-                // Invalid — warn and loop back to the AskDialog.
-                SimpleBox.Show(
-                    $"'{dlg.Answer.Trim()}' is not a valid URL.\n" +
-                    "Please enter a full address, e.g. http://192.168.1.42:11434",
-                    "Invalid Address",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
+            return dlg.ShowDialog() == true
+                ? probe.DiscoveredChatModels[dlg.SelectedIndex]
+                : null;
         });
     }
 
+    // ── Discovery helpers ──────────────────────────────────────────────────────
+
     /// <summary>
-    /// Runs a fresh discovery pass on a background thread that includes all
-    /// hosts currently in the registry (which now includes the newly added host).
+    /// Runs a fresh discovery pass on a background thread, honouring the
+    /// current provider registry (enabled state, user entries, priority).
     /// </summary>
-    private async Task<IReadOnlyList<AiProviderProbeResult>> ReprobeWithNewLanHostAsync(
-        Uri newHost, CancellationToken ct)
+    private async Task<IReadOnlyList<AiProviderProbeResult>> RediscoverAsync(CancellationToken ct)
     {
         if (_catalog is null)
             return [];
 
-        var lanHosts = _lanRegistry?.GetAll() ?? (IReadOnlyList<Uri>)[newHost];
         var options = new AiProviderDiscoveryOptions(
             ProbeLocalhost:            true,
-            LanEndpoints:              lanHosts,
-            CheckEnvironmentVariables: true);
+            // Only fall back to the legacy flat host list when no registry is
+            //  available; otherwise the registry is authoritative.
+            LanEndpoints:              _providerRegistry is null ? _lanRegistry?.GetAll() : null,
+            CheckEnvironmentVariables: true,
+            Registry:                  _providerRegistry);
 
         var discovery = new AiProviderDiscovery(_catalog);
         try
@@ -391,6 +440,25 @@ public sealed class AiInteractionWpf : IAiInteraction
         {
             return [];
         }
+    }
+
+    /// <inheritdoc/>
+    public Task ManageProvidersAsync(IAiProviderRegistry registry, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        if (_dispatcher is null)
+            return Task.CompletedTask;
+
+        // ShowDialog blocks, so it must run on the dispatcher. The registry
+        //  persists each edit as it is made, so nothing needs returning here.
+        return _dispatcher.InvokeAsync(() =>
+        {
+            var window = new ProviderManagerWindow(registry)
+            {
+                Owner = Application.Current.MainWindow
+            };
+            window.ShowDialog();
+        }).Task;
     }
 
     /// <inheritdoc/>

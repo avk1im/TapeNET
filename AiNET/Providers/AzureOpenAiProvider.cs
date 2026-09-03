@@ -1,8 +1,10 @@
 using System.ClientModel;
 
-using Microsoft.Extensions.AI;
+using AiNET.Internal;
 
-using OpenAI;
+using Azure.AI.OpenAI;
+
+using Microsoft.Extensions.AI;
 
 namespace AiNET.Providers;
 
@@ -11,11 +13,30 @@ namespace AiNET.Providers;
 /// endpoint, e.g. <c>https://myresource.openai.azure.com/</c>).
 /// </summary>
 /// <remarks>
-/// <b>Phase 1 status:</b> Stub — probe returns a synthetic result when an
-/// API key is present. Full integration tests are deferred to a later phase.
+/// Azure differs from stock OpenAI in three ways that this adapter handles:
+/// <list type="bullet">
+///  <item>authentication uses the <c>api-key</c> header, not a Bearer token;</item>
+///  <item>every request carries an <c>api-version</c> query parameter;</item>
+///  <item>the "model id" is really a <i>deployment name</i> chosen by whoever
+///   provisioned the resource, so discovered names are deployment names.</item>
+/// </list>
+/// Probing lists the resource's deployments, which both validates the key and
+///  populates the picker with names that actually exist on the resource.
 /// </remarks>
 public sealed class AzureOpenAiProvider : IAiProvider
 {
+    /// <summary>
+    /// Data-plane API version used for the deployment-listing probe.
+    /// </summary>
+    private const string ProbeApiVersion = "2024-10-21";
+
+    /// <summary>
+    /// Key in <see cref="AiProviderConfig.Options"/> overriding the Azure
+    /// data-plane API version (value must name an
+    /// <see cref="AzureOpenAIClientOptions.ServiceVersion"/> member).
+    /// </summary>
+    public const string ApiVersionOption = "azure.apiVersion";
+
     private static readonly AiProviderDescriptor _descriptor = new(
         Kind:            AiProviderKind.AzureOpenAi,
         Location:        AiProviderLocation.Cloud,
@@ -29,26 +50,26 @@ public sealed class AzureOpenAiProvider : IAiProvider
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Returns a synthetic result; the actual endpoint is user-supplied and
-    /// may vary by deployment.
+    /// Lists deployments via <c>/openai/deployments?api-version=…</c>. A 401/403
+    ///  is reported as an auth failure so the caller can re-prompt for the key.
     /// </remarks>
     public Task<AiProviderProbeResult> ProbeAsync(
-        Uri endpoint, string? apiKey, CancellationToken ct)
-    {
-        bool healthy = !string.IsNullOrEmpty(apiKey);
-        return Task.FromResult(new AiProviderProbeResult(
-            _descriptor, endpoint, healthy, [], [], TimeSpan.Zero,
-            healthy ? null : "No AZURE_OPENAI_API_KEY found."));
-    }
+        Uri endpoint, string? apiKey, CancellationToken ct) =>
+        OpenAiModelProbe.ProbeAsync(
+            _descriptor,
+            endpoint,
+            new Uri(endpoint, $"/openai/deployments?api-version={ProbeApiVersion}"),
+            headers => headers.Add("api-key", apiKey),
+            missingKeyMessage: "No Azure OpenAI API key supplied.",
+            hasCredential: !string.IsNullOrEmpty(apiKey),
+            ct);
 
     /// <inheritdoc/>
     public IChatClient? CreateChatClient(AiProviderConfig config)
     {
         if (config.ChatModelId is null || config.ApiKey is null) return null;
-        var credential = new ApiKeyCredential(config.ApiKey);
-        var options    = new OpenAIClientOptions { Endpoint = config.Endpoint };
-        return new OpenAI.Chat.ChatClient(config.ChatModelId, credential, options)
-            .AsIChatClient();
+        // ChatModelId carries the Azure *deployment name*.
+        return CreateClient(config).GetChatClient(config.ChatModelId).AsIChatClient();
     }
 
     /// <inheritdoc/>
@@ -56,9 +77,35 @@ public sealed class AzureOpenAiProvider : IAiProvider
         AiProviderConfig config)
     {
         if (config.EmbeddingModelId is null || config.ApiKey is null) return null;
-        var credential = new ApiKeyCredential(config.ApiKey);
-        var options    = new OpenAIClientOptions { Endpoint = config.Endpoint };
-        return new OpenAI.Embeddings.EmbeddingClient(config.EmbeddingModelId, credential, options)
+        return CreateClient(config)
+            .GetEmbeddingClient(config.EmbeddingModelId)
             .AsIEmbeddingGenerator();
+    }
+
+    // Builds the Azure client, which applies the api-key header, the
+    //  api-version query parameter, and /openai/deployments/{name}/… routing.
+    private static AzureOpenAIClient CreateClient(AiProviderConfig config)
+    {
+        var options = new AzureOpenAIClientOptions(ResolveApiVersion(config));
+        return new AzureOpenAIClient(
+            config.Endpoint, new ApiKeyCredential(config.ApiKey!), options);
+    }
+
+    /// <summary>
+    /// Maps the configured API-version string onto the SDK's supported
+    /// service-version enum, falling back to a known-good default when the
+    /// value is absent or unrecognised.
+    /// </summary>
+    private static AzureOpenAIClientOptions.ServiceVersion ResolveApiVersion(
+        AiProviderConfig config)
+    {
+        if (config.Options is not null &&
+            config.Options.TryGetValue(ApiVersionOption, out var raw) &&
+            Enum.TryParse<AzureOpenAIClientOptions.ServiceVersion>(raw, out var parsed))
+        {
+            return parsed;
+        }
+
+        return AzureOpenAIClientOptions.ServiceVersion.V2024_10_21;
     }
 }

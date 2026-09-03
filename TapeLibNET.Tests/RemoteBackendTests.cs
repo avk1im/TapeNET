@@ -33,7 +33,6 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
 
     #region *** Test Data ***
 
-#pragma warning disable CA1825
     public static TheoryData<DriveProfile> AllProfiles =>
     [
         DriveProfile.Setmarks,
@@ -41,7 +40,6 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         DriveProfile.SeqFilemarks,
         DriveProfile.FilemarksOnly,
     ];
-#pragma warning restore CA1825
 
     #endregion
 
@@ -248,7 +246,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         Array.Fill(block1, (byte)0xAA);
         drive.WriteDirect(block1, 0, blockSize);
 
-        Assert.True(fixture.Backend.WriteFilemarks(1));
+        Assert.True(fixture.Backend.WriteFilemarks(1, out _));
 
         byte[] block2 = new byte[blockSize];
         Array.Fill(block2, (byte)0xBB);
@@ -280,7 +278,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         Array.Fill(block1, (byte)0x11);
         drive.WriteDirect(block1, 0, blockSize);
 
-        Assert.True(fixture.Backend.WriteSetmarks(1));
+        Assert.True(fixture.Backend.WriteSetmarks(1, out _));
 
         byte[] block2 = new byte[blockSize];
         Array.Fill(block2, (byte)0x22);

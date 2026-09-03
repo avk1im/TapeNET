@@ -1,0 +1,65 @@
+using System.Windows;
+
+using TapeWinNET.Help;
+using TapeWinNET.ViewModels;
+
+namespace TapeWinNET;
+
+public partial class CalibrateWindow : Window, IHelpPaneHost
+{
+    private readonly DialogHelpPaneController _help;
+    private readonly CalibrationRunViewModel _viewModel;
+
+    public CalibrateWindow(CalibrationRunViewModel viewModel)
+    {
+        InitializeComponent();
+        DataContext = viewModel;
+        _viewModel = viewModel;
+        _viewModel.PropertyChanged += ViewModel_PropertyChanged;
+
+        var icon = TapeIcons.GetTapeMediaIcon(large: true);
+        if (icon != null)
+        {
+            icon.Freeze();
+            Icon = icon;
+        }
+
+        _help = new DialogHelpPaneController(
+            this, this, HelpPaneColumn, HelpPaneSplitter, HelpPaneControl,
+            defaultTopicId: "dialog.calibrate-media", helpButton: HelpButton);
+    }
+
+    private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(CalibrationRunViewModel.HasInspectionResult) or
+                               nameof(CalibrationRunViewModel.InspectionSummary))
+        {
+            // Ensure the inspection result banner is visible even if the scroll region is scrolled elsewhere.
+            Dispatcher.BeginInvoke(() => InspectionResultBorder.BringIntoView());
+        }
+    }
+
+    private void HelpButton_Click(object sender, RoutedEventArgs e)
+        => _help.ToggleHelpPane();
+
+    private void Window_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        => _help.HandleF1(e);
+
+    #region IHelpPaneHost
+
+    public string HostName => nameof(CalibrateWindow);
+
+    public HelpPaneHostMode HostMode => HelpPaneHostMode.Adjacent;
+
+    public void OnPaneOpening(double desiredWidth) => _help.OnPaneOpening(desiredWidth);
+
+    public void OnPaneClosed() => _help.OnPaneClosed();
+
+    public FrameworkElement? ResolveControlByName(string name)
+        => FindName(name) as FrameworkElement;
+
+    public void OpenHelpPane(string? topicId = null) => _help.OpenHelpPane(topicId);
+    public string? GetDefaultTopicId() => _help.GetDefaultTopicId();
+
+    #endregion
+}

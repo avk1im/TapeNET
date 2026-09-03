@@ -159,14 +159,14 @@ public partial class MainViewModel
 
         var drive0Item = new DriveMenuItem("Drive _0", 0, OpenRemoteDriveCommand);
         RemoteDriveMenuItems.Add(drive0Item);
-        ToolbarRemoteDriveItems.Add(drive0Item); // mirrored to toolbar
+        ToolbarRemoteDriveItems.Add(drive0Item with { Icon = TapeIcons.GetNumberedRemoteTapeDriveIcon(0) }); // mirrored to toolbar
 
         RemoteDriveMenuItems.Add(new DriveMenuItem("Scanning drives…", RemoteScanningNumber, OpenRemoteDriveCommand));
-        RemoteDriveMenuItems.Add(new DriveMenuItem("_Specify...",       RemoteSpecifyDriveNumber, OpenRemoteDriveCommand));
+        RemoteDriveMenuItems.Add(new DriveMenuItem("_Specify...", RemoteSpecifyDriveNumber, OpenRemoteDriveCommand));
         RemoteDriveMenuItems.Add(new Separator());
         RemoteDriveMenuItems.Add(new DriveMenuItem("_Open Remote Virtual Drive...", 0, OpenRemoteVirtualDriveCommand));
         RemoteDriveMenuItems.Add(new Separator());
-        RemoteDriveMenuItems.Add(new DriveMenuItem("_Disconnect",                     0, DisconnectRemoteHostCommand));
+        RemoteDriveMenuItems.Add(new DriveMenuItem("_Disconnect", 0, DisconnectRemoteHostCommand));
     }
 
     /// <summary>
@@ -216,7 +216,7 @@ public partial class MainViewModel
             {
                 var driveItem = new DriveMenuItem($"Drive _{driveNum}", (int)driveNum, OpenRemoteDriveCommand);
                 RemoteDriveMenuItems.Insert(insertAt, driveItem);
-                ToolbarRemoteDriveItems.Add(driveItem); // mirror to toolbar
+                ToolbarRemoteDriveItems.Add(driveItem with { Icon = TapeIcons.GetNumberedRemoteTapeDriveIcon((int)driveNum) }); // mirror to toolbar
                 insertAt++;
             }
         }
@@ -263,7 +263,7 @@ public partial class MainViewModel
         {
             SimpleBox.Show(
                 $"Failed to open remote drive {driveNumber} on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
-                "Open Remote Drive", MessageBoxButton.OK, MessageBoxImage.Error);
+                "Open Remote Drive", MessageBoxButton.OK, SimpleBox.ImageFailed);
             UpdateTreeForRemoteDriveOnly(driveNumber, settings);
             return;
         }
@@ -341,7 +341,7 @@ public partial class MainViewModel
             {
                 SimpleBox.Show(
                     $"Failed to create remote virtual drive on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
-                    "Create Remote Virtual Drive", MessageBoxButton.OK, MessageBoxImage.Error);
+                    "Create Remote Virtual Drive", MessageBoxButton.OK, SimpleBox.ImageFailed);
                 UpdateTreeForRemoteDriveOnly(0, settings);
                 return;
             }
@@ -378,7 +378,7 @@ public partial class MainViewModel
             {
                 SimpleBox.Show(
                     $"Failed to open remote virtual volume on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
-                    "Open Remote Virtual Drive", MessageBoxButton.OK, MessageBoxImage.Error);
+                    "Open Remote Virtual Drive", MessageBoxButton.OK, SimpleBox.ImageFailed);
                 UpdateTreeForRemoteDriveOnly(0, settings);
                 return;
             }
@@ -436,7 +436,7 @@ public partial class MainViewModel
         {
             SimpleBox.Show(
                 $"Failed to recreate remote virtual drive on {settings.DisplayLabel}.\n\n{_tapeService.LastError}",
-                "Format Remote Drive", MessageBoxButton.OK, MessageBoxImage.Error);
+                "Format Remote Drive", MessageBoxButton.OK, SimpleBox.ImageFailed);
             UpdateTreeForRemoteDriveOnly(0, settings);
             return;
         }
@@ -465,7 +465,7 @@ public partial class MainViewModel
         SelectMostRecentSet();
 
         SimpleBox.Show("Remote virtual media formatted successfully!", "Format Complete",
-            MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBoxButton.OK, SimpleBox.ImageComplete);
     }
 
     // ── Remote tree helpers ───────────────────────────────────────────────────

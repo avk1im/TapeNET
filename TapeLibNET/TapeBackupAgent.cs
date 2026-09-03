@@ -77,14 +77,13 @@ namespace TapeLibNET
 
         private long ComputeRemainingCapacity()
         {
-            // Phase 3: the authoritative remaining-capacity figure is the drive's calibrated estimate
-            //  (Drive.Remaining), from which we reserve room for the TOC when it is co-located with
-            //  content (no Initiator partition). The old Navigator.AdjustRemainingContentCapacity
-            //  heuristic is retired here; early-warning enforcement (see BeginWriteContentForCurrentSet)
-            //  is the real stop signal, this value is only a backstop for the legacy capacity checks.
-            var remainingCapacity = Drive.Remaining
-                - (Drive.HasInitiatorPartition ? 0L : Navigator.TOCCapacity);
-            return Math.Max(remainingCapacity, 0L);
+            // The authoritative remaining-capacity figure is the drive's calibrated ESTIMATE
+            //  (quantity (6)). The TOC reserve is NOT subtracted here: it is armed once, at the drive,
+            //  via SetEarlyWarning() in BeginWriteContentForCurrentSet(). Subtracting it again would
+            //  reserve room for the TOC twice and prematurely cut the set short (see the multi-volume
+            //  regression). Early warning is the real stop signal; this value only feeds the coarse
+            //  pre-checks on the (obsolete) aligned write path.
+            return Math.Max(Drive.EstimatedContentRemaining, 0L);
         }
 
         private bool BeginWriteContentForCurrentSet(bool newSet)
@@ -129,6 +128,20 @@ namespace TapeLibNET
             //  With an Initiator partition the TOC lives elsewhere, so no reserve is needed.
             Drive.SetEarlyWarning(Drive.HasInitiatorPartition ? 0L : Navigator.TOCCapacity);
 
+            // Overwriting existing content (not appending at EOD) leaves the drive reporting capacity−EOD,
+            //  which would trip a premature early warning and clamp the set to zero bytes. Anchor the EW
+            //  logic at the approximate write position until the first write resets EOD. Mirrors the target
+            //  resolution above: newSet + already-have-sets-on-volume ⇒ append at EOD (no notification);
+            //  newSet as first-on-volume ⇒ from BOM (offset 0); !newSet ⇒ overwrite the current set.
+            //  Irrelevant with an Initiator partition (no TOC reserve), so skip it there.
+            if (!Drive.HasInitiatorPartition)
+            {
+                long approxWritten = newSet
+                    ? (TOC.CurrentSetIndexOnVolume > 0 ? -1L : 0L)
+                    : TOC.ComputeContentSizeOnTapeBeforeCurrentSet(Drive.BlockSize);
+                Drive.NotifyNextContentWritePosition(approxWritten);
+            }
+
             if (!Manager.BeginWriteContent(remainingCapacity))
             {
                 m_logger.LogWarning("Failed to transition to writing content in {Method}",
@@ -141,6 +154,7 @@ namespace TapeLibNET
         }
 
         // currently used only by the obsolete <cref="BackupFileAligned"/>
+        [Obsolete("Use the non-Aligned (Packed) version")]
         private TapeWriteStream? OpenWriteContentStream(long length)
         {
             // Estimate actual tape footprint via the shared block-alignment formula.

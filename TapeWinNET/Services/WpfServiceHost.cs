@@ -90,6 +90,22 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
             filesSuffix: " files");
 
     /// <summary>
+    /// Updates the calibration progress indicators on the bound <see cref="MainViewModel"/>.
+    /// Safe to call from any thread — marshals to the UI dispatcher internally.
+    /// </summary>
+    public void UpdateCalibrateProgress(int processed, int total, long bytesWritten, long estimatedCapacity, string phase)
+    {
+        _dispatcher.Invoke(() =>
+        {
+            _viewModel.CurrentCalibrationPhase = phase;
+            double progress = UpdateIOProgress(processed, total, bytesWritten, estimatedCapacity);
+            _viewModel.CalibrationProgressPercent = Math.Clamp(progress * 100.0, 0.0, 100.0);
+            _viewModel.CalibrationProgressText =
+                $"{Helpers.BytesToStringLong(bytesWritten)} of ~{Helpers.BytesToStringLong(estimatedCapacity)} written";
+        });
+    }
+
+    /// <summary>
     /// Shared implementation for <see cref="UpdateBackupProgress"/> and
     ///  <see cref="UpdateRestoreProgress"/> — both operations report the same shape
     ///  of progress data, differing only in which view-model properties they update.
@@ -130,6 +146,13 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
     private double _lastReportedProgress = 0.0;
     private double? _initialSec = null; // time elapsed before the first progress tick (used to avoid skewing ETA & IO rate)
 
+    // Baseline for the "bytes" value reported on the very first progress tick. For a fresh (New) run
+    //  this is always 0, but Resume/Recalibrate report the ABSOLUTE tape position — which can already
+    //  sit at e.g. 80% of capacity when the run resumes near the end of the medium. Without this
+    //  baseline, the IO-rate calculation below would treat that entire pre-existing offset as data
+    //  moved in the first tick, producing a momentary (and then permanently skewed) bandwidth spike.
+    private long? _initialBytes = null;
+
     private void ResetIOProgressTracking()
     {
         _lastBytesProcessed = 0;
@@ -137,6 +160,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
         _smoothedAvgFileSize = 0.0;
         _lastReportedProgress = 0.0;
         _initialSec = null;
+        _initialBytes = null;
     }
 
     private static double CalculateDynamicByteWeight(double avgFileBytes, long totalBytes)
@@ -189,8 +213,15 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
             elapsed = Math.Max(elapsed - _initialSec.Value, 0.0); // avoid negative elapsed time
         }
 
-        // Compute overall throughput rate
-        double rate = elapsed > 0.1 ? bytes / elapsed : 0.0;
+        // First tick: record the starting tape position too. For Resume/Recalibrate this is
+        //  wherever the run resumed from (not 0), so the IO rate below reflects only what THIS
+        //  run has actually moved, not the pre-existing calibrated/filled portion of the medium.
+        _initialBytes ??= bytes;
+
+        // Compute overall throughput rate from bytes moved since this run started, not the raw
+        //  (possibly already-large) absolute tape position reported by Resume/Recalibrate.
+        long bytesSinceStart = Math.Max(0L, bytes - _initialBytes.Value);
+        double rate = elapsed > 0.1 ? bytesSinceStart / elapsed : 0.0;
         _viewModel.IOProgressRate = rate;
 
         // 1. Compute rolling average file size for the latest batch tick

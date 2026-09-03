@@ -1,0 +1,75 @@
+<UserControl x:Class="TapeWinNET.Controls.CalibrationCurveControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             d:DesignHeight="160"
+             d:DesignWidth="420"
+             ClipToBounds="True">
+    <Grid ClipToBounds="True">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <!-- Vertical (Y) axis = ReportedRemaining: full at the top, 0 at the bottom. These labels annotate
+             the MAIN (left-of-split) scale only; the magnified right scale is labelled on the split line. -->
+        <Grid Grid.Row="0"
+              Grid.Column="0"
+              Margin="0,4,8,4"
+              IsHitTestVisible="False">
+            <TextBlock x:Name="ReportedTopLabel"
+                       HorizontalAlignment="Left"
+                       VerticalAlignment="Top"
+                       Foreground="Gray"
+                       FontSize="11"/>
+            <TextBlock x:Name="ReportedBottomLabel"
+                       HorizontalAlignment="Left"
+                       VerticalAlignment="Bottom"
+                       Foreground="Gray"
+                       FontSize="11"/>
+        </Grid>
+        <Border Grid.Row="0"
+                Grid.Column="1"
+                MinHeight="40"
+                BorderBrush="#D0D7DE"
+                BorderThickness="1"
+                CornerRadius="4"
+                Background="White">
+            <!-- The plot Canvas plus the hover readout overlay in the (free) BOTTOM-LEFT corner: the curve
+                 descends left-to-right, so its lower-left is empty and the readout never hides the data. -->
+            <Grid ClipToBounds="True">
+                <Canvas x:Name="PlotCanvas"
+                        Margin="8"
+                        Background="Transparent"/>
+                <TextBlock x:Name="HoverReadout"
+                           HorizontalAlignment="Left"
+                           VerticalAlignment="Bottom"
+                           Margin="12,0,0,8"
+                           FontSize="11"
+                           IsHitTestVisible="False"
+                           Visibility="Collapsed"/>
+            </Grid>
+        </Border>
+        <!-- Horizontal (X) axis = ActualRemaining: full capacity on the left, EOM (0) on the right.
+             ActualAxisCanvas carries the (orange) "EW <value>" marker and the (blue) split-X value,
+             positioned under their respective vertical lines. -->
+        <Grid Grid.Row="1"
+              Grid.Column="1"
+              Margin="8,6,8,0">
+            <TextBlock x:Name="ActualLeftLabel"
+                       HorizontalAlignment="Left"
+                       Foreground="Gray"
+                       FontSize="11"/>
+            <TextBlock x:Name="ActualRightLabel"
+                       HorizontalAlignment="Right"
+                       FontSize="11"/>
+            <Canvas x:Name="ActualAxisCanvas"
+                    IsHitTestVisible="False"/>
+        </Grid>
+    </Grid>
+</UserControl>

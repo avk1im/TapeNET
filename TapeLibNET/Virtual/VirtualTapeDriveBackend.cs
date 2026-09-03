@@ -45,6 +45,11 @@ public readonly record struct VirtualTapeDriveCapabilities
         SupportsSeqFilemarks = true,
     };
 
+    /// <summary>A basic drive with filemarks support only.</summary>
+    public static VirtualTapeDriveCapabilities WithFilemarksOnly => Basic with
+    {
+    };
+
     /// <summary>Simulates a filemarks-only drive (like LTO-1..4) — no setmarks, no sequential filemark counting.</summary>
     public static VirtualTapeDriveCapabilities WithFilemarksOnlyLargeBlocks => new()
     {
@@ -92,7 +97,10 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
 
     #region *** Private Fields ***
 
-    private readonly VirtualTapeDriveCapabilities m_capabilities;
+    // Not readonly: block-size capabilities are reconciled against the actual loaded
+    //  media state in LoadMedia(), since existing media may have been created with
+    //  different block-size limits than the capabilities passed at construction time.
+    private VirtualTapeDriveCapabilities m_capabilities;
     private VirtualTapeMedia? m_contentMedia;
     private VirtualTapeMedia? m_initiatorMedia;
     private VirtualTapeMedia? m_currentMedia;
@@ -322,20 +330,26 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
     public override uint DriveNumber => m_driveNumber;
     public override string Vendor => Assembly.GetExecutingAssembly().GetName().Name ?? string.Empty;
     public override string Product => VTapePrefix; // GetType().Name;
-    public override string Revision => Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? string.Empty;
+
+    /// <summary>
+    /// Stable emulation identity — deliberately NOT the assembly version, which would change the
+    /// <see cref="TapeDriveBackend.ProfileKey"/> on every build and orphan every saved calibration
+    /// profile. Bump only when the emulation's capacity/EW behavior changes incompatibly.
+    /// </summary>
+    public override string Revision => "v1";
 
 
-/// <summary>
-/// Controls how LoadMedia() handles existing vs new media state:
-/// <list type="bullet">
-///   <item><see cref="FileMode.Open"/> — Require existing state; fail if not found.</item>
-///   <item><see cref="FileMode.Create"/> — Always create new media; truncate any existing state.</item>
-///   <item><see cref="FileMode.CreateNew"/> — Create new media; fail if valid state already exists.</item>
-///   <item><see cref="FileMode.OpenOrCreate"/> — Load existing state if available; otherwise create new.</item>
-/// </list>
-/// Default is <see cref="FileMode.OpenOrCreate"/>.
-/// </summary>
-public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
+    /// <summary>
+    /// Controls how LoadMedia() handles existing vs new media state:
+    /// <list type="bullet">
+    ///   <item><see cref="FileMode.Open"/> — Require existing state; fail if not found.</item>
+    ///   <item><see cref="FileMode.Create"/> — Always create new media; truncate any existing state.</item>
+    ///   <item><see cref="FileMode.CreateNew"/> — Create new media; fail if valid state already exists.</item>
+    ///   <item><see cref="FileMode.OpenOrCreate"/> — Load existing state if available; otherwise create new.</item>
+    /// </list>
+    /// Default is <see cref="FileMode.OpenOrCreate"/>.
+    /// </summary>
+    public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
 
     #endregion
 
@@ -461,6 +475,11 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
             }
 
             m_logger.LogTrace("{Prefix}: Loaded content media from existing state", LogPrefix);
+
+            // Reconcile capabilities' block-size limits with the actually loaded media,
+            //  which may have been created with different limits than currently configured
+            //  (e.g. a smaller MinBlockSize than the default capabilities provide).
+            ReconcileBlockSizeCapabilities(m_contentMedia);
         }
         else
         {
@@ -575,6 +594,32 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
 
         m_logger.LogTrace("{Prefix}: Media loaded", LogPrefix);
         return true;
+    }
+
+    /// <summary>
+    /// Reconciles the drive's block-size capabilities with the block-size limits actually
+    /// enforced by loaded media state. Existing media may have been created with different
+    /// MinBlockSize/MaxBlockSize/DefaultBlockSize than the capabilities passed to this
+    /// backend at construction time, so the reported capabilities must reflect what the
+    /// loaded media will actually accept.
+    /// </summary>
+    private void ReconcileBlockSizeCapabilities(VirtualTapeMedia media)
+    {
+        if (media.MinBlockSize == m_capabilities.MinBlockSize
+            && media.MaxBlockSize == m_capabilities.MaxBlockSize
+            && media.DefaultBlockSize == m_capabilities.DefaultBlockSize)
+            return;
+
+        m_logger.LogTrace(
+            "{Prefix}: Reconciling block-size capabilities from loaded media - min: {Min}, max: {Max}, default: {Default}",
+            LogPrefix, media.MinBlockSize, media.MaxBlockSize, media.DefaultBlockSize);
+
+        m_capabilities = m_capabilities with
+        {
+            MinBlockSize = media.MinBlockSize,
+            MaxBlockSize = media.MaxBlockSize,
+            DefaultBlockSize = media.DefaultBlockSize,
+        };
     }
 
     /// <summary>
@@ -1169,8 +1214,9 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
 
     #region *** Tapemark Operations ***
 
-    public override bool WriteFilemarks(uint count)
+    public override bool WriteFilemarks(uint count, out bool ew)
     {
+        ew = false;
         ResetError();
 
         if (m_currentMedia == null)
@@ -1186,13 +1232,15 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
                 SetError(m_currentMedia.LastError);
                 return false;
             }
+            ew = ew || m_reportEarlyWarning && m_currentMedia.IsInEarlyWarningZone;
         }
 
         return true;
     }
 
-    public override bool WriteSetmarks(uint count)
+    public override bool WriteSetmarks(uint count, out bool ew)
     {
+        ew = false;
         ResetError();
 
        if (!m_capabilities.SupportsSetmarks)
@@ -1214,6 +1262,7 @@ public FileMode MediaMode { get; set; } = FileMode.OpenOrCreate;
                 SetError(m_currentMedia.LastError);
                 return false;
             }
+            ew = ew || m_reportEarlyWarning && m_currentMedia.IsInEarlyWarningZone;
         }
 
         return true;

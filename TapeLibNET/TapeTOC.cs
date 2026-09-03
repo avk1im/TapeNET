@@ -644,6 +644,20 @@ namespace TapeLibNET
         private readonly List<TapeSetTOC> m_setTOCs;
         private TypeUID m_nextUID;
 
+        /// <summary>
+        /// On-tape format version for the <see cref="TapeTOC"/> record specifically, kept
+        ///  independent of the library-wide <see cref="TapeSerializer.Version"/> so the TOC
+        ///  layout can evolve without invalidating every other serialized type's signature.
+        /// <para>Legacy TOCs — written before per-record versioning — carry the then-current
+        ///  library version (0x0101) in their signature; that value doubles as our
+        ///  "initial, pre-MediaId" TOC version.</para>
+        /// </summary>
+        public const ushort TocVersionInitial = 0x0101;
+        /// <summary>TOC format version that introduced the <see cref="MediaId"/> field.</summary>
+        public const ushort TocVersionWithMediaId = 0x0102;
+        /// <summary>Current TOC format version written by this build.</summary>
+        public const ushort TocVersion = TocVersionWithMediaId;
+
         public TapeTOC()
         {
             m_setTOCs = [];
@@ -653,6 +667,11 @@ namespace TapeLibNET
         {
             Description = description;
         }
+        /// <summary>
+        /// Copy constructor: clones the given <see cref="TapeTOC"/> into a new instance.
+        /// <remark>Calls <see cref="CopyFrom(TapeTOC)"/>.</remark>
+        /// </summary>
+        /// <param name="toc">The <see cref="TapeTOC"/> instance to copy.</param>
         public TapeTOC(TapeTOC toc) : this()
         {
             CopyFrom(toc);
@@ -660,6 +679,31 @@ namespace TapeLibNET
 
         internal TypeUID GenerateUID() => m_nextUID++;
         public string Description { get; set; } = string.Empty;
+        /// <summary>
+        /// Stable identity of the media — or, for a multi-volume backup, of the whole volume
+        ///  series, since every volume of one series shares this id. Minted once on the first
+        ///  durable TOC write (see <see cref="EnsureMediaId"/>) and never altered afterwards.
+        /// <para><see cref="Guid.Empty"/> means "not yet assigned": a legacy Guid-less TOC just
+        ///  read from tape, or a brand-new in-memory TOC not yet written. Read by apps for
+        ///  catalog keys, log correlation, .tapetoc↔cartridge matching, and wrong-media guards;
+        ///  writable only inside TapeLibNET.</para>
+        /// </summary>
+        public Guid MediaId { get; internal set; } = Guid.Empty;
+        /// <summary>
+        /// Guarantees a non-empty <see cref="MediaId"/>: mints a fresh <see cref="Guid"/> when
+        ///  none exists, otherwise leaves the current identity intact. Called on the first durable
+        ///  TOC write, so freshly formatted media and legacy Guid-less media both acquire a
+        ///  permanent id — one that then rides unchanged across every rewrite and across all
+        ///  volumes of a multi-volume series.
+        /// </summary>
+        /// <returns>The effective (possibly newly minted) <see cref="MediaId"/>.</returns>
+        internal Guid EnsureMediaId()
+        {
+            if (MediaId == Guid.Empty)
+                MediaId = Guid.NewGuid();
+
+            return MediaId;
+        }
         public DateTime CreationTime { get; internal set; } = DateTime.Now;
         public DateTime LastSaveTime { get; internal set; } = DateTime.Now;
 
@@ -697,7 +741,9 @@ namespace TapeLibNET
                 return setIndex - 1;
         }
         private static int InternalToSetIndex(int setInternal) => setInternal + 1;
-        // convert standard index to alternative one, or vice versa
+        /// <summary>Convert standard index to alternative one, or vice versa.</summary>
+        /// <param name="setIndex">Index in standard (1..N) or alternative (−(N−1)..0) format.</param>
+        /// <returns>The converted index.</returns>
         public int SetIndexToAlt(int setIndex)
         {
             if (setIndex <= 0)
@@ -856,7 +902,10 @@ namespace TapeLibNET
             MakeLastSetCurrent();
         }
 
-        /// <summary>Deep-copies all content from <paramref name="toc"/>, replacing everything in this instance.</summary>
+        /// <summary>
+        /// Deep-copies all content from <paramref name="toc"/>, replacing everything in this instance.
+        /// <remarks>Used by the copy constructor <see cref="TapeTOC(TapeTOC)"/></remarks>
+        /// </summary>
         public void CopyFrom(TapeTOC toc) // Replaces the whole content -> use with CAUTION!
         {
             m_setTOCs.Clear();
@@ -864,6 +913,12 @@ namespace TapeLibNET
                 m_setTOCs.Add(new TapeSetTOC(setTOC));
 
             m_nextUID = toc.m_nextUID;
+
+            // Preserve the media identity across copies and restores — RestoreTOCCore copies the
+            // freshly deserialized TOC into the live one via CopyFrom, so dropping this line would
+            // silently strip the id from every loaded TOC.
+            MediaId = toc.MediaId;
+
             Description = toc.Description;
             CreationTime = toc.CreationTime;
             LastSaveTime = toc.LastSaveTime;
@@ -928,9 +983,17 @@ namespace TapeLibNET
 
         public void SerializeTo(TapeSerializer serializer)
         {
-            serializer.SerializeSignature();
+            // Write our own TOC-specific version (decoupled from the library-wide
+            //  TapeSerializer.Version) so the TOC layout can grow without disturbing
+            //  any other serialized type's signature.
+            serializer.SerializeSignature(TocVersion);
 
             serializer.Serialize((ulong)m_nextUID);
+
+            // MediaId sits early — right after the UID — so a future lightweight reader can
+            //  peek the series identity without deserializing the whole set list.
+            serializer.Serialize(MediaId);
+
             serializer.Serialize<List<TapeSetTOC>, TapeSetTOC>(m_setTOCs);
             serializer.Serialize(Description);
             serializer.Serialize(CreationTime);
@@ -941,17 +1004,29 @@ namespace TapeLibNET
 
         public static ITapeSerializable? ConstructFrom(TapeDeserializer deserializer)
         {
-            if (!deserializer.ValidateSignature())
-                return null;
+            // Tolerant read: capture the on-tape version instead of demanding an exact match,
+            //  so this build reads both legacy (pre-MediaId) and current TOCs. The nested
+            //  TapeSetTOC / TapeFileInfo records keep their strict signature check, unaffected.
+            if (!deserializer.ValidateSignature(out ushort version))
+                return null; // signature bytes don't match -> not a TOC record
 
             TypeUID nextUID = (TypeUID)deserializer.DeserializeUInt64();
             if (nextUID == 0UL) // invalid UID
                 return null;
 
+            // MediaId appears only from TocVersionWithMediaId onward. Older TOCs never wrote it,
+            //  so default to Guid.Empty ("unidentified legacy media") — it gets minted on the next
+            //  durable write. Reading it here, before the set list, matches the write order and
+            //  keeps the trailing fields (and the caller's appended CRC) correctly aligned.
+            Guid mediaId = (version >= TocVersionWithMediaId)
+                ? deserializer.DeserializeGuid()
+                : Guid.Empty;
+
             var setTOCs = deserializer.Deserialize<List<TapeSetTOC>, TapeSetTOC>();
 
             return new TapeTOC(nextUID, setTOCs)
             {
+                MediaId = mediaId,
                 Description = deserializer.DeserializeString(),
                 CreationTime = deserializer.DeserializeDateTime(),
                 LastSaveTime = deserializer.DeserializeDateTime(),
@@ -959,7 +1034,7 @@ namespace TapeLibNET
                 ContinuedOnNextVolume = deserializer.DeserializeBoolean(),
             };
         }
-        
+
         #endregion // ITapeSerializable
 
 
@@ -1439,6 +1514,21 @@ namespace TapeLibNET
             }
 
             return totalSize;
+        }
+
+        /// <summary>
+        /// Cumulative on-tape size of the sets on the current volume that PRECEDE the current set — i.e.
+        /// the approximate byte offset from the start of the volume's content to where the current set
+        /// begins. Used to anchor <see cref="TapeDrive.NotifyNextContentWritePosition"/> when overwriting
+        /// an existing set. Per-set block-size and software-compression aware, but oblivious to hardware
+        /// compression and setmark/gap overhead — sufficient as a rough, temporary anchor.
+        /// </summary>
+        public long ComputeContentSizeOnTapeBeforeCurrentSet(uint defaultBlockSize = 0)
+        {
+            long total = 0L;
+            for (int i = FirstSetInternalOnVolume; i < m_currSetInternal; i++)
+                total += m_setTOCs[i].ComputeTotalFileSizeOnTape(defaultBlockSize);
+            return total;
         }
 
         #endregion // File selection methods

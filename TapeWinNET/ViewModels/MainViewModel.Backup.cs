@@ -116,8 +116,8 @@ public partial class MainViewModel
     }
 
     /// <summary>
-    /// Opens the BackupWindow, optionally pre-populated with the given paths
-    ///  (e.g. from a drag-drop onto the MainWindow).
+    /// Creates <see cref="BackupViewModel"/>, opens the <see cref="BackupWindow"/>, optionally pre-populated
+    /// with the given paths (e.g. from a drag-drop onto the <see cref="MainWindow"/>).    
     /// </summary>
     internal void ShowBackupWindow(string[]? paths)
     {
@@ -200,7 +200,7 @@ public partial class MainViewModel
             {
                 LogErr("Backup failed");
                 SimpleBox.Show("Backup failed. See log for details.", "Backup Failed",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBoxButton.OK, SimpleBox.ImageFailed);
             }
             else if (operationResult is { WasAborted: true })
             {
@@ -216,7 +216,7 @@ public partial class MainViewModel
             else
             {
                 SimpleBox.Show("Backup completed successfully!", "Backup Complete",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBoxButton.OK, SimpleBox.ImageComplete);
             }
         }
         catch (Exception ex)

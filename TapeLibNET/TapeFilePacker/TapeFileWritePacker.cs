@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -21,13 +20,18 @@ namespace TapeLibNET.TapeFilePacker;
 /// <see cref="EndFile"/>). Closed files become "pending commit" until their tail block
 /// is committed, at which point they are reported via <see cref="FilesCommitted"/>.
 /// </para>
+/// <para>
+/// Fill buffers are page-aligned <see cref="TapeWriteBuffer"/> instances rented from a
+/// <see cref="TapeWriteBufferPool"/>. Page alignment lets the SPTD write path DMA directly with
+/// no intermediate copy; double-buffering means up to two buffers of the same size are live at once,
+/// which the pool supports natively.
+/// </para>
 /// </summary>
 internal sealed class TapeFileWritePacker : IDisposable
 {
     // -----------------------------------------------------------------------
     //  Construction & external dependencies
     // -----------------------------------------------------------------------
-
     private readonly ITapeWriteBackend _backend;
     private readonly Action<long>? _rewindToBlock;
     private readonly SourceErrorMode _sourceErrorMode;
@@ -35,13 +39,18 @@ internal sealed class TapeFileWritePacker : IDisposable
     private readonly int _blockSize;
     private readonly int _bufferCapacity;
 
+    // Page-aligned buffer pool. When the caller supplies one (production: shared per drive) we do
+    //  NOT own it; when omitted we create and dispose our own so unit tests need no extra wiring.
+    private readonly TapeWriteBufferPool _pool;
+    private readonly bool _ownsPool;
+
     // -----------------------------------------------------------------------
     //  Buffer & tape position state
     // -----------------------------------------------------------------------
 
     // Current fill buffer (we own it until handing off to backend, at which point
     //  ownership transfers and we replace it with a fresh one).
-    private byte[] _fillBuffer;
+    private TapeWriteBuffer _fillBuffer;
 
     // Bytes written into _fillBuffer that have NOT yet been handed to the backend.
     //  Includes leftover sub-block bytes carried over from the previous handoff.
@@ -60,7 +69,6 @@ internal sealed class TapeFileWritePacker : IDisposable
     // -----------------------------------------------------------------------
     //  File registry
     // -----------------------------------------------------------------------
-
     private sealed class PendingEntry
     {
         public CommitToken Token;
@@ -82,11 +90,10 @@ internal sealed class TapeFileWritePacker : IDisposable
     private bool _disposed;
 
     // -----------------------------------------------------------------------
-
     /// <param name="backend">Low-layer write backend (worker thread or test fake).</param>
     /// <param name="rewindToBlock">
     ///  Callback used by <see cref="DiscardOpenFile"/> in <see cref="SourceErrorMode.Rollback"/>
-    ///  mode and by <see cref="RollbackPending"/>. Pass <c>b =&gt; mgr.Drive.MoveToBlock((int)b)</c>
+    ///  mode and by <see cref="RollbackPending"/>. Pass <c>b => mgr.Drive.MoveToBlock((int)b)</c>
     ///  in production. May be <c>null</c> in unit tests that never exercise rollback paths.
     /// </param>
     /// <param name="blockMultiplier">Buffer size = <c>blockMultiplier × BlockSize</c>. Must be ≥ 1.</param>
@@ -100,13 +107,18 @@ internal sealed class TapeFileWritePacker : IDisposable
     ///  absolute on-tape coordinates -- matching the legacy backup's TOC convention and
     ///  enabling correct packed restore across multi-set tapes.
     /// </param>
+    /// <param name="bufferPool">
+    ///  Shared page-aligned buffer pool (production: one per drive). When <c>null</c> the packer
+    ///  creates and owns a private pool. Not disposed when supplied by the caller.
+    /// </param>
     public TapeFileWritePacker(
         ITapeWriteBackend backend,
         Action<long>? rewindToBlock = null,
         int blockMultiplier = 16,
         SourceErrorMode sourceErrorMode = SourceErrorMode.NoRollback,
         ILogger? logger = null,
-        long initialAbsBlock = 0)
+        long initialAbsBlock = 0,
+        TapeWriteBufferPool? bufferPool = null)
     {
         ArgumentNullException.ThrowIfNull(backend);
         if (blockMultiplier < 1)
@@ -121,7 +133,10 @@ internal sealed class TapeFileWritePacker : IDisposable
         _blockSize = checked((int)backend.BlockSize);
         _bufferCapacity = checked(blockMultiplier * _blockSize);
 
-        _fillBuffer = ArrayPool<byte>.Shared.Rent(_bufferCapacity);
+        // Own a private pool only when the caller didn't supply one (keeps unit tests trivial).
+        _ownsPool = bufferPool is null;
+        _pool = bufferPool ?? new TapeWriteBufferPool(_logger);
+        _fillBuffer = _pool.Rent(_bufferCapacity);
 
         // Anchor packer position to the current drive head so addresses are absolute.
         _committedTapeBlock = initialAbsBlock;
@@ -131,7 +146,6 @@ internal sealed class TapeFileWritePacker : IDisposable
     // -----------------------------------------------------------------------
     //  Public events & state
     // -----------------------------------------------------------------------
-
     /// <summary>
     /// Fired (synchronously, on the calling thread) whenever one or more files cross the
     /// commit boundary as a side effect of <see cref="TapeWriteStream.Write"/>,
@@ -148,7 +162,6 @@ internal sealed class TapeFileWritePacker : IDisposable
     // -----------------------------------------------------------------------
     //  Public API: BeginFile / EndFile
     // -----------------------------------------------------------------------
-
     /// <summary>
     /// Open a logical write slot for one file. Returns a stream the caller writes the
     /// source bytes into. The file's <see cref="TapeAddress"/> is not known yet; it is
@@ -174,7 +187,6 @@ internal sealed class TapeFileWritePacker : IDisposable
         };
         _pending.Add(entry);
         _openEntry = entry;
-
         _openStream = new TapeWriteStreamFacade(this, entry.Token);
         return _openStream;
     }
@@ -202,14 +214,12 @@ internal sealed class TapeFileWritePacker : IDisposable
         //  but it is NOT durably on tape until the buffer is flushed and harvested.
         //  We do not promote here. Promotion happens on the next harvest.
         TryPromoteCommittables();
-
         return token;
     }
 
     // -----------------------------------------------------------------------
     //  Public API: discard / rollback / flush
     // -----------------------------------------------------------------------
-
     /// <summary>
     /// Discard the open file according to <see cref="SourceErrorMode"/>. Both modes
     /// truncate the still-buffered tail of the open file. Rollback mode additionally
@@ -223,7 +233,6 @@ internal sealed class TapeFileWritePacker : IDisposable
             throw new InvalidOperationException("No file is open.");
 
         var entry = _openEntry;
-
         if (_sourceErrorMode == SourceErrorMode.NoRollback)
         {
             // Truncate fill back to the open file's start (or to 0 if the start has
@@ -274,7 +283,6 @@ internal sealed class TapeFileWritePacker : IDisposable
         //  committed file's tail shares it and we accept the open file's first partial
         //  block as on-tape garbage (see §4.13.5).
         long targetBlock = (startAbs + _blockSize - 1) / _blockSize;
-
         try
         {
             _rewindToBlock(targetBlock);
@@ -327,7 +335,6 @@ internal sealed class TapeFileWritePacker : IDisposable
         // Optional rewind: caller may want the tape head exactly at the committed
         //  boundary. We only call rewind if a callback was supplied.
         _rewindToBlock?.Invoke(_committedTapeBlock);
-
         return rolled;
     }
 
@@ -346,9 +353,8 @@ internal sealed class TapeFileWritePacker : IDisposable
         {
             int padded = ((_fillPos + _blockSize - 1) / _blockSize) * _blockSize;
             if (padded > _fillPos)
-                Array.Clear(_fillBuffer, _fillPos, padded - _fillPos);
+                _fillBuffer.Clear(_fillPos, padded - _fillPos);
             _fillPos = padded;
-
             DoFlushFillBuffer();
         }
 
@@ -359,7 +365,6 @@ internal sealed class TapeFileWritePacker : IDisposable
     // -----------------------------------------------------------------------
     //  Internal API: stream-facing write hook
     // -----------------------------------------------------------------------
-
     /// <summary>Called by <see cref="TapeWriteStreamFacade"/> on each <c>Write</c> call.</summary>
     internal void WriteFromOpenFile(byte[] buffer, int offset, int count)
     {
@@ -377,7 +382,7 @@ internal sealed class TapeFileWritePacker : IDisposable
             }
 
             int chunk = Math.Min(free, count);
-            Buffer.BlockCopy(buffer, offset, _fillBuffer, _fillPos, chunk);
+            _fillBuffer.CopyFrom(buffer.AsSpan(offset, chunk), _fillPos);
             _fillPos += chunk;
             offset += chunk;
             count -= chunk;
@@ -388,7 +393,6 @@ internal sealed class TapeFileWritePacker : IDisposable
     // -----------------------------------------------------------------------
     //  Buffer handoff & harvesting
     // -----------------------------------------------------------------------
-
     // Hands off the block-aligned prefix of _fillBuffer to the backend and rotates in
     //  a fresh fill buffer with the trailing sub-block bytes carried over.
     private void DoFlushFillBuffer()
@@ -402,15 +406,13 @@ internal sealed class TapeFileWritePacker : IDisposable
         HarvestNow();
 
         int leftover = _fillPos - validBytes;
-
-        var newFill = ArrayPool<byte>.Shared.Rent(_bufferCapacity);
+        var newFill = _pool.Rent(_bufferCapacity);
         if (leftover > 0)
-            Buffer.BlockCopy(_fillBuffer, validBytes, newFill, 0, leftover);
+            _fillBuffer.CopyRegionTo(newFill, validBytes, leftover);
 
         // Hand off; ownership of the old buffer transfers to the backend until harvest.
         _backend.StartWriting(_fillBuffer, validBytes);
         _inflightValidBytes = validBytes;
-
         _fillBuffer = newFill;
         _fillPos = leftover;
         _baseAbsByteOfFill += validBytes;
@@ -429,8 +431,7 @@ internal sealed class TapeFileWritePacker : IDisposable
     private void HarvestNow(bool suppressEomThrow = false)
     {
         var (result, returnedBuffer) = _backend.AwaitCompletion();
-        if (returnedBuffer is not null)
-            ArrayPool<byte>.Shared.Return(returnedBuffer);
+        returnedBuffer?.Return();
 
         if (result.BlocksWritten == 0 && result.Exception is null && !result.EomEncountered)
             return;     // nothing to do (idempotent harvest)
@@ -438,7 +439,6 @@ internal sealed class TapeFileWritePacker : IDisposable
         long blocksWritten = result.BlocksWritten;
         _committedTapeBlock += blocksWritten;
         _inflightValidBytes = 0;
-
         TryPromoteCommittables();
 
         if (result.Exception is not null)
@@ -461,16 +461,15 @@ internal sealed class TapeFileWritePacker : IDisposable
     // -----------------------------------------------------------------------
     //  Promotion & post-EOM rollback bookkeeping
     // -----------------------------------------------------------------------
-
     private void TryPromoteCommittables()
     {
         if (_pending.Count == 0)
             return;
 
         long committedAbsByte = _committedTapeBlock * (long)_blockSize;
-
         List<CommittedFile>? committed = null;
         int writeIdx = 0;
+
         for (int readIdx = 0; readIdx < _pending.Count; readIdx++)
         {
             var entry = _pending[readIdx];
@@ -491,6 +490,7 @@ internal sealed class TapeFileWritePacker : IDisposable
                 writeIdx++;
             }
         }
+
         if (writeIdx != _pending.Count)
             _pending.RemoveRange(writeIdx, _pending.Count - writeIdx);
 
@@ -512,7 +512,6 @@ internal sealed class TapeFileWritePacker : IDisposable
                 continue;       // leave open entry alone; agent will Discard it
             rolled.Add(e.Token);
         }
-
         _pending.RemoveAll(e => !e.IsOpen);
 
         // Reset fill to the committed boundary; everything in fill is gone.
@@ -527,7 +526,6 @@ internal sealed class TapeFileWritePacker : IDisposable
             _openEntry.StartAbsByte = _baseAbsByteOfFill;
             _openEntry.Length = 0;
         }
-
         return [.. rolled];
     }
 
@@ -538,7 +536,6 @@ internal sealed class TapeFileWritePacker : IDisposable
     // -----------------------------------------------------------------------
     //  Disposal
     // -----------------------------------------------------------------------
-
     public void Dispose()
     {
         if (_disposed)
@@ -560,8 +557,14 @@ internal sealed class TapeFileWritePacker : IDisposable
         //  returned by the final HarvestNow inside Flush.
         if (_fillBuffer is not null)
         {
-            try { ArrayPool<byte>.Shared.Return(_fillBuffer); } catch { /* ignore */ }
+            try { _fillBuffer.Return(); } catch { /* ignore */ }
             _fillBuffer = null!;
+        }
+
+        // Dispose the pool only if we created it (a caller-supplied pool is shared / caller-owned).
+        if (_ownsPool)
+        {
+            try { _pool.Dispose(); } catch { /* ignore */ }
         }
 
         _openStream?.MarkClosed();

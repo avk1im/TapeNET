@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices.Marshalling;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32.SafeHandles;
 using Windows.Win32;
@@ -61,8 +60,24 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     private string m_ltoProduct = string.Empty;
     private string m_ltoRevision = string.Empty;
 
-    // LTO partition usage flag — set during Open via ProbeForLtoInformation(), cleared in Close
+    // LTO partition usage flag — set during Open via ProbeForLtoInformation(), cleared in LtoClose().
     private bool m_useLtoPartitions;
+
+    // Does the drive answer LOG SENSE 0x31 at all? null = unprobed, true = works, false = unsupported.
+    //  DRIVE-level capability, decoupled from RefreshMediaParams use — calibration may call it too.
+    //  Reset in LtoClose (session), NOT in UnloadMedia.
+    private bool? m_ltoCapacitySupported;
+    // Set once Capacity < Remaining (classic AIT transposition) OR Capacity collapses below the
+    //  anchored physical max. Latches the correction schema on for the rest of the mount, so we
+    //  never trust tape.sys's raw figures again on this cartridge. Reset in UnloadMedia + Close.
+    private bool m_capacityQuirkDrive;
+    // Largest credible physical capacity seen this mount (-1 = unset). Reset in UnloadMedia + Close.
+    private long m_anchoredCapacity = -1;
+    private const double c_capacityCollapseFactor = 0.5; // reject capacity below half the anchor
+
+    // One-shot report latches for the LTO backend, keyed by call site and re-armed together in LtoClose().
+    //  Collapses per-chunk write-flow tracing (SCSI sense, early warning, LOG SENSE) to one line per session.
+    private readonly OnceLatchGroup m_traceOnce = new();
 
     #endregion
 
@@ -137,8 +152,9 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     public override string Product => string.IsNullOrEmpty(m_ltoProduct) ? "[unknown]" : m_ltoProduct;
     public override string Revision => m_ltoRevision; // SCSI INQUIRY Product Revision Level; empty when unknown
 
-    public bool IsLto => m_ltoGeneration >= 1;
+    public bool IsLto => m_ltoGeneration >= 0; // FIXME: To experiment with SCSI support on pre-LTO drives, set to 0. Otherwise, to 1
     public bool IsLto5Plus => m_ltoGeneration >= 5;
+    public int LtoGeneration => m_ltoGeneration;
 
     #endregion
 
@@ -225,11 +241,16 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         m_driveHandle.Close();
         m_driveParams = null;
         m_mediaParams = null;
+
         m_blockingPositionOps.Clear();
         m_blockingPrepareOps.Clear();
         m_blockingTapemarkOps.Clear();
+
         m_positionQueryNeedsRetry = false;
         m_setPositionNeedsBlocking = false;
+
+        m_capacityQuirkDrive = false; // reset capacity quirk on drive close
+        m_anchoredCapacity = -1L; // reset anchored capacity on drive close
 
         LtoClose();
     }
@@ -294,6 +315,9 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
             }
         }
 
+        m_capacityQuirkDrive = false; // reset capacity quirk on media change
+        m_anchoredCapacity = -1L; // reset anchored capacity on media change
+
         RefreshMediaParams();
         m_logger.LogTrace("{Prefix}: Media loaded", LogPrefix);
         return true;
@@ -308,11 +332,16 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
             return false;
         }
 
+
         SetError(PInvoke.PrepareTape(m_driveHandle, PREPARE_TAPE_OPERATION.TAPE_UNLOAD, false));
 
         if (WentOK)
         {
             m_mediaParams = null;
+
+            m_capacityQuirkDrive = false; // reset capacity quirk on media change
+            m_anchoredCapacity = -1L; // reset anchored capacity on media change
+            
             m_logger.LogTrace("{Prefix}: Media unloaded", LogPrefix);
         }
         else
@@ -760,39 +789,53 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
 
     #region *** Tapemark Operations ***
 
-    public override bool WriteFilemarks(uint count)
+    public override bool WriteFilemarks(uint count, out bool ew)
     {
+        ew = false;
         if (!HasMedia)
         {
             SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
             return false;
         }
 
-        Op(() => InvokeWriteTapemark(TAPEMARK_TYPE.TAPE_FILEMARKS, count)).WithRetry().WithPoll().Run();
+        // Notice ewLocal is an ordinary local the Op(...) closure captures and passes
+        //  as `out` to InvokeWriteTapemark. Read it back after the pipeline runs.
+        bool ewLocal = false;
+        Op(() => InvokeWriteTapemark(TAPEMARK_TYPE.TAPE_FILEMARKS, count, out ewLocal))
+            .WithRetry().WithPoll().Run();
+
+        ew = ewLocal && m_reportEw; // gate exactly like Write(): surface EW only when the caller asked
 
         if (WentOK)
-            m_logger.LogTrace("{Prefix}: Wrote {Count} filemark(s)", LogPrefix, count);
+            m_logger.LogTrace("{Prefix}: Wrote {Count} filemark(s){Ew}",
+                LogPrefix, count, ew ? " — early warning" : "");
         else
             LogErrorAsDebug("Failed to write filemarks");
-
         return WentOK;
     }
 
-    public override bool WriteSetmarks(uint count)
+    public override bool WriteSetmarks(uint count, out bool ew)
     {
+        ew = false;
         if (!HasMedia)
         {
             SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
             return false;
         }
 
-        Op(() => InvokeWriteTapemark(TAPEMARK_TYPE.TAPE_SETMARKS, count)).WithRetry().WithPoll().Run();
+        // Notice ewLocal is an ordinary local the Op(...) closure captures and passes
+        //  as `out` to InvokeWriteTapemark. Read it back after the pipeline runs.
+        bool ewLocal = false;
+        Op(() => InvokeWriteTapemark(TAPEMARK_TYPE.TAPE_SETMARKS, count, out ewLocal))
+            .WithRetry().WithPoll().Run();
+
+        ew = ewLocal && m_reportEw;
 
         if (WentOK)
-            m_logger.LogTrace("{Prefix}: Wrote {Count} setmark(s)", LogPrefix, count);
+            m_logger.LogTrace("{Prefix}: Wrote {Count} setmark(s){Ew}",
+                LogPrefix, count, ew ? " — early warning" : "");
         else
             LogErrorAsDebug("Failed to write setmarks");
-
         return WentOK;
     }
 
@@ -1117,13 +1160,39 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         return WentOK;
     }
 
-    /// <summary>Invokes WriteTapemark with automatic immediate-to-blocking fallback.</summary>
-    private bool InvokeWriteTapemark(TAPEMARK_TYPE type, uint count) =>
-        InvokeImmediateOrBlocking(type, m_blockingTapemarkOps, immediate =>
+    /// <summary>Invokes WriteTapemark with automatic immediate-to-blocking fallback, surfacing any
+    ///  physical early warning the SCSI path reports (filemarks OR setmarks). EW is NOT an error — the
+    ///  mark was written.</summary>
+    private bool InvokeWriteTapemark(TAPEMARK_TYPE type, uint count, out bool ew)
+    {
+        // ewInner is an ORDINARY local (not an out param) so the immediate/blocking closure below may
+        //  capture it and pass it as `out` to ScsiWriteTapemarksDirect. A lambda cannot capture an out
+        //  parameter directly, hence the local + copy-out after dispatch. On an immediate→blocking
+        //  fallback the closure runs twice; ewInner then reflects the last (accepted) invocation.
+        bool ewInner = false;
+
+        bool result = InvokeImmediateOrBlocking(type, m_blockingTapemarkOps, immediate =>
         {
-            SetError(PInvoke.WriteTapemark(m_driveHandle, type, count, immediate));
+            if (IsLto)
+            {
+                // SCSI direct path (real LTO + forced "LTO-0" AIT/DAT/DLT): avoids the tape.sys
+                //  WriteTapemark false-EOM inside the EW zone AND surfaces physical EW. WSMK picks
+                //  setmarks vs filemarks.
+                ScsiWriteTapemarksDirect(setmarks: type == TAPEMARK_TYPE.TAPE_SETMARKS,
+                    (int)count, immediate, out ewInner);
+            }
+            else
+            {
+                // Non-SCSI fallback: the Win32 API can't distinguish EW from a real EOM here.
+                SetError(PInvoke.WriteTapemark(m_driveHandle, type, count, immediate));
+                ewInner = false;
+            }
             return WentOK;
         });
+
+        ew = ewInner;
+        return result;
+    }
 
     /// <summary>
     /// Queries tape position with automatic retry for drives that return
@@ -1198,6 +1267,37 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         return WentOK;
     }
 
+    /// <summary>
+    /// Refreshes the cached media parameters (<see cref="m_mediaParams"/>) from the tape class driver,
+    /// correcting the CAPACITY field on drives that misreport it (notably Sony AIT).
+    /// <para>
+    /// <b>Healthy drives (common case):</b> the tape.sys figures pass through untouched (two comparisons).
+    /// The largest capacity seen is tracked in <see cref="m_anchoredCapacity"/> to arm the collapse guard
+    /// should the drive later prove quirky.
+    /// </para>
+    /// <para>
+    /// <b>Quirky drives (AIT):</b> only the <c>Capacity</c> field is unreliable — it collapses far below the
+    /// physical maximum after positioning (a 40 GB cartridge reads 21.56 MB). We reconstruct it from the
+    /// drive's own stable LOG SENSE 0x31 maximum (<see cref="GetLtoCapacity"/>), falling back to the
+    /// anti-collapse <see cref="m_anchoredCapacity"/> anchor, or the larger of the two tape.sys fields.
+    /// </para>
+    /// <para>
+    /// <b>Remaining is left to tape.sys.</b> Physically, remaining is the EOD→EOM distance — invariant under
+    /// head repositioning, changing only when a write establishes a new EOD. tape.sys reports a
+    /// position-relative figure that equals this EOD→EOM truth exactly on the append path (head at EOD while
+    /// writing) — which is the only place capacity decisions are made — and is what the drive's existing
+    /// calibration was built against. It drifts during pure reads/repositions, but that is non-critical and
+    /// the precise EOD/EW-landmark estimation lives one layer up in <c>EstimateActualRemaining</c>. We never
+    /// swap it: <c>Capacity &lt; Remaining</c> signals a bad CAPACITY, not a transposed pair.
+    /// </para>
+    /// <para>
+    /// <b>Note:</b> LOG SENSE 0x31 also exposes an EOD-based <c>remaining</c> that stayed constant across
+    /// read-only motion in testing (unlike tape.sys) — a candidate to adopt as the Remaining source too,
+    /// but it needs recalibration and reports "full" until the drive locates EOD. Deferred pending
+    /// validation beyond the single AIT-2 under test.
+    /// </para>
+    /// </summary>
+    /// <returns>True if the underlying <c>GetTapeParameters</c> query succeeded.</returns>
     private bool RefreshMediaParams()
     {
         if (!IsOpen)
@@ -1205,7 +1305,6 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
 
         TAPE_GET_MEDIA_PARAMETERS mediaParams;
         uint retSize;
-
         unsafe
         {
             retSize = (uint)sizeof(TAPE_GET_MEDIA_PARAMETERS);
@@ -1213,28 +1312,97 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
                 ref retSize, new Span<byte>(&mediaParams, (int)retSize)));
         }
 
-        if (WentOK)
+        if (!WentOK)
         {
-            // QUIRK on AIT drives: Capacity may be smaller than Remaining. Check & fix
-            if (mediaParams.Capacity < mediaParams.Remaining)
-            {
-                m_logger.LogTrace("Media parameters quirk detected: Remaining ({Remaining}) > Capacity ({Capacity}) - adjusted Capcity",
-                    Helpers.BytesToStringLong(mediaParams.Remaining), Helpers.BytesToStringLong(mediaParams.Capacity));
-                mediaParams.Capacity = mediaParams.Remaining;
-            }
-
-            m_mediaParams = mediaParams;
-
-            // trace media capacity and remaining
-            m_logger.LogTrace("Refreshed media parmeters: Capacity {Capacity}, Remaining {Remaining}",
-                Helpers.BytesToString(m_mediaParams?.Capacity ?? 0L), Helpers.BytesToString(m_mediaParams?.Remaining ?? 0L));
-        }
-        else
             LogErrorAsDebug("Failed to get media parameters");
+            return false;
+        }
 
+        long cap = mediaParams.Capacity;
+        long rem = mediaParams.Remaining;
 
+        // --- AIT QUIRK detection: two cheap, SCSI-free tells that the CAPACITY reading is bogus ---
+        //  capBelowRem : Capacity < Remaining — physically impossible (free can't exceed total),
+        //                so the Capacity field, not the pair, is wrong. NOT a transposition.
+        //  collapsed   : Capacity fell far below the anchored physical maximum.
+        //  Either one, once seen, marks the drive quirky for the rest of the mount.
+        bool capBelowRem = cap < rem;
+        bool collapsed = IsCapacityCollapsed(cap);
+        if ((capBelowRem || collapsed) && !m_capacityQuirkDrive)
+        {
+            m_capacityQuirkDrive = true;
+            m_logger.LogTrace("{Prefix}: Capacity quirk detected ({Why}) → correction engaged for this mount",
+                LogPrefix, capBelowRem ? "capacity below remaining" : "collapse below anchor");
+        }
 
+        if (m_capacityQuirkDrive)
+            (cap, rem) = CorrectQuirkyCapacity(cap, rem);
+        else if (cap > m_anchoredCapacity)
+            m_anchoredCapacity = cap; // healthy: keep the anchor current — ~free, and arms collapse detection
+
+        mediaParams.Capacity = cap;
+        mediaParams.Remaining = Math.Min(rem, cap); // remaining can never exceed capacity
+        Debug.Assert(mediaParams.Capacity >= mediaParams.Remaining);
+        m_mediaParams = mediaParams;
+
+        m_logger.LogTrace("Refreshed media parameters: Capacity {Capacity}, Remaining {Remaining}",
+            Helpers.BytesToString(mediaParams.Capacity), Helpers.BytesToString(mediaParams.Remaining));
         return WentOK;
+    }
+
+    // Shared predicate so detection and the correction's restore branch agree exactly.
+    private bool IsCapacityCollapsed(long cap)
+        => m_anchoredCapacity > 0L && cap < m_anchoredCapacity * c_capacityCollapseFactor;
+
+    /// <summary>
+    /// Reconstructs a trustworthy CAPACITY on a drive known to misreport it; Remaining is returned
+    /// UNCHANGED (tape.sys owns it — see <see cref="RefreshMediaParams"/> remarks). Capacity priority:
+    /// the drive's own LOG SENSE 0x31 maximum (stable, position- and EOD-independent); else the
+    /// anti-collapse anchor; else the larger of the two tape.sys fields (equals true capacity at BOT and
+    /// seeds the anchor). We never swap — <c>Capacity &lt; Remaining</c> means a bad Capacity, not a
+    /// transposed pair.
+    /// </summary>
+    private (long cap, long rem) CorrectQuirkyCapacity(long cap, long rem)
+    {
+        m_logger.LogTrace("{Prefix}: attempt to correct Capacity {Capacity}, Remaining {Remaining}; anchor at {Anchor}",
+            LogPrefix, Helpers.BytesToStringLong(cap), Helpers.BytesToStringLong(rem), Helpers.BytesToStringLong(m_anchoredCapacity));
+
+        // 1) Capacity from the authoritative source. LOG SENSE 0x31 exposes the MAXIMUM as its own
+        //    parameter — stable regardless of head position OR EOD, so it needs no ordering fix. We take
+        //    ONLY its capacity; its EOD-based 'remaining' is intentionally ignored here (Remaining stays
+        //    on tape.sys for calibration compatibility).
+        long ltoCap = -1L;
+        if (m_ltoCapacitySupported != false && GetLtoCapacity(out long lrem, out long lcap))
+        {
+            m_logger.LogTrace("{Prefix}: LTO capacity reports: Capacity {Capacity}, Remaining {Remaining}",
+                LogPrefix, Helpers.BytesToStringLong(lcap), Helpers.BytesToStringLong(lrem));
+            ltoCap = lcap;
+        }
+
+        if (ltoCap >= 0L)
+            cap = ltoCap;
+        else
+            // No firmware figure: the larger of the two tape.sys fields is the best capacity guess
+            //  (at BOT it equals the true capacity), used to seed / refresh the anchor below.
+            cap = Math.Max(cap, rem);
+
+        // 2) Anchor defense: grow to the largest credible capacity, or restore from a collapse.
+        if (cap > m_anchoredCapacity)
+        {
+            m_logger.LogTrace("{Prefix}: Capacity anchor {Old} → {New}",
+                LogPrefix, Helpers.BytesToStringLong(m_anchoredCapacity), Helpers.BytesToStringLong(cap));
+            m_anchoredCapacity = cap;
+        }
+        else if (IsCapacityCollapsed(cap))
+        {
+            m_logger.LogTrace("{Prefix}: Capacity collapse ignored: reported {Cap} << anchor {Anchor} → using anchor",
+                LogPrefix, Helpers.BytesToStringLong(cap), Helpers.BytesToStringLong(m_anchoredCapacity));
+            cap = m_anchoredCapacity;
+        }
+
+        // 3) Remaining: returned as tape.sys reported it. Position-relative, but equal to the true
+        //    EOD→EOM distance on the append path (head at EOD) — the only place it drives decisions.
+        return (cap, rem);
     }
 
     #endregion // *** Private Helpers ***

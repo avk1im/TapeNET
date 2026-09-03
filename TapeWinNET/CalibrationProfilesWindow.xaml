@@ -1,0 +1,144 @@
+<Window x:Class="TapeWinNET.CalibrationProfilesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
+        xmlns:controls="clr-namespace:TapeWinNET.Controls"
+        xmlns:help="clr-namespace:TapeWinNET.Help"
+        xmlns:converters="clr-namespace:TapeWinNET.Converters"
+        d:DataContext="{d:DesignInstance Type=vm:CalibrationProfilesViewModel}"
+        mc:Ignorable="d"
+        Title="Calibration Profiles"
+        Height="560" Width="620"
+        ResizeMode="CanResizeWithGrip"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        PreviewKeyDown="Window_PreviewKeyDown">
+
+    <Window.Resources>
+        <converters:MeasuredUtcDisplayConverter x:Key="MeasuredUtcDisplayConverter"/>
+    </Window.Resources>
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition x:Name="HelpPaneColumn" Width="0" MinWidth="0"/>
+        </Grid.ColumnDefinitions>
+
+        <Grid x:Name="HelpOverlayRoot" Grid.Column="0" Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0"
+                       Text="Every calibration profile ever saved is listed below. Select one to review it, apply it to the currently loaded media (single-partition only), or remove it."
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,12"/>
+
+            <StackPanel Grid.Row="1" Margin="0,0,0,8"
+                        help:HelpControlNameAttachedProperty.ControlName="Drive filter">
+                <CheckBox Content="Only for this drive"
+                          IsChecked="{Binding OnlyForThisDrive}"
+                          IsEnabled="{Binding CanFilterByDrive}"/>
+            </StackPanel>
+
+            <Grid Grid.Row="2" Margin="0,0,0,12"
+                  help:HelpControlNameAttachedProperty.ControlName="Profile selector">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0" Text="Profile:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <ComboBox Grid.Column="1"
+                          ItemsSource="{Binding Profiles}"
+                          SelectedItem="{Binding SelectedProfile}">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock>
+                                <TextBlock.Text>
+                                    <MultiBinding StringFormat="{}{0} — {1}">
+                                        <Binding Path="ProfileKey"/>
+                                        <Binding Path="MeasuredUtc" Converter="{StaticResource MeasuredUtcDisplayConverter}"/>
+                                    </MultiBinding>
+                                </TextBlock.Text>
+                            </TextBlock>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+            </Grid>
+
+            <controls:CalibrationResultView Grid.Row="3"
+                                            help:HelpControlNameAttachedProperty.ControlName="Calibration Result"/>
+
+            <TextBlock Grid.Row="4"
+                       Text="{Binding StatusMessage}"
+                       Foreground="{DynamicResource WarningFg.Info}"
+                       Margin="0,12,0,0"
+                       TextWrapping="Wrap">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding StatusMessage}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding StatusMessage}" Value="">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
+            <Grid Grid.Row="5" Margin="0,16,0,0">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                    <Button x:Name="HelpButton" Content="_Help ▶" Click="HelpButton_Click"
+                            MinWidth="60" Padding="10,1"
+                            ToolTip="Open help for this dialog (F1)"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Import…" Command="{Binding ImportCommand}"
+                            Width="80" Margin="0,0,8,0"
+                            ToolTip="Import a shared calibration profile or bundle file"/>
+                    <controls:SplitButton ButtonContent="Export…"
+                                          ButtonToolTip="Export the selected profile to a file"
+                                          DropDownToolTip="Select export scope"
+                                          Command="{Binding ExportCurrentCommand}"
+                                          Width="90" Margin="0,0,12,0">
+                        <MenuItem Header="Current profile…"
+                                  Command="{Binding ExportCurrentCommand}"/>
+                        <MenuItem Header="All for this drive…"
+                                  Command="{Binding ExportDriveProfilesCommand}"/>
+                        <MenuItem Header="All on this system…"
+                                  Command="{Binding ExportAllProfilesCommand}"/>
+                    </controls:SplitButton>
+                    <Button Content="Apply" Command="{Binding ApplyCommand}"
+                            Width="80" Margin="0,0,8,0"/>
+                    <Button Content="Remove" Command="{Binding RemoveCommand}"
+                            Foreground="{DynamicResource WarningFg.Error}"
+                            Width="80" Margin="0,0,12,0"/>
+                    <Button Content="Close" Width="80" IsCancel="True"/>
+                </StackPanel>
+            </Grid>
+        </Grid>
+
+        <GridSplitter x:Name="HelpPaneSplitter"
+                      Grid.Column="1"
+                      Width="4"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Stretch"
+                      Background="LightGray"
+                      Visibility="Collapsed"/>
+
+        <controls:HelpPane x:Name="HelpPaneControl"
+                           Grid.Column="2"
+                           DataContext="{x:Null}"
+                           Visibility="Collapsed"/>
+    </Grid>
+</Window>

@@ -44,8 +44,13 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     // Logical early-warning runtime state, mapped from the backend's physical EW/PEW + calibration.
     private bool m_physicalEwSeen = false;          // backend reported built-in EW this pass
     private long m_ewAnchorBlock = -1L;             // drive logical block where physical EW first fired
+    private long m_ewZoneEntryBlock = -1L;          // immovable LBA where physical EW first fired (membership test)
     private long m_bytesAfterPhysicalEwCarry = 0L;  // bytes-after-EW frozen across block-size changes
     private long m_bytesSinceRemainingPoll = 0L;    // paces the ReportedRemaining poll (approx ok)
+    // Writable headroom (estimate minus reserve) observed at the last poll. Paces the NEXT poll so the
+    //  sampling rate tracks how little is actually left. long.MaxValue = not yet polled (first write
+    //  after a reserve is set polls immediately to establish a real value).
+    private long m_writableHeadroomAtLastPoll = long.MaxValue;
 
     // Calibrations loaded by the app (typically one per capacity bucket / media type). TapeDrive
     //  auto-selects the matching one into m_calibration. Not owned/persisted here.
@@ -68,9 +73,30 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
     private const int c_gapFileLength = 64;
 
-    // Throttle for the (device-querying) ReportedRemaining poll used by the pre-physical-EW logical
-    //  EW check. Only exercised when the desired reserve exceeds the physical EW→EOM distance.
-    private const long c_ewRemainingPollInterval = 64L * 1024 * 1024; // 64 MB    #endregion
+    // Upper bound for the (device-querying) ReportedRemaining poll used by the pre-physical-EW logical
+    //  EW check. The effective interval is scaled down from this ceiling to a fraction of the WRITABLE
+    //  headroom still ahead of the reserve (see RemainingPollInterval), so the check also works on
+    //  drives WITHOUT a physical EW and on media whose headroom is smaller than the ceiling -- there
+    //  the curve poll is the ONLY way logical EW can fire.
+    private const long c_ewRemainingPollIntervalMax = 64L * 1024 * 1024; // 64 MB
+
+    // The poll must be fine-grained relative to the headroom it is watching shrink -- NOT relative to
+    //  the reserve, which may be arbitrarily large compared to what is actually left (e.g. a 32 MiB TOC
+    //  reserve on a 36 MiB cartridge leaves ~2 MiB of headroom). Sampling every quarter of the headroom
+    //  bounds the overshoot to ~25% of it, at a cost of at most 4 queries per headroom-width of tape.
+    //  Floored at the block size so it can never degenerate to polling on every write.
+    //  Uses the headroom CACHED at the last poll, so this stays a pure arithmetic property: it is read
+    //  on every write and must never query the device itself.
+    private long RemainingPollInterval
+    {
+        get
+        {
+            // Guard the (pathological) case of a block size at/above the ceiling, which would
+            //  make min > max and throw in Math.Clamp.
+            long floor = Math.Clamp(Math.Max(1L, BlockSize), 1L, c_ewRemainingPollIntervalMax);
+            return Math.Clamp(Math.Max(0L, m_writableHeadroomAtLastPoll) / 4L, floor, c_ewRemainingPollIntervalMax);
+        }
+    }
 
     #endregion // *** Private Constants ***
 
@@ -211,19 +237,23 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     /// </summary>
     public long ContentCapacity => m_cachedContentCapacity >= 0 ? m_cachedContentCapacity : Capacity;
 
-    /// <summary>Queries remaining capacity of the current partition (refreshes media params). Returns −1 on failure.</summary>
-    public long GetRemainingCapacity() => EnsureMediaParams()?.Remaining ?? 0L;
+    /// <summary>
+    /// Quantity (3) — the RAW driver-reported remaining for the CURRENT partition (refreshes media
+    /// params). Optimistic on real hardware: it overshoots the truth and floors above zero at hard EOM.
+    /// Use <see cref="EstimateActualRemaining"/> for capacity decisions. Returns 0 on failure.
+    /// </summary>
+    public long GetReportedCurrentPartitionRemaining() => EnsureMediaParams()?.Remaining ?? 0L;
 
     /// <summary>
-    /// Remaining capacity of the Content partition, cached from the last time media params
-    /// were refreshed while on Content. If currently on Content, refreshes first.
+    /// Quantity (3) for the Content partition, cached from the last time media params were refreshed
+    /// while on Content. If currently on Content, refreshes first. Still the RAW driver figure.
     /// </summary>
-    public long GetRemainingContentCapacity()
+    public long GetReportedContentRemaining()
     {
         if (m_onContentPartition)
         {
             // On content — refresh to get the latest value and cache it
-            return GetRemainingCapacity();
+            return GetReportedCurrentPartitionRemaining();
         }
 
         // On another partition — return the cached content remaining
@@ -231,19 +261,19 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     }
 
     /// <summary>
-    /// The authoritative estimate of bytes still actually writable — the figure the rest of the
-    /// library and the apps should consume for "remaining capacity". Calibrated when a calibration
-    /// (measured or a-priori) is available, otherwise the raw driver value.
+    /// Quantity (6) — the authoritative ESTIMATE of bytes still actually writable on the Content
+    /// partition: the figure the rest of the library and the apps should consume. Calibrated when a
+    /// calibration (measured or a-priori) is available, otherwise the raw driver value.
     /// <para>Delegates to <see cref="EstimateActualRemaining"/> (throttled/cached per its contract).</para>
     /// </summary>
-    public long Remaining => EstimateActualRemaining();
+    public long EstimatedContentRemaining => EstimateActualRemaining();
 
     /// <summary>
-    /// The raw remaining capacity as reported by the drive/backend, kept for diagnostics,
-    /// calibration, and "driver says vs. we estimate" UI display. Prefer <see cref="Remaining"/>
-    /// for capacity decisions.
+    /// Quantity (3) — property form of <see cref="GetReportedContentRemaining"/>, kept for diagnostics,
+    /// calibration, and "driver says vs. we estimate" UI display. Prefer
+    /// <see cref="EstimatedContentRemaining"/> for capacity decisions.
     /// </summary>
-    public long DriverReportedRemaining => GetRemainingContentCapacity();
+    public long ReportedContentRemaining => GetReportedContentRemaining();
 
     /// <summary>
     /// True if the underlying backend is a Win32 tape drive and the drive is an LTO model.
@@ -256,6 +286,13 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     /// </summary>
     public bool IsLto5PlusDrive => m_backend is TapeDriveWin32Backend wbe && wbe.IsLto5Plus
                 || m_backend is RemoteTapeDriveBackend rbe && rbe.IsLto5Plus;
+
+    /// <summary>
+    /// Positive value if the drive is a true LTO drive; 0 if pre-LTO SCSI-adressable drive; -1 otherwise
+    /// </summary>
+    public int LtoGeneration => m_backend is TapeDriveWin32Backend wbe? wbe.LtoGeneration
+                : m_backend is RemoteTapeDriveBackend rbe? rbe.LtoGeneration
+                : -1;
 
     /// <summary>
     /// Desired LOGICAL early-warning reserve, in bytes before physical EOM (0 = none). TapeDrive maps
@@ -286,6 +323,11 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     /// <para>Marked <c>protected</c> since used internally to support logical implementation of <see cref="IsEarlyWarning"/></para>
     /// </summary>
     internal bool IsProgrammableEarlyWarning { get; private set; } = false;
+
+    /// <summary>Sticky flag: the BACKEND's physical early warning has fired this pass (the landmark
+    /// anchoring the precise tail estimate). Distinct from the logical <see cref="IsEarlyWarning"/>,
+    /// which maps this plus the calibration onto the caller's requested reserve.</summary>
+    internal bool IsPhysicalEarlyWarningSeen => m_physicalEwSeen;
 
     /// <summary>Running count of bytes transferred via <see cref="WriteDirect"/>/<see cref="ReadDirect"/>. Reset by the stream manager.</summary>
     public long ByteCounter
@@ -371,6 +413,21 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         if (toWrite == 0)
             return 0;
 
+        // Logical EW is evaluated AFTER the write, so on its own it can only ever report
+        //  "you have already crossed the line". That is harmless while a single write is small
+        //  relative to the reserve, but a write comparable to (or larger than) the reserve can
+        //  consume the whole reserve -- and the room meant for the TOC -- in one go. Guard that
+        //  case by clamping the write to what still fits ahead of the reserve.
+        bool ewClamped = ClampWriteToEarlyWarning(ref toWrite);
+        if (toWrite == 0)
+        {
+            // Nothing fits ahead of the reserve: report EW without writing so the caller
+            //  wraps up the set (the packer rolls back its uncommitted tail).
+            ew = m_desiredEarlyWarning > 0L;
+            IsEarlyWarning = true;
+            return 0;
+        }
+
         m_IoTimer.Restart();
         int written = m_backend.Write(buffer, offset, toWrite,
             out tapemark, out bool pew, out bool physicalEw, out eom);
@@ -378,7 +435,12 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         IoTimeCounterUs += m_IoTimer.ElapsedMicroseconds;
         SyncErrorFrom(m_backend);
 
-        InvalidateMediaParams(keepBlockSize: true); // force refresh on next GetRemainingCapacity() to see the new position
+        // The first actual write reset EOD, so the drive's Remaining is authoritative again, and MediaParams
+        //  should be invalidated. Clear the temporary write-position notification BEFORE evaluating logical
+        //  EW, so evaluation uses the fresh, calibrated drive figure. It intentionally SURVIVES a zero-byte
+        //  write (EOD unmoved), where the stale drive figure would otherwise trip a spurious early warning.
+        if (written > 0)
+            OnWritten();
 
         // Track the physical early-warning landmark at the drive's AUTHORITATIVE block position.
         //  PEW stays an internal detail (phase-2 anchor); EW anchor drives the precise tail estimate.
@@ -386,19 +448,13 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         //  EstimateActualRemaining()'s precise tail path even when NO logical reserve was requested
 
         IsProgrammableEarlyWarning = pew;
-        if (physicalEw && !m_physicalEwSeen)
-        {
-            m_physicalEwSeen = true;
-            m_ewAnchorBlock = GetCurrentBlock();
-            m_bytesAfterPhysicalEwCarry = 0L;
-            m_logger.LogTrace("{Prefix}: Physical early warning at block {Block}", LogPrefix, m_ewAnchorBlock);
-        }
+        CapturePhysicalEarlyWarning(physicalEw);
 
         // Map physical EW/PEW + calibrated ReportedRemaining onto the caller's LOGICAL early warning.
         //  With NO reserve requested this surfaces the drive's physical EW 1:1 (v1.0 behavior, and exactly
         //  what a calibration run needs to capture the EW landmark). The costly ReportedRemaining poll lives
         //  inside EvaluateLogicalEarlyWarning and is gated + throttled, so calling it per write is cheap.
-        bool logicalEw = EvaluateLogicalEarlyWarning(written, physicalEw);
+        bool logicalEw = EvaluateLogicalEarlyWarning(written, physicalEw) || ewClamped;
         if (logicalEw && !IsEarlyWarning)
             m_logger.LogInformation("{Prefix}: WriteDirect crossed logical early-warning boundary", LogPrefix);
         IsEarlyWarning = logicalEw;
@@ -416,6 +472,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         }
 
         m_byteCounter += written;
+
         return written;
     }
 
@@ -478,8 +535,57 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         IsProgrammableEarlyWarning = false;
         m_physicalEwSeen = false;
         m_ewAnchorBlock = -1L;
+        m_ewZoneEntryBlock = -1L;   
         m_bytesAfterPhysicalEwCarry = 0L;
         m_bytesSinceRemainingPoll = 0L;
+        m_writableHeadroomAtLastPoll = long.MaxValue;
+    }
+
+    private void CapturePhysicalEarlyWarning(bool physicalEw)
+    {
+        if (physicalEw && !m_physicalEwSeen)
+        {
+            m_physicalEwSeen = true;
+            m_ewAnchorBlock = GetCurrentBlock();
+            m_ewZoneEntryBlock = m_ewAnchorBlock; // ← the fixed zone start (m_ewAnchorBlock may later re-anchor; this does not)
+            m_bytesAfterPhysicalEwCarry = 0L;
+            m_logger.LogTrace("{Prefix}: Physical early warning at block {Block}", LogPrefix, m_ewAnchorBlock);
+        }
+    }
+
+    /// <summary>
+    /// Re-evaluates EW state after a tape REPOSITION, since early warning is a property of physical
+    /// position, not a permanent latch. The logical sticky is derived per-write, so it is always dropped
+    /// here — it re-fires on the next write if we are still in the tail (e.g. a file-write retry a few
+    /// blocks back), and correctly stays clear once the caller has repositioned out of the zone (e.g. a
+    /// rewind to overwrite earlier sets). The PHYSICAL anchor is kept unless we have moved before the
+    /// zone-entry landmark, because losing it would let a later re-detection re-anchor DEEPER and
+    /// over-estimate remaining. Only meaningful on the content partition.
+    /// </summary>
+    /// <param name="newBlock">The content-partition logical block the tape was repositioned to.</param>
+    private void ReevaluateEarlyWarningAfterReposition(long newBlock)
+    {
+        // Drop the derived logical sticky on ANY reposition; it is recomputed on the next write.
+        IsEarlyWarning = false;
+        IsProgrammableEarlyWarning = false;
+
+        // Physical zone membership: only when we have moved BEFORE where physical EW first fired do we
+        //  leave the zone and shed the anchor + accounting. A within-zone move (retry) keeps them, so
+        //  BytesAfterPhysicalEw() recomputes correctly from the new, earlier-but-still-in-zone position.
+        //  The zone-entry LBA is immovable across block-size changes, so this comparison is robust.
+        if (m_physicalEwSeen && m_ewZoneEntryBlock >= 0L && newBlock < m_ewZoneEntryBlock)
+        {
+            m_physicalEwSeen = false;
+            m_ewAnchorBlock = -1L;
+            m_ewZoneEntryBlock = -1L;
+            m_bytesAfterPhysicalEwCarry = 0L;
+
+            // Left the zone → reset the pre-EW curve-poll pacing to a clean state. (A within-zone move
+            //  deliberately KEEPS the cached headroom so ClampWriteToEarlyWarning stays armed for the
+            //  very next write, and keeps the poll counter high so that write re-polls immediately.)
+            m_bytesSinceRemainingPoll = 0L;
+            m_writableHeadroomAtLastPoll = long.MaxValue;
+        }
     }
 
     /// <summary>
@@ -526,15 +632,18 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     }
 
     /// <summary>
-    /// Selects the best available logical-EW mechanism given the requested reserve, loaded calibration,
-    /// backend capabilities, and media capacity. Synthesizes an a-priori baseline when no measured
-    /// calibration matches, so a reserve is always enforceable.
+    /// Selects the best available logical-EW mechanism given the loaded calibration, backend
+    /// capabilities, and media capacity. Synthesizes an a-priori baseline when no measured calibration
+    /// matches, so a reserve is always enforceable as soon as one is requested via
+    /// <see cref="SetEarlyWarning"/>. Runs independently of whether a reserve has actually been
+    /// requested yet, so <c>EarlyWarningMechanism</c> (and the UI's "Estimation by") reflects a
+    /// matched/auto-loaded calibration immediately, not only once a reserve is later set.
     /// </summary>
     private void SelectEarlyWarningMechanism()
     {
         m_aprioriCalibration = null;
 
-        if (m_desiredEarlyWarning <= 0L || !IsMediaLoaded)
+        if (!IsMediaLoaded)
         {
             m_ewMechanism = EarlyWarningMechanism.None;
             return;
@@ -551,20 +660,91 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         bool backendHasEw = backendMech is EarlyWarningMechanism.ProgrammableEarlyWarning
                                          or EarlyWarningMechanism.HardwareEarlyWarning;
 
+        // A pre-LTO / LTO-1..3 physical EW fires far too late to be the real mechanism — the a-priori curve is.
+        bool ewIsUseful = backendHasEw && LtoGeneration >= 4;
         long capacity = Capacity;
         if (capacity > 0L)
         {
-            // Synthesize an a-priori baseline so the reserve is honored even with no measured data.
-            //  A backend physical EW, when present, opportunistically sharpens the tail estimate —
-            //  hence the higher (Hardware/Programmable) precision label in that case.
-            m_aprioriCalibration = TapeCalibration.Apriori(DriveProfileKey, capacity);
-            m_ewMechanism = backendHasEw ? backendMech : EarlyWarningMechanism.Uncalibrated;
+            if (m_backend.ReportsExactRemaining)
+            {
+                // Honest backend (un-emulated virtual): identity calibration — no margin, so the reserve
+                // fires exactly at TOC size and "space remaining" is the truth. This is what lets the
+                // multivolume tests tune to exact capacities, immune to a-priori constant changes.
+                m_aprioriCalibration = TapeCalibration.Ideal(DriveProfileKey, capacity);
+                m_ewMechanism = EarlyWarningMechanism.Uncalibrated; // FIXME: Consider introducing EarlyWarningMechanism.Exact
+            }
+            else
+            {
+                // Synthesize an a-priori baseline so the reserve is honored even with no measured data.
+                //  A backend physical EW, when present, opportunistically sharpens the tail estimate —
+                //  hence the higher (Hardware/Programmable) precision label in that case.
+                m_aprioriCalibration = TapeCalibration.Apriori(DriveProfileKey, capacity, LtoGeneration);
+                m_ewMechanism = ewIsUseful ? backendMech : EarlyWarningMechanism.Uncalibrated;
+            }
         }
         else
         {
             // Capacity unknown: rely solely on the backend's physical EW if it has one.
-            m_ewMechanism = backendHasEw ? backendMech : EarlyWarningMechanism.None;
+            m_ewMechanism = ewIsUseful ? backendMech : EarlyWarningMechanism.None;
         }
+    }
+
+    // TEMPORARY write-position notification, used ONLY for the special "repositioned but not yet written"
+    //  case (e.g. overwriting an earlier backup set). The drive's Remaining is capacity−EOD, which is
+    //  stale after a backward seek, so an overwrite would trip a premature logical early warning and clamp
+    //  every write to zero. While active, the EW logic uses (capacity − approxWrittenBytes) instead. The
+    //  drive CLEARS it by itself on the first actual write (WriteDirect / WriteFilemark / WriteSetmark),
+    //  after which the write has reset EOD and MediaParams.Remaining is authoritative again (with our
+    //  usual calibration adjustments). It intentionally does NOT affect the public EstimateActualRemaining
+    //  / service-level Writable, which stay on the drive figure — the override is EW-decision-only.
+    private long m_notifiedApproxWrittenBytes = -1L;
+
+    private bool HasWritePositionNotification => m_notifiedApproxWrittenBytes >= 0L;
+
+    /// <summary>
+    /// Temporarily informs the drive of the approximate bytes already on tape BEFORE the position where
+    /// content writing will resume, so its stale <c>capacity − EOD</c> Remaining does not trip a premature
+    /// early warning when OVERWRITING existing content. Cleared automatically on the first write (or pass a
+    /// negative value to clear explicitly). Only meaningful while a TOC reserve is armed (TOC-in-set).
+    /// </summary>
+    public void NotifyNextContentWritePosition(long approxWrittenBytes)
+        => m_notifiedApproxWrittenBytes = approxWrittenBytes >= 0L ? approxWrittenBytes : -1L;
+
+    // Actual-remaining estimate for EW DECISIONS only. Identical to EstimateActualRemaining() in steady
+    //  state, but while the temporary write-position notification is active it substitutes
+    //  (Capacity − approxWrittenBytes) — a proxy for the driver's reported (capacity−EOD) remaining once
+    //  writing resumes — for the stale drive Remaining, then applies the SAME calibration adjustment via
+    //  the shared core. Post physical EW the core ignores the reported source and byte-counts, as usual.
+    private long EstimatedContentRemainingForEw()
+    {
+        if (!HasWritePositionNotification)
+            return EstimateActualRemaining();
+
+        long reported = Math.Max(0L, Capacity - m_notifiedApproxWrittenBytes);
+        ITapeCalibration? cal = EffectiveCalibration;
+        return cal is null ? reported : EstimateActualRemainingCore(cal, reported);
+    }
+
+    /// <summary>
+    /// The pure estimate logic shared by <see cref="EstimateActualRemaining"/> and
+    /// <see cref="EvaluateLogicalEarlyWarning"/>, given an already-fetched <paramref name="reported"/>
+    /// value — so callers can control (and throttle) the device poll themselves.
+    /// <para>
+    /// Before physical EW → the calibrated <c>ReportedRemaining → ActualRemaining</c> curve.
+    /// After physical EW → the precise, self-anchored per-cartridge byte-count from the EW landmark
+    /// (<c>EwToEomDistance − bytesSinceEw</c>). We TRUST the byte-count in the tail rather than combine it
+    /// with the curve: the curve is unreliable there — on collapse drives (LTO-0..3) it has already
+    /// dropped to ~0 while real capacity remains, so a min() would wrongly abandon the writable tail; the
+    /// byte-count can never OVER-estimate (measured landmarks are exact; a-priori landmarks are set ≤ the
+    /// real runway), so it never risks an overrun. <paramref name="reported"/> is IGNORED post-EW.
+    /// </para>
+    /// </summary>
+    private long EstimateActualRemainingCore(ITapeCalibration cal, long reported)
+    {
+        if (m_physicalEwSeen)
+            return Math.Max(0L, cal.EwToEomDistance - BytesAfterPhysicalEw());
+
+        return cal.TranslateReportedToActual(reported);
     }
 
     /// <summary>
@@ -575,35 +755,85 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     /// </summary>
     private bool EvaluateLogicalEarlyWarning(int written, bool physicalEw)
     {
-        // Sticky: once the logical EW fires, it stays fired until media reload / reset.
-        if (IsEarlyWarning)
-            return true;
-
-        // No reserve requested → surface the drive's physical EW 1:1 as a safety backstop (legacy).
+        // No reserve requested → surface the drive's physical EW 1:1 (legacy; and exactly what a
+        //  calibration RUN needs to capture the landmark). Sticky so the once-seen landmark never flickers.
         if (m_desiredEarlyWarning <= 0L)
-            return physicalEw;
+            return IsEarlyWarning || physicalEw;
 
+        // No calibration / unknown capacity → physical EW only, likewise sticky.
         ITapeCalibration? cal = EffectiveCalibration;
         if (cal is null)
-            return physicalEw;   // capacity-unknown fallback: physical EW only
+            return IsEarlyWarning || physicalEw;
 
-        // Precise tail regime: after physical EW, byte-count down from the (measured or a-priori)
-        //  EW→EOM distance using the drive's authoritative block position. No Remaining query needed.
-        if (m_physicalEwSeen)
+        // Throttle the costly device-Remaining poll of the pre-physical-EW curve regime. We skip it ONLY
+        //  while EW is NOT currently latched (and no cheap fresh estimate is available): preserving the
+        //  un-latched state avoids a device query on every write far from EOM. We deliberately do NOT skip
+        //  while EW IS latched — a fresh estimate is then worth it, so a reposition/overwrite that genuinely
+        //  freed room can CLEAR the latch on the next accepted write instead of it lingering (the overwrite
+        //  bug). With a write-position notification or after physical EW the estimate needs no device poll,
+        //  so we always evaluate.
+        if (!IsEarlyWarning && !HasWritePositionNotification && !m_physicalEwSeen)
         {
-            long actualRemaining = Math.Max(0L, cal.EwToEomDistance - BytesAfterPhysicalEw());
-            return actualRemaining <= m_desiredEarlyWarning;
+            m_bytesSinceRemainingPoll += written;
+            if (m_bytesSinceRemainingPoll < RemainingPollInterval)
+                return false; // not latched, between polls (physicalEw necessarily false here) ⇒ no EW yet
+            m_bytesSinceRemainingPoll = 0L;
         }
 
-        // Before physical EW: consult the curve on ReportedRemaining, throttling the costly query,
-        //  while still honoring a physical-EW backstop between polls.
-        m_bytesSinceRemainingPoll += written;
-        if (m_bytesSinceRemainingPoll < c_ewRemainingPollInterval)
-            return physicalEw;
-        m_bytesSinceRemainingPoll = 0L;
+        // A fresh estimate DEFINITIVELY sets the logical EW: fires when ≤ the reserve, and CLEARS a
+        //  previously-latched EW when there is room again. Also paces the next poll / arms the clamp.
+        long est = EstimatedContentRemainingForEw();
+        m_writableHeadroomAtLastPoll = est - m_desiredEarlyWarning;
+        return est <= m_desiredEarlyWarning;
+        // Do NOT "|| physicalEw": in the pre-EW regime physicalEw is provably false (see above); in the post-EW
+        //  regime firing on it would wrongly abandon the calibrated tail runway (e.g. LTO-4+'s ~30 GB).
+    }
 
-        long est = cal.TranslateRemaining(GetRemainingCapacity());
-        return est <= m_desiredEarlyWarning || physicalEw;
+    /// <summary>
+    /// Clamps a pending write so it cannot overrun the requested early-warning reserve in a single
+    /// call. Logical EW is necessarily evaluated AFTER a write, so a write that is large relative to
+    /// the reserve could otherwise consume the reserve -- the room set aside for the TOC -- before
+    /// anyone gets a chance to react. This is the pre-write counterpart to
+    /// <see cref="EvaluateLogicalEarlyWarning"/>.
+    /// <para>
+    /// Deliberately cheap and self-limiting: it only engages once the write is big enough to matter
+    /// relative to the headroom still ahead of the reserve, so on real drives -- where a 256 KiB write
+    /// sits against gigabytes of headroom -- it never fires and costs a single comparison. It becomes
+    /// active exactly in the coarse-granularity regime (tiny emulated media, a nearly-full cartridge,
+    /// or a genuinely huge write) where the post-hoc signal is too late to be useful.
+    /// </para>
+    /// </summary>
+    /// <param name="toWrite">Block-aligned byte count to write; reduced in place if it would overrun.</param>
+    /// <returns>True if the write was clamped, i.e. the reserve boundary is being reached now.</returns>
+    private bool ClampWriteToEarlyWarning(ref int toWrite)
+    {
+        if (m_desiredEarlyWarning <= 0L || IsEarlyWarning)
+            return false;
+
+        // Only worth checking once a single write could eat a meaningful part of the headroom still
+        //  ahead of the reserve. Gauged against the HEADROOM (not the reserve, which may dwarf what is
+        //  actually left), using the value cached by the EW poll so this stays off the hot path: on a
+        //  real drive a 256 KiB write against GB of headroom exits on one comparison.
+        if (m_writableHeadroomAtLastPoll != long.MaxValue
+            && toWrite < m_writableHeadroomAtLastPoll / 4L)
+            return false;
+
+        long writable = EstimatedContentRemainingForEw() - m_desiredEarlyWarning;
+        m_writableHeadroomAtLastPoll = writable; // refresh the pacing hint; we just paid for the query
+        if (writable >= toWrite)
+            return false;
+
+        uint blockSize = BlockSize;
+        long aligned = writable > 0L && blockSize > 0
+            ? writable - (writable % blockSize)
+            : 0L;
+
+        m_logger.LogInformation(
+            "{Prefix}: Clamping write of {ToWrite} B to {Aligned} B to preserve the {Reserve} B early-warning reserve",
+            LogPrefix, toWrite, aligned, m_desiredEarlyWarning);
+
+        toWrite = (int)Math.Min(aligned, toWrite);
+        return true;
     }
 
     /// <summary>
@@ -701,15 +931,15 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     /// </summary>
     public long EstimateActualRemaining()
     {
-        long reported = GetRemainingCapacity();
+        long reported = GetReportedContentRemaining();
         if (reported < 0L)
             return 0L;
+
         ITapeCalibration? cal = EffectiveCalibration;
         if (cal is null)
             return reported;
-        if (m_physicalEwSeen)
-            return Math.Max(0L, cal.EwToEomDistance - BytesAfterPhysicalEw());
-        return cal.TranslateRemaining(reported);
+
+        return EstimateActualRemainingCore(cal, reported);
     }
 
     #endregion // *** Calibration ***
@@ -808,7 +1038,9 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         }
 
         InvalidateMediaParams(keepBlockSize: false);
-        EnsureOnContentPartition(); // CHECKME: do we indeed need to force to Content partition right away? or is it ok to fill the content param cache somehwta later?
+        EnsureOnContentPartition(); // CHECKME: do we indeed need to force to Content partition right away? or is it ok to fill the content param cache later?
+
+        ReloadDriveCaps(); // refresh drive caps after media load, as some drives (e.g. virtual ones) change their capabilities depending on the media loaded
 
         ResetEarlyWarningRuntime();
 
@@ -963,7 +1195,10 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         InvalidateMediaParams(keepBlockSize: false);
 
         if (m_onContentPartition)
+        {
             CacheContentMediaParams(EnsureMediaParams()); // refresh content capacity cache asap
+            ReevaluateEarlyWarningAfterReposition(block);
+        }
 
         m_logger.LogTrace("{Prefix}: Moved to partition {Partition}", LogPrefix, partition);
         return true;
@@ -986,6 +1221,8 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return false;
         }
 
+        OnPositionChanged(backwards: count < 0);
+
         m_logger.LogTrace("{Prefix}: Moved by {Count} filemark(s)", LogPrefix, count);
         return true;
     }
@@ -996,14 +1233,15 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         if (!IsMediaLoaded)
             return false;
 
-        if (!m_backend.WriteFilemarks(count))
+        if (!m_backend.WriteFilemarks(count, out bool physicalEw))
         {
             SyncErrorFrom(m_backend);
             LogErrorAsDebug("Failed to write filemark(s)");
             return false;
         }
 
-        InvalidateMediaParams(keepBlockSize: true); // filemark may have changed the position
+        OnWritten(); // writing a mark resets EOD → notification no longer needed, and MediaParams.Remaining needs to be refreshed
+        CapturePhysicalEarlyWarning(physicalEw);
 
         m_logger.LogTrace("{Prefix}: Wrote {Count} filemark(s)", LogPrefix, count);
         return true;
@@ -1021,6 +1259,8 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             LogErrorAsDebug("Failed to move past seq filemarks");
             return false;
         }
+
+        OnPositionChanged(backwards: count < 0);
 
         m_logger.LogTrace("{Prefix}: Moved past {Count} seq filemark(s)", LogPrefix, count);
         return true;
@@ -1045,6 +1285,8 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return false;
         }
 
+        OnPositionChanged(backwards: count < 0);
+
         m_logger.LogTrace("{Prefix}: Moved by {Count} setmark(s)", LogPrefix, count);
         return true;
     }
@@ -1055,14 +1297,15 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         if (!IsMediaLoaded)
             return false;
 
-        if (!m_backend.WriteSetmarks(count))
+        if (!m_backend.WriteSetmarks(count, out bool physicalEw))
         {
             SyncErrorFrom(m_backend);
             LogErrorAsDebug("Failed to write setmark(s)");
             return false;
         }
 
-        InvalidateMediaParams(keepBlockSize: true); // setmark may have changed the position
+        OnWritten(); // writing a mark resets EOD → notification no longer needed, and MediaParams.Remaining needs to be refreshed
+        CapturePhysicalEarlyWarning(physicalEw);
 
         m_logger.LogTrace("{Prefix}: Wrote {Count} setmark(s)", LogPrefix, count);
         return true;
@@ -1105,6 +1348,8 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return false;
         }
 
+        OnPositionChanged(backwards: true);
+
         m_logger.LogTrace("{Prefix}: Rewound", LogPrefix);
         return true;
     }
@@ -1122,6 +1367,8 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return false;
         }
 
+        OnPositionChanged(backwards: false);
+
         m_logger.LogTrace("{Prefix}: Fast forwarded to end", LogPrefix);
         return true;
     }
@@ -1132,7 +1379,9 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         if (!IsMediaLoaded)
             return false;
 
-        if (block == BlockCounter)
+        long currBlock = BlockCounter;
+
+        if (block == currBlock)
             return true;
 
         if (block < 0)
@@ -1147,6 +1396,8 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             LogErrorAsDebug("Failed to move to block");
             return false;
         }
+
+        OnPositionChanged(backwards: block < currBlock, toBlock: block);
 
         m_logger.LogTrace("{Prefix}: Moved to block {Block}", LogPrefix, block);
         return true;
@@ -1231,6 +1482,25 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         m_onContentPartition = false;
     }
 
+    private void OnPositionChanged(bool backwards, long toBlock = -1)
+    {
+        // InvalidateMediaParams(keepBlockSize: true); // position changed ⇒ but Remaining doesn't!
+        if (m_onContentPartition && backwards) // we moved backwards ⇒ might've left the EW zone!
+        {
+            if (toBlock < 0)
+                toBlock = BlockCounter;
+            ReevaluateEarlyWarningAfterReposition(toBlock);
+        }
+    }
+
+    // The first actual write reset EOD, so the drive's Remaining is authoritative again and MediaParams
+    //  must be invalidated to refresh Remaining.
+    private void OnWritten()
+    {
+        InvalidateMediaParams(keepBlockSize: true); // EOD changed ⇒ Remaining changes, too
+        m_notifiedApproxWrittenBytes = -1L; // writing resets EOD → notification no longer needed
+    }
+
     /// <summary>
     /// Ensures the drive is on the Content partition and the capacity cache is populated.
     /// For multi-partition media, checks actual position first to avoid an unnecessary move.
@@ -1312,4 +1582,5 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     }
 
     #endregion // *** Private Helpers ***
+
 } // class TapeDrive

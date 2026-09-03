@@ -24,7 +24,6 @@ public class TapeTOCRoundTripTests
     #region *** Test Data ***
 
     /// <summary>All three drive profiles for parameterized theories.</summary>
-#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> AllProfiles =>
     [
         DriveProfile.Setmarks,
@@ -32,19 +31,16 @@ public class TapeTOCRoundTripTests
         DriveProfile.SeqFilemarks,
         DriveProfile.FilemarksOnly,
     ];
-#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     /// <summary>
     /// Profiles that can save/restore TOC on an empty tape (no prior content).
     /// SeqFilemarks excluded: its navigator requires existing TOC markers on tape.
     /// </summary>
-#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> ProfilesWithTOCOnEmptyTape =>
     [
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
     ];
-#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     #endregion
 
@@ -235,6 +231,7 @@ public class TapeTOCRoundTripTests
     /// </summary>
     private static void AssertTOCEqual(TapeTOC expected, TapeTOC actual)
     {
+        Assert.Equal(expected.MediaId, actual.MediaId);
         Assert.Equal(expected.Description, actual.Description);
         Assert.Equal(expected.CreationTime, actual.CreationTime);
         Assert.Equal(expected.Volume, actual.Volume);
@@ -522,6 +519,125 @@ public class TapeTOCRoundTripTests
 
     #endregion
 
+    #region *** MediaId (Guid) ***
+
+    [Fact]
+    public void TapeTOC_MediaId_RoundTrip()
+    {
+        var toc = BuildComplexTOC(2, 3, description: "Identity");
+
+        toc.EnsureMediaId();               // mint an id
+        var id = toc.MediaId;
+        Assert.NotEqual(Guid.Empty, id);
+
+        var result = SerializeAndDeserialize(toc);
+        Assert.Equal(id, result.MediaId);  // survives the round-trip
+    }
+
+    [Fact]
+    public void TapeTOC_MediaId_DefaultsEmpty_WhenNeverMinted()
+    {
+        // A TOC that was never written keeps Guid.Empty through serialization.
+        var toc = BuildComplexTOC(1, 2, description: "No Identity Yet");
+
+        var result = SerializeAndDeserialize(toc);
+        Assert.Equal(Guid.Empty, result.MediaId);
+    }
+
+    [Fact]
+    public void TapeTOC_EnsureMediaId_IsIdempotent()
+    {
+        var toc = new TapeTOC("Once Only");
+
+        var first = toc.EnsureMediaId();
+        var second = toc.EnsureMediaId();   // must not re-mint
+
+        Assert.Equal(first, second);
+        Assert.NotEqual(Guid.Empty, first);
+    }
+
+    [Fact]
+    public void TapeTOC_CopyFrom_PreservesMediaId()
+    {
+        var original = BuildComplexTOC(2, 2, description: "Source");
+        original.EnsureMediaId();
+
+        var copy = new TapeTOC();
+        copy.CopyFrom(original);
+
+        Assert.Equal(original.MediaId, copy.MediaId);
+    }
+
+    /// <summary>
+    /// Builds a pre-MediaId (TocVersionInitial / 0x0101) on-tape image of an EMPTY TOC:
+    ///  identical to the current layout but WITHOUT the MediaId field and with the old
+    ///  version in the signature. An empty set list serializes as just its count (0),
+    ///  so we can hand-write the whole stream with serializer primitives.
+    /// </summary>
+    private static byte[] BuildLegacyEmptyTOCBytes(
+        ulong nextUID, string description, DateTime creation, DateTime lastSave,
+        int volume, bool continued)
+    {
+        using var ms = new MemoryStream();
+        var s = new TapeSerializer(ms);
+
+        s.SerializeSignature(TapeTOC.TocVersionInitial); // 0x0101 — no MediaId follows
+
+        s.Serialize(nextUID);
+        s.Serialize(0);            // setTOCs: empty list == count 0 (NO MediaId before it)
+        s.Serialize(description);
+        s.Serialize(creation);
+        s.Serialize(lastSave);
+        s.Serialize(volume);
+        s.Serialize(continued);
+
+        return ms.ToArray();
+    }
+
+    [Fact]
+    public void TapeTOC_LegacyVersion_ReadsWithEmptyMediaId()
+    {
+        var creation = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Local);
+        var lastSave = new DateTime(2020, 1, 2, 0, 0, 0, DateTimeKind.Local);
+
+        var bytes = BuildLegacyEmptyTOCBytes(
+            nextUID: 5UL, description: "Legacy Media",
+            creation: creation, lastSave: lastSave, volume: 2, continued: true);
+
+        using var ms = new MemoryStream(bytes);
+        var toc = new TapeDeserializer(ms).Deserialize<TapeTOC>();
+
+        Assert.NotNull(toc);
+
+        // The crucial guarantee: the legacy stream reads back with NO identity and the
+        //  trailing fields stay aligned (no phantom 16-byte Guid read corrupting them).
+        Assert.Equal(Guid.Empty, toc!.MediaId);
+        Assert.Equal("Legacy Media", toc.Description);
+        Assert.Equal(2, toc.Volume);
+        Assert.True(toc.ContinuedOnNextVolume);
+
+        // UID continuity intact — proves stream position landed correctly.
+        Assert.Equal(5UL, toc.GenerateUID());
+    }
+
+    [Theory]
+    [MemberData(nameof(ProfilesWithTOCOnEmptyTape))]
+    public void OnTape_MediaId_MintedOnFirstSave_PersistsAcrossReload(DriveProfile profile)
+    {
+        using var fixture = new VirtualTapeFixture(profile);
+
+        // A fresh in-memory TOC has no identity yet.
+        Assert.Equal(Guid.Empty, fixture.TOC.MediaId);
+
+        fixture.SaveTOC();                 // first durable write mints the id
+        var minted = fixture.TOC.MediaId;
+        Assert.NotEqual(Guid.Empty, minted);
+
+        fixture.LoadTOC();                 // reload from tape
+        Assert.Equal(minted, fixture.TOC.MediaId); // identity survives the round-trip
+    }
+
+    #endregion
 
     #region *** TapeTOC — In-Memory Serialization ***
 

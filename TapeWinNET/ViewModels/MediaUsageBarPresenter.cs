@@ -166,15 +166,15 @@ public class MediaUsageBarPresenter : ViewModelBase
 
         if (pending)
         {
-            // Don't use _tapeService.AdjustRemainingContentCapacity(free) as it can't know about
-            //  to-be-added backup set / TOC and will retun the (adjusted) drive's reported free space
-            free = Math.Max(free, 0); // avoid negative free space
+            // Pending (to-be-added) sets/TOC are already counted in usedSoFar, so the remainder IS the
+            //  what-if free space — no further TOC reservation, just clamp.
+            free = Math.Max(free, 0);
         }
         else
         {
-            free += tocSize; // AdjustRemainingContentCapacity() will account for TOC size
-            // Adjust free space to account for the TOC's reserved capacity.
-            free = _tapeService.AdjustRemainingContentCapacity(free);
+            // Hand ComputeWritableRemaining the free space WITHOUT the TOC deducted; it reserves the TOC
+            //  itself when the TOC shares the content partition.
+            free = _tapeService.ComputeWritableRemaining(free + tocSize);
         }
 
         segments.Add(new UsageSegment(

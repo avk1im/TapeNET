@@ -79,15 +79,12 @@ public class BackupMediaUsageBarPresenter(TapeService tapeService, BackupViewMod
         }
 
         // 5. Compute the room actually available for the pending segment.
-        //  Reserve the trailing TOC (added later by base.BuildSegments) and
-        //  one byte for the visible Free remnant.
-        long capacity = _tapeService.Capacity;
+        //  Work on the ESTIMATED capacity axis (the true medium size, phantom free space removed), then
+        //  let ComputeWritableRemaining reserve the trailing TOC (added later by base.BuildSegments).
+        //  One further byte is held back for the visible Free remnant.
+        long capacity = _tapeService.EstimatedCapacity;
         long usedAfterDrop = segments.Sum(s => s.Size);
-        long trailingTocReserve = _tapeService.HasInitiatorPartition
-            ? 0
-            : _tapeService.DefaultTOCCapacity;
-        long available = capacity - usedAfterDrop;
-        available = _tapeService.AdjustRemainingContentCapacity(available) - 1;
+        long available = _tapeService.ComputeWritableRemaining(capacity - usedAfterDrop) - 1;
         if (available < 1) available = 1;
 
         bool fits = pendingSize <= available;

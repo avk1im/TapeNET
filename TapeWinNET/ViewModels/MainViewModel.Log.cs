@@ -122,7 +122,7 @@ public partial class MainViewModel
         set { if (SetProperty(ref _showLogWarning, value)) RefreshLogFilter(); }
     }
 
-    /// <summary>Show Error + Failed entries.</summary>
+    /// <summary>Show Error + ImageFailed entries.</summary>
     public bool ShowLogError
     {
         get => _showLogError;
@@ -285,7 +285,7 @@ public partial class MainViewModel
 
     /// <summary>
     /// Priority-based pruning: removes the oldest entries of the lowest-priority
-    /// warning levels first, preserving Error/Failed messages as long as possible.
+    /// warning levels first, preserving Error/ImageFailed messages as long as possible.
     /// Rebuilds the collection in one pass to avoid O(n²) single-item removals.
     /// </summary>
     private void PruneLogMessages()
@@ -294,7 +294,7 @@ public partial class MainViewModel
         if (toRemove <= 0)
             return;
 
-        // Removal priority: None → Info → Completed → Warning → Failed → Error
+        // Removal priority: None → Info → Completed → Warning → ImageFailed → Error
         WarningLevel[] pruneOrder =
         [
             WarningLevel.None, WarningLevel.Info, WarningLevel.Completed,

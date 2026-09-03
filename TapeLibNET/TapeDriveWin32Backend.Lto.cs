@@ -106,6 +106,12 @@ public partial class TapeDriveWin32Backend
         m_ltoProduct = string.Empty;
         m_ltoRevision = string.Empty;
 
+        m_ltoCapacitySupported = null;
+        m_ltoCapacityUnit = 0L;
+
+        // Re-arm all one-shot write-run reports for the next open/session.
+        m_traceOnce.ResetAll();
+
         FreeAlignedScratch();
     }
 
@@ -1089,6 +1095,210 @@ public partial class TapeDriveWin32Backend
     /// </summary>
     internal bool IsBeyondProgrammableEarlyWarning()
         => GetEarlyWarningStatus(out bool bpew, out _) && bpew;
+
+    #endregion
+
+    #region *** Tape Capacity — LOG SENSE (page 0x31) ***
+
+    // =============================================================================
+    //  The drive's OWN remaining/maximum capacity, read straight from the device via
+    //  LOG SENSE(10) + Tape Capacity log page (0x31), bypassing the tape class driver's
+    //  (tape.sys) GetTapeParameters().Remaining. Real runs showed the driver figure both
+    //  UNDER-reporting capacity at BOM and — on LTO-3 — COLLAPSING to 0 the instant EW
+    //  fires. This native figure lets us cross-check (and potentially replace) it.
+    //
+    //  UNITS: resolved empirically. LTO-1+ is standardized in MEGABYTES (MiB) per SSC.
+    //  Pre-LTO drives are NOT: the Sony AIT SDX-560V reports in ~KiB (its raw maximum
+    //  scaled by 1 MiB over-reads by exactly 1024×, turning a 40 GB tape into 39.67 TB).
+    //  GetLtoCapacity therefore auto-detects the multiplier for pre-LTO drives (see
+    //  DetermineCapacityUnit) and uses the standardized MiB unit for LTO-1+.
+    // =============================================================================
+
+    private const byte c_scsiOpLogSense10 = 0x4D;
+    private const byte c_logPageTapeCapacity = 0x31;
+
+    // Tape Capacity page parameter codes (SSC): main partition remaining / maximum.
+    private const ushort c_tapeCapParamMainRemaining = 0x0001;
+    private const ushort c_tapeCapParamMainMaximum = 0x0003;
+
+    // Standardized page unit for LTO-1+ (SSC): megabytes. Pre-LTO drives are auto-scaled instead.
+    private const long c_tapeCapBytesPerUnitStd = 1024L * 1024;
+
+    // A pre-LTO cartridge holds well under 1 TiB — the ceiling used to auto-detect its raw unit.
+    private const long c_preLtoCapacityCeiling = 1024L * 1024 * 1024 * 1024; // 1 TiB
+
+    // Generous allocation for the page header + the four capacity parameters.
+    private const int c_logSenseAllocLen = 128;
+
+    // Raw-unit → byte multiplier for this drive's Tape Capacity page (0 = not yet established).
+    //  Established once per session from the STABLE maximum. Reset in LtoClose().
+    private long m_ltoCapacityUnit = 0L;
+
+    /// <summary>
+    /// Reads the drive's own remaining- and maximum-capacity figures for the MAIN (content) partition
+    /// via SCSI <c>LOG SENSE(10)</c> on the Tape Capacity log page (0x31), in the drive's RAW page units
+    /// (scaling to bytes is the caller's job — see <see cref="GetLtoCapacity"/>). This is the firmware
+    /// figure, NOT tape.sys's derived <c>Remaining</c> — useful to cross-check (and, if it proves more
+    /// honest, to substitute for) the driver figure near EW/EOM.
+    /// <para>
+    /// Returns <c>false</c> (gracefully) on drives that do not implement the page — the drive answers
+    /// CHECK CONDITION and <see cref="SendScsiCommand"/> reports failure.
+    /// </para>
+    /// </summary>
+    /// <returns>True if LOG SENSE 0x31 was answered (regardless of which parameters it carried).</returns>
+    /// <param name="remainingUnits">Main-partition remaining in RAW page units; -1 if the parameter was absent.</param>
+    /// <param name="maxCapacityUnits">Main-partition maximum in RAW page units; -1 if the parameter was absent.</param>
+    private bool GetScsiCapacityRaw(out long remainingUnits, out long maxCapacityUnits)
+    {
+        remainingUnits = -1;
+        maxCapacityUnits = -1;
+
+        if (!HasMedia)
+        {
+            SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
+            return false;
+        }
+
+        Span<byte> cdb = stackalloc byte[10];
+        cdb[0] = c_scsiOpLogSense10;
+        cdb[2] = (byte)(0x40 | c_logPageTapeCapacity); // PC=01b (current) | PAGE CODE 0x31
+        // bytes 3 (subpage) and 5-6 (parameter pointer) = 0
+        cdb[7] = (byte)((c_logSenseAllocLen >> 8) & 0xFF); // ALLOCATION LENGTH (BE)
+        cdb[8] = (byte)(c_logSenseAllocLen & 0xFF);
+        // byte 9 CONTROL = 0
+
+        Span<byte> data = stackalloc byte[c_logSenseAllocLen];
+        if (!SendScsiCommand(cdb, data, dataIn: true))
+        {
+            LogErrorAsTrace("Tape Capacity: LOG SENSE(10) page 0x31 failed (likely unsupported)");
+            return false;
+        }
+
+        // Log page header (SPC): byte 0 = page code, byte 1 = subpage, bytes 2-3 = PAGE LENGTH (BE),
+        //  counting the parameter bytes that follow. Then a run of log parameters, each:
+        //  bytes 0-1 = PARAMETER CODE (BE), byte 2 = control, byte 3 = PARAMETER LENGTH, bytes 4+ = value.
+        int pageLen = (data[2] << 8) | data[3];
+        int end = Math.Min(4 + pageLen, data.Length);
+
+        int p = 4;
+        while (p + 4 <= end)
+        {
+            ushort code = (ushort)((data[p] << 8) | data[p + 1]);
+            int paramLen = data[p + 3];
+            int valOff = p + 4;
+            if (valOff + paramLen > data.Length)
+                break;
+
+            long value = ReadBigEndian(data, valOff, paramLen); // unsigned ⇒ always >= 0
+
+            if (code == c_tapeCapParamMainRemaining)
+                remainingUnits = value;         // raw units — 0 = full tape, legitimately
+            else if (code == c_tapeCapParamMainMaximum)
+                maxCapacityUnits = value;
+
+            // Both parameters in hand — no need to walk the rest of the page.
+            if (remainingUnits >= 0 && maxCapacityUnits >= 0)
+                break;
+
+            p = valOff + paramLen;
+        }
+
+        // if (m_traceOnce.ThisLine().TryEnter())
+        m_logger.LogTrace("{Prefix}: Tape Capacity (LOG SENSE 0x31) — remaining {Rem} units, maximum {Max} units",
+            LogPrefix, remainingUnits, maxCapacityUnits);
+
+        ResetError();
+        return true; // the page answered; presence of each field is signalled by -1
+    }
+
+    /// <summary>
+    /// Determines the raw-unit → byte multiplier for this drive's Tape Capacity page.
+    /// <para>
+    /// LTO-1+ is standardized in MiB (SSC). Pre-LTO drives (LtoGeneration &lt; 1) are unit-inconsistent
+    /// — the Sony AIT reports in ~KiB — so we exploit a physical fact: a pre-LTO cartridge holds well
+    /// under 1 TiB. We pick the LARGEST ×1024^k multiplier that keeps the maximum below that ceiling,
+    /// which self-adapts to whatever base unit (bytes, KiB, …) the firmware happens to use.
+    /// </para>
+    /// </summary>
+    /// <param name="rawMaxUnits">The drive's raw maximum-capacity figure (page units).</param>
+    private long DetermineCapacityUnit(long rawMaxUnits)
+    {
+        // LTO-1+: SSC standardizes these parameters in megabytes.
+        if (LtoGeneration >= 1)
+            return c_tapeCapBytesPerUnitStd;
+
+        // Pre-LTO: choose the largest ×1024^k that keeps max capacity below 1 TiB.
+        //  Compare via division so the trial product can never overflow a long.
+        long unit = 1L;
+        foreach (long candidate in new[] { 1L, 1024L, 1024L * 1024, 1024L * 1024 * 1024 })
+            if (rawMaxUnits > 0L && candidate <= c_preLtoCapacityCeiling / rawMaxUnits)
+                unit = candidate;
+
+        return unit;
+    }
+
+    /// <summary>
+    /// Drive's own remaining/maximum capacity via LOG SENSE 0x31, IN BYTES, latching page support at
+    /// most once per session. -1 in either out-param means that field was absent from the page.
+    /// A "no media" condition is transient and does NOT latch the path off.
+    /// <para>
+    /// The raw page units are scaled to bytes via a multiplier established once per session from the
+    /// STABLE maximum (see <see cref="DetermineCapacityUnit"/>): standardized MiB for LTO-1+, auto-
+    /// detected for pre-LTO drives. The same multiplier applies to both fields.
+    /// </para>
+    /// </summary>
+    /// <returns>True if succeeded (regardless of which parameters it carried).</returns>
+    /// <param name="remainingBytes">Main-partition remaining in BYTES; -1 if the parameter was absent.</param>
+    /// <param name="maxCapacityBytes">Main-partition maximum in BYTES; -1 if the parameter was absent.</param>
+    internal bool GetLtoCapacity(out long remainingBytes, out long maxCapacityBytes)
+    {
+        remainingBytes = -1;
+        maxCapacityBytes = -1;
+
+        if (m_ltoCapacitySupported == false)
+            return false; // known unsupported — never touch the bus again this session
+
+        if (!HasMedia)
+        {
+            SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
+            return false; // transient — leave the latch unprobed
+        }
+
+        if (!GetScsiCapacityRaw(out long remRaw, out long maxRaw))
+        {
+            // Failed WITH media present → treat the page as unsupported and latch off.
+            m_ltoCapacitySupported = false;
+            m_logger.LogTrace("{Prefix}: Tape Capacity page 0x31 unsupported — method latched off", LogPrefix);
+            return false;
+        }
+
+        m_ltoCapacitySupported = true; // the page answers — usable elsewhere (e.g. calibration)
+
+        // Establish the raw-unit → byte multiplier ONCE, keyed off the stable maximum (remaining is
+        //  position-dependent and unfit as a scaling reference). Held for the mount; reset in LtoClose.
+        if (m_ltoCapacityUnit == 0L && maxRaw > 0L)
+        {
+            m_ltoCapacityUnit = DetermineCapacityUnit(maxRaw);
+            m_logger.LogTrace("{Prefix}: Tape Capacity unit = {Unit} bytes/unit (LTO generation {Gen})",
+                LogPrefix, m_ltoCapacityUnit, LtoGeneration);
+        }
+
+        long unit = m_ltoCapacityUnit != 0L ? m_ltoCapacityUnit : c_tapeCapBytesPerUnitStd;
+
+        // Apply the SAME multiplier to both fields; -1 (absent) passes through untouched.
+        remainingBytes = remRaw < 0L ? -1L : remRaw * unit;
+        maxCapacityBytes = maxRaw < 0L ? -1L : maxRaw * unit;
+        return true;
+    }
+
+    // Reads a big-endian unsigned integer of 1..8 bytes from a span slice.
+    private static long ReadBigEndian(ReadOnlySpan<byte> data, int offset, int length)
+    {
+        long v = 0;
+        for (int i = 0; i < length && offset + i < data.Length; i++)
+            v = (v << 8) | data[offset + i];
+        return v;
+    }
 
     #endregion
 

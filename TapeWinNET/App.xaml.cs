@@ -97,6 +97,16 @@ public partial class App : Application
             typeof(Window),
             FrameworkElement.LoadedEvent,
             new RoutedEventHandler(OnWindowLoaded));
+
+        // trace exception in PresentationCore.dll
+        AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
+        {
+            if (e.Exception is ArgumentException
+                && e.Exception.TargetSite?.Module.Name == "PresentationCore.dll")
+            {
+                System.Diagnostics.Debug.WriteLine($"[FCE] {e.Exception.Message}\n{e.Exception.StackTrace}");
+            }
+        };
     }
 
     protected override async void OnExit(ExitEventArgs e)

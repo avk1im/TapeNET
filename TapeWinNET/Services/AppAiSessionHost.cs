@@ -16,9 +16,17 @@ public sealed class AppAiSessionHost : IAsyncDisposable
     private bool _disposed;
     private bool _userDeclinedSetup;   // set when user chose "no AI for now"
 
+    // Persists cloud API keys in the Windows Credential Manager so the user is
+    //  not re-prompted on every launch. Falls back to in-memory off-Windows.
+    private readonly IAiSecretStore _secretStore = AiSecretStore.CreateDefault();
+
     // UI-context objects injected by MainWindow after construction
     // (set before any EnsureAsync call that prompts the user).
     private AiInteractionWpf? _interaction;
+
+    // Authoritative provider list (enabled state, order, endpoints, pinned models).
+    // Created in SetInteraction and shared with the interaction layer.
+    private IAiProviderRegistry? _providerRegistry;
 
     // ── Public API ─────────────────────────────────────────────────────────
 
@@ -44,11 +52,31 @@ public sealed class AppAiSessionHost : IAsyncDisposable
     {
         _interaction = interaction;
 
-        // Give the interaction layer access to the catalog and LAN registry so it
-        //  can re-probe after the user adds an OpenAI-compatible LAN host.
-        var catalog  = AiProviderCatalog.CreateDefault();
-        var registry = new LanHostsRegistry();
-        interaction.SetDiscoveryContext(catalog, registry);
+        // Give the interaction layer access to the catalog and registries so it
+        //  can manage providers and re-probe after the user edits the list.
+        var catalog          = AiProviderCatalog.CreateDefault();
+        var lanRegistry      = new LanHostsRegistry();
+        var providerRegistry = new AiProviderRegistry(catalog, _secretStore);
+        _providerRegistry = providerRegistry;
+        interaction.SetDiscoveryContext(catalog, lanRegistry, providerRegistry);
+    }
+
+    /// <summary>
+    /// Opens the provider-management dialog directly (no picker in front of it),
+    /// then rebuilds the session so the edited list takes effect immediately.
+    /// Called from "Help → Manage AI Providers…".
+    /// </summary>
+    public async Task ManageProvidersAsync(CancellationToken ct = default)
+    {
+        if (_interaction is null || _providerRegistry is null)
+            return;
+
+        await _interaction.ManageProvidersAsync(_providerRegistry, ct);
+
+        // The list may have changed in ways that invalidate the live session
+        //  (its provider disabled, removed, or re-pointed), so rebuild. Adopt an
+        //  unambiguous result silently — the user just made their choice.
+        await ReconfigureAsync(autoUseIfSingle: true, ct);
     }
 
     /// <summary>
@@ -84,7 +112,7 @@ public sealed class AppAiSessionHost : IAsyncDisposable
 
             var logger = App.LoggerFactory.CreateLogger<AppAiSessionHost>();
 
-            _current = await AiSessionFactory.BuildAsync(autouseLast: !promptUser, catalog, interaction, prefs, ct, logger);
+            _current = await AiSessionFactory.BuildAsync(autouseLast: !promptUser, catalog, interaction, prefs, ct, logger, _secretStore);
 
             if (_current == null)
                 _userDeclinedSetup = true;
@@ -118,6 +146,9 @@ public sealed class AppAiSessionHost : IAsyncDisposable
     /// Called from "Help → AI Provider settings…".
     /// </summary>
     public async Task ReconfigureAsync(CancellationToken ct = default)
+        => await ReconfigureAsync(autoUseIfSingle: false, ct);
+
+    private async Task ReconfigureAsync(bool autoUseIfSingle, CancellationToken ct)
     {
         await _lock.WaitAsync(ct);
         try
@@ -139,7 +170,12 @@ public sealed class AppAiSessionHost : IAsyncDisposable
         //  (autoUseIfSingle: false) — the user explicitly asked to reconfigure.
         //  Suppress the EnsureAsync-internal raise so we fire SessionChanged
         //  exactly once below, regardless of outcome.
-        await EnsureAsync(promptUser: true, autoUseIfSingle: false, raiseChanged: false, ct);
+        // Re-build with a full UI prompt
+        //  provider list, autoUseIfSingle lets an unambiguous result be adopted
+        //  silently instead of stacking another dialog on top of the manager.
+        //  Suppress the EnsureAsync-internal raise so we fire SessionChanged
+        //  exactly once below, regardless of outcome.
+        await EnsureAsync(promptUser: true, autoUseIfSingle, raiseChanged: false, ct);
 
         // Always notify consumers — even if the user chose "None" — so they
         //  can update their state (e.g. rebuild the help session without AI).
@@ -157,6 +193,7 @@ public sealed class AppAiSessionHost : IAsyncDisposable
     /// Disposes the current session and resets all state without triggering
     /// re-discovery. Used by "Help → Reset AI Providers" to clear persisted
     /// settings and start fresh.
+    /// Also erases every stored API key, so no credential survives the reset.
     /// Raises <see cref="SessionChanged"/> so consumers (HelpPane, etc.) rebind.
     /// </summary>
     public async Task SignOutAsync(CancellationToken ct = default)
@@ -170,6 +207,18 @@ public sealed class AppAiSessionHost : IAsyncDisposable
                 _current = null;
             }
             _userDeclinedSetup = false;   // allow future EnsureAsync calls to prompt again
+
+            // Erase persisted credentials — a "sign out" that left keys behind
+            //  would be misleading. Only AiNET-owned entries are removed.
+            try
+            {
+                _secretStore.Clear();
+            }
+            catch (Exception ex)
+            {
+                App.LoggerFactory.CreateLogger<AppAiSessionHost>()
+                   .LogWarning(ex, "Could not clear stored AI credentials.");
+            }
         }
         finally
         {

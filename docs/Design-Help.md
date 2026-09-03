@@ -32,7 +32,7 @@ Phase 8 (Overlays) ✅ done: **Reveal** detailed design (§11) + implementation 
 
 | Project | Type | TFM | Depends on |
 |---|---|---|---|
-| `AiNET` | Class library | `net8.0` | `Microsoft.Extensions.AI 9.*`, `Microsoft.Extensions.AI.OpenAI 9.*`, `Microsoft.Extensions.Http 8.*`, `Microsoft.ML.OnnxRuntime 1.20.*`, `Microsoft.ML.Tokenizers 0.22.*` |
+| `AiNET` | Class library | `net8.0` | `Microsoft.Extensions.AI 9.*`, `Microsoft.Extensions.AI.OpenAI 9.*`, `Microsoft.Extensions.Http 8.*`, `Microsoft.ML.OnnxRuntime 1.20.*`, `Microsoft.ML.Tokenizers 0.22.*`, `Azure.AI.OpenAI 2.1.0`, `Anthropic.SDK 5.10.0`, `Microsoft.Windows.CsWin32 0.3.269` (private — Credential Manager interop) |
 | `AiNET.Tests` | xUnit | `net8.0` | `AiNET`, fake `HttpMessageHandler` |
 | `HelpNET` | Class library | `net8.0` | `AiNET`, `Markdig` (ONNX runtime comes transitively via `AiNET`) |
 | `HelpNET.Tests` | xUnit | `net8.0` | `HelpNET` (plus a small fixture content set) |
@@ -80,6 +80,10 @@ AiNET/
   IAiSession.cs
   AiSession.cs                      (impl)
   AiSessionFactory.cs               (static entry: BuildAsync)
+  IAiSecretStore.cs                 abstraction + AiSecretKey key derivation + AiSecretStore factory
+  CredentialManagerSecretStore.cs   Windows Credential Manager (CsWin32 P/Invoke)
+  NativeMethods.txt                 CsWin32 input: Cred* APIs, CREDENTIALW, CRED_TYPE, CRED_PERSIST
+  InMemorySecretStore.cs            process-lifetime fallback (non-Windows, tests)
   LanHostsRegistry.cs               JSON-backed persisted list of host:port
   Providers/
 	OllamaProvider.cs
@@ -88,10 +92,12 @@ AiNET/
 	OpenAiCompatibleProvider.cs     (generic — used for LAN gateways)
 	OpenAiProvider.cs
 	AzureOpenAiProvider.cs
+	AnthropicProvider.cs
 	GitHubModelsProvider.cs
   Internal/
 	HttpProbe.cs
 	JsonOptions.cs
+	OpenAiModelProbe.cs               shared real model-listing probe for cloud adapters
 ```
 
 ### 2.3 Public API (signatures)
@@ -193,11 +199,49 @@ public static class AiSessionFactory
 | `LmStudioProvider` | `http://localhost:1234` | OpenAI-compat `/v1/chat/completions` | OpenAI-compat `/v1/embeddings` | Models via `/v1/models` |
 | `OnnxProvider` | `file:///<path/to/model.onnx>` | — (no chat) | ✓ in-process | Embeddings-only; no HTTP. Model loaded via `Microsoft.ML.OnnxRuntime`; tokenized with `Microsoft.ML.Tokenizers` (`BertTokenizer`). Probe verifies the `.onnx` file exists and the `InferenceSession` can be created. `Options["ModelPath"]` overrides the URI path; `Options["VocabPath"]` overrides vocab discovery (default: `vocab.txt` alongside the model file). Supports 2-D `[batch, dim]` and 3-D `[batch, seq, dim]` output shapes — 3-D tensors are mean-pooled over the sequence dimension before L2 normalisation. `CreateChatClient` always returns `null`.|
 | `OpenAiCompatibleProvider` | user-supplied | OpenAI-compat | OpenAI-compat | Used for LAN gateways, vLLM, etc. |
-| `OpenAiProvider` | `https://api.openai.com` | yes | yes | API key required |
-| `AzureOpenAiProvider` | user-supplied | yes | yes | API key required; deployment name = model id |
+| `OpenAiProvider` | `https://api.openai.com` | yes | yes | API key required. Probe performs a real `GET /v1/models`, so an invalid key is rejected up front and the model picker reflects the account's actual entitlements. Honours a custom endpoint (proxy/gateway). |
+| `AzureOpenAiProvider` | user-supplied | yes | yes | API key required; **deployment name = model id**. Uses `AzureOpenAIClient` (`Azure.AI.OpenAI`), which applies the `api-key` header, the `api-version` query parameter, and `/openai/deployments/{name}/…` routing. Probe lists the resource's deployments. Override the API version via `Options["azure.apiVersion"]`. |
+| `AnthropicProvider` | `https://api.anthropic.com` | yes | **no** | API key required. Auth via `x-api-key` + `anthropic-version` headers. Anthropic exposes **no embeddings API**, so `Capabilities` is `Chat \| Tools` and `CreateEmbeddingGenerator` always returns `null` — RAG falls back to the in-process ONNX embedder. |
 | `GitHubModelsProvider` | `https://models.inference.ai.azure.com` | yes | yes | Uses `GITHUB_TOKEN` |
 
 LAN endpoints are added by the user through the Settings dialog and persisted in `LanHostsRegistry` (`%LocalAppData%\AiNET\lan-hosts.json`). They are probed via whichever protocol the user selected (Ollama / LM Studio / OpenAI-compatible).
+
+### 2.4a Cloud credentials — `IAiSecretStore`
+
+Cloud providers need an API key on every launch, so AiNET persists them outside its JSON settings:
+
+| Type | Role |
+|---|---|
+| `IAiSecretStore` | Abstraction: `Load` / `Save` / `Delete` / `Clear`. |
+| `AiSecretKey.For(kind, endpoint)` | Derives the stable, non-secret storage key, e.g. `AiNET:AzureOpenAi@https://contoso.openai.azure.com/`. Keying on **provider + endpoint** keeps two accounts of the same kind from colliding. |
+| `CredentialManagerSecretStore` | Windows Credential Manager (generic credentials) via `CredRead`/`CredWrite`/`CredDelete`/`CredEnumerate`. The OS encrypts the blob at rest and scopes it to the current user, so **no key material is ever written into `Settings.json`**. `Clear()` enumerates with an `AiNET:*` filter, so other applications' credentials are never touched. |
+| `InMemorySecretStore` | Process-lifetime fallback used off-Windows and in tests. |
+| `AiSecretStore.CreateDefault()` | Returns the Credential Manager store on Windows, otherwise the in-memory one — keeping `AiNET` a plain `net8.0` library for a future cross-platform TapeConNET. |
+
+#### Win32 interop — CsWin32
+
+The credential store uses **CsWin32**-generated P/Invoke, matching the convention already established in `TapeLibNET` (see `TapeDriveWin32Backend.cs`) rather than hand-written `DllImport` declarations:
+
+- `AiNET/NativeMethods.txt` lists the required APIs and types (`CredReadW`, `CredWriteW`, `CredDeleteW`, `CredEnumerateW`, `CredFree`, `CREDENTIALW`, `CRED_TYPE`, `CRED_PERSIST`); the generator emits them into `Windows.Win32.PInvoke` / `Windows.Win32.Security.Credentials`.
+- `AiNET.csproj` gains `Microsoft.Windows.CsWin32` (`PrivateAssets=all`, so nothing leaks to consumers) plus `<AllowUnsafeBlocks>` — the generated signatures are pointer-based (`CREDENTIALW*`, `PCWSTR`).
+- The store therefore pins strings/blobs with `fixed` and frees native buffers through `PInvoke.CredFree`, avoiding the manual `Marshal.AllocHGlobal`/`PtrToStructure` round-trips of the previous implementation. This also removes the SYSLIB1054 analyzer messages.
+
+#### Platform annotations
+
+CsWin32 annotates the `Cred*` APIs as `windows5.1.2600` (Windows XP and later). To keep the solution warning-clean under CA1416:
+
+- `CredentialManagerSecretStore` carries `[SupportedOSPlatform("windows5.1.2600")]` — matching the APIs it calls exactly, rather than the broader `"windows"`.
+- The platform decision itself lives in the separate, unannotated `AiSecretStore.CreateDefault()`, which guards with `OperatingSystem.IsWindowsVersionAtLeast(5, 1, 2600)` before touching the Windows-only type. Platform-neutral callers (`AiSessionFactory`, `AppAiSessionHost`) reference only this factory.
+- The Windows-only tests in `SecretStoreTests` mirror the same annotation and guard, and remain `SkippableFact`s so the suite still runs off-Windows.
+
+Lifecycle inside `AiSessionFactory.BuildAsync`:
+
+- **Load** a stored key *before* probing the last-used provider (previously the fast path hardcoded `ApiKey: null`, so it always failed for cloud providers).
+- **Save** the key after a probe confirms it works. A failed save is logged but never blocks the session.
+- **Delete** the key when the provider rejects it, then re-prompt.
+- `AppAiSessionHost.SignOutAsync` calls `Clear()`, so "Reset AI Providers" genuinely erases stored credentials.
+
+The retry loop re-prompts **only** when `AiProviderProbeResult.IsAuthFailure` is set (HTTP 401/403). A network or endpoint failure bails out instead of looping on a key prompt that cannot help.
 
 ### 2.5 `AiSessionFactory.BuildAsync` flow
 
@@ -205,8 +249,9 @@ LAN endpoints are added by the user through the Settings dialog and persisted in
 1. interaction.ShowStatusAsync("Discovering AI providers…")
 2. discovery.DiscoverAsync(opts)
 	 - probe localhost (Ollama 11434, LM Studio 1234)
-	 - probe each LAN endpoint from LanHostsRegistry
-	 - check env vars: GITHUB_TOKEN / OPENAI_API_KEY / AZURE_OPENAI_API_KEY
+	 - probe each user entry from the provider registry (§ 2.8)
+	 - check env vars: OPENAI_API_KEY / AZURE_OPENAI_API_KEY / ANTHROPIC_API_KEY
+	 - skip every provider whose registry entry is disabled; order results by registry priority
 3. if probes contain exactly one healthy + preferences.AutoUseIfSingle → use it (no prompt)
    else interaction.ChooseProviderAsync(probes) → user picks
 4. if RequiresApiKey && ApiKey is null → interaction.PromptApiKeyAsync
@@ -234,6 +279,8 @@ Returning `null` from `ChooseProviderAsync` is legitimate: it means "no AI for n
 | `OnnxProviderTests` | ✅ | Fake unit tests: descriptor metadata, probe healthy/unhealthy (file present/absent), missing vocab, explicit vocab override, `CreateChatClient` always null, `CreateEmbeddingGenerator` null on invalid file, `FileUriToPath` round-trip. |
 | `OnnxIntegrationTests` | ✅ | Real ONNX tests (auto-skipped unless `ONNX_MODEL_PATH` env var set); probe health, generator creation, non-zero vectors, distinct embeddings, semantic similarity ordering, empty input. |
 | `OpenAiCompatibleIntegrationTests` | ✅ | Live LAN tests against an OpenAI-compatible server (OpenVINO Model Server etc.); settings via `AiNET.Tests/remote-test-settings.json` or `AINET_REMOTE_*` env vars; auto-skipped when not configured. |
+| `SecretStoreTests` | ✅ | `AiSecretKey` derivation (kind-only, kind+endpoint, distinct endpoints); `InMemorySecretStore` save/load/delete/clear and empty-secret-deletes semantics; `CredentialManagerSecretStore` round-trip, overwrite, unknown key and oversized-blob rejection — the latter four `SkippableFact`s guarded on Windows and keyed with a GUID suffix so a developer's real credentials are never touched. |
+| `CloudProviderTests` | ✅ | Descriptor metadata for OpenAI / Azure OpenAI / Anthropic (capabilities, key requirement, absent Azure default endpoint), registration in the default catalog, key-less probes returning `IsAuthFailure` without a network call, and Anthropic's null embedding generator. The theory rows are keyed by `AiProviderKind` + endpoint **string** (resolved through the catalog inside the test) so Test Explorer can serialize and enumerate them individually — avoiding xUnit1045. |
 | `LmStudioProviderTests` | *(planned)* | Fake handler for `/v1/models` + `/v1/chat/completions`. |
 | `EnvVarProviderTests` | *(planned)* | Env-var-driven discovery for GitHub Models / OpenAI / Azure. |
 | `DiscoveryTests` | *(planned)* | End-to-end `DiscoverAsync` across a mixed catalog of fakes; latency & failure handling. |
@@ -244,6 +291,54 @@ Returning `null` from `ChooseProviderAsync` is legitimate: it means "no AI for n
 **Infrastructure additions (Phase 1):**
 - `AiNET.Tests/remote-test-settings.json` (gitignored) + `remote-test-settings.template.json` — mirrors the TapeLibNET remote-settings pattern for LAN integration tests.
 - `Helpers/OpenAiRemoteTestSettings.cs` — reads endpoint/model from JSON or `AINET_REMOTE_*` env vars, strips `//` line comments before parsing.
+
+### 2.8 Provider management — the registry model
+
+Early builds treated user-supplied providers as a bare list of LAN URIs (`LanHostsRegistry` → `lan-hosts.json`). That worked for “add one host” but could not express *disabled*, *reordered*, or *pinned* providers, and it had no way to remove a stale entry — which is how a first live test ended up with a dozen unreachable `10.0.0.*` rows in the picker.
+
+Provider state is now owned by a first-class registry.
+
+**`AiProviderEntry`** — the persisted unit of provider state:
+
+| Member | Meaning |
+|---|---|
+| `Kind` | Which adapter serves this entry (`Ollama`, `OpenAiCompatible`, `OpenAi`, `AzureOpenAi`, `Anthropic`, `Onnx`…). |
+| `Endpoint` | Explicit endpoint, or `null` to fall back to the descriptor default. |
+| `DisplayName` | User-chosen label; falls back to the descriptor display name. |
+| `IsBuiltIn` | Seeded from the catalog — may be **disabled** but never **removed**. |
+| `IsEnabled` | Discovery skips disabled entries entirely (no probe, no network cost). |
+| `SortOrder` | User priority; discovery results are ordered by it. |
+| `PinnedChatModelId` | Optional model pin, so a known-good model survives re-probing. |
+
+`Identity` compares *kind + endpoint origin* (scheme/host/port), which is what prevents duplicate rows when a probe returns a versioned endpoint (`…/v3`) for a host stored as a bare URI.
+
+**`IAiProviderRegistry` / `AiProviderRegistry`** — the façade and its implementation:
+
+- Persists to `%LocalAppData%\AiNET\providers.json`; every mutation writes through immediately under a lock, so the store is always consistent with what the user sees.
+- **Seeds** built-in entries from `IAiProviderCatalog` on first load, and **migrates** any legacy `lan-hosts.json` once (recorded via a persisted `Migrated` flag). `LanHostsRegistry` survives purely as that migration source.
+- Operations: `Add`, `Remove` (bulk-capable), `SetEnabled`, `SetEndpoint`, `SetPinnedChatModel`, `Reorder`, `ProbeAsync`, `ClearCredential`, `HasCredential`, `ResetToDefaults`.
+- `DescriptorFor` tolerates entries whose kind is no longer in the catalog — a retired provider stays *visible and removable* instead of vanishing or throwing. (The GitHub Models retirement is exactly this case; see the generic HTTP 410 handling in `OpenAiModelProbe`.)
+- Credential operations delegate to `IAiSecretStore` keyed by `AiSecretKey`, so removing a provider can also drop its stored key.
+
+**Discovery integration.** `AiProviderDiscoveryOptions` gained an optional `Registry`. When supplied it is authoritative: `AiProviderDiscovery` filters disabled kinds, probes registry user entries instead of the bare `LanEndpoints` list (which remains a fallback for headless callers), and sorts the final probe list by registry priority.
+
+**Host contract.** Rather than growing `IAiInteraction` with a dozen UI-shaped methods, the interface gained a *single* defaulted callback:
+
+```csharp
+Task ManageProvidersAsync(IAiProviderRegistry registry, CancellationToken ct) => Task.CompletedTask;
+```
+
+The library hands the host a rich façade and lets it decide how much UI to build; console and headless hosts simply inherit the no-op. This mirrors the `ITapeFileNotifiable` philosophy used elsewhere in the solution — minimal surface, maximal host freedom.
+
+**WPF realisation.** `ProviderManagerWindow` (root of `TapeWinNET`, matching the existing dialog convention) presents a multi-select `ListView` — enabled checkbox, name, endpoint, type, status — with Add / Edit / Remove / Move Up / Move Down / Test / Clear Key commands plus Reset-to-defaults. An `EntryRow` wrapper (`INotifyPropertyChanged`) carries live probe status; every action writes through the registry and then reloads the snapshot, so the dialog never holds divergent state.
+
+`AiInteractionWpf` still offers a “⚙ Manage providers…” sentinel inside the first-run picker, so a user who discovers *nothing* can fix the list without leaving the flow; choosing it opens the dialog, re-runs discovery (`RediscoverAsync`) against the updated registry and re-shows the picker.
+
+The **primary** entry point, however, is the menu item **Help → Manage AI Providers…** (header augmented with the live provider, e.g. *“Manage AI Providers (current: Ollama / phi3.mini)…”*). It binds to `AppAiSessionHost.ManageProvidersAsync`, which opens `ProviderManagerWindow` **directly** — no picker in front of it — and then rebuilds the session via `ReconfigureAsync(autoUseIfSingle: true)`. The auto-adopt flag matters: after the user has just curated the list, stacking a second selection dialog on top of the manager would be redundant, so an unambiguous result is taken silently. `ReconfigureAsync()` without arguments still forces the picker for the genuine “let me re-choose” case.
+
+The former ad-hoc *add-LAN-host* prompt, its probe-merging helper, and the unreachable-host confirmation were all removed — the registry plus the dialog subsume them.
+
+`AppAiSessionHost` constructs the `AiProviderRegistry` (catalog + secret store) at wire-up time and passes it, alongside the legacy LAN registry, into `AiInteractionWpf.SetDiscoveryContext`.
 
 ---
 
@@ -1061,7 +1156,7 @@ Each phase lists deliverables and the tests we add for it.
 - ✅ Enums + records: `AiProviderKind`, `AiProviderLocation`, `AiCapabilities`, `AiProviderDescriptor`, `AiProviderConfig`, `AiProviderProbeResult`, `AiProviderPreferences`, `AiProviderDiscoveryOptions`.
 - ✅ Interfaces: `IAiProvider`, `IAiProviderCatalog`, `IAiProviderDiscovery`, `IAiInteraction`, `IAiSession`.
 - ✅ `AiSession` impl + `AiSessionFactory.BuildAsync` (with convenience overload that builds the default catalog).
-- ✅ Adapters: `OllamaProvider` (fully functional), `OnnxProvider` (fully functional — embeddings only), `OpenAiCompatibleProvider` (fully functional), `LmStudioProvider`, `OpenAiProvider`, `AzureOpenAiProvider`, `GitHubModelsProvider` (structural stubs, wired into catalog).
+- ✅ Adapters: `OllamaProvider` (fully functional), `OnnxProvider` (fully functional — embeddings only), `OpenAiCompatibleProvider` (fully functional), `OpenAiProvider`, `AzureOpenAiProvider`, `AnthropicProvider` (all three fully functional — real model-listing probes and credential persistence), `LmStudioProvider`, `GitHubModelsProvider` (structural stubs, wired into catalog).
 - ✅ `LanHostsRegistry`.
 - ✅ `OnnxEmbeddingGenerator` — in-process embedding computation: `BertTokenizer`, ONNX `InferenceSession`, shape-adaptive output (2-D / 3-D), mean-pool, L2-normalise. Lives in `AiNET/Providers/OnnxEmbeddingGenerator.cs`.
 - ✅ `AiProviderCatalog.CreateDefault()` — registers all built-in providers.

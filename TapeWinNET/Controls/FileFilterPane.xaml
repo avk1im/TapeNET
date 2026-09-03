@@ -4,6 +4,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:converters="clr-namespace:TapeWinNET.Converters"
+             xmlns:controls="clr-namespace:TapeWinNET.Controls"
              mc:Ignorable="d"
              x:Name="Root"
              d:DesignHeight="60" d:DesignWidth="600">
@@ -17,44 +18,48 @@
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Toggle Apply / Disable button -->
-            <Button Grid.Column="0"
-                    Command="{Binding ToggleFilterCommand, ElementName=Root}"
-                    Width="60" Margin="0,0,4,0">
-                <Button.Style>
-                    <Style TargetType="Button">
-                        <Setter Property="Content" Value="Apply"/>
-                        <Setter Property="ToolTip" Value="Apply filter"/>
-                        <Setter Property="IsEnabled" Value="{Binding CanApplyFilter, ElementName=Root}"/>
+            <!-- Toggle Apply / Disable split button — primary action applies to this set;
+                 the dropdown offers "for this set" / "for all sets" scope. -->
+            <!-- Toggle Apply / Disable split button — primary action applies to this set;
+                 the dropdown offers "for this set" / "for all sets" scope.
+                 DataContext is explicitly set to Root: the dropdown's ContextMenu is a
+                 detached popup whose DataContext gets rebased to PlacementTarget.DataContext
+                 (see SplitButton.xaml), so ElementName bindings from inside the menu items
+                 would fail to resolve — plain {Binding} on Root's DataContext works instead. -->
+            <controls:SplitButton Grid.Column="0"
+                                   Width="86" Margin="0,0,4,0"
+                                   DataContext="{Binding ElementName=Root}"
+                                   DropDownToolTip="Select filter scope">
+                <controls:SplitButton.Style>
+                    <Style TargetType="controls:SplitButton">
+                        <Setter Property="ButtonContent" Value="Apply"/>
+                        <Setter Property="ButtonToolTip" Value="Apply filter"/>
+                        <Setter Property="Command" Value="{Binding ToggleFilterCommand}"/>
+                        <Setter Property="IsEnabled" Value="{Binding CanApplyFilter}"/>
                         <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsFilterActive, ElementName=Root}" Value="True">
-                                <Setter Property="Content" Value="Disable"/>
-                                <Setter Property="ToolTip" Value="Disable the active filter (keeps definition)"/>
+                            <DataTrigger Binding="{Binding IsFilterActive}" Value="True">
+                                <Setter Property="ButtonContent" Value="Disable"/>
+                                <Setter Property="ButtonToolTip" Value="Disable the active filter (keeps definition)"/>
                                 <Setter Property="IsEnabled" Value="True"/>
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>
-                </Button.Style>
-            </Button>
-
-            <!-- "All sets" checkbox — visible only when multiple sets exist -->
-            <CheckBox Grid.Column="1"
-                      Content="all sets"
-                      IsChecked="{Binding ApplyToAll, ElementName=Root}"
-                      VerticalAlignment="Center"
-                      Margin="0,0,6,0"
-                      ToolTip="Apply or disable the filter for all backup sets on this tape"
-                      Visibility="{Binding HasMultipleSets, ElementName=Root,
-                                   Converter={StaticResource BoolToVis}}"/>
+                </controls:SplitButton.Style>
+                <MenuItem Header="for this set"
+                          Command="{Binding ToggleFilterCommand}"/>
+                <MenuItem Header="for all sets"
+                          Command="{Binding ToggleFilterAllSetsCommand}"
+                          Visibility="{Binding HasMultipleSets,
+                                       Converter={StaticResource BoolToVis}}"/>
+            </controls:SplitButton>
 
             <!-- Pattern text / advanced summary -->
-            <TextBox Grid.Column="2"
+            <TextBox Grid.Column="1"
                      Text="{Binding FilterText, ElementName=Root, UpdateSourceTrigger=PropertyChanged}"
                      IsReadOnly="{Binding HasAdvancedFilter, ElementName=Root}"
                      VerticalContentAlignment="Center"
@@ -77,7 +82,7 @@
             </TextBox>
 
             <!-- Filter status text -->
-            <TextBlock Grid.Column="3" VerticalAlignment="Center" Margin="4,0,8,0">
+            <TextBlock Grid.Column="2" VerticalAlignment="Center" Margin="4,0,8,0">
                 <TextBlock.Style>
                     <Style TargetType="TextBlock">
                         <Setter Property="Text">
@@ -102,7 +107,7 @@
             </TextBlock>
 
             <!-- Advanced filter button -->
-            <Button Grid.Column="4"
+            <Button Grid.Column="3"
                     Command="{Binding AdvancedFilterCommand, ElementName=Root}"
                     Padding="6,0" Margin="0,0,0,0">
                 <Button.Style>

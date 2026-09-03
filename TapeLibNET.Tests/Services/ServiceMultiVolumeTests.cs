@@ -73,8 +73,10 @@ public class ServiceMultiVolumeTests : ServiceTestBase
     ///  With file-header overhead this slightly exceeds a 6 MiB usable window, so
     ///  vol-1 is sized at 40 MiB (usable = 40 − 32 MiB TOC reserve = 8 MiB):
     ///  8 MiB &gt; ~6.1 MiB (full backup, block-padded) ✓  and  8 MiB &lt; ~11.2 MiB (incremental) ✓.
+    ///  <para>Added 1 MiB so that at least one file from the follow-up set fits, therefore splitting
+    ///  the set across vol-1 and vol-2 -- as we check volume continuation in the test.</para>
     /// </summary>
-    private const long MvIncVol1Capacity_Setmarks = 40L * 1024 * 1024;
+    private const long MvIncVol1Capacity_Setmarks = 41L * 1024 * 1024;
 
     /// <summary>
     /// Vol-1 capacity for initiator-partition drives in A-6.
@@ -261,8 +263,8 @@ public class ServiceMultiVolumeTests : ServiceTestBase
     /// <b>Volume sizing:</b> vol-1 capacity is chosen so the full backup (~5.5 MiB,
     ///  16 × 350 KiB) fits with headroom to spare, while the incremental backup
     ///  (~11.2 MiB, 16 × 700 KiB) exceeds that headroom and spills onto vol-2.
-    ///  Profile-specific values: 24 MiB setmarks (16 MiB TOC reserve → 8 MiB
-    ///  usable) / 8 MiB initiator.
+    ///  Profile-specific values: for setmarks s. explanation for <see cref="MvIncVol1Capacity_Setmarks"/>
+    ///  / 8 MiB initiator.
     /// </para>
     /// <para>
     /// Three assertions are made after setup:

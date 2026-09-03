@@ -164,7 +164,7 @@ public record IoRateOption(long BytesPerSecond, long LocateBytesPerSecond, long 
 /// <list type="bullet">
 ///   <item><see cref="None"/> — no profile specified -> do not emulate EW functionality.</item>
 ///   <item><see cref="Custom"/> — the user supplies the EW-zone and capacity-overreport values directly.</item>
-///   <item><see cref="Lto4"/> — the built-in LTO-4-like preset.</item>
+///   <item><see cref="Overreport"/> — the built-in emulated overreport preset.</item>
 ///   <item>Calibration-backed — derived from a stored <see cref="ITapeCalibration"/> profile.</item>
 /// </list>
 /// The <see cref="Custom"/> option leaves the two value inputs editable; all others are opaque and blank the
@@ -182,19 +182,29 @@ public sealed record EwProfileOption(string Display, bool EnableEw, ITapeCalibra
     /// <summary>The editable "[Custom]" option — values come from the UI, not from this option.</summary>
     public static EwProfileOption Custom { get; } = new("[Custom]", EnableEw: true, IsCustom: true);
 
-    /// <summary>The built-in LTO-4-like preset.</summary>
-    public static EwProfileOption Lto4 { get; } = new("[LTO-4]", EnableEw: true);
+    /// <summary>The built-in emulated overreport preset.</summary>
+    public static EwProfileOption Overreport { get; } = new("[Overreport]", EnableEw: true);
 
     /// <summary>True when this option carries a stored calibration profile.</summary>
     public bool IsCalibration => Calibration is not null;
 
     /// <summary>
     /// Builds the emulation profile for a target <paramref name="capacityBytes"/>. For <see cref="Custom"/>
-    /// the caller passes explicit <paramref name="ewZoneBytes"/> / <paramref name="overreportBytes"/>; for the
-    /// LTO-4 preset those are derived as percentages; for calibration options they are taken from the profile.
+    /// the caller passes the explicit knobs; for the LTO-4 preset those are derived as percentages; for
+    /// calibration options they are taken from the profile.
+    /// <para>
+    /// The two over-report knobs are INDEPENDENT and neither reduces the medium's true writable capacity:
+    /// <list type="bullet">
+    ///   <item><paramref name="phantomFreeAtEomBytes"/> — phantom free space the driver still claims at hard
+    ///   EOM. This is the faithful LTO shape.</item>
+    ///   <item><paramref name="reportedCapacityBoostBytes"/> — capacity inflated at BOM, i.e. an overshoot
+    ///   present from the very first byte. Real LTO drives do not do this, hence the default of 0.</item>
+    /// </list>
+    /// </para>
     /// Returns <see langword="null"/> when no meaningful emulation is configured (e.g. Custom with zero zone).
     /// </summary>
-    public VirtualTapeEwProfile? BuildProfile(long capacityBytes, long ewZoneBytes, long overreportBytes)
+    public VirtualTapeEwProfile? BuildProfile(long capacityBytes, long ewZoneBytes,
+        long phantomFreeAtEomBytes, long reportedCapacityBoostBytes = 0)
     {
         if (!EnableEw)
             return null;
@@ -207,16 +217,18 @@ public sealed record EwProfileOption(string Display, bool EnableEw, ITapeCalibra
 
         if (IsCustom)
         {
-            if (ewZoneBytes <= 0 && overreportBytes <= 0)
+            if (ewZoneBytes <= 0 && phantomFreeAtEomBytes <= 0 && reportedCapacityBoostBytes <= 0)
                 return null;
 
-            double ewZonePercent = 100.0 * ewZoneBytes / capacityBytes;
-            double floorPercent  = 100.0 * overreportBytes / capacityBytes;
-            return VirtualTapeEwProfile.Lto4Like(capacityBytes, ewZonePercent, floorPercent);
+            return VirtualTapeEwProfile.EmulatedOverreport(
+                capacityBytes,
+                ewZonePercent: 100.0 * ewZoneBytes / capacityBytes,
+                phantomFreePercent: 100.0 * phantomFreeAtEomBytes / capacityBytes,
+                reportedBoostPercent: 100.0 * reportedCapacityBoostBytes / capacityBytes);
         }
 
-        // Built-in LTO-4 preset (default 4% EW zone, 4% floor).
-        return VirtualTapeEwProfile.Lto4Like(capacityBytes);
+        // Built-in LTO-4 preset (4% EW zone, 4% phantom free at EOM, no BOM boost).
+        return VirtualTapeEwProfile.EmulatedOverreport(capacityBytes);
     }
 }
 

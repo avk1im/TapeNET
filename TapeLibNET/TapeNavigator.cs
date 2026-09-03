@@ -32,12 +32,35 @@ namespace TapeLibNET
         #region *** Properties ***
 
         /// <summary>Default TOC capacity used when no override is specified.</summary>
+        /// <summary>Default TOC capacity used when no override is specified.</summary>
+        /// <remarks>
+        /// Scales with the media's physical <see cref="TapeDrive.Capacity"/> when known — TOC size
+        /// tracks file count, which tracks capacity — clamped to a floor/ceiling. Falls back to
+        /// generation buckets when capacity is not yet available (e.g. before media is loaded, as in
+        /// <c>SetOptimalDriveParams</c> during drive open).
+        /// </remarks>
         public static long DefaultTOCCapacity(TapeDrive? drive)
-            => drive?.IsLto5PlusDrive == true
-                ? 1024 * 1024 * 1024 // 1 GB for LTO-5+
-                : drive?.IsLtoDrive == true
-                    ? 512 * 1024 * 1024 // 512 MB for LTO-1..4
-                    : 32 * 1024 * 1024; // 32 MB for non-LTO drives (default if no drive specified)
+        {
+            const long MB = 1024L * 1024;
+            const long GB = 1024L * MB;
+
+            const long Floor = 32 * MB;   // smallest useful TOC reserve
+            const long Ceiling = 1 * GB;  // enough for a huge TOC; caps waste on LTO-5+
+            const long Divisor = 400;     // ~0.25% of physical capacity
+
+            long capacity = drive?.Capacity ?? 0L;
+            if (capacity > 0L)
+                return Math.Clamp(capacity / Divisor, Floor, Ceiling);
+
+            // Capacity unknown (media not loaded yet) → fall back to generation buckets.
+            return (drive?.LtoGeneration ?? -1) switch
+            {
+                >= 5 => 1 * GB,      // LTO-5+
+                >= 1 => 512 * MB,    // LTO-1..4
+                0 => 64 * MB,     // pre-LTO SCSI (AIT, DAT, …) — no longer 512 MB
+                _ => 32 * MB,     // unknown / no drive
+            };
+        }
 
         /// <summary>
         /// Maximum space reserved for the TOC area on this tape.
@@ -49,58 +72,6 @@ namespace TapeLibNET
             set => m_tocCapacityOverride = value;
         }
 
-        /// <summary>
-        /// Adjusts the remaining content capacity accounting for the drive reporting and TOC capacity.
-        /// <para>Do <b>not</b> deduct the TOC capacity; the method will do this.</para>
-        /// </summary>
-        /// <param name="remainingCapacity">
-        /// The remaining content capacity to adjust <b>without</b> deducted TOC capacity.
-        /// </param>
-        /// <returns>The adjusted remaining content capacity.</returns>
-        [Obsolete("Phase 3: superseded by TapeDrive.Remaining (calibrated estimate) plus early-warning " +
-            "enforcement via TapeDrive.SetEarlyWarning. Retained as a backstop for the legacy capacity checks.")]
-        public long AdjustRemainingContentCapacity(long remainingCapacity)
-        {
-            // Prefer the authoritative calibrated estimate; fall back to the raw driver figure.
-            var remainingFromDrive = Drive.Remaining;
-            // adjust down by 1% of drive capacity to account for drive reporting inaccuracies
-            remainingFromDrive -= Drive.Capacity / 100;
-
-            remainingCapacity = Math.Max(remainingCapacity, remainingFromDrive);
-
-            if (!Drive.HasInitiatorPartition)
-                remainingCapacity -= TOCCapacity;
-
-            remainingCapacity = Math.Max(remainingCapacity, 0); // don't return negative capacity
-            return remainingCapacity;
-        }
-
-        /// <summary>
-        /// Adjusts the remaining content capacity accounting for the drive reporting and TOC capacity.
-        /// <para>Do <b>not</b> deduct the TOC capacity; the method will do this.</para>
-        /// </summary>
-        /// <param name="drive">The tape drive to use for the adjustment.</param>
-        /// <param name="remainingCapacity">
-        /// The remaining content capacity to adjust <b>without</b> deducted TOC capacity.
-        /// </param>
-        /// <returns>The adjusted remaining content capacity.</returns>
-        [Obsolete("Phase 3: superseded by TapeDrive.Remaining (calibrated estimate) plus early-warning " +
-            "enforcement via TapeDrive.SetEarlyWarning. Retained as a backstop for the legacy capacity checks.")]
-        public static long AdjustRemainingContentCapacity(TapeDrive drive, long remainingCapacity)
-        {
-            var remainingFromDrive = drive.Remaining;
-            // adjust down by 1% of drive capacity to account for drive reporting inaccuracies
-            remainingFromDrive -= drive.Capacity / 100;
-            
-            remainingCapacity = Math.Max(remainingCapacity, remainingFromDrive);
-
-            if (!drive.HasInitiatorPartition)
-                remainingCapacity -= DefaultTOCCapacity(drive);
-
-            remainingCapacity = Math.Max(remainingCapacity, 0); // don't return negative capacity
-            return remainingCapacity;
-        }
-        
         private long? m_tocCapacityOverride = null;
 
         public virtual bool TOCInvalidated { get; protected set; } = false;
@@ -776,8 +747,8 @@ namespace TapeLibNET
 
         private void MoveToEndOfContentInternal()
         {
-            // QUIRK in Quantum SDLT: it seems necessary to rewind before going to the end of the data
-            if (!Drive.IsLtoDrive)
+            // QUIRK in DLT-V4: it seems necessary to rewind before going to the end of the data
+            if (!Drive.IsLtoDrive && Drive.LtoGeneration < 1)
                 Drive.Rewind();
 
             // First move to the end of the data in the partition. Notice the following will produce an error if TOC hasn't been written yet
@@ -911,7 +882,7 @@ namespace TapeLibNET
                     SeekForwardPastTOCMark();
 
                 /*
-                // The following doesn't work on Quantum SDLT
+                // The following doesn't work on DLT-V4
                 // First go to the end. Notice this will fail on an empty tape
                 FastforwardToEnd(partition: 1);
                 if (WentOK)
@@ -919,7 +890,7 @@ namespace TapeLibNET
                 if (WentOK)
                     SeekForwardPastTOCMark();
                 */
-        }
+            }
             else // we're somewhere in the content
             {
                 SeekForwardPastTOCMark();

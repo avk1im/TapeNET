@@ -50,7 +50,7 @@ public class CalibrationAndLogicalEwTests
     [Fact]
     public void CalibrationRun_ProducesUsableMonotonicCurve_WithEwLandmark()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // Faster run: fewer samples, small interval so a 64 MB cartridge still yields several points.
         var calibrator = new TapeCalibrator(drive)
@@ -58,8 +58,8 @@ public class CalibrationAndLogicalEwTests
             Options = new TapeCalibrationOptions
             {
                 SampleCount = 40,
-                MinSampleInterval = 1L * 1024 * 1024,
-                ChunkBytesTarget = 1L * 1024 * 1024,
+                //MinSampleInterval = 1L * 1024 * 1024,
+                //ChunkBytesTarget = 1L * 1024 * 1024,
             },
         };
 
@@ -90,7 +90,7 @@ public class CalibrationAndLogicalEwTests
     [Fact]
     public void CalibrationRun_RestoresPriorReserveAndCalibrations()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // Pre-existing reserve + a matching loaded calibration that the run must NOT taint or discard.
         var preloaded = TapeCalibration.Apriori(drive.DriveProfileKey, Capacity);
@@ -103,8 +103,8 @@ public class CalibrationAndLogicalEwTests
             Options = new TapeCalibrationOptions
             {
                 SampleCount = 20,
-                MinSampleInterval = 2L * 1024 * 1024,
-                ChunkBytesTarget = 1L * 1024 * 1024,
+                //MinSampleInterval = 2L * 1024 * 1024,
+                //ChunkBytesTarget = 1L * 1024 * 1024,
             },
         };
         Assert.NotNull(calibrator.Run());
@@ -114,6 +114,54 @@ public class CalibrationAndLogicalEwTests
         Assert.Contains(preloaded, drive.Calibrations);
     }
 
+    [Theory]
+    // phantomFreePercent, reportedBoostPercent — the two INDEPENDENT over-report axes.
+    [InlineData(10.0, 0.0)]   // faithful LTO shape: truthful at BOM, phantom free space at EOM
+    [InlineData(0.0, 10.0)]   // inflated capacity at BOM only: constant overshoot, honest at EOM
+    [InlineData(10.0, 5.0)]   // both axes at once
+    public void CalibrationRun_WithOverreport_CapturesBothBomAndEomAnchors(
+        double phantomFreePercent, double reportedBoostPercent)
+    {
+        var profile = VirtualTapeEwProfile.EmulatedOverreport(
+            Capacity, ewZonePercent: 4.0,
+            phantomFreePercent: phantomFreePercent,
+            reportedBoostPercent: reportedBoostPercent);
+        var (drive, _) = CreateDrive(profile);
+
+        var calibrator = new TapeCalibrator(drive)
+        {
+            Options = new TapeCalibrationOptions
+            {
+                SampleCount = 40,
+                //MinSampleInterval = 1L * 1024 * 1024,
+                //ChunkBytesTarget = 1L * 1024 * 1024,
+            },
+        };
+
+        ITapeCalibration? cal = calibrator.Run();
+        Assert.NotNull(cal);
+
+        // TrueRemaining still drives hard EOM at the cartridge's real capacity.
+        Assert.InRange(cal!.CapacityActual, (long)(Capacity * 0.98), Capacity);
+
+        // (a) BOM anchor — the driver's claim on the virgin cartridge, inflated by the boost only.
+        long expectedBom = Capacity + (long)(Capacity * reportedBoostPercent / 100.0);
+        Assert.InRange(cal.ReportedCapacityAtBom, (long)(expectedBom * 0.98), (long)(expectedBom * 1.02));
+
+        // (b) EOM anchor — the phantom free space still claimed at hard EOM, driven by the phantom knob only.
+        long expectedPhantom = (long)(Capacity * phantomFreePercent / 100.0);
+        Assert.InRange(cal.PhantomFreeAtEom,
+            (long)(expectedPhantom * 0.98), (long)(expectedPhantom * 1.02) + 1L);
+
+        // The two anchors are independent: neither knob may leak into the other's measurement.
+        if (reportedBoostPercent == 0.0)
+            Assert.InRange(cal.ReportedCapacityAtBom, (long)(Capacity * 0.98), (long)(Capacity * 1.02));
+        if (phantomFreePercent == 0.0)
+            Assert.InRange(cal.PhantomFreeAtEom, 0L, (long)(Capacity * 0.01));
+
+        Assert.Equal(0L, cal.Curve[0].ActualRemaining);
+    }
+
     #endregion
 
     #region *** Persistence ***
@@ -121,14 +169,14 @@ public class CalibrationAndLogicalEwTests
     [Fact]
     public void CalibrationJson_RoundTrips_AndRejectsUnknownFormat()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
         var calibrator = new TapeCalibrator(drive)
         {
             Options = new TapeCalibrationOptions
             {
                 SampleCount = 20,
-                MinSampleInterval = 2L * 1024 * 1024,
-                ChunkBytesTarget = 1L * 1024 * 1024,
+                //MinSampleInterval = 2L * 1024 * 1024,
+                //ChunkBytesTarget = 1L * 1024 * 1024,
             },
         };
         ITapeCalibration? cal = calibrator.Run();
@@ -142,7 +190,8 @@ public class CalibrationAndLogicalEwTests
         Assert.NotNull(loaded);
         Assert.Equal(cal.FormatId, loaded!.FormatId);
         Assert.Equal(cal.ProfileKey, loaded.ProfileKey);
-        Assert.Equal(cal.CapacityReported, loaded.CapacityReported);
+        Assert.Equal(cal.ReportedCapacityAtBom, loaded.ReportedCapacityAtBom);
+        Assert.Equal(cal.PhantomFreeAtEom, loaded.PhantomFreeAtEom);
         Assert.Equal(cal.CapacityActual, loaded.CapacityActual);
         Assert.Equal(cal.EwToEomDistance, loaded.EwToEomDistance);
         Assert.Equal(cal.Curve.Count, loaded.Curve.Count);
@@ -152,7 +201,7 @@ public class CalibrationAndLogicalEwTests
         // A blob with an unrecognized FormatId must be rejected.
         using var bad = new MemoryStream();
         using (var writer = new StreamWriter(bad, leaveOpen: true))
-            writer.Write("""{"FormatId":"unknown/9","ProfileKey":"x","CapacityReported":1,"CapacityActual":1,"Curve":[],"EarlyWarning":null}""");
+            writer.Write("""{"FormatId":"unknown/9","ProfileKey":"x","ReportedCapacityAtBom":1,"PhantomFreeAtEom":0,"CapacityActual":1,"Curve":[],"EarlyWarning":null}""");
         bad.Position = 0;
         Assert.Null(TapeCalibration.LoadFrom(bad));
     }
@@ -173,8 +222,8 @@ public class CalibrationAndLogicalEwTests
 
         // Conservative: the translated actual never exceeds the reported figure at any point.
         long reported = drive.Capacity;
-        Assert.True(apriori.TranslateRemaining(reported) <= reported);
-        Assert.True(apriori.TranslateRemaining(0) <= 0 + 1); // clamps at/near zero near EOM
+        Assert.True(apriori.TranslateReportedToActual(reported) <= reported);
+        Assert.True(apriori.TranslateReportedToActual(0) <= 0 + 1); // clamps at/near zero near EOM
     }
 
     #endregion
@@ -184,7 +233,7 @@ public class CalibrationAndLogicalEwTests
     [Fact]
     public void MultiProfile_SelectsMatchingKey_AndTracksLoadUnload()
     {
-        var (drive, backend) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, backend) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         string matchingKey = drive.DriveProfileKey;
         var matching = TapeCalibration.Apriori(matchingKey, Capacity);
@@ -224,7 +273,7 @@ public class CalibrationAndLogicalEwTests
         // Capacity must exceed the internal ReportedRemaining poll interval (64 MB) so the throttled
         //  before-EW curve poll fires at least once before the physical EW zone near the tail.
         const long largeCapacity = 256L * 1024 * 1024;
-        var profile = VirtualTapeEwProfile.Lto4Like(largeCapacity);
+        var profile = VirtualTapeEwProfile.EmulatedOverreport(largeCapacity);
         var (drive, _) = CreateDrive(profile, capacity: largeCapacity);
 
         // A LARGE reserve so the calibrated curve trips logical EW well before the physical EW zone.
@@ -263,10 +312,11 @@ public class CalibrationAndLogicalEwTests
         Assert.True(firedBeforePhysical, "Logical EW should trip from the curve before the physical EW zone");
     }
 
+    /*
     [Fact]
     public void LogicalEw_AfterPhysicalEw_FiresFromByteCountWithSmallReserve()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
 
         // A SMALL reserve so logical EW only trips in the precise after-physical-EW byte-count regime.
         long reserve = 256L * 1024;
@@ -284,17 +334,72 @@ public class CalibrationAndLogicalEwTests
         while (true)
         {
             int n = drive.WriteDirect(data, 0, block, out _, out bool ew, out bool eom);
-            if (eom || n == 0)
-                break;
 
-            // Track whether the physical EW was observed before logical EW fired.
-            physicalSeen |= drive.EstimateActualRemaining() < drive.GetRemainingCapacity();
+            // Check the EW flags BEFORE the loop-exit guard: a write clamped down to zero bytes to
+            //  preserve the reserve still reports ew, and would otherwise be swallowed by n == 0.
+            //  IsPhysicalEarlyWarningSeen is the drive's actual physical landmark -- unlike comparing
+            //  the estimate to the reported value, which with an a-priori calibration is ALWAYS true
+            //  (the curve models actual ˜ reported - margin) and so detects nothing.
+            physicalSeen |= drive.IsPhysicalEarlyWarningSeen;
 
             if (ew)
             {
                 sawPhysicalEwBeforeLogical = physicalSeen;
                 break;
             }
+
+            if (eom || n == 0)
+                break;
+        }
+
+        Assert.True(drive.IsEarlyWarning, "Logical EW should have fired near the tail");
+        Assert.True(sawPhysicalEwBeforeLogical,
+            "With a tiny reserve, logical EW should fire only after the physical EW landmark");
+    }
+    */
+
+    [Fact]
+    public void LogicalEw_AfterPhysicalEw_FiresFromByteCountWithSmallReserve()
+    {
+        // Measure a real calibration first, so the loaded curve accurately models the emulated drive
+        //  (a small, true over-report margin). The pessimistic A-PRIORI cannot be used here: on this tiny
+        //  64 MB cartridge its margin FLOOR (8 MB = 12.5%) dwarfs the 4% physical-EW zone (2.56 MB), so the
+        //  curve trips logical EW well before physical EW is ever seen — correct pessimism, but not the
+        //  after-EW byte-count regime under test.
+        var (calDrive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
+        ITapeCalibration? cal = new TapeCalibrator(calDrive)
+        {
+            Options = new TapeCalibrationOptions { SampleCount = 60 },
+        }.Run();
+        Assert.NotNull(cal);
+
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
+
+        // A SMALL reserve so logical EW only trips in the precise after-physical-EW byte-count regime.
+        long reserve = 256L * 1024;
+        Assert.True(drive.AddCalibration(cal!));
+        Assert.True(drive.SetEarlyWarning(reserve));
+
+        int block = (int)drive.MaximumBlockSize;
+        var data = IncompressibleBlock(block, seed: 12);
+
+        Assert.True(drive.MoveToPartition(MediaPartition.Content));
+        Assert.True(drive.Rewind());
+
+        bool sawPhysicalEwBeforeLogical = false;
+        bool physicalSeen = false;
+        while (true)
+        {
+            int n = drive.WriteDirect(data, 0, block, out _, out bool ew, out bool eom);
+            physicalSeen |= drive.IsPhysicalEarlyWarningSeen;
+
+            if (ew)
+            {
+                sawPhysicalEwBeforeLogical = physicalSeen;
+                break;
+            }
+            if (eom || n == 0)
+                break;
         }
 
         Assert.True(drive.IsEarlyWarning, "Logical EW should have fired near the tail");
@@ -310,20 +415,20 @@ public class CalibrationAndLogicalEwTests
     public void EstimateActualRemaining_TracksTrueRemaining_AcrossRegimes()
     {
         // Calibrate first so the drive has a measured curve to translate with.
-        var (calDrive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (calDrive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
         ITapeCalibration? cal = new TapeCalibrator(calDrive)
         {
             Options = new TapeCalibrationOptions
             {
                 SampleCount = 60,
-                MinSampleInterval = 512L * 1024,
-                ChunkBytesTarget = 1L * 1024 * 1024,
+                //MinSampleInterval = 512L * 1024,
+                //ChunkBytesTarget = 1L * 1024 * 1024,
             },
         }.Run();
         Assert.NotNull(cal);
 
         // Fresh cartridge, load the measured calibration, then write and compare estimate vs ground truth.
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
         Assert.True(drive.AddCalibration(cal!));
         Assert.True(drive.SetEarlyWarning(1L * 1024 * 1024));
 
@@ -364,7 +469,7 @@ public class CalibrationAndLogicalEwTests
     [Fact]
     public void EarlyWarningRuntime_ResetsOnMediaReload()
     {
-        var (drive, _) = CreateDrive(VirtualTapeEwProfile.Lto4Like(Capacity));
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
         Assert.True(drive.SetEarlyWarning(256L * 1024));
 
         int block = (int)drive.MaximumBlockSize;
@@ -389,4 +494,187 @@ public class CalibrationAndLogicalEwTests
     }
 
     #endregion
+
+    #region *** Re-evaluate Early Warning on Reposition ***
+
+    [Fact]
+    public void EarlyWarning_ClearsOnReposition_OutsideZone_OnlyWithNotification()
+    {
+        // Measured calibration so physical EW is actually reached (a-priori's 8 MB margin would pre-empt it).
+        var (calDrive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
+        ITapeCalibration? cal = new TapeCalibrator(calDrive) { Options = new() { SampleCount = 60 } }.Run();
+        Assert.NotNull(cal);
+
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
+        Assert.True(drive.AddCalibration(cal!));
+        Assert.True(drive.SetEarlyWarning(256L * 1024));
+
+        int block = (int)drive.MaximumBlockSize;
+        var data = IncompressibleBlock(block, seed: 41);
+        Assert.True(drive.MoveToPartition(MediaPartition.Content));
+        Assert.True(drive.Rewind());
+
+        while (!drive.IsEarlyWarning)
+        {
+            int n = drive.WriteDirect(data, 0, block, out _, out _, out bool eom);
+            if (eom || n == 0) break;
+        }
+        Assert.True(drive.IsEarlyWarning, "Precondition: EW should latch");
+        Assert.True(drive.IsPhysicalEarlyWarningSeen, "Precondition: physical EW should have fired");
+
+        // Rewind to BOT — before the zone. Sticky + physical anchor clear, and Remaining is now ~full.
+        Assert.True(drive.Rewind());
+        Assert.False(drive.IsEarlyWarning); // Reposition clears EW flag...
+        Assert.False(drive.IsPhysicalEarlyWarningSeen); // ...and physical EW
+
+        // But the drive still shows little remaining capacity
+        Assert.True(drive.EstimateActualRemaining() < block);
+        // ...hence we cannot write anything...
+        int written = drive.WriteDirect(data, 0, block, out _, out bool ew, out bool eom2);
+        Assert.Equal(0, written);
+        Assert.True(ew); // ...the drive still signals EW...
+        Assert.False(eom2); // ...even though there's no EOM of course
+
+        // Now advise the drive
+        drive.NotifyNextContentWritePosition(0L);
+        Assert.True(drive.IsEarlyWarning); // NotifyNextContentWritePosition doesn't reset the EW latch
+
+        // Now we can write a full block — no stale EW, no clamp-to-zero.
+        written = drive.WriteDirect(data, 0, block, out _, out ew, out eom2);
+        Assert.Equal(block, written);
+        Assert.False(ew);
+        Assert.False(eom2);
+        Assert.False(drive.IsEarlyWarning);
+    }
+
+    [Fact]
+    public void EarlyWarning_PersistsOnReposition_InsideZone()
+    {
+        var (calDrive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
+        ITapeCalibration? cal = new TapeCalibrator(calDrive) { Options = new() { SampleCount = 60 } }.Run();
+        Assert.NotNull(cal);
+
+        var (drive, _) = CreateDrive(VirtualTapeEwProfile.EmulatedOverreport(Capacity));
+        Assert.True(drive.AddCalibration(cal!));
+        Assert.True(drive.SetEarlyWarning(256L * 1024));
+
+        int block = (int)drive.MaximumBlockSize;
+        var data = IncompressibleBlock(block, seed: 42);
+        Assert.True(drive.MoveToPartition(MediaPartition.Content));
+        Assert.True(drive.Rewind());
+
+        while (!drive.IsEarlyWarning)
+        {
+            int n = drive.WriteDirect(data, 0, block, out _, out _, out bool eom);
+            if (eom || n == 0) break;
+        }
+        Assert.True(drive.IsEarlyWarning, "Precondition: EW should latch");
+        Assert.True(drive.IsPhysicalEarlyWarningSeen, "Precondition: physical EW should have fired");
+
+        // Reposition back a couple of blocks — still deep in the zone (a file-write retry).
+        long backTarget = Math.Max(drive.GetCurrentBlock() - 2, 0);
+        Assert.True(drive.MoveToBlock(backTarget));
+
+        // Derived sticky drops, but the physical anchor is KEPT (we are still past zone entry).
+        Assert.True(drive.IsPhysicalEarlyWarningSeen,
+            "A within-zone reposition must keep the physical EW anchor");
+
+        // Still in the tail ⇒ the next write re-fires logical EW immediately.
+        drive.WriteDirect(data, 0, block, out _, out bool ew, out _);
+        Assert.True(drive.IsEarlyWarning, "Within the zone, the next write must re-fire logical EW");
+        Assert.True(ew);
+    }
+
+    #endregion
+
+    #region *** Write-Position Notification (overwrite reposition) ***
+
+    // Fills the loaded cartridge to hard EOM (no reserve), then rewinds — leaving the drive reporting
+    //  ~0 remaining (EOD-based), the exact "full cartridge, repositioned to overwrite" state.
+    private static void FillToEomThenRewind(TapeDrive drive, int block, byte[] data)
+    {
+        Assert.True(drive.SetEarlyWarning(0));            // no reserve → fill freely to hard EOM
+        Assert.True(drive.MoveToPartition(MediaPartition.Content));
+        Assert.True(drive.Rewind());
+
+        while (true)
+        {
+            int n = drive.WriteDirect(data, 0, block, out _, out _, out bool eom);
+            if (n == 0 || eom) break;
+        }
+
+        Assert.True(drive.Rewind());                      // reposition to overwrite from BOM
+        Assert.True(drive.GetReportedContentRemaining() < block,
+            "After fill+rewind the drive should report ~0 remaining (EOD-based)");
+    }
+
+    [Fact]
+    public void Overwrite_WithoutNotification_ClampsWriteToZero()
+    {
+        var (drive, _) = CreateDrive(profile: null);      // honest drive, identity calibration
+        int block = (int)drive.MaximumBlockSize;
+        var data = IncompressibleBlock(block, seed: 51);
+
+        FillToEomThenRewind(drive, block, data);
+
+        // Arm a reserve but DON'T notify: the stale EOD-based Remaining (~0) makes the EW logic believe
+        //  no room is left, so the overwrite is clamped to zero — the bug the notification exists to fix.
+        Assert.True(drive.SetEarlyWarning(1L * 1024 * 1024));
+        int w = drive.WriteDirect(data, 0, block, out _, out bool ew, out _);
+
+        Assert.Equal(0, w);
+        Assert.True(ew);
+        Assert.True(drive.IsEarlyWarning);
+    }
+
+    [Fact]
+    public void Overwrite_WithNotification_AllowsWrite()
+    {
+        var (drive, _) = CreateDrive(profile: null);
+        int block = (int)drive.MaximumBlockSize;
+        var data = IncompressibleBlock(block, seed: 52);
+
+        FillToEomThenRewind(drive, block, data);
+
+        Assert.True(drive.SetEarlyWarning(1L * 1024 * 1024));
+        drive.NotifyNextContentWritePosition(0);          // overwriting from BOM ⇒ ~0 bytes precede the head
+
+        // The notification lets the EW logic use capacity − 0 (full) instead of the stale figure.
+        int w1 = drive.WriteDirect(data, 0, block, out _, out bool ew1, out _);
+        Assert.Equal(block, w1);
+        Assert.False(ew1);
+        Assert.False(drive.IsEarlyWarning);
+
+        // First write reset EOD (overwrite truncated the old data), so the drive figure is accurate again
+        //  and the notification is cleared — a second write proceeds on the real figure, not re-clamped.
+        int w2 = drive.WriteDirect(data, 0, block, out _, out bool ew2, out _);
+        Assert.Equal(block, w2);
+        Assert.False(ew2);
+    }
+
+    [Fact]
+    public void Notification_DoesNotAffectPublicEstimate()
+    {
+        var (drive, _) = CreateDrive(profile: null);
+        int block = (int)drive.MaximumBlockSize;
+        var data = IncompressibleBlock(block, seed: 53);
+
+        FillToEomThenRewind(drive, block, data);
+
+        long estBefore = drive.EstimateActualRemaining();
+        drive.NotifyNextContentWritePosition(0);
+        long estAfter = drive.EstimateActualRemaining();
+
+        // The notification is EW-DECISION-only: the public estimate (and thus service-level Writable)
+        //  must stay on the drive figure, unchanged by the notification.
+        Assert.Equal(estBefore, estAfter);
+
+        // Yet the EW-decision path DOES honor it — an overwrite proceeds.
+        Assert.True(drive.SetEarlyWarning(1L * 1024 * 1024));
+        int w = drive.WriteDirect(data, 0, block, out _, out _, out _);
+        Assert.Equal(block, w);
+    }
+
+    #endregion
+
 }

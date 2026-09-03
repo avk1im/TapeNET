@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Diagnostics;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Virtual;
@@ -323,6 +324,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
     }
     public uint MinBlockSize => m_minBlockSize;
     public uint MaxBlockSize => m_maxBlockSize;
+    public uint DefaultBlockSize => m_defaultBlockSize;
     public long Capacity => m_capacity;
     public long Remaining => ReportedRemaining();
     public long CurrentBlock => m_currentBlock;
@@ -341,6 +343,15 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
     /// <summary>Whether state has been modified since last save.</summary>
     public bool IsStateDirty => m_stateDirty;
+
+    /// <summary>
+    /// Validate the invariant the "<see cref="m_bytesWritten"/> == <see cref="CalculateStreamLength()"/>".
+    /// Recommended after operations modifying media content. Only active in DEBUG builds.
+    /// </summary>
+    [Conditional("DEBUG")]
+    private void AssertByteTotalConsistent() =>
+    Debug.Assert(m_bytesWritten == CalculateStreamLength(),
+        $"m_bytesWritten {m_bytesWritten} != CalculateStreamLength {CalculateStreamLength()}");
 
     #endregion
 
@@ -405,6 +416,13 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
             return 0;
         }
 
+        // Overwrite mode: truncate everything from the current position FIRST, so the capacity check
+        //  below measures the real remaining from HERE — not the stale full-media figure. Writing after
+        //  a backward seek (e.g. resuming a calibration in front of the last filemark) reclaims the space
+        //  the trailing data occupied, exactly as real tape sets a new EOD on overwrite. At EOD this is a
+        //  no-op, so the append/EOM path is unchanged.
+        TruncateFromCurrentPosition();
+
         // Check capacity — enforcement always uses the TRUE remaining, never the (possibly
         //  optimistic) reported figure, so hard EOM lands at the real capacity.
         if (TrueRemaining < count)
@@ -416,9 +434,6 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
             if (count == 0)
                 return 0;
         }
-
-        // Truncate any data after current position (overwrite mode)
-        TruncateFromCurrentPosition();
 
         int totalWritten = 0;
         long streamOffset = m_stream.Position;
@@ -460,6 +475,8 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
             LogErrorAsDebug("Stream write failed");
         }
 
+        AssertByteTotalConsistent();
+
         return totalWritten;
     }
 
@@ -470,13 +487,6 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
     {
         ResetError();
 
-        // Check capacity - marks should not be written when media is full
-        if (TrueRemaining <= 0)
-        {
-            SetError(WIN32_ERROR.ERROR_END_OF_MEDIA);
-            return false;
-        }
-
         // Check ResumeWriteFromMarkOnly constraint
         if (ResumeWriteFromMarkOnly && !CanResumeWrite())
         {
@@ -484,13 +494,26 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
             return false;
         }
 
+        // Overwrite mode: truncate from the current position FIRST (see WriteBlocks) so the capacity
+        //  check reflects the true remaining measured from HERE. A mark written after a backward seek
+        //  (resuming a calibration in front of the last filemark) reclaims the trailing space; at EOD
+        //  this is a no-op.
         TruncateFromCurrentPosition();
+
+        // Check capacity — a mark cannot be written when the medium is genuinely full at this position.
+        if (TrueRemaining <= 0)
+        {
+            SetError(WIN32_ERROR.ERROR_END_OF_MEDIA);
+            return false;
+        }
 
         var mark = VirtualTapeBlock.CreateMark(m_currentBlock, markType);
         m_virtualBlocks.Add(mark);
         m_currentVirtualBlockIndex = m_virtualBlocks.Count; // Point past end
         m_currentBlock++;
         m_stateDirty = true;
+
+        AssertByteTotalConsistent();
 
         return true;
     }
@@ -1017,6 +1040,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
     /// <summary>
     /// Finds the virtual block index that contains the given logical block.
     /// Returns m_virtualBlocks.Count if block is at or past end.
+    /// <remarks>Complexity: O(log n) thanks to binary search.</remarks>
     /// </summary>
     private int FindVirtualBlockIndex(long logicalBlock)
     {
@@ -1065,60 +1089,90 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
     }
 
     /// <summary>
+    /// Data bytes between BOM and the current logical position — i.e. physical tape consumed "behind" the
+    /// head. Basis for a POSITION-based Remaining ("bytes between the current position and EOT", per the
+    /// Win32 TAPE_GET_MEDIA_PARAMETERS contract), NOT the odometer m_bytesWritten. They coincide while
+    /// appending (position == EOD), and diverge exactly after a rewind/seek — where position is correct:
+    /// a rewound tape can be overwritten to its full capacity, so it must report ~full remaining.
+    /// </summary>
+    private long CurrentPositionBytes()
+    {
+        if (m_virtualBlocks.Count == 0 || m_currentBlock <= 0)
+            return 0;
+        if (m_currentBlock >= TotalBlockCount)
+            return m_bytesWritten;                       // at EOD: all data is behind the head
+
+        int i = FindVirtualBlockIndex(m_currentBlock);   // existing binary search — O(log n)
+        var vb = m_virtualBlocks[i];
+
+        // Inside (or at the start of) a data block: StreamOffset is the prefix sum of all prior data bytes
+        //  (data is contiguous in the stream, in block order; marks add nothing). BeginAtBlock is contained,
+        //  so a head sitting exactly at the block start correctly yields StreamOffset + 0.
+        if (!vb.IsMark && vb.ContainsBlock(m_currentBlock))
+            return vb.StreamOffset + (m_currentBlock - vb.BeginAtBlock) * vb.BlockSize;
+
+        // Head sits on a MARK: the prefix sum is where the surrounding data ends. Walk back to the nearest
+        //  data block (marks are isolated in practice, so this is effectively O(1)).
+        for (int j = i - 1; j >= 0; j--)
+            if (!m_virtualBlocks[j].IsMark)
+                return m_virtualBlocks[j].StreamOffset + m_virtualBlocks[j].DataLength;
+
+        return 0;
+    }
+
+    /// <summary>
     /// Truncates all data from the current logical block position onwards.
     /// Handles splitting a virtual block if current position is inside it.
     /// </summary>
     private void TruncateFromCurrentPosition()
     {
         SyncVirtualBlockIndex();
-
         if (m_currentVirtualBlockIndex >= m_virtualBlocks.Count)
-            return; // At end, nothing to truncate
+            return; // At EOD — nothing to truncate; m_bytesWritten already correct.
+
+        // The data BEHIND the head is exactly what survives, so it IS the new total. Capture it BEFORE
+        //  mutating the block list, then assign it authoritatively — replacing the fragile per-branch
+        //  delta-subtraction, self-correcting any prior drift, and staying consistent with the
+        //  position-based CurrentPositionBytes() used everywhere else.
+        long survivingBytes = CurrentPositionBytes();
 
         var vb = m_virtualBlocks[m_currentVirtualBlockIndex];
 
-        // Check if we're in the middle of a data virtual block (need to split)
         if (!vb.IsMark && vb.ContainsBlock(m_currentBlock) && m_currentBlock > vb.BeginAtBlock)
         {
-            // Calculate bytes being removed from this block
-            long bytesRemoved = (vb.EndBlock - m_currentBlock) * vb.BlockSize;
-            m_bytesWritten -= bytesRemoved;
-
-            // Truncate this virtual block
-            var truncated = vb.TruncateAt(m_currentBlock);
-            m_virtualBlocks[m_currentVirtualBlockIndex] = truncated;
-
-            // Remove all subsequent virtual blocks
+            // Head inside a data block → split at the head, drop everything after.
+            m_virtualBlocks[m_currentVirtualBlockIndex] = vb.TruncateAt(m_currentBlock);
             RemoveVirtualBlocksFrom(m_currentVirtualBlockIndex + 1);
         }
         else if (vb.BeginAtBlock == m_currentBlock)
         {
-            // Current position is at the start of a virtual block - remove it and all following
+            // Head at a block boundary → drop this block and all following.
             RemoveVirtualBlocksFrom(m_currentVirtualBlockIndex);
         }
         else
             LogErrorAsDebug("Unexpected: current block points past last virtual block");
 
-        // Truncate stream to match
+        m_bytesWritten = survivingBytes;
         TruncateStream();
         m_stateDirty = true;
+
+        AssertByteTotalConsistent();
     }
 
     /// <summary>
     /// Removes all virtual blocks starting from the given index.
+    /// <para>
+    /// <b>NOTE:</b> Does NOT update <see cref="m_bytesWritten"/> — caller must do so based
+    /// on <see cref="CurrentPositionBytes"/> or other logic.
+    /// </para>
     /// </summary>
     private void RemoveVirtualBlocksFrom(int startIndex)
     {
         if (startIndex >= m_virtualBlocks.Count)
             return;
 
-        // Subtract bytes from all removed data blocks
-        for (int i = startIndex; i < m_virtualBlocks.Count; i++)
-        {
-            if (!m_virtualBlocks[i].IsMark)
-                m_bytesWritten -= m_virtualBlocks[i].DataLength;
-        }
-
+        // Structural removal only — TruncateFromCurrentPosition now owns m_bytesWritten (set from
+        //  CurrentPositionBytes()), so there is no byte bookkeeping here to drift.
         m_virtualBlocks.RemoveRange(startIndex, m_virtualBlocks.Count - startIndex);
         m_stateDirty = true;
     }

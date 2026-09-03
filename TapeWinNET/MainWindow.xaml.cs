@@ -139,7 +139,7 @@ namespace TapeWinNET
             _viewModel.ShowHelpLastTopicCommand = new RelayCommand(() => OpenHelpPane(/*last or home topic*/));
             _viewModel.ShowHelpOnMainWindowCommand   = new RelayCommand(OpenHelpPaneForMainWindow);
             _viewModel.ConfigureAiCommand = new AsyncRelayCommand(async _ =>
-                await AppAiSessionHost.ReconfigureAndNotifyAsync());
+                await App.AiSessionHost.ManageProvidersAsync());
             _viewModel.ResetAiProvidersCommand = new AsyncRelayCommand(async _ =>
                 await ResetAiProvidersAsync());
 
@@ -269,8 +269,8 @@ namespace TapeWinNET
         {
             var cfg = App.AiSessionHost.CurrentConfig;
             _viewModel.AiProviderMenuHeader = cfg is not null
-                ? $"AI _Provider Settings (current: {BuildProviderLabel(cfg)})\u2026"
-                : "AI _Provider Settings\u2026";
+                ? $"Manage AI _Providers (current: {BuildProviderLabel(cfg)})\u2026"
+                : "Manage AI _Providers\u2026";
         }
 
         private static string BuildProviderLabel(AiProviderConfig cfg) => cfg.DisplayLabel;

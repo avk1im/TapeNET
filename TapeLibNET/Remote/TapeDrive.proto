@@ -47,8 +47,8 @@ service TapeDriveService {
   rpc SpaceSequentialFilemarks(SpaceMarksRequest) returns (OperationResponse);
 
   // --- Tapemarks ---
-  rpc WriteFilemarks(WriteMarksRequest)         returns (OperationResponse);
-  rpc WriteSetmarks(WriteMarksRequest)          returns (OperationResponse);
+  rpc WriteFilemarks(WriteMarksRequest)         returns (WriteMarksResponse);
+  rpc WriteSetmarks(WriteMarksRequest)          returns (WriteMarksResponse);
 
   // --- Parameter queries ---
   rpc FillDriveCapabilities(EmptyRequest)       returns (DriveCapabilitiesResponse);
@@ -128,6 +128,8 @@ message BackendState {
   bool   is_lto                      = 18;
   bool   is_lto5plus                 = 19;
   string revision					 = 20;
+  int32  lto_generation              = 21;
+  bool   reports_exact_remaining     = 22;
 }
 
 // ============================================================================
@@ -356,6 +358,12 @@ message SpaceMarksRequest {
 
 message WriteMarksRequest {
   uint32 count = 1;
+}
+
+message WriteMarksResponse {
+  bool         ew    = 1;   // physical early warning reported while writing the mark(s)
+  ErrorInfo    error = 2;
+  BackendState state = 3;
 }
 
 // ============================================================================

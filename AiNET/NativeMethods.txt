@@ -1,0 +1,12 @@
+
+// Windows Credential Manager — persistence of AI provider API keys
+//  (see CredentialManagerSecretStore.cs).
+CredReadW
+CredWriteW
+CredDeleteW
+CredEnumerateW
+CredFree
+
+CREDENTIALW
+CRED_TYPE
+CRED_PERSIST

@@ -110,7 +110,128 @@ public sealed record RestoreResult : FileOperationResult
     public Dictionary<int, List<TapeFileInfo>> ProcessedFiles { get; init; } = [];
 }
 
-// ── List ─────────────────────────────────────────────────────────────────────
+// ── Calibrate ────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Service-level judgment of a <see cref="CalibrationMode.Recalibrate"/> run: whether the reassessed
+/// calibration is close enough to the previous one to keep using, or the drive has shifted enough that a
+/// full re-run is advised. This is policy (threshold-based), computed by <c>TapeServiceBase</c> from the
+/// raw <see cref="TapeRecalibrationDelta"/> that <see cref="TapeCalibrator.Recalibrate"/> reports.
+/// </summary>
+public enum RecalibrationVerdict
+{
+    /// <summary>The reassessed calibration is within tolerance of the existing one — keep using it.</summary>
+    Holds,
+
+    /// <summary>The drive's behavior shifted beyond tolerance — a full recalibration is advised.</summary>
+    FullRecalibrationAdvised,
+}
+
+/// <summary>
+/// Summary statistics returned by a calibration operation.
+/// </summary>
+/// <remarks>
+/// To preserve the established operation-triad shape, the inherited "file" counters map
+/// calibration chunks → files. <see cref="BytesTotal"/> / <see cref="BytesProcessed"/> remain
+/// the more meaningful quantities for callers and UI progress.
+/// </remarks>
+public sealed record CalibrateResult : FileOperationResult
+{
+    /// <summary>Which calibration mode produced this result.</summary>
+    public CalibrationMode Mode { get; init; } = CalibrationMode.New;
+
+    /// <summary>The calibration produced by the run, or <see langword="null"/> on failure/abort.</summary>
+    public ITapeCalibration? Calibration { get; init; }
+
+    /// <summary>Matched drive+media profile key for this run.</summary>
+    public string ProfileKey { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Quantity (4) — the driver's remaining claim on a virgin cartridge, sampled at BOM at the start of
+    /// the run. Compare against <see cref="CapacityActual"/> to see whether the driver inflates capacity
+    /// from the first byte.
+    /// </summary>
+    public long ReportedCapacityAtBom { get; init; }
+
+    /// <summary>
+    /// Quantity (5) — the headline number of a calibration run: the phantom free space the driver still
+    /// claimed at the instant hard EOM fired. This space does not exist. LTO-4: ~28 GB.
+    /// </summary>
+    public long PhantomFreeAtEom { get; init; }
+
+    /// <summary>
+    /// The total capacity implied by the driver's own figures: <see cref="CapacityActual"/> plus the
+    /// <see cref="PhantomFreeAtEom"/> it still claims at hard EOM.
+    /// </summary>
+    public long ReportedCapacityTotal => CapacityActual + PhantomFreeAtEom;
+
+    /// <summary>True raw capacity measured at hard EOM (bytes) — quantity (1).</summary>
+    public long CapacityActual { get; init; }
+
+    /// <summary>Captured EW landmark, or <see langword="null"/> when none was observed.</summary>
+    public CalibrationPoint? EarlyWarning { get; init; }
+
+    /// <summary>Bytes still writable when EW fired, or 0 when no EW landmark was observed.</summary>
+    public long EwToEomDistance { get; init; }
+
+    /// <summary>Number of points in the calibrated curve.</summary>
+    public int CurvePointCount => Calibration?.Curve.Count ?? 0;
+
+    /// <summary>For <see cref="CalibrationMode.Recalibrate"/>: how the key figures moved versus the
+    ///  existing calibration, or <see langword="null"/> for New/Resume.</summary>
+    public TapeRecalibrationDelta? RecalibrationDelta { get; init; }
+
+    /// <summary>For <see cref="CalibrationMode.Recalibrate"/>: the service's threshold-based verdict, or
+    ///  <see langword="null"/> for New/Resume.</summary>
+    public RecalibrationVerdict? RecalibrationVerdict { get; init; }
+
+    /// <inheritdoc/>
+    public override bool IsFullSuccess => base.IsFullSuccess && Calibration is not null;
+}
+
+/// <summary>
+/// Result of a non-destructive <see cref="TapeCalibrator.InspectMedia"/> probe, enriched with the
+/// service-layer policy (store lookup) that the calibrator itself stays free of. Lets a UI decide
+/// which mode to recommend WITHOUT gating anything — inspection is always an optional convenience.
+/// </summary>
+public sealed record InspectCalibrationMediaResult : ServiceOperationResult
+{
+    /// <summary>True when a valid calibration run header was found on the loaded cartridge.</summary>
+    public bool HasRunHeader { get; init; }
+
+    /// <summary>The drive+media profile key recorded in the header, or empty when no header was found.</summary>
+    public string ProfileKey { get; init; } = string.Empty;
+
+    /// <summary>When the inspected run started (UTC), or <see langword="default"/> when no header was found.</summary>
+    public DateTime StartedUtc { get; init; }
+
+    /// <summary>Driver-reported capacity at BOM, captured at the start of the inspected run.</summary>
+    public long CapacityReportedAtBom { get; init; }
+
+    /// <summary>True when a CRC-valid checkpoint of the run exists — i.e. Resume can proceed.</summary>
+    public bool HasCheckpoint { get; init; }
+
+    /// <summary>Bytes written as of the last good checkpoint.</summary>
+    public long BytesWritten { get; init; }
+
+    /// <summary>Progress hint in 0..1 — see <see cref="TapeCalibrationMediaInfo.ProgressFraction"/>.</summary>
+    public double ProgressFraction { get; init; }
+
+    /// <summary>True when the header's profile key matches the currently loaded drive+media.</summary>
+    public bool MatchesCurrentDrive { get; init; }
+
+    /// <summary>True when a calibration profile for this run's key is already in the shared store —
+    ///  the strongest signal that the run reached the tail and completed.</summary>
+    public bool HasStoredCalibration { get; init; }
+
+    /// <summary>The mode the service recommends offering, or <see langword="null"/> when no header was found.</summary>
+    public CalibrationMode? RecommendedMode { get; init; }
+
+    /// <summary>Ready-to-display summary of the inspection, for the UI's inspect-result pane.</summary>
+    public string Summary { get; init; } = string.Empty;
+}
+
+// ── List ──────
 
 /// <summary>
 /// Summary result of a list / contents-display operation.

@@ -1,0 +1,157 @@
+<UserControl x:Class="TapeWinNET.Controls.CalibrationResultView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
+             xmlns:converters="clr-namespace:TapeWinNET.Converters"
+             xmlns:controls="clr-namespace:TapeWinNET.Controls"
+             xmlns:help="clr-namespace:TapeWinNET.Help"
+             d:DataContext="{d:DesignInstance Type=vm:CalibrationResultViewModelBase}"
+             mc:Ignorable="d"
+             d:DesignHeight="480" d:DesignWidth="560">
+
+    <!--
+      The whole surface is wrapped in a ScrollViewer so that once the host window shrinks below the
+       combined natural (minimum) height of the banner + its two or three GroupBoxes (Measured Result,
+       the optional Recalibration delta, and the curve), the content scrolls instead of the GroupBoxes
+       being squeezed and the curve graph ending up clipped. Star-sizing the curve row (as before) only
+       works while there is enough room to spare — inside a ScrollViewer, which offers effectively
+       unlimited height, a "*" row collapses to zero, so the last row is "Auto" here and the curve
+       GroupBox instead carries a MinHeight to give it a sensible floor size.
+    -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Verdict banner (Recalibrate only) -->
+        <Border Grid.Row="0" Margin="0,0,0,12">
+            <Border.Style>
+                <Style TargetType="Border" BasedOn="{StaticResource WarningPanelStyle}">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding HasVerdict}" Value="False">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Left"
+                           Text="{Binding VerdictLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
+                           FontSize="13" Margin="0,0,6,0"/>
+                <Button DockPanel.Dock="Right"
+                        Content="Run Full Calibration..."
+                        Command="{Binding RunFullCalibrationCommand}"
+                        VerticalAlignment="Top"
+                        Margin="8,0,0,0" Padding="8,2">
+                    <Button.Style>
+                        <Style TargetType="Button">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding RunFullCalibrationCommand}" Value="{x:Null}">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
+                <TextBlock Text="{Binding VerdictMessage}" TextWrapping="Wrap"/>
+            </DockPanel>
+        </Border>
+
+        <GroupBox Grid.Row="1" Header="Measured Result" Margin="0,0,0,12"
+                  help:HelpControlNameAttachedProperty.ControlName="Measured Result">
+            <Grid Margin="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Profile key:" Margin="0,0,8,4"/>
+                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding ProfileKeyDisplay}" TextWrapping="Wrap"/>
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Reported at BOM:" Margin="0,0,8,4"/>
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ReportedCapacityAtBomDisplay}" TextWrapping="Wrap"/>
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Measured capacity:" Margin="0,0,8,4"/>
+                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding CapacityActualDisplay}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="Phantom free at EOM:" Margin="0,0,8,4"/>
+                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding PhantomFreeAtEomDisplay}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+
+                <TextBlock Grid.Row="4" Grid.Column="0" Text="EW landmark:" Margin="0,0,8,4"/>
+                <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding EarlyWarningDisplay}" TextWrapping="Wrap"/>
+
+                <TextBlock Grid.Row="5" Grid.Column="0" Text="EW → EOM:" Margin="0,0,8,0"/>
+                <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding EwToEomDistanceDisplay}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+            </Grid>
+        </GroupBox>
+
+        <GroupBox Grid.Row="2" Header="Recalibration: Before → After" Margin="0,0,0,12"
+                  help:HelpControlNameAttachedProperty.ControlName="Recalibration delta">
+            <GroupBox.Style>
+                <Style TargetType="GroupBox">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding HasRecalibrationDelta}" Value="False">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </GroupBox.Style>
+            <Grid Margin="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="EW → EOM:" Margin="0,0,8,4"/>
+                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding EwToEomDeltaDisplay}" TextWrapping="Wrap"/>
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Actual capacity:" Margin="0,0,8,4"/>
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding CapacityActualDeltaDisplay}" TextWrapping="Wrap"/>
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Phantom @ EOM:" Margin="0,0,8,0"/>
+                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding PhantomFreeAtEomDeltaDisplay}" TextWrapping="Wrap"/>
+            </Grid>
+        </GroupBox>
+
+        <GroupBox Grid.Row="3" Header="Actual → Reported Remaining Curve"
+                  MinHeight="220"
+                  help:HelpControlNameAttachedProperty.ControlName="Calibration curve">
+            <Grid Margin="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <controls:CalibrationCurveControl Grid.Row="0"
+                                                  Calibration="{Binding Calibration}"/>
+
+                <TextBlock Grid.Row="1"
+                           Text="The blue band magnifies the tail region with a split X-axis.&#10;Left click to select a new region, right click to reset to EW → EOM."
+                           Foreground="Gray"
+                           TextWrapping="Wrap"
+                           Margin="0,6,0,0"
+                           TextAlignment="Right"/>
+            </Grid>
+        </GroupBox>
+    </Grid>
+    </ScrollViewer>
+</UserControl>

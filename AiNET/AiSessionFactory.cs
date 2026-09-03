@@ -29,6 +29,12 @@ public static class AiSessionFactory
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     /// <param name="logger">Optional logger; uses <see cref="NullLogger"/> if omitted.</param>
+    /// <param name="secretStore">
+    /// Optional persistent credential store. When supplied, previously saved
+    ///  API keys are reused (avoiding a prompt on every launch) and newly
+    ///  verified keys are written back. Pass <c>null</c> to keep keys
+    ///  in-memory for the session only.
+    /// </param>
     /// <returns>
     /// A live <see cref="IAiSession"/>, or <c>null</c> if the user
     /// cancelled or all providers are unavailable.
@@ -39,7 +45,8 @@ public static class AiSessionFactory
         IAiInteraction interaction,
         AiProviderPreferences preferences,
         CancellationToken ct,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        IAiSecretStore? secretStore = null)
     {
         logger ??= NullLogger.Instance;
         AiProviderConfig? config = null;
@@ -57,10 +64,15 @@ public static class AiSessionFactory
             {
                 var chatModelId = preferences.LastChatModelId;
                 var embeddingModelId = preferences.LastEmbeddingModelId;
+
+                // Reuse a previously stored key, otherwise the probe below is
+                //  guaranteed to fail for any provider that requires one.
+                var storedKey = secretStore?.Load(AiSecretKey.For(providerKind, endpoint));
+
                 config = new AiProviderConfig(
                     provider.Descriptor,
                     endpoint,
-                    ApiKey: null,
+                    ApiKey: storedKey,
                     ChatModelId: chatModelId,
                     EmbeddingModelId: embeddingModelId);
                 logger.LogInformation(
@@ -71,6 +83,20 @@ public static class AiSessionFactory
                 var probeResult = await provider.ProbeAsync(config.Endpoint, config.ApiKey, ct);
                 if (probeResult.IsHealthy)
                 {
+                    // Guard against a saved model id the provider no longer offers
+                    //  (e.g. after a service renames or retires a model).
+                    //  Falling back to a discovered model beats failing on first use.
+                    if (chatModelId is not null &&
+                        probeResult.DiscoveredChatModels.Count > 0 &&
+                        !probeResult.DiscoveredChatModels.Contains(chatModelId))
+                    {
+                        var replacement = probeResult.DiscoveredChatModels[0];
+                        logger.LogWarning(
+                            "Last-used chat model '{ChatModel}' is no longer offered by '{Provider}' — falling back to '{Replacement}'.",
+                            chatModelId, provider.Descriptor.DisplayName, replacement);
+                        config = config with { ChatModelId = replacement };
+                    }
+
                     logger.LogInformation(
                         "Last-used provider '{Provider}' is healthy — skipping discovery.",
                         provider.Descriptor.DisplayName);
@@ -97,7 +123,12 @@ public static class AiSessionFactory
             var options = new AiProviderDiscoveryOptions(
                 ProbeLocalhost: true,
                 LanEndpoints: lanHosts.Count > 0 ? lanHosts : null,
-                CheckEnvironmentVariables: true);
+                CheckEnvironmentVariables: true,
+                SecretStore: secretStore,
+                KnownCloudEndpoints: preferences.LastEndpoint is { } lastEp &&
+                                     preferences.LastProviderKind is { } lastKind
+                    ? new Dictionary<AiProviderKind, Uri> { [lastKind] = lastEp }
+                    : null);
 
             var discovery = new AiProviderDiscovery(catalog, logger);
             var probes = await discovery.DiscoverAsync(
@@ -162,16 +193,29 @@ public static class AiSessionFactory
         //  without restarting the whole selection flow.
         while (true)
         {
-            // Prompt for API key if required and not yet present
+            // Prompt for API key if required and not yet present. Try the
+            //  persistent store first so a returning user is not re-prompted.
             if (config.Descriptor.RequiresApiKey && string.IsNullOrEmpty(config.ApiKey))
             {
-                var key = await interaction.PromptApiKeyAsync(config.Descriptor, ct);
-                if (key is null)
+                var secretKey = AiSecretKey.For(config);
+                var stored    = secretStore?.Load(secretKey);
+
+                if (!string.IsNullOrEmpty(stored))
                 {
-                    logger.LogInformation("User cancelled API key prompt — AI unavailable.");
-                    return null;
+                    logger.LogDebug("Reusing stored credential for '{Provider}'.",
+                        config.Descriptor.DisplayName);
+                    config = config with { ApiKey = stored };
                 }
-                config = config with { ApiKey = key };
+                else
+                {
+                    var key = await interaction.PromptApiKeyAsync(config.Descriptor, ct);
+                    if (key is null)
+                    {
+                        logger.LogInformation("User cancelled API key prompt — AI unavailable.");
+                        return null;
+                    }
+                    config = config with { ApiKey = key };
+                }
             }
 
             // Verify the credentials with a lightweight probe
@@ -179,7 +223,23 @@ public static class AiSessionFactory
             var verify = await provider.ProbeAsync(config.Endpoint, config.ApiKey, ct);
 
             if (verify.IsHealthy)
+            {
+                // Persist the working key so the next launch starts silently.
+                if (config.Descriptor.RequiresApiKey && !string.IsNullOrEmpty(config.ApiKey))
+                {
+                    try
+                    {
+                        secretStore?.Save(AiSecretKey.For(config), config.ApiKey);
+                    }
+                    catch (Exception ex)
+                    {
+                        // A failed save must never block an otherwise-working session.
+                        logger.LogWarning(ex, "Could not persist the credential for '{Provider}'.",
+                            config.Descriptor.DisplayName);
+                    }
+                }
                 break;   // credentials accepted — fall through to session creation
+            }
 
             // Probe failed — report and decide whether to retry
             var errDetail = verify.ErrorMessage ?? "connection failed";
@@ -188,13 +248,16 @@ public static class AiSessionFactory
             await interaction.ShowWarningAsync(
                 $"Could not connect to {config.DisplayLabel}: {errDetail}", ct);
 
-            // If the provider requires an API key, clear it and re-prompt.
-            // Otherwise (wrong endpoint / server down) there is nothing to retry — bail out.
-            if (!config.Descriptor.RequiresApiKey)
+            // Only re-prompting for a rejected key can help. A network or
+            //  endpoint failure would just loop, so bail out instead.
+            if (!config.Descriptor.RequiresApiKey || !verify.IsAuthFailure)
             {
-                logger.LogInformation("No credentials to retry — AI unavailable.");
+                logger.LogInformation("Failure is not credential-related — AI unavailable.");
                 return null;
             }
+
+            // The stored key was rejected — discard it so we do not reuse it.
+            secretStore?.Delete(AiSecretKey.For(config));
             config = config with { ApiKey = null };   // force re-prompt on next iteration
         }
 
@@ -213,12 +276,14 @@ public static class AiSessionFactory
 
     /// <summary>
     /// Builds the default <see cref="AiProviderCatalog"/> containing all
-    /// built-in providers, then runs <see cref="BuildAsync"/>.
+    /// built-in providers and the platform-default credential store, then runs
+    /// <see cref="BuildAsync"/>.
     /// </summary>
     public static Task<IAiSession?> BuildAsync(
         IAiInteraction interaction,
         AiProviderPreferences preferences,
         CancellationToken ct,
         ILogger? logger = null) =>
-        BuildAsync(autouseLast: false, AiProviderCatalog.CreateDefault(), interaction, preferences, ct, logger);
+        BuildAsync(autouseLast: false, AiProviderCatalog.CreateDefault(), interaction, preferences,
+                   ct, logger, AiSecretStore.CreateDefault());
 }

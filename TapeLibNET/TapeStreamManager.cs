@@ -43,12 +43,13 @@ namespace TapeLibNET
         //  by EndWriteContent. Both remain null while the manager is not in
         //  TapeState.WritingContent.
         private WorkerThreadTapeWriteBackend? m_packerBackend;
+        private TapeWriteBufferPool? m_packerBufferPool;
         private TapeFileWritePacker? m_packer;
 
         // Bytes already handed off to the drive by the packer in the current content
-        //  session. Used to enforce CapacityForCurrentSet (which reserves room for the
-        //  TOC when there's no Initiator partition) -- the aligned path enforces this in
-        //  ProduceWriteContentStream, and the packed path enforces it in PackerWriteSink.
+        //  session. Used only to enforce the artificial ContentCapacityLimit in
+        //  PackerWriteSink; the TOC reserve itself is enforced by the drive's logical
+        //  early warning, armed once by the backup agent.
         private long m_packerBytesWritten;
 
         // Read-side packer: lazily constructed inside BeginPackedFileRead and torn down
@@ -571,7 +572,10 @@ namespace TapeLibNET
             return WentOK;
         }
 
-        private long CapacityForCurrentSet { get; set; } = -1; // unknow
+        // Coarse per-set capacity estimate, used only by the legacy aligned write path's
+        //  CheckContentCapacity() pre-check. The packed path relies on the drive's logical
+        //  early warning instead, so this value is never enforced there.
+        private long CapacityForCurrentSet { get; set; } = -1; // unknown
 
         /// <summary>
         /// Phase 3: true when a logical early warning should terminate the current content write and
@@ -794,28 +798,20 @@ namespace TapeLibNET
 
         // Sink that bridges the worker-thread backend to TapeDrive.WriteDirect.
         //  Captured once and passed to the backend; lives for the backend's lifetime.
-        private WriteResult PackerWriteSink(byte[] buffer, int validBytes)
+        private WriteResult PackerWriteSink(TapeWriteBuffer buffer, int validBytes)
         {
             try
             {
-                // Enforce CapacityForCurrentSet only when the TOC is co-located with content
-                //  (no Initiator partition) -- there we MUST leave room for the TOC at the end.
-                //  When an Initiator partition is present, the drive's real EOM is authoritative
-                //  and we let it surface through Drive.WriteDirect's eof flag below; clamping
-                //  here would needlessly roll back files that would otherwise have committed.
-                //  The artificial ContentCapacityLimit (test/diagnostic knob) is honored in either case.
-                bool enforceReserved = CapacityForCurrentSet >= 0 && !Drive.HasInitiatorPartition;
-                if (enforceReserved || ContentCapacityLimit > 0L)
+                // The drive's logical early warning is the single authoritative stop signal for
+                //  content writing: it is armed by the backup agent with the TOC reserve and is
+                //  evaluated by TapeDrive using the best available mechanism (calibration, physical
+                //  EW, or a-priori estimate). Enforcing CapacityForCurrentSet here as well would
+                //  duplicate that decision with a strictly more pessimistic (and compression-blind)
+                //  byte count, cutting sets short. Only the artificial ContentCapacityLimit
+                //  (test/diagnostic knob) is still clamped here.
+                if (ContentCapacityLimit > 0L)
                 {
-                    long remaining = long.MaxValue;
-                    if (enforceReserved)
-                    {
-                        remaining = CapacityForCurrentSet - m_packerBytesWritten;
-                    }
-
-                    // Honor the artificial ContentCapacityLimit if set
-                    if (ContentCapacityLimit > 0L)
-                        remaining = Math.Min(remaining, ContentCapacityLimit - m_packerBytesWritten);
+                    long remaining = ContentCapacityLimit - m_packerBytesWritten;
 
                     if (validBytes > remaining)
                     {
@@ -828,13 +824,13 @@ namespace TapeLibNET
                             ? (int)(remaining - (remaining % blockSize))
                             : 0;
 
-                        m_logger.LogTrace("Drive #{Drive}: Remaining {Remaining} B; packer hit reserved capacity ({Written}+{Bytes} > {Cap}); writing {Writable} B then EOM",
-                            DriveNumber, remaining, m_packerBytesWritten, validBytes, CapacityForCurrentSet, writable);
+                        m_logger.LogTrace("Drive #{Drive}: Remaining {Remaining} B; packer hit artificial content capacity limit ({Written}+{Bytes} > {Cap}); writing {Writable} B then EOM",
+                            DriveNumber, remaining, m_packerBytesWritten, validBytes, ContentCapacityLimit, writable);
 
                         int partialBlocks = 0;
                         if (writable > 0)
                         {
-                            int w = Drive.WriteDirect(buffer, 0, writable);
+                            int w = Drive.WriteDirect(buffer.Array, buffer.Offset, writable);
                             partialBlocks = w / (int)blockSize;
                             m_packerBytesWritten += w;
                         }
@@ -845,7 +841,7 @@ namespace TapeLibNET
                         DriveNumber, validBytes, m_packerBytesWritten, remaining);
                 }
 
-                int written = Drive.WriteDirect(buffer, 0, validBytes, out _, out bool ew, out bool eom);
+                int written = Drive.WriteDirect(buffer.Array, buffer.Offset, validBytes, out _, out bool ew, out bool eom);
 
                 int blocks = written / (int)Drive.BlockSize;
                 m_packerBytesWritten += written;
@@ -909,13 +905,16 @@ namespace TapeLibNET
             if (startBlock < 0)
                 startBlock = 0;
 
+            m_packerBufferPool = new(m_logger);
+
             m_packer = new TapeFileWritePacker(
                 backend: m_packerBackend,
                 rewindToBlock: b => Drive.MoveToBlock(b),
                 blockMultiplier: PackerBlockMultiplier,
                 sourceErrorMode: PackerSourceErrorMode,
                 logger: m_logger,
-                initialAbsBlock: startBlock);
+                initialAbsBlock: startBlock,
+                bufferPool: m_packerBufferPool);
 
             m_packer.FilesCommitted += OnPackerFilesCommitted;
 
@@ -965,6 +964,19 @@ namespace TapeLibNET
             finally
             {
                 m_packerBackend = null;
+            }
+
+            try
+            {
+                m_packerBackend?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                m_logger.LogWarning(ex, "Drive #{Drive}: Exception disposing packer buffer pool", DriveNumber);
+            }
+            finally
+            {
+                m_packerBufferPool = null;
             }
 
             m_logger.LogTrace("Drive #{Drive}: Packer disposed", DriveNumber);

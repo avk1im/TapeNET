@@ -371,6 +371,7 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <!-- Profile -->
@@ -381,9 +382,10 @@
                               SelectedItem="{Binding SelectedEwProfile}"
                               Width="200" HorizontalAlignment="Left" Margin="0,0,8,6"/>
 
-                    <!-- Early Warning Zone -->
+                    <!-- Early Warning Zone — the last stretch of REAL medium before hard EOM -->
                     <TextBlock Grid.Row="1" Grid.Column="0" Text="Early Warning Zone:"
                                Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
+                               ToolTip="Distance before hard end-of-media at which the emulated drive starts asserting early warning. Real, writable medium."
                                VerticalAlignment="Center" Margin="0,0,8,6"/>
                     <TextBox Grid.Row="1" Grid.Column="1"
                              Text="{Binding EwZoneValue, UpdateSourceTrigger=PropertyChanged}"
@@ -401,22 +403,44 @@
                                Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
                                VerticalAlignment="Center" Foreground="Gray"/>
 
-                    <!-- Capacity Overreport -->
-                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Capacity Overreport:"
+                    <!-- (b) Phantom free space still claimed at hard EOM — the faithful LTO shape -->
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Phantom Free at EOM:"
                                Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
-                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                               ToolTip="Free space the emulated driver still claims once hard end-of-media is reached. This space does not exist. A real LTO-4 claims ~28 GB — this is what calibration measures and corrects."
+                               VerticalAlignment="Center" Margin="0,0,8,6"/>
                     <TextBox Grid.Row="2" Grid.Column="1"
+                             Text="{Binding PhantomFreeValue, UpdateSourceTrigger=PropertyChanged}"
+                             IsEnabled="{Binding IsEwCustom}"
+                             Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
+                             Width="70" Margin="0,0,8,6"/>
+                    <ComboBox Grid.Row="2" Grid.Column="2"
+                              ItemsSource="{Binding EwCapacityUnits}"
+                              SelectedItem="{Binding PhantomFreeUnit}"
+                              IsEnabled="{Binding IsEwCustom}"
+                              Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
+                              Width="90" Margin="0,0,8,6"/>
+                    <TextBlock Grid.Row="2" Grid.Column="3"
+                               Text="{Binding PhantomFreeBytesDisplay}"
+                               Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
+                               VerticalAlignment="Center" Foreground="Gray"/>
+
+                    <!-- (a) Capacity inflated at BOM — usually 0, real drives report honestly at BOM -->
+                    <TextBlock Grid.Row="3" Grid.Column="0" Text="Capacity Overreport:"
+                               Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
+                               ToolTip="How much MORE than the true capacity the emulated driver claims is free on a virgin cartridge — a constant overshoot from the first byte. Real LTO drives report honestly at beginning-of-media, so this is normally left at 0."
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBox Grid.Row="3" Grid.Column="1"
                              Text="{Binding OverreportValue, UpdateSourceTrigger=PropertyChanged}"
                              IsEnabled="{Binding IsEwCustom}"
                              Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
                              Width="70" Margin="0,0,8,0"/>
-                    <ComboBox Grid.Row="2" Grid.Column="2"
+                    <ComboBox Grid.Row="3" Grid.Column="2"
                               ItemsSource="{Binding EwCapacityUnits}"
                               SelectedItem="{Binding OverreportUnit}"
                               IsEnabled="{Binding IsEwCustom}"
                               Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
                               Width="90" Margin="0,0,8,0"/>
-                    <TextBlock Grid.Row="2" Grid.Column="3"
+                    <TextBlock Grid.Row="3" Grid.Column="3"
                                Text="{Binding OverreportBytesDisplay}"
                                Visibility="{Binding IsEwCustom, Converter={StaticResource BoolToVis}}"
                                VerticalAlignment="Center" Foreground="Gray"/>

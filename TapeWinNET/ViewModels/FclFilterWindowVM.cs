@@ -15,7 +15,7 @@ namespace TapeWinNET.ViewModels;
 /// </summary>
 public class FclFilterWindowVM : ViewModelBase
 {
-    private readonly Action<FclExpression?> _onApply;
+    private readonly Action<FclExpression?, bool> _onApply;
     private readonly Action _onCancel;
 
     /// <summary>
@@ -35,7 +35,6 @@ public class FclFilterWindowVM : ViewModelBase
     private FclDiagnostic? _selectedDiagnostic;
     private bool _isDnfCompatible = true;
     private string? _nonDnfMessage;
-    private bool _applyToAll;
     private bool _hasMultipleSets;
 
     // ── AI-assisted generation state ──
@@ -53,11 +52,12 @@ public class FclFilterWindowVM : ViewModelBase
     /// Creates the filter window VM.
     /// </summary>
     /// <param name="onApply">
-    /// Callback invoked when the user clicks "Apply Filter". Receives the
-    /// resulting <see cref="FclExpression"/>, or <c>null</c> to clear.
+    /// Callback invoked when the user applies or clears the filter. Receives
+    /// the resulting <see cref="FclExpression"/> (<c>null</c> to clear) and
+    /// whether the operation should apply to all backup sets.
     /// </param>
     /// <param name="onCancel">Callback invoked on Cancel / Escape.</param>
-    public FclFilterWindowVM(Action<FclExpression?> onApply, Action onCancel)
+    public FclFilterWindowVM(Action<FclExpression?, bool> onApply, Action onCancel)
     {
         _onApply = onApply;
         _onCancel = onCancel;
@@ -74,8 +74,10 @@ public class FclFilterWindowVM : ViewModelBase
             _ => SyncTextToVisual(),
             _ => IsFclTextModified && IsProgramPaneOpen);
         ToggleProgramPaneCommand = new RelayCommand(_ => ToggleProgramPane());
-        ApplyFilterCommand = new RelayCommand(_ => ExecuteApply(), _ => CanApply);
-        ClearFilterCommand = new RelayCommand(_ => _onApply(null));
+        ApplyFilterCommand = new RelayCommand(_ => ExecuteApply(applyToAll: false), _ => CanApply);
+        ApplyFilterAllSetsCommand = new RelayCommand(_ => ExecuteApply(applyToAll: true), _ => CanApply);
+        ClearFilterCommand = new RelayCommand(_ => _onApply(null, false));
+        ClearFilterAllSetsCommand = new RelayCommand(_ => _onApply(null, true));
         CancelCommand = new RelayCommand(_ => _onCancel());
         GenerateWithAiCommand = new RelayCommand(_ => ToggleAiPanel());
         SubmitAiPromptCommand = new AsyncRelayCommand(
@@ -94,7 +96,7 @@ public class FclFilterWindowVM : ViewModelBase
     /// when no AI provider is available.
     /// </param>
     public FclFilterWindowVM(
-        Action<FclExpression?> onApply,
+        Action<FclExpression?, bool> onApply,
         Action onCancel,
         Func<CancellationToken, Task<FclAiTranslator?>> translatorFactory)
         : this(onApply, onCancel)
@@ -143,7 +145,7 @@ public class FclFilterWindowVM : ViewModelBase
 
     /// <summary>
     /// Whether more than one backup set exists. Controls visibility of the
-    ///  "all sets" checkbox in the dialog.
+    ///  "for all sets" menu items on the Apply / Clear Filter SplitButtons.
     /// </summary>
     public bool HasMultipleSets
     {
@@ -151,16 +153,6 @@ public class FclFilterWindowVM : ViewModelBase
         set => SetProperty(ref _hasMultipleSets, value);
     }
 
-    /// <summary>
-    /// Whether the filter should be applied to / disabled for all backup sets.
-    /// Mirrors <see cref="Controls.FileFilterPane.ApplyToAll"/>; initialised from
-    ///  the pane before the dialog opens and read back when it closes.
-    /// </summary>
-    public bool ApplyToAll
-    {
-        get => _applyToAll;
-        set => SetProperty(ref _applyToAll, value);
-    }
 
     /// <summary>
     /// Whether the user has modified the FCL text since the last sync.
@@ -287,11 +279,17 @@ public class FclFilterWindowVM : ViewModelBase
     /// <summary>Toggles the program pane visibility.</summary>
     public ICommand ToggleProgramPaneCommand { get; }
 
-    /// <summary>Applies the filter and closes the dialog.</summary>
+    /// <summary>Applies the filter (for this backup set) and closes the dialog.</summary>
     public ICommand ApplyFilterCommand { get; }
 
-    /// <summary>Clears the filter definition and closes the dialog.</summary>
+    /// <summary>Applies the filter to all backup sets and closes the dialog.</summary>
+    public ICommand ApplyFilterAllSetsCommand { get; }
+
+    /// <summary>Clears the filter definition (for this backup set) and closes the dialog.</summary>
     public ICommand ClearFilterCommand { get; }
+
+    /// <summary>Clears the filter definition for all backup sets and closes the dialog.</summary>
+    public ICommand ClearFilterAllSetsCommand { get; }
 
     /// <summary>Cancels and closes the dialog.</summary>
     public ICommand CancelCommand { get; }
@@ -401,7 +399,7 @@ public class FclFilterWindowVM : ViewModelBase
             {
                 AiStatusLevel = WarningLevel.Warning;
                 AiStatusMessage = "No AI provider is configured. "
-                    + "Set one up via Help → AI Provider settings.";
+                    + "Set one up via Help → Manage AI Providers.";
                 return;
             }
 
@@ -599,7 +597,7 @@ public class FclFilterWindowVM : ViewModelBase
 
     private bool CanApply => HasAnyCompleteCondition || !string.IsNullOrWhiteSpace(FclText);
 
-    private void ExecuteApply()
+    private void ExecuteApply(bool applyToAll)
     {
         FclExpression? result;
 
@@ -630,7 +628,7 @@ public class FclFilterWindowVM : ViewModelBase
                 //  but hasn't modified the visual program - then we should keep the text!
         }
 
-        _onApply(result);
+        _onApply(result, applyToAll);
     }
 
     // ─────────────────────────────────────────────────────

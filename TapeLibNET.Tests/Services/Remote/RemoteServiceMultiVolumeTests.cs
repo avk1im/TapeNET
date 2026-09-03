@@ -49,7 +49,9 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
     private const int  MvIncFileCount            = 16;
     private const long MvIncFileSizeFull          = 350L * 1024;
     private const long MvIncFileSizeModified      = 700L * 1024;
-    private const long MvIncVol1Capacity_Setmarks = 40L * 1024 * 1024;
+    private const long MvIncVol1Capacity_Setmarks = 41L * 1024 * 1024;
+        // Added 1 MiB so that at least one file from the follow-up set fits, therefore splitting
+        //  the set across vol-1 and vol-2 -- as we check volume continuation in the test.
     private const long MvIncVol1Capacity_Initiator = 8L * 1024 * 1024;
     private const long MvIncVol2Capacity_Setmarks = 46L * 1024 * 1024;
     private const long MvIncVol2Capacity_Initiator = 14L * 1024 * 1024;
@@ -81,7 +83,8 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
         long volumeCapacity = withInitiator ? MultiVolumeCapacity_Initiator : MultiVolumeCapacity_Setmarks;
         using var vol1 = new TempVirtualMedia(withInitiator, volumeCapacity);
         using var vol2 = new TempVirtualMedia(withInitiator, volumeCapacity);
-        IReadOnlyList<TempVirtualMedia> volumes = [vol1, vol2];
+        //using var vol3 = new TempVirtualMedia(withInitiator, volumeCapacity);
+        IReadOnlyList<TempVirtualMedia> volumes = [vol1, vol2,/*vol3,*/ ];
 
         using var src = new TempFileTree();
         AddMultiVolumeContent(src);

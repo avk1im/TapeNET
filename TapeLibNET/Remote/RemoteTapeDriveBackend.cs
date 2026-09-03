@@ -185,6 +185,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     public override string Revision => _state.Revision ?? string.Empty;
     public bool IsLto => _state.IsLto;
     public bool IsLto5Plus => _state.IsLto5Plus;
+    public int LtoGeneration => _state.LtoGeneration;
     public override uint DriveNumber => _state.DriveNumber;
 
     #endregion
@@ -202,6 +203,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     public override bool HasInitiatorPartition => _state.HasInitiatorPartition;
     public override bool SupportsSetmarks => _state.SupportsSetmarks;
     public override bool SupportsSeqFilemarks => _state.SupportsSeqFilemarks;
+    public override bool ReportsExactRemaining => _state.ReportsExactRemaining;
 
     #endregion
 
@@ -760,17 +762,24 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
 
     #region *** Tapemarks ***
 
-    public override bool WriteFilemarks(uint count)
+    public override bool WriteFilemarks(uint count, out bool ew)
     {
         var response = _client.WriteFilemarks(new WriteMarksRequest { Count = count }, WithSession());
-        return Sync(response);
+        SyncState(response.State);
+        SyncError(response.Error);
+        ew = response.Ew;
+        return WentOK;   // error already synced; success iff no error (mirrors data-op convention)
     }
 
-    public override bool WriteSetmarks(uint count)
+    public override bool WriteSetmarks(uint count, out bool ew)
     {
         var response = _client.WriteSetmarks(new WriteMarksRequest { Count = count }, WithSession());
-        return Sync(response);
+        SyncState(response.State);
+        SyncError(response.Error);
+        ew = response.Ew;
+        return WentOK;
     }
+
 
     #endregion
 

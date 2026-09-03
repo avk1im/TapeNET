@@ -1,5 +1,7 @@
-﻿using System.Windows;
+﻿using System.Numerics;
+using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 
 namespace TapeWinNET;
 
@@ -10,17 +12,58 @@ public partial class SimpleBox : Window
 {
     private MessageBoxResult _result = MessageBoxResult.None;
 
+    /// <summary>
+    /// SimpleBox-only pseudo icons: a success checkmark and a failure cross.
+    /// Not part of the framework MessageBoxImage enum, outside of its range.
+    /// </summary>
+    public const MessageBoxImage ImageComplete = (MessageBoxImage)0x2000;
+    public const MessageBoxImage ImageFailed = (MessageBoxImage)0x2001;
+
+    private readonly record struct IconStyle(string Glyph, string? ResourceKey, Brush Fallback);
+
+    private static IconStyle StyleFor(MessageBoxImage icon) => icon switch
+    {
+        ImageComplete => new("✔", "WarningFg.Completed", Brushes.Green),
+        ImageFailed => new("✗", "WarningFg.Failed", new SolidColorBrush(Color.FromRgb(0xCC, 0x44, 0x00))),
+        MessageBoxImage.Information => new("ℹ\uFE0E", "WarningFg.Info", Brushes.Blue), // guarntee monochrome glyph
+        MessageBoxImage.Warning => new("⚠\uFE0E", "WarningFg.Warning", Brushes.Orange), // guarntee monochrome glyph
+        MessageBoxImage.Error => new("✖", "WarningFg.Error", Brushes.Red),
+        MessageBoxImage.Question => new("?", null, Brushes.SteelBlue),
+        _ => new("", null, Brushes.Transparent),
+    };
+
+    private Brush ResolveBrush(in IconStyle style)
+    {
+        if (style.ResourceKey is not null
+                && TryFindResource(style.ResourceKey) is Brush brush)
+            return brush;
+
+        return style.Fallback;
+    }
+    
+    /// <summary>
+    /// Initializes a new instance of the <see cref="SimpleBox"/> class with the specified message, title, buttons, icon, default result, and options.
+    /// </summary>
+    /// <param name="message">The message to display in the message box.</param>
+    /// <param name="title">The title of the message box.</param>
+    /// <param name="buttons">The buttons to include in the message box.</param>
+    /// <param name="icon">The icon to display in the message box.</param>
+    /// <param name="defaultResult">The default result of the message box.</param>
+    /// <param name="options">The options for displaying the message box.</param>
     public SimpleBox(string message, string title,
-                         MessageBoxButton buttons,
-                         MessageBoxImage icon,
-                         MessageBoxResult defaultResult,
-                         MessageBoxOptions options)
+        MessageBoxButton buttons,
+        MessageBoxImage icon,
+        MessageBoxResult defaultResult,
+        MessageBoxOptions options)
     {
         InitializeComponent();
 
         TitleText.Text = title;
         MessageText.Text = message;
-        IconText.Text = IconFromEnum(icon);
+
+        var style = StyleFor(icon);
+        IconText.Text = style.Glyph;
+        IconText.Foreground = ResolveBrush(style);
 
         ApplyOptions(options);
 
@@ -54,6 +97,8 @@ public partial class SimpleBox : Window
     {
         return icon switch
         {
+            ImageComplete => "✔",   // pairs with "✖" for Error
+            ImageFailed => "✖",     // pairs with "✔" for ImageComplete
             MessageBoxImage.Information => "ℹ",
             MessageBoxImage.Warning => "⚠",
             MessageBoxImage.Error => "✖",

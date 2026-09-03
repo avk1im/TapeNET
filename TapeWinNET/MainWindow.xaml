@@ -28,6 +28,7 @@
         <converters:BoolToOpacityConverter x:Key="BoolToOpacityIcon" DimmedOpacity="0.4"/>
         <converters:BoolToOpacityConverter x:Key="BoolToOpacityText" DimmedOpacity="0.6"/>
         <converters:RemoveUnderscoreConverter x:Key="RemoveUnderscoreConverter" />
+        <converters:EqualityConverter x:Key="EqualityConverter" />
         
         <!-- Context menu: Drive node (DataContext is TapeTreeItemViewModel, so bind to window) -->
         <ContextMenu x:Key="DriveContextMenu" x:Shared="False"
@@ -266,7 +267,7 @@
                             <Setter Property="IsCheckable" Value="True"/>
                             <Setter Property="IsChecked">
                                 <Setter.Value>
-                                    <MultiBinding Converter="{x:Static converters:EqualityConverter.Instance}" Mode="OneWay">
+                                    <MultiBinding Converter="{StaticResource EqualityConverter}" Mode="OneWay">
                                         <Binding/>
                                         <Binding Path="DataContext.SelectedIoSpeed" RelativeSource="{RelativeSource AncestorType=Window}"/>
                                     </MultiBinding>
@@ -288,6 +289,9 @@
                 <MenuItem Header="_Import TOC from File..." Command="{Binding ImportTOCCommand}"/>
                 <Separator/>
                 <MenuItem Header="_Eject" Command="{Binding EjectCommand}"/>
+                <Separator/>
+                <MenuItem Header="_Calibrate..." Command="{Binding CalibrateMediaCommand}"/>
+                <MenuItem Header="Calibration _Profiles..." Command="{Binding ShowCalibrationProfilesCommand}"/>
                 <Separator/>
                 <MenuItem Header="_Delete Backup Sets..." Command="{Binding DeleteBackupSetsCommand}"/>
                 <MenuItem Header="_Format..." Command="{Binding FormatMediaCommand}"/>
@@ -364,8 +368,7 @@
                             Visibility="{Binding IsRemoteConnected,
                                                  Converter={StaticResource InverseBoolToVis}}">
                     <!-- Dynamic per-drive buttons, one per physical drive found at startup.
-                         The Image source is a frozen BitmapSource registered as ToolbarDriveIcon
-                          in MainWindow.xaml.cs so it is loaded once via P/Invoke.
+                         The Image source is Icon property, set in MainViewModel.InitializeDriveMenu().
                           Notice we strip the command texts of underscores for tooltips -->
                     <ItemsControl ItemsSource="{Binding ToolbarDriveItems}">
                         <ItemsControl.ItemsPanel>
@@ -383,8 +386,7 @@
                                         Style="{DynamicResource {x:Static ToolBar.ButtonStyleKey}}"
                                         Width="30" Height="28" Padding="4,2"
                                         Margin="0,0,1,0">
-                                    <Image Source="{Binding RelativeSource={RelativeSource AncestorType=Window},
-                                                            Path=Resources[ToolbarDriveIcon]}"
+                                    <Image Source="{Binding Icon}"
                                            Width="16" Height="16"
                                            IsHitTestVisible="False"/>
                                 </Button>
@@ -405,7 +407,7 @@
                             Visibility="{Binding IsRemoteConnected,
                                                  Converter={StaticResource BoolToVis}}">
                     <!-- One button per probed remote physical drive (Drive 0 always present).
-                         Icon: tape-drive with globe badge (ToolbarRemoteDriveIcon). -->
+                         Icon: tape-drive with globe badge (Icon property, set in MainViewModel.ProbeRemoteDrivesAsync()). -->
                     <ItemsControl ItemsSource="{Binding ToolbarRemoteDriveItems}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
@@ -423,8 +425,7 @@
                                         Style="{DynamicResource {x:Static ToolBar.ButtonStyleKey}}"
                                         Width="30" Height="28" Padding="4,2"
                                         Margin="0,0,1,0">
-                                    <Image Source="{Binding RelativeSource={RelativeSource AncestorType=Window},
-                                                            Path=Resources[ToolbarRemoteDriveIcon]}"
+                                    <Image Source="{Binding Icon}"
                                            Width="16" Height="16"
                                            IsHitTestVisible="False"/>
                                 </Button>
@@ -608,16 +609,14 @@
                                 <MenuItem Header="Re_name..." Command="{Binding RenameSelectedCommand}"/>
                             </ContextMenu>
                         </ListView.ContextMenu>
-                        <ListView.ItemContainerStyle>
-                            <Style TargetType="ListViewItem">
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsHighlighted}" Value="True">
-                                        <Setter Property="Foreground" Value="{StaticResource WarningFg.Failed}" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </ListView.ItemContainerStyle>
-                        <ListView.View>
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="Foreground"
+                                            Value="{Binding HighlightLevel,
+                                            Converter={x:Static converters:WarningLevelToBrushConverter.Instance}}" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
+                            <ListView.View>
                             <GridView>
                                 <GridViewColumn Header="Property" Width="180"
                                                 DisplayMemberBinding="{Binding Property}" />
@@ -1188,6 +1187,10 @@
         <StatusBar Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="3">
             <StatusBarItem>
                 <TextBlock Text="{Binding StatusMessage}" />
+            </StatusBarItem>
+            <Separator />
+            <StatusBarItem Visibility="{Binding RemainingAndEw, Converter={StaticResource NullToVis}}">
+                <TextBlock Text="{Binding RemainingAndEw}" />
             </StatusBarItem>
             <Separator />
             <StatusBarItem Visibility="{Binding IsIoSpeedVisible, Converter={StaticResource BoolToVis}}">

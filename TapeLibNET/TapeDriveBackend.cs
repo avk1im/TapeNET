@@ -126,26 +126,17 @@ public abstract class TapeDriveBackend : ErrorManageableBase, IDisposable
     /// </para>
     /// Backends may override to add density or other discriminators.
     /// </summary>
-    public virtual string ProfileKey => $"{Vendor}|{Product}|{Revision}|cap={CapacityBucketGB(Capacity)}GB";
+    public virtual string ProfileKey => $"{Vendor}|{Product}|{Revision}|{TapeCalibration.CapacityBucket(Capacity)}";
 
     /// <summary>
-    /// Rounds a native capacity (bytes) to a coarse GB bucket (2 significant figures) so that
+    /// Rounds a native capacity to a coarse bucket string (2 significant figures) so that
     /// cartridge-to-cartridge jitter never splits a calibration profile, while genuinely different
-    /// media generations stay distinct. Examples: 781.47 GB → 780, 402 GB → 400, 1495 GB → 1500,
-    /// 2498 GB → 2500. Returns 0 when capacity is unknown (e.g. no media loaded).
+    /// media generations stay distinct. Examples: 781.47 GB → <c>780GB</c>, 402 GB → <c>400GB</c>,
+    /// 500 MB → <c>500MB</c>. Sub-2 GB media are bucketed in MB so small (virtual) test cartridges
+    /// stay distinguishable. Returns <c>0</c> when capacity is unknown (e.g. no media loaded).
+    /// <para>Delegates to <see cref="TapeCalibration.CapacityBucket"/> so a key built by either side matches.</para>
     /// </summary>
-    protected static long CapacityBucketGB(long capacityBytes)
-    {
-        if (capacityBytes <= 0)
-            return 0;
-
-        double gb = capacityBytes / (1024.0 * 1024 * 1024);
-        // Keep 2 significant figures: round to the nearest 10^(floor(log10)-1).
-        double mag = Math.Pow(10, Math.Floor(Math.Log10(gb)) - 1);
-        if (mag < 1) mag = 1; // never sub-GB granularity
-
-        return (long)(Math.Round(gb / mag) * mag);
-    }
+    protected static string CapacityBucket(long capacityBytes) => TapeCalibration.CapacityBucket(capacityBytes);
 
     #endregion
 
@@ -168,13 +159,22 @@ public abstract class TapeDriveBackend : ErrorManageableBase, IDisposable
     #region *** Early Warning ***
 
     /// <summary>
+    /// True when this backend reports EXACT remaining capacity (no over/under-report to compensate for), so
+    /// <see cref="TapeDrive"/> should hold NO pessimistic a-priori margin. False for all real/emulated
+    /// hardware. Only an un-emulated virtual drive is honest by construction.
+    /// </summary>
+    public virtual bool ReportsExactRemaining => false;
+
+    /// <summary>
     /// If early warnings are being reported. This is what the drive actually does — which may differ
     /// from what was requested via <see cref="ReportEarlyWarning"/>, exactly like block size.
     /// Default: <c>false</c> since not supported.
     /// </summary>
     public virtual bool ReportsEarlyWarning => false;
 
-    /// <summary>How <see cref="ReportsEarlyWarning"/> is currently realized (best available mechanism).</summary>
+    /// <summary>
+    /// How <see cref="ReportsEarlyWarning"/> is currently realized (best available mechanism).
+    /// </summary>
     public virtual EarlyWarningMechanism EarlyWarningMechanism => EarlyWarningMechanism.None;
 
     /// <summary>
@@ -285,10 +285,10 @@ public abstract class TapeDriveBackend : ErrorManageableBase, IDisposable
     #region *** Abstract Tapemark Operations ***
 
     /// <summary>Writes <paramref name="count"/> filemarks at the current position.</summary>
-    public abstract bool WriteFilemarks(uint count);
+    public abstract bool WriteFilemarks(uint count, out bool ew);
 
     /// <summary>Writes <paramref name="count"/> setmarks at the current position.</summary>
-    public abstract bool WriteSetmarks(uint count);
+    public abstract bool WriteSetmarks(uint count, out bool ew);
 
     #endregion
 

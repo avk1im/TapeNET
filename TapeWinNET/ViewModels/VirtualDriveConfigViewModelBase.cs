@@ -38,12 +38,17 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
 
     protected string _mediaName = $"Virtual media created {DateTime.Now:yyyy-MM-dd HH:mm}";
 
-    // End-of-media emulation (early warning zone + capacity overreport)
+    // End-of-media emulation: the EW zone plus the two INDEPENDENT over-report anchors
+    //  (see docs/Design-RemainingAndEw.md §5.1).
     protected EwProfileOption _selectedEwProfile = EwProfileOption.None;
-    protected string       _ewZoneValue     = "4";
-    protected CapacityUnit _ewZoneUnit      = CapacityUnit.Percent;
-    protected string       _overreportValue = "4";
-    protected CapacityUnit _overreportUnit  = CapacityUnit.Percent;
+    protected string       _ewZoneValue       = "4";
+    protected CapacityUnit _ewZoneUnit        = CapacityUnit.Percent;
+    // (b) Phantom free space still claimed at hard EOM — the faithful LTO shape, hence a 4% default.
+    protected string       _phantomFreeValue  = "4";
+    protected CapacityUnit _phantomFreeUnit   = CapacityUnit.Percent;
+    // (a) Capacity inflated at BOM — real LTO drives do not do this, hence a 0 default.
+    protected string       _overreportValue   = "0";
+    protected CapacityUnit _overreportUnit    = CapacityUnit.Percent;
 
     // ── Commands ──────────────────────────────────────────────────────────────
 
@@ -196,7 +201,7 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
     /// calibration profiles are appended by the owning view-model.
     /// </summary>
     public ObservableCollection<EwProfileOption> EwProfiles { get; } =
-        new([EwProfileOption.None, EwProfileOption.Custom, EwProfileOption.Lto4]);
+        new([EwProfileOption.None, EwProfileOption.Custom, EwProfileOption.Overreport]);
 
     public EwProfileOption SelectedEwProfile
     {
@@ -207,6 +212,7 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
             {
                 OnPropertyChanged(nameof(IsEwCustom));
                 OnPropertyChanged(nameof(EwZoneBytesDisplay));
+                OnPropertyChanged(nameof(PhantomFreeBytesDisplay));
                 OnPropertyChanged(nameof(OverreportBytesDisplay));
             }
         }
@@ -242,6 +248,35 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// (b) Phantom free space the emulated driver still claims at hard EOM — the LTO-4's ~28 GB lie, and the
+    /// reason the estimator exists. Over-reported space only; it never reduces the medium's true capacity.
+    /// </summary>
+    public string PhantomFreeValue
+    {
+        get => _phantomFreeValue;
+        set
+        {
+            if (SetProperty(ref _phantomFreeValue, value))
+                OnPropertyChanged(nameof(PhantomFreeBytesDisplay));
+        }
+    }
+
+    public CapacityUnit PhantomFreeUnit
+    {
+        get => _phantomFreeUnit;
+        set
+        {
+            if (SetProperty(ref _phantomFreeUnit, value))
+                OnPropertyChanged(nameof(PhantomFreeBytesDisplay));
+        }
+    }
+
+    /// <summary>
+    /// (a) Capacity inflated at BOM — how much MORE than the true capacity the emulated driver claims is free
+    /// on a virgin cartridge, i.e. a constant overshoot present from the very first byte. Usually left at 0,
+    /// since real LTO drives report their capacity honestly at BOM.
+    /// </summary>
     public string OverreportValue
     {
         get => _overreportValue;
@@ -265,14 +300,21 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
     /// <summary>EW-zone size resolved to bytes against the current content capacity.</summary>
     public long EwZoneBytes => _ewZoneUnit.ToBytes(_ewZoneValue, ContentCapacityBytes);
 
-    /// <summary>Capacity-overreport (floor) size resolved to bytes against the current content capacity.</summary>
+    /// <summary>(b) Phantom-free-at-EOM size resolved to bytes against the current content capacity.</summary>
+    public long PhantomFreeBytes => _phantomFreeUnit.ToBytes(_phantomFreeValue, ContentCapacityBytes);
+
+    /// <summary>(a) Capacity-overreport size resolved to bytes against the current content capacity.</summary>
     public long OverreportBytes => _overreportUnit.ToBytes(_overreportValue, ContentCapacityBytes);
 
-    public string EwZoneBytesDisplay =>
-        IsEwCustom ? EwZoneUnit == CapacityUnit.Percent ? $"= {Helpers.BytesToString(EwZoneBytes)}" : $"= {EwZoneBytes:N0} bytes" : string.Empty;
+    public string EwZoneBytesDisplay => FormatEwBytes(EwZoneUnit, EwZoneBytes);
+    public string PhantomFreeBytesDisplay => FormatEwBytes(PhantomFreeUnit, PhantomFreeBytes);
+    public string OverreportBytesDisplay => FormatEwBytes(OverreportUnit, OverreportBytes);
 
-    public string OverreportBytesDisplay =>
-        IsEwCustom ? OverreportUnit == CapacityUnit.Percent ? $"= {Helpers.BytesToString(OverreportBytes)}" : $"= {OverreportBytes:N0} bytes" : string.Empty;
+    /// <summary>Shared "= 31.2 GB" / "= 33,554,432 bytes" hint shown beside each EW input.</summary>
+    private string FormatEwBytes(CapacityUnit unit, long bytes) =>
+        !IsEwCustom ? string.Empty
+        : unit == CapacityUnit.Percent ? $"= {Helpers.BytesToString(bytes)}"
+        : $"= {bytes:N0} bytes";
 
     /// <summary>
     /// Builds the <see cref="VirtualTapeEwProfile"/> for the current content capacity and EW settings, or
@@ -280,7 +322,7 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
     /// the IO-rate emulation.
     /// </summary>
     public VirtualTapeEwProfile? BuildEwProfile() =>
-        _selectedEwProfile.BuildProfile(ContentCapacityBytes, EwZoneBytes, OverreportBytes);
+        _selectedEwProfile.BuildProfile(ContentCapacityBytes, EwZoneBytes, PhantomFreeBytes, OverreportBytes);
 
     /// <summary>
     /// Appends stored calibration profiles to <see cref="EwProfiles"/>. Non-throwing: a store failure simply
@@ -302,6 +344,7 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
     private void OnEwBaseCapacityChanged()
     {
         OnPropertyChanged(nameof(EwZoneBytesDisplay));
+        OnPropertyChanged(nameof(PhantomFreeBytesDisplay));
         OnPropertyChanged(nameof(OverreportBytesDisplay));
     }
 

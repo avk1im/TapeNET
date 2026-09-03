@@ -12,10 +12,10 @@ public sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? log
     : IAiProviderDiscovery
 {
     // ── Well-known environment variable names ────────────────────────────────
-    private const string EnvGitHubToken         = "GITHUB_TOKEN";
-    private const string EnvOpenAiApiKey        = "OPENAI_API_KEY";
+    private const string EnvOpenAiApiKey         = "OPENAI_API_KEY";
     private const string EnvAzureOpenAiApiKey   = "AZURE_OPENAI_API_KEY";
     private const string EnvAzureOpenAiEndpoint = "AZURE_OPENAI_ENDPOINT";
+    private const string EnvAnthropicApiKey     = "ANTHROPIC_API_KEY";
 
     private static readonly TimeSpan DefaultPerProbeTimeout = TimeSpan.FromSeconds(5);
 
@@ -49,6 +49,20 @@ public sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? log
             return ProbeWithTimeoutAsync(provider, ep, apiKey, timeout, ct);
         }
 
+        // ── Registry-driven filtering ───────────────────────────────────────
+        //  When a registry is supplied it decides which kinds may be probed at
+        //  all. Kinds absent from the registry are allowed through, so a newly
+        //  added provider is never silently invisible before it is seeded.
+        var registryEntries = options.Registry?.Entries;
+        var disabledKinds = registryEntries is null
+            ? []
+            : registryEntries
+                .Where(e => e.IsBuiltIn && !e.IsEnabled)
+                .Select(e => e.Kind)
+                .ToHashSet();
+
+        bool IsEnabled(AiProviderKind kind) => !disabledKinds.Contains(kind);
+
         // ── Localhost probes ─────────────────────────────────────────────────
         if (options.ProbeLocalhost)
         {
@@ -57,13 +71,30 @@ public sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? log
                 var ep = provider.Descriptor.DefaultEndpoint;
                 if (ep is null || provider.Descriptor.Location != AiProviderLocation.Local)
                     continue;
+                if (!IsEnabled(provider.Descriptor.Kind))
+                    continue;
 
                 tasks.Add(Probe(provider, ep, apiKey: null));
             }
         }
 
         // ── LAN endpoint probes ──────────────────────────────────────────────
-        if (options.LanEndpoints is { Count: > 0 })
+        //  Prefer the registry: it carries per-entry kind, enabled state and
+        //  priority order, whereas LanEndpoints is a bare URI list.
+        if (registryEntries is not null)
+        {
+            foreach (var entry in registryEntries.Where(e => !e.IsBuiltIn && e.IsEnabled))
+            {
+                var provider = catalog.Find(entry.Kind);
+                var ep       = entry.ResolveEndpoint(provider?.Descriptor);
+                if (provider is null || ep is null)
+                    continue;
+
+                var epLabel = ep.IsDefaultPort ? ep.Host : $"{ep.Host}:{ep.Port}";
+                tasks.Add(Probe(provider, ep, apiKey: null, epLabel));
+            }
+        }
+        else if (options.LanEndpoints is { Count: > 0 })
         {
             // For each LAN URI, probe every OpenAI-compatible and Ollama provider
             var lanProviders = catalog.Providers
@@ -81,44 +112,105 @@ public sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? log
         }
 
         // ── Environment-variable-based providers ─────────────────────────────
+        //  Tracks which cloud kinds were already queued so the stored-credential
+        //  sweep below does not probe the same provider twice.
+        var queuedCloudKinds = new HashSet<AiProviderKind>();
+
         if (options.CheckEnvironmentVariables)
         {
-            // GitHub Models
-            var githubToken = Environment.GetEnvironmentVariable(EnvGitHubToken);
-            if (!string.IsNullOrEmpty(githubToken))
-            {
-                var provider = catalog.Find(AiProviderKind.GitHubModels);
-                if (provider?.Descriptor.DefaultEndpoint is { } ep)
-                    tasks.Add(Probe(provider, ep, githubToken));
-            }
-
             // OpenAI
             var openAiKey = Environment.GetEnvironmentVariable(EnvOpenAiApiKey);
-            if (!string.IsNullOrEmpty(openAiKey))
+            if (!string.IsNullOrEmpty(openAiKey) && IsEnabled(AiProviderKind.OpenAi))
             {
                 var provider = catalog.Find(AiProviderKind.OpenAi);
                 if (provider?.Descriptor.DefaultEndpoint is { } ep)
+                {
                     tasks.Add(Probe(provider, ep, openAiKey));
+                    queuedCloudKinds.Add(AiProviderKind.OpenAi);
+                }
+            }
+
+            // Anthropic
+            var anthropicKey = Environment.GetEnvironmentVariable(EnvAnthropicApiKey);
+            if (!string.IsNullOrEmpty(anthropicKey) && IsEnabled(AiProviderKind.Anthropic))
+            {
+                var provider = catalog.Find(AiProviderKind.Anthropic);
+                if (provider?.Descriptor.DefaultEndpoint is { } ep)
+                {
+                    tasks.Add(Probe(provider, ep, anthropicKey));
+                    queuedCloudKinds.Add(AiProviderKind.Anthropic);
+                }
             }
 
             // Azure OpenAI
             var azureKey = Environment.GetEnvironmentVariable(EnvAzureOpenAiApiKey);
             var azureEpStr = Environment.GetEnvironmentVariable(EnvAzureOpenAiEndpoint);
             if (!string.IsNullOrEmpty(azureKey) && !string.IsNullOrEmpty(azureEpStr) &&
+                IsEnabled(AiProviderKind.AzureOpenAi) &&
                 Uri.TryCreate(azureEpStr, UriKind.Absolute, out var azureEp))
             {
                 var provider = catalog.Find(AiProviderKind.AzureOpenAi);
                 if (provider is not null)
+                {
                     tasks.Add(Probe(provider, azureEp, azureKey));
+                    queuedCloudKinds.Add(AiProviderKind.AzureOpenAi);
+                }
+            }
+        }
+
+        // ── Cloud providers with a previously stored credential ──────────────
+        //  Lets a returning user's configured cloud provider reappear in the
+        //  picker without any environment variable being set.
+        if (options.SecretStore is { } store)
+        {
+            foreach (var provider in catalog.Providers)
+            {
+                var descriptor = provider.Descriptor;
+                if (descriptor.Location != AiProviderLocation.Cloud ||
+                    queuedCloudKinds.Contains(descriptor.Kind) ||
+                    !IsEnabled(descriptor.Kind))
+                {
+                    continue;
+                }
+
+                // Azure has no fixed endpoint — fall back to a caller-supplied one.
+                var ep = descriptor.DefaultEndpoint;
+                if (ep is null &&
+                    options.KnownCloudEndpoints?.TryGetValue(descriptor.Kind, out var knownEp) == true)
+                {
+                    ep = knownEp;
+                }
+                if (ep is null) continue;
+
+                var storedKey = store.Load(AiSecretKey.For(descriptor.Kind, ep));
+                if (string.IsNullOrEmpty(storedKey)) continue;
+
+                tasks.Add(Probe(provider, ep, storedKey));
+                queuedCloudKinds.Add(descriptor.Kind);
             }
         }
 
         // ── Await all probes ─────────────────────────────────────────────────
         var results = await Task.WhenAll(tasks);
 
-        return [.. results
+        var discovered = results
             .Where(r => r is not null)
-            .Select(r => r!)];
+            .Select(r => r!);
+
+        // Present results in the user's configured priority order. Kinds the
+        //  registry does not know about sort last but keep their relative order.
+        if (registryEntries is not null)
+        {
+            var priority = registryEntries
+                .Select((e, i) => (e.Kind, Index: i))
+                .GroupBy(x => x.Kind)
+                .ToDictionary(g => g.Key, g => g.Min(x => x.Index));
+
+            discovered = discovered.OrderBy(
+                r => priority.TryGetValue(r.Descriptor.Kind, out var i) ? i : int.MaxValue);
+        }
+
+        return [.. discovered];
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

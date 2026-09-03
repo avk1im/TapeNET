@@ -1,5 +1,7 @@
 using System.Globalization;
+using System.Windows;
 using System.Windows.Data;
+using System.Windows.Media;
 using TapeWinNET.Models;
 
 namespace TapeWinNET.Converters;
@@ -21,6 +23,26 @@ public class WarningLevelToIconConverter : IValueConverter
     {
         throw new NotImplementedException();
     }
+}
+
+/// <summary>
+/// Converts a <see cref="WarningLevel"/> to its foreground brush.
+/// Usage: Foreground="{Binding HighlightLevel, Converter={x:Static converters:WarningLevelToBrushConverter.Instance}}"
+/// </summary>
+public class WarningLevelToBrushConverter : IValueConverter
+{
+    public static WarningLevelToBrushConverter Instance { get; } = new();
+
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        // Return the brush, or UnsetValue so None keeps the inherited Foreground.
+        return value is WarningLevel level && WarningLevelHelper.GetBrush(level) is Brush brush
+            ? brush
+            : DependencyProperty.UnsetValue;
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotImplementedException();
 }
 
 /// <summary>

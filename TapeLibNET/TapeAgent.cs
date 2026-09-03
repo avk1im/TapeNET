@@ -432,6 +432,12 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     ///  (use after operations that may leave the tape position uncertain).</param>
     public TapeResult BackupTOC(bool enforce = false)
     {
+        // We stamp a stable media identity before the first durable write. New media (just
+        //  formatted) and legacy Guid-less media (just loaded) both reach here with an empty
+        //  MediaId; we mint once, then it persists across every rewrite and across all volumes.
+        //  Both TOC copies serialize the same value, since we mint into the in-memory TOC here.
+        TOC.EnsureMediaId();
+
 #if DEBUG
         _tocCopyCounter = 0;
 #endif

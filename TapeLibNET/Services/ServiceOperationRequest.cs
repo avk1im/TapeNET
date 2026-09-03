@@ -68,6 +68,47 @@ public sealed record RestoreRequest(
     bool EjectWhenDone,
     ITapeFileFilter? Filter = null) : ServiceOperationRequest;
 
+// ── Calibrate ────────────────────────────────────────────────────────────────
+
+/// <summary>Which calibration operation a <see cref="CalibrateRequest"/> performs.</summary>
+public enum CalibrationMode
+{
+    /// <summary>A fresh, full calibration from BOM (destructive). The default.</summary>
+    New,
+
+    /// <summary>Continue a calibration interrupted by a transport fault, from the last on-tape checkpoint
+    ///  on the currently loaded cartridge. Requires the (partially written) calibration cartridge.</summary>
+    Resume,
+
+    /// <summary>Fast re-measurement of the tail from the last checkpoint on a COMPLETE calibration
+    ///  cartridge (e.g. after a firmware update / drive swap), producing a reassessed calibration and a
+    ///  verdict on whether it still holds. Requires the calibration cartridge.</summary>
+    Recalibrate,
+}
+
+/// <summary>
+/// Options for a destructive calibration run over the currently loaded medium.
+/// </summary>
+/// <remarks>
+/// Calibration works on fixed-size write chunks rather than user files, but it still
+/// follows the same service-operation pattern as backup and restore.
+/// </remarks>
+/// <param name="ConfirmFullRecalibrationInline">
+/// When a <see cref="CalibrationMode.Recalibrate"/> run yields a
+///  <see cref="RecalibrationVerdict.FullRecalibrationAdvised"/> verdict, controls whether the service
+///  itself prompts via <see cref="ITapeServiceHost.Confirm"/> and, if accepted, chains straight into a
+///  full re-run before returning (the interactive CLI model). Hosts that instead want to present the
+///  verdict/delta in their own UI and let the user trigger a follow-up run themselves (e.g. TapeWinNET's
+///  <see cref ="CalibrationResultViewModel"/> banner) should set this to <see langword="false"/> — the service
+///  then simply returns the reassessed result and verdict without prompting or chaining.
+/// </param>
+public sealed record CalibrateRequest(
+    bool EjectWhenDone,
+    TapeCalibrationOptions Options,
+    CalibrationMode Mode = CalibrationMode.New,
+    ITapeCalibration? ExistingCalibration = null,
+    bool ConfirmFullRecalibrationInline = true) : ServiceOperationRequest;
+
 // ── List ─────────────────────────────────────────────────────────────────────
 
 /// <summary>
@@ -130,5 +171,4 @@ public sealed record ListRequest(
     bool ShowFullPath = true,
     ITapeFileFilter? Filter = null,
     ListDepth Depth = ListDepth.Full) : ServiceOperationRequest;
-
 

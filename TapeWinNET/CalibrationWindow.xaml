@@ -1,0 +1,93 @@
+<Window x:Class="TapeWinNET.CalibrationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
+        xmlns:controls="clr-namespace:TapeWinNET.Controls"
+        xmlns:help="clr-namespace:TapeWinNET.Help"
+        d:DataContext="{d:DesignInstance Type=vm:CalibrationResultViewModel}"
+        mc:Ignorable="d"
+        Title="Calibration Result"
+        Height="520" Width="620"
+        ResizeMode="CanResizeWithGrip"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        PreviewKeyDown="Window_PreviewKeyDown"
+        Closing="Window_Closing">
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition x:Name="HelpPaneColumn" Width="0" MinWidth="0"/>
+        </Grid.ColumnDefinitions>
+
+        <Grid x:Name="HelpOverlayRoot" Grid.Column="0" Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0"
+                       Text="The calibration profile below can be saved as well as applied immediately to the current media (single-partition only)."
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,12"/>
+
+            <controls:CalibrationResultView Grid.Row="2"
+                                            help:HelpControlNameAttachedProperty.ControlName="Calibration Result"/>
+
+
+            <TextBlock Grid.Row="3"
+                       Text="{Binding StatusMessage}"
+                       Foreground="{DynamicResource WarningFg.Info}"
+                       Margin="0,12,0,0"
+                       TextWrapping="Wrap">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding StatusMessage}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding StatusMessage}" Value="">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+            
+            <Grid Grid.Row="4" Margin="0,16,0,0">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                    <Button x:Name="HelpButton" Content="_Help ▶" Click="HelpButton_Click"
+                            MinWidth="60" Padding="10,1"
+                            ToolTip="Open help for this dialog (F1)"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="SaveProfileButton"
+                            Content="Save Profile" Command="{Binding SaveProfileCommand}"
+                            Width="100" Margin="0,0,8,0"/>
+                    <Button Content="Apply Profile" Command="{Binding ApplyProfileCommand}"
+                            Width="100" Margin="0,0,8,0"/>
+                    <Button Content="Close" Width="80" IsCancel="True"/>
+                </StackPanel>
+            </Grid>
+        </Grid>
+
+        <GridSplitter x:Name="HelpPaneSplitter"
+                      Grid.Column="1"
+                      Width="4"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Stretch"
+                      Background="LightGray"
+                      Visibility="Collapsed"/>
+
+        <controls:HelpPane x:Name="HelpPaneControl"
+                           Grid.Column="2"
+                           DataContext="{x:Null}"
+                           Visibility="Collapsed"/>
+    </Grid>
+</Window>

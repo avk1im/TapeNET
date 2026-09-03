@@ -51,6 +51,7 @@ internal sealed class TempVirtualTapeDriveBackend(
     public override bool HasInitiatorPartition => _inner.HasInitiatorPartition;
     public override bool SupportsSetmarks => _inner.SupportsSetmarks;
     public override bool SupportsSeqFilemarks => _inner.SupportsSeqFilemarks;
+    public override bool ReportsExactRemaining => _inner.ReportsExactRemaining;
 
     public override bool Open(uint driveNumber) => _inner.Open(driveNumber);
     public override void Close() => _inner.Close();
@@ -80,8 +81,8 @@ internal sealed class TempVirtualTapeDriveBackend(
     public override bool SpaceSetmarks(int count) => _inner.SpaceSetmarks(count);
     public override bool SpaceSequentialFilemarks(int count) => _inner.SpaceSequentialFilemarks(count);
 
-    public override bool WriteFilemarks(uint count) => _inner.WriteFilemarks(count);
-    public override bool WriteSetmarks(uint count) => _inner.WriteSetmarks(count);
+    public override bool WriteFilemarks(uint count, out bool ew) => _inner.WriteFilemarks(count, out ew);
+    public override bool WriteSetmarks(uint count, out bool ew) => _inner.WriteSetmarks(count, out ew);
 
     public override void FillDriveCapabilities(out TapeLibNET.DriveCapabilities parameters)
         => _inner.FillDriveCapabilities(out parameters);
