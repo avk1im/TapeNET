@@ -379,7 +379,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 DriveNumber = driveNumber;
                 LogOk($"Drive {driveNumber} opened successfully");
                 LogInfoSub($"Device name: {_drive.DriveDeviceName}");
-                AutoLoadCalibrations();
+                // AutoLoadCalibrations();
+                    // NOT needed here; much rather will be done upon loading media in LoadMediaAsync() when the media identity / capacity is known.
                 _host.OnServiceStateChanged(ServiceStateChange.DriveOpened);
                 return true;
             }
