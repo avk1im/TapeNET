@@ -250,7 +250,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
             var (svc, host1) = await OpenFormatWithEwAsync(media);
             using (svc)
             {
-                host1.ConfirmAnswers.Enqueue(true);   // "yes, erase and calibrate"
+                host1.MediaMismatchAnswers.Enqueue(MediaMismatchChoice.Proceed);   // proceed to erase and calibrate
                 var cal = await svc.ExecuteCalibrateAsync(new CalibrateRequest(
                     EjectWhenDone: false, Options: new TapeCalibrationOptions { SampleCount = 20, NumCheckpoints = 4 }));
                 Assert.True(cal.Success, $"calibration setup failed: {svc.LastError}");
@@ -296,7 +296,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
         {
             Assert.IsType<TapeMediaHeader>(svc2.LoadedHeader);
 
-            host.ConfirmAnswers.Enqueue(false);   // decline the "holds a backup — erase?" confirm
+            host.MediaMismatchAnswers.Enqueue(MediaMismatchChoice.Abort);   // respond "abort" to the "holds a backup — erase?" confirm
 
             var cal = await svc2.ExecuteCalibrateAsync(new CalibrateRequest(
                 EjectWhenDone: false, Options: new TapeCalibrationOptions { SampleCount = 8, NumCheckpoints = 4 }));

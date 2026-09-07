@@ -1,6 +1,8 @@
+using System.Reflection.PortableExecutable;
+using System.Timers;
+using TapeLibNET.Virtual;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices; // Helpers, Stopwatch
-using TapeLibNET.Virtual;
 using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
 
 namespace TapeLibNET.Services;
@@ -118,19 +120,56 @@ public partial class TapeServiceBase
                 return MakeResult(aborted: true, message: "For calibration, use a single-partition media", mode: request.Mode);
         }
 
-        // §10.7 — the ONLY pre-run guard that catches a New run (which reads no header): if the cartridge
-        //  holds backup media, confirm before the destructive overwrite. Uses the cached load-time header;
-        //  when null / not a media header, no prompt.
-        //  Composes with the post-run `ForeignHeader` reporting already present for Resume/Recalibrate: this
+        // §10.7 — pre-run guard through the unified verdict channel. Format/backup heads the media, so a
+        //  cartridge carrying a MEDIA header is the wrong kind for a destructive calibration run.
+        //  Uses the cached load-time header; when null / not a media header, no prompt.
+        //  SkipMediaHeaderCheck bypasses the guard entirely (scripted/unattended scratch runs).
+        //  This composes with the post-run `ForeignHeader` reporting already present for Resume/Recalibrate: this
         //  guard catches the destructive write up front; `ForeignHeader` still explains a failed Resume/Recalibrate.
-        if (!request.SkipMediaHeaderCheck && _loadedHeader is TapeMediaHeader mh)
+        if (!request.SkipMediaHeaderCheck)
         {
-            if (!_host.Confirm(
-                    $"This cartridge holds backup media:\n{mh}\n" +
-                    "Calibration is destructive and will erase it. Continue?",
-                    defaultAnswer: false))
-                return MakeResult(aborted: true,
-                    message: "Calibration cancelled — cartridge holds a backup", mode: request.Mode);
+            while (_loadedHeader is TapeMediaHeader)
+            {
+                var choice = PresentVerdict(
+                    TapeMediaVerdict.WrongKind, MediaPromptContext.CalibrateScratch,
+                    suppress: false, allowRetry: true, allowProceedAlways: false); // calibration run is one-off ⇒ there's no "always"
+
+                if (choice == MediaMismatchChoice.Abort)
+                    return MakeResult(aborted: true,
+                        message: "Calibration cancelled — cartridge holds a backup", mode: request.Mode);
+
+                if (choice != MediaMismatchChoice.Retry)
+                    break;   // Proceed — erase and calibrate the loaded cartridge
+
+                // Retry: eject the wrong cartridge, prompt for a scratch one, reload, and re-probe its identity.
+                //  The loop then re-evaluates the freshly loaded cartridge (blank/scratch ⇒ _loadedHeader null ⇒ exit).
+                LogInfo("Ejecting cartridge for exchange...");
+                OnStatusUpdate("Waiting for a scratch cartridge...");
+
+                if (!_drive.UnloadMedia())
+                {
+                    LastError = _drive.LastErrorMessage;
+                    throw new InvalidOperationException($"Couldn't eject media: {LastError}");
+                }
+
+                // Reuse the existing insert prompt (virtual: opens the open-existing picker; physical: "insert &
+                //  continue"). The RestoreMode arg only colors the dialog wording — a minor cosmetic stretch for
+                //  calibration; swap for a dedicated calibration-insert host verb if that wording ever matters.
+                if (!_host.OnInsertMediaConfirm(volumeNeeded: 1, RestoreMode.Restore))
+                    return MakeResult(aborted: true,
+                        message: "Calibration cancelled — no scratch cartridge inserted", mode: request.Mode);
+
+                LogInfo("Loading media...");
+                OnStatusUpdate("Loading media...");
+                if (!_drive.ReloadMedia() || !_drive.PrepareMedia())
+                {
+                    LastError = _drive.LastErrorMessage;
+                    throw new InvalidOperationException($"Couldn't load media: {LastError}");
+                }
+
+                AutoLoadCalibrations();   // the profile key depends on the newly loaded medium
+                RefreshLoadedHeader();    // re-read identity; the while-condition re-checks it
+            }
         }
 
         try

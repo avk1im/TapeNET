@@ -107,12 +107,25 @@ public sealed class ConsoleUxServiceHost(IConsoleUx ux) : ITapeServiceHost
 
         // Non-interactive / quiet / redirected: auto-proceed (legacy batch behaviour) and log it.
         //  NOTE: this explicit branch is what yields Proceed; Select's own default-index fallback would
-        //  otherwise resolve to the safe Abort. Keep this branch.
+        //  otherwise resolve to the safe Abort. Keep this branch, PLUS keep the PROTECTIVE default for
+        //  the one destructive-erase context
         if (ux.NonInteractive || ux.QuietMode)
         {
+            /*
+            // Version with auto-proceed always, even for CalibrateScratch (legacy behaviour):
             ux.Log(WarningLevel.Warning,
                 $"Media check ({verdict}/{context}) auto-proceeding (non-interactive): {headerDescription}");
             return MediaMismatchChoice.Proceed;
+            */
+            // CalibrateScratch stays Abort even unattended — never silently erase a backup to calibrate.
+            //  Every other context keeps the legacy batch-friendly Proceed.
+            var auto = context == MediaPromptContext.CalibrateScratch
+                ? MediaMismatchChoice.Abort
+                : MediaMismatchChoice.Proceed;
+            
+            ux.Log(WarningLevel.Warning,
+                $"Media check ({verdict}/{context}) auto-{auto} (non-interactive): {headerDescription}");
+            return auto;
         }
 
         // Assemble the allowed choices in a stable order; map the chosen label back to the enum.
