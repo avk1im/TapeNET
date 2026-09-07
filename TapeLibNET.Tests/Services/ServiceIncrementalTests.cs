@@ -219,7 +219,7 @@ public class ServiceIncrementalTests : ServiceTestBase
     ///  (17 files). The returned <c>wave2Files</c> list is a snapshot of
     ///  <see cref="TempFileTree.Files"/> after wave 2.
     /// </remarks>
-    private static async Task<(ThreeWaveChain chain, List<string> wave2Files)>
+    private async Task<(ThreeWaveChain chain, List<string> wave2Files)>
         SetupThreeWaveChainAsync(TempVirtualMedia media, TempFileTree src)
     {
         // ── Wave 0: full backup of 15 files ──────────────────────────────────

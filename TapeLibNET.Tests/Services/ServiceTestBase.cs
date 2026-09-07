@@ -1,11 +1,9 @@
-using System.IO;
-
 using Microsoft.Extensions.Logging.Abstractions;
-
+using System.IO;
 using TapeLibNET;
 using TapeLibNET.Services;
-using TapeLibNET.Virtual;
 using TapeLibNET.Tests.Helpers; // TempFileTree, FileComparer, TestTapeServiceHost,
+using TapeLibNET.Virtual;
                                 //  TempVirtualMedia, MultiVolumeTapeServiceHost
 
 namespace TapeLibNET.Tests.Services;
@@ -21,7 +19,10 @@ namespace TapeLibNET.Tests.Services;
 ///  <see cref="ServiceStateChange"/> notification for post-hoc assertions.
 /// </para>
 /// </summary>
-public abstract class ServiceTestBase
+/// <remarks>
+/// Implements <see cref="IDisposable"/> to check for spurious media prompts at teardown.
+/// </remarks>
+public abstract class ServiceTestBase : IDisposable
 {
     // ── Shared constants ──────────────────────────────────────────────────────
 
@@ -47,6 +48,59 @@ public abstract class ServiceTestBase
     /// </summary>
     protected const int RichContentFileCount = 26;
 
+    // ── Media-prompt tracking ─────────────────────────────────────────────────
+    private readonly List<TestTapeServiceHost> _trackedHosts = [];
+
+    /// <summary>Hosts already checked via <see cref="AssertMediaPrompts"/> — excluded from the
+    ///  teardown "must be empty" sweep so their prompts aren't double-judged.</summary>
+    private readonly HashSet<TestTapeServiceHost> _promptChecked = [];
+
+    private T Track<T>(T host) where T : TestTapeServiceHost
+    {
+        _trackedHosts.Add(host);
+        return host;
+    }
+
+    /// <summary>
+    /// Asserts that <paramref name="host"/> recorded EXACTLY the given media-identity prompts, in order,
+    ///  each matching on (<see cref="TapeMediaVerdict"/>, <see cref="MediaPromptContext"/>). Drains the
+    ///  recorded queue and marks the host as checked (so teardown won't re-judge it). Pass no
+    ///  <paramref name="expected"/> to assert the host prompted zero times.
+    /// </summary>
+    protected void AssertMediaPrompts(
+        TestTapeServiceHost host,
+        params (TapeMediaVerdict Verdict, MediaPromptContext Context)[] expected)
+    {
+        _promptChecked.Add(host);
+
+        var actual = new List<TestTapeServiceHost.MediaMismatchPrompt>();
+        while (host.MediaMismatchPrompts.TryDequeue(out var p))
+            actual.Add(p);
+
+        Assert.True(expected.Length == actual.Count,
+            $"Expected {expected.Length} media prompt(s), got {actual.Count}: " +
+            $"[{string.Join("; ", actual.Select(a => $"{a.Verdict}/{a.Context}"))}]");
+
+        for (int i = 0; i < expected.Length; i++)
+        {
+            Assert.Equal(expected[i].Verdict, actual[i].Verdict);
+            Assert.Equal(expected[i].Context, actual[i].Context);
+        }
+    }
+
+    /// <summary>Convenience: assert the host prompted zero times (explicit happy-path check).</summary>
+    protected void AssertNoMediaPrompts(TestTapeServiceHost host) => AssertMediaPrompts(host);
+
+    // ── Teardown: every UN-checked host must have prompted zero times ──────────
+    public void Dispose()
+    {
+        foreach (var host in _trackedHosts)
+            if (!_promptChecked.Contains(host))
+                Assert.Empty(host.MediaMismatchPrompts);   // happy-path hosts: provably silent
+
+        GC.SuppressFinalize(this);
+    }
+
     // ── Single-volume factory helpers ─────────────────────────────────────────
 
     /// <summary>
@@ -55,10 +109,10 @@ public abstract class ServiceTestBase
     ///  <see cref="ITapeServiceHost.Report"/> call and every
     ///  <see cref="ServiceStateChange"/> notification for post-hoc assertions.
     /// </summary>
-    protected static (TapeServiceBase service, TestTapeServiceHost host) CreateService(
+    protected (TapeServiceBase service, TestTapeServiceHost host) CreateService(
         CancellationToken _ = default)
     {
-        var host    = new TestTapeServiceHost();
+        var host = Track(new TestTapeServiceHost()); // ← create AND register
         var service = new TapeServiceBase(TestLoggerFactory.Default, host);
         return (service, host);
     }
@@ -67,7 +121,7 @@ public abstract class ServiceTestBase
     /// Opens a file-backed virtual drive, formats it, and leaves the service
     ///  in the post-format state (media loaded, TOC available).
     /// </summary>
-    protected static async Task<(TapeServiceBase service, TestTapeServiceHost host)> OpenAndFormatAsync(
+    protected async Task<(TapeServiceBase service, TestTapeServiceHost host)> OpenAndFormatAsync(
         TempVirtualMedia media,
         CancellationToken ct = default)
     {
@@ -99,7 +153,7 @@ public abstract class ServiceTestBase
     /// Re-opens the same virtual media files for reading (e.g. post-backup).
     ///  Loads media and restores the TOC.
     /// </summary>
-    protected static async Task<(TapeServiceBase service, TestTapeServiceHost host)> ReopenAsync(
+    protected async Task<(TapeServiceBase service, TestTapeServiceHost host)> ReopenAsync(
         TempVirtualMedia media,
         CancellationToken ct = default)
     {
@@ -164,10 +218,10 @@ public abstract class ServiceTestBase
     ///  for its swap callbacks). The <see cref="MultiVolumeTapeServiceHost.Service"/> property
     ///  is set immediately after the service is created.
     /// </remarks>
-    protected static (TapeServiceBase service, MultiVolumeTapeServiceHost host)
+    protected (TapeServiceBase service, MultiVolumeTapeServiceHost host)
         CreateMultiVolumeService(IReadOnlyList<TempVirtualMedia> volumes)
     {
-        var host    = new MultiVolumeTapeServiceHost(volumes);
+        var host = Track(new MultiVolumeTapeServiceHost(volumes)); // ← create AND register (base-typed list)
         var service = new TapeServiceBase(TestLoggerFactory.Default, host);
         host.Service = service; // back-link; set after construction to break the circular dependency
         return (service, host);
@@ -177,7 +231,7 @@ public abstract class ServiceTestBase
     /// Opens and formats the first volume of a multi-volume sequence,
     ///  leaving the service ready to begin backup.
     /// </summary>
-    protected static async Task<(TapeServiceBase service, MultiVolumeTapeServiceHost host)>
+    protected async Task<(TapeServiceBase service, MultiVolumeTapeServiceHost host)>
         OpenAndFormatMultiVolumeAsync(
             IReadOnlyList<TempVirtualMedia> volumes,
             CancellationToken _ = default)
@@ -216,7 +270,7 @@ public abstract class ServiceTestBase
     ///  <see cref="MultiVolumeTapeServiceHost.OnInsertMediaConfirm"/> as needed.
     /// </para>
     /// </summary>
-    protected static async Task<(TapeServiceBase service, MultiVolumeTapeServiceHost host)>
+    protected async Task<(TapeServiceBase service, MultiVolumeTapeServiceHost host)>
         ReopenMultiVolumeAsync(
             IReadOnlyList<TempVirtualMedia> volumes,
             CancellationToken _ = default)

@@ -25,7 +25,7 @@ public class ServiceCalibrationResumeTests : ServiceTestBase
     private const long MB = 1024L * 1024;
     private const long CalibrationCapacity = 64L * MB;
 
-    private static async Task<(TapeServiceBase service, TestTapeServiceHost host)> OpenCalibrationServiceAsync(
+    private async Task<(TapeServiceBase service, TestTapeServiceHost host)> OpenCalibrationServiceAsync(
         long capacity = CalibrationCapacity,
         VirtualTapeDriveIoRate? ioRate = null,
         VirtualTapeEwProfile? ewProfile = null)

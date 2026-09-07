@@ -1,8 +1,8 @@
 using System.IO;
 using TapeLibNET;
 using TapeLibNET.Services;
-using TapeLibNET.Virtual;
 using TapeLibNET.Tests.Helpers; // TempFileTree, FileComparer, TempVirtualMedia, TestTapeServiceHost
+using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests.Services;
 
@@ -26,7 +26,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
     // ── Local open helpers ────────────────────────────────────────────────────
 
     /// <summary>Opens file-backed setmarks media WITHOUT formatting or restoring the TOC — just load.</summary>
-    private static async Task<(TapeServiceBase svc, TestTapeServiceHost host)> OpenLoadOnlyAsync(
+    private async Task<(TapeServiceBase svc, TestTapeServiceHost host)> OpenLoadOnlyAsync(
         TempVirtualMedia media, FileMode mode, VirtualTapeEwProfile? ew = null)
     {
         var (svc, host) = CreateService();
@@ -41,7 +41,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
     }
 
     /// <summary>Opens + formats file-backed setmarks media with EW emulation (for calibration tests).</summary>
-    private static async Task<(TapeServiceBase svc, TestTapeServiceHost host)> OpenFormatWithEwAsync(
+    private async Task<(TapeServiceBase svc, TestTapeServiceHost host)> OpenFormatWithEwAsync(
         TempVirtualMedia media, FileMode mode = FileMode.Create)
     {
         var (svc, host) = await OpenLoadOnlyAsync(media, mode, VirtualTapeEwProfile.EmulatedOverreport(media.ContentCapacity));
@@ -128,20 +128,19 @@ public class ServiceMediaHeaderTests : ServiceTestBase
             Assert.Equal(firstId, svc2.LoadedMediaHeader!.MediaId);
 
             host.MediaMismatchAnswers.Enqueue(MediaMismatchChoice.Proceed);
-
             var result = await svc2.ExecuteBackupAsync(MakeBackupRequest(svc2, src2.RootPath, "s2")); // append:false ⇒ overwrite
             Assert.True(result.Success, $"overwrite failed: {svc2.LastError}");
             Assert.Equal(src2.Files.Count, result.FilesSucceeded);
 
-            // The overwrite guard fired (existing sets present) in the OverwriteBackup context …
-            var prompt = Assert.Single(host.MediaMismatchPrompts);
-            Assert.Equal(MediaPromptContext.OverwriteBackup, prompt.Context);
+            // The overwrite guard fired a prompt (existing sets present) in the OverwriteBackup context …
+            AssertMediaPrompts(host, (TapeMediaVerdict.MediaIdMismatch, MediaPromptContext.OverwriteBackup));
             // … and the rewritten media now carries a FRESH series id (collision-safe vs surviving volumes).
             Assert.NotEqual(firstId, svc2.TOC!.MediaId);
         }
 
         // The tape actually holds only the new series now.
         var (svcR, _) = await ReopenAsync(media);
+            // this ReopenAsync host is a fresh, unchecked host → teardown asserts it stayed silent
         using (svcR)
         {
             Assert.Single(svcR.TOC!);
@@ -174,7 +173,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
 
             var result = await svc2.ExecuteBackupAsync(MakeBackupRequest(svc2, src2.RootPath, "new"));
             Assert.True(result.WasAborted, "overwrite should abort on user Abort");
-            Assert.Single(host.MediaMismatchPrompts);
+            AssertMediaPrompts(host, (TapeMediaVerdict.MediaIdMismatch, MediaPromptContext.OverwriteBackup)); // check that there was just this exact prompt
         }
 
         // Original series + set survive untouched.
@@ -207,7 +206,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
             var result = await svc2.ExecuteBackupAsync(req);
 
             Assert.True(result.Success, $"forced overwrite failed: {svc2.LastError}");
-            Assert.Empty(host.MediaMismatchPrompts);   // suppressed — never reached the host
+            AssertNoMediaPrompts(host); // prompt suppressed — never reached the host
         }
     }
 
@@ -231,7 +230,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
         {
             var result = await svc2.ExecuteBackupAsync(MakeBackupRequest(svc2, src2.RootPath, "b", append: true));
             Assert.True(result.Success, $"append failed: {svc2.LastError}");
-            Assert.Empty(host.MediaMismatchPrompts);   // same series + volume ⇒ Match ⇒ silent
+            AssertNoMediaPrompts(host); // same series + volume ⇒ Match ⇒ silent
             Assert.Equal(2, svc2.TOC!.Count);
         }
     }
@@ -250,15 +249,18 @@ public class ServiceMediaHeaderTests : ServiceTestBase
             var (svc, host1) = await OpenFormatWithEwAsync(media);
             using (svc)
             {
+                // Calibration setup over freshly-headed media → CalibrateScratch guard:
                 host1.MediaMismatchAnswers.Enqueue(MediaMismatchChoice.Proceed);   // proceed to erase and calibrate
                 var cal = await svc.ExecuteCalibrateAsync(new CalibrateRequest(
                     EjectWhenDone: false, Options: new TapeCalibrationOptions { SampleCount = 20, NumCheckpoints = 4 }));
                 Assert.True(cal.Success, $"calibration setup failed: {svc.LastError}");
+                AssertMediaPrompts(host1, (TapeMediaVerdict.WrongKind, MediaPromptContext.CalibrateScratch));
             }
         }
 
         // 2) Reopen for a backup-overwrite: the cartridge now identifies as calibration media.
         using var src = new TempFileTree(); src.AddFiles("x", 3, 1_024, 4_096);
+        // Backup-overwrite over the calibration cartridge → WrongKind/OverwriteBackup:
         var (svc2, host) = await OpenLoadOnlyAsync(media, FileMode.Open,
             VirtualTapeEwProfile.EmulatedOverreport(media.ContentCapacity));   // no RestoreTOC — cal destroyed it
         using (svc2)
@@ -266,13 +268,9 @@ public class ServiceMediaHeaderTests : ServiceTestBase
             Assert.IsType<TapeCalibrationHeader>(svc2.LoadedHeader);
 
             host.MediaMismatchAnswers.Enqueue(MediaMismatchChoice.Abort);      // decline the destructive overwrite
-
             var result = await svc2.ExecuteBackupAsync(MakeBackupRequest(svc2, src.RootPath, "over-cal")); // overwrite
             Assert.True(result.WasAborted);
-
-            var prompt = Assert.Single(host.MediaMismatchPrompts);
-            Assert.Equal(TapeMediaVerdict.WrongKind, prompt.Verdict);
-            Assert.Equal(MediaPromptContext.OverwriteBackup, prompt.Context);
+            AssertMediaPrompts(host, (TapeMediaVerdict.WrongKind, MediaPromptContext.OverwriteBackup));
         }
     }
 
@@ -297,12 +295,12 @@ public class ServiceMediaHeaderTests : ServiceTestBase
             Assert.IsType<TapeMediaHeader>(svc2.LoadedHeader);
 
             host.MediaMismatchAnswers.Enqueue(MediaMismatchChoice.Abort);   // respond "abort" to the "holds a backup — erase?" confirm
-
             var cal = await svc2.ExecuteCalibrateAsync(new CalibrateRequest(
                 EjectWhenDone: false, Options: new TapeCalibrationOptions { SampleCount = 8, NumCheckpoints = 4 }));
 
             Assert.True(cal.WasAborted, "calibration should abort when the backup-media confirm is declined");
             Assert.Contains("holds a backup", cal.Message ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            AssertMediaPrompts(host, (TapeMediaVerdict.WrongKind, MediaPromptContext.CalibrateScratch));
         }
     }
 
@@ -364,7 +362,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
             var result = await svc.ExecuteRestoreAsync(req);
             Assert.True(result.Success, $"legacy restore failed: {svc.LastError}");
             Assert.Equal(src.Files.Count, result.FilesSucceeded);
-            Assert.Empty(host.MediaMismatchPrompts);   // Unidentified never prompts
+            AssertNoMediaPrompts(host); // Unidentified media never prompts
         }
 
         FileComparer.AssertFilesMatch(src.RootPath, src.Files, FindRestoredRoot(restoreRoot, src.RootPath));
