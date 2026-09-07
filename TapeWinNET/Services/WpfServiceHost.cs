@@ -605,6 +605,15 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
 
         return context switch
         {
+            MediaPromptContext.SearchForTOC => new(
+                Title: "Search for a table of contents?",
+                Headline: "This cartridge could not be identified",
+                Detail: "The loaded media has no recognizable header. It may be a legacy backup media (which does "
+                        + "have a table of contents) or unrelated / blank media. Searching reads to the end of the "
+                        + "media, which can take a while and may find nothing.",
+                ProceedLabel: "Search",
+                Severity: MediaMismatchSeverity.Warning),
+
             MediaPromptContext.OverwriteBackup => new(
                 Title: "Overwrite media?",
                 Headline: "This cartridge already holds data",

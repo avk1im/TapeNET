@@ -40,6 +40,16 @@ public enum TapeMediaVerdict
 /// </summary>
 public enum MediaPromptContext
 {
+    /// <summary>
+    /// Media-load: the cartridge has no recognizable header. Ask before the lengthy end-of-data seek
+    ///  for a table of contents (it may be a legacy backup tape, or unrelated/blank media).
+    /// </summary>
+    /// <remarks>
+    /// Unlike the identity-verification contexts, an <see cref="TapeMediaVerdict.Unidentified"/> verdict
+    ///  DOES prompt here (see <seealso cref="TapeServiceBase.PresentVerdict"/>).
+    /// </remarks>
+    SearchForTOC,
+
     /// <summary>Backup, overwrite mode: the loaded media holds content that overwriting will destroy.</summary>
     OverwriteBackup,
 

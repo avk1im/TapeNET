@@ -9,7 +9,9 @@ public enum TreeItemType
 {
     Drive,
     Tape,
-    BackupSet
+    BackupSet,
+    /// <summary>A calibration cartridge (no backup TOC) identified from its BOM header.</summary>
+    CalibrationCartridge
 }
 
 public class TapeTreeItemViewModel : ViewModelBase
@@ -18,6 +20,9 @@ public class TapeTreeItemViewModel : ViewModelBase
     private static BitmapSource? _driveIcon;
     private static BitmapSource? _tapeIcon;
     private static BitmapSource? _backupSetIcon;
+    // Reuses the regular media icon for now; kept as its own field so a distinct icon can be
+    //  composed later without touching the Icon switch below.
+    private static BitmapSource? _calibrationIcon;
     private static bool _iconsLoaded;
 
     private string _displayName = string.Empty;
@@ -46,11 +51,13 @@ public class TapeTreeItemViewModel : ViewModelBase
             _driveIcon = TapeIcons.GetTapeDriveIcon(large: false);
             _tapeIcon = TapeIcons.GetTapeMediaIcon(large: false);
             _backupSetIcon = TapeIcons.GetBackupSetIcon(large: false);
+            _calibrationIcon = TapeIcons.GetTapeMediaIcon(large: false);
 
             // Freeze the icons for better performance (they won't change)
             _driveIcon?.Freeze();
             _tapeIcon?.Freeze();
             _backupSetIcon?.Freeze();
+            _calibrationIcon?.Freeze();
         }
         catch
         {
@@ -100,6 +107,7 @@ public class TapeTreeItemViewModel : ViewModelBase
         TreeItemType.Drive => _driveIcon,
         TreeItemType.Tape => _tapeIcon,
         TreeItemType.BackupSet => _backupSetIcon,
+        TreeItemType.CalibrationCartridge => _calibrationIcon,
         _ => null
     };
 
@@ -218,6 +226,22 @@ public class TapeTreeItemViewModel : ViewModelBase
             IsInMemory = isInMemory
         };
         return item;
+    }
+
+    /// <summary>
+    /// Creates the tree node for a calibration cartridge (no backup TOC) identified from its BOM header.
+    /// </summary>
+    public static TapeTreeItemViewModel CreateCalibrationItem(TapeCalibrationHeader header, TapeTreeItemViewModel parent)
+    {
+        return new TapeTreeItemViewModel
+        {
+            DisplayName = $"Calibration Cartridge ({header.ProfileKey})",
+            IndexDisplay = string.Empty,
+            ItemType = TreeItemType.CalibrationCartridge,
+            Tag = 0,
+            Parent = parent,
+            IsExpanded = false,
+        };
     }
 
     public static TapeTreeItemViewModel CreateBackupSetItem(TapeTOC toc, int setIndex, TapeTreeItemViewModel parent)

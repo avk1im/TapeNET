@@ -28,7 +28,9 @@ public enum ContentPaneType
     /// <summary>Media selected: properties + backup sets table</summary>
     MediaInfo,
     /// <summary>Backup set selected: properties + files table</summary>
-    BackupSetInfo
+    BackupSetInfo,
+    /// <summary>Calibration cartridge selected: properties + calibration details table</summary>
+    CalibrationInfo
 }
 
 /// <summary>
@@ -446,6 +448,7 @@ public partial class MainViewModel : ViewModelBase
                 OnPropertyChanged(nameof(IsTableVisible));
                 OnPropertyChanged(nameof(IsFileTableVisible));
                 OnPropertyChanged(nameof(IsBackupSetTableVisible));
+                OnPropertyChanged(nameof(IsCalibrationTableVisible));
                 OnPropertyChanged(nameof(IsUsageBarVisible));
             }
         }
@@ -459,6 +462,9 @@ public partial class MainViewModel : ViewModelBase
 
     /// <summary>Whether the backup sets table is visible (Media selected)</summary>
     public bool IsBackupSetTableVisible => ContentType == ContentPaneType.MediaInfo;
+
+    /// <summary>Whether the calibration details table is visible (Calibration Cartridge selected)</summary>
+    public bool IsCalibrationTableVisible => ContentType == ContentPaneType.CalibrationInfo;
 
     #region Media Usage Bar
 
@@ -526,6 +532,12 @@ public partial class MainViewModel : ViewModelBase
 
     public ObservableCollection<TapeTreeItemViewModel> TreeItems { get; } = [];
     public ObservableCollection<PropertyItem> PropertyList { get; } = [];
+
+    /// <summary>Lower property/value pane populated for a selected Calibration Cartridge node.</summary>
+    public ObservableCollection<PropertyItem> CalibrationPropertyList { get; } = [];
+
+    /// <summary>The calibration header behind the currently selected Calibration Cartridge tree node, if any.</summary>
+    private TapeCalibrationHeader? _loadedCalibrationHeader;
 
     private List<FileListItem> _fileList = [];
     public List<FileListItem> FileList
@@ -766,6 +778,10 @@ public partial class MainViewModel : ViewModelBase
                     LoadBackupSetInfo(item.SetIndex.Value);
                 }
                 break;
+            case TreeItemType.CalibrationCartridge:
+                if (_loadedCalibrationHeader is not null)
+                    LoadCalibrationInfo(_loadedCalibrationHeader);
+                break;
         }
 
         // Selection change may affect dynamic command menu text
@@ -955,6 +971,87 @@ public partial class MainViewModel : ViewModelBase
         return result == MessageBoxResult.Yes && await ImportTOCFromFileAsync();
     }
 
+    // C' — Identify media and read TOC / calibration header (unified, abortable via dedicated overlay)
+
+    private async Task<RestoreTOCOrCalibrationOutcome> LoadTOCOrCalibrationCoreAsync(
+        string busyMessage = "Reading TOC...")
+    {
+        bool prevBusy = IsBusy;
+        string prevMsg = BusyMessage;
+        _isTOCLoadCancelled = false;
+        IsTOCAbortPending = false;
+        IsBusy = true;
+        BusyMessage = busyMessage;
+        IsTOCLoadInProgress = true;
+        try
+        {
+            try { return await _tapeService.RestoreTOCOrCalibrationAsync(); }
+            catch { return RestoreTOCOrCalibrationOutcome.Failed; }
+        }
+        finally
+        {
+            IsTOCLoadInProgress = false;
+            IsTOCAbortPending = false;
+            IsBusy = prevBusy;
+            BusyMessage = prevMsg;
+        }
+    }
+
+    /// <summary>
+    /// Identifies the loaded medium and reads its TOC (or calibration header), fully updating the
+    ///  tree/content pane for whichever outcome is returned by <see cref="TapeServiceBase.RestoreTOCOrCalibrationAsync"/>.
+    /// On <see cref="RestoreTOCOrCalibrationOutcome.Failed"/>, offers the same TOC-from-file recovery prompt as
+    ///  the legacy <see cref="ReadTOCWithUIAsync"/> (unless <paramref name="offerFileImportOnFailure"/> is false).
+    /// Silent on user-cancel.
+    /// </summary>
+    private async Task<RestoreTOCOrCalibrationOutcome> LoadTOCOrCalibrationWithUIAsync(
+        int driveNumber,
+        string busyMessage = "Reading TOC...",
+        bool offerFileImportOnFailure = true)
+    {
+        var outcome = await LoadTOCOrCalibrationCoreAsync(busyMessage);
+
+        switch (outcome)
+        {
+            case RestoreTOCOrCalibrationOutcome.TocLoaded:
+                UpdateTreeFromTOC(driveNumber);
+                SelectMostRecentSet();
+                return outcome;
+
+            case RestoreTOCOrCalibrationOutcome.CalibrationMedia:
+                UpdateTreeForCalibrationMedia(driveNumber);
+                return outcome;
+
+            case RestoreTOCOrCalibrationOutcome.Unidentified:
+                UpdateTreeForDriveOnly(driveNumber);
+                StatusMessage = "Unidentified media — TOC search skipped";
+                return outcome;
+        }
+
+        // Failed: user-cancelled search is silent — no error dialog, no recovery prompt.
+        if (_isTOCLoadCancelled || !offerFileImportOnFailure)
+        {
+            UpdateTreeForDriveOnly(driveNumber);
+            return outcome;
+        }
+
+        var result = SimpleBox.Show(
+            $"Failed to read TOC from media.\n\n{_tapeService.LastError}\n\n" +
+            "If you have a saved TOC file (.tapetoc), you can load it to access the media content.\n\n" +
+            "Would you like to load a TOC from file?",
+            "TOC Read Failed", MessageBoxButton.YesNo, SimpleBox.ImageFailed);
+
+        if (result == MessageBoxResult.Yes && await ImportTOCFromFileAsync())
+        {
+            UpdateTreeFromTOC(driveNumber);
+            SelectMostRecentSet();
+            return RestoreTOCOrCalibrationOutcome.TocLoaded;
+        }
+
+        UpdateTreeForDriveOnly(driveNumber);
+        return outcome;
+    }
+
     private void AbortTOCLoad()
     {
         BusyMessage = "Aborting TOC load...";
@@ -982,16 +1079,14 @@ public partial class MainViewModel : ViewModelBase
             return;
         }
 
-        if (!await LoadMediaWithUIAsync() || !await ReadTOCWithUIAsync())
+        if (!await LoadMediaWithUIAsync())
         {
             UpdateTreeForDriveOnly(driveNumber);
             NotifyIoSpeedChanged();
             return;
         }
 
-        UpdateTreeFromTOC(driveNumber);
-        // Select the most recent backup set
-        SelectMostRecentSet();
+        await LoadTOCOrCalibrationWithUIAsync(driveNumber);
         NotifyIoSpeedChanged();
     }
 
@@ -1268,6 +1363,7 @@ public partial class MainViewModel : ViewModelBase
         TreeItems.Clear();
         _tocView = null;
         _currentSetView = null;
+        _loadedCalibrationHeader = null;
         var driveItem = TapeTreeItemViewModel.CreateDriveItem(driveNumber, _tapeService.DeviceName);
         TreeItems.Add(driveItem);
         WindowTitle = $"TapeWin - Drive {driveNumber}";
@@ -1276,6 +1372,38 @@ public partial class MainViewModel : ViewModelBase
 
         // Show drive info when only drive is available
         LoadDriveInfo();
+    }
+
+    /// <summary>
+    /// Builds a drive-only tree plus a Calibration Cartridge child node, and shows the calibration
+    ///  property pane for it — the counterpart of <see cref="UpdateTreeFromTOC"/> for calibration media.
+    /// </summary>
+    private void UpdateTreeForCalibrationMedia(int driveNumber)
+    {
+        TreeItems.Clear();
+        _tocView = null;
+        _currentSetView = null;
+
+        var header = _tapeService.LoadedHeader as TapeCalibrationHeader;
+        _loadedCalibrationHeader = header;
+
+        var driveItem = TapeTreeItemViewModel.CreateDriveItem(driveNumber, _tapeService.DeviceName);
+        TreeItems.Add(driveItem);
+
+        if (header is not null)
+        {
+            var calibrationItem = TapeTreeItemViewModel.CreateCalibrationItem(header, driveItem);
+            driveItem.Children.Add(calibrationItem);
+            calibrationItem.IsSelected = true;
+        }
+
+        WindowTitle = $"TapeWin - Drive {driveNumber}";
+        OnPropertyChanged(nameof(HasMultipleSets));
+
+        if (header is not null)
+            LoadCalibrationInfo(header);
+        else
+            LoadDriveInfo();
     }
 
     private void UpdateTreeFromTOC(int driveNumber)
@@ -1553,6 +1681,57 @@ public partial class MainViewModel : ViewModelBase
             highlightLevel: WarningLevelHelper.Translate(_tapeService.WritableRemaining / (double)_tapeService.EstimatedCapacity)));
         PropertyList.Add(new PropertyItem("Estimation by", _tapeService.RemainingEstimationSource,
             highlightLevel: _tapeService.IsEarlyWarning? WarningLevel.Warning : WarningLevel.None));
+    }
+
+    /// <summary>
+    /// Populates the calibration property pane for a Calibration Cartridge tree node, mirroring
+    ///  <see cref="TapeServiceBase.LogCalibrationInfo"/> — the identity/summary rows go into the
+    ///  upper Properties pane, and the plan/run details go into the lower <see cref="CalibrationPropertyList"/>
+    ///  pane (in place of the backup-set/file table).
+    /// </summary>
+    private void LoadCalibrationInfo(TapeCalibrationHeader cal)
+    {
+        PropertyList.Clear();
+        CalibrationPropertyList.Clear();
+        BackupSetList.Clear();
+        FileList = [];
+        ContentType = ContentPaneType.CalibrationInfo;
+        PropertiesHeader = "Media Properties";
+        TableHeader = "Calibration Details";
+        UsageBar.Clear();
+
+        // Upper pane: the same drive/media identity properties shown for any drive with media loaded
+        //  but no TOC — the calibration cartridge is, after all, just media without a backup TOC.
+        PropertyList.Add(new PropertyItem("Device Name", _tapeService.DeviceName));
+        string model = _tapeService.DeviceVendor;
+        if (!string.IsNullOrEmpty(_tapeService.DeviceProduct))
+            model += $" {_tapeService.DeviceProduct}";
+        if (!string.IsNullOrEmpty(_tapeService.DeviceRevision))
+            model += $" rev {_tapeService.DeviceRevision}";
+        if (!string.IsNullOrEmpty(model))
+            PropertyList.Add(new PropertyItem("Device Model", model));
+        PropertyList.Add(new PropertyItem("Media Loaded", _tapeService.IsMediaLoaded ? "Yes" : "No"));
+        if (_tapeService.IsMediaLoaded)
+        {
+            PropertyList.Add(new PropertyItem("Partition Count", _tapeService.PartitionCount.ToString()));
+            AddCapacityProperties();
+        }
+
+        // Lower pane: everything the calibration header reveals (mirrors LogCalibrationInfo).
+        CalibrationPropertyList.Add(new PropertyItem("Status", "Calibration cartridge (no backup TOC)"));
+        CalibrationPropertyList.Add(new PropertyItem("Profile key", cal.ProfileKey));
+        CalibrationPropertyList.Add(new PropertyItem("Run id", cal.RunId.ToString("N")));
+        CalibrationPropertyList.Add(new PropertyItem("Started", cal.StartedUtc.ToString("u")));
+        CalibrationPropertyList.Add(new PropertyItem("Reported capacity at BOM",
+            Helpers.BytesToStringLong(cal.CapacityReportedAtBom)));
+
+        var plan = cal.Plan;
+        CalibrationPropertyList.Add(new PropertyItem("Planned samples",
+            $"{plan.SampleCount:N0} (body {plan.BodySampleCount:N0}, tail {plan.TailSampleCount:N0})"));
+        CalibrationPropertyList.Add(new PropertyItem("Planned checkpoints", plan.NumCheckpoints.ToString("N0")));
+        CalibrationPropertyList.Add(new PropertyItem("Run block size", Helpers.BytesToStringLong(cal.RunBlockSize)));
+
+        StatusMessage = "Calibration cartridge (no backup TOC)";
     }
 
     private void LoadMediaInfo()
@@ -1904,16 +2083,11 @@ public partial class MainViewModel : ViewModelBase
                 LogWarn("Could not create initial TOC");
         }
 
-        // C — Read TOC. For freshly created media there's no prior TOC to import,
-        //  so suppress the file-import recovery prompt in that case.
-        if (!await ReadTOCWithUIAsync(offerFileImportOnFailure: !request.IsCreateNew))
-        {
-            UpdateTreeForDriveOnly(0);
+        // C — Identify media and read TOC / calibration header. For freshly created media there's no
+        //  prior TOC to import, so suppress the file-import recovery prompt in that case.
+        var outcome = await LoadTOCOrCalibrationWithUIAsync(0, offerFileImportOnFailure: !request.IsCreateNew);
+        if (outcome == RestoreTOCOrCalibrationOutcome.Failed)
             return;
-        }
-
-        UpdateTreeFromTOC(0);
-        SelectMostRecentSet();
 
         var modeText = request.Media.InMemory ? "Created in-memory"
             : request.IsCreateNew ? "Created new" : "Opened existing";

@@ -82,6 +82,20 @@ public class ServiceMediaHeaderTests : ServiceTestBase
         Assert.True((bool)agent.BackupTOC(), "legacy: BackupTOC");
     }
 
+    /// <summary>Raw-formats single-partition media with NO header and NO content — genuinely blank/foreign.</summary>
+    private static void ManufactureBlankForeign(TempVirtualMedia media)
+    {
+        var backend = VirtualTapeDriveBackend.CreateFileBacked(
+            TestLoggerFactory.Default, media.ContentPath, media.ContentCapacity,
+            initiatorFilePath: null, initiatorCapacity: 0,
+            VirtualTapeDriveCapabilities.WithSetmarks, FileMode.Create);
+        using var drive = new TapeDrive(TestLoggerFactory.Default, backend);
+        Assert.True(drive.ReopenDrive(0));
+        Assert.True(drive.ReloadMedia());
+        Assert.True(drive.PrepareMedia());
+        Assert.True(drive.FormatMedia(-1L));   // format only: no header, no TOC
+    }
+
     // ── Format heads the media ────────────────────────────────────────────────
 
     [Theory]
@@ -140,7 +154,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
 
         // The tape actually holds only the new series now.
         var (svcR, _) = await ReopenAsync(media);
-            // this ReopenAsync host is a fresh, unchecked host → teardown asserts it stayed silent
+            // this ReopenAsync host2 is a fresh, unchecked host2 → teardown asserts it stayed silent
         using (svcR)
         {
             Assert.Single(svcR.TOC!);
@@ -206,7 +220,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
             var result = await svc2.ExecuteBackupAsync(req);
 
             Assert.True(result.Success, $"forced overwrite failed: {svc2.LastError}");
-            AssertNoMediaPrompts(host); // prompt suppressed — never reached the host
+            AssertNoMediaPrompts(host); // prompt suppressed — never reached the host2
         }
     }
 
@@ -366,5 +380,133 @@ public class ServiceMediaHeaderTests : ServiceTestBase
         }
 
         FileComparer.AssertFilesMatch(src.RootPath, src.Files, FindRestoredRoot(restoreRoot, src.RootPath));
+    }
+
+    // ── Identified backup media → TocLoaded, no prompt ────────────────────────
+
+    [Fact]
+    public async Task LoadTOCOrCalibration_BackupMedia_ReturnsTocLoaded_NoPrompt()
+    {
+        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity);
+        using var src = new TempFileTree(); src.AddFiles("b", 4, 1_024, 4_096);
+
+        {
+            var (svc, _) = await OpenAndFormatAsync(media);   // heads the media
+            using (svc)
+                Assert.True((await svc.ExecuteBackupAsync(MakeBackupRequest(svc, src.RootPath, "b"))).Success);
+        }
+
+        var (svc2, host) = await OpenLoadOnlyAsync(media, System.IO.FileMode.Open);
+        using (svc2)
+        {
+            var outcome = await svc2.RestoreTOCOrCalibrationAsync();
+
+            Assert.Equal(RestoreTOCOrCalibrationOutcome.TocLoaded, outcome);
+            Assert.NotNull(svc2.TOC);
+            Assert.Equal(1, svc2.TOC!.Count);
+            AssertNoMediaPrompts(host);   // identified media header → the seek is justified, no prompt
+        }
+    }
+
+    // ── Calibration cartridge → CalibrationMedia, reported, no TOC, no prompt ──
+
+    [Fact]
+    public async Task LoadTOCOrCalibration_CalibrationCartridge_ReturnsCalibrationMedia_Reports()
+    {
+        using var media = new TempVirtualMedia(withInitiator: false, CalibCapacity);
+
+        {
+            var (svc, host) = await OpenFormatWithEwAsync(media);
+            using (svc)
+            {
+                // Format heads the media, so the CalibrateScratch guard challenges it — (optionally) confirm setup.
+                host.MediaMismatchAnswers.Enqueue(MediaMismatchChoice.Proceed); // not necessary -- Proceed is the default response anyways
+                var cal = await svc.ExecuteCalibrateAsync(new CalibrateRequest(
+                    EjectWhenDone: false, Options: new TapeCalibrationOptions { SampleCount = 8, NumCheckpoints = 4 }));
+                Assert.True(cal.Success, $"calibration setup failed: {svc.LastError}");
+                // CalibrateScratch guard fired a prompt (existing sets present) in the CalibrateScratch context …
+                AssertMediaPrompts(host, (TapeMediaVerdict.WrongKind, MediaPromptContext.CalibrateScratch));
+            }
+        }
+
+        var (svc2, host2) = await OpenLoadOnlyAsync(media, System.IO.FileMode.Open,
+            VirtualTapeEwProfile.EmulatedOverreport(media.ContentCapacity));
+        using (svc2)
+        {
+            var outcome = await svc2.RestoreTOCOrCalibrationAsync();
+
+            Assert.Equal(RestoreTOCOrCalibrationOutcome.CalibrationMedia, outcome);
+            Assert.Null(svc2.TOC);                                   // no TOC on a calibration cartridge
+            Assert.True(host2.ContainsMessage("Calibration cartridge"));  // it was reported, not sought
+            AssertNoMediaPrompts(host2);                             // recognized ⇒ silent (no search prompt)
+        }
+    }
+
+    // ── Legacy (headerless) media → Unidentified → SEARCH → TocLoaded ─────────
+
+    [Fact]
+    public async Task LoadTOCOrCalibration_LegacyMedia_SearchConfirmed_ReturnsTocLoaded()
+    {
+        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity);
+        using var src = new TempFileTree(); src.AddFiles("legacy", 5, 1_024, 8_192);
+
+        ManufactureLegacyMedia(media, src);   // content at block 0, no BOM header, but a real TOC at EOD
+
+        var (svc, host) = await OpenLoadOnlyAsync(media, System.IO.FileMode.Open);
+        using (svc)
+        {
+            host.MediaMismatchAnswers.Enqueue(MediaMismatchChoice.Proceed);   // "search anyway"
+
+            var outcome = await svc.RestoreTOCOrCalibrationAsync();
+
+            Assert.Equal(RestoreTOCOrCalibrationOutcome.TocLoaded, outcome);
+            Assert.NotNull(svc.TOC);
+            AssertMediaPrompts(host, (TapeMediaVerdict.Unidentified, MediaPromptContext.SearchForTOC));
+        }
+    }
+
+    // ── Legacy media → Unidentified → DECLINE search → Unidentified (no churn) ─
+
+    [Fact]
+    public async Task LoadTOCOrCalibration_LegacyMedia_SearchDeclined_ReturnsUnidentified()
+    {
+        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity);
+        using var src = new TempFileTree(); src.AddFiles("legacy", 5, 1_024, 8_192);
+
+        ManufactureLegacyMedia(media, src);
+
+        var (svc, host) = await OpenLoadOnlyAsync(media, System.IO.FileMode.Open);
+        using (svc)
+        {
+            host.MediaMismatchAnswers.Enqueue(MediaMismatchChoice.Abort);   // "don't search"
+
+            var outcome = await svc.RestoreTOCOrCalibrationAsync();
+
+            Assert.Equal(RestoreTOCOrCalibrationOutcome.Unidentified, outcome);
+            Assert.Null(svc.TOC);   // we deliberately did NOT churn to EOD
+            AssertMediaPrompts(host, (TapeMediaVerdict.Unidentified, MediaPromptContext.SearchForTOC));
+        }
+    }
+
+    // ── Blank/foreign media → Unidentified → SEARCH → Failed (nothing found) ──
+
+    [Fact]
+    public async Task LoadTOCOrCalibration_BlankForeign_SearchConfirmed_ReturnsFailed()
+    {
+        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity);
+
+        ManufactureBlankForeign(media);   // formatted, no header, no content, no TOC
+
+        var (svc, host) = await OpenLoadOnlyAsync(media, System.IO.FileMode.Open);
+        using (svc)
+        {
+            host.MediaMismatchAnswers.Enqueue(MediaMismatchChoice.Proceed);   // search — but there's nothing
+
+            var outcome = await svc.RestoreTOCOrCalibrationAsync();
+
+            Assert.Equal(RestoreTOCOrCalibrationOutcome.Failed, outcome);
+            Assert.Null(svc.TOC);
+            AssertMediaPrompts(host, (TapeMediaVerdict.Unidentified, MediaPromptContext.SearchForTOC));
+        }
     }
 }

@@ -896,6 +896,29 @@
                                 <StaticResource ResourceKey="RestoreContextMenu"/>
                                     </ListView.ContextMenu>
                                         </ListView>
+
+                            <!-- Calibration Cartridge Details (visible when a Calibration Cartridge node is selected) -->
+                            <ListView ItemsSource="{Binding CalibrationPropertyList}"
+                                      IsEnabled="{Binding IsMediaBrowsingEnabled}"
+                                      Visibility="{Binding IsCalibrationTableVisible, Converter={StaticResource BoolToVis}}"
+                                      VirtualizingPanel.IsVirtualizing="True"
+                                      VirtualizingPanel.VirtualizationMode="Recycling">
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem">
+                                        <Setter Property="Foreground"
+                                                Value="{Binding HighlightLevel,
+                                                Converter={x:Static converters:WarningLevelToBrushConverter.Instance}}" />
+                                    </Style>
+                                </ListView.ItemContainerStyle>
+                                <ListView.View>
+                                    <GridView>
+                                        <GridViewColumn Header="Property" Width="220"
+                                                        DisplayMemberBinding="{Binding Property}" />
+                                        <GridViewColumn Header="Value" Width="320"
+                                                        DisplayMemberBinding="{Binding Value}" />
+                                    </GridView>
+                                </ListView.View>
+                            </ListView>
                                     </Grid>
                                 </GroupBox>
                             </Grid>
