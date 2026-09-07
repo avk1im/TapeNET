@@ -38,10 +38,10 @@ internal static class OpenAiModelProbe
     /// Applies provider-specific authentication headers to the request.
     /// </param>
     /// <param name="missingKeyMessage">
-    /// Error text used when <paramref name="hasCredential"/> is <c>false</c>.
+    /// Error text used when <paramref name="hasCredential"/> is <see langword="false"/>.
     /// </param>
     /// <param name="hasCredential">
-    /// Whether a credential is present; when <c>false</c> the network call is
+    /// Whether a credential is present; when <see langword="false"/> the network call is
     ///  skipped and an unhealthy auth-failure result is returned immediately.
     /// </param>
     /// <param name="httpClientFactory">

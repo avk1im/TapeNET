@@ -3,6 +3,17 @@ using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
 
+
+public sealed class TapeNavigatorTests_Headerless : TapeNavigatorTestsBase
+{
+    protected override bool WithMediaHeader => false;
+}
+
+public sealed class TapeNavigatorTests_Headed : TapeNavigatorTestsBase
+{
+    protected override bool WithMediaHeader => true;
+}
+
 /// <summary>
 /// Unit tests for <see cref="TapeNavigator"/> and all four descendant navigator types:
 /// <list type="bullet">
@@ -17,12 +28,14 @@ namespace TapeLibNET.Tests;
 /// <see cref="TapeDrive"/> positioning and mark-writing methods.
 /// </para>
 /// </summary>
-public class TapeNavigatorTests
+public abstract class TapeNavigatorTestsBase
 {
     #region *** Test Data ***
 
+    /// <summary>Subclasses fix whether the produced fixture writes a media header.</summary>
+    protected abstract bool WithMediaHeader { get; }
+
     /// <summary>All three drive profiles for parameterized theories.</summary>
-#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> AllProfiles =>
     [
         DriveProfile.Setmarks,
@@ -30,52 +43,49 @@ public class TapeNavigatorTests
         DriveProfile.SeqFilemarks,
         DriveProfile.FilemarksOnly,
     ];
-#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     /// <summary>Profiles that use actual setmarks (not emulated via filemarks).</summary>
-#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> SetmarkProfiles =>
     [
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
     ];
-#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     /// <summary>Profiles that use filemarks to emulate setmarks.</summary>
-#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> FilemarkProfiles =>
     [
         DriveProfile.SeqFilemarks,
         DriveProfile.FilemarksOnly,
     ];
-#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     /// <summary>
     /// Profiles where the TOC resides "in set" (content partition), meaning
     /// writing content invalidates the TOC.
     /// </summary>
-#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> TOCInSetProfiles =>
     [
         DriveProfile.Setmarks,
         DriveProfile.SeqFilemarks,
         DriveProfile.FilemarksOnly,
     ];
-#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     #endregion
-
 
     #region *** Helpers ***
 
     /// <summary>
-    /// Creates a <see cref="VirtualTapeFixture"/> and produces a navigator via the factory method.
+    /// Creates a <see cref="VirtualTapeFixture"/> based on the property <see cref="WithMediaHeader"/>
+    /// and produces a <see cref="TapeNavigator"/> via the factory method <see cref="TapeNavigator.ProduceNavigator"/>.
     /// </summary>
-    private static (VirtualTapeFixture fixture, TapeNavigator nav) CreateNavigator(DriveProfile profile)
+    private (VirtualTapeFixture fixture, TapeNavigator nav) CreateNavigator(DriveProfile profile)
     {
-        var fixture = new VirtualTapeFixture(profile);
+        var fixture = new VirtualTapeFixture(profile, withMediaHeader: WithMediaHeader);
         var nav = TapeNavigator.ProduceNavigator(fixture.Drive);
         Assert.NotNull(nav);
+        
+        nav.ResolveHeaderPresence(fixture.WithMediaHeader ? TapeHeaderPresence.Present : TapeHeaderPresence.Absent);
+        nav.ResetContentSet(); // must reset since ResolveHeaderPresence(Present) would set CurrentContentSet to 0
+
         return (fixture, nav!);
     }
 
@@ -128,6 +138,7 @@ public class TapeNavigatorTests
     private static long[] WriteFullTapeLayout(TapeNavigator nav, int setCount, int blocksPerSet = 4)
     {
         var starts = new long[setCount];
+        nav.MoveToBeginOfContent();
         for (int i = 0; i < setCount; i++)
         {
             nav.OnBeginWriteContent();
@@ -140,6 +151,7 @@ public class TapeNavigatorTests
 
     #endregion
 
+    #region *** Tests ***
 
     #region *** ProduceNavigator — Factory Dispatching ***
 
@@ -371,7 +383,7 @@ public class TapeNavigatorTests
 
         Assert.True(result);
         Assert.Equal(0, nav.CurrentContentSet);
-        Assert.Equal(0, nav.GetCurrentBlock());
+        Assert.Equal(fixture.FirstContentBlock, nav.GetCurrentBlock());
     }
 
     [Theory]
@@ -387,7 +399,7 @@ public class TapeNavigatorTests
         // Second call should short-circuit (already at set 0)
         Assert.True(nav.MoveToBeginOfContent());
         Assert.Equal(0, nav.CurrentContentSet);
-        Assert.Equal(0, nav.GetCurrentBlock());
+        Assert.Equal(fixture.FirstContentBlock, nav.GetCurrentBlock());
     }
 
     #endregion
@@ -407,7 +419,7 @@ public class TapeNavigatorTests
         Assert.True(result);
         Assert.Equal(-1, nav.CurrentContentSet);
         // On an empty tape, end of content is at the beginning
-        Assert.Equal(0, nav.GetCurrentBlock());
+        Assert.Equal(fixture.FirstContentBlock, nav.GetCurrentBlock());
     }
 
     [Theory]
@@ -1416,7 +1428,7 @@ public class TapeNavigatorTests
         var (fixture, nav) = CreateNavigator(profile);
         using var _ = fixture;
 
-        Assert.Equal(0, nav.GetCurrentBlock());
+        Assert.Equal(fixture.FirstContentBlock, nav.GetCurrentBlock());
     }
 
     [Theory]
@@ -1427,7 +1439,7 @@ public class TapeNavigatorTests
         using var _ = fixture;
 
         WriteDataBlocks(nav.Drive, 3);
-        Assert.Equal(3, nav.GetCurrentBlock());
+        Assert.Equal(3, nav.GetCurrentBlock() - fixture.FirstContentBlock);
     }
 
     [Theory]
@@ -1485,4 +1497,7 @@ public class TapeNavigatorTests
     }
 
     #endregion
+
+    #endregion // Tests
+
 }

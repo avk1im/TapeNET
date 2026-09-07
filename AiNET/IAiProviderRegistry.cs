@@ -84,7 +84,7 @@ public interface IAiProviderRegistry
     /// <summary>
     /// Deletes any stored credential for this entry.
     /// </summary>
-    /// <returns><c>true</c> when a credential existed and was removed.</returns>
+    /// <returns><see langword="true"/> when a credential existed and was removed.</returns>
     bool ClearCredential(AiProviderEntry entry);
 
     /// <summary>Indicates whether a credential is currently stored for this entry.</summary>

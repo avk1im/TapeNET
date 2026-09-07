@@ -61,7 +61,7 @@ public sealed class LanHostsRegistry
     ///  <c>10.0.0.5:11434</c> and <c>http://10.0.0.5:11434/</c> are treated as
     ///  the same host rather than accumulating as duplicates.
     /// </remarks>
-    /// <returns><c>true</c> if the host was added; <c>false</c> if already known.</returns>
+    /// <returns><see langword="true"/> if the host was added; <see langword="false"/> if already known.</returns>
     public bool Add(Uri host)
     {
         ArgumentNullException.ThrowIfNull(host);
@@ -80,7 +80,7 @@ public sealed class LanHostsRegistry
     /// <summary>
     /// Removes a host URI if present, then persists the list.
     /// </summary>
-    /// <returns><c>true</c> if a matching host was removed.</returns>
+    /// <returns><see langword="true"/> if a matching host was removed.</returns>
     public bool Remove(Uri host)
     {
         ArgumentNullException.ThrowIfNull(host);

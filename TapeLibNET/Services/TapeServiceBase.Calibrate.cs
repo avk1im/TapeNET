@@ -118,6 +118,21 @@ public partial class TapeServiceBase
                 return MakeResult(aborted: true, message: "For calibration, use a single-partition media", mode: request.Mode);
         }
 
+        // §10.7 — the ONLY pre-run guard that catches a New run (which reads no header): if the cartridge
+        //  holds backup media, confirm before the destructive overwrite. Uses the cached load-time header;
+        //  when null / not a media header, no prompt.
+        //  Composes with the post-run `ForeignHeader` reporting already present for Resume/Recalibrate: this
+        //  guard catches the destructive write up front; `ForeignHeader` still explains a failed Resume/Recalibrate.
+        if (!request.SkipMediaHeaderCheck && _loadedHeader is TapeMediaHeader mh)
+        {
+            if (!_host.Confirm(
+                    $"This cartridge holds backup media:\n{mh}\n" +
+                    "Calibration is destructive and will erase it. Continue?",
+                    defaultAnswer: false))
+                return MakeResult(aborted: true,
+                    message: "Calibration cancelled — cartridge holds a backup", mode: request.Mode);
+        }
+
         try
         {
             LogWarn("Calibration is destructive — use a scratch cartridge only");
@@ -166,6 +181,7 @@ public partial class TapeServiceBase
                     LogInfo("Resuming calibration from the last checkpoint on the cartridge...");
                     OnStatusUpdate("Resuming calibration...");
                     calibration = calibrator.Resume(progressHandler);
+
                     break;
 
                 case CalibrationMode.Recalibrate:
@@ -190,6 +206,7 @@ public partial class TapeServiceBase
                     (calibration, TapeRecalibrationDelta delta) = calibrator.Recalibrate(existing, progressHandler);
                     if (calibration is not null)
                         recalDelta = delta;
+
                     break;
                 }
 
@@ -197,6 +214,7 @@ public partial class TapeServiceBase
                 default:
                     OnStatusUpdate("Calibrating...");
                     calibration = calibrator.Run(progressHandler);
+
                     break;
             }
             timer.Stop();
@@ -212,18 +230,31 @@ public partial class TapeServiceBase
                     return MakeResult(aborted: true, message: "Calibration aborted", mode: request.Mode);
                 }
 
+                string logMsg, resultMsg;
                 // Resume/Recalibrate can legitimately fail to find a resumable trail on the cartridge;
                 //  surface a mode-appropriate message so the caller can offer a fresh run instead.
-                string failMsg = request.Mode switch
+                if ((request.Mode is CalibrationMode.Resume or CalibrationMode.Recalibrate)
+                    && calibrator.ForeignHeader is { } foreign)
                 {
-                    CalibrationMode.Resume      => $"Resume failed: no resumable run found on this cartridge ({LastError})",
-                    CalibrationMode.Recalibrate => $"Recalibration failed: no calibration trail on this cartridge ({LastError})",
-                    _                           => LastError,
-                };
+                    // For identifiable foreign header, offer a more detailed explanation
+                    //  Precise: "This is backup media — id …, volume … — not a calibration cartridge."
+                    logMsg = $"Not a calibration cartridge — {foreign}";
+                    resultMsg = $"This cartridge carries a different header:\n{foreign}\n" +
+                                "This operation needs a calibration cartridge.";
+                }
+                else
+                {
+                    logMsg = resultMsg = request.Mode switch
+                    {
+                        CalibrationMode.Resume => $"Resume failed: no resumable run found on this cartridge ({LastError})",
+                        CalibrationMode.Recalibrate => $"Recalibration failed: no calibration trail on this cartridge ({LastError})",
+                        _ => LastError,
+                    };
+                }
 
                 OnStatusUpdate("Calibration failed");
-                LogErr($"Calibration failed: {failMsg}");
-                return MakeResult(failed: true, message: failMsg, mode: request.Mode);
+                LogErr($"Calibration failed: {logMsg}");
+                return MakeResult(failed: true, message: resultMsg, mode: request.Mode);
             }
 
             OnStatusUpdate("Calibration complete");

@@ -83,6 +83,72 @@ public sealed class ConsoleUxServiceHost(IConsoleUx ux) : ITapeServiceHost
 
     /// <inheritdoc/>
     /// <remarks>
+    /// Builds a plain-text explanation from (<paramref name="verdict"/>, <paramref name="context"/>) and
+    ///  routes the allowed choices through <see cref="IConsoleUx.Select"/>. Under
+    ///  <see cref="IConsoleUx.NonInteractive"/> / <see cref="IConsoleUx.QuietMode"/> it auto-proceeds and
+    ///  logs the decision, preserving legacy unattended-batch behaviour (§10.4).
+    /// </remarks>
+    public MediaMismatchChoice OnMediaMismatchConfirm(
+        string headerDescription, TapeMediaVerdict verdict, MediaPromptContext context,
+        bool allowRetry, bool allowProceedAlways)
+    {
+        bool destructive = context is MediaPromptContext.OverwriteBackup or MediaPromptContext.ContinuationVolume
+            or MediaPromptContext.CalibrateScratch;
+
+        string headline = context switch
+        {
+            MediaPromptContext.OverwriteBackup => "Loaded media already holds data — overwriting will erase it.",
+            MediaPromptContext.ContinuationVolume => "Continuation volume is not blank — continuing will erase it.",
+            MediaPromptContext.VerifyRestore => "Loaded media does not match the backup.",
+            MediaPromptContext.ImportToc => "Imported TOC does not match this media.",
+            MediaPromptContext.CalibrateScratch => "Scratch media is not blank — continuing will erase it.",
+            _ => "Unexpected media.",
+        };
+
+        // Non-interactive / quiet / redirected: auto-proceed (legacy batch behaviour) and log it.
+        //  NOTE: this explicit branch is what yields Proceed; Select's own default-index fallback would
+        //  otherwise resolve to the safe Abort. Keep this branch.
+        if (ux.NonInteractive || ux.QuietMode)
+        {
+            ux.Log(WarningLevel.Warning,
+                $"Media check ({verdict}/{context}) auto-proceeding (non-interactive): {headerDescription}");
+            return MediaMismatchChoice.Proceed;
+        }
+
+        // Assemble the allowed choices in a stable order; map the chosen label back to the enum.
+        var choices = new List<string>();
+        var mapping = new List<MediaMismatchChoice>();
+
+        if (allowRetry)
+        {
+            choices.Add("Insert different media");
+            mapping.Add(MediaMismatchChoice.Retry);
+        }
+
+        string proceedLabel = destructive ? "Proceed and overwrite" : "Proceed";
+        choices.Add(proceedLabel);
+        mapping.Add(MediaMismatchChoice.Proceed);
+
+        if (allowProceedAlways)
+        {
+            choices.Add("Always proceed (don't ask again)");
+            mapping.Add(MediaMismatchChoice.ProceedAlways);
+        }
+
+        choices.Add("Abort");
+        mapping.Add(MediaMismatchChoice.Abort);
+
+        string topic = destructive ? "Overwrite media?" : "Media identity check";
+        string question = $"{headline}\n  {headerDescription}\nChoose action";
+
+        // Default to Abort (the safe outcome) — the last entry. (Reached only in interactive mode.)
+        int idx = Select(topic, question, choices, defaultIndex: mapping.Count - 1);
+
+        return mapping[idx];
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
     /// Translates to a four-choice <see cref="IConsoleUx.Select"/> prompt matching the
     ///  legacy console behaviour (Skip / Retry / Skip all / Abort).
     /// </remarks>

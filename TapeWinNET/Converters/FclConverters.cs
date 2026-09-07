@@ -58,7 +58,7 @@ public class FclOperatorDisplayNameConverter : IValueConverter
 }
 
 /// <summary>
-/// Returns <c>true</c> when the bound value is not null.
+/// Returns <see langword="true"/> when the bound value is not null.
 /// Useful for enabling controls only when a selection has been made.
 /// </summary>
 public class NotNullToBoolConverter : IValueConverter

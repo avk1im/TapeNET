@@ -118,10 +118,10 @@ internal abstract class HelpOverlayBase : IHelpOverlay
     }
 
     /// <summary>
-    /// When <c>true</c> (default), the adorner forms a hit-test capture surface over
+    /// When <see langword="true"/> (default), the adorner forms a hit-test capture surface over
     /// the overlay root so that underlying controls cannot be accidentally actuated.
     /// <para>
-    /// <see cref="Overlays.WalkthroughOverlay"/> overrides this to <c>false</c> so
+    /// <see cref="Overlays.WalkthroughOverlay"/> overrides this to <see langword="false"/> so
     /// controls remain fully interactive throughout the guided tour.
     /// </para>
     /// </summary>
@@ -314,7 +314,7 @@ internal abstract class HelpOverlayBase : IHelpOverlay
     // ── Exclusion / bounds helpers ────────────────────────────────────────────
 
     /// <summary>
-    /// Returns <c>true</c> if the mouse event is within the bounds of the excluded element
+    /// Returns <see langword="true"/> if the mouse event is within the bounds of the excluded element
     /// (e.g. the HelpPane UserControl), which must remain fully interactive.
     /// </summary>
     protected bool IsInExcludedElement(MouseEventArgs e)
@@ -325,7 +325,7 @@ internal abstract class HelpOverlayBase : IHelpOverlay
     }
 
     /// <summary>
-    /// Returns <c>true</c> if the mouse event is within the bounds of
+    /// Returns <see langword="true"/> if the mouse event is within the bounds of
     /// <see cref="OverlayRoot"/> — distinguishes between the empty content area
     /// (still inside the root, cursor should show null/default) and entirely different
     /// UI regions such as the menu bar, toolbar, and log pane (cursor should also be

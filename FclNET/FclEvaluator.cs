@@ -41,7 +41,7 @@ public sealed class FclEvaluator
 
     /// <summary>
     /// Evaluates the expression against a single file.
-    /// Returns <c>true</c> if the file matches the filter.
+    /// Returns <see langword="true"/> if the file matches the filter.
     /// </summary>
     public bool Evaluate(IFclFileInfo file)
     {
@@ -394,9 +394,9 @@ public sealed class FclEvaluator
     /// </list>
     /// <para>Trailing backslash handling depends on <paramref name="isPathField"/>:</para>
     /// <list type="bullet">
-    /// <item><b>Path</b> (<c>true</c>): trailing <c>\</c> is stripped, since
+    /// <item><b>Path</b> (<see langword="true"/>): trailing <c>\</c> is stripped, since
     ///   <c>Path.GetDirectoryName</c> returns without trailing separator.</item>
-    /// <item><b>FullName</b> (<c>false</c>): trailing <c>\</c> → append <c>*.*</c>
+    /// <item><b>FullName</b> (<see langword="false"/>): trailing <c>\</c> → append <c>*.*</c>
     ///   ("any file in this directory and subdirectories").</item>
     /// </list>
     /// <para>The result is <b>not anchored</b> — the pattern matches as a fragment

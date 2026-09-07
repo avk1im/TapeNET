@@ -33,10 +33,10 @@ public sealed class RemoteHostTlsTapeServiceFixture : IAsyncLifetime, IDisposabl
 
     private GrpcChannel? _channel;
 
-    /// <summary>Whether the remote TLS host was configured and reachable. Tests should skip when <c>false</c>.</summary>
+    /// <summary>Whether the remote TLS host was configured and reachable. Tests should skip when <see langword="false"/>.</summary>
     public bool IsConfigured { get; private set; }
 
-    /// <summary>Human-readable skip reason when <see cref="IsConfigured"/> is <c>false</c>.</summary>
+    /// <summary>Human-readable skip reason when <see cref="IsConfigured"/> is <see langword="false"/>.</summary>
     public string SkipReason { get; private set; } = string.Empty;
 
     /// <summary>The gRPC channel connected to the remote TLS service.</summary>

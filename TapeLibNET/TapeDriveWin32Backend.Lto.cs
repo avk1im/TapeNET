@@ -596,8 +596,8 @@ public partial class TapeDriveWin32Backend
     /// <param name="partition">Target partition (0-based SCSI partition number).</param>
     /// <param name="logicalBlock">Target logical block address (32-bit).</param>
     /// <param name="immediate">
-    /// When <c>true</c>, the command returns as soon as it is accepted (IMMED bit set).
-    /// The caller must then poll for completion. When <c>false</c> (default), the command
+    /// When <see langword="true"/>, the command returns as soon as it is accepted (IMMED bit set).
+    /// The caller must then poll for completion. When <see langword="false"/> (default), the command
     /// returns only after the physical seek is complete.
     /// </param>
     internal bool SetLtoPosition(byte partition, uint logicalBlock, bool immediate = false)
@@ -643,7 +643,7 @@ public partial class TapeDriveWin32Backend
     /// Pass <see cref="Span{T}.Empty"/> for no-data commands.
     /// </param>
     /// <param name="dataIn">
-    /// <c>true</c> for READ direction (device → host); <c>false</c> for WRITE/no-data.
+    /// <see langword="true"/> for READ direction (device → host); <see langword="false"/> for WRITE/no-data.
     /// </param>
     /// <param name="timeoutSeconds">SCSI command timeout passed to the driver.</param>
     private unsafe bool SendScsiCommand(
@@ -803,7 +803,7 @@ public partial class TapeDriveWin32Backend
     /// programmable zone is established (the drive still has its fixed hardware EW).
     /// </para>
     /// <para>
-    /// Returns <c>false</c> (gracefully) on drives that do not implement the page —
+    /// Returns <see langword="false"/> (gracefully) on drives that do not implement the page —
     /// e.g. LTO-1..4 — where the drive answers CHECK CONDITION (INVALID FIELD IN CDB).
     /// </para>
     /// </summary>
@@ -1052,7 +1052,7 @@ public partial class TapeDriveWin32Backend
     /// </summary>
     /// <param name="beyondProgrammableEarlyWarning">Receives the BPEW flag.</param>
     /// <param name="inEndOfPartitionRegion">Receives the EOP flag.</param>
-    /// <returns><c>true</c> if the status was read; <c>false</c> on command failure.</returns>
+    /// <returns><see langword="true"/> if the status was read; <see langword="false"/> on command failure.</returns>
     internal bool GetEarlyWarningStatus(
         out bool beyondProgrammableEarlyWarning,
         out bool inEndOfPartitionRegion)
@@ -1090,7 +1090,7 @@ public partial class TapeDriveWin32Backend
 
     /// <summary>
     /// Convenience overload: returns only whether the current position is beyond the
-    /// Programmable Early Warning point (BPEW). Returns <c>false</c> if the status could
+    /// Programmable Early Warning point (BPEW). Returns <see langword="false"/> if the status could
     /// not be read or no PEW zone applies.
     /// </summary>
     internal bool IsBeyondProgrammableEarlyWarning()
@@ -1141,7 +1141,7 @@ public partial class TapeDriveWin32Backend
     /// figure, NOT tape.sys's derived <c>Remaining</c> — useful to cross-check (and, if it proves more
     /// honest, to substitute for) the driver figure near EW/EOM.
     /// <para>
-    /// Returns <c>false</c> (gracefully) on drives that do not implement the page — the drive answers
+    /// Returns <see langword="false"/> (gracefully) on drives that do not implement the page — the drive answers
     /// CHECK CONDITION and <see cref="SendScsiCommand"/> reports failure.
     /// </para>
     /// </summary>

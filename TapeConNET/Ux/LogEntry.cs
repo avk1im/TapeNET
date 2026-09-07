@@ -6,7 +6,7 @@ namespace TapeConNET.Ux;
 /// </summary>
 /// <param name="Level">Severity classification.</param>
 /// <param name="Message">Human-readable message.</param>
-/// <param name="IsSub">If <c>true</c>, the entry is a sub-step of the previous
+/// <param name="IsSub">If <see langword="true"/>, the entry is a sub-step of the previous
 /// non-sub entry (rendered without an icon and slightly indented).</param>
 /// <param name="Timestamp">When the entry was created.</param>
 public sealed record LogEntry(

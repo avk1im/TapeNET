@@ -5,6 +5,21 @@ using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests.Helpers;
 
+#region *** Media Header ***
+
+/// <summary>How the volumes of a multi-volume series receive media headers.</summary>
+public enum VolumeHeaderMode
+{
+    /// <summary>No volume is headed — a fully legacy series.</summary>
+    None,
+    /// <summary>Every volume is headed — a fully modern series.</summary>
+    All,
+    /// <summary>Volume 1 legacy (headerless), volumes 2+ modern (headed) — the mixed series of design §10.4.</summary>
+    Mixed,
+}
+
+#endregion
+
 /// <summary>
 /// Test fixture for multi-volume tape scenarios.
 /// Manages virtual tape volume lifecycle with snapshot-based volume swapping:
@@ -66,6 +81,19 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// software capacity check works correctly on small test volumes.
     /// </summary>
     public long TOCCapacityOverride { get; set; } = DefaultTOCCapacity;
+
+    #endregion
+
+    #region *** Media Header ***
+
+    VolumeHeaderMode HeaderMode { get; init; }
+
+    private bool ShouldHeadVolume(int volumeNumber) => HeaderMode switch
+    {
+        VolumeHeaderMode.All => true,
+        VolumeHeaderMode.Mixed => volumeNumber >= 2,   // legacy vol 1, modern vol 2+  (design §10.4)
+        _ => false,
+    };
 
     #endregion
 
@@ -146,15 +174,18 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// <param name="contentCapacity">Content partition capacity per volume.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     /// <param name="mediaDescription">Description for the initial TOC.</param>
+    /// <param name="headerMode">How the volumes of the series receive media headers.</param>
     public MultiVolumeVirtualTapeFixture(
         DriveProfile profile = DriveProfile.Setmarks,
         long contentCapacity = DefaultContentCapacity,
         ILoggerFactory? loggerFactory = null,
-        string mediaDescription = "Multi-Volume Test Media")
+        string mediaDescription = "Multi-Volume Test Media",
+        VolumeHeaderMode headerMode = VolumeHeaderMode.None)
     {
         ContentCapacity = contentCapacity;
         LoggerFactory = loggerFactory ?? TestLoggerFactory.Default;
         Capabilities = VirtualTapeFixture.ProfileToCapabilities(profile);
+        HeaderMode = headerMode;
 
         long initCap = Capabilities.SupportsInitiatorPartition
             ? DefaultInitiatorCapacity : 0;
@@ -188,7 +219,10 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// <summary>Creates a backup agent bound to this fixture's drive and TOC.</summary>
     public TapeFileBackupAgent CreateBackupAgent()
     {
-        var agent = new TapeFileBackupAgent(Drive, TOC);
+        var agent = new TapeFileBackupAgent(Drive, TOC)
+            {
+                WritesMediaHeader = ShouldHeadVolume(TOC.Volume)
+            };
         agent.Navigator.TOCCapacity = TOCCapacityOverride;
         return agent;
     }

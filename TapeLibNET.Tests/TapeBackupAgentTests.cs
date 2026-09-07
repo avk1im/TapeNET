@@ -1,7 +1,12 @@
-﻿using TapeLibNET.Tests.Helpers;
+﻿using Microsoft.Extensions.Logging;
+using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
+
+
+public sealed class TapeBackupAgentTests_Headerless : TapeBackupAgentTestsBase { protected override bool WithMediaHeader => false; }
+public sealed class TapeBackupAgentTests_Headed : TapeBackupAgentTestsBase { protected override bool WithMediaHeader => true; }
 
 /// <summary>
 /// Focused tests for <see cref="TapeFileBackupAgent"/> — the middle layer between
@@ -19,8 +24,25 @@ namespace TapeLibNET.Tests;
 /// All profiles are tested to surface any profile-specific positioning bugs.
 /// </para>
 /// </summary>
-public class TapeBackupAgentTests
+public abstract class TapeBackupAgentTestsBase
 {
+    #region *** Media Header ***
+
+    /// <summary>Subclasses fix whether the produced fixture writes a media header.</summary>
+    protected abstract bool WithMediaHeader { get; }
+
+    /// <summary>Fixture factory mirroring the ctor; injects the header axis. All tests funnel through here.</summary>
+    protected VirtualTapeFixture CreateFixture(
+            DriveProfile profile = DriveProfile.Setmarks,
+            long contentCapacity = VirtualTapeFixture.DefaultContentCapacity,
+            ILoggerFactory? loggerFactory = null,
+            string mediaDescription = "Test Media",
+            bool useMemoryMap = false)
+        => new(profile, contentCapacity, loggerFactory, mediaDescription, useMemoryMap,
+               withMediaHeader: WithMediaHeader);
+
+    #endregion
+
     #region *** Test Data ***
 
     /// <summary>All three drive profiles for parameterized theories.</summary>
@@ -90,7 +112,7 @@ public class TapeBackupAgentTests
         using var tree = new TempFileTree();
         tree.AddFile("single.dat", 4096);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();
 
         bool backupOk = BackupFileList(agent, fixture.TOC, tree.Files, description: "Single File");
@@ -114,7 +136,7 @@ public class TapeBackupAgentTests
         using var tree = new TempFileTree();
         tree.AddFile("roundtrip.dat", 8192);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();
 
         BackupFileList(agent, fixture.TOC, tree.Files, description: "TOC Reload");
@@ -141,7 +163,7 @@ public class TapeBackupAgentTests
         using var tree = new TempFileTree();
         tree.AddFiles("batch", count: 8, minSize: 100, maxSize: 16 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         var notifiable = new TestNotifiable();
         using var agent = fixture.CreateBackupAgent();
 
@@ -182,7 +204,7 @@ public class TapeBackupAgentTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("set2", count: 3, minSize: 512, maxSize: 16 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
 
         // Backup set 1 (using fixture convenience, which also saves TOC)
         fixture.BackupFiles(tree1.Files, description: "Set 1", hashAlgorithm: TapeHashAlgorithm.Crc64);
@@ -207,7 +229,7 @@ public class TapeBackupAgentTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("set2", count: 3, minSize: 512, maxSize: 16 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
 
         fixture.BackupFiles(tree1.Files, description: "Set 1", hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(tree2.Files, description: "Set 2", hashAlgorithm: TapeHashAlgorithm.XxHash3);
@@ -241,7 +263,7 @@ public class TapeBackupAgentTests
         using var tree3 = new TempFileTree(seed: 30);
         tree3.AddFiles("s3", count: 2, minSize: 500, maxSize: 12 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
 
         fixture.BackupFiles(tree1.Files, description: "Set A",
             hashAlgorithm: TapeHashAlgorithm.Crc64, blockSize: 16384);
@@ -280,7 +302,7 @@ public class TapeBackupAgentTests
         using var tree = new TempFileTree();
         tree.AddFiles("ordered", count: 10, minSize: 100, maxSize: 8 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree.Files, description: "Block Order");
 
         // Block numbers within a set should be monotonically increasing
@@ -300,7 +322,7 @@ public class TapeBackupAgentTests
         using var tree = new TempFileTree();
         tree.AddFiles("uids", count: 10, minSize: 100, maxSize: 4 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree.Files, description: "UID Uniqueness");
 
         var uids = new HashSet<ulong>();
@@ -322,7 +344,7 @@ public class TapeBackupAgentTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("s2", count: 3, minSize: 100, maxSize: 8 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree1.Files, description: "Set 1");
         fixture.BackupFiles(tree2.Files, description: "Set 2");
 
@@ -345,7 +367,7 @@ public class TapeBackupAgentTests
         tree.AddFile("exact_block.dat", 16384);
         tree.AddFile("zero.dat", 0);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree.Files, description: "Length Check");
 
         var setToc = fixture.TOC[1];
@@ -370,7 +392,7 @@ public class TapeBackupAgentTests
         using var tree = new TempFileTree();
         tree.AddFiles("stats", count: 7, minSize: 100, maxSize: 8 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         var notifiable = new TestNotifiable();
         using var agent = fixture.CreateBackupAgent();
 
@@ -399,7 +421,7 @@ public class TapeBackupAgentTests
         notifiable.FilesToSkip.Add(tree.Files[0]);
         notifiable.FilesToSkip.Add(tree.Files[2]);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();
 
         bool backupOk = BackupFileList(agent, fixture.TOC, tree.Files,
@@ -425,7 +447,7 @@ public class TapeBackupAgentTests
         using var tree = new TempFileTree();
         tree.AddFiles("order", count: 3, minSize: 100, maxSize: 4 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         var notifiable = new TestNotifiable();
         using var agent = fixture.CreateBackupAgent();
 
@@ -450,7 +472,7 @@ public class TapeBackupAgentTests
         using var tree = new TempFileTree();
         tree.AddFile("empty.dat", 0);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();
 
         bool backupOk = BackupFileList(agent, fixture.TOC, tree.Files, description: "Zero Byte");
@@ -465,7 +487,7 @@ public class TapeBackupAgentTests
     [MemberData(nameof(AllProfiles))]
     public void Backup_ExactBlockSizeFile_RecordedCorrectly(DriveProfile profile)
     {
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         uint blockSize = fixture.Drive.BlockSize;
 
         using var tree = new TempFileTree();
@@ -485,7 +507,7 @@ public class TapeBackupAgentTests
     [MemberData(nameof(AllProfiles))]
     public void Backup_MixedEdgeCaseFiles_AllRecorded(DriveProfile profile)
     {
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         uint blockSize = fixture.Drive.BlockSize;
 
         using var tree = new TempFileTree();
@@ -525,7 +547,7 @@ public class TapeBackupAgentTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("set2", count: 4, minSize: 256, maxSize: 12 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();
 
         // Set 1
@@ -564,7 +586,7 @@ public class TapeBackupAgentTests
         using var tree3 = new TempFileTree(seed: 30);
         tree3.AddFiles("c", count: 2, minSize: 500, maxSize: 12 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
 
         fixture.BackupFiles(tree1.Files, description: "Set Alpha");
         fixture.BackupFiles(tree2.Files, description: "Set Beta");
@@ -596,7 +618,7 @@ public class TapeBackupAgentTests
         using var tree = new TempFileTree();
         tree.AddFiles("bytes", count: 5, minSize: 1024, maxSize: 8 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();
 
         Assert.Equal(0L, agent.BytesBackedup);
@@ -620,7 +642,7 @@ public class TapeBackupAgentTests
         // Honest small cartridge + small TOC reserve ⇒ soft EW fires (reported ≤ reserve) well before hard
         //  EOM, stopping the set and reserving room for the TOC. FilemarksOnly = TOC-in-set (LTO-like).
         const long capacity = 2L * 1024 * 1024;
-        using var fixture = new VirtualTapeFixture(DriveProfile.FilemarksOnly, contentCapacity: capacity);
+        using var fixture = CreateFixture(DriveProfile.FilemarksOnly, contentCapacity: capacity);
         using var agent = fixture.CreateBackupAgent();
 
         agent.Manager.Navigator.TOCCapacity = 256L * 1024; // small reserve so EW precedes EOM cleanly
@@ -653,13 +675,15 @@ public class TapeBackupAgentTests
     //  the drive would trip a premature logical early warning and clamp every write to zero — the bug that
     //  produced a "0 files" backup set. This test proves the agent path now writes the files.
 
-    [Fact]
+    [SkippableFact]
     public void OverwriteFullTape_FromBeginning_WritesAllFilesAndRestores()
     {
+        Skip.If(WithMediaHeader, "Overwrite raw-fills the tape to hard EOM; a BOM media header is N/A here."); // even though it would pass with WithMediaHeader
+
         // Honest drive (no EW emulation) ⇒ identity calibration, so logical EW fires precisely when
         //  reported remaining ≤ the TOC reserve — deterministic, no a-priori margin to reason about.
         const long capacity = 4L * 1024 * 1024;
-        using var fixture = new VirtualTapeFixture(DriveProfile.FilemarksOnly, contentCapacity: capacity);
+        using var fixture = CreateFixture(DriveProfile.FilemarksOnly, contentCapacity: capacity);
         var drive = fixture.Drive;
 
         // --- Phase 1: raw-fill the cartridge to hard EOM with SMALL blocks, then rewind. The drive now

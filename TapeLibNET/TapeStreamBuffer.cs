@@ -70,11 +70,11 @@ public class TapeByteBuffer(int capacity) : IDisposable
     public int Capacity => capacity;
     /// <summary>Number of unread bytes currently in the buffer.</summary>
     public int ContentSize => m_writeFrom - m_readFrom;
-    /// <summary><c>true</c> when <see cref="ContentSize"/> is zero.</summary>
+    /// <summary><see langword="true"/> when <see cref="ContentSize"/> is zero.</summary>
     public bool IsEmpty => ContentSize == 0;
-    /// <summary><c>true</c> when <see cref="ContentSize"/> is non-zero.</summary>
+    /// <summary><see langword="true"/> when <see cref="ContentSize"/> is non-zero.</summary>
     public bool IsNonEmpty => !IsEmpty;
-    /// <summary><c>true</c> when <see cref="ContentSize"/> equals <see cref="Capacity"/>.</summary>
+    /// <summary><see langword="true"/> when <see cref="ContentSize"/> equals <see cref="Capacity"/>.</summary>
     public bool IsFull => ContentSize == Capacity;
     /// <summary>Free space available for writing.</summary>
     public int Remaining => Capacity - ContentSize;

@@ -11,7 +11,7 @@ namespace FclNET;
 public record FclParseResult(FclExpression? Expression, IReadOnlyList<FclDiagnostic> Diagnostics)
 {
     /// <summary>
-    /// <c>true</c> when parsing and validation both succeeded without errors.
+    /// <see langword="true"/> when parsing and validation both succeeded without errors.
     /// </summary>
     public bool IsValid => Expression is not null && Diagnostics.Count == 0;
 }
@@ -137,7 +137,7 @@ public static class FclPipeline
     // ─────────────────────────────────────────────────────
 
     /// <summary>
-    /// Returns <c>true</c> if <paramref name="expression"/> is already in
+    /// Returns <see langword="true"/> if <paramref name="expression"/> is already in
     /// Disjunctive Normal Form: <c>OR( AND(literal, …), … )</c> where each
     /// literal is an <see cref="Ast.FclCondition"/> or
     /// <c>NOT(FclCondition)</c>.

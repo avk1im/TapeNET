@@ -1,6 +1,11 @@
+using Microsoft.Extensions.Logging;
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
+
+
+public sealed class TapeRestoreAgentPipelinedTests_Headerless : TapeRestoreAgentPipelinedTestsBase { protected override bool WithMediaHeader => false; }
+public sealed class TapeRestoreAgentPipelinedTests_Headed : TapeRestoreAgentPipelinedTestsBase { protected override bool WithMediaHeader => true; }
 
 /// <summary>
 /// Step 7 integration coverage for the pipelined read path
@@ -21,11 +26,27 @@ namespace TapeLibNET.Tests;
 ///   and let back-pressure dominate the read loop.</item>
 /// </list>
 /// </summary>
-public class TapeRestoreAgentPipelinedTests
+public abstract class TapeRestoreAgentPipelinedTestsBase
 {
+    #region *** Media Header ***
+
+    /// <summary>Subclasses fix whether the produced fixture writes a media header.</summary>
+    protected abstract bool WithMediaHeader { get; }
+
+    /// <summary>Fixture factory mirroring the ctor; injects the header axis. All tests funnel through here.</summary>
+    protected VirtualTapeFixture CreateFixture(
+        DriveProfile profile = DriveProfile.Setmarks,
+        long contentCapacity = VirtualTapeFixture.DefaultContentCapacity,
+        ILoggerFactory? loggerFactory = null,
+        string mediaDescription = "Test Media",
+        bool useMemoryMap = false)
+        => new(profile, contentCapacity, loggerFactory, mediaDescription, useMemoryMap,
+               withMediaHeader: WithMediaHeader);
+
+    #endregion // Media Header
+
     #region *** Test Data ***
 
-#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> AllProfiles =>
     [
         DriveProfile.Setmarks,
@@ -33,7 +54,6 @@ public class TapeRestoreAgentPipelinedTests
         DriveProfile.SeqFilemarks,
         DriveProfile.FilemarksOnly,
     ];
-#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     #endregion
 
@@ -106,7 +126,6 @@ public class TapeRestoreAgentPipelinedTests
 
     #endregion
 
-
     #region *** Backward-Seek Selective Restore ***
 
     /// <summary>
@@ -128,7 +147,7 @@ public class TapeRestoreAgentPipelinedTests
         for (int i = 0; i < totalFiles; i++)
             tree.AddFile($"bwd_{i:D3}.dat", 32 * 1024 + i * 17);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         BackupPackedAndSaveTOC(fixture, tree.Files, "Pipelined Backward Seek");
 
         // Pick every other file, then reverse so the agent walks the tape backward.
@@ -186,7 +205,7 @@ public class TapeRestoreAgentPipelinedTests
         for (int i = 0; i < totalFiles; i++)
             tree.AddFile($"order_{i:D3}.dat", 24 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         BackupPackedAndSaveTOC(fixture, tree.Files, "Pipelined Seek to 0");
 
         var setToc = fixture.TOC[1];
@@ -244,7 +263,7 @@ public class TapeRestoreAgentPipelinedTests
         using var tree2 = new TempFileTree(seed: 2002);
         tree2.AddFiles("set2", count: 10, minSize: 1 * 1024, maxSize: 8 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         BackupPackedAndSaveTOC(fixture, tree1.Files, "Pipelined Set 1", TapeHashAlgorithm.Crc64);
         BackupPackedAndSaveTOC(fixture, tree2.Files, "Pipelined Set 2", TapeHashAlgorithm.XxHash3);
         Assert.Equal(2, fixture.TOC.Count);
@@ -308,7 +327,7 @@ public class TapeRestoreAgentPipelinedTests
         using var tree2 = new TempFileTree(seed: 4004);
         tree2.AddFiles("rev_set2", count: 8, minSize: 2 * 1024, maxSize: 6 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         BackupPackedAndSaveTOC(fixture, tree1.Files, "Pipelined Rev Set 1");
         BackupPackedAndSaveTOC(fixture, tree2.Files, "Pipelined Rev Set 2");
 
@@ -372,7 +391,7 @@ public class TapeRestoreAgentPipelinedTests
         tree2.AddFile("ms_b2.dat", 6 * 1024);
         tree2.AddFile("ms_c2.dat", 5 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         BackupPackedAndSaveTOC(fixture, tree1.Files, "Pipelined MS Set 1");
         BackupPackedAndSaveTOC(fixture, tree2.Files, "Pipelined MS Set 2");
 
@@ -417,7 +436,7 @@ public class TapeRestoreAgentPipelinedTests
     [MemberData(nameof(AllProfiles))]
     public void Pipelined_SingleLargeFile_RingBackPressure_RoundTrip(DriveProfile profile)
     {
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         // Block size from the drive determines ring memory pressure
         //  (default ring is 16 slots wide).
         uint blockSize = fixture.Drive.DefaultBlockSize;
@@ -461,7 +480,7 @@ public class TapeRestoreAgentPipelinedTests
     [MemberData(nameof(AllProfiles))]
     public void Pipelined_MixedLargeAndTiny_RoundTrip(DriveProfile profile)
     {
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         uint blockSize = fixture.Drive.DefaultBlockSize;
 
         using var tree = new TempFileTree();
@@ -506,7 +525,7 @@ public class TapeRestoreAgentPipelinedTests
     [MemberData(nameof(AllProfiles))]
     public void Pipelined_SelectiveLargeFile_FromMixedSet_Succeeds(DriveProfile profile)
     {
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         uint blockSize = fixture.Drive.DefaultBlockSize;
 
         using var tree = new TempFileTree();

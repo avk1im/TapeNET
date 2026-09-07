@@ -1,3 +1,5 @@
+#define LEGACY_TapeCalibrationRunHeader // FIXME: temporary to keep compatibility with legacy calibration cartridges
+
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
@@ -43,7 +45,7 @@ public readonly record struct TapeCalibrationProgress(
 /// </para>
 /// <para>
 /// RESUMABLE: the run lays down a self-describing on-tape trail (a header block at BOM plus body
-/// checkpoints, filemark-delimited — see <see cref="TapeCalibrationRecord"/>). A run interrupted by a
+/// checkpoints, filemark-delimited — see <see cref="TapeCalibrationFramer"/>). A run interrupted by a
 /// transport fault can be continued with <see cref="Resume"/> from the last good checkpoint, and a
 /// COMPLETE calibration cartridge can be re-measured cheaply after a firmware update / drive swap with
 /// <see cref="Recalibrate"/>. The cartridge is the single source of truth — no host sidecar.
@@ -95,6 +97,14 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
     /// </summary>
     public bool IsAbortRequested { get; set; }
 
+    /// <summary>
+    /// When the last header read found a valid TapeLibNET header of the WRONG kind (e.g. a backup
+    ///  media cartridge loaded for calibration), this holds it for the service to report precisely
+    ///  ("not a calibration cartridge — it's {header}"). Null when the last read found our header,
+    ///  or nothing identifiable at all (blank/foreign/torn). Reset at the start of every run verb.
+    /// </summary>
+    public TapeHeader? ForeignHeader { get; private set; }
+
     #endregion
 
     #region *** Run state ***
@@ -130,6 +140,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
     {
         ResetError();
         IsAbortRequested = false;
+        ForeignHeader = null;
 
         if (!Drive.IsMediaLoaded)
         {
@@ -152,8 +163,8 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
             var state = new RunState { RunId = Guid.NewGuid(), BytesWritten = 0, CheckpointIndex = 0 };
             state.Samples.Add((0L, capacityReportedAtBom));
 
-            var header = new TapeCalibrationRunHeader(
-                state.RunId, Drive.DriveProfileKey, capacityReportedAtBom, blockSize, DateTime.UtcNow, plan);
+            var header = TapeCalibrationHeader.CreateHeader(state.RunId, Drive.DriveProfileKey,
+                capacityReportedAtBom, blockSize, DateTime.UtcNow, plan);
 
             using var records = new RecordBlockWriter(this, blockSize);
             if (!records.Emit(header, ref state.BytesWritten, writeLeadingFilemark: false))
@@ -191,6 +202,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
     {
         ResetError();
         IsAbortRequested = false;
+        ForeignHeader = null;
 
         RunGuard guard = new(this);
         try
@@ -223,8 +235,10 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         ITapeCalibration existing, IProgress<TapeCalibrationProgress>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(existing);
+
         ResetError();
         IsAbortRequested = false;
+        ForeignHeader = null;
 
         RunGuard guard = new(this);
         try
@@ -265,7 +279,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
     private TapeCalibration? ResumeCore(IProgress<TapeCalibrationProgress>? progress)
     {
         // Position at BOM and read the run header (read-only; shared with InspectMedia).
-        TapeCalibrationRunHeader? header = ReadRunHeader(out uint blockSize, out byte[] recordBuffer);
+        TapeCalibrationHeader? header = ReadRunHeader(out uint blockSize, out byte[] recordBuffer);
         if (header is null)
             return null;   // no media / no valid header — error state already set
 
@@ -345,8 +359,9 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
     public TapeCalibrationMediaInfo? InspectMedia()
     {
         ResetError();
+        ForeignHeader = null;
 
-        TapeCalibrationRunHeader? header = ReadRunHeader(out _, out byte[] recordBuffer);
+        TapeCalibrationHeader? header = ReadRunHeader(out _, out byte[] recordBuffer);
         if (header is null)
             return null;   // no media / no valid header — error state already set
 
@@ -364,10 +379,12 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
     /// <see cref="FindLastCheckpoint"/>. Returns <see langword="null"/> (error state set) when the drive
     /// cannot be prepared or no valid header is present. WRITES NOTHING.
     /// </summary>
-    private TapeCalibrationRunHeader? ReadRunHeader(out uint blockSize, out byte[] recordBuffer)
+    private TapeCalibrationHeader? ReadRunHeader(out uint blockSize, out byte[] recordBuffer)
     {
         blockSize = 0;
         recordBuffer = [];
+
+        ForeignHeader = null;
 
         if (!Drive.IsMediaLoaded)
         {
@@ -389,15 +406,32 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         }
 
         recordBuffer = new byte[blockSize];
-        TapeCalibrationRunHeader? header = ReadRecord<TapeCalibrationRunHeader>(recordBuffer);
-        if (header is null)
+        int read = Drive.ReadDirect(recordBuffer, 0, recordBuffer.Length, out _, out _);
+
+        // Polymorphic probe: classify whatever is at BOM, don't pre-commit to our kind.
+        TapeHeader? any = read > 0 ? TapeCalibrationFramer.Unpack<TapeHeader>(recordBuffer, read) : null;
+
+#if LEGACY_TapeCalibrationRunHeader
+        if (any is null && read > 0)
+            any = TapeCalibrationFramer.Unpack<TapeCalibrationRunHeader>(recordBuffer, read)?.ToHeader();
+#endif
+
+        if (any is TapeCalibrationHeader header)
+            return header;                                  // our kind — done
+
+        // A valid header, but NOT ours (Media / Set): remember it so the service can name it.
+        if (any is not null)
         {
+            ForeignHeader = any;
             SetError(WIN32_ERROR.ERROR_INVALID_DATA);
-            LogErrorAsDebug("Calibration inspect: no valid calibration header on this cartridge");
+            LogErrorAsDebug($"Calibration inspect: foreign header — {any}");   // trace: "…backup media, id …"
             return null;
         }
 
-        return header;
+        // Nothing identifiable at all — blank / foreign / torn.
+        SetError(WIN32_ERROR.ERROR_INVALID_DATA);
+        LogErrorAsDebug("Calibration inspect: no valid calibration header on this cartridge");
+        return null;
     }
 
     #endregion
@@ -778,7 +812,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         if (read <= 0)
             return null;
 
-        return TapeCalibrationRecord.Unpack<T>(recordBuffer, read);
+        return TapeCalibrationFramer.Unpack<T>(recordBuffer, read);
     }
 
     /// <summary>
@@ -844,7 +878,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
 
     /// <summary>
     /// Writes calibration RECORDS (header, checkpoints) into single full-size blocks: the framed record
-    /// (see <see cref="TapeCalibrationRecord.Pack"/>) at the front, random padding for the rest. A fixed
+    /// (see <see cref="TapeCalibrationFramer.Pack"/>) at the front, random padding for the rest. A fixed
     /// random block is reused across records (padding content is immaterial with compression off; only the
     /// front is overwritten per record), so no per-record allocation churn. The full block is counted into
     /// the run's <c>bytesWritten</c>.
@@ -872,7 +906,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         /// </summary>
         public bool Emit(ITapeSerializable record, ref long bytesWritten, bool writeLeadingFilemark)
         {
-            byte[] frame = TapeCalibrationRecord.Pack(record);
+            byte[] frame = TapeCalibrationFramer.Pack(record);
             if (frame.Length > m_blockSize)
             {
                 if (!m_tooLargeWarned)

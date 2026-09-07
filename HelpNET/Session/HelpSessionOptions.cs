@@ -24,11 +24,11 @@ namespace HelpNET.Session;
 /// Defaults to 50.
 /// </param>
 /// <param name="PreferProviderEmbeddings">
-/// When <c>true</c> and <c>IAiSession.EmbeddingGenerator</c> is available, the
+/// When <see langword="true"/> and <c>IAiSession.EmbeddingGenerator</c> is available, the
 /// session will use the provider's generator instead of the built-in ONNX one —
 /// provided a precomputed bundle exists whose <c>ModelId</c> matches the
 /// provider's current embedding model (Strategy A).
-/// Defaults to <c>false</c> (built-in ONNX preferred).
+/// Defaults to <see langword="false"/> (built-in ONNX preferred).
 /// </param>
 public sealed record HelpSessionOptions(
     string HomeTopicId            = "home",

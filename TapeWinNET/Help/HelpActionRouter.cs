@@ -136,7 +136,7 @@ public sealed class HelpActionRouter : IHelpActionRouter
 
     // ── Queries ───────────────────────────────────────────────────────────────
 
-    /// <summary>Returns <c>true</c> when a command is registered for <paramref name="actionId"/>.</summary>
+    /// <summary>Returns <see langword="true"/> when a command is registered for <paramref name="actionId"/>.</summary>
     public bool IsRegistered(string actionId) => _entries.ContainsKey(actionId);
 
     /// <summary>

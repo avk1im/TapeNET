@@ -131,7 +131,7 @@ public class RestoreViewModel : ViewModelBase
 
     /// <summary>
     /// Total number of files across all checked sets.
-    ///  For fully checked sets (<c>true</c>), counts all files;
+    ///  For fully checked sets (<see langword="true"/>), counts all files;
     ///  for partially checked sets (<c>null</c>), counts only the checked files.
     /// </summary>
     public int TotalFileCount

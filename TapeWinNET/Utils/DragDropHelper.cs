@@ -102,7 +102,7 @@ internal static class DragDropHelper
 
     /// <summary>
     /// Enables shell-based file drag-drop with a dynamic drop-availability guard.
-    /// When <paramref name="canDrop"/> returns <c>false</c>, the shell shows the
+    /// When <paramref name="canDrop"/> returns <see langword="false"/>, the shell shows the
     ///  "no drop" cursor and any accidental drops are silently discarded.
     /// </summary>
     /// <param name="window">The WPF window to enable file drops on.</param>

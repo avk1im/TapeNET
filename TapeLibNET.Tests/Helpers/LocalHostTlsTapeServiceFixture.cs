@@ -28,10 +28,10 @@ public sealed class LocalHostTlsTapeServiceFixture : IAsyncLifetime, IDisposable
     private WebApplication? _app;
     private GrpcChannel? _channel;
 
-    /// <summary>Whether TLS was configured and the server started. Tests should skip when <c>false</c>.</summary>
+    /// <summary>Whether TLS was configured and the server started. Tests should skip when <see langword="false"/>.</summary>
     public bool IsConfigured { get; private set; }
 
-    /// <summary>Human-readable skip reason when <see cref="IsConfigured"/> is <c>false</c>.</summary>
+    /// <summary>Human-readable skip reason when <see cref="IsConfigured"/> is <see langword="false"/>.</summary>
     public string SkipReason { get; private set; } = string.Empty;
 
     /// <summary>The gRPC channel connected to the in-process TLS server.</summary>

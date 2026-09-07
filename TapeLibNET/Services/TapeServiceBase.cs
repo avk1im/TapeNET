@@ -434,7 +434,10 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 LogOk("Media loaded successfully");
                 LogMediaInfo();
-                // The profile key depends on the medium's capacity bucket, so re-match on every load.
+
+                RefreshLoadedHeader();     // §10.2 — cheap BOM probe so identity is known at load (UI + later ops)
+
+                // The claibration profile key depends on the medium's capacity bucket, so re-match on every load.
                 AutoLoadCalibrations();
                 _host.OnServiceStateChanged(ServiceStateChange.MediaLoaded);
                 return true;
@@ -493,6 +496,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         _agent?.Dispose();
         _agent = null;
         _toc = null;
+        _loadedHeader = null;   // identity is tied to the loaded media/TOC
         IsTOCFromFile = false;
         TOCFilePath = null;
     }
@@ -1078,6 +1082,141 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         });
     }
 
+    #region Media-identity header state
+
+    /// <summary>
+    /// The BOM header of the currently loaded media (media or calibration kind), or
+    ///  <see langword="null"/> when the cartridge is blank, legacy, or foreign. Read once per media
+    ///  (re)load by <see cref="RefreshLoadedHeader"/> and interpreted per operation.
+    /// </summary>
+    protected TapeHeader? _loadedHeader;
+
+    /// <summary>The loaded media's BOM header (any kind), or null. See <see cref="RefreshLoadedHeader"/>.</summary>
+    public TapeHeader? LoadedHeader => _loadedHeader;
+
+    /// <summary>The loaded media header, or null when the BOM header is a different kind / absent.</summary>
+    public TapeMediaHeader? LoadedMediaHeader => _loadedHeader as TapeMediaHeader;
+
+    /// <summary>
+    /// Reads and classifies the loaded media's BOM header into <see cref="_loadedHeader"/> — one cheap
+    ///  block read. Non-throwing: any failure leaves it <see langword="null"/>. Prefers the live
+    ///  <see cref="_agent"/> when present, so the agent that OWNS the navigator is the one moving the
+    ///  tape (keeping its presence + position coherent — §17.7); otherwise a throwaway probe agent.
+    /// </summary>
+    /// <remarks>
+    /// PRECONDITION: this MOVES the tape (rewinds to BOM). Call only at load / reload / between-volumes
+    ///  — never mid-stream. The caller must already hold <see cref="_operationLock"/>.
+    /// </remarks>
+    protected void RefreshLoadedHeader()
+    {
+        _loadedHeader = null;
+
+        if (_drive is null || !_drive.IsMediaLoaded)
+            return;
+
+        try
+        {
+            // A header read needs prepared media (mirrors RestoreTOCAsync); PrepareMedia is idempotent.
+            if (!_drive.PrepareMedia())
+                return;
+
+            if (_agent is not null)
+            {
+                _loadedHeader = _agent.ReadHeader();
+            }
+            else
+            {
+                using var probe = new TapeFileAgent(_drive, _toc ?? new TapeTOC());
+                _loadedHeader = probe.ReadHeader();
+            }
+
+            if (_loadedHeader is not null)
+                LogInfoSub($"Media identity: {_loadedHeader}");   // trace-level surfacing only
+        }
+        catch
+        {
+            // Never let an identity probe break the enclosing operation.
+            _loadedHeader = null;
+        }
+    }
+
+    #endregion
+
+    #region Verdict & presentation
+
+    // ── Step 9b — media-identity header state & verdict machinery (§10) ────────────
+    //  Agent WRITES headers (mechanism, D21); these methods are the service's side: it READS the loaded
+    //  media's BOM header once per (re)load, judges it per operation, and drives the host prompt. It
+    //  NEVER WRITES a header itself.
+
+    /// <summary>
+    /// Judges the loaded media's identity for identity-VERIFYING contexts (restore / append).
+    ///  <see cref="TapeMediaVerdict.Match"/> and <see cref="TapeMediaVerdict.Unidentified"/> are benign
+    ///  (never prompted); the three positive mismatches are surfaced.
+    /// </summary>
+    /// <param name="expectedSeriesId">The MediaId we expect, or null to skip the series check.</param>
+    /// <param name="expectedVolume">The volume number we expect, or null to skip the volume check.</param>
+    protected TapeMediaVerdict EvaluateLoadedHeader(Guid? expectedSeriesId = null, int? expectedVolume = null)
+        => _loadedHeader switch
+        {
+            null => TapeMediaVerdict.Unidentified,
+            TapeCalibrationHeader => TapeMediaVerdict.WrongKind,
+            TapeMediaHeader m when expectedSeriesId is { } s && m.MediaId != s => TapeMediaVerdict.MediaIdMismatch,
+            TapeMediaHeader m when expectedVolume is { } v && m.Volume != v => TapeMediaVerdict.WrongVolume,
+            _ => TapeMediaVerdict.Match,
+        };
+
+    /// <summary>
+    /// Culture-neutral label for a verdict, used in LOG lines only. The host builds the localized
+    ///  user-facing prompt from the verdict enum + context (never from this string).
+    /// </summary>
+    protected static string VerdictToString(TapeMediaVerdict verdict) => verdict switch
+    {
+        TapeMediaVerdict.Match => "Match",
+        TapeMediaVerdict.Unidentified => "Unidentified",
+        TapeMediaVerdict.WrongKind => "Wrong kind",
+        TapeMediaVerdict.MediaIdMismatch => "Media ID mismatch",
+        TapeMediaVerdict.WrongVolume => "Wrong volume",
+        TapeMediaVerdict.MediaInconsistent => "Media inconsistent",
+        _ => $"Unknown ({(int)verdict})",
+    };
+
+    /// <summary>
+    /// Central presenter for an identity verdict. <see cref="TapeMediaVerdict.Match"/> /
+    ///  <see cref="TapeMediaVerdict.Unidentified"/> proceed silently; a suppressed check proceeds
+    ///  (logged); otherwise the host is prompted. <see cref="MediaMismatchChoice.Retry"/> is handled by
+    ///  the caller's own eject/insert loop.
+    /// </summary>
+    /// <param name="verdict">The identity judgment to present.</param>
+    /// <param name="context">What the user is proceeding into — drives the host's wording/severity.</param>
+    /// <param name="suppress">When true, proceed without prompting (opt-out flag or a prior ProceedAlways).</param>
+    /// <param name="allowRetry">Offer Retry — only where eject/insert machinery exists (continuation loops).</param>
+    /// <param name="allowProceedAlways">Offer "Always proceed" — false for one-off ops (e.g. import).</param>
+    protected MediaMismatchChoice PresentVerdict(
+        TapeMediaVerdict verdict,
+        MediaPromptContext context,
+        bool suppress,
+        bool allowRetry = false,
+        bool allowProceedAlways = true)
+    {
+        // Benign — nothing to confirm.
+        if (verdict is TapeMediaVerdict.Match or TapeMediaVerdict.Unidentified)
+            return MediaMismatchChoice.Proceed;
+
+        string text = _loadedHeader?.ToString() ?? "Unidentified media";
+
+        if (suppress)
+        {
+            LogWarn($"Media check ({VerdictToString(verdict)} / {context}) suppressed — proceeding: {text}");
+            return MediaMismatchChoice.Proceed;
+        }
+
+        LogWarn($"Media check ({VerdictToString(verdict)} / {context}): {text}");
+        return _host.OnMediaMismatchConfirm(text, verdict, context, allowRetry, allowProceedAlways);
+    }
+
+    #endregion
+
     /// <summary>
     /// Formats the media
     /// Reloads media after format to refresh parameters.
@@ -1137,6 +1276,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     LogWarn($"Couldn't reload media after format. Error: {LastError}");
                 }
 
+                RefreshLoadedHeader();     // we just wrote the new header -> cache the fresh identity
+
                 LogOk($"Media formatted: {description}");
                 LogMediaInfo();
                 OnStatusUpdate("Media formatted");
@@ -1195,6 +1336,27 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 }
 
                 _toc = _agent.TOC;
+
+                // Now compare the media header with the loaded _toc acc. to
+                //  verify-and-adopt-Volume-not-MediaId reconciliation (§10.8).
+                //  Import has media presence as optional, so we guard on IsMediaLoaded:
+                if (_drive.IsMediaLoaded)
+                {
+                    RefreshLoadedHeader();
+                    var choice = PresentVerdict(
+                        EvaluateLoadedHeader(expectedSeriesId: _toc.MediaId, expectedVolume: _toc.Volume),
+                        MediaPromptContext.ImportToc, suppress: false, allowProceedAlways: false); // ProceedAlways is disallowed (one-off)
+                    if (choice == MediaMismatchChoice.Abort)
+                    {
+                        LastError = "Import cancelled — media does not match the imported TOC";
+                        return false;
+                    }
+                    // On Proceed: adopt the mounted volume's number (FUNCTIONAL — restore positions by TOC.Volume),
+                    //  but NOT its MediaId (adopting would hide a wrong-tape error inside a good TOC — §10.8).
+                    if (_loadedHeader is TapeMediaHeader imh)
+                        _toc.Volume = imh.Volume;
+                }
+
                 IsTOCFromFile = true;
                 TOCFilePath = filePath;
                 LogOk($"TOC imported from file with {_toc.Count} backup set(s)");

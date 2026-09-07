@@ -20,7 +20,7 @@ internal static class FclDnfConverter
     // ─────────────────────────────────────────────────────
 
     /// <summary>
-    /// Returns <c>true</c> if <paramref name="expr"/> is already in DNF shape.
+    /// Returns <see langword="true"/> if <paramref name="expr"/> is already in DNF shape.
     /// </summary>
     public static bool IsDnf(FclExpression expr) => IsDnfCore(Unwrap(expr));
 

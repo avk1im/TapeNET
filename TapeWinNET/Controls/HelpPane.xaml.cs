@@ -293,9 +293,9 @@ public partial class HelpPane : UserControl
 
     /// <summary>
     /// Called when <see cref="HelpPaneViewModel.GuideRequested"/> fires.
-    /// When <paramref name="activate"/> is <c>true</c> and the tour is advancing
+    /// When <paramref name="activate"/> is <see langword="true"/> and the tour is advancing
     /// (step cursor already updated in the VM), the overlay is updated to show
-    /// the new spotlight; when <c>false</c> the overlay is deactivated.
+    /// the new spotlight; when <see langword="false"/> the overlay is deactivated.
     /// </summary>
     private void OnGuideRequested(object? sender, bool activate)
     {

@@ -98,7 +98,7 @@ public sealed class PhysicalTapeFixture : IDisposable
 
     /// <summary>
     /// Whether the tape is formatted with an initiator partition.
-    /// <c>true</c> when the drive supports partitions and
+    /// <see langword="true"/> when the drive supports partitions and
     /// <see cref="PhysicalTestEnv.ForceNoPartition"/> is not set.
     /// </summary>
     public bool UsesPartition { get; }

@@ -7,7 +7,7 @@ namespace TapeLibNET.Tests;
 /// <summary>
 /// Coverage for the RESUMABLE calibration feature (<see cref="TapeCalibrator.Resume"/> /
 /// <see cref="TapeCalibrator.Recalibrate"/>) and its on-tape record framing
-/// (<see cref="TapeCalibrationRecord"/>), driven over small memory-backed virtual cartridges.
+/// (<see cref="TapeCalibrationFramer"/>), driven over small memory-backed virtual cartridges.
 /// <para>
 /// Two tiers:
 /// <list type="bullet">
@@ -138,9 +138,9 @@ public class CalibrationResumeTests
         var cp = new TapeCalibrationCheckpoint(runId, Index: 3, BytesWritten: 200L,
             EarlyWarning: (150L, 850L), Samples: samples);
 
-        byte[] frame = TapeCalibrationRecord.Pack(cp);
+        byte[] frame = TapeCalibrationFramer.Pack(cp);
 
-        var back = TapeCalibrationRecord.Unpack<TapeCalibrationCheckpoint>(frame, frame.Length);
+        var back = TapeCalibrationFramer.Unpack<TapeCalibrationCheckpoint>(frame, frame.Length);
         Assert.NotNull(back);
         Assert.Equal(runId, back!.RunId);
         Assert.Equal(3, back.Index);
@@ -152,7 +152,7 @@ public class CalibrationResumeTests
         // Flip a byte INSIDE the payload (past the 4-byte length prefix) ⇒ CRC catches it ⇒ null.
         byte[] corrupt = (byte[])frame.Clone();
         corrupt[8] ^= 0xFF;
-        Assert.Null(TapeCalibrationRecord.Unpack<TapeCalibrationCheckpoint>(corrupt, corrupt.Length));
+        Assert.Null(TapeCalibrationFramer.Unpack<TapeCalibrationCheckpoint>(corrupt, corrupt.Length));
     }
 
     [Fact]
@@ -162,8 +162,8 @@ public class CalibrationResumeTests
         var cp = new TapeCalibrationCheckpoint(runId, Index: 0, BytesWritten: 0L,
             EarlyWarning: null, Samples: new List<(long, long)> { (0L, 500L) });
 
-        byte[] frame = TapeCalibrationRecord.Pack(cp);
-        var back = TapeCalibrationRecord.Unpack<TapeCalibrationCheckpoint>(frame, frame.Length);
+        byte[] frame = TapeCalibrationFramer.Pack(cp);
+        var back = TapeCalibrationFramer.Unpack<TapeCalibrationCheckpoint>(frame, frame.Length);
 
         Assert.NotNull(back);
         Assert.Null(back!.EarlyWarning);
@@ -180,12 +180,12 @@ public class CalibrationResumeTests
             TailBlocksPerChunk: 1, TailChunkSize: 1 << 20,
             TailCapacityFraction: 0.05, NumCheckpoints: 128);
 
-        var header = new TapeCalibrationRunHeader(
-            runId, "VENDOR|PRODUCT|REV|64MB", CapacityReportedAtBom: 12345L,
-            BlockSize: (uint)(1 << 20), StartedUtc: DateTime.UtcNow, Plan: plan);
+        var header = TapeCalibrationHeader.CreateHeader(
+            runId, "VENDOR|PRODUCT|REV|64MB", capacityReportedAtBom: 12345L,
+            blockSize: (uint)(1 << 20), startedUtc: DateTime.UtcNow, plan: plan);
 
-        byte[] frame = TapeCalibrationRecord.Pack(header);
-        var back = TapeCalibrationRecord.Unpack<TapeCalibrationRunHeader>(frame, frame.Length);
+        byte[] frame = TapeCalibrationFramer.Pack(header);
+        var back = TapeCalibrationFramer.Unpack<TapeCalibrationHeader>(frame, frame.Length);
 
         Assert.NotNull(back);
         Assert.Equal(runId, back!.RunId);
@@ -202,7 +202,7 @@ public class CalibrationResumeTests
         // A block of random bytes is not one of our records: no valid signature / length ⇒ null.
         var junk = new byte[4096];
         new Random(7).NextBytes(junk);
-        Assert.Null(TapeCalibrationRecord.Unpack<TapeCalibrationCheckpoint>(junk, junk.Length));
+        Assert.Null(TapeCalibrationFramer.Unpack<TapeCalibrationCheckpoint>(junk, junk.Length));
     }
 
     #endregion

@@ -140,9 +140,9 @@ namespace TapeLibNET
     /// </summary>
     public class TapeReadStream : TapeStream
     {
-        /// <summary>When <c>true</c>, reading stops at the first null byte.</summary>
+        /// <summary>When <see langword="true"/>, reading stops at the first null byte.</summary>
         public bool TextFileMode { get; private set; }
-        /// <summary>When <c>true</c>, <see cref="Read"/> enforces <see cref="LengthLimit"/>.</summary>
+        /// <summary>When <see langword="true"/>, <see cref="Read"/> enforces <see cref="LengthLimit"/>.</summary>
         public bool LengthLimitMode { get; private set; }
         /// <summary>
         /// Absolute byte limit. Setting a non-negative value activates <see cref="LengthLimitMode"/>;

@@ -10,14 +10,14 @@ namespace TapeLibNET.Tests.Helpers;
 /// <c>remote-test-settings.json</c> (gitignored) with environment variable overrides.
 /// <para>
 /// When no host is configured, the fixture sets <see cref="IsConfigured"/> to
-/// <c>false</c> so tests can skip gracefully.
+/// <see langword="false"/> so tests can skip gracefully.
 /// </para>
 /// <para>Configuration keys (JSON / environment variables):</para>
 /// <list type="table">
 ///   <listheader><term>Key</term><description>Purpose</description></listheader>
 ///   <item><term>RemoteHost</term><description>IP address or hostname (required)</description></item>
 ///   <item><term>RemotePort</term><description>plain-HTTP gRPC port (default: 50551)</description></item>
-///   <item><term>UseTls</term><description><c>true</c> for HTTPS, <c>false</c> for HTTP (default: false)</description></item>
+///   <item><term>UseTls</term><description><see langword="true"/> for HTTPS, <see langword="false"/> for HTTP (default: false)</description></item>
 ///   <item><term>DangerousAcceptAnyServerCertificate</term><description>Skip TLS cert validation for self-signed dev certs (default: false)</description></item>
 /// </list>
 /// </summary>
@@ -37,7 +37,7 @@ public sealed class RemoteHostTapeServiceFixture : IAsyncLifetime, IDisposable, 
 
     private GrpcChannel? _channel;
 
-    /// <summary>Whether a remote host was configured. Tests should skip when <c>false</c>.</summary>
+    /// <summary>Whether a remote host was configured. Tests should skip when <see langword="false"/>.</summary>
     public bool IsConfigured { get; private set; }
 
     /// <summary>The gRPC channel connected to the remote service.</summary>
@@ -50,7 +50,7 @@ public sealed class RemoteHostTapeServiceFixture : IAsyncLifetime, IDisposable, 
     /// <summary>The remote service address (e.g. <c>http://192.168.1.50:50551</c>).</summary>
     public string Address { get; private set; } = string.Empty;
 
-    /// <summary>Human-readable reason when <see cref="IsConfigured"/> is <c>false</c>.</summary>
+    /// <summary>Human-readable reason when <see cref="IsConfigured"/> is <see langword="false"/>.</summary>
     public string SkipReason { get; private set; } = string.Empty;
 
     public async Task InitializeAsync()

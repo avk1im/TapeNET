@@ -704,6 +704,13 @@ namespace TapeLibNET
 
             return MediaId;
         }
+        /// <summary>
+        /// Clears the media identity so the next durable write (header / TOC) mints a fresh one. Used on
+        ///  OVERWRITE, where the tape becomes new-content media of a new series (§10.5) — a fresh MediaId
+        ///  avoids collisions with surviving volumes of the overwritten series.
+        /// </summary>
+        public void ResetMediaId() => MediaId = Guid.Empty;   // EnsureMediaId() re-mints on next write
+
         public DateTime CreationTime { get; internal set; } = DateTime.Now;
         public DateTime LastSaveTime { get; internal set; } = DateTime.Now;
 
@@ -728,6 +735,33 @@ namespace TapeLibNET
             }
         }
         public bool IsEmpty => Count == 0 || Count == 1 && CurrentSetTOC.Count == 0;
+
+        /// <summary>
+        /// Builds the immutable <see cref="TapeMediaHeader"/> for this medium — the sole authority for
+        ///  producing a media header, guaranteeing it always matches this TOC's identity.
+        /// </summary>
+        /// <remarks>
+        /// Mints the <see cref="MediaId"/> if still unset (so header and TOC always share it), then
+        ///  snapshots the current identity: id, creation time, volume, and a length-clamped name. Written
+        ///  once at format / on a fresh volume and never rewritten. Only ever produced for single-headerPartition
+        ///  (TOC-in-set) media, hence <see cref="TapeTocPlacement.InSet"/>.
+        /// </remarks>
+        /// <param name="tocBlockSize">The block size to use for the TOC on tape (NOT the header itself! This is always <see cref="TapeHeader.FixedHeaderBlockSize"/>).</param>
+        /// <param name="tapeTocPlacement">The placement of the TOC on tape (in-set or in-partition).</param>
+        /// <param name="headerPartition">The partition in which this header resides. By default <see cref="MediaPartition.Content"/>.</param>
+        public TapeMediaHeader CreateHeader(uint tocBlockSize,
+                TapeTocPlacement tapeTocPlacement,
+                MediaPartition headerPartition = MediaPartition.Content) =>
+            new()
+            {
+                MediaId = EnsureMediaId(),
+                CreatedUtc = CreationTime,
+                TocBlockSize = tocBlockSize,
+                Volume = Volume,
+                Partition = headerPartition,
+                TocPlacement = tapeTocPlacement,
+                OriginalName = TapeMediaHeader.ClampName(Description),
+            };
 
         // Set index conversion helpers (see class-level doc for indexation scheme).
         //  Standard: 1..N,  Alternative: −(N−1)..0,  Internal: 0..N−1
@@ -1513,6 +1547,14 @@ namespace TapeLibNET
                 }
             }
 
+            // Media header overhead: one media header block at content BOM per volume.
+            //  (Phase B adds one set-header block per set — see TapeSetTOC.ComputeTotalFileSizeOnTape.)
+            //  Counted for write-planning / remaining-capacity; freshly formatted media always carries it.
+            if (onVolumeOnly)
+                totalSize += TapeHeader.FixedHeaderBlockSize;                 // this volume's media header
+            else
+                totalSize += Volume /* == volume count incl. this TOC */ * (long)TapeHeader.FixedHeaderBlockSize;
+
             return totalSize;
         }
 
@@ -1525,10 +1567,16 @@ namespace TapeLibNET
         /// </summary>
         public long ComputeContentSizeOnTapeBeforeCurrentSet(uint defaultBlockSize = 0)
         {
-            long total = 0L;
+            long totalSize = 0L;
             for (int i = FirstSetInternalOnVolume; i < m_currSetInternal; i++)
-                total += m_setTOCs[i].ComputeTotalFileSizeOnTape(defaultBlockSize);
-            return total;
+                totalSize += m_setTOCs[i].ComputeTotalFileSizeOnTape(defaultBlockSize);
+
+            // Media header overhead: one media header block at content BOM per volume.
+            //  (Phase B adds one set-header block per set — see TapeSetTOC.ComputeTotalFileSizeOnTape.)
+            //  Counted for write-planning / remaining-capacity; freshly formatted media always carries it.
+            totalSize += TapeHeader.FixedHeaderBlockSize;                 // this volume's media header
+
+            return totalSize;
         }
 
         #endregion // File selection methods

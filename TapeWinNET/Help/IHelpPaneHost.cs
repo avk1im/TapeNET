@@ -75,17 +75,17 @@ public interface IHelpPaneHost
     //  no such concept (dialogs) simply keep the default of true.
 
     /// <summary>
-    /// Returns <c>false</c> to disable <c>RevealCommand</c> while this host is busy
+    /// Returns <see langword="false"/> to disable <c>RevealCommand</c> while this host is busy
     ///  with an operation that should not be interrupted by the Reveal overlay.
-    /// The default returns <c>true</c>; only hosts with a notion of "operation in
+    /// The default returns <see langword="true"/>; only hosts with a notion of "operation in
     ///  progress" (currently <c>MainWindow</c>) override it.
     /// </summary>
     bool CanReveal() => true;
 
     /// <summary>
-    /// Returns <c>false</c> to disable <c>GuideMeCommand</c> while this host is busy
+    /// Returns <see langword="false"/> to disable <c>GuideMeCommand</c> while this host is busy
     ///  with an operation that should not be interrupted by a walkthrough tour.
-    /// The default returns <c>true</c>; only hosts with a notion of "operation in
+    /// The default returns <see langword="true"/>; only hosts with a notion of "operation in
     ///  progress" override it.
     /// </summary>
     bool CanGuideMe() => true;
@@ -93,7 +93,7 @@ public interface IHelpPaneHost
     // ── Phase 8b: Guide Me helpers ─────────────────────────────────────────
 
     /// <summary>
-    /// Returns <c>true</c> when the given <paramref name="session"/> has at least one
+    /// Returns <see langword="true"/> when the given <paramref name="session"/> has at least one
     /// walkthrough tour for this host.  Used by <c>GuideMeCommand.CanExecute</c>.
     /// </summary>
     bool HostHasWalkthroughs(HelpNET.Session.IHelpSession session)

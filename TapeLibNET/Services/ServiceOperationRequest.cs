@@ -21,7 +21,7 @@ public abstract record ServiceOperationRequest
     public string? OperationLabel { get; init; }
 
     /// <summary>
-    /// When <c>true</c>, the operation is confined to the current volume only:
+    /// When <see langword="true"/>, the operation is confined to the current volume only:
     ///  multi-volume continuation is not attempted. If the tape is full or a
     ///  volume change is required, the operation ends with the files processed
     ///  so far and a log message is emitted.
@@ -50,7 +50,10 @@ public sealed record BackupRequest(
     ITapeFileFilter? Filter = null,
     string? MediaName = null,
     TapeCompression Compression = TapeCompression.None,
-    int CompressionLevel = ZstdLevel.Default) : ServiceOperationRequest;
+    int CompressionLevel = ZstdLevel.Default) : ServiceOperationRequest
+{
+    public bool ForceVolumeOverwrite { get; init; } = false;   // skip identified-media prompts; overwrite unattended
+}
 
 // ── Restore ──────────────────────────────────────────────────────────────────
 
@@ -66,7 +69,10 @@ public sealed record RestoreRequest(
     TapeHowToHandleExisting HandleExisting,
     bool SkipAllErrors,
     bool EjectWhenDone,
-    ITapeFileFilter? Filter = null) : ServiceOperationRequest;
+    ITapeFileFilter? Filter = null) : ServiceOperationRequest
+{
+    public bool SkipVolumeCheck { get; init; } = false;        // skip the per-volume identity prompt (unattended)
+}
 
 // ── Calibrate ────────────────────────────────────────────────────────────────
 
@@ -107,7 +113,10 @@ public sealed record CalibrateRequest(
     TapeCalibrationOptions Options,
     CalibrationMode Mode = CalibrationMode.New,
     ITapeCalibration? ExistingCalibration = null,
-    bool ConfirmFullRecalibrationInline = true) : ServiceOperationRequest;
+    bool ConfirmFullRecalibrationInline = true) : ServiceOperationRequest
+{
+    public bool SkipMediaHeaderCheck { get; init; } = false;   // skip the pre-run "holds a backup?" confirm
+}
 
 // ── List ─────────────────────────────────────────────────────────────────────
 

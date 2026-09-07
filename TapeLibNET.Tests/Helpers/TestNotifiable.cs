@@ -32,7 +32,7 @@ public class TestNotifiable : ITapeFileNotifiable
 
     /// <summary>
     /// Set of file names (full paths) that <see cref="PreProcessFile"/> should
-    /// return <c>false</c> for, causing them to be skipped. Empty by default.
+    /// return <see langword="false"/> for, causing them to be skipped. Empty by default.
     /// </summary>
     public HashSet<string> FilesToSkip { get; } = new(StringComparer.OrdinalIgnoreCase);
 

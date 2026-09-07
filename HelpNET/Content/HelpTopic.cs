@@ -17,8 +17,8 @@ namespace HelpNET.Content;
 /// <param name="PlainText">Stripped text used for indexing.</param>
 /// <param name="Walkthrough">Parsed walkthrough script; <c>null</c> unless <c>kind == walkthrough</c>.</param>
 /// <param name="IncludeInAiCorpus">
-/// When <c>false</c>, the topic is excluded from RAG retrieval.
-/// Default is <c>true</c>.
+/// When <see langword="false"/>, the topic is excluded from RAG retrieval.
+/// Default is <see langword="true"/>.
 /// </param>
 public sealed record HelpTopic(
     string Id,

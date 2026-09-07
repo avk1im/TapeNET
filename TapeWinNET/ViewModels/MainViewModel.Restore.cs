@@ -416,7 +416,7 @@ public partial class MainViewModel
 
     /// <summary>
     /// Gets or sets whether all files are checked for restore.
-    /// Getter returns <c>true</c> (all checked), <c>false</c> (none checked),
+    /// Getter returns <see langword="true"/> (all checked), <see langword="false"/> (none checked),
     /// or <c>null</c> (some checked) for tri-state display.
     /// Setter checks or unchecks every item in the current filtered view — the
     /// three-state WPF cycle (false→true→null→false) is mapped so clicking

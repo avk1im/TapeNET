@@ -13,7 +13,7 @@ namespace AiNET;
 ///  <c>null</c> for providers where the endpoint is always user-supplied.
 /// </param>
 /// <param name="RequiresApiKey">
-/// <c>true</c> when an API key or token is mandatory before probing.
+/// <see langword="true"/> when an API key or token is mandatory before probing.
 /// </param>
 /// <param name="Capabilities">
 /// The set of <see cref="AiCapabilities"/> this provider type can offer.

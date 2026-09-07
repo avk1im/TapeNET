@@ -15,7 +15,7 @@ public static class AdsHelper
     // -----------------------------------------------------------------------
 
     /// <summary>
-    /// Returns <c>true</c> when <paramref name="path"/> resides on an NTFS volume.
+    /// Returns <see langword="true"/> when <paramref name="path"/> resides on an NTFS volume.
     /// Use this before writing or asserting ADS so tests self-skip on FAT/exFAT/network shares.
     /// </summary>
     public static bool IsNtfs(string path)
@@ -69,7 +69,7 @@ public static class AdsHelper
     }
 
     /// <summary>
-    /// Returns <c>true</c> when the named ADS exists on the given file.
+    /// Returns <see langword="true"/> when the named ADS exists on the given file.
     /// </summary>
     /// <remarks>
     /// Existence is checked by opening the colon-path; <see cref="File.Exists"/> alone is

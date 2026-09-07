@@ -168,7 +168,7 @@ public abstract class TapeDriveBackend : ErrorManageableBase, IDisposable
     /// <summary>
     /// If early warnings are being reported. This is what the drive actually does — which may differ
     /// from what was requested via <see cref="ReportEarlyWarning"/>, exactly like block size.
-    /// Default: <c>false</c> since not supported.
+    /// Default: <see langword="false"/> since not supported.
     /// </summary>
     public virtual bool ReportsEarlyWarning => false;
 

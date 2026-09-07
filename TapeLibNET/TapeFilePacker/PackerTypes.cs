@@ -11,7 +11,7 @@ internal readonly record struct CommitToken(ulong Sequence)
     /// <summary>Sentinel "no token" value, useful for default initialization.</summary>
     public static readonly CommitToken None = default;
 
-    /// <summary><c>true</c> when this is not the <see cref="None"/> sentinel.</summary>
+    /// <summary><see langword="true"/> when this is not the <see cref="None"/> sentinel.</summary>
     public bool IsValid => Sequence != 0;
 
     public override string ToString() => $"CT#{Sequence}";

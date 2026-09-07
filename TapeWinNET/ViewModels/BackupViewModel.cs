@@ -292,7 +292,7 @@ public class BackupViewModel : ViewModelBase
 
     /// <summary>
     /// Tri-state header checkbox for the Files pane:
-    /// <c>true</c> = all filtered checked, <c>false</c> = none,
+    /// <see langword="true"/> = all filtered checked, <see langword="false"/> = none,
     /// <c>null</c> = mixed. Setter toggles between all/none.
     /// </summary>
     public bool? AreAllFilesChecked
@@ -708,7 +708,7 @@ public class BackupViewModel : ViewModelBase
     // ═════════════════════════════════════════════════
 
     /// <summary>
-    /// Tri-state header checkbox: <c>true</c> = all checked, <c>false</c> = none,
+    /// Tri-state header checkbox: <see langword="true"/> = all checked, <see langword="false"/> = none,
     /// <c>null</c> = mixed. Setter toggles between all/none.
     /// </summary>
     public bool? AreAllSourcesChecked

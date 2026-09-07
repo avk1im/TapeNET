@@ -6,6 +6,62 @@ using TapeLibNET.Virtual;
 namespace TapeLibNET.Tests.Helpers;
 
 /// <summary>
+/// Reusable test fixture that creates a virtual tape media object only (no drive).
+/// </summary>
+public sealed class VirtualMediaOnlyFixture : IDisposable
+{
+    //         var media = new VirtualTapeMedia(new MemoryStream(16384 * 2), ownsStream: true, capacity: 16384 * 2,
+    // minBlockSize: 1024, maxBlockSize: 16384, defaultBlockSize: 16384);
+    public VirtualTapeMedia Media { get; }
+    public ILoggerFactory LoggerFactory { get; }
+
+    /// <summary>
+    /// Creates a disposable virtual tape media object for unit tests.
+    /// </summary>
+    /// <param name="blockSize">The block size of the virtual tape media.</param>
+    /// <param name="contentCapacity">The capacity of the virtual tape media.</param>
+    /// <param name="name">The name of the virtual tape media.</param>
+    /// <param name="loggerFactory">The logger factory to use for logging.</param>
+    public VirtualMediaOnlyFixture(
+        uint blockSize,
+        long contentCapacity,
+        string? name = null,
+        ILoggerFactory? loggerFactory = null)
+    {
+        LoggerFactory = loggerFactory ?? TestLoggerFactory.Default;
+
+        Media = new VirtualTapeMedia(
+            new MemoryStream((int)contentCapacity),
+            minBlockSize: blockSize,
+            maxBlockSize: blockSize,
+            defaultBlockSize: blockSize,
+            capacity: contentCapacity,
+            ownsStream: true,
+            name: name ?? $"Test Virtual Media",
+            loggerFactory: LoggerFactory);
+    }
+
+    /// <summary>
+    /// Creates a disposable virtual tape media object for unit tests.
+    /// </summary>
+    /// <param name="blockSize">The block size of the virtual tape media.</param>
+    /// <param name="capacity">The capacity of the virtual tape media.</param>
+    /// <returns>A new instance of <see cref="VirtualTapeMedia"/>.</returns>
+    public static VirtualTapeMedia CreateTestMedia(uint blockSize, uint capacity) =>
+        new VirtualMediaOnlyFixture(blockSize, capacity).Media;
+
+    #region *** Dispose ***
+
+    public void Dispose()
+    {
+        Media.Dispose();
+    }
+
+    #endregion
+
+}
+
+/// <summary>
 /// The four real-world drive profiles we test against.
 /// <list type="bullet">
 ///   <item><see cref="Setmarks"/> — basic drive with setmarks (like AIT or DAT).</item>
@@ -54,6 +110,9 @@ public sealed class VirtualTapeFixture : IDisposable
     public VirtualTapeDriveCapabilities Capabilities { get; }
     public VirtualTapeDriveBackend Backend { get; }
 
+    public bool WithMediaHeader { get; init; }
+    public long FirstContentBlock => WithMediaHeader ? 1 : 0;
+
     #endregion
 
     #region *** Construction ***
@@ -67,16 +126,21 @@ public sealed class VirtualTapeFixture : IDisposable
     /// <param name="loggerFactory">Optional logger factory (defaults to <see cref="NullLoggerFactory"/>).</param>
     /// <param name="mediaDescription">Optional description for the initial TOC.</param>
     /// <param name="useMemoryMap">
-    /// When <c>true</c>, uses <see cref="VirtualTapeDriveBackend.CreateMemoryMapBacked"/>
+    /// When <see langword="true"/>, uses <see cref="VirtualTapeDriveBackend.CreateMemoryMapBacked"/>
     /// (memory-mapped files) instead of <see cref="MemoryStream"/>-backed media.
     /// Required for content capacities exceeding 2 GB.
+    /// </param>
+    /// <param name="withMediaHeader">
+    /// When <see langword="true"/>, writes a <see cref="TapeMediaHeader"/> to the tape.
+    /// Set to <see langword="false"/> by default (no header).
     /// </param>
     public VirtualTapeFixture(
         DriveProfile profile = DriveProfile.Setmarks,
         long contentCapacity = DefaultContentCapacity,
         ILoggerFactory? loggerFactory = null,
         string mediaDescription = "Test Media",
-        bool useMemoryMap = false)
+        bool useMemoryMap = false,
+        bool withMediaHeader = false)
     {
         LoggerFactory = loggerFactory ?? TestLoggerFactory.Default;
         Capabilities = ProfileToCapabilities(profile);
@@ -100,8 +164,17 @@ public sealed class VirtualTapeFixture : IDisposable
         Assert.True(Drive.ReloadMedia(), "Failed to load virtual media");
         Assert.True(Drive.PrepareMedia(), "Failed to prepare virtual media");
 
+
         // Create initial TOC
         TOC = new TapeTOC(mediaDescription);
+        
+        // Write header if requested (Notice some tests want to start with a blank tape)
+        if (withMediaHeader)
+        {
+            using var a = new TapeFileAgent(Drive, TOC);
+            Assert.True(a.WriteHeader(), "Fixture: WriteHeader failed");
+        }
+        WithMediaHeader = withMediaHeader;
     }
 
     /// <summary>
@@ -124,7 +197,10 @@ public sealed class VirtualTapeFixture : IDisposable
     /// <summary>Creates a backup agent bound to this fixture's drive and TOC.</summary>
     public TapeFileBackupAgent CreateBackupAgent()
     {
-        return new TapeFileBackupAgent(Drive, TOC);
+        return new TapeFileBackupAgent(Drive, TOC)
+            {
+                WritesMediaHeader = WithMediaHeader
+            };
     }
 
     /// <summary>
@@ -223,14 +299,7 @@ public sealed class VirtualTapeFixture : IDisposable
 
         using var agent = CreateBackupAgent();
 
-        /*
-        bool success = agent.BackupFileListToCurrentSet(
-            newSet: true,
-            fileList,
-            ignoreFailures: true,
-            fileNotify: notifiable);
-        */
-#pragma warning disable CS0618 // Type or member is obsolete // FIXME - transition period test
+#pragma warning disable CS0618 // Type or member is obsolete -- We test the legacy aligned case as well, also as a comparison to the packed variety
         bool success = useAligned
             ? agent.BackupFileListToCurrentSetAligned(
                 newSet: true,

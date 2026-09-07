@@ -280,10 +280,10 @@ public abstract class ErrorManageableBase(ILogger logger) : IErrorManageable
         set => SetError(value);
     }
 
-    /// <summary><c>true</c> when no error is recorded.</summary>
+    /// <summary><see langword="true"/> when no error is recorded.</summary>
     public virtual bool WentOK => m_errorOwn == WIN32_ERROR.NO_ERROR;
 
-    /// <summary><c>true</c> when an error is recorded.</summary>
+    /// <summary><see langword="true"/> when an error is recorded.</summary>
     public virtual bool WentBad => !WentOK;
 
     /// <summary>True when the current error indicates end-of-media (tape full or no more data).</summary>

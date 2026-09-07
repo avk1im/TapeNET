@@ -93,7 +93,7 @@ internal sealed class MemoryTapeReadBackend : ITapeReadBackend
     /// <summary>
     /// Insert a tapemark immediately before <paramref name="blockNumber"/>: a read whose
     ///  drive head is positioned at that block returns
-    ///  <see cref="ReadResult.TapemarkEncountered"/> = <c>true</c> with zero bytes.
+    ///  <see cref="ReadResult.TapemarkEncountered"/> = <see langword="true"/> with zero bytes.
     ///  Subsequent reads advance normally past the mark.
     /// </summary>
     public void ScriptTapemarkBefore(long blockNumber)
@@ -104,7 +104,7 @@ internal sealed class MemoryTapeReadBackend : ITapeReadBackend
 
     /// <summary>
     /// After block index <paramref name="blockIndex"/> (0-based) has been fully read,
-    ///  all further reads return <see cref="ReadResult.EofEncountered"/> = <c>true</c>.
+    ///  all further reads return <see cref="ReadResult.EofEncountered"/> = <see langword="true"/>.
     ///  Pass -1 to disable (default).
     /// </summary>
     public void ScriptEofAfterBlock(long blockIndex) => _eofAfterBlock = blockIndex;
