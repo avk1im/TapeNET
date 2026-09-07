@@ -35,13 +35,13 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
     /// Redirects trace output, checks fixture health, reformats the tape,
     /// and returns the ready fixture. Each scenario starts fresh.
     /// </summary>
-    private PhysicalTapeFixture Init()
+    private PhysicalTapeFixture Init(bool forceSinglePartition = false)
     {
         _fixtureWrapper.SetOutput(_output);
         var fixture = _fixtureWrapper.GetFixtureOrSkip();
         fixture.AssertHealthyOrSkip();
 
-        Assert.True(fixture.RecoverAndReformat("Scenario Test Media"),
+        Assert.True(fixture.RecoverAndReformat("Scenario Test Media", forceSinglePartition),
             "Failed to reformat tape for scenario test");
 
         return fixture;
@@ -544,7 +544,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
     [SkippableFact]
     public void HeadedMedia_DeleteAll_PreservesHeader_AndReBackups()
     {
-        var fixture = Init();
+        var fixture = Init(forceSinglePartition: true);
 
         using var tree1 = new TempFileTree(); tree1.AddFiles("h1", 4, 100, 4 * 1024);
         fixture.BackupFiles(tree1.Files, description: "Headed set 1");   // agent writes header @ block 0
