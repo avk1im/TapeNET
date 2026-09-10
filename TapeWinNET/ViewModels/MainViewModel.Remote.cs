@@ -268,7 +268,7 @@ public partial class MainViewModel
             return;
         }
 
-        if (!await LoadMediaWithUIAsync() || !await ReadTOCWithUIAsync())
+        if (!await LoadMediaWithUIAsync() || !await RestoreTOCWithUIAsync())
         {
             UpdateTreeForRemoteDriveOnly(driveNumber, settings);
             NotifyIoSpeedChanged();
@@ -363,7 +363,7 @@ public partial class MainViewModel
             if (!tocCreated)
                 LogWarn("Could not create initial TOC on remote virtual drive");
 
-            if (!await ReadTOCWithUIAsync(offerFileImportOnFailure: false))
+            if (!await RestoreTOCWithUIAsync(offerFileImportOnFailure: false))
             {
                 UpdateTreeForRemoteDriveOnly(0, settings);
                 NotifyIoSpeedChanged();
@@ -383,7 +383,7 @@ public partial class MainViewModel
                 return;
             }
 
-            if (!await LoadMediaWithUIAsync() || !await ReadTOCWithUIAsync(offerFileImportOnFailure: false))
+            if (!await LoadMediaWithUIAsync() || !await RestoreTOCWithUIAsync(offerFileImportOnFailure: false))
             {
                 UpdateTreeForRemoteDriveOnly(0, settings);
                 NotifyIoSpeedChanged();
@@ -455,7 +455,7 @@ public partial class MainViewModel
         if (!tocCreated)
             LogWarn("Could not create initial TOC on remote virtual drive");
 
-        if (!await ReadTOCWithUIAsync(offerFileImportOnFailure: false))
+        if (!await RestoreTOCWithUIAsync(offerFileImportOnFailure: false))
         {
             UpdateTreeForRemoteDriveOnly(0, settings);
             return;

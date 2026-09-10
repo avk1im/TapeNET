@@ -11,13 +11,37 @@ using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Services;
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Naming vocabulary — one verb per lifecycle stage (keep new names consistent!)
+// ─────────────────────────────────────────────────────────────────────────────
+//  Stage                        Verb              Meaning
+//  ---------------------------  ----------------  ------------------------------------------------
+//  Drive handle                 Open / Close      acquire / release the drive
+//  Medium presence              Load / Eject      insert / remove the cartridge in the drive
+//  Medium identity + content    Identify          read the BOM header, then dispatch:
+//                                                   load TOC  OR  report calibration
+//  On-tape TOC read (sub-step)  Restore           recover the TOC from tape into memory
+//                                                   (established domain term)
+//  TOC <-> file                 Import / Export    .tapetoc round-trip
+//  New medium                   Format            erase + write initial TOC / header
+//  Calibration probe            Inspect           read the calibration checkpoint trail
+//  Redisplay, no I/O            Refresh (view)    rebuild the selected pane from in-memory data
+//  Reload content, with I/O     Reload            re-fetch the medium's content into the views
+//
+//  Two rules that resolve most prior confusion:
+//   1. "Identify" is the umbrella and CONTAINS a "Restore TOC" sub-step — hence
+//      IdentifyMedia* replaces the clumsy *TOCOrCalibration* names, while the
+//      low-level Restore(TOC) stays the TOC-only read it already is.
+//   2. "Refresh" != "Reload": Refresh is pure in-memory redisplay (no tape I/O);
+//      Reload does tape I/O.
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
 /// Outcome of <see cref="RestoreTOCOrCalibrationAsync"/> — lets the app react to each recognized
 ///  media kind explicitly (show the TOC, show a calibration pane, or flag unidentified media)
 ///  without conflating them into a single success/failure bool.
 /// </summary>
-public enum RestoreTOCOrCalibrationOutcome
+public enum IdentifyMediaOutcome
 {
     /// <summary>Backup media identified (or the user opted to search): the TOC was read into <see cref="TOC"/>.</summary>
     TocLoaded,
@@ -1094,7 +1118,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// The header was written at format/backup time, so this is a one-block read at BOM. Apps should call
     ///  this instead of <c>RestoreTOCAsync</c> on media load, then switch on the returned outcome.
     /// </remarks>
-    public Task<RestoreTOCOrCalibrationOutcome> RestoreTOCOrCalibrationAsync()
+    public Task<IdentifyMediaOutcome> RestoreTOCOrCalibrationAsync()
     {
         _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
 
@@ -1107,7 +1131,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 if (_drive is null || !_drive.IsMediaLoaded)
                 {
                     LastError = "Media not loaded";
-                    return RestoreTOCOrCalibrationOutcome.Failed;
+                    return IdentifyMediaOutcome.Failed;
                 }
 
                 LogInfo("Preparing media...");
@@ -1115,7 +1139,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 {
                     LastError = _drive.LastErrorMessage;
                     LogErr($"Couldn't prepare media. Error: {LastError}");
-                    return RestoreTOCOrCalibrationOutcome.Failed;
+                    return IdentifyMediaOutcome.Failed;
                 }
 
                 // Cheap BOM identity probe. Dispose any stale agent first so the probe uses a fresh
@@ -1135,7 +1159,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                             LogInfoSub($"Calibration profile >{cal.ProfileKey}<");
                         OnStatusUpdate("Calibration cartridge");
                         _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
-                        return RestoreTOCOrCalibrationOutcome.CalibrationMedia;
+                        return IdentifyMediaOutcome.CalibrationMedia;
 
                     case null:
                         // Unidentified: could be a legacy backup (has a TOC) or blank/foreign (no TOC).
@@ -1150,7 +1174,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                             _toc = null;
                             LogInfo("Unidentified media — TOC search skipped");
                             OnStatusUpdate("Unidentified media");
-                            return RestoreTOCOrCalibrationOutcome.Unidentified;
+                            return IdentifyMediaOutcome.Unidentified;
                         }
 
                         break;   // Proceed → search for the TOC below
@@ -1179,7 +1203,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 {
                     LastError = tocResult.ErrorMessage;
                     LogErr($"Couldn't restore TOC. Error: {tocResult.ErrorMessage}");
-                    return RestoreTOCOrCalibrationOutcome.Failed;
+                    return IdentifyMediaOutcome.Failed;
                 }
 
                 _toc = _agent.TOC;
@@ -1191,19 +1215,19 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 OnStatusUpdate($"TOC loaded: {_toc.Count} backup set(s)");
                 _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
 
-                return RestoreTOCOrCalibrationOutcome.TocLoaded;
+                return IdentifyMediaOutcome.TocLoaded;
             }
             catch (RpcException rpc)
             {
                 LastError = FormatRpcError(rpc);
                 LogErr($"gRPC error loading TOC: {LastError}");
-                return RestoreTOCOrCalibrationOutcome.Failed;
+                return IdentifyMediaOutcome.Failed;
             }
             catch (Exception ex)
             {
                 LastError = ex.Message;
                 LogErr($"Exception loading TOC: {ex.Message}");
-                return RestoreTOCOrCalibrationOutcome.Failed;
+                return IdentifyMediaOutcome.Failed;
             }
             finally
             {

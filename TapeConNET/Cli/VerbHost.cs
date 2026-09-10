@@ -91,7 +91,7 @@ internal static class VerbHost
                 //  medium is a valid state the verb renders (list already reports calibration internally); it does
                 //  NOT throw and — crucially — does NOT churn to end-of-data hunting for an absent TOC.
                 var outcome = service.RestoreTOCOrCalibrationAsync().GetAwaiter().GetResult();
-                if (outcome == RestoreTOCOrCalibrationOutcome.Failed)
+                if (outcome == IdentifyMediaOutcome.Failed)
                     throw new TapeConException(TapeConExitCode.OperationFailed,
                         $"Couldn't identify media: {service.LastError}");
                 // TocLoaded / CalibrationMedia / Unidentified → proceed.

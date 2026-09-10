@@ -649,7 +649,7 @@ public partial class MainViewModel
             if (!request.EjectWhenDone)
             {
                 // Uncheck successfully processed files before refreshing the UI —
-                //  RefreshAsync rebuilds BackupSetList from _tocView which already
+                //  ReloadMediaAsync rebuilds BackupSetList from _tocView which already
                 //  reflects the updated checked state, so no manual UI sync needed.
                 if (uncheckProcessedFiles && operationResult is { ProcessedFiles.Count: > 0 } result2
                 && _tocView != null)
@@ -661,7 +661,7 @@ public partial class MainViewModel
 
                 // Refresh tree after operation — always, regardless of outcome,
                 //  to keep TOCView in sync with the (possibly modified) TOC
-                try { await RefreshAsync(); } catch { /* ignore */ }
+                try { await ReloadMediaAsync(); } catch { /* ignore */ }
             }
             else
                 try { await EjectAsync(); } catch { /* ignore */ }
@@ -698,7 +698,7 @@ public partial class MainViewModel
         catch (Exception ex)
         {
             // Refresh even on failure — TOC state may have changed
-            await RefreshAsync();
+            await ReloadMediaAsync();
             LogErr($"{modeName} failed: {ex.Message}");
             SimpleBox.Show($"{modeName} failed.\n\n{ex.Message}", $"{modeName} Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);

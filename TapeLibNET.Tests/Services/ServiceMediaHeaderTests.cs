@@ -401,7 +401,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
         {
             var outcome = await svc2.RestoreTOCOrCalibrationAsync();
 
-            Assert.Equal(RestoreTOCOrCalibrationOutcome.TocLoaded, outcome);
+            Assert.Equal(IdentifyMediaOutcome.TocLoaded, outcome);
             Assert.NotNull(svc2.TOC);
             Assert.Equal(1, svc2.TOC!.Count);
             AssertNoMediaPrompts(host);   // identified media header → the seek is justified, no prompt
@@ -435,7 +435,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
         {
             var outcome = await svc2.RestoreTOCOrCalibrationAsync();
 
-            Assert.Equal(RestoreTOCOrCalibrationOutcome.CalibrationMedia, outcome);
+            Assert.Equal(IdentifyMediaOutcome.CalibrationMedia, outcome);
             Assert.Null(svc2.TOC);                                   // no TOC on a calibration cartridge
             Assert.True(host2.ContainsMessage("Calibration cartridge"));  // it was reported, not sought
             AssertNoMediaPrompts(host2);                             // recognized ⇒ silent (no search prompt)
@@ -459,7 +459,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
 
             var outcome = await svc.RestoreTOCOrCalibrationAsync();
 
-            Assert.Equal(RestoreTOCOrCalibrationOutcome.TocLoaded, outcome);
+            Assert.Equal(IdentifyMediaOutcome.TocLoaded, outcome);
             Assert.NotNull(svc.TOC);
             AssertMediaPrompts(host, (TapeMediaVerdict.Unidentified, MediaPromptContext.SearchForTOC));
         }
@@ -482,7 +482,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
 
             var outcome = await svc.RestoreTOCOrCalibrationAsync();
 
-            Assert.Equal(RestoreTOCOrCalibrationOutcome.Unidentified, outcome);
+            Assert.Equal(IdentifyMediaOutcome.Unidentified, outcome);
             Assert.Null(svc.TOC);   // we deliberately did NOT churn to EOD
             AssertMediaPrompts(host, (TapeMediaVerdict.Unidentified, MediaPromptContext.SearchForTOC));
         }
@@ -504,7 +504,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
 
             var outcome = await svc.RestoreTOCOrCalibrationAsync();
 
-            Assert.Equal(RestoreTOCOrCalibrationOutcome.Failed, outcome);
+            Assert.Equal(IdentifyMediaOutcome.Failed, outcome);
             Assert.Null(svc.TOC);
             AssertMediaPrompts(host, (TapeMediaVerdict.Unidentified, MediaPromptContext.SearchForTOC));
         }

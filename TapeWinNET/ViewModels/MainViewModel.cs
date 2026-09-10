@@ -18,6 +18,31 @@ using Windows.Win32.System.SystemServices; // for Helpers
 
 namespace TapeWinNET.ViewModels;
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Naming vocabulary — one verb per lifecycle stage (keep new names consistent!)
+// ─────────────────────────────────────────────────────────────────────────────
+//  Stage                        Verb              Meaning
+//  ---------------------------  ----------------  ------------------------------------------------
+//  Drive handle                 Open / Close      acquire / release the drive
+//  Medium presence              Load / Eject      insert / remove the cartridge in the drive
+//  Medium identity + content    Identify          read the BOM header, then dispatch:
+//                                                   load TOC  OR  report calibration
+//  On-tape TOC read (sub-step)  Restore           recover the TOC from tape into memory
+//                                                   (established domain term)
+//  TOC <-> file                 Import / Export    .tapetoc round-trip
+//  New medium                   Format            erase + write initial TOC / header
+//  Calibration probe            Inspect           read the calibration checkpoint trail
+//  Redisplay, no I/O            Refresh (view)    rebuild the selected pane from in-memory data
+//  Reload content, with I/O     Reload            re-fetch the medium's content into the views
+//
+//  Two rules that resolve most prior confusion:
+//   1. "Identify" is the umbrella and CONTAINS a "Restore TOC" sub-step — hence
+//      IdentifyMedia* replaces the clumsy *TOCOrCalibration* names, while the
+//      low-level Restore(TOC) stays the TOC-only read it already is.
+//   2. "Refresh" != "Reload": Refresh is pure in-memory redisplay (no tape I/O);
+//      Reload does tape I/O.
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// <summary>
 /// Defines what type of content is displayed in the content pane.
 /// </summary>
@@ -58,7 +83,7 @@ public partial class MainViewModel : ViewModelBase
     private string _ioProgressText = string.Empty;
     private double _ioProgressRate;
     private bool _isTOCLoadInProgress;
-    // Set to true when the user explicitly cancels a TOC load, so ReadTOCWithUIAsync
+    // Set to true when the user explicitly cancels a TOC load, so RestoreTOCWithUIAsync
     //  can suppress the failure dialog that would otherwise appear.
     private bool _isTOCLoadCancelled;
     private bool _isTOCAbortPending;
@@ -90,8 +115,8 @@ public partial class MainViewModel : ViewModelBase
         OpenVirtualDriveCommand = new RelayCommand(ShowOpenVirtualDriveWindow, _ => !IsBusy);
         OpenRecentVirtualDriveCommand = new AsyncRelayCommand(OpenRecentVirtualDriveAsync, _ => !IsBusy);
         SetIoSpeedCommand = new RelayCommand(SetIoSpeed, _ => IsIoSpeedEnabled);
-        RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => !IsBusy && _tapeService.IsDriveOpen);
-        RereadTOCCommand = new AsyncRelayCommand(RereadTOCAsync, () => !IsBusy && _tapeService.IsDriveOpen);
+        RefreshCommand = new AsyncRelayCommand(ReloadMediaAsync, () => !IsBusy && _tapeService.IsDriveOpen);
+        RereadMediaCommand = new AsyncRelayCommand(RereadMediaAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         EjectCommand = new AsyncRelayCommand(EjectAsync, () => !IsBusy && _tapeService.IsMediaLoaded);
         FormatMediaCommand = new RelayCommand(ShowFormatMediaWindow, _ => !IsBusy && _tapeService.IsMediaLoaded);
         DeleteBackupSetsCommand = new RelayCommand(ShowDeleteBackupSetsWindow, _ => !IsBusy && _tapeService.IsMediaLoaded && /*!_tapeService.IsTOCFromFile &&*/ (_tapeService.TOC?.Count ?? 0) > 0);
@@ -707,7 +732,7 @@ public partial class MainViewModel : ViewModelBase
     public ICommand OpenRecentVirtualDriveCommand { get; }
     public ICommand SetIoSpeedCommand { get; }
     public ICommand RefreshCommand { get; }
-    public ICommand RereadTOCCommand { get; }
+    public ICommand RereadMediaCommand { get; }
     public ICommand EjectCommand { get; }
     public ICommand FormatMediaCommand { get; }
     public ICommand DeleteBackupSetsCommand { get; }
@@ -914,9 +939,15 @@ public partial class MainViewModel : ViewModelBase
     private Task<bool> LoadMediaCoreAsync(string busyMessage = "Loading media...") =>
         RunBusyAsync(busyMessage, () => _tapeService.LoadMediaAsync());
 
-    // C — Read TOC (abortable; uses dedicated overlay via IsTOCLoadInProgress)
+    /// <summary>
+    /// Restores TOC (abortable; uses dedicated overlay via IsTOCLoadInProgress)
+    /// </summary>
+    /// <param name="busyMessage">The message to display while the operation is in progress.</param>
+    /// <returns>
+    /// <langword cref="true"/> if the TOC was successfully restored; otherwise, <langword cref="false"/>.
+    /// </returns>
 
-    private async Task<bool> ReadTOCCoreAsync(string busyMessage = "Reading TOC...")
+    private async Task<bool> RestoreTOCCoreAsync(string busyMessage = "Restoring TOC...")
     {
         bool prevBusy = IsBusy;
         string prevMsg = BusyMessage;
@@ -966,15 +997,15 @@ public partial class MainViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Reads the TOC; on failure offers to load a saved .tapetoc file (unless
+    /// Reads the TOC; on failure offers to load a saved <c>.tapetoc</c> file (unless
     ///  <paramref name="offerFileImportOnFailure"/> is false, e.g. for a freshly
     ///  created virtual drive where no prior TOC could exist). Silent on user-cancel.
     /// </summary>
-    private async Task<bool> ReadTOCWithUIAsync(
-        string busyMessage = "Reading TOC...",
+    private async Task<bool> RestoreTOCWithUIAsync(
+        string busyMessage = "Restoring TOC...",
         bool offerFileImportOnFailure = true)
     {
-        var success = await ReadTOCCoreAsync(busyMessage);
+        var success = await RestoreTOCCoreAsync(busyMessage);
         if (success)
             return true;
 
@@ -994,9 +1025,12 @@ public partial class MainViewModel : ViewModelBase
         return result == MessageBoxResult.Yes && await ImportTOCFromFileAsync();
     }
 
-    // C' — Identify media and read TOC / calibration calHeader (unified, abortable via dedicated overlay)
-
-    private async Task<RestoreTOCOrCalibrationOutcome> LoadTOCOrCalibrationCoreAsync(
+    /// <summary>
+    /// Identify media and read TOC / calibration (unified, abortable via dedicated overlay)
+    /// </summary>
+    /// <param name="busyMessage">The message to display while the operation is in progress.</param>
+    /// <returns>The outcome of the media identification operation.</returns>
+    private async Task<IdentifyMediaOutcome> IdentifyMediaCoreAsync(
         string busyMessage = "Reading TOC...")
     {
         bool prevBusy = IsBusy;
@@ -1009,7 +1043,7 @@ public partial class MainViewModel : ViewModelBase
         try
         {
             try { return await _tapeService.RestoreTOCOrCalibrationAsync(); }
-            catch { return RestoreTOCOrCalibrationOutcome.Failed; }
+            catch { return IdentifyMediaOutcome.Failed; }
         }
         finally
         {
@@ -1023,29 +1057,29 @@ public partial class MainViewModel : ViewModelBase
     /// <summary>
     /// Identifies the loaded medium and reads its TOC (or calibration calHeader), fully updating the
     ///  tree/content pane for whichever outcome is returned by <see cref="TapeServiceBase.RestoreTOCOrCalibrationAsync"/>.
-    /// On <see cref="RestoreTOCOrCalibrationOutcome.Failed"/>, offers the same TOC-from-file recovery prompt as
-    ///  the legacy <see cref="ReadTOCWithUIAsync"/> (unless <paramref name="offerFileImportOnFailure"/> is false).
+    /// On <see cref="IdentifyMediaOutcome.Failed"/>, offers the same TOC-from-file recovery prompt as
+    ///  the legacy <see cref="RestoreTOCWithUIAsync"/> (unless <paramref name="offerFileImportOnFailure"/> is false).
     /// Silent on user-cancel.
     /// </summary>
-    private async Task<RestoreTOCOrCalibrationOutcome> LoadTOCOrCalibrationWithUIAsync(
+    private async Task<IdentifyMediaOutcome> IdentifyMediaWithUIAsync(
         int driveNumber,
         string busyMessage = "Reading TOC...",
         bool offerFileImportOnFailure = true)
     {
-        var outcome = await LoadTOCOrCalibrationCoreAsync(busyMessage);
+        var outcome = await IdentifyMediaCoreAsync(busyMessage);
 
         switch (outcome)
         {
-            case RestoreTOCOrCalibrationOutcome.TocLoaded:
+            case IdentifyMediaOutcome.TocLoaded:
                 UpdateTreeFromTOC(driveNumber);
                 SelectMostRecentSet();
                 return outcome;
 
-            case RestoreTOCOrCalibrationOutcome.CalibrationMedia:
+            case IdentifyMediaOutcome.CalibrationMedia:
                 UpdateTreeForCalibrationMedia(driveNumber);
                 return outcome;
 
-            case RestoreTOCOrCalibrationOutcome.Unidentified:
+            case IdentifyMediaOutcome.Unidentified:
                 UpdateTreeForDriveOnly(driveNumber);
                 StatusMessage = "Unidentified media — TOC search skipped";
                 return outcome;
@@ -1068,7 +1102,7 @@ public partial class MainViewModel : ViewModelBase
         {
             UpdateTreeFromTOC(driveNumber);
             SelectMostRecentSet();
-            return RestoreTOCOrCalibrationOutcome.TocLoaded;
+            return IdentifyMediaOutcome.TocLoaded;
         }
 
         UpdateTreeForDriveOnly(driveNumber);
@@ -1109,7 +1143,7 @@ public partial class MainViewModel : ViewModelBase
             return;
         }
 
-        await LoadTOCOrCalibrationWithUIAsync(driveNumber);
+        await IdentifyMediaWithUIAsync(driveNumber);
         NotifyIoSpeedChanged();
     }
 
@@ -1146,7 +1180,12 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
-    private async Task RereadTOCAsync()
+    /// <summary>
+    /// Resets the <see cref="_tapeService"/> state via <see cref="TapeServiceBase.Reset"/>,
+    ///  then reloads media content and updates the tree & content panes accordingly via
+    ///  <see cref="ReloadMediaAsync"/>
+    /// </summary>
+    private async Task RereadMediaAsync()
     {
         if (!_tapeService.IsDriveOpen)
             return;
@@ -1158,10 +1197,14 @@ public partial class MainViewModel : ViewModelBase
             return;
         }
 
-        await RefreshAsync();
+        await ReloadMediaAsync();
     }
 
-    private async Task RefreshAsync()
+    /// <summary>
+    /// Reloads medium content and updates the tree/content pane, both upon user request (F5)
+    ///  and after a backup/restore operation completes.
+    /// </summary>
+    private async Task ReloadMediaAsync()
     {
         if (!_tapeService.IsDriveOpen)
             return;
@@ -1179,7 +1222,7 @@ public partial class MainViewModel : ViewModelBase
         }
 
         // Otherwise (re)identify the medium: reload it, then load its TOC or calibration info per the BOM
-        //  header — the same three-way dispatch OpenDrive uses. LoadTOCOrCalibrationWithUIAsync updates the
+        //  header — the same three-way dispatch OpenDrive uses. IdentifyMediaWithUIAsync updates the
         //  tree for TocLoaded / CalibrationMedia / Unidentified / Failed on its own.
         if (!await LoadMediaWithUIAsync())
         {
@@ -1187,7 +1230,7 @@ public partial class MainViewModel : ViewModelBase
             return;
         }
 
-        await LoadTOCOrCalibrationWithUIAsync(driveNumber);
+        await IdentifyMediaWithUIAsync(driveNumber);
     }
 
     private async Task EjectAsync()
@@ -1826,6 +1869,11 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Refreshes the content pane based on the currently selected tree item, dispatching to
+    ///  the appropriate load method. Does NOT initiate any tape access operation as opposed to
+    ///  <see cref="RereadMediaAsync"/>.
+    /// </summary>
     private void RefreshCurrentView()
     {
         if (_selectedTreeItem == null)
@@ -2145,8 +2193,8 @@ public partial class MainViewModel : ViewModelBase
 
         // C — Identify media and read TOC / calibration calHeader. For freshly created media there's no
         //  prior TOC to import, so suppress the file-import recovery prompt in that case.
-        var outcome = await LoadTOCOrCalibrationWithUIAsync(0, offerFileImportOnFailure: !request.IsCreateNew);
-        if (outcome == RestoreTOCOrCalibrationOutcome.Failed)
+        var outcome = await IdentifyMediaWithUIAsync(0, offerFileImportOnFailure: !request.IsCreateNew);
+        if (outcome == IdentifyMediaOutcome.Failed)
             return;
 
         var modeText = request.Media.InMemory ? "Created in-memory"

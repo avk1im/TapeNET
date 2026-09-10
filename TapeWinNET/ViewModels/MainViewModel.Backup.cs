@@ -191,7 +191,7 @@ public partial class MainViewModel
             // Refresh tree after backup to keep TOCView in sync with the (possibly modified) TOC.
             // Refresh might throw if TOC has been spoiled.
             if (!request.EjectWhenDone)
-                try { await RefreshAsync(); } catch { /* ignore */ }
+                try { await ReloadMediaAsync(); } catch { /* ignore */ }
             else
                 try { await EjectAsync(); } catch { /* ignore */ }
 
@@ -225,7 +225,7 @@ public partial class MainViewModel
 
             // Refresh even on failure — TOC may have been modified before the error.
             // Refresh might throw if TOC has been spoiled.
-            try { await RefreshAsync(); } catch { /* ignore */ }
+            try { await ReloadMediaAsync(); } catch { /* ignore */ }
             LogErr($"Backup failed: {ex.Message}");
             SimpleBox.Show($"Backup failed.\n\n{ex.Message}", "Backup Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);

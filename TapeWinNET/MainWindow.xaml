@@ -62,7 +62,7 @@
             <MenuItem Header="Restore _All Sets..." Command="{Binding RestoreAllSetsCommand}"/>
             <Separator/>
             <MenuItem Header="Re_name..." Command="{Binding RenameSelectedCommand}"/>
-            <MenuItem Header="_Reread TOC" Command="{Binding RereadTOCCommand}"/>
+            <MenuItem Header="_Reread Media" Command="{Binding RereadMediaCommand}"/>
             <Separator/>
             <MenuItem Header="E_xport TOC to File..." Command="{Binding ExportTOCCommand}"/>
             <MenuItem Header="_Import TOC from File..." Command="{Binding ImportTOCCommand}"/>
@@ -283,7 +283,7 @@
             </MenuItem>
             <MenuItem Header="_Media">
                 <MenuItem Header="Re_name..." Command="{Binding RenameMediaCommand}"/>
-                <MenuItem Header="_Reread TOC" Command="{Binding RereadTOCCommand}"/>
+                <MenuItem Header="_Reread Media" Command="{Binding RereadMediaCommand}"/>
                 <Separator/>
                 <MenuItem Header="E_xport TOC to File..." Command="{Binding ExportTOCCommand}"/>
                 <MenuItem Header="_Import TOC from File..." Command="{Binding ImportTOCCommand}"/>
@@ -456,9 +456,9 @@
             <!-- Media group: re-read TOC, eject -->
             <ToolBar Band="0" BandIndex="1" Margin="12,0,0,0">
                 <Separator/>
-                <Button Command="{Binding RereadTOCCommand}"
+                <Button Command="{Binding RereadMediaCommand}"
                         Style="{StaticResource ToolbarButtonStyle}"
-                        ToolTip="Re-read TOC">
+                        ToolTip="Re-read Media">
                     <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets" FontSize="14"
                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                IsHitTestVisible="False"/>
