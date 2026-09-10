@@ -957,7 +957,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// Logs everything the loaded calibration run header reveals — the CLI counterpart of the WPF
     ///  calibration property pane. Uses only the BOM header (profile, capacity, plan), so it needs no
     ///  checkpoint read; a richer, resumability-aware view is available via
-    ///  <see cref="ExecuteInspectCalibrationMediaAsync"/>.
+    ///  <see cref="InspectCalibrationForRecalibrationAsync"/>.
     /// </summary>
     protected virtual void LogCalibrationInfo()
     {
@@ -1027,7 +1027,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// <summary>
     /// Restores the TOC from tape into <see cref="TOC"/>.
     /// <para>
-    /// For newer, more versatile version, see <seealso cref="RestoreTOCOrCalibrationAsync"/>.
+    /// For newer, more versatile version, see <seealso cref="IdentifyMediaAsync"/>.
     /// </para>
     /// </summary>
     public Task<bool> RestoreTOCAsync()
@@ -1118,7 +1118,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// The header was written at format/backup time, so this is a one-block read at BOM. Apps should call
     ///  this instead of <c>RestoreTOCAsync</c> on media load, then switch on the returned outcome.
     /// </remarks>
-    public Task<IdentifyMediaOutcome> RestoreTOCOrCalibrationAsync()
+    public Task<IdentifyMediaOutcome> IdentifyMediaAsync()
     {
         _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
 
@@ -1326,7 +1326,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     protected void RefreshLoadedHeader()
     {
         // This cleanup covers every reload path — LoadMediaAsync, FormatMediaAsync, ImportTOCFromFileAsync,
-        //  RestoreTOCOrCalibrationAsync, and the calibrate - retry loop — since they all funnel through here.
+        //  IdentifyMediaAsync, and the calibrate - retry loop — since they all funnel through here.
         _loadedHeader = null;
         _loadedCalibrationInfo = null; // a fresh header read means any prior Inspect is stale
 

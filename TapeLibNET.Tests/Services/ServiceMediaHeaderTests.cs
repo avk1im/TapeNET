@@ -399,7 +399,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
         var (svc2, host) = await OpenLoadOnlyAsync(media, System.IO.FileMode.Open);
         using (svc2)
         {
-            var outcome = await svc2.RestoreTOCOrCalibrationAsync();
+            var outcome = await svc2.IdentifyMediaAsync();
 
             Assert.Equal(IdentifyMediaOutcome.TocLoaded, outcome);
             Assert.NotNull(svc2.TOC);
@@ -433,7 +433,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
             VirtualTapeEwProfile.EmulatedOverreport(media.ContentCapacity));
         using (svc2)
         {
-            var outcome = await svc2.RestoreTOCOrCalibrationAsync();
+            var outcome = await svc2.IdentifyMediaAsync();
 
             Assert.Equal(IdentifyMediaOutcome.CalibrationMedia, outcome);
             Assert.Null(svc2.TOC);                                   // no TOC on a calibration cartridge
@@ -457,7 +457,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
         {
             host.MediaMismatchAnswers.Enqueue(MediaMismatchChoice.Proceed);   // "search anyway"
 
-            var outcome = await svc.RestoreTOCOrCalibrationAsync();
+            var outcome = await svc.IdentifyMediaAsync();
 
             Assert.Equal(IdentifyMediaOutcome.TocLoaded, outcome);
             Assert.NotNull(svc.TOC);
@@ -480,7 +480,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
         {
             host.MediaMismatchAnswers.Enqueue(MediaMismatchChoice.Abort);   // "don't search"
 
-            var outcome = await svc.RestoreTOCOrCalibrationAsync();
+            var outcome = await svc.IdentifyMediaAsync();
 
             Assert.Equal(IdentifyMediaOutcome.Unidentified, outcome);
             Assert.Null(svc.TOC);   // we deliberately did NOT churn to EOD
@@ -502,7 +502,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
         {
             host.MediaMismatchAnswers.Enqueue(MediaMismatchChoice.Proceed);   // search — but there's nothing
 
-            var outcome = await svc.RestoreTOCOrCalibrationAsync();
+            var outcome = await svc.IdentifyMediaAsync();
 
             Assert.Equal(IdentifyMediaOutcome.Failed, outcome);
             Assert.Null(svc.TOC);

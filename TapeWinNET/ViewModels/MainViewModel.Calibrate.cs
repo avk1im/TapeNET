@@ -243,7 +243,7 @@ public partial class MainViewModel
 
         var calInfoLoaded = await RunBusyAsync(
             "Inspecting calibration cartridge...",
-            _tapeService.ExecuteLoadCalibrationMediaInfoAsync);
+            _tapeService.InspectCalibrationInfoAsync);
 
         // Re-render base + enrichment idempotently.
         LoadCalibrationInfo();

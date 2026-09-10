@@ -25,7 +25,7 @@ public partial class TapeServiceBase
     public TapeCalibrationHeader? CalibrationHeader => _loadedHeader as TapeCalibrationHeader;
 
     /// <summary>
-    /// The last modal <see cref="ExecuteLoadCalibrationMediaInfoAsync"/> result for the loaded calibration
+    /// The last modal <see cref="InspectCalibrationInfoAsync"/> result for the loaded calibration
     ///  cartridge (checkpoint-derived run state: resumable / complete / progress), or null until it is run.
     ///  Tracks <see cref="_loadedHeader"/>: cleared on every media (re)load / eject / format, so it can
     ///  never describe a previously-loaded cartridge.
@@ -468,14 +468,14 @@ public partial class TapeServiceBase
     /// Lean, DISPLAY-ONLY probe of the loaded calibration cartridge: returns the raw
     ///  <see cref="TapeCalibrationMediaInfo"/> from <see cref="TapeCalibrator.InspectMedia"/> under the
     ///  operation lock. Deliberately omits the multi-partition confirm and the CalibrationStore
-    ///  baseline/recommended-mode policy of <see cref="ExecuteInspectCalibrationMediaAsync"/> — those exist
+    ///  baseline/recommended-mode policy of <see cref="InspectCalibrationForRecalibrationAsync"/> — those exist
     ///  for the pre-recalibration flow, not for showing a cartridge's details. Use to enrich a
     ///  calibration-cartridge pane with the checkpoint-derived fields (resumable / complete / progress)
     ///  beyond the plain BOM header.
     /// </summary>
     /// <returns>The media info, or <see langword="null"/> when media isn't loaded or no readable trail exists.</returns>
-    /// <remarks>See also <seealso cref="ExecuteInspectCalibrationMediaAsync"/>.</remarks>
-    public Task<bool> ExecuteLoadCalibrationMediaInfoAsync()
+    /// <remarks>See also <seealso cref="InspectCalibrationForRecalibrationAsync"/>.</remarks>
+    public Task<bool> InspectCalibrationInfoAsync()
     {
         _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
 
@@ -522,6 +522,7 @@ public partial class TapeServiceBase
     /// This is a pure convenience for the UI — it doesn't gate New/Resume/Recalibrate, which all remain
     /// available regardless of the result, since Resume/Recalibrate will fail gracefully if the cartridge
     /// is unsuitable.
+    /// </summary>
     /// <remarks>
     /// <para>
     /// Recommendation logic. Resume AND Recalibrate both require a valid ON-TAPE checkpoint — no stored
@@ -537,10 +538,9 @@ public partial class TapeServiceBase
     ///  Complete run, no baseline  |   true      |     true        |   false     | Resume
     ///  Complete run + baseline    |   true      |     true        |   true      | Recalibrate
     /// </code>
-    /// See also <seealso cref="ExecuteLoadCalibrationMediaInfoAsync"/>.
+    /// See also <seealso cref="InspectCalibrationInfoAsync"/>.
     /// </remarks>
-    /// </summary>
-    public Task<InspectCalibrationMediaResult> ExecuteInspectCalibrationMediaAsync()
+    public Task<InspectCalibrationMediaResult> InspectCalibrationForRecalibrationAsync()
     {
         _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
 

@@ -1042,7 +1042,7 @@ public partial class MainViewModel : ViewModelBase
         IsTOCLoadInProgress = true;
         try
         {
-            try { return await _tapeService.RestoreTOCOrCalibrationAsync(); }
+            try { return await _tapeService.IdentifyMediaAsync(); }
             catch { return IdentifyMediaOutcome.Failed; }
         }
         finally
@@ -1056,7 +1056,7 @@ public partial class MainViewModel : ViewModelBase
 
     /// <summary>
     /// Identifies the loaded medium and reads its TOC (or calibration calHeader), fully updating the
-    ///  tree/content pane for whichever outcome is returned by <see cref="TapeServiceBase.RestoreTOCOrCalibrationAsync"/>.
+    ///  tree/content pane for whichever outcome is returned by <see cref="TapeServiceBase.IdentifyMediaAsync"/>.
     /// On <see cref="IdentifyMediaOutcome.Failed"/>, offers the same TOC-from-file recovery prompt as
     ///  the legacy <see cref="RestoreTOCWithUIAsync"/> (unless <paramref name="offerFileImportOnFailure"/> is false).
     /// Silent on user-cancel.

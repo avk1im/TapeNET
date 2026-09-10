@@ -90,7 +90,7 @@ internal static class VerbHost
                 // Smart identification: throw ONLY on a genuine failure. A calibration cartridge or unidentified
                 //  medium is a valid state the verb renders (list already reports calibration internally); it does
                 //  NOT throw and — crucially — does NOT churn to end-of-data hunting for an absent TOC.
-                var outcome = service.RestoreTOCOrCalibrationAsync().GetAwaiter().GetResult();
+                var outcome = service.IdentifyMediaAsync().GetAwaiter().GetResult();
                 if (outcome == IdentifyMediaOutcome.Failed)
                     throw new TapeConException(TapeConExitCode.OperationFailed,
                         $"Couldn't identify media: {service.LastError}");
