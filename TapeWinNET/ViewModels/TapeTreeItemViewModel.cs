@@ -235,7 +235,7 @@ public class TapeTreeItemViewModel : ViewModelBase
     {
         return new TapeTreeItemViewModel
         {
-            DisplayName = $"Calibration Cartridge ({header.ProfileKey})",
+            DisplayName = $"Calibration Cartridge >{header.ProfileKey}<",
             IndexDisplay = string.Empty,
             ItemType = TreeItemType.CalibrationCartridge,
             Tag = 0,

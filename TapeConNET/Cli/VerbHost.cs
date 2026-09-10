@@ -28,17 +28,26 @@ internal static class VerbHost
     [Flags]
     public enum LifecycleSteps
     {
-        None       = 0,
-        OpenDrive  = 1,
-        LoadMedia  = 2,
+        None = 0,
+        OpenDrive = 1,
+        LoadMedia = 2,
         RestoreTOC = 4,
 
+        /// <summary>
+        /// Identify the medium (TOC or calibration) WITHOUT the historical EOD churn: a calibration
+        ///  cartridge is reported, unidentified media prompts before any search. Tolerant — proceeds even
+        ///  when no TOC results. For <c>list</c>. (Strict <see cref="RestoreTOC"/> stays for TOC-required verbs.)
+        /// </summary>
+        IdentifyMedia = 8,
+
         /// <summary>Drive only — for <c>format</c>, <c>eject</c>.</summary>
-        Drive      = OpenDrive,
+        Drive = OpenDrive,
         /// <summary>Drive + media — for <c>format</c>, <c>eject</c>.</summary>
-        Media      = OpenDrive | LoadMedia,
-        /// <summary>Drive + media + TOC — for <c>backup</c>, <c>restore</c>, <c>list</c>.</summary>
-        Full       = OpenDrive | LoadMedia | RestoreTOC,
+        Media = OpenDrive | LoadMedia,
+        /// <summary>Drive + media + TOC (required) — for <c>backup</c>, <c>restore</c>, <c>validate</c>, <c>verify</c>.</summary>
+        Full = OpenDrive | LoadMedia | RestoreTOC,
+        /// <summary>Drive + media + identify (TOC or calibration) — for <c>list</c>.</summary>
+        FullOrCalibration = OpenDrive | LoadMedia | IdentifyMedia,
     }
 
     /// <summary>
@@ -76,6 +85,17 @@ internal static class VerbHost
                         $"Couldn't restore TOC: {service.LastError}");
             }
 
+            if ((steps & LifecycleSteps.IdentifyMedia) != 0)
+            {
+                // Smart identification: throw ONLY on a genuine failure. A calibration cartridge or unidentified
+                //  medium is a valid state the verb renders (list already reports calibration internally); it does
+                //  NOT throw and — crucially — does NOT churn to end-of-data hunting for an absent TOC.
+                var outcome = service.RestoreTOCOrCalibrationAsync().GetAwaiter().GetResult();
+                if (outcome == RestoreTOCOrCalibrationOutcome.Failed)
+                    throw new TapeConException(TapeConExitCode.OperationFailed,
+                        $"Couldn't identify media: {service.LastError}");
+                // TocLoaded / CalibrationMedia / Unidentified → proceed.
+            }
             return service;
         }
         catch

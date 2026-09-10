@@ -519,6 +519,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         _agent = null;
         _toc = null;
         _loadedHeader = null;   // identity is tied to the loaded media/TOC
+        _loadedCalibrationInfo = null; // always clear along with the header
         IsTOCFromFile = false;
         TOCFilePath = null;
     }
@@ -1128,7 +1129,10 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     case TapeCalibrationHeader:
                         // No TOC on a calibration cartridge — never seek to EOD. Report it and stop.
                         _toc = null;
-                        LogCalibrationInfo();
+                        // Log just two lines isntead if full LogCalibrationInfo() -- done either by service.list or by main window display
+                        LogInfo($"Calibration cartridge — no backup TOC");
+                        if (_loadedHeader is TapeCalibrationHeader cal)
+                            LogInfoSub($"Calibration profile >{cal.ProfileKey}<");
                         OnStatusUpdate("Calibration cartridge");
                         _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
                         return RestoreTOCOrCalibrationOutcome.CalibrationMedia;
@@ -1297,7 +1301,10 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// </remarks>
     protected void RefreshLoadedHeader()
     {
+        // This cleanup covers every reload path — LoadMediaAsync, FormatMediaAsync, ImportTOCFromFileAsync,
+        //  RestoreTOCOrCalibrationAsync, and the calibrate - retry loop — since they all funnel through here.
         _loadedHeader = null;
+        _loadedCalibrationInfo = null; // a fresh header read means any prior Inspect is stale
 
         if (_drive is null || !_drive.IsMediaLoaded)
             return;

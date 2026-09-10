@@ -13,6 +13,16 @@ namespace TapeConNET.Cli;
 /// <c>start</c> and <c>end</c> set indexes select a range; remaining
 /// positional args are FCL/wildcard patterns to filter the listing.
 /// </summary>
+/// <remarks>
+/// Depth-by-depth behavior for a calibration cartridge:
+/// <code>
+/// Command        Lifecycle          Identify             Presenter              Result
+/// info --drive   Drive              none, no media       none                   drive info only
+/// info --media   Media              none                 ListContentsAsync §2   detailed calibration
+/// info / --full  FullOrCalibration  brief one-liner §1   ListContentsAsync §2   one-liner + details
+/// list           FullOrCalibration  brief one-liner §1   ListContentsAsync §2   one-liner + details
+/// </code>
+/// </remarks>
 internal static class ListCommand
 {
     public static Command Create(IConsoleUx ux)
@@ -59,7 +69,7 @@ internal static class ListCommand
             var filterFcl  = parseResult.GetValue(FilterOptions.Filter);
             var filterFile = parseResult.GetValue(FilterOptions.FilterFile);
 
-            using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.Full, ct);
+            using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.FullOrCalibration, ct); // was .Full
 
             // Parse leading 0..2 tokens as set indexes; the rest are patterns
             int? startIdx = null, endIdx = null;
@@ -94,6 +104,7 @@ internal static class ListCommand
                 Depth:               setsOnly ? ListDepth.SetsOverview : ListDepth.Full);
 
             var result = await service.ListContentsAsync(options);
+
             return !result.Success
                 ? (int)TapeConExitCode.OperationFailed
                 : (int)TapeConExitCode.Ok;

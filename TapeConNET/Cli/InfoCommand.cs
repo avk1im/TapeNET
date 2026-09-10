@@ -19,7 +19,17 @@ namespace TapeConNET.Cli;
 ///  <item><c>--full</c>   — drive + media + compact backup-sets table (TOC restored).
 ///   Supersedes both. This is the default when no flag is supplied.</item>
 /// </list>
-/// For the full per-file listing use <c>tapecon list</c>.
+/// For the full per-file listing, use <c>tapecon list</c>.
+/// <para>
+/// Depth-by-depth behavior for a calibration cartridge:
+/// <code>
+/// Command        Lifecycle          Identify             Presenter              Result
+/// info --drive   Drive              none, no media       none                   drive info only
+/// info --media   Media              none                 ListContentsAsync §2   detailed calibration
+/// info / --full  FullOrCalibration  brief one-liner §1   ListContentsAsync §2   one-liner + details
+/// list           FullOrCalibration  brief one-liner §1   ListContentsAsync §2   one-liner + details
+/// </code>
+/// </para>
 /// </remarks>
 internal static class InfoCommand
 {
@@ -62,13 +72,14 @@ internal static class InfoCommand
             // Highest level present wins; default (no flags) → full.
             var (steps, depth) = (wantFull || (!wantDrive && !wantMedia), wantMedia) switch
             {
-                (true,  _)  => (VerbHost.LifecycleSteps.Full,  ListDepth.SetsOverview),
-                (false, true)  => (VerbHost.LifecycleSteps.Media, ListDepth.DriveAndMedia),
-                _           => (VerbHost.LifecycleSteps.Drive, ListDepth.Drive),
+                (true, _) => (VerbHost.LifecycleSteps.FullOrCalibration, ListDepth.SetsOverview), // was Full
+                (false, true) => (VerbHost.LifecycleSteps.Media, ListDepth.DriveAndMedia),
+                _ => (VerbHost.LifecycleSteps.Drive, ListDepth.Drive),
             };
 
             using var service = VerbHost.BuildAndOpen(parseResult, ux, steps, ct);
             var result = await service.ListContentsAsync(new ListRequest(Depth: depth));
+                // ListContentsAsync() presents a calibration cartridge or the sets overview, and returns `Ok` either way
 
             return !result.Success
                 ? (int)TapeConExitCode.OperationFailed

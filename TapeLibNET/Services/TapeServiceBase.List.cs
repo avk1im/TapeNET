@@ -49,10 +49,12 @@ public partial class TapeServiceBase
                         return ListResult.Failed(LastError);
                     }
 
-                    // A calibration cartridge has no TOC — report it and stop (no EOD churn).
+                    // A calibration cartridge has NO backup TOC — present its details and stop (no EOD churn,
+                    //  no "TOC not loaded" error at SetTable/FileDetails depth). _loadedHeader was populated at
+                    //  media load (LoadMediaAsync) or by the IdentifyMedia lifecycle step.
                     if (_loadedHeader is TapeCalibrationHeader)
                     {
-                        LogInfo("Media information:");
+                        LogInfo("Calibration information:");
                         LogCalibrationInfo();
                         return ListResult.Ok(0, 0, 0);
                     }

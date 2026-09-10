@@ -18,6 +18,24 @@ public partial class TapeServiceBase
     private const double c_recalCapacityShiftTolerance = 0.01;  // 1%
     private const double c_recalPhantomShiftTolerance = 0.05;   // 5%
 
+
+    // ── Properties  ───────────────────────────────────────────────────────────
+
+    /// <summary>The loaded calibration run header, or null when the BOM header is a different kind / absent.</summary>
+    public TapeCalibrationHeader? CalibrationHeader => _loadedHeader as TapeCalibrationHeader;
+
+    /// <summary>
+    /// The last modal <see cref="ExecuteLoadCalibrationMediaInfoAsync"/> result for the loaded calibration
+    ///  cartridge (checkpoint-derived run state: resumable / complete / progress), or null until it is run.
+    ///  Tracks <see cref="_loadedHeader"/>: cleared on every media (re)load / eject / format, so it can
+    ///  never describe a previously-loaded cartridge.
+    /// </summary>
+    protected TapeCalibrationMediaInfo? _loadedCalibrationInfo;
+
+    /// <summary>The cached calibration run trail from the last Inspect, or null. See <see cref="CalibrationHeader"/>.</summary>
+    public TapeCalibrationMediaInfo? CalibrationInfo => _loadedCalibrationInfo;
+
+
     // ── Calibration ───────────────────────────────────────────────────────────
     /// <summary>
     /// Executes a destructive calibration run against the currently loaded medium. The
@@ -445,6 +463,58 @@ public partial class TapeServiceBase
     }
 
     // ── Media inspection (read-only, optional convenience) ──────────────────────────────────────
+
+    /// <summary>
+    /// Lean, DISPLAY-ONLY probe of the loaded calibration cartridge: returns the raw
+    ///  <see cref="TapeCalibrationMediaInfo"/> from <see cref="TapeCalibrator.InspectMedia"/> under the
+    ///  operation lock. Deliberately omits the multi-partition confirm and the CalibrationStore
+    ///  baseline/recommended-mode policy of <see cref="ExecuteInspectCalibrationMediaAsync"/> — those exist
+    ///  for the pre-recalibration flow, not for showing a cartridge's details. Use to enrich a
+    ///  calibration-cartridge pane with the checkpoint-derived fields (resumable / complete / progress)
+    ///  beyond the plain BOM header.
+    /// </summary>
+    /// <returns>The media info, or <see langword="null"/> when media isn't loaded or no readable trail exists.</returns>
+    /// <remarks>See also <seealso cref="ExecuteInspectCalibrationMediaAsync"/>.</remarks>
+    public Task<bool> ExecuteLoadCalibrationMediaInfoAsync()
+    {
+        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
+
+        return Task.Run(async () =>
+        {
+            await _operationLock.WaitAsync().ConfigureAwait(false);
+
+            try
+            {
+                if (_drive is null || !_drive.IsMediaLoaded)
+                {
+                    LastError = "Media not loaded";
+                    return false;
+                }
+
+                if (!_drive.PrepareMedia())
+                {
+                    LastError = _drive.LastErrorMessage;
+                    return false;
+                }
+
+                var calibrator = new TapeCalibrator(_drive);
+                _loadedCalibrationInfo = calibrator.InspectMedia();   // cache for the UI (cleared on next reload)
+                return _loadedCalibrationInfo is not null;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                LogErr($"Calibration inspect failed: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                _operationLock.Release();
+                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
+            }
+        });
+    }
+
     /// <summary>
     /// Non-destructively probes the loaded cartridge for an existing calibration trail, combining the
     /// on-tape header/checkpoint (<see cref="TapeCalibrator.InspectMedia"/>) with a
@@ -467,6 +537,7 @@ public partial class TapeServiceBase
     ///  Complete run, no baseline  |   true      |     true        |   false     | Resume
     ///  Complete run + baseline    |   true      |     true        |   true      | Recalibrate
     /// </code>
+    /// See also <seealso cref="ExecuteLoadCalibrationMediaInfoAsync"/>.
     /// </remarks>
     /// </summary>
     public Task<InspectCalibrationMediaResult> ExecuteInspectCalibrationMediaAsync()

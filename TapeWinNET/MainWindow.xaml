@@ -898,62 +898,73 @@
                                         </ListView>
 
                             <!-- Calibration Cartridge Details (visible when a Calibration Cartridge node is selected) -->
-                            <ListView ItemsSource="{Binding CalibrationPropertyList}"
-                                      IsEnabled="{Binding IsMediaBrowsingEnabled}"
-                                      Visibility="{Binding IsCalibrationTableVisible, Converter={StaticResource BoolToVis}}"
-                                      VirtualizingPanel.IsVirtualizing="True"
-                                      VirtualizingPanel.VirtualizationMode="Recycling">
-                                <ListView.ItemContainerStyle>
-                                    <Style TargetType="ListViewItem">
-                                        <Setter Property="Foreground"
-                                                Value="{Binding HighlightLevel,
-                                                Converter={x:Static converters:WarningLevelToBrushConverter.Instance}}" />
-                                    </Style>
-                                </ListView.ItemContainerStyle>
-                                <ListView.View>
-                                    <GridView>
-                                        <GridViewColumn Header="Property" Width="220"
-                                                        DisplayMemberBinding="{Binding Property}" />
-                                        <GridViewColumn Header="Value" Width="320"
-                                                        DisplayMemberBinding="{Binding Value}" />
-                                    </GridView>
-                                </ListView.View>
-                            </ListView>
-                                    </Grid>
-                                </GroupBox>
-                            </Grid>
+                            <DockPanel Visibility="{Binding IsCalibrationTableVisible, Converter={StaticResource BoolToVis}}">
 
-                            <!-- TOC Load Overlay - shown while reading TOC, cancellable for blank/new media.
-                                 Covers tree + splitter + content (not the log pane), same as the Operation
-                                 overlay below, so the TreeView selection cannot be changed mid-read. -->
-                            <Grid Grid.Column="0" Grid.ColumnSpan="3"
-                                  Background="#80000000"
-                                  Visibility="{Binding IsTOCLoadInProgress, Converter={StaticResource BoolToVis}}">
-                                <Border Background="White"
-                                        CornerRadius="8"
-                                        Padding="24"
-                                        HorizontalAlignment="Center"
-                                        VerticalAlignment="Center"
-                                        MinWidth="350">
-                                    <StackPanel>
-                                        <TextBlock Text="{Binding BusyMessage}"
-                                                   FontSize="14"
-                                                   FontWeight="SemiBold"
-                                                   HorizontalAlignment="Center"
-                                                   Margin="0,0,0,12"/>
+                                <!-- Modal "Inspect Media": reads the checkpoint trail and enriches the list below -->
+                                <Button DockPanel.Dock="Top"
+                                        Content="Inspect Media"
+                                        HorizontalAlignment="Left"
+                                        Margin="2,2,2,6" Padding="10,3"
+                                        Command="{Binding InspectCalibrationMediaCommand}"
+                                        ToolTip="Read the calibration checkpoint trail (resumable / complete / progress)"/>
 
-                                        <ProgressBar IsIndeterminate="True"
-                                                     Height="24"
-                                                     Margin="0,0,0,16"/>
+                                <ListView ItemsSource="{Binding CalibrationPropertyList}"
+                                          IsEnabled="{Binding IsMediaBrowsingEnabled}"
+                                          VirtualizingPanel.IsVirtualizing="True"
+                                          VirtualizingPanel.VirtualizationMode="Recycling">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <Setter Property="Foreground"
+                                                    Value="{Binding HighlightLevel,
+                                                    Converter={x:Static converters:WarningLevelToBrushConverter.Instance}}" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                    <ListView.View>
+                                        <GridView>
+                                            <GridViewColumn Header="Property" Width="220"
+                                                            DisplayMemberBinding="{Binding Property}" />
+                                            <GridViewColumn Header="Value" Width="320"
+                                                            DisplayMemberBinding="{Binding Value}" />
+                                        </GridView>
+                                    </ListView.View>
+                                </ListView>
+                            </DockPanel>
 
-                                        <Button Content="Cancel"
-                                                Command="{Binding AbortTOCLoadCommand}"
-                                                IsEnabled="{Binding IsTOCCancelEnabled}"
-                                                HorizontalAlignment="Center"
-                                                Width="100"/>
-                                    </StackPanel>
-                                </Border>
-                            </Grid>
+                    </Grid>
+                </GroupBox>
+            </Grid>
+
+            <!-- TOC Load Overlay - shown while reading TOC, cancellable for blank/new media.
+                    Covers tree + splitter + content (not the log pane), same as the Operation
+                    overlay below, so the TreeView selection cannot be changed mid-read. -->
+            <Grid Grid.Column="0" Grid.ColumnSpan="3"
+                    Background="#80000000"
+                    Visibility="{Binding IsTOCLoadInProgress, Converter={StaticResource BoolToVis}}">
+                <Border Background="White"
+                        CornerRadius="8"
+                        Padding="24"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        MinWidth="350">
+                    <StackPanel>
+                        <TextBlock Text="{Binding BusyMessage}"
+                                    FontSize="14"
+                                    FontWeight="SemiBold"
+                                    HorizontalAlignment="Center"
+                                    Margin="0,0,0,12"/>
+
+                        <ProgressBar IsIndeterminate="True"
+                                        Height="24"
+                                        Margin="0,0,0,16"/>
+
+                        <Button Content="Cancel"
+                                Command="{Binding AbortTOCLoadCommand}"
+                                IsEnabled="{Binding IsTOCCancelEnabled}"
+                                HorizontalAlignment="Center"
+                                Width="100"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
 
             <!-- Operation Overlay (Backup / Restore / Validate / Verify) - covers tree + splitter + content,
                  not the log pane, so the user cannot change the TreeView selection (which would mutate
