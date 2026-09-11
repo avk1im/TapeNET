@@ -239,7 +239,8 @@ public enum VirtualDriveProbeStatus
 {
     None,
     Probing,
-    ExistingFound,
+    BackupFound,
+    CalibrationFound,
     NewMedia,
     Error
 }
@@ -613,7 +614,8 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
 
     public string ProbeStatusIcon => ProbeStatus switch
     {
-        VirtualDriveProbeStatus.ExistingFound => "✓",
+        VirtualDriveProbeStatus.BackupFound => "✓",
+        VirtualDriveProbeStatus.CalibrationFound => "⚙\uFE0E", // guarantee monochrome glyph
         VirtualDriveProbeStatus.NewMedia => "○",
         VirtualDriveProbeStatus.Probing => "⟳",
         VirtualDriveProbeStatus.Error => "✗",
@@ -622,13 +624,15 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
 
     public string ProbeStatusText => ProbeStatus switch
     {
-        VirtualDriveProbeStatus.ExistingFound =>
-            $"Existing media found: {_lastProbeResult?.MediaName ?? "unnamed"} ({_lastProbeResult?.BackupSetCount ?? 0} sets)" +
-            (EnableInitiatorPartition ? " [with initiator partition]" : ""),
+        VirtualDriveProbeStatus.BackupFound =>
+            $"Existing backup media found: {_lastProbeResult?.MediaName ?? "unnamed"} ({_lastProbeResult?.BackupSetCount ?? 0} sets)" +
+            (EnableInitiatorPartition ? " [with initiator partition]" : string.Empty),
+        VirtualDriveProbeStatus.CalibrationFound =>
+            $"Existing calibration found: >{_lastProbeResult?.CalibrationHeader?.ProfileKey ?? "unknown profile"}<",
         VirtualDriveProbeStatus.NewMedia => "New media location",
         VirtualDriveProbeStatus.Probing => "Checking...",
         VirtualDriveProbeStatus.Error => _lastProbeResult?.ErrorMessage ?? "Error",
-        _ => ""
+        _ => string.Empty
     };
 
     #endregion
@@ -656,7 +660,9 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
     public string WarningMessage => _isInMemory
         ? "The content of in-memory virtual media cannot be saved."
         : WarningLevel != WarningLevel.None
-            ? "Existing files will be overwritten."
+            ? (ProbeStatus is VirtualDriveProbeStatus.CalibrationFound
+                ? "Existing calibration data will be permanently erased."
+                : "Existing backup data will be overwritten.")
             : string.Empty;
 
     public override bool CanExecute =>
@@ -818,43 +824,69 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
 
                     if (result.Success)
                     {
-                        ProbeStatus = VirtualDriveProbeStatus.ExistingFound;
-                        // Auto-select "Open existing" mode if existing media found
+                        // Auto-select Open-existing so an identified medium (backup OR calibration) is never
+                        //  overwritten by default. The user can still switch to Create-new (overwrite) if desired.
                         if (!_newMediaOnly && !_existingMediaOnly)
                             IsOpenExistingMode = true;
 
-                        // Pre-populate all fields from probe result
-                        if (result.Media != null)
+                        if (result.Kind == VirtualMediaKind.Calibration)
                         {
-                            SetCapacityFromBytes(result.Media.ContentCapacity, v => ContentCapacityValue = v, u => ContentCapacityUnit = u);
-                            EnableInitiatorPartition = result.Media.InitiatorPath != null;
-                            if (result.Media.InitiatorPartitionCapacity > 0)
-                                SetCapacityFromBytes(result.Media.InitiatorPartitionCapacity, v => InitiatorCapacityValue = v, u => InitiatorCapacityUnit = u);
+                            ProbeStatus = VirtualDriveProbeStatus.CalibrationFound;
+
+                            // Calibration cartridges are single-partition; populate capacity + caps only (no TOC / name).
+                            if (result.Media != null)
+                                SetCapacityFromBytes(result.Media.ContentCapacity,
+                                    v => ContentCapacityValue = v, u => ContentCapacityUnit = u);
+
+                            EnableInitiatorPartition = false;
+
+                            if (result.DetectedCapabilities.HasValue)
+                            {
+                                var caps = result.DetectedCapabilities.Value;
+                                MinBlockSize = BlockSizeOption.FromBytes(caps.MinBlockSize);
+                                DefaultBlockSize = BlockSizeOption.FromBytes(caps.DefaultBlockSize);
+                                MaxBlockSize = BlockSizeOption.FromBytes(caps.MaxBlockSize);
+                                SupportsSetmarks = caps.SupportsSetmarks;
+                                SupportsSeqFilemarks = caps.SupportsSeqFilemarks;
+                            }
                         }
-
-                        if (!string.IsNullOrEmpty(result.MediaName))
-                            MediaName = result.MediaName;
-
-                        if (result.DetectedCapabilities.HasValue)
+                        else   // VirtualMediaKind.BackupFound (or legacy)
                         {
-                            var caps = result.DetectedCapabilities.Value;
-                            MinBlockSize = BlockSizeOption.FromBytes(caps.MinBlockSize);
-                            DefaultBlockSize = BlockSizeOption.FromBytes(caps.DefaultBlockSize);
-                            MaxBlockSize = BlockSizeOption.FromBytes(caps.MaxBlockSize);
-                            SupportsSetmarks = caps.SupportsSetmarks;
-                            SupportsSeqFilemarks = caps.SupportsSeqFilemarks;
+                            ProbeStatus = VirtualDriveProbeStatus.BackupFound;
+
+                            if (result.Media != null)
+                            {
+                                SetCapacityFromBytes(result.Media.ContentCapacity, v => ContentCapacityValue = v, u => ContentCapacityUnit = u);
+                                EnableInitiatorPartition = result.Media.InitiatorPath != null;
+                                if (result.Media.InitiatorPartitionCapacity > 0)
+                                    SetCapacityFromBytes(result.Media.InitiatorPartitionCapacity, v => InitiatorCapacityValue = v, u => InitiatorCapacityUnit = u);
+                            }
+                            if (!string.IsNullOrEmpty(result.MediaName))
+                                MediaName = result.MediaName;
+                            if (result.DetectedCapabilities.HasValue)
+                            {
+                                var caps = result.DetectedCapabilities.Value;
+                                MinBlockSize = BlockSizeOption.FromBytes(caps.MinBlockSize);
+                                DefaultBlockSize = BlockSizeOption.FromBytes(caps.DefaultBlockSize);
+                                MaxBlockSize = BlockSizeOption.FromBytes(caps.MaxBlockSize);
+                                SupportsSetmarks = caps.SupportsSetmarks;
+                                SupportsSeqFilemarks = caps.SupportsSeqFilemarks;
+                            }
                         }
                     }
-                    else
+                    else // !result.Success (error or non-identified media)
                     {
                         ProbeStatus = VirtualDriveProbeStatus.NewMedia;
-                        // Auto-select "Create new" mode if no valid media
+                        // Auto-select "Create new" mode for non-identified media
                         if (!_newMediaOnly && !_existingMediaOnly && IsOpenExistingMode)
                             IsCreateNewMode = true;
                     }
 
                     OnPropertyChanged(nameof(ProbeStatusText));
+                    OnPropertyChanged(nameof(WarningLevel));     // kind-specific message may apply
+                    OnPropertyChanged(nameof(WarningMessage));   // ← ditto
                     CommandManager.InvalidateRequerySuggested();
+
                 });
             }
             catch (OperationCanceledException)

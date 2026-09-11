@@ -38,6 +38,7 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <!-- Scrollable content area -->
@@ -317,8 +318,11 @@
                 </Grid>
             </GroupBox>
 
-            <!-- In-memory warning panel -->
-            <Border Style="{StaticResource WarningPanelStyle}" Margin="0,0,0,12">
+            </StackPanel>
+            </ScrollViewer>
+
+            <!-- Warning panel - fixed outside scroll area so it's always visible -->
+            <Border Grid.Row="1" Style="{StaticResource WarningPanelStyle}" Margin="0,12,0,0">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
                                FontSize="14" Margin="0,0,8,0"/>
@@ -327,11 +331,8 @@
                 </StackPanel>
             </Border>
 
-            </StackPanel>
-            </ScrollViewer>
-
             <!-- Buttons -->
-            <Grid Grid.Row="1" Margin="0,8,0,0">
+            <Grid Grid.Row="2" Margin="0,8,0,0">
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
                     <Button x:Name="HelpButton"
                             Content="_Help ▶"
