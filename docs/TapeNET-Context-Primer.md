@@ -2,23 +2,25 @@
 
 ## Solution Structure
 
-The **TapeNET** solution (`D:\Documents.DEV\Projects\TapeNET`) targets **.NET 8 / C# 12** and contains six projects:
+The **TapeNET** solution (`\TapeNET`) targets **.NET 8 / C# 12** and includes the following projects:
 
 | Project | Type | Role |
 |---------|------|------|
 | `TapeLibNET` | Class library | Core tape I/O library — drives, agents, TOC, streams, serialization |
 | `FclNET` | Class library | FCL (File Conditions Language) — DSL for file filtering by name, path, size, date, attributes |
-| `FclAiNET` | Class library | AI-assisted natural language → FCL translation using `Microsoft.Extensions.AI` |
+| `AiNET` | Class library | AI provider discovery and chat completion support via `Microsoft.Extensions.AI` |
+| `FclAiNET` | Class library | AI-assisted natural language → FCL translation using `AiAI` |
+| `HelpNET` | Class library | Interactive AI-supported help system. Used for `TapeWinNET` |
 | `TapeConNET` | Console app | CLI tape backup utility (`tapecon`) — verb-based command-line interface (System.CommandLine + Spectre.Console) |
 | `TapeWinNET` | WPF app | GUI tape backup manager — MVVM, tree-based navigation, log pane, FCL-based file filtering |
 | `TapeServiceNET` | ASP.NET Core service | Windows Service / console host exposing `TapeDriveGrpcService` over gRPC (port 50551) |
 | `FclAiNET.Test` | Console app | Interactive NL → FCL REPL for testing AI translation |
 
-**Test projects:** `FclNET.Tests` (xUnit, 469+ tests covering lexer, parser, validator, evaluator, formatter, pipeline). `TapeLibNET.Tests` (xUnit, 1,170+ tests covering virtual drives, navigation, streams, TOC serialization, backup/restore agents, incremental chains, multi-volume, error handling, service-layer round-trips, and gRPC remote-backend round-trips via `LocalHostBackendTests` / `RemoteHostBackendTests`). `TapeConNET.Tests` (xUnit, 56+ tests covering CLI parsing, lifecycle, FCL filtering, backup/restore round-trips, large/incremental stress scenarios, and the embedded-docs verb).
+**Test projects:** `FclNET.Tests` (xUnit, 469+ tests covering lexer, parser, validator, evaluator, formatter, pipeline). `TapeLibNET.Tests` (xUnit, 2,470+ tests covering virtual drives, navigation, streams, TOC serialization, backup/restore agents, incremental chains, multi-volume, error handling, service-layer round-trips, and gRPC remote-backend round-trips via `LocalHostBackendTests` / `RemoteHostBackendTests`). `TapeConNET.Tests` (xUnit, 56+ tests covering CLI parsing, lifecycle, FCL filtering, backup/restore round-trips, large/incremental stress scenarios, and the embedded-docs verb).
 
-**Dependencies:** The apps depend on the libraries. `FclNET` has no dependencies on other solution projects. `FclAiNET` depends on `FclNET`. `TapeWinNET` depends on `FclNET` for file filtering in the MainWindow via the `FclTapeFileFilter` adapter (the restore pipeline uses a dictionary-based selection path — see below). `TapeConNET` depends on `FclNET` for its `ITapeFileFilter`-based restore path. `TapeLibNET` remains independent of the FCL projects. `TapeServiceNET` depends on `TapeLibNET` only; proto-generated stubs are compiled in `TapeLibNET` (`GrpcServices="Both"`) and consumed via project reference.
+**Dependencies:** The apps depend on the libraries. `TapeLibNET` remains independent of the other projects. `TapeServiceNET` depends on `TapeLibNET` only; proto-generated stubs are compiled in `TapeLibNET` (`GrpcServices="Both"`) and consumed via project reference. `FclNET` has no dependencies on other solution projects. `FclAiNET` depends on `FclNET`, `AiNET`. `TapeWinNET` depends on `FclNET` for file filtering in the MainWindow via the `FclTapeFileFilter` adapter (the restore pipeline uses a dictionary-based selection path — see below) and on `HelpNET` for interactive help. `TapeConNET` depends on `FclNET` for its `ITapeFileFilter`-based restore path. 
 
-Git repo: `https://github.com/avk1im/TapeNET`, branch `dev`.
+Git repo: `https://github.com/avk1im/TapeNET`, branch `master`.
 
 ---
 
@@ -219,7 +221,113 @@ Multiple files can share a single tape block, eliminating per-file alignment was
 
 Complete design specification: `docs/Design-RemainingAndEw.md`.
 
-A tape drive's own "space remaining" figure is optimistic — an LTO-4 still claims ~28 GB free at the instant it hits hard end-of-medium — so TapeLibNET treats capacity as a small family of distinct quantities rather than one number: the raw **reported** figure from the driver, the **estimated** figure obtained by translating it through a per-drive+media calibration, and the **writable** figure the user actually spends (estimated, less the table-of-contents reserve when the TOC shares the content partition). Two independent over-report axes are measured, persisted and emulated: an inflated capacity claim at beginning of media (`ReportedCapacityAtBom`) and phantom free space still claimed at hard EOM (`PhantomFreeAtEom`). `TapeCalibrator` measures them destructively once per drive+media profile; profiles persist in a shared store and **auto-apply on drive open and media load**, so the user never has to remember to arm them. `TapeDrive.EarlyWarning` turns all this into the one signal that matters — "stop content now, there is exactly room for the TOC" — mapping the drive's physical early-warning landmark and the measured EW→EOM distance onto the caller's byte reserve. **What it brings:** a trustworthy figure instead of a guess, and a cartridge filled to its real end — without calibration a backup must stop at the drive's physical early warning and abandon the entire unknown tail; with calibration it deliberately writes *past* that landmark, byte-counting down the measured distance, and stops with precisely the TOC reserve left. The UI is writable-first throughout: property panes pair `reported / estimated` on one row with `Writable` and an `Estimation by` row beneath, the status bar reads `Writable X of Y`, the calibration result window leads with "your drive over-reports by X at EOM", and virtual drives can emulate either over-report axis so the whole chain is exercisable without hardware.
+A tape drive's own "space remaining" figure cannot carry a backup's stop decision. It mis-reports at
+beginning of media in **both** directions — an LTO-3 under-reports its capacity by 3.8%, an AIT-2
+over-reports by 2.2%, an LTO-6 over-reports by 0.19% — and near the end of tape it either collapses to zero
+while hundreds of megabytes remain writable (LTO-3, AIT, DAT) or keeps claiming phantom free space that
+does not exist (DLT-V4). TapeLibNET therefore treats capacity as a small family of distinct quantities
+rather than one number: the raw **reported** figure from the driver, the **estimated** figure obtained by
+translating it through a per-drive+media calibration, and the **writable** figure the user actually spends
+(estimated, less the table-of-contents reserve when the TOC shares the content partition). Two independent
+over-report axes are measured, persisted and emulated: capacity mis-reported at beginning of media
+(ReportedCapacityAtBom — which may be negative) and phantom free space still claimed at hard EOM
+(PhantomFreeAtEom — in practice small, 0–2.4 GB). The large number is a third quantity entirely: the
+**EW→EOM runway**, the bytes still writable after the drive's physical early warning fires — 32 GB on
+LTO-4 and 110 GB on LTO-6, but under 500 MB on every pre-LTO drive measured.
+
+TapeCalibrator measures a profile destructively once per drive+media; profiles persist in a shared store
+and **auto-apply on drive open and media load**, so a measured profile is never left un-armed. Runs are
+**resumable and recalibratable**: the run lays down a self-describing on-tape trail (header plus CRC-framed
+body checkpoints), so a multi-hour run interrupted by a transport fault continues from its last checkpoint,
+and a complete cartridge is re-measured cheaply after a firmware update or drive swap — yielding a
+verdict-free delta that the service judges against policy thresholds. `InspectMedia()` reads that trail
+non-destructively, so the UI can offer New / Resume / Recalibrate knowingly, and a Calibration Profiles
+browser (Media ▸ Calibration Profiles…) reviews, applies and removes stored profiles outside the
+destructive Calibrate flow.
+
+TapeDrive.EarlyWarning turns all of this into the one signal that matters — "stop content now, there is
+exactly room for the TOC" — piecewise: before the physical landmark it translates the reported figure
+through the calibrated curve; after it, it **trusts the byte-count** down the measured runway and ignores
+reported entirely. That tail rule is what protects LTO-3's 437 MB of writable tape, which its collapsed
+report would otherwise abandon.
+
+**What it brings:** a trustworthy figure instead of a guess, and a cartridge filled to its real end —
+without calibration a backup must stop at the drive's physical early warning and abandon the entire unknown
+tail; with calibration it deliberately writes *past* that landmark, byte-counting down the measured
+distance, and stops with precisely the TOC reserve left.
+
+**Across generations:** validated against eight cartridges over six drives in three behavioral classes
+(AIT-2, DAT-320, DLT-V4, LTO-3/4/6). Where no measurement exists, the a-priori model is differentiated by
+drive generation into three safety envelopes — LTO-4+ gets a 1% margin and a real 3% runway; LTO-1..3 and
+pre-LTO get a 2% margin with a 1 MB emergency backstop — deliberately wasting 1–2% of tape on collapse
+drives rather than risking an overrun, and reclaiming it as soon as a measured profile exists. The
+mechanism is labeled honestly: on generations 0–3 the physical EW fires far too late to be the real
+mechanism (the a-priori curve pre-empts it), so *Estimation by* reads **Uncalibrated** rather than
+overstating **Hardware**.
+
+The UI is writable-first throughout: property panes pair reported / estimated on one row with Writable and
+an *Estimation by* row beneath, the status bar reads `Writable X of Y`, the calibration result window leads
+with the measured anchors and plots the reported→actual curve with the EW and EOM landmarks marked, and
+virtual drives can emulate either over-report axis (and replay a measured profile) so the whole chain is
+exercisable without hardware.
+
+#### Media header — one-block cartridge identity
+
+Complete design specification: `docs/Design-TapeHeader.md`.
+
+Single-partition ("TOC-in-set") media stores the table of contents at end-of-data, so loading a cartridge
+once meant a minutes-long seek to EOD merely to discover whether a TOC existed at all — and on a
+calibration cartridge, a foreign tape or a blank one, that seek is pure churn that finds nothing. Every
+medium TapeLibNET formats, or writes from beginning-of-media, now carries a **media header**: one 16 KiB
+framed, CRC-guarded record at the beginning of the content partition that identifies the cartridge in a
+single block read. It carries the TOC's MediaId (the series identity), the Volume number, a
+self-describing TocPlacement (InSet / InPartition), the TOC's on-tape block size and a snapshot of the
+media name — so a cartridge answers "whose am I, which volume, what kind?" without parsing a TOC, on
+partitioned and single-partition media alike. **Division of labour:** the *agent* writes the header (pure
+mechanism, at the two beginning-of-media moments — format, and the first set of every fresh volume), the
+*service* evaluates it (identity policy and every user prompt), and the *navigator* counts and caches its
+presence but never parses it. The header is additive and non-destructive: never inserted into
+already-written media, and it never alters setmark or filemark counting.
+
+**One grammar, one block, mutual recognition.** All header kinds share the `TapeHeader` record base and
+`TapeFramer` framing, and both the media header and the calibration run header occupy the same standard
+block via `TapeHeaderBlock` — the single point that owns the block size, the size guard and the
+set-and-restore block-size discipline. One polymorphic read (`TapeFramer.Unpack<TapeHeader>`) therefore
+classifies any cartridge as backup media, a calibration cartridge, or unidentified, which is what lets
+TapeCalibrator and the backup agent name each other's media ("this cartridge holds a backup" / "this is a
+calibration cartridge") instead of failing blankly. Each kind is built by the subsystem that owns its
+identity — TapeTOC for the media header, TapeCalibrator for the run header — sharing the grammar, not a
+construction path.
+
+**Service verdicts and prompts.** The service reads one header per media load and judges it per operation,
+producing a typed `TapeMediaVerdict` (Match, Unidentified, WrongKind, MediaIdMismatch, WrongVolume,
+MediaInconsistent) presented through a single context-typed host callback with Retry / Proceed /
+ProceedAlways / Abort — the host owning all localized wording, the library passing only verdict + context.
+The golden rule is that **Unidentified never blocks**: blank, legacy and foreign media cannot be
+*verified*, so legacy cartridges stay first-class citizens and only the positive mismatches prompt. Each
+verb carries an opt-out for unattended use (ForceVolumeOverwrite, SkipVolumeCheck, SkipMediaHeaderCheck),
+which silences prompts but never the header read.
+
+**What it brings:** loading a calibration cartridge is reported instantly instead of churning to
+end-of-data for a TOC that cannot exist, and genuinely unidentified media asks before the costly search;
+overwrite, multi-volume continuation, restore, TOC import and calibration all verify identity before
+destructive work (an overwrite mints a fresh MediaId, so surviving volumes of the overwritten series can
+never be confused with the new one); and mixed series — a legacy volume 1 followed by headed continuation
+volumes — restore correctly, because header presence is re-resolved per volume rather than assumed once.
+
+**Applications:** TapeWinNET surfaces a Calibration Cartridge tree node carrying the header's details, plus
+an optional modal *Inspect Media* probe that enriches it with the checkpoint trail (resumable / complete /
+progress); the Open Virtual Drive dialog now recognizes a calibration `.vt` as *existing* media,
+auto-selects "Open existing", and warns specifically that calibration data would be erased if the user
+overrides to "Create new". TapeConNET renders the same report from `list` and `info` via a tolerant
+IdentifyMedia lifecycle step, while backup / restore / validate / verify keep the strict TOC requirement.
+
+**Watch-item:** the header carries no trailing filemark, so beginning-of-content is a mid-data write.
+Accepted on AIT-2 (isolated by the S10 mid-data vs. S11 post-mark conformance probes) and on DLT-V4,
+permissive on LTO by construction, and modeled by the virtual backend's strict-write mode so the hazard
+stays visible in the test suite. Should a strict drive ever appear, the fix is one filemark after the
+header plus a self-describing flag in the header so legacy headed media still navigates — cheapest applied
+before headers ship in the field.
 
 ### Win32 BackupRead / BackupWrite file I/O (`TapeBackupStream`)
 
@@ -324,7 +432,7 @@ Key design points:
 
 ## TapeLibNET.Tests
 
-xUnit test project with **1,170+ tests** across test classes covering the library core and service-layer round-trips, all running against memory-backed virtual tape drives (no hardware required). Parallel execution is disabled globally due to shared virtual drive state.
+xUnit test project with **2,470+ tests** across test classes covering the library core and service-layer round-trips, all running against memory-backed virtual tape drives (no hardware required). Parallel execution is disabled globally due to shared virtual drive state.
 
 ### Drive profiles
 
@@ -712,6 +820,13 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 - ✅ MainWindow restore/validate/verify: dynamic command text reflecting checked sets/files, tri-state set checkboxes propagating to `FilteredFileList`, per-file check changes pushing back to `BackupSetListItem` tri-state, `RestoreAllSetsCommand` for quick access
 - ✅ Remote tape drive integration: `TapeServiceNET` gRPC server (session registry, idle reaper, named-volume catalog, TLS overlay), `RemoteTapeDriveBackend` client (`TapeLibNET.Remote`), `TapeServiceBase.Remote.cs` service-layer partial, full TapeWinNET UX (Connect dialog, Open/Create remote virtual drive dialog with Open-existing volume picker, remote submenu with drive probing, tree indicator, status bar, auto-disconnect). Multi-volume remote backup/restore with `WpfServiceHost` media-swap prompts. 1,569+ tests including four-fixture remote backend suite and catalog-driven multi-volume round-trip.
 - ✅ Per-file software compression (ZSTD): `TapeCompression { None, Hardware, Software }` per-set mode + level stored in `TapeSetTOC`; per-file `TapeFileCodec { Stored, Zstd }` flag in `TapeFileInfo`; `ProbingCompressionStream` with 128 KiB probe window and auto store-fallback for incompressible data; hardware compression interlock via `TapeDrive.SetHardwareCompression`; hash always over uncompressed bytes; `CompressionPreset` parse/display helper shared by WPF and CLI; 20 targeted round-trip tests + large-file theories. Full design: `docs/Design-Compression.md`. UI exposure (WPF BackupWindow, CLI `--compression`) is pending.
+- ✅ Media header — one-block cartridge identity: a 16 KiB framed BOM record on every formatted medium
+  carrying MediaId / Volume / TocPlacement, written by the agent (format + fresh volume) and evaluated by
+  the service into typed verdicts with context-typed host prompts. Ends the end-of-data churn on
+  calibration / unidentified cartridges, verifies identity before every destructive operation, and lets
+  backup and calibration recognize each other's media. Shared `TapeHeaderBlock` primitive; mixed
+  legacy/headed multi-volume series restore correctly. WPF calibration-cartridge pane + Inspect Media,
+  calibration-aware virtual-drive probe, CLI list/info integration. Full design: docs/Design-TapeHeader.md.
 
 ## What's Next (Planned)
 
