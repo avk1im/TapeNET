@@ -1,3 +1,5 @@
+#define LEGACY_TapeCalibrationRunHeader // FIXME: temporary to keep compatibility with legacy calibration cartridges
+
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -50,6 +52,7 @@ namespace TapeLibNET;
 //  and the re-measure point Recalibrate needs.
 // =============================================================================
 
+#if LEGACY_TapeCalibrationRunHeader
 /// <summary>
 /// Written once as the header block at BOM. Self-identifies the run and cartridge so <c>Resume</c> can
 /// verify "same run" (internal <see cref="RunId"/> consistency) before trusting any checkpoint, and so a
@@ -112,7 +115,13 @@ public sealed record TapeCalibrationRunHeader(
 
         return new TapeCalibrationRunHeader(runId, profileKey, capacity, blockSize, started, plan);
     }
+
+    /// <summary>Adapts this legacy record to the unified <see cref="TapeCalibrationHeader"/>.</summary>
+    public TapeCalibrationHeader ToHeader() =>
+        TapeCalibrationHeader.CreateHeader(RunId, ProfileKey,
+            CapacityReportedAtBom, BlockSize, StartedUtc, Plan);
 }
+#endif // LEGACY_TapeCalibrationRunHeader
 
 /// <summary>
 /// Written at each body checkpoint. CUMULATIVE and self-contained: a single valid read fully restores
@@ -179,41 +188,15 @@ public sealed record TapeCalibrationCheckpoint(
 /// <summary>
 /// Frames an <see cref="ITapeSerializable"/> calibration record for on-tape storage with a CRC-32 guard,
 /// so a torn tail record is DETECTED (and the resume walk steps back) rather than silently deserialized
-/// into garbage. Reuses the library's <see cref="HashingStream"/> / <see cref="Crc32"/> plumbing.
-/// <para>
-/// Wire framing: <c>[int32 payloadLen][payload][4-byte crc]</c>, where <c>payload</c> is the record's own
-/// <see cref="ITapeSerializable.SerializeTo"/> output (signature + fields) and <c>crc</c> is CRC-32 over
-/// that payload — kept OUTSIDE the hashed span. The whole frame is copied into the front of a full block;
-/// the block's remaining bytes are caller-supplied random padding (ignored on read-back).
-/// </para>
+/// into garbage. Uses <see cref="TapeFramer"/>.
+/// <remarks>
+/// We keep it distinct from <see cref="TapeFramer"/> to allow future calibration-specific logic.
+/// </remarks>
 /// </summary>
-public static class TapeCalibrationRecord
+public static class TapeCalibrationFramer
 {
     /// <summary>Serializes <paramref name="record"/> and returns the framed <c>[len][payload][crc]</c> bytes.</summary>
-    public static byte[] Pack(ITapeSerializable record)
-    {
-        ArgumentNullException.ThrowIfNull(record);
-
-        // Serialize the payload while hashing it — reuse HashingStream over a growable MemoryStream.
-        using var payloadMs = new MemoryStream();
-        var crc = new Crc32();
-        using (var hashing = new HashingStream(payloadMs, crc, ownInner: false))
-        {
-            var ser = new TapeSerializer(hashing);
-            record.SerializeTo(ser);
-        }
-
-        byte[] payload = payloadMs.ToArray();
-        byte[] crcBytes = crc.GetCurrentHash();      // 4 bytes
-
-        using var frameMs = new MemoryStream(payload.Length + 8);
-        var frameSer = new TapeSerializer(frameMs);
-        frameSer.Serialize(payload.Length);          // int32 length prefix
-        frameSer.Serialize(payload);                 // raw payload (already hashed)
-        frameSer.Serialize(crcBytes);                // raw 4-byte CRC trailer (outside the hash)
-
-        return frameMs.ToArray();
-    }
+    public static byte[] Pack(ITapeSerializable record) => TapeFramer.Pack(record);
 
     /// <summary>
     /// Parses a framed record out of a full block read back from tape and verifies its CRC. Returns the
@@ -221,38 +204,7 @@ public static class TapeCalibrationRecord
     /// or fails the CRC — the exact signals the resume walk treats as "step back to the previous checkpoint".
     /// </summary>
     public static T? Unpack<T>(byte[] block, int length) where T : class, ITapeSerializable
-    {
-        ArgumentNullException.ThrowIfNull(block);
-
-        try
-        {
-            using var ms = new MemoryStream(block, 0, Math.Min(length, block.Length), writable: false);
-            var d = new TapeDeserializer(ms);
-
-            int payloadLen = d.DeserializeInt32();
-            if (payloadLen < 0 || payloadLen > block.Length - 8)
-                return null;                         // implausible length ⇒ not a valid frame
-
-            byte[]? payload = d.DeserializeBytes(payloadLen);
-            byte[]? crcStored = d.DeserializeBytes(4);
-            if (payload is null || crcStored is null)
-                return null;
-
-            var crc = new Crc32();
-            crc.Append(payload);
-            if (!crc.GetCurrentHash().AsSpan().SequenceEqual(crcStored))
-                return null;                         // CRC mismatch ⇒ torn / corrupt
-
-            using var pms = new MemoryStream(payload, writable: false);
-            var pd = new TapeDeserializer(pms);
-            return T.ConstructFrom(pd) as T;         // ConstructFrom re-checks signature/version
-        }
-        catch (Exception)
-        {
-            // Any framing/format error ⇒ treat as an invalid record; the caller walks back.
-            return null;
-        }
-    }
+        => TapeFramer.Unpack<T>(block, length);
 }
 
 /// <summary>
@@ -287,7 +239,7 @@ public readonly record struct TapeRecalibrationDelta(
 /// CRC-valid checkpoint of that run also exists.
 /// </summary>
 public sealed record TapeCalibrationMediaInfo(
-    TapeCalibrationRunHeader Header,
+    TapeCalibrationHeader Header,
     TapeCalibrationCheckpoint? LastCheckpoint)
 {
     /// <summary>The run's unique id (from the header).</summary>

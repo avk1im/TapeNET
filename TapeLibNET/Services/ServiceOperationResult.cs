@@ -12,7 +12,7 @@ namespace TapeLibNET.Services;
 public abstract record ServiceOperationResult
 {
     /// <summary>
-    /// <c>true</c> when the operation completed without a catastrophic failure.
+    /// <see langword="true"/> when the operation completed without a catastrophic failure.
     /// Partial failures (skipped / failed files) are still reported via
     ///  <see cref="ServiceReportLevel"/> and the file-count properties on derived types.
     /// </summary>
@@ -72,7 +72,7 @@ public abstract record FileOperationResult : ServiceOperationResult
     public bool HasFailed { get; init; }
 
     /// <summary>
-    /// <c>true</c> when all selected files were processed successfully with
+    /// <see langword="true"/> when all selected files were processed successfully with
     ///  no aborts, failures, or skips.
     /// </summary>
     public virtual bool IsFullSuccess =>

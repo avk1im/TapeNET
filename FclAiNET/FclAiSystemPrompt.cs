@@ -60,8 +60,8 @@ RULES:
     /// resolution of relative date references ("last summer", "this year", etc.).
     /// </summary>
     /// <param name="withTools">
-    /// <c>true</c> to include tool-calling instructions (ValidateFcl);
-    /// <c>false</c> for direct text output rules.
+    /// <see langword="true"/> to include tool-calling instructions (ValidateFcl);
+    /// <see langword="false"/> for direct text output rules.
     /// </param>
     internal static string GetSystemMessage(bool withTools)
     {

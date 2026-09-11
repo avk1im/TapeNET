@@ -237,7 +237,7 @@ public class FclConditionRowVM : ViewModelBase
 
     /// <summary>
     /// Whether this condition row can be removed.
-    /// Set to <c>false</c> for the last remaining row in a group.
+    /// Set to <see langword="false"/> for the last remaining row in a group.
     /// </summary>
     public bool CanRemove { get; set; } = true;
 
@@ -265,7 +265,7 @@ public class FclConditionRowVM : ViewModelBase
     // ─────────────────────────────────────────────────────
 
     /// <summary>
-    /// Returns <c>true</c> when the row has enough data to produce
+    /// Returns <see langword="true"/> when the row has enough data to produce
     /// a valid <see cref="FclExpression"/> (field, operator, and value set).
     /// </summary>
     public bool IsComplete => SelectedField is not null

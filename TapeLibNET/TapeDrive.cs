@@ -598,7 +598,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     /// </summary>
     /// <param name="bytesBeforeEom">Desired reserve in bytes before EOM (0 = none).</param>
     /// <returns>
-    /// True if the requested reserve is honored (<c>true</c> unless capacity is unknown and the backend has no physical EW).
+    /// True if the requested reserve is honored (<see langword="true"/> unless capacity is unknown and the backend has no physical EW).
     /// </returns>
     public bool SetEarlyWarning(long bytesBeforeEom)
     {

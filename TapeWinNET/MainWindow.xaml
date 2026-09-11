@@ -62,7 +62,7 @@
             <MenuItem Header="Restore _All Sets..." Command="{Binding RestoreAllSetsCommand}"/>
             <Separator/>
             <MenuItem Header="Re_name..." Command="{Binding RenameSelectedCommand}"/>
-            <MenuItem Header="_Reread TOC" Command="{Binding RereadTOCCommand}"/>
+            <MenuItem Header="_Reread Media" Command="{Binding RereadMediaCommand}"/>
             <Separator/>
             <MenuItem Header="E_xport TOC to File..." Command="{Binding ExportTOCCommand}"/>
             <MenuItem Header="_Import TOC from File..." Command="{Binding ImportTOCCommand}"/>
@@ -283,7 +283,7 @@
             </MenuItem>
             <MenuItem Header="_Media">
                 <MenuItem Header="Re_name..." Command="{Binding RenameMediaCommand}"/>
-                <MenuItem Header="_Reread TOC" Command="{Binding RereadTOCCommand}"/>
+                <MenuItem Header="_Reread Media" Command="{Binding RereadMediaCommand}"/>
                 <Separator/>
                 <MenuItem Header="E_xport TOC to File..." Command="{Binding ExportTOCCommand}"/>
                 <MenuItem Header="_Import TOC from File..." Command="{Binding ImportTOCCommand}"/>
@@ -456,9 +456,9 @@
             <!-- Media group: re-read TOC, eject -->
             <ToolBar Band="0" BandIndex="1" Margin="12,0,0,0">
                 <Separator/>
-                <Button Command="{Binding RereadTOCCommand}"
+                <Button Command="{Binding RereadMediaCommand}"
                         Style="{StaticResource ToolbarButtonStyle}"
-                        ToolTip="Re-read TOC">
+                        ToolTip="Re-read Media">
                     <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets" FontSize="14"
                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                IsHitTestVisible="False"/>
@@ -896,41 +896,75 @@
                                 <StaticResource ResourceKey="RestoreContextMenu"/>
                                     </ListView.ContextMenu>
                                         </ListView>
-                                    </Grid>
-                                </GroupBox>
-                            </Grid>
 
-                            <!-- TOC Load Overlay - shown while reading TOC, cancellable for blank/new media.
-                                 Covers tree + splitter + content (not the log pane), same as the Operation
-                                 overlay below, so the TreeView selection cannot be changed mid-read. -->
-                            <Grid Grid.Column="0" Grid.ColumnSpan="3"
-                                  Background="#80000000"
-                                  Visibility="{Binding IsTOCLoadInProgress, Converter={StaticResource BoolToVis}}">
-                                <Border Background="White"
-                                        CornerRadius="8"
-                                        Padding="24"
-                                        HorizontalAlignment="Center"
-                                        VerticalAlignment="Center"
-                                        MinWidth="350">
-                                    <StackPanel>
-                                        <TextBlock Text="{Binding BusyMessage}"
-                                                   FontSize="14"
-                                                   FontWeight="SemiBold"
-                                                   HorizontalAlignment="Center"
-                                                   Margin="0,0,0,12"/>
+                            <!-- Calibration Cartridge Details (visible when a Calibration Cartridge node is selected) -->
+                            <DockPanel Visibility="{Binding IsCalibrationTableVisible, Converter={StaticResource BoolToVis}}">
 
-                                        <ProgressBar IsIndeterminate="True"
-                                                     Height="24"
-                                                     Margin="0,0,0,16"/>
+                                <!-- Modal "Inspect Media": reads the checkpoint trail and enriches the list below -->
+                                <Button DockPanel.Dock="Top"
+                                        Content="Inspect Media"
+                                        HorizontalAlignment="Left"
+                                        Margin="2,2,2,6" Padding="10,3"
+                                        Command="{Binding InspectCalibrationMediaCommand}"
+                                        ToolTip="Read the calibration checkpoint trail (resumable / complete / progress)"/>
 
-                                        <Button Content="Cancel"
-                                                Command="{Binding AbortTOCLoadCommand}"
-                                                IsEnabled="{Binding IsTOCCancelEnabled}"
-                                                HorizontalAlignment="Center"
-                                                Width="100"/>
-                                    </StackPanel>
-                                </Border>
-                            </Grid>
+                                <ListView ItemsSource="{Binding CalibrationPropertyList}"
+                                          IsEnabled="{Binding IsMediaBrowsingEnabled}"
+                                          VirtualizingPanel.IsVirtualizing="True"
+                                          VirtualizingPanel.VirtualizationMode="Recycling">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <Setter Property="Foreground"
+                                                    Value="{Binding HighlightLevel,
+                                                    Converter={x:Static converters:WarningLevelToBrushConverter.Instance}}" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                    <ListView.View>
+                                        <GridView>
+                                            <GridViewColumn Header="Property" Width="220"
+                                                            DisplayMemberBinding="{Binding Property}" />
+                                            <GridViewColumn Header="Value" Width="320"
+                                                            DisplayMemberBinding="{Binding Value}" />
+                                        </GridView>
+                                    </ListView.View>
+                                </ListView>
+                            </DockPanel>
+
+                    </Grid>
+                </GroupBox>
+            </Grid>
+
+            <!-- TOC Load Overlay - shown while reading TOC, cancellable for blank/new media.
+                    Covers tree + splitter + content (not the log pane), same as the Operation
+                    overlay below, so the TreeView selection cannot be changed mid-read. -->
+            <Grid Grid.Column="0" Grid.ColumnSpan="3"
+                    Background="#80000000"
+                    Visibility="{Binding IsTOCLoadInProgress, Converter={StaticResource BoolToVis}}">
+                <Border Background="White"
+                        CornerRadius="8"
+                        Padding="24"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        MinWidth="350">
+                    <StackPanel>
+                        <TextBlock Text="{Binding BusyMessage}"
+                                    FontSize="14"
+                                    FontWeight="SemiBold"
+                                    HorizontalAlignment="Center"
+                                    Margin="0,0,0,12"/>
+
+                        <ProgressBar IsIndeterminate="True"
+                                        Height="24"
+                                        Margin="0,0,0,16"/>
+
+                        <Button Content="Cancel"
+                                Command="{Binding AbortTOCLoadCommand}"
+                                IsEnabled="{Binding IsTOCCancelEnabled}"
+                                HorizontalAlignment="Center"
+                                Width="100"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
 
             <!-- Operation Overlay (Backup / Restore / Validate / Verify) - covers tree + splitter + content,
                  not the log pane, so the user cannot change the TreeView selection (which would mutate

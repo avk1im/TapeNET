@@ -21,35 +21,35 @@ public sealed class FclFormatOptions
     public static readonly FclFormatOptions MultiLine = new() { ConditionPerLine = true };
 
     /// <summary>
-    /// When <c>true</c>, each condition starts on a new line.
+    /// When <see langword="true"/>, each condition starts on a new line.
     /// Logical operators (<c>or</c>, <c>and</c>) appear at the beginning of
     /// continuation lines (SQL-style).
     /// </summary>
     public bool ConditionPerLine { get; init; }
 
     /// <summary>
-    /// When <c>true</c> (and <see cref="ConditionPerLine"/> is also <c>true</c>),
+    /// When <see langword="true"/> (and <see cref="ConditionPerLine"/> is also <see langword="true"/>),
     /// opening parentheses are placed on their own line (C-style braces).
-    /// When <c>false</c>, the opening parenthesis stays inline and the first
+    /// When <see langword="false"/>, the opening parenthesis stays inline and the first
     /// inner operand follows on the same line.
     /// </summary>
     public bool BracesOnNewLine { get; init; }
 
     /// <summary>
-    /// When <c>true</c>, uses word-form operators (<c>equals</c>, <c>greaterThan</c>).
-    /// When <c>false</c>, prefers symbolic operators where available (<c>==</c>, <c>&gt;</c>).
+    /// When <see langword="true"/>, uses word-form operators (<c>equals</c>, <c>greaterThan</c>).
+    /// When <see langword="false"/>, prefers symbolic operators where available (<c>==</c>, <c>&gt;</c>).
     /// </summary>
     public bool PreferWordOperators { get; init; } = true;
 
     /// <summary>
-    /// When <c>true</c>, absolute dates are formatted as ISO 8601 (<c>yyyy-MM-dd</c>).
-    /// When <c>false</c>, uses <see cref="System.Globalization.CultureInfo.CurrentCulture"/>.
+    /// When <see langword="true"/>, absolute dates are formatted as ISO 8601 (<c>yyyy-MM-dd</c>).
+    /// When <see langword="false"/>, uses <see cref="System.Globalization.CultureInfo.CurrentCulture"/>.
     /// </summary>
     public bool UseIso8601Dates { get; init; } = true;
 
     /// <summary>
     /// Number of spaces per indentation level (used inside groups
-    /// when <see cref="ConditionPerLine"/> is <c>true</c>).
+    /// when <see cref="ConditionPerLine"/> is <see langword="true"/>).
     /// </summary>
     public int IndentSize { get; init; } = 2;
 } // FclFormatOptions

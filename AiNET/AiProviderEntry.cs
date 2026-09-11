@@ -29,9 +29,9 @@ namespace AiNET;
 ///  overridden so several entries of the same kind stay distinguishable
 ///  (e.g. two Ollama boxes on different hosts).
 /// </param>
-/// <param name="IsBuiltIn"><c>true</c> for catalog-provided entries.</param>
+/// <param name="IsBuiltIn"><see langword="true"/> for catalog-provided entries.</param>
 /// <param name="IsEnabled">
-/// When <c>false</c> the entry is skipped entirely during discovery.
+/// When <see langword="false"/> the entry is skipped entirely during discovery.
 /// </param>
 /// <param name="SortOrder">
 /// Ascending probe/display priority. Gaps are permitted; the registry

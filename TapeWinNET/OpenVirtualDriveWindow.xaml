@@ -24,17 +24,20 @@
         <!-- Style for status indicator -->
         <Style x:Key="StatusTextStyle" TargetType="TextBlock">
             <Style.Triggers>
-                <DataTrigger Binding="{Binding ProbeStatus}" Value="ExistingFound">
-                    <Setter Property="Foreground" Value="Green"/>
+                <DataTrigger Binding="{Binding ProbeStatus}" Value="BackupFound">
+                    <Setter Property="Foreground" Value="{StaticResource WarningFg.Completed}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ProbeStatus}" Value="CalibrationFound">
+                    <Setter Property="Foreground" Value="{StaticResource WarningFg.Completed}"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding ProbeStatus}" Value="NewMedia">
                     <Setter Property="Foreground" Value="Gray"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding ProbeStatus}" Value="Probing">
-                    <Setter Property="Foreground" Value="Blue"/>
+                    <Setter Property="Foreground" Value="{StaticResource WarningFg.Info}"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding ProbeStatus}" Value="Error">
-                    <Setter Property="Foreground" Value="Red"/>
+                    <Setter Property="Foreground" Value="{StaticResource WarningFg.Error}"/>
                 </DataTrigger>
             </Style.Triggers>
         </Style>
@@ -57,6 +60,7 @@
         <Grid x:Name="HelpOverlayRoot" Grid.Column="0" Margin="16">
             <Grid.RowDefinitions>
                 <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
@@ -141,6 +145,7 @@
 
                     <CheckBox Grid.Row="3" 
                               Content="Enable Initiator Partition" 
+                              IsEnabled="{Binding IsCreateNewMode}"
                               IsChecked="{Binding EnableInitiatorPartition}"
                               Margin="0,0,0,4"/>
 
@@ -447,8 +452,11 @@
                 </Grid>
             </GroupBox>
 
-            <!-- Overwrite Warning -->
-            <Border Style="{StaticResource WarningPanelStyle}" Margin="0,0,0,12">
+            </StackPanel>
+            </ScrollViewer>
+
+            <!-- Warning panel - fixed outside scroll area so it's always visible -->
+            <Border Grid.Row="1" Style="{StaticResource WarningPanelStyle}" Margin="0,12,0,0">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
                                FontSize="14" Margin="0,0,8,0"/>
@@ -458,11 +466,8 @@
                 </StackPanel>
             </Border>
 
-            </StackPanel>
-            </ScrollViewer>
-
             <!-- Buttons - Cancel left of Action, Action rightmost (consistent with other dialogs) -->
-            <Grid Grid.Row="1" Margin="0,12,0,0">
+            <Grid Grid.Row="2" Margin="0,12,0,0">
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
                     <Button x:Name="HelpButton"
                             Content="_Help ▶"

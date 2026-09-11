@@ -20,7 +20,7 @@ internal enum WriteBackendStatus
 ///  as advancing by exactly this value; the underlying drive's count is authoritative.
 /// </param>
 /// <param name="EomEncountered">
-///  <c>true</c> when the drive reported end-of-media during this write. EOM is a
+///  <see langword="true"/> when the drive reported end-of-media during this write. EOM is a
 ///  status, not an exception: <see cref="BlocksWritten"/> may be non-zero.
 /// </param>
 /// <param name="Exception">
@@ -36,7 +36,7 @@ internal readonly record struct WriteResult(
     /// <summary>Sentinel "nothing was in flight" result returned by idempotent <see cref="ITapeWriteBackend.AwaitCompletion"/> calls.</summary>
     public static WriteResult Empty => default;
 
-    /// <summary><c>true</c> when no exception occurred (EOM alone is not a failure).</summary>
+    /// <summary><see langword="true"/> when no exception occurred (EOM alone is not a failure).</summary>
     public bool Succeeded => Exception is null;
 }
 

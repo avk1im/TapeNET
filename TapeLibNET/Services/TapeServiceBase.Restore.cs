@@ -133,6 +133,17 @@ public partial class TapeServiceBase
                 LogOk($"TOC restored with {toc.Count} backup set(s)");
             }
 
+            // §10.6: verify the loaded media matches the TOC we'll restore from. RefreshLoadedHeader uses the
+            //  live restore agent, so its navigator also becomes header-aware for the content reads that follow.
+            bool suppress = request.SkipVolumeCheck;
+            RefreshLoadedHeader();
+            {
+                var v0 = EvaluateLoadedHeader(expectedSeriesId: toc.MediaId, expectedVolume: toc.Volume);
+                var c0 = PresentVerdict(v0, MediaPromptContext.VerifyRestore, suppress);
+                if (c0 == MediaMismatchChoice.Abort) return MakeResult(aborted: true);
+                if (c0 == MediaMismatchChoice.ProceedAlways) suppress = true;
+            }
+
             var setIndexes = request.CheckedFilesBySet.Keys.OrderBy(i => i).ToList();
 
             // Apply the optional FCL/wildcard selection filter to any entry whose value
@@ -246,61 +257,74 @@ public partial class TapeServiceBase
                     break;
                 }
 
-                // Step 2: Eject the current volume
-                LogInfo("Ejecting media...");
-                OnStatusUpdate("Ejecting media...");
-                if (!_drive.UnloadMedia())
-                    throw new InvalidOperationException($"Couldn't eject media: {_drive.LastErrorMessage}");
-                LogOk($"Volume #{toc.Volume} ejected");
-
-                // Step 3: Ask user to insert the required volume (WPF: shows dialog /
-                //  opens virtual-drive picker; CLI: simple confirm)
-                if (!_host.OnInsertMediaConfirm(volumeNeeded, request.Mode))
+                // Steps 2–5: eject, insert, load, verify identity. Retry re-runs the cycle.
+                bool cancelled = false;
+                do
                 {
-                    LogInfo("User cancelled media insertion");
+                    // Step 2: Eject the current volume
+                    LogInfo("Ejecting media...");
+                    OnStatusUpdate("Ejecting media...");
+                    if (!_drive.UnloadMedia())
+                        throw new InvalidOperationException($"Couldn't eject media: {_drive.LastErrorMessage}");
+                    LogOk($"Volume #{toc.Volume} ejected");
+
+                    // Step 3: Ask user to insert the required volume
+                    if (!_host.OnInsertMediaConfirm(volumeNeeded, request.Mode))
+                    {
+                        LogInfo("User cancelled media insertion");
+                        cancelled = true;
+                        break;
+                    }
+
+                    // Step 4: Load and prepare the new media (with load-retry)
+                    LogInfo("Loading media...");
+                    OnStatusUpdate("Loading media...");
+                    const int maxLoadAttempts = 2;
+                    bool mediaLoaded = false;
+                    for (int attempt = 1; attempt <= maxLoadAttempts && !mediaLoaded; attempt++)
+                    {
+                        bool loadOk = _drive.ReloadMedia();
+                        string loadErr = _drive.LastErrorMessage;
+                        if (loadOk && !_drive.PrepareMedia())
+                        {
+                            loadOk = false;
+                            loadErr = _drive.LastErrorMessage;
+                        }
+                        if (loadOk)
+                        {
+                            mediaLoaded = true;
+                        }
+                        else
+                        {
+                            LogErr($"Couldn't load media: {loadErr}");
+                            bool retryLoad = attempt < maxLoadAttempts
+                                && _host.OnMediaLoadRetryConfirm(loadErr, attempt > 1);
+                            if (!retryLoad)
+                                throw new InvalidOperationException($"Couldn't load media: {loadErr}");
+                            LogInfo("Retrying media load...");
+                            OnStatusUpdate("Loading media...");
+                        }
+                    }
+
+                    // Step 5 (§10.6): verify the inserted volume — re-read per volume. A legacy (header-less)
+                    //  volume classifies Unidentified → proceeds silently, so mixed headed/headless series work.
+                    RefreshLoadedHeader();
+                    var cvChoice = PresentVerdict(
+                        EvaluateLoadedHeader(expectedSeriesId: toc.MediaId, expectedVolume: volumeNeeded),
+                        MediaPromptContext.VerifyRestore, suppress, allowRetry: true);
+
+                    if (cvChoice == MediaMismatchChoice.Abort) { cancelled = true; break; }
+                    if (cvChoice == MediaMismatchChoice.Retry) continue;
+                    if (cvChoice == MediaMismatchChoice.ProceedAlways) suppress = true;
                     break;
-                }
-
-                // Step 4: Load and prepare the new media (with retry)
-                LogInfo("Loading media...");
-                OnStatusUpdate("Loading media...");
-
-                const int maxLoadAttempts = 2;
-                bool mediaLoaded = false;
-                for (int attempt = 1; attempt <= maxLoadAttempts && !mediaLoaded; attempt++)
-                {
-                    bool loadOk    = _drive.ReloadMedia();
-                    string loadErr = _drive.LastErrorMessage;
-
-                    if (loadOk && !_drive.PrepareMedia())
-                    {
-                        loadOk  = false;
-                        loadErr = _drive.LastErrorMessage;
-                    }
-
-                    if (loadOk)
-                    {
-                        mediaLoaded = true;
-                    }
-                    else
-                    {
-                        LogErr($"Couldn't load media: {loadErr}");
-
-                        bool retry = attempt < maxLoadAttempts
-                            && _host.OnMediaLoadRetryConfirm(loadErr, attempt > 1);
-
-                        if (!retry)
-                            throw new InvalidOperationException($"Couldn't load media: {loadErr}");
-
-                        LogInfo("Retrying media load...");
-                        OnStatusUpdate("Loading media...");
-                    }
-                }
+                } while (true);
+                if (cancelled)
+                    break; // exit the multi-volume continuation loop
 
                 LogOk($"Media loaded, continuing {modeName.ToLowerInvariant()}...");
                 OnStatusUpdate($"{modeName} files...");
 
-                // Step 5: Resume restore on the new volume
+                // Step 6: Resume restore on the new volume
                 _drive.IoTimeCounterUs = 0; // reset I/O time counter for this volume
                 dataTimer.Restart();
                 success = agent.ResumeRestoreFromAnotherVolume();

@@ -227,7 +227,7 @@ internal sealed class ProbingCompressionStream : Stream
     ///   Call <see cref="Session.ResetBuffers"/> before constructing each instance, or pass
     ///   <paramref name="resetSession"/><c>=true</c> to have the constructor do it.</param>
     /// <param name="level">ZSTD compression level; passed to <see cref="Session.GetOrUpdateCodec"/>.</param>
-    /// <param name="resetSession">When <c>true</c> (default), the constructor calls
+    /// <param name="resetSession">When <see langword="true"/> (default), the constructor calls
     ///   <see cref="Session.ResetBuffers"/> automatically.</param>
     internal ProbingCompressionStream(Stream inner, Session session, int level, bool resetSession = true)
     {

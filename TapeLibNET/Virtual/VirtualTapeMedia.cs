@@ -346,7 +346,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
     /// <summary>
     /// Validate the invariant the "<see cref="m_bytesWritten"/> == <see cref="CalculateStreamLength()"/>".
-    /// Recommended after operations modifying media content. Only active in DEBUG builds.
+    /// Recommended after operations modifying media content. Only active in <c>DEBUG</c> builds.
     /// </summary>
     [Conditional("DEBUG")]
     private void AssertByteTotalConsistent() =>
@@ -687,23 +687,20 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         SyncVirtualBlockIndex();
         AccumulateOdometer(fromBlock, block);
 
-        // Position stream if we're inside a data block
-        if (m_currentVirtualBlockIndex < m_virtualBlocks.Count)
+        // Position the backing stream to match the logical block, so a subsequent read/write
+        //  operates at the correct byte offset. CurrentPositionBytes() is authoritative for ALL
+        //  cases — inside a data block, on a mark, and at EOD (== m_bytesWritten). The previous
+        //  "only if inside a data block" check left the stream stale at EOD (and on a mark), so a
+        //  write at EOD landed at the prior position (e.g. block 0), clobbering earlier data.
+        try
         {
-            var vb = m_virtualBlocks[m_currentVirtualBlockIndex];
-            if (!vb.IsMark && vb.ContainsBlock(block))
-            {
-                try
-                {
-                    m_stream.Position = vb.GetStreamOffsetForBlock(block);
-                }
-                catch (Exception ex)
-                {
-                    SetError(ex);
-                    LogErrorAsDebug("Stream seek failed");
-                    return false;
-                }
-            }
+            m_stream.Position = CurrentPositionBytes();
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            LogErrorAsDebug("Stream seek failed");
+            return false;
         }
 
         return true;

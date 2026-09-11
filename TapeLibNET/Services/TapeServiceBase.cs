@@ -11,6 +11,51 @@ using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Services;
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Naming vocabulary — one verb per lifecycle stage (keep new names consistent!)
+// ─────────────────────────────────────────────────────────────────────────────
+//  Stage                        Verb              Meaning
+//  ---------------------------  ----------------  ------------------------------------------------
+//  Drive handle                 Open / Close      acquire / release the drive
+//  Medium presence              Load / Eject      insert / remove the cartridge in the drive
+//  Medium identity + content    Identify          read the BOM header, then dispatch:
+//                                                   load TOC  OR  report calibration
+//  On-tape TOC read (sub-step)  Restore           recover the TOC from tape into memory
+//                                                   (established domain term)
+//  TOC <-> file                 Import / Export    .tapetoc round-trip
+//  New medium                   Format            erase + write initial TOC / header
+//  Calibration probe            Inspect           read the calibration checkpoint trail
+//  Redisplay, no I/O            Refresh (view)    rebuild the selected pane from in-memory data
+//  Reload content, with I/O     Reload            re-fetch the medium's content into the views
+//
+//  Two rules that resolve most prior confusion:
+//   1. "Identify" is the umbrella and CONTAINS a "Restore TOC" sub-step — hence
+//      IdentifyMedia* replaces the clumsy *TOCOrCalibration* names, while the
+//      low-level Restore(TOC) stays the TOC-only read it already is.
+//   2. "Refresh" != "Reload": Refresh is pure in-memory redisplay (no tape I/O);
+//      Reload does tape I/O.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Outcome of <see cref="RestoreTOCOrCalibrationAsync"/> — lets the app react to each recognized
+///  media kind explicitly (show the TOC, show a calibration pane, or flag unidentified media)
+///  without conflating them into a single success/failure bool.
+/// </summary>
+public enum IdentifyMediaOutcome
+{
+    /// <summary>Backup media identified (or the user opted to search): the TOC was read into <see cref="TOC"/>.</summary>
+    TocLoaded,
+
+    /// <summary>A calibration cartridge — no TOC exists; its details were surfaced instead.</summary>
+    CalibrationMedia,
+
+    /// <summary>No recognizable header and the user declined the end-of-data TOC search.</summary>
+    Unidentified,
+
+    /// <summary>A genuine failure preparing the media or reading a TOC that should have been present.</summary>
+    Failed,
+}
+
 // ── TapeServiceBase ───────────────────────────────────────────────────────────
 
 /// <summary>
@@ -379,7 +424,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 DriveNumber = driveNumber;
                 LogOk($"Drive {driveNumber} opened successfully");
                 LogInfoSub($"Device name: {_drive.DriveDeviceName}");
-                AutoLoadCalibrations();
+                // AutoLoadCalibrations();
+                    // NOT needed here; much rather will be done upon loading media in LoadMediaAsync() when the media identity / capacity is known.
                 _host.OnServiceStateChanged(ServiceStateChange.DriveOpened);
                 return true;
             }
@@ -434,7 +480,10 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 LogOk("Media loaded successfully");
                 LogMediaInfo();
-                // The profile key depends on the medium's capacity bucket, so re-match on every load.
+
+                RefreshLoadedHeader();     // §10.2 — cheap BOM probe so identity is known at load (UI + later ops)
+
+                // The claibration profile key depends on the medium's capacity bucket, so re-match on every load.
                 AutoLoadCalibrations();
                 _host.OnServiceStateChanged(ServiceStateChange.MediaLoaded);
                 return true;
@@ -493,6 +542,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         _agent?.Dispose();
         _agent = null;
         _toc = null;
+        _loadedHeader = null;   // identity is tied to the loaded media/TOC
+        _loadedCalibrationInfo = null; // always clear along with the header
         IsTOCFromFile = false;
         TOCFilePath = null;
     }
@@ -903,6 +954,31 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     }
 
     /// <summary>
+    /// Logs everything the loaded calibration run header reveals — the CLI counterpart of the WPF
+    ///  calibration property pane. Uses only the BOM header (profile, capacity, plan), so it needs no
+    ///  checkpoint read; a richer, resumability-aware view is available via
+    ///  <see cref="InspectCalibrationForRecalibrationAsync"/>.
+    /// </summary>
+    protected virtual void LogCalibrationInfo()
+    {
+        if (_loadedHeader is not TapeCalibrationHeader cal)
+            return;
+
+        LogInfo("Calibration cartridge (no backup TOC)");
+        LogInfoSub($"Profile key: >{cal.ProfileKey}<");
+        LogInfoSub($"Run id: {cal.RunId:N}");
+        LogInfoSub($"Started: {cal.StartedUtc:u}");
+        LogInfoSub($"Reported capacity at BOM: {Helpers.BytesToStringLong(cal.CapacityReportedAtBom)}");
+
+        var plan = cal.Plan;
+        LogInfoSub($"Planned samples: {plan.SampleCount:N0} (body {plan.BodySampleCount:N0}, tail {plan.TailSampleCount:N0})");
+        LogInfoSub($"Planned checkpoints: {plan.NumCheckpoints:N0}");
+        LogInfoSub($"Run block size: {Helpers.BytesToStringLong(cal.RunBlockSize)}");
+    }
+
+
+
+    /// <summary>
     /// Creates a file filter from a list of raw patterns (e.g. wildcards or FCL
     ///  expressions) when <see cref="ListRequest.Filter"/> is not supplied.
     /// Base returns <see langword="null"/> (no filtering); app subclasses that have
@@ -948,7 +1024,12 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             agent.IsAbortRequested = true;
     }
 
-    /// <summary>Restores the TOC from tape into <see cref="TOC"/>.</summary>
+    /// <summary>
+    /// Restores the TOC from tape into <see cref="TOC"/>.
+    /// <para>
+    /// For newer, more versatile version, see <seealso cref="IdentifyMediaAsync"/>.
+    /// </para>
+    /// </summary>
     public Task<bool> RestoreTOCAsync()
     {
         _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
@@ -1019,6 +1100,145 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         }, OperationCancellationToken);
     }
 
+    // ── Load-TOC-or-Calibration: the header-gated media identification entry point ─────────────
+    //  Delivers objective #1 — stop CHURNING to end-of-data hunting for a TOC that isn't there.
+    //  The cheap BOM header probe (RefreshLoadedHeader) decides:
+    //    • media header      → identified backup media; the EOD TOC seek is justified → read it.
+    //    • calibration header→ NO TOC exists; report the cartridge, DO NOT seek.
+    //    • no header (null)  → legacy backup (HAS a TOC) vs blank/foreign (the churn); ASK the user.
+    //  The legacy bool RestoreTOCAsync() is left untouched (it unconditionally reads the TOC, as many
+    //   tests rightfully expect); apps that want the smart behavior call this method instead.
+
+    /// <summary>
+    /// Identifies the loaded medium from its BOM header and, for backup media, reads the TOC — WITHOUT
+    ///  the historical churn: a calibration cartridge is reported (never seeked to EOD), and truly
+    ///  unidentified media prompts (warning severity) before any costly search.
+    /// </summary>
+    /// <remarks>
+    /// The header was written at format/backup time, so this is a one-block read at BOM. Apps should call
+    ///  this instead of <c>RestoreTOCAsync</c> on media load, then switch on the returned outcome.
+    /// </remarks>
+    public Task<IdentifyMediaOutcome> IdentifyMediaAsync()
+    {
+        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
+
+        return Task.Run(async () =>
+        {
+            await _operationLock.WaitAsync().ConfigureAwait(false);
+
+            try
+            {
+                if (_drive is null || !_drive.IsMediaLoaded)
+                {
+                    LastError = "Media not loaded";
+                    return IdentifyMediaOutcome.Failed;
+                }
+
+                LogInfo("Preparing media...");
+                if (!_drive.PrepareMedia())
+                {
+                    LastError = _drive.LastErrorMessage;
+                    LogErr($"Couldn't prepare media. Error: {LastError}");
+                    return IdentifyMediaOutcome.Failed;
+                }
+
+                // Cheap BOM identity probe. Dispose any stale agent first so the probe uses a fresh
+                //  throwaway; the real TOC-reading agent is created below only if we proceed to a read.
+                _agent?.Dispose();
+                _agent = null;
+                RefreshLoadedHeader();
+
+                switch (_loadedHeader)
+                {
+                    case TapeCalibrationHeader:
+                        // No TOC on a calibration cartridge — never seek to EOD. Report it and stop.
+                        _toc = null;
+                        // Log just two lines isntead if full LogCalibrationInfo() -- done either by service.list or by main window display
+                        LogInfo($"Calibration cartridge — no backup TOC");
+                        if (_loadedHeader is TapeCalibrationHeader cal)
+                            LogInfoSub($"Calibration profile >{cal.ProfileKey}<");
+                        OnStatusUpdate("Calibration cartridge");
+                        _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
+                        return IdentifyMediaOutcome.CalibrationMedia;
+
+                    case null:
+                        // Unidentified: could be a legacy backup (has a TOC) or blank/foreign (no TOC).
+                        //  We can't tell without the seek, so ASK — a warning, since "yes" may be a long,
+                        //  fruitless search. Non-interactive hosts return Proceed (legacy behavior).
+                        var choice = PresentVerdict(
+                            TapeMediaVerdict.Unidentified, MediaPromptContext.SearchForTOC,
+                            suppress: false, allowRetry: false, allowProceedAlways: false);
+
+                        if (choice == MediaMismatchChoice.Abort)
+                        {
+                            _toc = null;
+                            LogInfo("Unidentified media — TOC search skipped");
+                            OnStatusUpdate("Unidentified media");
+                            return IdentifyMediaOutcome.Unidentified;
+                        }
+
+                        break;   // Proceed → search for the TOC below
+
+                    default:
+                        // TapeMediaHeader (identified backup media): the EOD TOC seek is justified.
+                        break;
+                }
+
+                // ── Identified backup media, or the user chose to search: read the TOC ──
+                LogInfo("Restoring TOC...");
+                OnStatusUpdate("Reading TOC...");
+
+                _agent = new TapeFileAgent(_drive, null);
+
+                // Bridge OperationCancellationToken → agent abort flag (CLI Ctrl+C).
+                var ct = OperationCancellationToken;
+                using var ctReg = ct.Register(() =>
+                {
+                    var a = _agent;
+                    if (a is not null) a.IsAbortRequested = true;
+                });
+
+                var tocResult = _agent.RestoreTOC();
+                if (!tocResult)
+                {
+                    LastError = tocResult.ErrorMessage;
+                    LogErr($"Couldn't restore TOC. Error: {tocResult.ErrorMessage}");
+                    return IdentifyMediaOutcome.Failed;
+                }
+
+                _toc = _agent.TOC;
+                IsTOCFromFile = false;
+                TOCFilePath = null;
+
+                LogOk($"TOC restored with {_toc.Count} backup set(s)");
+                LogTOCInfo();
+                OnStatusUpdate($"TOC loaded: {_toc.Count} backup set(s)");
+                _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
+
+                return IdentifyMediaOutcome.TocLoaded;
+            }
+            catch (RpcException rpc)
+            {
+                LastError = FormatRpcError(rpc);
+                LogErr($"gRPC error loading TOC: {LastError}");
+                return IdentifyMediaOutcome.Failed;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                LogErr($"Exception loading TOC: {ex.Message}");
+                return IdentifyMediaOutcome.Failed;
+            }
+            finally
+            {
+                _agent?.Dispose();
+                _agent = null;
+                _operationLock.Release();
+                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
+            }
+        }, OperationCancellationToken);
+    }
+
     /// <summary>
     /// Creates and saves an initial empty TOC
     /// Should be called after <see cref="LoadMediaAsync"/> for new virtual media.
@@ -1077,6 +1297,147 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             }
         });
     }
+
+    #region Media-identity header state
+
+    /// <summary>
+    /// The BOM header of the currently loaded media (media or calibration kind), or
+    ///  <see langword="null"/> when the cartridge is blank, legacy, or foreign. Read once per media
+    ///  (re)load by <see cref="RefreshLoadedHeader"/> and interpreted per operation.
+    /// </summary>
+    protected TapeHeader? _loadedHeader;
+
+    /// <summary>The loaded media's BOM header (any kind), or null. See <see cref="RefreshLoadedHeader"/>.</summary>
+    public TapeHeader? LoadedHeader => _loadedHeader;
+
+    /// <summary>The loaded media header, or null when the BOM header is a different kind / absent.</summary>
+    public TapeMediaHeader? LoadedMediaHeader => _loadedHeader as TapeMediaHeader;
+
+    /// <summary>
+    /// Reads and classifies the loaded media's BOM header into <see cref="_loadedHeader"/> — one cheap
+    ///  block read. Non-throwing: any failure leaves it <see langword="null"/>. Prefers the live
+    ///  <see cref="_agent"/> when present, so the agent that OWNS the navigator is the one moving the
+    ///  tape (keeping its presence + position coherent — §17.7); otherwise a throwaway probe agent.
+    /// </summary>
+    /// <remarks>
+    /// PRECONDITION: this MOVES the tape (rewinds to BOM). Call only at load / reload / between-volumes
+    ///  — never mid-stream. The caller must already hold <see cref="_operationLock"/>.
+    /// </remarks>
+    protected void RefreshLoadedHeader()
+    {
+        // This cleanup covers every reload path — LoadMediaAsync, FormatMediaAsync, ImportTOCFromFileAsync,
+        //  IdentifyMediaAsync, and the calibrate - retry loop — since they all funnel through here.
+        _loadedHeader = null;
+        _loadedCalibrationInfo = null; // a fresh header read means any prior Inspect is stale
+
+        if (_drive is null || !_drive.IsMediaLoaded)
+            return;
+
+        try
+        {
+            // A header read needs prepared media (mirrors RestoreTOCAsync); PrepareMedia is idempotent.
+            if (!_drive.PrepareMedia())
+                return;
+
+            if (_agent is not null)
+            {
+                _loadedHeader = _agent.ReadHeader();
+            }
+            else
+            {
+                using var probe = new TapeFileAgent(_drive, _toc ?? new TapeTOC());
+                _loadedHeader = probe.ReadHeader();
+            }
+
+            if (_loadedHeader is not null)
+                LogInfoSub($"Media identity: {_loadedHeader}");   // trace-level surfacing only
+        }
+        catch
+        {
+            // Never let an identity probe break the enclosing operation.
+            _loadedHeader = null;
+        }
+    }
+
+    #endregion
+
+    #region Verdict & presentation
+
+    // ── Step 9b — media-identity header state & verdict machinery (§10) ────────────
+    //  Agent WRITES headers (mechanism, D21); these methods are the service's side: it READS the loaded
+    //  media's BOM header once per (re)load, judges it per operation, and drives the host prompt. It
+    //  NEVER WRITES a header itself.
+
+    /// <summary>
+    /// Judges the loaded media's identity for identity-VERIFYING contexts (restore / append).
+    ///  <see cref="TapeMediaVerdict.Match"/> and <see cref="TapeMediaVerdict.Unidentified"/> are benign
+    ///  (never prompted); the three positive mismatches are surfaced.
+    /// </summary>
+    /// <param name="expectedSeriesId">The MediaId we expect, or null to skip the series check.</param>
+    /// <param name="expectedVolume">The volume number we expect, or null to skip the volume check.</param>
+    protected TapeMediaVerdict EvaluateLoadedHeader(Guid? expectedSeriesId = null, int? expectedVolume = null)
+        => _loadedHeader switch
+        {
+            null => TapeMediaVerdict.Unidentified,
+            TapeCalibrationHeader => TapeMediaVerdict.WrongKind,
+            TapeMediaHeader m when expectedSeriesId is { } s && m.MediaId != s => TapeMediaVerdict.MediaIdMismatch,
+            TapeMediaHeader m when expectedVolume is { } v && m.Volume != v => TapeMediaVerdict.WrongVolume,
+            _ => TapeMediaVerdict.Match,
+        };
+
+    /// <summary>
+    /// Culture-neutral label for a verdict, used in LOG lines only. The host builds the localized
+    ///  user-facing prompt from the verdict enum + context (never from this string).
+    /// </summary>
+    protected static string VerdictToString(TapeMediaVerdict verdict) => verdict switch
+    {
+        TapeMediaVerdict.Match => "Match",
+        TapeMediaVerdict.Unidentified => "Unidentified",
+        TapeMediaVerdict.WrongKind => "Wrong kind",
+        TapeMediaVerdict.MediaIdMismatch => "Media ID mismatch",
+        TapeMediaVerdict.WrongVolume => "Wrong volume",
+        TapeMediaVerdict.MediaInconsistent => "Media inconsistent",
+        _ => $"Unknown ({(int)verdict})",
+    };
+
+    /// <summary>
+    /// Central presenter for an identity verdict. <see cref="TapeMediaVerdict.Match"/> /
+    ///  <see cref="TapeMediaVerdict.Unidentified"/> proceed silently; a suppressed check proceeds
+    ///  (logged); otherwise the host is prompted. <see cref="MediaMismatchChoice.Retry"/> is handled by
+    ///  the caller's own eject/insert loop.
+    /// </summary>
+    /// <param name="verdict">The identity judgment to present.</param>
+    /// <param name="context">What the user is proceeding into — drives the host's wording/severity.</param>
+    /// <param name="suppress">When true, proceed without prompting (opt-out flag or a prior ProceedAlways).</param>
+    /// <param name="allowRetry">Offer Retry — only where eject/insert machinery exists (continuation loops).</param>
+    /// <param name="allowProceedAlways">Offer "Always proceed" — false for one-off ops (e.g. import).</param>
+    protected MediaMismatchChoice PresentVerdict(
+        TapeMediaVerdict verdict,
+        MediaPromptContext context,
+        bool suppress,
+        bool allowRetry = false,
+        bool allowProceedAlways = true)
+    {
+        // Match is always benign. Unidentified is benign for identity-VERIFY contexts (backup/restore/import),
+        //  but under SearchForTOC it is precisely the case we must ask about — do the lengthy EOD seek or not?
+        bool benign = verdict == TapeMediaVerdict.Match
+            || (verdict == TapeMediaVerdict.Unidentified && context != MediaPromptContext.SearchForTOC);
+        if (benign)
+            return MediaMismatchChoice.Proceed;
+
+        string text = _loadedHeader?.ToString() ?? "Unidentified media";
+
+        if (suppress)
+        {
+            LogWarn($"Media check ({VerdictToString(verdict)} / {context}) suppressed — proceeding: {text}");
+            return MediaMismatchChoice.Proceed;
+        }
+
+        LogWarn($"Media check ({VerdictToString(verdict)} / {context}): {text}");
+        return _host.OnMediaMismatchConfirm(text, verdict, context, allowRetry, allowProceedAlways);
+    }
+
+    #endregion
 
     /// <summary>
     /// Formats the media
@@ -1137,6 +1498,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     LogWarn($"Couldn't reload media after format. Error: {LastError}");
                 }
 
+                RefreshLoadedHeader();     // we just wrote the new header -> cache the fresh identity
+
                 LogOk($"Media formatted: {description}");
                 LogMediaInfo();
                 OnStatusUpdate("Media formatted");
@@ -1195,6 +1558,27 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 }
 
                 _toc = _agent.TOC;
+
+                // Now compare the media header with the loaded _toc acc. to
+                //  verify-and-adopt-Volume-not-MediaId reconciliation (§10.8).
+                //  Import has media presence as optional, so we guard on IsMediaLoaded:
+                if (_drive.IsMediaLoaded)
+                {
+                    RefreshLoadedHeader();
+                    var choice = PresentVerdict(
+                        EvaluateLoadedHeader(expectedSeriesId: _toc.MediaId, expectedVolume: _toc.Volume),
+                        MediaPromptContext.ImportToc, suppress: false, allowProceedAlways: false); // ProceedAlways is disallowed (one-off)
+                    if (choice == MediaMismatchChoice.Abort)
+                    {
+                        LastError = "Import cancelled — media does not match the imported TOC";
+                        return false;
+                    }
+                    // On Proceed: adopt the mounted volume's number (FUNCTIONAL — restore positions by TOC.Volume),
+                    //  but NOT its MediaId (adopting would hide a wrong-tape error inside a good TOC — §10.8).
+                    if (_loadedHeader is TapeMediaHeader imh)
+                        _toc.Volume = imh.Volume;
+                }
+
                 IsTOCFromFile = true;
                 TOCFilePath = filePath;
                 LogOk($"TOC imported from file with {_toc.Count} backup set(s)");

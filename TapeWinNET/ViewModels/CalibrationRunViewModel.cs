@@ -151,7 +151,7 @@ public sealed class CalibrationRunViewModel : ViewModelBase
 
         try
         {
-            InspectCalibrationMediaResult result = await _tapeService.ExecuteInspectCalibrationMediaAsync();
+            InspectCalibrationMediaResult result = await _tapeService.InspectCalibrationForRecalibrationAsync();
 
             InspectionSummary = result.Success
                 ? result.Summary

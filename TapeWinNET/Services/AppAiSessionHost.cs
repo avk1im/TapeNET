@@ -82,7 +82,7 @@ public sealed class AppAiSessionHost : IAsyncDisposable
     /// <summary>
     /// Returns the current session, building it on first call.
     /// If the user has already declined setup, returns <c>null</c> immediately.
-    /// Pass <paramref name="promptUser"/> = <c>false</c> to suppress any UI prompt
+    /// Pass <paramref name="promptUser"/> = <see langword="false"/> to suppress any UI prompt
     /// (silent mode — returns <c>null</c> if not yet built).
     /// </summary>
     public async Task<IAiSession?> EnsureAsync(

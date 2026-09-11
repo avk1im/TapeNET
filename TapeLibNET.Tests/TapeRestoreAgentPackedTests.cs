@@ -1,6 +1,11 @@
-﻿using TapeLibNET.Tests.Helpers;
+﻿using Microsoft.Extensions.Logging;
+using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
+
+
+public sealed class TapeRestoreAgentPackedTests_Headerless : TapeRestoreAgentPackedTestsBase { protected override bool WithMediaHeader => false; }
+public sealed class TapeRestoreAgentPackedTests_Headed : TapeRestoreAgentPackedTestsBase { protected override bool WithMediaHeader => true; }
 
 /// <summary>
 /// Round-trip (Backup → Restore) tests for the packed (shared-block) path
@@ -23,8 +28,25 @@ namespace TapeLibNET.Tests;
 /// in the validate and verify subclasses behave correctly.
 /// </para>
 /// </summary>
-public class TapeRestoreAgentPackedTests
+public abstract class TapeRestoreAgentPackedTestsBase
 {
+    #region *** Media Header ***
+
+    /// <summary>Subclasses fix whether the produced fixture writes a media header.</summary>
+    protected abstract bool WithMediaHeader { get; }
+
+    /// <summary>Fixture factory mirroring the ctor; injects the header axis. All tests funnel through here.</summary>
+    protected VirtualTapeFixture CreateFixture(
+        DriveProfile profile = DriveProfile.Setmarks,
+        long contentCapacity = VirtualTapeFixture.DefaultContentCapacity,
+        ILoggerFactory? loggerFactory = null,
+        string mediaDescription = "Test Media",
+        bool useMemoryMap = false)
+        => new(profile, contentCapacity, loggerFactory, mediaDescription, useMemoryMap,
+               withMediaHeader: WithMediaHeader);
+
+    #endregion // Media Header
+
     #region *** Test Data ***
 
 #pragma warning disable CA1825 // Avoid zero-length array allocations
@@ -152,7 +174,7 @@ public class TapeRestoreAgentPackedTests
         using var tree = new TempFileTree();
         tree.AddFile("solo.dat", 4096);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         BackupPackedAndSaveTOC(fixture, tree.Files, "Packed Single Restore");
 
         string restoreDir = MakeRestoreDir();
@@ -180,7 +202,7 @@ public class TapeRestoreAgentPackedTests
         using var tree = new TempFileTree();
         tree.AddFiles("packed_rt", count: 12, minSize: 100, maxSize: 8 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         BackupPackedAndSaveTOC(fixture, tree.Files, $"Packed RT Hash={hash}", hash);
 
         string restoreDir = MakeRestoreDir();
@@ -214,7 +236,7 @@ public class TapeRestoreAgentPackedTests
         for (int i = 0; i < count; i++)
             tree.AddFile($"tiny_{i:D3}.dat", size);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         BackupPackedAndSaveTOC(fixture, tree.Files, "Packed Tiny RT");
 
         // Sanity: at least one pair of files should share a tape block, otherwise
@@ -267,7 +289,7 @@ public class TapeRestoreAgentPackedTests
         tree.AddFile("big.dat", 96 * 1024);
         tree.AddFile("tiny_e.dat", 75);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         BackupPackedAndSaveTOC(fixture, tree.Files, "Packed Mixed RT");
 
         string restoreDir = MakeRestoreDir();
@@ -297,7 +319,7 @@ public class TapeRestoreAgentPackedTests
         using var tree = new TempFileTree();
         tree.AddEdgeCases(blockSize: 16 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         BackupPackedAndSaveTOC(fixture, tree.Files, "Packed Edge RT");
 
         string restoreDir = MakeRestoreDir();
@@ -337,7 +359,7 @@ public class TapeRestoreAgentPackedTests
         tree.AddFile("d.dat", 32 * 1024);
         tree.AddFile("e.dat", 75);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         BackupPackedAndSaveTOC(fixture, tree.Files, "Packed Reload RT");
 
         // Reload TOC from tape — restore must use the deserialized addresses.
@@ -385,7 +407,7 @@ public class TapeRestoreAgentPackedTests
         tree.AddFile("keep_04.dat", 5 * 1024);
         tree.AddFile("skip_04.log", 6 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         BackupPackedAndSaveTOC(fixture, tree.Files, "Packed Selective RT");
 
         string restoreDir = MakeRestoreDir();
@@ -440,7 +462,7 @@ public class TapeRestoreAgentPackedTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("set2", count: 6, minSize: 200, maxSize: 6 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         BackupPackedAndSaveTOC(fixture, tree1.Files, "Packed Set 1", TapeHashAlgorithm.Crc64);
         BackupPackedAndSaveTOC(fixture, tree2.Files, "Packed Set 2", TapeHashAlgorithm.XxHash3);
 
@@ -493,7 +515,7 @@ public class TapeRestoreAgentPackedTests
         using var tree = new TempFileTree();
         tree.AddFiles("packed_validate", count: 10, minSize: 100, maxSize: 4 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         BackupPackedAndSaveTOC(fixture, tree.Files, $"Packed Validate Hash={hash}", hash);
 
         fixture.TOC.CurrentSetIndex = 1;
@@ -514,7 +536,7 @@ public class TapeRestoreAgentPackedTests
         using var tree = new TempFileTree();
         tree.AddFiles("packed_verify", count: 10, minSize: 100, maxSize: 4 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         BackupPackedAndSaveTOC(fixture, tree.Files, $"Packed Verify Hash={hash}", hash);
 
         fixture.TOC.CurrentSetIndex = 1;
@@ -543,7 +565,7 @@ public class TapeRestoreAgentPackedTests
         using var tree = new TempFileTree();
         tree.AddFiles("legacy_to_packed", count: 8, minSize: 200, maxSize: 6 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree.Files, useAligned: true, description: "Legacy backup, packed restore");
 
         // All addresses should be block-aligned for legacy backup.

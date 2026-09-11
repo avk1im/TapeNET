@@ -997,7 +997,7 @@ public sealed class FclParser(List<FclToken> tokens)
     }
 
     /// <summary>
-    /// Returns <c>true</c> if the text is the <c>not</c> keyword, which must
+    /// Returns <see langword="true"/> if the text is the <c>not</c> keyword, which must
     /// not be consumed as a chain value (it starts a negation expression).
     /// </summary>
     private static bool IsNegationKeyword(string text) =>

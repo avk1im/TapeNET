@@ -9,7 +9,7 @@ namespace TapeLibNET
     public interface ITapeFileFilter
     {
         /// <summary>
-        /// Returns <c>true</c> if the file described by <paramref name="fileDescr"/> passes the filter.
+        /// Returns <see langword="true"/> if the file described by <paramref name="fileDescr"/> passes the filter.
         /// </summary>
         bool Matches(in TapeFileDescriptor fileDescr);
     }

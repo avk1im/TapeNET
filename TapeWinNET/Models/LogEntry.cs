@@ -47,8 +47,8 @@ public static class WarningLevelHelper
     {
         WarningLevel.Error => "✖",
         WarningLevel.Failed => "✗",
-        WarningLevel.Warning => "⚠\uFE0E", // gurantee monochrome glyph
-        WarningLevel.Info => "ℹ\uFE0E", // gurantee monochrome glyph
+        WarningLevel.Warning => "⚠\uFE0E", // guarantee monochrome glyph
+        WarningLevel.Info => "ℹ\uFE0E", // guarantee monochrome glyph
         WarningLevel.Completed => "✓",
         _ => string.Empty
     };

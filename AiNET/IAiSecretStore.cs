@@ -27,14 +27,14 @@ public interface IAiSecretStore
     /// Passing a <c>null</c> or empty <paramref name="secret"/> is equivalent
     ///  to calling <see cref="Delete"/>.
     /// </summary>
-    /// <returns><c>true</c> if the secret was persisted successfully.</returns>
+    /// <returns><see langword="true"/> if the secret was persisted successfully.</returns>
     bool Save(string key, string? secret);
 
     /// <summary>
     /// Removes the secret stored under <paramref name="key"/>, if any.
     /// </summary>
     /// <returns>
-    /// <c>true</c> if a secret existed and was removed; <c>false</c> if there
+    /// <see langword="true"/> if a secret existed and was removed; <see langword="false"/> if there
     ///  was nothing to remove or the removal failed.
     /// </returns>
     bool Delete(string key);

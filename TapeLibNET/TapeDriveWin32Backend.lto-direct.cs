@@ -229,7 +229,7 @@ public partial class TapeDriveWin32Backend
     /// For data-out commands: the payload to send. For data-in commands: receives the data.
     /// Pass an empty span for no-data commands.
     /// </param>
-    /// <param name="dataIn"><c>true</c> for READ direction (device → host); <c>false</c> for WRITE/no-data.</param>
+    /// <param name="dataIn"><see langword="true"/> for READ direction (device → host); <see langword="false"/> for WRITE/no-data.</param>
     /// <param name="timeoutSeconds">SCSI command timeout passed to the driver.</param>
     private unsafe ScsiDirectOutcome SendScsiCommandDirect(
         Span<byte> cdb,
@@ -335,18 +335,18 @@ public partial class TapeDriveWin32Backend
     /// Byte count to write. In fixed-block mode this must be a whole multiple of the current
     /// <see cref="BlockSize"/>; it may exceed one SRB and will be chunked automatically.
     /// </param>
-    /// <param name="tapemark"><c>true</c> if a filemark condition was reported.</param>
+    /// <param name="tapemark"><see langword="true"/> if a filemark condition was reported.</param>
     /// <param name="programmableEarlyWarning">
-    /// <c>true</c> if the drive reported Programmable Early Warning (the earlier, host-configured
+    /// <see langword="true"/> if the drive reported Programmable Early Warning (the earlier, host-configured
     /// trip point). The data up to the return value WAS written. LTO-5+ only; requires a PEWS to have
     /// been set. Not an error.
     /// </param>
     /// <param name="earlyWarning">
-    /// <c>true</c> if the drive reported built-in Early Warning. The data up to the return value WAS
+    /// <see langword="true"/> if the drive reported built-in Early Warning. The data up to the return value WAS
     /// written; this is the cue to stop accepting new payload and switch to TOC / volume-spanning
     /// wrap-up. Not an error.
     /// </param>
-    /// <param name="eom"><c>true</c> on hard physical EOM. The last chunk's data was NOT written.</param>
+    /// <param name="eom"><see langword="true"/> on hard physical EOM. The last chunk's data was NOT written.</param>
     /// <param name="forceVariable">Force variable-block mode regardless of <see cref="BlockSize"/>.</param>
     /// <returns>The total number of payload bytes the drive accepted across all chunks.</returns>
     internal int ScsiWriteDirect(
@@ -626,10 +626,10 @@ public partial class TapeDriveWin32Backend
     /// </summary>
     /// <param name="count">Number of filemarks to write.</param>
     /// <param name="immediate">
-    /// When <c>true</c>, sets the IMMED bit and returns as soon as the command is accepted
-    /// (caller must poll). When <c>false</c> (default), waits for physical completion.
+    /// When <see langword="true"/>, sets the IMMED bit and returns as soon as the command is accepted
+    /// (caller must poll). When <see langword="false"/> (default), waits for physical completion.
     /// </param>
-    /// <param name="earlyWarning">Set to <c>true</c> if the drive reported (any) Early Warning.</param>
+    /// <param name="earlyWarning">Set to <see langword="true"/> if the drive reported (any) Early Warning.</param>
     internal bool ScsiWriteFilemarksDirect(int count, bool immediate, out bool earlyWarning)
     {
         earlyWarning = false;
@@ -692,13 +692,13 @@ public partial class TapeDriveWin32Backend
     /// </remarks>
     /// </para>
     /// </summary>
-    /// <param name="setmarks"><c>true</c> to write setmarks; <c>false</c> to write filemarks.</param>
+    /// <param name="setmarks"><see langword="true"/> to write setmarks; <see langword="false"/> to write filemarks.</param>
     /// <param name="count">Number of tape marks to write.</param>
     /// <param name="immediate">
-    /// When <c>true</c>, sets the IMMED bit and returns as soon as the command is accepted
-    /// (caller must poll). When <c>false</c> (default), waits for physical completion.
+    /// When <see langword="true"/>, sets the IMMED bit and returns as soon as the command is accepted
+    /// (caller must poll). When <see langword="false"/> (default), waits for physical completion.
     /// </param>
-    /// <param name="earlyWarning">Set to <c>true</c> if the drive reported (any) Early Warning.</param>
+    /// <param name="earlyWarning">Set to <see langword="true"/> if the drive reported (any) Early Warning.</param>
     internal bool ScsiWriteTapemarksDirect(bool setmarks, int count, bool immediate, out bool earlyWarning)
     {
         earlyWarning = false;

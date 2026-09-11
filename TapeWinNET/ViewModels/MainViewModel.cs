@@ -18,6 +18,31 @@ using Windows.Win32.System.SystemServices; // for Helpers
 
 namespace TapeWinNET.ViewModels;
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Naming vocabulary — one verb per lifecycle stage (keep new names consistent!)
+// ─────────────────────────────────────────────────────────────────────────────
+//  Stage                        Verb              Meaning
+//  ---------------------------  ----------------  ------------------------------------------------
+//  Drive handle                 Open / Close      acquire / release the drive
+//  Medium presence              Load / Eject      insert / remove the cartridge in the drive
+//  Medium identity + content    Identify          read the BOM header, then dispatch:
+//                                                   load TOC  OR  report calibration
+//  On-tape TOC read (sub-step)  Restore           recover the TOC from tape into memory
+//                                                   (established domain term)
+//  TOC <-> file                 Import / Export    .tapetoc round-trip
+//  New medium                   Format            erase + write initial TOC / header
+//  Calibration probe            Inspect           read the calibration checkpoint trail
+//  Redisplay, no I/O            Refresh (view)    rebuild the selected pane from in-memory data
+//  Reload content, with I/O     Reload            re-fetch the medium's content into the views
+//
+//  Two rules that resolve most prior confusion:
+//   1. "Identify" is the umbrella and CONTAINS a "Restore TOC" sub-step — hence
+//      IdentifyMedia* replaces the clumsy *TOCOrCalibration* names, while the
+//      low-level Restore(TOC) stays the TOC-only read it already is.
+//   2. "Refresh" != "Reload": Refresh is pure in-memory redisplay (no tape I/O);
+//      Reload does tape I/O.
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// <summary>
 /// Defines what type of content is displayed in the content pane.
 /// </summary>
@@ -28,7 +53,9 @@ public enum ContentPaneType
     /// <summary>Media selected: properties + backup sets table</summary>
     MediaInfo,
     /// <summary>Backup set selected: properties + files table</summary>
-    BackupSetInfo
+    BackupSetInfo,
+    /// <summary>Calibration cartridge selected: properties + calibration details table</summary>
+    CalibrationInfo
 }
 
 /// <summary>
@@ -56,7 +83,7 @@ public partial class MainViewModel : ViewModelBase
     private string _ioProgressText = string.Empty;
     private double _ioProgressRate;
     private bool _isTOCLoadInProgress;
-    // Set to true when the user explicitly cancels a TOC load, so ReadTOCWithUIAsync
+    // Set to true when the user explicitly cancels a TOC load, so RestoreTOCWithUIAsync
     //  can suppress the failure dialog that would otherwise appear.
     private bool _isTOCLoadCancelled;
     private bool _isTOCAbortPending;
@@ -88,8 +115,8 @@ public partial class MainViewModel : ViewModelBase
         OpenVirtualDriveCommand = new RelayCommand(ShowOpenVirtualDriveWindow, _ => !IsBusy);
         OpenRecentVirtualDriveCommand = new AsyncRelayCommand(OpenRecentVirtualDriveAsync, _ => !IsBusy);
         SetIoSpeedCommand = new RelayCommand(SetIoSpeed, _ => IsIoSpeedEnabled);
-        RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => !IsBusy && _tapeService.IsDriveOpen);
-        RereadTOCCommand = new AsyncRelayCommand(RereadTOCAsync, () => !IsBusy && _tapeService.IsDriveOpen);
+        RefreshCommand = new AsyncRelayCommand(ReloadMediaAsync, () => !IsBusy && _tapeService.IsDriveOpen);
+        RereadMediaCommand = new AsyncRelayCommand(RereadMediaAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         EjectCommand = new AsyncRelayCommand(EjectAsync, () => !IsBusy && _tapeService.IsMediaLoaded);
         FormatMediaCommand = new RelayCommand(ShowFormatMediaWindow, _ => !IsBusy && _tapeService.IsMediaLoaded);
         DeleteBackupSetsCommand = new RelayCommand(ShowDeleteBackupSetsWindow, _ => !IsBusy && _tapeService.IsMediaLoaded && /*!_tapeService.IsTOCFromFile &&*/ (_tapeService.TOC?.Count ?? 0) > 0);
@@ -439,13 +466,14 @@ public partial class MainViewModel : ViewModelBase
         set
         {
             if (value != ContentPaneType.BackupSetInfo)
-                _currentSetView = null; // important to prevent backup set-only UI changes e.g. table header
+                _currentSetView = null; // important to prevent backup set-only UI changes e.g. table calHeader
 
             if (SetProperty(ref _contentType, value))
             {
                 OnPropertyChanged(nameof(IsTableVisible));
                 OnPropertyChanged(nameof(IsFileTableVisible));
                 OnPropertyChanged(nameof(IsBackupSetTableVisible));
+                OnPropertyChanged(nameof(IsCalibrationTableVisible));
                 OnPropertyChanged(nameof(IsUsageBarVisible));
             }
         }
@@ -459,6 +487,9 @@ public partial class MainViewModel : ViewModelBase
 
     /// <summary>Whether the backup sets table is visible (Media selected)</summary>
     public bool IsBackupSetTableVisible => ContentType == ContentPaneType.MediaInfo;
+
+    /// <summary>Whether the calibration details table is visible (Calibration Cartridge selected)</summary>
+    public bool IsCalibrationTableVisible => ContentType == ContentPaneType.CalibrationInfo;
 
     #region Media Usage Bar
 
@@ -526,6 +557,9 @@ public partial class MainViewModel : ViewModelBase
 
     public ObservableCollection<TapeTreeItemViewModel> TreeItems { get; } = [];
     public ObservableCollection<PropertyItem> PropertyList { get; } = [];
+
+    /// <summary>Lower property/value pane populated for a selected Calibration Cartridge node.</summary>
+    public ObservableCollection<PropertyItem> CalibrationPropertyList { get; } = [];
 
     private List<FileListItem> _fileList = [];
     public List<FileListItem> FileList
@@ -629,7 +663,7 @@ public partial class MainViewModel : ViewModelBase
         if (tasks.Count > 0)
             await Task.WhenAll(tasks);
 
-        // Refresh current view header/counts
+        // Refresh current view calHeader/counts
         NotifyFilterPropertiesChanged();
     }
 
@@ -698,7 +732,7 @@ public partial class MainViewModel : ViewModelBase
     public ICommand OpenRecentVirtualDriveCommand { get; }
     public ICommand SetIoSpeedCommand { get; }
     public ICommand RefreshCommand { get; }
-    public ICommand RereadTOCCommand { get; }
+    public ICommand RereadMediaCommand { get; }
     public ICommand EjectCommand { get; }
     public ICommand FormatMediaCommand { get; }
     public ICommand DeleteBackupSetsCommand { get; }
@@ -766,6 +800,9 @@ public partial class MainViewModel : ViewModelBase
                     LoadBackupSetInfo(item.SetIndex.Value);
                 }
                 break;
+            case TreeItemType.CalibrationCartridge:
+                LoadCalibrationInfo();
+                break;
         }
 
         // Selection change may affect dynamic command menu text
@@ -795,7 +832,7 @@ public partial class MainViewModel : ViewModelBase
             : null;
 
     /// <summary>
-    /// Saves the current application state (last drive info).
+    /// Saves the current application state (last drive calInfo).
     /// Call before passing to the View layer's <see cref="AppSettings"/> save.
     /// </summary>
     public void SaveSettings()
@@ -836,6 +873,32 @@ public partial class MainViewModel : ViewModelBase
     /// Captures and restores prior IsBusy/BusyMessage so the helpers nest safely
     ///  inside an outer busy scope (e.g. FormatVirtualDriveAsync).
     /// </summary>
+    private async Task<T?> RunBusyAsync<T>(string busyMessage, Func<Task<T>> action)
+    {
+        bool prevBusy = IsBusy;
+        string prevMsg = BusyMessage;
+        IsBusy = true;
+        BusyMessage = busyMessage;
+        try
+        {
+            try
+            {
+                return await action();
+            }
+            catch
+            {
+                return default; // e.g. `false` if T is bool
+            }
+        }
+        finally
+        {
+            IsBusy = prevBusy;
+            BusyMessage = prevMsg;
+        }
+    }
+
+    /*
+    /// <summary><see cref="RunBusyAsync"/> instantiated for <langword cref="bool"/>.</summary>
     private async Task<bool> RunBusyAsync(string busyMessage, Func<Task<bool>> action)
     {
         bool prevBusy = IsBusy;
@@ -853,6 +916,7 @@ public partial class MainViewModel : ViewModelBase
             BusyMessage = prevMsg;
         }
     }
+    */
 
     // A — Open drive
 
@@ -875,9 +939,15 @@ public partial class MainViewModel : ViewModelBase
     private Task<bool> LoadMediaCoreAsync(string busyMessage = "Loading media...") =>
         RunBusyAsync(busyMessage, () => _tapeService.LoadMediaAsync());
 
-    // C — Read TOC (abortable; uses dedicated overlay via IsTOCLoadInProgress)
+    /// <summary>
+    /// Restores TOC (abortable; uses dedicated overlay via IsTOCLoadInProgress)
+    /// </summary>
+    /// <param name="busyMessage">The message to display while the operation is in progress.</param>
+    /// <returns>
+    /// <langword cref="true"/> if the TOC was successfully restored; otherwise, <langword cref="false"/>.
+    /// </returns>
 
-    private async Task<bool> ReadTOCCoreAsync(string busyMessage = "Reading TOC...")
+    private async Task<bool> RestoreTOCCoreAsync(string busyMessage = "Restoring TOC...")
     {
         bool prevBusy = IsBusy;
         string prevMsg = BusyMessage;
@@ -927,15 +997,15 @@ public partial class MainViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Reads the TOC; on failure offers to load a saved .tapetoc file (unless
+    /// Reads the TOC; on failure offers to load a saved <c>.tapetoc</c> file (unless
     ///  <paramref name="offerFileImportOnFailure"/> is false, e.g. for a freshly
     ///  created virtual drive where no prior TOC could exist). Silent on user-cancel.
     /// </summary>
-    private async Task<bool> ReadTOCWithUIAsync(
-        string busyMessage = "Reading TOC...",
+    private async Task<bool> RestoreTOCWithUIAsync(
+        string busyMessage = "Restoring TOC...",
         bool offerFileImportOnFailure = true)
     {
-        var success = await ReadTOCCoreAsync(busyMessage);
+        var success = await RestoreTOCCoreAsync(busyMessage);
         if (success)
             return true;
 
@@ -953,6 +1023,90 @@ public partial class MainViewModel : ViewModelBase
             "TOC Read Failed", MessageBoxButton.YesNo, SimpleBox.ImageFailed);
 
         return result == MessageBoxResult.Yes && await ImportTOCFromFileAsync();
+    }
+
+    /// <summary>
+    /// Identify media and read TOC / calibration (unified, abortable via dedicated overlay)
+    /// </summary>
+    /// <param name="busyMessage">The message to display while the operation is in progress.</param>
+    /// <returns>The outcome of the media identification operation.</returns>
+    private async Task<IdentifyMediaOutcome> IdentifyMediaCoreAsync(
+        string busyMessage = "Reading TOC...")
+    {
+        bool prevBusy = IsBusy;
+        string prevMsg = BusyMessage;
+        _isTOCLoadCancelled = false;
+        IsTOCAbortPending = false;
+        IsBusy = true;
+        BusyMessage = busyMessage;
+        IsTOCLoadInProgress = true;
+        try
+        {
+            try { return await _tapeService.IdentifyMediaAsync(); }
+            catch { return IdentifyMediaOutcome.Failed; }
+        }
+        finally
+        {
+            IsTOCLoadInProgress = false;
+            IsTOCAbortPending = false;
+            IsBusy = prevBusy;
+            BusyMessage = prevMsg;
+        }
+    }
+
+    /// <summary>
+    /// Identifies the loaded medium and reads its TOC (or calibration calHeader), fully updating the
+    ///  tree/content pane for whichever outcome is returned by <see cref="TapeServiceBase.IdentifyMediaAsync"/>.
+    /// On <see cref="IdentifyMediaOutcome.Failed"/>, offers the same TOC-from-file recovery prompt as
+    ///  the legacy <see cref="RestoreTOCWithUIAsync"/> (unless <paramref name="offerFileImportOnFailure"/> is false).
+    /// Silent on user-cancel.
+    /// </summary>
+    private async Task<IdentifyMediaOutcome> IdentifyMediaWithUIAsync(
+        int driveNumber,
+        string busyMessage = "Reading TOC...",
+        bool offerFileImportOnFailure = true)
+    {
+        var outcome = await IdentifyMediaCoreAsync(busyMessage);
+
+        switch (outcome)
+        {
+            case IdentifyMediaOutcome.TocLoaded:
+                UpdateTreeFromTOC(driveNumber);
+                SelectMostRecentSet();
+                return outcome;
+
+            case IdentifyMediaOutcome.CalibrationMedia:
+                UpdateTreeForCalibrationMedia(driveNumber);
+                return outcome;
+
+            case IdentifyMediaOutcome.Unidentified:
+                UpdateTreeForDriveOnly(driveNumber);
+                StatusMessage = "Unidentified media — TOC search skipped";
+                return outcome;
+        }
+
+        // Failed: user-cancelled search is silent — no error dialog, no recovery prompt.
+        if (_isTOCLoadCancelled || !offerFileImportOnFailure)
+        {
+            UpdateTreeForDriveOnly(driveNumber);
+            return outcome;
+        }
+
+        var result = SimpleBox.Show(
+            $"Failed to read TOC from media.\n\n{_tapeService.LastError}\n\n" +
+            "If you have a saved TOC file (.tapetoc), you can load it to access the media content.\n\n" +
+            "Would you like to load a TOC from file?",
+            "TOC Read Failed", MessageBoxButton.YesNo, SimpleBox.ImageFailed);
+
+        if (result == MessageBoxResult.Yes && await ImportTOCFromFileAsync())
+        {
+            UpdateTreeFromTOC(driveNumber);
+            SelectMostRecentSet();
+            return IdentifyMediaOutcome.TocLoaded;
+        }
+
+        UpdateTreeForDriveOnly(driveNumber);
+        return outcome;
     }
 
     private void AbortTOCLoad()
@@ -982,16 +1136,14 @@ public partial class MainViewModel : ViewModelBase
             return;
         }
 
-        if (!await LoadMediaWithUIAsync() || !await ReadTOCWithUIAsync())
+        if (!await LoadMediaWithUIAsync())
         {
             UpdateTreeForDriveOnly(driveNumber);
             NotifyIoSpeedChanged();
             return;
         }
 
-        UpdateTreeFromTOC(driveNumber);
-        // Select the most recent backup set
-        SelectMostRecentSet();
+        await IdentifyMediaWithUIAsync(driveNumber);
         NotifyIoSpeedChanged();
     }
 
@@ -1028,40 +1180,57 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
-    private async Task RereadTOCAsync()
+    /// <summary>
+    /// Resets the <see cref="_tapeService"/> state via <see cref="TapeServiceBase.Reset"/>,
+    ///  then reloads media content and updates the tree & content panes accordingly via
+    ///  <see cref="ReloadMediaAsync"/>
+    /// </summary>
+    private async Task RereadMediaAsync()
     {
         if (!_tapeService.IsDriveOpen)
             return;
 
-        if (!_tapeService.Reset())
+        if (!_tapeService.Reset()) // disposes agent + nulls _toc → forces the identify path
         {
             SimpleBox.Show("Cannot reload while an operation is in progress.",
                 "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        await RefreshAsync();
+        await ReloadMediaAsync();
     }
 
-    private async Task RefreshAsync()
+    /// <summary>
+    /// Reloads medium content and updates the tree/content pane, both upon user request (F5)
+    ///  and after a backup/restore operation completes.
+    /// </summary>
+    private async Task ReloadMediaAsync()
     {
         if (!_tapeService.IsDriveOpen)
             return;
 
         var driveNumber = _tapeService.DriveNumber;
 
-        if (_tapeService.TOC == null)
+        // Fast path — a backup TOC is already in memory (e.g. right after a backup/restore, or an F5 with
+        //  content still loaded): rebuild the views WITHOUT touching the tape.
+        if (_tapeService.TOC is not null)
         {
-            if (!await LoadMediaWithUIAsync() || !await ReadTOCWithUIAsync())
-            {
-                UpdateTreeForDriveOnly(driveNumber);
-                return;
-            }
+            UpdateTreeFromTOC(driveNumber);
+            // select the latest backup set (#0)
+            SelectMostRecentSet();
+            return;
         }
 
-        UpdateTreeFromTOC(driveNumber);
-        // Select the most recent backup set
-        SelectMostRecentSet();
+        // Otherwise (re)identify the medium: reload it, then load its TOC or calibration info per the BOM
+        //  header — the same three-way dispatch OpenDrive uses. IdentifyMediaWithUIAsync updates the
+        //  tree for TocLoaded / CalibrationMedia / Unidentified / Failed on its own.
+        if (!await LoadMediaWithUIAsync())
+        {
+            UpdateTreeForDriveOnly(driveNumber);
+            return;
+        }
+
+        await IdentifyMediaWithUIAsync(driveNumber);
     }
 
     private async Task EjectAsync()
@@ -1268,14 +1437,43 @@ public partial class MainViewModel : ViewModelBase
         TreeItems.Clear();
         _tocView = null;
         _currentSetView = null;
+
         var driveItem = TapeTreeItemViewModel.CreateDriveItem(driveNumber, _tapeService.DeviceName);
         TreeItems.Add(driveItem);
         WindowTitle = $"TapeWin - Drive {driveNumber}";
 
         OnPropertyChanged(nameof(HasMultipleSets));
 
-        // Show drive info when only drive is available
+        // Show drive calInfo when only drive is available
         LoadDriveInfo();
+    }
+
+    /// <summary>
+    /// Builds a drive-only tree plus a Calibration Cartridge child node, and shows the calibration
+    ///  property pane for it — the counterpart of <see cref="UpdateTreeFromTOC"/> for calibration media.
+    /// </summary>
+    private void UpdateTreeForCalibrationMedia(int driveNumber)
+    {
+        TreeItems.Clear();
+        _tocView = null;
+        _currentSetView = null;
+
+        var calHeader = _tapeService.CalibrationHeader;
+
+        var driveItem = TapeTreeItemViewModel.CreateDriveItem(driveNumber, _tapeService.DeviceName);
+        TreeItems.Add(driveItem);
+
+        if (calHeader is not null)
+        {
+            var calibrationItem = TapeTreeItemViewModel.CreateCalibrationItem(calHeader, driveItem);
+            driveItem.Children.Add(calibrationItem);
+            calibrationItem.IsSelected = true;
+        }
+
+        WindowTitle = $"TapeWin - Calibration Cartridge >{calHeader?.ProfileKey ?? "Unknown"}<";
+        OnPropertyChanged(nameof(HasMultipleSets));
+
+        LoadCalibrationInfo();
     }
 
     private void UpdateTreeFromTOC(int driveNumber)
@@ -1327,7 +1525,7 @@ public partial class MainViewModel : ViewModelBase
 
         OnPropertyChanged(nameof(HasMultipleSets));
 
-        // Status message: TOC-from-file warning takes precedence over in-memory info
+        // Status message: TOC-from-file warning takes precedence over in-memory calInfo
         if (_tapeService.IsTOCFromFile)
             StatusMessage = $"\u26a0 TOC: {System.IO.Path.GetFileName(_tapeService.TOCFilePath)} | Loaded {totalSets} backup set(s)";
         else if (_tapeService.IsInMemoryDrive)
@@ -1352,6 +1550,358 @@ public partial class MainViewModel : ViewModelBase
             OnTreeItemSelected(TreeItems[0]);
         }
     }
+
+    private void LoadDriveInfo()
+    {
+        PropertyList.Clear();
+        FileList = [];
+        BackupSetList.Clear();
+        ContentType = ContentPaneType.DriveInfo;
+        PropertiesHeader = "Drive Properties";
+        TableHeader = ""; // Not visible for drive
+        UsageBar.Clear();
+
+        PropertyList.Add(new PropertyItem("Device Name", _tapeService.DeviceName));
+        string model = _tapeService.DeviceVendor;
+        if (!string.IsNullOrEmpty(_tapeService.DeviceProduct))
+            model += $" {_tapeService.DeviceProduct}";
+        if (!string.IsNullOrEmpty(_tapeService.DeviceRevision))
+            model += $" rev {_tapeService.DeviceRevision}";
+        if (!string.IsNullOrEmpty(model))
+            PropertyList.Add(new PropertyItem("Device Model", model));
+        PropertyList.Add(new PropertyItem("Drive Open", _tapeService.IsDriveOpen ? "Yes" : "No"));
+
+        if (_tapeService.IsDriveOpen)
+        {
+            PropertyList.Add(new PropertyItem("Supports Multiple Partitions", 
+                _tapeService.SupportsInitiatorPartition ? "Yes" : "No"));
+            PropertyList.Add(new PropertyItem("Supports Setmarks", 
+                _tapeService.SupportsSetmarks ? "Yes" : "No"));
+            PropertyList.Add(new PropertyItem("Supports Sequential Filemarks", 
+                _tapeService.SupportsSeqFilemarks ? "Yes" : "No"));
+            PropertyList.Add(new PropertyItem("Block Size (Min)", 
+                Helpers.BytesToString(_tapeService.MinimumBlockSize)));
+            PropertyList.Add(new PropertyItem("Block Size (Default)", 
+                Helpers.BytesToString(_tapeService.DefaultBlockSize)));
+            PropertyList.Add(new PropertyItem("Block Size (Max)", 
+                Helpers.BytesToString(_tapeService.MaximumBlockSize)));
+
+            PropertyList.Add(new PropertyItem("Media Loaded", 
+                _tapeService.IsMediaLoaded ? "Yes" : "No"));
+
+            if (_tapeService.IsMediaLoaded)
+            {
+                PropertyList.Add(new PropertyItem("Partition Count", 
+                    _tapeService.PartitionCount.ToString()));
+                AddCapacityProperties();
+            }
+        }
+
+        StatusMessage = "Drive information displayed";
+
+        // Append remote connection calInfo section when a remote host is active (§2.6)
+        if (IsRemoteConnected)
+            AppendRemoteConnectionInfo();
+    }
+
+    /// <summary>
+    /// Appends the shared capacity block to <see cref="PropertyList"/>, using the strict semantics of
+    ///  docs/Design-RemainingAndEw.md §5.1: the driver's optimistic REPORTED figures are shown beside our
+    ///  corrected ESTIMATES, and the WRITABLE space — the number the user actually spends — is called out
+    ///  on its own row, followed by the provenance of the estimate.
+    /// <para>
+    /// Reported and estimated are never mixed within one row's arithmetic; each is quoted on its own axis.
+    /// </para>
+    /// </summary>
+    private void AddCapacityProperties()
+    {
+        static string pair(long reported, long estimated)
+            => $"{Helpers.BytesToStringLong(reported)} / {Helpers.BytesToStringLong(estimated)}";
+
+        PropertyList.Add(new PropertyItem("Capacity reported / estimated",
+            pair(_tapeService.Capacity, _tapeService.EstimatedCapacity)));
+        PropertyList.Add(new PropertyItem("Remaining reported / estimated",
+            pair(_tapeService.ReportedContentRemaining, _tapeService.EstimatedContentRemaining)));
+        // The headline figure — highlighted because it is the one the user plans a backup against.
+        PropertyList.Add(new PropertyItem("Writable",
+            Helpers.BytesToStringLong(_tapeService.WritableRemaining),
+            highlightLevel: WarningLevelHelper.Translate(_tapeService.WritableRemaining / (double)_tapeService.EstimatedCapacity)));
+        PropertyList.Add(new PropertyItem("Estimation by", _tapeService.RemainingEstimationSource,
+            highlightLevel: _tapeService.IsEarlyWarning? WarningLevel.Warning : WarningLevel.None));
+    }
+
+    /// <summary>
+    /// Populates the calibration property pane for a Calibration Cartridge tree node, mirroring
+    ///  <see cref="TapeServiceBase.LogCalibrationInfo"/> — the identity/summary rows go into the
+    ///  upper Properties pane, and the plan/run details go into the lower <see cref="CalibrationPropertyList"/>
+    ///  pane (in place of the backup-set/file table).
+    /// </summary>
+    private void LoadCalibrationInfo()
+    {
+        PropertyList.Clear();
+        CalibrationPropertyList.Clear();
+        BackupSetList.Clear();
+        FileList = [];
+        ContentType = ContentPaneType.CalibrationInfo;
+        PropertiesHeader = "Media Properties";
+        TableHeader = "Calibration Details";
+        UsageBar.Clear();
+
+        if (_tapeService.CalibrationHeader is not { } calHeader)
+        {
+            PropertyList.Add(new PropertyItem("Status", "No calibration data available"));
+            StatusMessage = "No calibration data available";
+            return;
+        }
+
+        // Upper pane: the same drive/media identity properties shown for any drive with media loaded
+        //  but no TOC — the calibration cartridge is, after all, just media without a backup TOC.
+        PropertyList.Add(new PropertyItem("Device Name", _tapeService.DeviceName));
+        string model = _tapeService.DeviceVendor;
+        if (!string.IsNullOrEmpty(_tapeService.DeviceProduct))
+            model += $" {_tapeService.DeviceProduct}";
+        if (!string.IsNullOrEmpty(_tapeService.DeviceRevision))
+            model += $" rev {_tapeService.DeviceRevision}";
+        if (!string.IsNullOrEmpty(model))
+            PropertyList.Add(new PropertyItem("Device Model", model));
+        PropertyList.Add(new PropertyItem("Media Loaded", _tapeService.IsMediaLoaded ? "Yes" : "No"));
+        if (_tapeService.IsMediaLoaded)
+        {
+            PropertyList.Add(new PropertyItem("Partition Count", _tapeService.PartitionCount.ToString()));
+            AddCapacityProperties();
+        }
+
+        // Lower pane: everything the calibration calHeader reveals (mirrors LogCalibrationInfo).
+        CalibrationPropertyList.Add(new PropertyItem("Status", "Calibration cartridge (no backup TOC)"));
+        CalibrationPropertyList.Add(new PropertyItem("Profile key", calHeader.ProfileKey));
+        CalibrationPropertyList.Add(new PropertyItem("Run id", calHeader.RunId.ToString("N")));
+        CalibrationPropertyList.Add(new PropertyItem("Started", calHeader.StartedUtc.ToString("u")));
+        CalibrationPropertyList.Add(new PropertyItem("Reported capacity at BOM",
+            Helpers.BytesToStringLong(calHeader.CapacityReportedAtBom)));
+
+        var plan = calHeader.Plan;
+        CalibrationPropertyList.Add(new PropertyItem("Planned samples",
+            $"{plan.SampleCount:N0} (body {plan.BodySampleCount:N0}, tail {plan.TailSampleCount:N0})"));
+        CalibrationPropertyList.Add(new PropertyItem("Planned checkpoints", plan.NumCheckpoints.ToString("N0")));
+        CalibrationPropertyList.Add(new PropertyItem("Run block size", Helpers.BytesToStringLong(calHeader.RunBlockSize)));
+
+        StatusMessage = "Calibration cartridge (no backup TOC)";
+
+        // Optional enrichment: the checkpoint-derived run state, present only after a modal Inspect.
+        if (_tapeService.CalibrationInfo is { } calInfo)
+        {
+            CalibrationPropertyList.Add(new PropertyItem("— Run trail —", string.Empty));
+            CalibrationPropertyList.Add(new PropertyItem("Resumable",
+                calInfo.IsResumable ? "Yes" : "No",
+                highlightLevel: calInfo.IsResumable ? WarningLevel.None : WarningLevel.Warning));
+            CalibrationPropertyList.Add(new PropertyItem("Appears complete",
+                calInfo.AppearsComplete ? "Yes" : "No"));
+            CalibrationPropertyList.Add(new PropertyItem("Checkpointed",
+                Helpers.BytesToStringLong(calInfo.CheckpointedBytes)));
+            CalibrationPropertyList.Add(new PropertyItem("Progress", $"{calInfo.ProgressFraction:P0}"));
+            // TODO verify the exact property name on TapeCalibrationMediaInfo for the EW-captured flag,
+            //  e.g. calInfo.EarlyWarningCaptured / calInfo.HasEarlyWarning — surfaced by InspectMedia().
+            // CalibrationPropertyList.Add(new PropertyItem("EW captured", calInfo.EarlyWarningCaptured ? "Yes" : "No"));
+        }
+        else
+        {
+            CalibrationPropertyList.Add(new PropertyItem("Run trail",
+                "Not loaded — use “Inspect Media” to read checkpoints",
+                highlightLevel: WarningLevel.Info));
+        }
+    }
+
+    private void LoadMediaInfo()
+    {
+        PropertyList.Clear();
+        BackupSetList.Clear();
+        FileList = [];
+        ContentType = ContentPaneType.MediaInfo;
+        PropertiesHeader = "Media Properties";
+
+        if (_tapeService.TOC is not { } toc)
+        {
+            PropertyList.Add(new PropertyItem("Status", "No TOC available"));
+            TableHeader = "Backup Sets";
+            StatusMessage = "No media information available";
+            return;
+        }
+
+        // Populate media properties
+        PropertyList.Add(new PropertyItem("Description", toc.Description ?? "(unnamed)"));
+        if (toc.MediaId != Guid.Empty)
+            PropertyList.Add(new PropertyItem("Media ID", toc.MediaId.ToString()));
+        PropertyList.Add(new PropertyItem("Created On", toc.CreationTime.ToString("G")));
+        PropertyList.Add(new PropertyItem("Last Saved", toc.LastSaveTime.ToString("G")));
+        PropertyList.Add(new PropertyItem("Backup Sets", toc.Count.ToString()));
+        PropertyList.Add(new PropertyItem("Used", Helpers.BytesToStringLong(_tapeService.Used)));
+        AddCapacityProperties();
+        PropertyList.Add(new PropertyItem("TOC Placement", 
+            _tapeService.IsTOCFromFile
+                ? $"File: {_tapeService.TOCFilePath}"
+                : _tapeService.HasInitiatorPartition ? "Partition" : "Set",
+            highlightLevel: _tapeService.IsTOCFromFile? WarningLevel.Warning : WarningLevel.None));
+        PropertyList.Add(new PropertyItem("Volume", $"#{toc.Volume}"));
+        PropertyList.Add(new PropertyItem("Continued on Next Volume", 
+            toc.ContinuedOnNextVolume ? "Yes" : "No"));
+
+        // Populate backup sets table (newest-first, with checked-state sync)
+        _tocView ??= new TOCView(toc);
+        TableHeader = $"Backup Sets ({toc.Count})";
+        foreach (var item in _tocView.BuildBackupSetItemList())
+            BackupSetList.Add(item);
+
+        // Refresh the calHeader "select all" checkbox — items may carry partial
+        //  (null) checked state from per-file selections in a previous visit.
+        OnPropertyChanged(nameof(AreAllBackupSetsChecked));
+
+        var mediaName = toc.Description ?? "Volume #" + toc.Volume;
+        StatusMessage = _tapeService.IsTOCFromFile
+            ? $"\u26a0 TOC: {System.IO.Path.GetFileName(_tapeService.TOCFilePath)} | Media: {mediaName} - {toc.Count} backup set(s)"
+            : $"Media: {mediaName} - {toc.Count} backup set(s)";
+
+        // Build the media usage bar from the current-volume sets
+        UsageBar.Rebuild();
+    }
+
+    private void LoadBackupSetInfo(int setIndex)
+    {
+        if (_tapeService.TOC is not { } toc || _tocView is null)
+            return;
+
+        PropertyList.Clear();
+        BackupSetList.Clear();
+        ClearFileFilter();
+        FileList = [];
+        ContentType = ContentPaneType.BackupSetInfo;
+        TableHeader = "Files"; // Reset early to avoid showing stale backup-set calHeader
+        UsageBar.Clear();
+
+        try
+        {
+            toc.CurrentSetIndex = setIndex;
+            var setTOC = toc.CurrentSetTOC;
+            int totalSets = toc.Count;
+            int altIndex = toc.SetIndexToAlt(setIndex);
+
+            PropertiesHeader = $"Backup Set #{setIndex} | {altIndex} Properties";
+
+            // Populate backup set properties
+            PropertyList.Add(new PropertyItem("Description", setTOC.Description ?? "(unnamed)"));
+            PropertyList.Add(new PropertyItem("Set Index", $"#{setIndex} | {altIndex}"));
+            PropertyList.Add(new PropertyItem("Files", setTOC.Count.ToString("N0")));
+            PropertyList.Add(new PropertyItem("Total File Size",
+                Helpers.BytesToStringLong(setTOC.Sum(tfi => tfi.FileDescr.Length))));
+            PropertyList.Add(new PropertyItem("Total File Size on Tape",
+                Helpers.BytesToStringLong(setTOC.ComputeTotalFileSizeOnTape(_tapeService.DefaultBlockSize))));
+            PropertyList.Add(new PropertyItem("Created On", setTOC.CreationTime.ToString("G")));
+            PropertyList.Add(new PropertyItem("Last Saved", setTOC.LastSaveTime.ToString("G")));
+            PropertyList.Add(new PropertyItem("Block Size", Helpers.BytesToStringLong(setTOC.BlockSize)));
+            PropertyList.Add(new PropertyItem("Hash Algorithm", setTOC.HashAlgorithm.ToString()));
+            PropertyList.Add(new PropertyItem("Compression",
+                CompressionPreset.DisplayName(setTOC.Compression, setTOC.CompressionLevel)));
+            PropertyList.Add(new PropertyItem("Incremental", setTOC.Incremental ? "Yes" : "No"));
+            PropertyList.Add(new PropertyItem("Volume", $"#{setTOC.Volume}"));
+            PropertyList.Add(new PropertyItem("Continued from Previous Volume", 
+                toc.IsCurrentSetContFromPrevVolume ? "Yes, directly" :
+                toc.IsCurrentSetContFromPrevVolumeInc ? "Yes, incrementally" : "No"));
+            PropertyList.Add(new PropertyItem("Continued on Next Volume", 
+                toc.IsCurrentSetContOnNextVolume ? "Yes" : "No"));
+
+            // Get or create the BackupSetView (handles incremental file resolution,
+            //  caching, and checked-state migration)
+            var setView = _tocView.GetOrCreate(setIndex, ShowIncrementalSets);
+            _currentSetView = setView;
+
+            // Build the display list (creates FileListItem proxies as needed)
+            FileList = setView.BuildFileItemList(ShowFullPathname);
+
+            NotifyFilterPropertiesChanged();
+
+            StatusMessage = $"Set #{setIndex} | #{altIndex}: {FileTotalCount} file(s)";
+
+            // Queue a pending filter restore if the user previously filtered this set
+            PendingFilterRestore = setView.SavedFilterState;
+        }
+        catch (Exception ex)
+        {
+            LogErr($"Error loading backup set info: {ex.Message}");
+            StatusMessage = "Error loading backup set information";
+        }
+    }
+
+    private void NavigateToSelectedBackupSet(object? parameter)
+    {
+        if (SelectedBackupSet != null)
+        {
+            OnBackupSetSelectedInTable(SelectedBackupSet);
+        }
+    }
+
+    /// <summary>
+    /// Selects the <see cref="BackupSetListItem"/> with the given set index in
+    ///  <see cref="BackupSetList"/>. Wired to <see cref="UsageBar"/>'s click callback.
+    /// </summary>
+    private void SelectBackupSetByIndex(int setIndex)
+    {
+        var item = BackupSetList.FirstOrDefault(b => b.SetIndex == setIndex);
+        if (item != null)
+            SelectedBackupSet = item;
+    }
+
+    private void OnBackupSetSelectedInTable(BackupSetListItem backupSetItem)
+    {
+        // Find the corresponding tree node and select it
+        if (TreeItems.Count > 0 && TreeItems[0].Children.Count > 0)
+        {
+            var tapeNode = TreeItems[0].Children[0];
+            var setIndex = backupSetItem.SetIndex;
+            int totalSets = tapeNode.Children.Count;
+            // Convert setIndex to tree position (reversed order)
+            int treeIndex = totalSets - setIndex;
+            if (treeIndex >= 0 && treeIndex < totalSets)
+            {
+                var setNode = tapeNode.Children[treeIndex];
+                setNode.IsSelected = true;
+                // Don't call OnTreeItemSelected here to avoid recursion;
+                //  the TreeView selection changed event will handle it            }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Refreshes the content pane based on the currently selected tree item, dispatching to
+    ///  the appropriate load method. Does NOT initiate any tape access operation as opposed to
+    ///  <see cref="RereadMediaAsync"/>.
+    /// </summary>
+    private void RefreshCurrentView()
+    {
+        if (_selectedTreeItem == null)
+            return;
+
+        switch (_selectedTreeItem.ItemType)
+        {
+            case TreeItemType.Drive:
+                LoadDriveInfo();
+                break;
+            case TreeItemType.Tape:
+                LoadMediaInfo();
+                break;
+            case TreeItemType.BackupSet:
+                if (_selectedTreeItem.SetIndex.HasValue)
+                    LoadBackupSetInfo(_selectedTreeItem.SetIndex.Value);
+                break;
+            case TreeItemType.CalibrationCartridge:
+                LoadCalibrationInfo();
+                break;
+        }
+    }
+
+    #endregion
+
+    // Logging region is in MainViewModel.Log.cs
+
+    #region Private Methods - Renaming Media and Backup Set
 
     /// <summary>Whether the rename command should be enabled.</summary>
     private bool CanRenameSelected =>
@@ -1476,270 +2026,7 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
-    private void LoadDriveInfo()
-    {
-        PropertyList.Clear();
-        FileList = [];
-        BackupSetList.Clear();
-        ContentType = ContentPaneType.DriveInfo;
-        PropertiesHeader = "Drive Properties";
-        TableHeader = ""; // Not visible for drive
-        UsageBar.Clear();
-
-        PropertyList.Add(new PropertyItem("Device Name", _tapeService.DeviceName));
-        string model = _tapeService.DeviceVendor;
-        if (!string.IsNullOrEmpty(_tapeService.DeviceProduct))
-            model += $" {_tapeService.DeviceProduct}";
-        if (!string.IsNullOrEmpty(_tapeService.DeviceRevision))
-            model += $" rev {_tapeService.DeviceRevision}";
-        if (!string.IsNullOrEmpty(model))
-            PropertyList.Add(new PropertyItem("Device Model", model));
-        PropertyList.Add(new PropertyItem("Drive Open", _tapeService.IsDriveOpen ? "Yes" : "No"));
-
-        if (_tapeService.IsDriveOpen)
-        {
-            PropertyList.Add(new PropertyItem("Supports Multiple Partitions", 
-                _tapeService.SupportsInitiatorPartition ? "Yes" : "No"));
-            PropertyList.Add(new PropertyItem("Supports Setmarks", 
-                _tapeService.SupportsSetmarks ? "Yes" : "No"));
-            PropertyList.Add(new PropertyItem("Supports Sequential Filemarks", 
-                _tapeService.SupportsSeqFilemarks ? "Yes" : "No"));
-            PropertyList.Add(new PropertyItem("Block Size (Min)", 
-                Helpers.BytesToString(_tapeService.MinimumBlockSize)));
-            PropertyList.Add(new PropertyItem("Block Size (Default)", 
-                Helpers.BytesToString(_tapeService.DefaultBlockSize)));
-            PropertyList.Add(new PropertyItem("Block Size (Max)", 
-                Helpers.BytesToString(_tapeService.MaximumBlockSize)));
-
-            PropertyList.Add(new PropertyItem("Media Loaded", 
-                _tapeService.IsMediaLoaded ? "Yes" : "No"));
-
-            if (_tapeService.IsMediaLoaded)
-            {
-                PropertyList.Add(new PropertyItem("Partition Count", 
-                    _tapeService.PartitionCount.ToString()));
-                AddCapacityProperties();
-            }
-        }
-
-        StatusMessage = "Drive information displayed";
-
-        // Append remote connection info section when a remote host is active (§2.6)
-        if (IsRemoteConnected)
-            AppendRemoteConnectionInfo();
-    }
-
-    /// <summary>
-    /// Appends the shared capacity block to <see cref="PropertyList"/>, using the strict semantics of
-    ///  docs/Design-RemainingAndEw.md §5.1: the driver's optimistic REPORTED figures are shown beside our
-    ///  corrected ESTIMATES, and the WRITABLE space — the number the user actually spends — is called out
-    ///  on its own row, followed by the provenance of the estimate.
-    /// <para>
-    /// Reported and estimated are never mixed within one row's arithmetic; each is quoted on its own axis.
-    /// </para>
-    /// </summary>
-    private void AddCapacityProperties()
-    {
-        static string pair(long reported, long estimated)
-            => $"{Helpers.BytesToStringLong(reported)} / {Helpers.BytesToStringLong(estimated)}";
-
-        PropertyList.Add(new PropertyItem("Capacity reported / estimated",
-            pair(_tapeService.Capacity, _tapeService.EstimatedCapacity)));
-        PropertyList.Add(new PropertyItem("Remaining reported / estimated",
-            pair(_tapeService.ReportedContentRemaining, _tapeService.EstimatedContentRemaining)));
-        // The headline figure — highlighted because it is the one the user plans a backup against.
-        PropertyList.Add(new PropertyItem("Writable",
-            Helpers.BytesToStringLong(_tapeService.WritableRemaining),
-            highlightLevel: WarningLevelHelper.Translate(_tapeService.WritableRemaining / (double)_tapeService.EstimatedCapacity)));
-        PropertyList.Add(new PropertyItem("Estimation by", _tapeService.RemainingEstimationSource,
-            highlightLevel: _tapeService.IsEarlyWarning? WarningLevel.Warning : WarningLevel.None));
-    }
-
-    private void LoadMediaInfo()
-    {
-        PropertyList.Clear();
-        BackupSetList.Clear();
-        FileList = [];
-        ContentType = ContentPaneType.MediaInfo;
-        PropertiesHeader = "Media Properties";
-
-        var toc = _tapeService.TOC;
-        if (toc == null)
-        {
-            PropertyList.Add(new PropertyItem("Status", "No TOC available"));
-            TableHeader = "Backup Sets";
-            StatusMessage = "No media information available";
-            return;
-        }
-
-        // Populate media properties
-        PropertyList.Add(new PropertyItem("Description", toc.Description ?? "(unnamed)"));
-        if (toc.MediaId != Guid.Empty)
-            PropertyList.Add(new PropertyItem("Media ID", toc.MediaId.ToString()));
-        PropertyList.Add(new PropertyItem("Created On", toc.CreationTime.ToString("G")));
-        PropertyList.Add(new PropertyItem("Last Saved", toc.LastSaveTime.ToString("G")));
-        PropertyList.Add(new PropertyItem("Backup Sets", toc.Count.ToString()));
-        PropertyList.Add(new PropertyItem("Used", Helpers.BytesToStringLong(_tapeService.Used)));
-        AddCapacityProperties();
-        PropertyList.Add(new PropertyItem("TOC Placement", 
-            _tapeService.IsTOCFromFile
-                ? $"File: {_tapeService.TOCFilePath}"
-                : _tapeService.HasInitiatorPartition ? "Partition" : "Set",
-            highlightLevel: _tapeService.IsTOCFromFile? WarningLevel.Warning : WarningLevel.None));
-        PropertyList.Add(new PropertyItem("Volume", $"#{toc.Volume}"));
-        PropertyList.Add(new PropertyItem("Continued on Next Volume", 
-            toc.ContinuedOnNextVolume ? "Yes" : "No"));
-
-        // Populate backup sets table (newest-first, with checked-state sync)
-        _tocView ??= new TOCView(toc);
-        TableHeader = $"Backup Sets ({toc.Count})";
-        foreach (var item in _tocView.BuildBackupSetItemList())
-            BackupSetList.Add(item);
-
-        // Refresh the header "select all" checkbox — items may carry partial
-        //  (null) checked state from per-file selections in a previous visit.
-        OnPropertyChanged(nameof(AreAllBackupSetsChecked));
-
-        var mediaName = toc.Description ?? "Volume #" + toc.Volume;
-        StatusMessage = _tapeService.IsTOCFromFile
-            ? $"\u26a0 TOC: {System.IO.Path.GetFileName(_tapeService.TOCFilePath)} | Media: {mediaName} - {toc.Count} backup set(s)"
-            : $"Media: {mediaName} - {toc.Count} backup set(s)";
-
-        // Build the media usage bar from the current-volume sets
-        UsageBar.Rebuild();
-    }
-
-    private void LoadBackupSetInfo(int setIndex)
-    {
-        var toc = _tapeService.TOC;
-        if (toc == null || _tocView == null)
-            return;
-
-        PropertyList.Clear();
-        BackupSetList.Clear();
-        ClearFileFilter();
-        FileList = [];
-        ContentType = ContentPaneType.BackupSetInfo;
-        TableHeader = "Files"; // Reset early to avoid showing stale backup-set header
-        UsageBar.Clear();
-
-        try
-        {
-            toc.CurrentSetIndex = setIndex;
-            var setTOC = toc.CurrentSetTOC;
-            int totalSets = toc.Count;
-            int altIndex = toc.SetIndexToAlt(setIndex);
-
-            PropertiesHeader = $"Backup Set #{setIndex} | {altIndex} Properties";
-
-            // Populate backup set properties
-            PropertyList.Add(new PropertyItem("Description", setTOC.Description ?? "(unnamed)"));
-            PropertyList.Add(new PropertyItem("Set Index", $"#{setIndex} | {altIndex}"));
-            PropertyList.Add(new PropertyItem("Files", setTOC.Count.ToString("N0")));
-            PropertyList.Add(new PropertyItem("Total File Size",
-                Helpers.BytesToStringLong(setTOC.Sum(tfi => tfi.FileDescr.Length))));
-            PropertyList.Add(new PropertyItem("Total File Size on Tape",
-                Helpers.BytesToStringLong(setTOC.ComputeTotalFileSizeOnTape(_tapeService.DefaultBlockSize))));
-            PropertyList.Add(new PropertyItem("Created On", setTOC.CreationTime.ToString("G")));
-            PropertyList.Add(new PropertyItem("Last Saved", setTOC.LastSaveTime.ToString("G")));
-            PropertyList.Add(new PropertyItem("Block Size", Helpers.BytesToStringLong(setTOC.BlockSize)));
-            PropertyList.Add(new PropertyItem("Hash Algorithm", setTOC.HashAlgorithm.ToString()));
-            PropertyList.Add(new PropertyItem("Compression",
-                CompressionPreset.DisplayName(setTOC.Compression, setTOC.CompressionLevel)));
-            PropertyList.Add(new PropertyItem("Incremental", setTOC.Incremental ? "Yes" : "No"));
-            PropertyList.Add(new PropertyItem("Volume", $"#{setTOC.Volume}"));
-            PropertyList.Add(new PropertyItem("Continued from Previous Volume", 
-                toc.IsCurrentSetContFromPrevVolume ? "Yes, directly" :
-                toc.IsCurrentSetContFromPrevVolumeInc ? "Yes, incrementally" : "No"));
-            PropertyList.Add(new PropertyItem("Continued on Next Volume", 
-                toc.IsCurrentSetContOnNextVolume ? "Yes" : "No"));
-
-            // Get or create the BackupSetView (handles incremental file resolution,
-            //  caching, and checked-state migration)
-            var setView = _tocView.GetOrCreate(setIndex, ShowIncrementalSets);
-            _currentSetView = setView;
-
-            // Build the display list (creates FileListItem proxies as needed)
-            FileList = setView.BuildFileItemList(ShowFullPathname);
-
-            NotifyFilterPropertiesChanged();
-
-            StatusMessage = $"Set #{setIndex} | #{altIndex}: {FileTotalCount} file(s)";
-
-            // Queue a pending filter restore if the user previously filtered this set
-            PendingFilterRestore = setView.SavedFilterState;
-        }
-        catch (Exception ex)
-        {
-            LogErr($"Error loading backup set info: {ex.Message}");
-            StatusMessage = "Error loading backup set information";
-        }
-    }
-
-    private void NavigateToSelectedBackupSet(object? parameter)
-    {
-        if (SelectedBackupSet != null)
-        {
-            OnBackupSetSelectedInTable(SelectedBackupSet);
-        }
-    }
-
-    /// <summary>
-    /// Selects the <see cref="BackupSetListItem"/> with the given set index in
-    ///  <see cref="BackupSetList"/>. Wired to <see cref="UsageBar"/>'s click callback.
-    /// </summary>
-    private void SelectBackupSetByIndex(int setIndex)
-    {
-        var item = BackupSetList.FirstOrDefault(b => b.SetIndex == setIndex);
-        if (item != null)
-            SelectedBackupSet = item;
-    }
-
-    private void OnBackupSetSelectedInTable(BackupSetListItem backupSetItem)
-    {
-        // Find the corresponding tree node and select it
-        if (TreeItems.Count > 0 && TreeItems[0].Children.Count > 0)
-        {
-            var tapeNode = TreeItems[0].Children[0];
-            var setIndex = backupSetItem.SetIndex;
-            int totalSets = tapeNode.Children.Count;
-            // Convert setIndex to tree position (reversed order)
-            int treeIndex = totalSets - setIndex;
-            if (treeIndex >= 0 && treeIndex < totalSets)
-            {
-                var setNode = tapeNode.Children[treeIndex];
-                setNode.IsSelected = true;
-                // Don't call OnTreeItemSelected here to avoid recursion;
-                //  the TreeView selection changed event will handle it            }
-            }
-        }
-    }
-
-    private void RefreshCurrentView()
-    {
-        if (_selectedTreeItem == null)
-            return;
-
-        switch (_selectedTreeItem.ItemType)
-        {
-            case TreeItemType.Drive:
-                LoadDriveInfo();
-                break;
-            case TreeItemType.Tape:
-                LoadMediaInfo();
-                break;
-            case TreeItemType.BackupSet:
-                if (_selectedTreeItem.SetIndex.HasValue)
-                {
-                    LoadBackupSetInfo(_selectedTreeItem.SetIndex.Value);
-                }
-                break;
-        }
-    }
-
     #endregion
-
-    // Logging region is in MainViewModel.Log.cs
 
     #region Private Methods - Event Handlers
 
@@ -1904,16 +2191,11 @@ public partial class MainViewModel : ViewModelBase
                 LogWarn("Could not create initial TOC");
         }
 
-        // C — Read TOC. For freshly created media there's no prior TOC to import,
-        //  so suppress the file-import recovery prompt in that case.
-        if (!await ReadTOCWithUIAsync(offerFileImportOnFailure: !request.IsCreateNew))
-        {
-            UpdateTreeForDriveOnly(0);
+        // C — Identify media and read TOC / calibration calHeader. For freshly created media there's no
+        //  prior TOC to import, so suppress the file-import recovery prompt in that case.
+        var outcome = await IdentifyMediaWithUIAsync(0, offerFileImportOnFailure: !request.IsCreateNew);
+        if (outcome == IdentifyMediaOutcome.Failed)
             return;
-        }
-
-        UpdateTreeFromTOC(0);
-        SelectMostRecentSet();
 
         var modeText = request.Media.InMemory ? "Created in-memory"
             : request.IsCreateNew ? "Created new" : "Opened existing";

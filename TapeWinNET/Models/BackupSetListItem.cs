@@ -178,9 +178,9 @@ public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bo
 
     /// <summary>
     /// Whether this backup set is checked for restore/validate/verify operations.
-    /// Tri-state: <c>true</c> = all files checked, <c>false</c> = unchecked,
+    /// Tri-state: <see langword="true"/> = all files checked, <see langword="false"/> = unchecked,
     ///  <c>null</c> = partially checked (some files selected). Sets that have never
-    ///  been navigated to can only be <c>false</c> or <c>true</c>; the indeterminate
+    ///  been navigated to can only be <see langword="false"/> or <see langword="true"/>; the indeterminate
     ///  state arises only when a <see cref="BackupSetView"/> with partial file
     ///  selection exists.
     /// </summary>

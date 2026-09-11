@@ -1,11 +1,11 @@
-using TapeLibNET;
+﻿using TapeLibNET;
 using TapeLibNET.Tests.Helpers;
 using Xunit.Abstractions;
 
 namespace TapeLibNET.Tests.Physical;
 
 /// <summary>
-/// Layer 3 � Physical Scenario Tests.
+/// Layer 3 — Physical Scenario Tests.
 /// <para>
 /// End-to-end scenarios that exercise the full agent pipeline
 /// (<see cref="TapeFileBackupAgent"/> / <see cref="TapeFileRestoreAgentEx"/>)
@@ -35,13 +35,13 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
     /// Redirects trace output, checks fixture health, reformats the tape,
     /// and returns the ready fixture. Each scenario starts fresh.
     /// </summary>
-    private PhysicalTapeFixture Init()
+    private PhysicalTapeFixture Init(bool forceSinglePartition = false)
     {
         _fixtureWrapper.SetOutput(_output);
         var fixture = _fixtureWrapper.GetFixtureOrSkip();
         fixture.AssertHealthyOrSkip();
 
-        Assert.True(fixture.RecoverAndReformat("Scenario Test Media"),
+        Assert.True(fixture.RecoverAndReformat("Scenario Test Media", forceSinglePartition),
             "Failed to reformat tape for scenario test");
 
         return fixture;
@@ -443,9 +443,9 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
         // Build the filesSelected array: [0]=newest(C), [1]=middle(B=skip), [2]=oldest(A)
         var filesSelected = new List<TapeFileInfo>?[]
         {
-            selectedFromC,   // [0] = newest set (C) � selected files
-            [],              // [1] = middle set (B) � skip entirely
-            selectedFromA,   // [2] = oldest set (A) � selected files
+            selectedFromC,   // [0] = newest set (C) — selected files
+            [],              // [1] = middle set (B) — skip entirely
+            selectedFromA,   // [2] = oldest set (A) — selected files
         };
 
         // Position to the newest selected set and restore
@@ -535,4 +535,38 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
     }
 
     #endregion
+
+    /// <summary>
+    /// Headed backup → delete-all-preserving-header (a case-B mid-data overwrite from block 1) → the header
+    /// must survive and the tape remain restorable. Exercises TapeFileAgent.DeleteSetsFromCurrentSetUp on real
+    /// hardware with WritesMediaHeader on.
+    /// </summary>
+    [SkippableFact]
+    public void HeadedMedia_DeleteAll_PreservesHeader_AndReBackups()
+    {
+        var fixture = Init(forceSinglePartition: true);
+
+        using var tree1 = new TempFileTree(); tree1.AddFiles("h1", 4, 100, 4 * 1024);
+        fixture.BackupFiles(tree1.Files, description: "Headed set 1");   // agent writes header @ block 0
+
+        // Delete all sets on volume, preserving the header (writeHeader:false path) — overwrites from block 1.
+        fixture.TOC.CurrentSetIndex = fixture.TOC.FirstSetOnVolume;
+        using (var agent = new TapeFileBackupAgent(fixture.Drive, fixture.TOC))
+            Assert.True((bool)agent.DeleteSetsFromCurrentSetUp(), "delete-all preserving header");
+
+        // Re-backup and round-trip — proves the header survived the mid-data overwrite.
+        using var tree2 = new TempFileTree(); tree2.AddFiles("h2", 5, 100, 8 * 1024);
+        fixture.BackupFiles(tree2.Files, description: "Headed set 2 (after delete)");
+        fixture.SaveAndReloadTOC();
+
+        string dir = CreateRestoreDir();
+        try
+        {
+            using var r = fixture.CreateRestoreAgent(dir);
+            fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
+            Assert.True(r.RestoreAllFilesFromCurrentSet(ignoreFailures: true));
+            FileComparer.AssertFilesMatch(tree2.RootPath, tree2.Files, RestoreEquivalentRoot(dir, tree2.RootPath));
+        }
+        finally { TryDeleteDirectory(dir); }
+    }
 }

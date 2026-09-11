@@ -416,7 +416,7 @@ public partial class MainViewModel
 
     /// <summary>
     /// Gets or sets whether all files are checked for restore.
-    /// Getter returns <c>true</c> (all checked), <c>false</c> (none checked),
+    /// Getter returns <see langword="true"/> (all checked), <see langword="false"/> (none checked),
     /// or <c>null</c> (some checked) for tri-state display.
     /// Setter checks or unchecks every item in the current filtered view — the
     /// three-state WPF cycle (false→true→null→false) is mapped so clicking
@@ -649,7 +649,7 @@ public partial class MainViewModel
             if (!request.EjectWhenDone)
             {
                 // Uncheck successfully processed files before refreshing the UI —
-                //  RefreshAsync rebuilds BackupSetList from _tocView which already
+                //  ReloadMediaAsync rebuilds BackupSetList from _tocView which already
                 //  reflects the updated checked state, so no manual UI sync needed.
                 if (uncheckProcessedFiles && operationResult is { ProcessedFiles.Count: > 0 } result2
                 && _tocView != null)
@@ -661,7 +661,7 @@ public partial class MainViewModel
 
                 // Refresh tree after operation — always, regardless of outcome,
                 //  to keep TOCView in sync with the (possibly modified) TOC
-                try { await RefreshAsync(); } catch { /* ignore */ }
+                try { await ReloadMediaAsync(); } catch { /* ignore */ }
             }
             else
                 try { await EjectAsync(); } catch { /* ignore */ }
@@ -698,7 +698,7 @@ public partial class MainViewModel
         catch (Exception ex)
         {
             // Refresh even on failure — TOC state may have changed
-            await RefreshAsync();
+            await ReloadMediaAsync();
             LogErr($"{modeName} failed: {ex.Message}");
             SimpleBox.Show($"{modeName} failed.\n\n{ex.Message}", $"{modeName} Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);

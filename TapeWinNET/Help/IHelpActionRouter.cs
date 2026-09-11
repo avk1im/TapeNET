@@ -16,6 +16,6 @@ public interface IHelpActionRouter
     /// </summary>
     void Invoke(string actionId);
 
-    /// <summary>Returns <c>true</c> when a command is registered for <paramref name="actionId"/>.</summary>
+    /// <summary>Returns <see langword="true"/> when a command is registered for <paramref name="actionId"/>.</summary>
     bool IsRegistered(string actionId);
 }

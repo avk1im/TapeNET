@@ -43,7 +43,7 @@ public sealed class FclAiTranslator(IChatClient client, ILogger<FclAiTranslator>
 
     /// <summary>
     /// Tool-calling support state: <c>null</c> = not yet probed,
-    /// <c>true</c> = model supports tools, <c>false</c> = direct mode only.
+    /// <see langword="true"/> = model supports tools, <see langword="false"/> = direct mode only.
     /// Determined automatically on the first request.
     /// </summary>
     private bool? _toolsSupported;
@@ -293,8 +293,8 @@ public sealed class FclAiTranslator(IChatClient client, ILogger<FclAiTranslator>
     /// </para>
     /// </summary>
     /// <returns>
-    /// <c>true</c> if the model used real tool calls or responded with plain
-    /// text; <c>false</c> if it emitted fake tool-call JSON.
+    /// <see langword="true"/> if the model used real tool calls or responded with plain
+    /// text; <see langword="false"/> if it emitted fake tool-call JSON.
     /// </returns>
     private static bool DetectToolSupport(ChatResponse response, string responseText)
     {

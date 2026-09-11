@@ -141,6 +141,35 @@ public interface ITapeServiceHost
     bool OnMediaLoadRetryConfirm(string errorMessage, bool isRetry);
 
     /// <summary>
+    /// Presents a media-identity problem (§10) and asks how to proceed. The host builds its own
+    ///  LOCALIZED message from <paramref name="verdict"/> + <paramref name="context"/> +
+    ///  <paramref name="headerDescription"/> (the header's <c>ToString()</c>, or "Unidentified media"),
+    ///  and offers the allowed subset of choices.
+    /// </summary>
+    /// <param name="headerDescription">The offending header's self-description, for display verbatim.</param>
+    /// <param name="verdict">The service's identity judgment.</param>
+    /// <param name="context">What the user is proceeding into — drives wording, severity, and the Proceed label.</param>
+    /// <param name="allowRetry">
+    ///  Offer <see cref="MediaMismatchChoice.Retry"/> (eject/insert different media, re-check) — only where
+    ///  insert machinery exists (multi-volume continuation loops); false at operation start.
+    /// </param>
+    /// <param name="allowProceedAlways">
+    ///  Offer <see cref="MediaMismatchChoice.ProceedAlways"/> — false for one-off operations (e.g. import-TOC).
+    /// </param>
+    /// <remarks>
+    ///  HOST GUIDANCE: a non-interactive / unattended host should return
+    ///  <see cref="MediaMismatchChoice.Proceed"/> (preserving legacy batch behaviour — an unattended backup
+    ///  must not stall on a prompt) and LOG the auto-decision. A stricter host may return
+    ///  <see cref="MediaMismatchChoice.Abort"/>. The library imposes no policy; it always asks.
+    /// </remarks>
+    MediaMismatchChoice OnMediaMismatchConfirm(
+        string headerDescription,
+        TapeMediaVerdict verdict,
+        MediaPromptContext context,
+        bool allowRetry,
+        bool allowProceedAlways);
+
+    /// <summary>
     /// Invoked when a file-level error occurs during backup or restore.
     /// The host shows the appropriate error dialog and returns the chosen action.
     /// <para>

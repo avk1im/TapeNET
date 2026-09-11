@@ -101,7 +101,7 @@ public sealed class HelpPopup
 
     // ── Public API ────────────────────────────────────────────────────────────
 
-    /// <summary><c>true</c> while the popup is visible.</summary>
+    /// <summary><see langword="true"/> while the popup is visible.</summary>
     public bool IsOpen => _popup.IsOpen;
 
     /// <summary>

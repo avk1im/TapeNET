@@ -101,7 +101,7 @@ public class VirtualDriveBasicTests
     [MemberData(nameof(AllProfiles))]
     public void Media_StartsAtPositionZero(DriveProfile profile)
     {
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = new VirtualTapeFixture(profile, withMediaHeader: false);
 
         // Position should be at the beginning after load
         long block = fixture.Drive.BlockCounter;
@@ -115,6 +115,32 @@ public class VirtualDriveBasicTests
         Assert.True(fixture.Drive.HasInitiatorPartition);
         Assert.Equal(2U, fixture.Drive.PartitionCount);
     }
+
+    [Fact]
+    public void SeekToBlock_AtEod_PositionsStreamAtEnd_SoNextWriteAppends()
+    {
+        using var media = VirtualMediaOnlyFixture.CreateTestMedia(blockSize: 16384, capacity: 16384 * 2);
+
+        // One block written (e.g. the 16 KiB header), then rewind + seek to EOD (block 1).
+        var block = new byte[16384];
+        Array.Fill(block, (byte)0xAB);
+        Assert.Equal(16384, media.WriteBlocks(block, 0, 16384));
+
+        media.Rewind();
+        Assert.True(media.SeekToBlock(1));                 // EOD == TotalBlockCount
+
+        var second = new byte[16384];
+        Array.Fill(second, (byte)0xCD);
+        Assert.Equal(16384, media.WriteBlocks(second, 0, 16384));
+
+        // The first block must still be intact — not overwritten.
+        media.SeekToBlock(0);
+        var read = new byte[16384];
+        media.ReadBlocks(read, 0, 16384, out _);
+        Assert.All(read, b => Assert.Equal(0xAB, b));      // header survived
+        Assert.Equal(2, media.TotalBlockCount);            // header + appended content
+    }
+
 
     [Theory]
     [InlineData(DriveProfile.Setmarks)]
@@ -220,7 +246,7 @@ public class VirtualDriveBasicTests
     [MemberData(nameof(AllProfiles))]
     public void WriteAndRead_SingleBlock_RoundTrips(DriveProfile profile)
     {
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = new VirtualTapeFixture(profile, withMediaHeader: false);
         var drive = fixture.Drive;
         int blockSize = (int)drive.BlockSize;
 
@@ -248,7 +274,7 @@ public class VirtualDriveBasicTests
     [MemberData(nameof(AllProfiles))]
     public void WriteAndRead_MultipleBlocks_RoundTrips(DriveProfile profile)
     {
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = new VirtualTapeFixture(profile, withMediaHeader: false);
         var drive = fixture.Drive;
         int blockSize = (int)drive.BlockSize;
         int blockCount = 20;
@@ -280,7 +306,7 @@ public class VirtualDriveBasicTests
     [MemberData(nameof(AllProfiles))]
     public void WriteFilemark_CanBeSpaced(DriveProfile profile)
     {
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = new VirtualTapeFixture(profile, withMediaHeader: false);
         var drive = fixture.Drive;
         int blockSize = (int)drive.BlockSize;
 
@@ -315,7 +341,7 @@ public class VirtualDriveBasicTests
     [Fact]
     public void Setmarks_WriteAndSpace_Works()
     {
-        using var fixture = new VirtualTapeFixture(DriveProfile.Setmarks);
+        using var fixture = new VirtualTapeFixture(DriveProfile.Setmarks, withMediaHeader: false);
         var drive = fixture.Drive;
         int blockSize = (int)drive.BlockSize;
 
@@ -346,7 +372,7 @@ public class VirtualDriveBasicTests
     [Fact]
     public void SeqFilemarks_WriteAndSpace_Works()
     {
-        using var fixture = new VirtualTapeFixture(DriveProfile.SeqFilemarks);
+        using var fixture = new VirtualTapeFixture(DriveProfile.SeqFilemarks, withMediaHeader: false);
         var drive = fixture.Drive;
         int blockSize = (int)drive.BlockSize;
 
@@ -402,7 +428,7 @@ public class VirtualDriveBasicTests
     [Fact]
     public void Partitions_CanSwitchBetweenPartitions()
     {
-        using var fixture = new VirtualTapeFixture(DriveProfile.Partitions);
+        using var fixture = new VirtualTapeFixture(DriveProfile.Partitions, withMediaHeader: false);
         var drive = fixture.Drive;
         int blockSize = (int)drive.BlockSize;
 
@@ -583,7 +609,7 @@ public class VirtualDriveBasicTests
         int blockSize = (int)caps.MaxBlockSize;
         long capacity = (long)blockCount * blockSize;   // exact multiple ⇒ the tape fills precisely
 
-        var fixture = new VirtualTapeFixture(ResumeProfile, contentCapacity: capacity);
+        var fixture = new VirtualTapeFixture(ResumeProfile, contentCapacity: capacity, withMediaHeader: false);
         Assert.True(fixture.Drive.SetBlockSize((uint)blockSize));
 
         Assert.True(fixture.Drive.MoveToPartition(MediaPartition.Content));

@@ -40,14 +40,23 @@ public partial class TapeServiceBase
                     LogDriveInfo();
                 }
 
-                // ── Media section ────────────────────────────────────────────
+                // ── Media check and Calibration cartridge section ────────────
                 if (depth.HasFlag(ListDepth.Media))
                 {
                     if (_drive is null || !_drive.IsMediaLoaded)
                     {
-                        // If the caller asked for media info and it is not there, fail.
                         LastError = "Media not loaded";
                         return ListResult.Failed(LastError);
+                    }
+
+                    // A calibration cartridge has NO backup TOC — present its details and stop (no EOD churn,
+                    //  no "TOC not loaded" error at SetTable/FileDetails depth). _loadedHeader was populated at
+                    //  media load (LoadMediaAsync) or by the IdentifyMedia lifecycle step.
+                    if (_loadedHeader is TapeCalibrationHeader)
+                    {
+                        LogInfo("Calibration information:");
+                        LogCalibrationInfo();
+                        return ListResult.Ok(0, 0, 0);
                     }
                 }
 

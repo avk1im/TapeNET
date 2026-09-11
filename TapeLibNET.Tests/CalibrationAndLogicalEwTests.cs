@@ -150,14 +150,25 @@ public class CalibrationAndLogicalEwTests
 
         // (b) EOM anchor — the phantom free space still claimed at hard EOM, driven by the phantom knob only.
         long expectedPhantom = (long)(Capacity * phantomFreePercent / 100.0);
+
+        // The run header occupies one STANDARD 16 KiB block while the payload writes whole RUN blocks, so the
+        //  payload no longer divides the capacity evenly: a trailing partial block (up to one run block) is
+        //  genuinely unwritable and the driver still reports it as remaining. The BOM boost inflates THAT stub
+        //  too, so the measurement slack scales with it.
+        long blockSlack = (long)(drive.BlockSize * (1.0 + reportedBoostPercent / 100.0));
+
         Assert.InRange(cal.PhantomFreeAtEom,
-            (long)(expectedPhantom * 0.98), (long)(expectedPhantom * 1.02) + 1L);
+            (long)(expectedPhantom * 0.98),
+            (long)(expectedPhantom * 1.02) + blockSlack + 1L);
 
         // The two anchors are independent: neither knob may leak into the other's measurement.
         if (reportedBoostPercent == 0.0)
             Assert.InRange(cal.ReportedCapacityAtBom, (long)(Capacity * 0.98), (long)(Capacity * 1.02));
         if (phantomFreePercent == 0.0)
-            Assert.InRange(cal.PhantomFreeAtEom, 0L, (long)(Capacity * 0.01));
+            // Same block-granularity slack as above: with no phantom configured, what remains at EOM is the
+            //  unwritable trailing stub (up to one run block), reported inflated by any BOM boost. On this
+            //  small test cartridge one run block exceeds 1% of capacity, so it must be allowed explicitly.
+            Assert.InRange(cal.PhantomFreeAtEom, 0L, (long)(Capacity * 0.01) + blockSlack);
 
         Assert.Equal(0L, cal.Curve[0].ActualRemaining);
     }

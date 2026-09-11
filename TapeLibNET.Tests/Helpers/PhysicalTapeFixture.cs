@@ -27,7 +27,7 @@ public static class PhysicalTestEnv
     /// an initiator partition even on drives that support one. This exercises the
     /// <c>TapeNavigatorTOCInSet</c> code path on partition-capable hardware.
     /// </summary>
-    public const string ForceNoPartition = "TAPELIBNET_PHYSICAL_NO_PARTITION";
+    public const string forceSinglePartition = "TAPELIBNET_PHYSICAL_NO_PARTITION";
 
     /// <summary>
     /// Maximum number of drives to probe when <see cref="DriveNumbers"/> is not set.
@@ -98,8 +98,8 @@ public sealed class PhysicalTapeFixture : IDisposable
 
     /// <summary>
     /// Whether the tape is formatted with an initiator partition.
-    /// <c>true</c> when the drive supports partitions and
-    /// <see cref="PhysicalTestEnv.ForceNoPartition"/> is not set.
+    /// <see langword="true"/> when the drive supports partitions and
+    /// <see cref="PhysicalTestEnv.forceSinglePartition"/> is not set.
     /// </summary>
     public bool UsesPartition { get; }
 
@@ -158,9 +158,9 @@ public sealed class PhysicalTapeFixture : IDisposable
                 $"Drive #{driveNumber} doesn't match any known DriveProfile. {DriveDescription}");
 
         // Determine partition mode: use partition unless the env var forces it off
-        bool forceNoPartition = !string.IsNullOrEmpty(
-            Environment.GetEnvironmentVariable(PhysicalTestEnv.ForceNoPartition));
-        UsesPartition = Capabilities.SupportsInitiatorPartition && !forceNoPartition;
+        bool forceSinglePartition = !string.IsNullOrEmpty(
+            Environment.GetEnvironmentVariable(PhysicalTestEnv.forceSinglePartition));
+        UsesPartition = Capabilities.SupportsInitiatorPartition && !forceSinglePartition;
 
         // Format media
         if (format)
@@ -168,6 +168,8 @@ public sealed class PhysicalTapeFixture : IDisposable
             if (!FormatTape())
                 throw new InvalidOperationException($"Failed to format tape in drive #{driveNumber}");
         }
+
+        EffectiveUsesPartition = UsesPartition; // ← match the ctor's plain FormatTape()
 
         // Prepare media (sets optimal block size, etc.)
         if (!Drive.PrepareMedia())
@@ -277,26 +279,33 @@ public sealed class PhysicalTapeFixture : IDisposable
         return false;
     }
 
+    /// <summary>Tracks the partition mode of the MOST RECENT format, which may differ from
+    ///  <see cref="UsesPartition"/> when a test reformats with <c>forceSinglePartition</c>.</summary>
+    public bool EffectiveUsesPartition { get; private set; }
+
     /// <summary>
-    /// Recovers the drive and reformats the tape for a clean start.
-    /// Use when a previous test may have corrupted the tape layout.
+    /// Recovers the drive and reformats. Pass <paramref name="forceSinglePartition"/> = true to reformat
+    ///  single-partition (TOC-in-set) for this reformat only — the caller's test then runs against a
+    ///  content-partition layout even on a partition-capable drive.
     /// </summary>
-    /// <returns>True if reformat succeeded.</returns>
-    public bool RecoverAndReformat(string mediaDescription = "Physical Test Media")
+    public bool RecoverAndReformat(
+        string mediaDescription = "Physical Test Media",
+        bool forceSinglePartition = false)
     {
         if (!RecoverDrive())
             return false;
 
-        if (!FormatTape())
+        if (!FormatTape(forceSinglePartition))
         {
             IsFailed = true;
             return false;
         }
 
+        EffectiveUsesPartition = UsesPartition && !forceSinglePartition;   // record actual mode
+
         Drive.PrepareMedia();
         TOC = new TapeTOC(mediaDescription);
 
-        // Refresh media parameters
         Drive.Backend.FillMediaParameters(out var mediaParams);
         MediaParams = mediaParams;
 
@@ -304,12 +313,19 @@ public sealed class PhysicalTapeFixture : IDisposable
     }
 
     /// <summary>
-    /// Formats the tape according to <see cref="UsesPartition"/>.
-    /// Creates a 4 MB initiator partition when enabled, plain format otherwise.
+    /// Formats the tape according to <see cref="UsesPartition"/> by default: creates a 4 MB initiator partition when
+    ///  enabled, plain format otherwise.
+    ///  <para>
+    ///  Pass <paramref name="forceSinglePartition"/> = <see langword="true"> to format single-partition (TOC-in-set) FOR THIS
+    ///  FORMAT ONLY, e.g. to exercise the content-partition header path on a partition-capable
+    ///  drive without changing the whole session's mode.
+    ///  </para>
     /// </summary>
-    private bool FormatTape()
+    private bool FormatTape(bool forceSinglePartition = false)
     {
-        return UsesPartition
+        bool usePartition = UsesPartition && !forceSinglePartition;
+
+        return usePartition
             ? Drive.FormatMedia(4L * 1024 * 1024)
             : Drive.FormatMedia();
     }

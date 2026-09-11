@@ -21,7 +21,7 @@ public sealed record WalkthroughStep(
     string? ActionId = null)
 {
     /// <summary>
-    /// <c>true</c> when this step opens a dialog/command rather than pointing at
+    /// <see langword="true"/> when this step opens a dialog/command rather than pointing at
     /// a control on screen. The step footer shows a "Do it ▶" button instead of "Next ▶".
     /// </summary>
     public bool IsActionStep => !string.IsNullOrEmpty(ActionId);

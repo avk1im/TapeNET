@@ -7,7 +7,7 @@ namespace AiNET;
 /// <param name="Descriptor">The provider type that was probed.</param>
 /// <param name="Endpoint">The endpoint URI that was contacted.</param>
 /// <param name="IsHealthy">
-/// <c>true</c> if the provider responded and is usable.
+/// <see langword="true"/> if the provider responded and is usable.
 /// </param>
 /// <param name="DiscoveredChatModels">
 /// Model IDs available for chat completions. Empty when none were found or
@@ -23,7 +23,7 @@ namespace AiNET;
 /// </param>
 /// <param name="ErrorMessage">
 /// Human-readable failure description; <c>null</c> when <see cref="IsHealthy"/>
-///  is <c>true</c>.
+///  is <see langword="true"/>.
 /// </param>
 public sealed record AiProviderProbeResult(
     AiProviderDescriptor Descriptor,
@@ -35,7 +35,7 @@ public sealed record AiProviderProbeResult(
     string? ErrorMessage)
 {
     /// <summary>
-    /// <c>true</c> when the probe failed specifically because the supplied
+    /// <see langword="true"/> when the probe failed specifically because the supplied
     /// credentials were rejected (HTTP 401/403) — as opposed to a network or
     /// endpoint failure.
     /// </summary>

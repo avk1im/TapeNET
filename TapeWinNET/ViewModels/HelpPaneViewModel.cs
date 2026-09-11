@@ -238,7 +238,7 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
         set => SetProperty(ref _pendingQuery, value);
     }
 
-    /// <summary><c>true</c> while an async operation is in flight.</summary>
+    /// <summary><see langword="true"/> while an async operation is in flight.</summary>
     public bool IsBusy
     {
         get => _isBusy;
@@ -257,7 +257,7 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     }
 
     /// <summary>
-    /// <c>true</c> while the Reveal overlay is active on the host window.
+    /// <see langword="true"/> while the Reveal overlay is active on the host window.
     /// Setting this raises <see cref="RevealRequested"/> so <see cref="Controls.HelpPane"/>
     /// can activate or deactivate the overlay.
     /// </summary>
@@ -280,7 +280,7 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     // ── Guide Me (Walkthrough) properties ─────────────────────────────────────
 
     /// <summary>
-    /// <c>true</c> while a walkthrough tour is active on the host window.
+    /// <see langword="true"/> while a walkthrough tour is active on the host window.
     /// Setting this raises <see cref="GuideRequested"/> so <see cref="Controls.HelpPane"/>
     /// can activate or deactivate the <see cref="Overlays.WalkthroughOverlay"/>.
     /// </summary>
@@ -326,13 +326,13 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
         => _activeTour?.Steps.ElementAtOrDefault(_stepIndex);
 
     /// <summary>
-    /// <c>true</c> when the current step is an action step so the footer shows
+    /// <see langword="true"/> when the current step is an action step so the footer shows
     /// "Do it ▶" rather than "Next ▶".
     /// </summary>
     public bool IsActionStep => CurrentStep?.IsActionStep == true;
 
     /// <summary>
-    /// <c>true</c> when the current step is the last step in the tour so the footer displays
+    /// <see langword="true"/> when the current step is the last step in the tour so the footer displays
     /// "Finish" rather than "Next ▶".
     /// </summary>
     public bool IsLastStep => _activeTour is not null
@@ -376,7 +376,7 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     public bool CanGoForward => _session.ForwardHistory.Count > 0;
 
     /// <summary>
-    /// <c>true</c> while the AI assistant is preparing an answer.
+    /// <see langword="true"/> while the AI assistant is preparing an answer.
     /// Drives the thinking animation strip and the Ask/Abort button state.
     /// </summary>
     public bool IsAsking

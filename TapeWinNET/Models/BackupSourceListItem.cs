@@ -123,7 +123,7 @@ public class BackupSourceListItem(BackupSourceEntry entry) : INotifyPropertyChan
 
     /// <summary>
     /// Tri-state check for this source:
-    /// <c>true</c> = all files checked, <c>false</c> = none,
+    /// <see langword="true"/> = all files checked, <see langword="false"/> = none,
     /// <c>null</c> = partial (some files selected via the Files pane).
     /// </summary>
     public bool? IsCheckedForBackup

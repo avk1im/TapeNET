@@ -6,7 +6,7 @@ namespace TapeWinNET.Help.Overlays;
 /// </summary>
 internal interface IHelpOverlay
 {
-    /// <summary><c>true</c> while the overlay is active.</summary>
+    /// <summary><see langword="true"/> while the overlay is active.</summary>
     bool IsActive { get; }
 
     /// <summary>Activates the overlay: adds the adorner and starts intercepting input.</summary>

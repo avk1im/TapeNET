@@ -161,6 +161,48 @@ public class TestTapeServiceHost : ITapeServiceHost
     public bool OnMediaLoadRetryConfirm(string errorMessage, bool isRetry)
         => ConfirmAnswers.Count > 0 && ConfirmAnswers.Dequeue();
 
+    // ── Media-identity prompt (§10) ───────────────────────────────────────────
+    #region Media-dentity prompt
+
+    /// <summary>
+    /// Queued <see cref="MediaMismatchChoice"/> answers consumed one-by-one by
+    ///  <see cref="OnMediaMismatchConfirm"/>. When empty, <see cref="MediaMismatchChoice.Proceed"/>
+    ///  is returned — the legacy-compatible non-interactive default, so tests that do not expect a
+    ///  mismatch prompt never stall or fail on one.
+    /// </summary>
+    public Queue<MediaMismatchChoice> MediaMismatchAnswers { get; } = new();
+
+    /// <summary>Every <see cref="OnMediaMismatchConfirm"/> invocation, in order, for post-hoc assertions.</summary>
+    public ConcurrentQueue<MediaMismatchPrompt> MediaMismatchPrompts { get; } = new();
+
+    /// <summary>Snapshot of one <see cref="OnMediaMismatchConfirm"/> call.</summary>
+    public record MediaMismatchPrompt(
+        string HeaderDescription,
+        TapeMediaVerdict Verdict,
+        MediaPromptContext Context,
+        bool AllowRetry,
+        bool AllowProceedAlways);
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Records the prompt and returns the next queued answer, or <see cref="MediaMismatchChoice.Proceed"/>
+    ///  when the queue is empty.
+    /// </remarks>
+    public virtual MediaMismatchChoice OnMediaMismatchConfirm(
+        string headerDescription,
+        TapeMediaVerdict verdict,
+        MediaPromptContext context,
+        bool allowRetry,
+        bool allowProceedAlways)
+    {
+        MediaMismatchPrompts.Enqueue(
+            new MediaMismatchPrompt(headerDescription, verdict, context, allowRetry, allowProceedAlways));
+
+        return MediaMismatchAnswers.Count > 0 ? MediaMismatchAnswers.Dequeue() : MediaMismatchChoice.Proceed;
+    }
+
+    #endregion
+
     /// <inheritdoc/>
     /// <remarks>
     /// Dequeues from <see cref="FileErrorAnswers"/>; returns
@@ -225,6 +267,11 @@ public class TestTapeServiceHost : ITapeServiceHost
         SelectAnswers.Clear();
         AskAnswers.Clear();
         FileErrorAnswers.Clear();
+
+        // Ensure a reused host clears mismatch state:
+        while (MediaMismatchPrompts.TryDequeue(out _))
+            { }
+        MediaMismatchAnswers.Clear();
     }
 
     // ── Inner types ───────────────────────────────────────────────────────────

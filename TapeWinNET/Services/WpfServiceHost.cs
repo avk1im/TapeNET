@@ -521,6 +521,156 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
         return retry;
     }
 
+    #region Media Mismatch
+
+    // ── ITapeServiceHost — Media-identity prompt (§10) ────────────────────────
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Builds a localized headline / detail / proceed-label + severity from
+    ///  (<paramref name="verdict"/>, <paramref name="context"/>), then shows the modal
+    ///  <see cref="MediaMismatchDialog"/>. Marshalled to the UI thread; blocks the calling
+    ///  worker thread until the user chooses.
+    /// </remarks>
+    public MediaMismatchChoice OnMediaMismatchConfirm(
+        string headerDescription,
+        TapeMediaVerdict verdict,
+        MediaPromptContext context,
+        bool allowRetry,
+        bool allowProceedAlways)
+    {
+        MediaMismatchChoice result = MediaMismatchChoice.Abort;
+
+        _dispatcher.Invoke(() =>
+        {
+            var p = BuildPresentation(verdict, context);
+
+            var dialog = new MediaMismatchDialog(
+                title: p.Title,
+                headline: p.Headline,
+                detail: p.Detail,
+                headerDescription: headerDescription,
+                severity: p.Severity,
+                proceedLabel: p.ProceedLabel,
+                allowRetry: allowRetry,
+                allowProceedAlways: allowProceedAlways)
+            {
+                Owner = Application.Current.MainWindow,
+            };
+
+            if (dialog.ShowDialog() == true)
+                result = dialog.Result;
+        });
+
+        return result;
+    }
+
+    // ── Presentation builder (localization-ready) ─────────────────────────────
+
+    /// <summary>The fully-composed strings + severity for a given verdict/context.</summary>
+    private readonly record struct MismatchPresentation(
+        string Title, string Headline, string Detail, string ProceedLabel, MediaMismatchSeverity Severity);
+
+    /// <summary>
+    /// Maps (<paramref name="verdict"/>, <paramref name="context"/>) to user-facing wording and severity.
+    ///  Destructive contexts (overwrite, continuation) escalate severity and use a "&amp; overwrite" label;
+    ///  verify/import contexts warn that the wrong medium may be mounted.
+    /// </summary>
+    private static MismatchPresentation BuildPresentation(TapeMediaVerdict verdict, MediaPromptContext context)
+    {
+        bool destructive = context is MediaPromptContext.OverwriteBackup or MediaPromptContext.ContinuationVolume
+            or MediaPromptContext.CalibrateScratch;
+
+        // Severity: wrong kind and destructive mismatches are stern; a wrong volume / verify mismatch is a warning.
+        MediaMismatchSeverity severity = verdict switch
+        {
+            TapeMediaVerdict.WrongKind => MediaMismatchSeverity.Error,
+            TapeMediaVerdict.MediaInconsistent => MediaMismatchSeverity.Error,
+            TapeMediaVerdict.MediaIdMismatch => destructive ? MediaMismatchSeverity.Error : MediaMismatchSeverity.Warning,
+            _ => MediaMismatchSeverity.Warning,   // WrongVolume, others
+        };
+
+        string proceedLabel = destructive ? "Proceed & overwrite" : "Proceed";
+
+        // `what` names the offending media in the user's terms.
+        string what = verdict switch
+        {
+            TapeMediaVerdict.WrongKind => context is not/*!!*/ MediaPromptContext.CalibrateScratch
+                ? "calibration data (not a backup)" // NOT a calibration operation -> calibration data is wrong
+                : "backup data (not calibration data)", // calibration operation -> backup data is wrong
+            TapeMediaVerdict.MediaIdMismatch => "a different backup",
+            TapeMediaVerdict.WrongVolume => "a different volume of this backup series",
+            _ => "unexpected media",
+        };
+
+        return context switch
+        {
+            MediaPromptContext.SearchForTOC => new(
+                Title: "Search for a table of contents?",
+                Headline: "This cartridge could not be identified",
+                Detail: "The loaded media has no recognizable header. It may be a legacy backup media (which does "
+                        + "have a table of contents) or unrelated / blank media. Searching reads to the end of the "
+                        + "media, which can take a while and may find nothing.",
+                ProceedLabel: "Search",
+                Severity: MediaMismatchSeverity.Warning),
+
+            MediaPromptContext.OverwriteBackup => new(
+                Title: "Overwrite media?",
+                Headline: "This cartridge already holds data",
+                Detail: $"The loaded media appears to hold {what}. Proceeding will PERMANENTLY ERASE it and "
+                        + "write a new backup from the beginning. This cannot be undone.",
+                ProceedLabel: proceedLabel,
+                Severity: severity),
+
+            MediaPromptContext.ContinuationVolume => new(
+                Title: "Unexpected continuation volume",
+                Headline: "This is not blank media for the next volume",
+                Detail: verdict == TapeMediaVerdict.WrongVolume
+                            ? "This looks like an EARLIER volume of the same backup series. Continuing here will "
+                            + "overwrite that volume's data and break the series."
+                            : $"This media holds {what}. Continuing the backup here will PERMANENTLY ERASE it.",
+                ProceedLabel: proceedLabel,
+                Severity: severity),
+
+            MediaPromptContext.VerifyRestore => new(
+                Title: "Media does not match",
+                Headline: "The loaded media does not match the backup",
+                Detail: verdict == TapeMediaVerdict.WrongVolume
+                            ? "The inserted volume number differs from the one expected for this restore. You may "
+                            + "have inserted the wrong volume."
+                            : $"The loaded media identifies as {what}. You may have inserted the wrong tape. "
+                            + "Proceeding will read from it anyway.",
+                ProceedLabel: proceedLabel,
+                Severity: severity),
+
+            MediaPromptContext.ImportToc => new(
+                Title: "Imported TOC does not match this media",
+                Headline: "The imported TOC was recorded for other media",
+                Detail: "The table of contents you imported does not match the medium currently loaded. You can "
+                        + "still proceed, using the imported TOC on this medium — its volume number will be adopted, "
+                        + "but the media identity in the imported TOC is left unchanged so the discrepancy stays visible.",
+                ProceedLabel: proceedLabel,
+                Severity: severity),
+
+            MediaPromptContext.CalibrateScratch => new(
+                Title: "Overwrite media?",
+                Headline: "This cartridge holds backup data",
+                Detail: $"The loaded media appears to hold {what}. Proceeding will PERMANENTLY ERASE it and "
+                        + "write new calibration data from the beginning. This cannot be undone.",
+                ProceedLabel: proceedLabel,
+                Severity: severity),
+
+            _ => new(
+                Title: "Media identity check",
+                Headline: "Unexpected media",
+                Detail: "The loaded media does not match what this operation expected.",
+                ProceedLabel: proceedLabel,
+                Severity: severity),
+        };
+    }
+
+    #endregion
+
     /// <inheritdoc/>
     /// <remarks>
     /// Shows the WPF <see cref="FileErrorDialog"/> and maps

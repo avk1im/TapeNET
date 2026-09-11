@@ -172,13 +172,24 @@ public interface ITapeFileNotifiable
 /// </summary>
 public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDriveHolder<TapeFileAgent>(drive), IDisposable
 {
-    private const uint c_fixedTOCBlockSize = 16 * 1024; // 16K
+    /// <summary>BlockSize used for header and TOC read / write, fixed since it needs to be known upfront.</summary>
+    private const uint c_fixedTOCBlockSize = 16 * 1024; // 16 KiB
 
-    // Hashing for TOC is fixed since it needs to be known upfront for each tape
+    /// <summary>Hashing for TOC, fixed since it needs to be known upfront for each tape.</summary>
     private readonly TapeHashAlgorithm c_hashForTOC = TapeHashAlgorithm.Crc64;
+
+    /// <summary>
+    /// Guards <see cref="EnsureHeaderResolved"/> so the one-time BOM probe runs at most once per agent.
+    /// </summary>
+    private bool m_headerResolved = false;
 
     /// <summary>Table of contents for this tape session.</summary>
     public TapeTOC TOC { get; init; } = legacyTOC ?? [];
+    /// <summary>
+    /// Where the TOC is stored on tape, determined based on the type of <see cref="Navigator"/> in use.
+    /// </summary>
+    public TapeTocPlacement TOCPlacement =>
+        Navigator is TapeNavigatorTOCInPartition ? TapeTocPlacement.InPartition : TapeTocPlacement.InSet;
     /// <summary>Stream manager providing state-guarded read/write stream provisioning.</summary>
     public TapeStreamManager Manager { get; init; } = new(drive);
     /// <summary>Shortcut to <see cref="Manager"/>.<see cref="TapeStreamManager.Navigator"/>.</summary>
@@ -342,10 +353,114 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
         return hasher;
     }
 
+    #region *** Media Header ***
+
+    /// <summary>
+    /// Whether to auto-write a media header at the start of a new volume via <see cref="BackupInitialTOC"/>.
+    /// Also defines whether <see cref="TapeFileBackupAgent"/> auto-writes header at the start of a new and continuation volumes.
+    /// <para>Set to <see langword="true"/> at the construction by default.</para>
+    /// </summary>
+    public bool WritesMediaHeader { get; set; } = true;
+
+    /// <summary>
+    /// Writes the media header at BOM. Invoked from <see cref="BackupInitialTOC"/> on the
+    ///  format / fresh-media path (when heading is requested), and from <see cref="TapeFileBackupAgent"/>
+    ///  at the start of a fresh content set on a new volume. Builds the header via the TOC (the sole
+    ///  header authority), frames it, pads it to the fixed header block, and hands it to the manager.
+    /// </summary>
+    public TapeResult WriteHeader()
+    {
+        var header = TOC.CreateHeader(tocBlockSize: c_fixedTOCBlockSize, tapeTocPlacement: TOCPlacement);
+
+        byte[]? block = TapeHeaderBlock.Frame(header);      // pack + size guard + pad, single-point
+        if (block is null)
+        {
+            m_logger.LogError("Media header frame exceeds the standard header block ({Bs} B)", TapeHeaderBlock.Size);
+            SetError(WIN32_ERROR.ERROR_INSUFFICIENT_BUFFER, "Media header too large for its block");
+            return TapeResult.Fail(this);
+        }
+
+        if (!Manager.WriteHeaderBlock(block))
+        {
+            SyncErrorFrom(Manager);
+            return TapeResult.Fail(this);
+        }
+
+        m_headerResolved = true;                            // we just wrote it — presence is Present
+        m_logger.LogTrace("Media header written: {Header}", header);
+        return TapeResult.OK;
+    }
+
+
+    /// <summary>
+    /// Reads and classifies the BOM header, returning the polymorphic <see cref="TapeHeader"/> (media,
+    ///  calibration, or null for legacy/blank/foreign) and caching presence on the navigator. One block read.
+    /// </summary>
+    /// <remarks>The service inspects the returned kind for its verdict; the navigator only learns
+    ///  Present (a media header) vs Absent (anything else). Evaluation stays the service's job (D16).</remarks>
+    public TapeHeader? ReadHeader()
+    {
+        var buffer = new byte[TapeHeaderBlock.Size];
+        int read = Manager.ReadHeaderBlock(buffer);
+
+        m_headerResolved = true;
+
+        if (read <= 0)
+        {
+            // Reaching BOM and finding NO data is the blank / legacy / at-EOD case — a DEFINITIVE
+            //  "no media header", i.e. Absent. It is NOT an unresolved state: nothing retries
+            //  EnsureHeaderResolved, so leaving Unknown wedges all later navigation
+            //  (MoveToBeginOfContentFromBom rejects Unknown). Absent lets navigation proceed and
+            //  skip nothing — exactly right for headerless media.
+            Navigator.ResolveHeaderPresence(TapeHeaderPresence.Absent);
+            return null;
+        }
+
+        TapeHeader? header = TapeHeaderBlock.Classify(buffer, read);
+
+        // A readable block that is NOT our media header (calibration / foreign / torn) is likewise
+        //  "no media header here" for navigation = Absent; the service still learns the concrete kind.
+        Navigator.ResolveHeaderPresence(
+            header is TapeMediaHeader ? TapeHeaderPresence.Present : TapeHeaderPresence.Absent);
+
+        if (header is not null)
+            m_logger.LogTrace("BOM header read: {Header}", header);
+
+        return header;
+    }
+
+
+    /// <summary>Convenience: reads the header and returns just the resulting presence.</summary>
+    public TapeHeaderPresence ProbeHeaderPresence()
+    {
+        ReadHeader();
+        return Navigator.HeaderPresence;
+    }
+
+    /// <summary>
+    /// Resolves header presence before the first content/TOC navigation, if not already known. Idempotent
+    ///  and best-effort: on I/O failure presence stays Unknown and downstream navigation surfaces the error.
+    /// </summary>
+    internal void EnsureHeaderResolved()
+    {
+        if (m_headerResolved || Navigator.HeaderPresence != TapeHeaderPresence.Unknown)
+        {
+            m_headerResolved = true;
+            return;
+        }
+
+        ReadHeader();
+    }
+
+    #endregion // *** Media Header ***
+
     #region *** TOC Backup ***
 
     private bool BeginWriteTOC()
     {
+        // Do NOT EnsureHeaderResolved() here — TOC navigation works from end-of-content and never
+        //  needs header presence; resolving here would rewind to BOM and destroy the position.
+
         // If we were reading or writing, end it first - before setting the parameters for TOC writing
         if (!Manager.EndReadWrite())
         {
@@ -487,9 +602,21 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     /// Equivalent to <see cref="BackupTOC()"/> but tells the navigator that no
     /// existing TOC mark or content needs to be located first.
     /// </summary>
-    public TapeResult BackupInitialTOC()
+    /// <param name="writeHeader">
+    /// Write the media header before the initial TOC. TRUE only on the format / fresh-media path;
+    ///  FALSE on the delete-all path (which must preserve, never rewrite, the existing header — §10.8).
+    ///  Defaults to <see cref="WritesMediaHeader"/> so continuation heading (which sets the flag) works.
+    /// </param>
+    public TapeResult BackupInitialTOC(bool? writeHeader = null)
     {
         Navigator.AssumeBlankMedia();
+
+        if (writeHeader ?? WritesMediaHeader)
+        {
+            var hr = WriteHeader();
+            if (!hr) return hr;
+        }
+
         return BackupTOC();
     }
 
@@ -509,6 +636,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     /// </list>
     /// </para>
     /// </summary>
+    /// <remarks>Takes a special precaution to NOT overwrite the media header.</remarks>
     /// <param name="navigateFromBegin">
     /// If <see langword="true"/>, enforces navigator to count from the beginning of media --
     ///     useful if TOC is missing or corrupted, hence its filemarks should not be trusted.
@@ -519,7 +647,6 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
         m_logger.LogTrace("Deleting sets from #{Set} up", TOC.CurrentSetIndex);
 
         // --- Precondition checks (before any tape I/O) ---
-
         if (!TOC.IsCurrentSetOnVolume)
         {
             m_logger.LogWarning("Current set #{Set} is not on volume #{Volume}", TOC.CurrentSetIndex, TOC.Volume);
@@ -530,7 +657,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
 
         bool deletingAll = TOC.CurrentSetIndex == TOC.FirstSetOnVolume;
 
-        if (deletingAll && /*Drive.HasInitiatorPartition*/ Navigator is TapeNavigatorTOCInPartition)
+        if (deletingAll && TOCPlacement == TapeTocPlacement.InPartition)
         {
             // Cannot erase all content when TOC is in a separate partition —
             //  the caller should format the media instead.
@@ -542,15 +669,21 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
 
         try
         {
+            // §17.3: this method navigates content DIRECTLY (not via a backup content choke-point),
+            //  so resolve header presence up front. Otherwise MoveToBeginOfContent / MoveToTargetContentSet
+            //  on a headed tape would meet an unresolved Unknown → permissive Absent → no header skip →
+            //  land at block 0 and clobber the media header. Idempotent / no-op once resolved.
+            EnsureHeaderResolved();
+
             if (deletingAll)
             {
                 // --- Delete ALL sets on volume (TOC in set only) ---
                 //  Navigate to the very beginning of content, then write an initial TOC
-                //  which overwrites everything from position 0.
+                //  which overwrites everything from the first content block.
                 m_logger.LogTrace("Deleting all sets — navigating to beginning of content");
 
                 Manager.EndReadWrite();
-                Navigator.MoveToBeginOfContent();
+                Navigator.MoveToBeginOfContent();   // Present ⇒ skips the header, lands at block 1
                 if (Navigator.WentBad)
                 {
                     SyncErrorFrom(Navigator);
@@ -569,31 +702,32 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                     TOC.RemoveAllSets();
                 }
 
-                // Write the TOC as if this were blank media
-                return BackupInitialTOC();
+                // Write the TOC as if this were blank media — but do NOT rewrite the media header
+                //  (§10.8 / INV-4). MoveToBeginOfContent already positioned us at block 1 (past the
+                //  header at block 0), so the fresh initial TOC overwrites content only; the header survives.
+                return BackupInitialTOC(writeHeader: false);
             }
             else
             {
                 // --- Delete trailing sets (at least one set remains) ---
-                //  Navigate to the first set to be deleted, step back one setmark,
-                //  then rewrite the content setmark at that position. This overwrites
-                //  the zombie setmarks and moves the end-of-data marker. Then update
-                //  the TOC and write it to tape.
-
+                //  Navigate to the first set to be deleted, step back one setmark, then rewrite the
+                //  content setmark there. This overwrites the zombie setmarks and moves the EOD marker.
+                //  Then update the TOC and write it to tape.
                 m_logger.LogTrace("Navigating to set #{Set} for deletion", TOC.CurrentSetIndex);
 
                 Manager.EndReadWrite();
+
                 if (navigateFromBegin)
                 {
                     m_logger.LogTrace("Enforced navigating to beginning of content");
-                    Navigator.MoveToBeginOfContent();
+                    Navigator.MoveToBeginOfContent();   // Present ⇒ skips the header
                     Navigator.TargetContentSet = TOC.CurrentSetIndexOnVolume;
                 }
                 else
                 {
                     Navigator.TargetContentSet = CurrentSetAsNavigatorContentSet;
                 }
-                
+
                 Navigator.MoveToTargetContentSet();
                 if (Navigator.WentBad)
                 {
@@ -601,8 +735,8 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                     return TapeResult.Fail(this);
                 }
 
-                // Step back one setmark — position to just before the setmark that
-                //  separates the last retained set from the first set to delete.
+                // Step back one setmark — to just before the setmark separating the last retained set
+                //  from the first set to delete.
                 Navigator.MoveToNextContentSetmark(-1);
                 if (Navigator.WentBad)
                 {
@@ -610,8 +744,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                     return TapeResult.Fail(this);
                 }
 
-                // Rewrite the content setmark at this position — this physically
-                //  overwrites the zombie data and advances the end-of-data marker.
+                // Rewrite the content setmark here — physically overwrites the zombie data and advances EOD.
                 Navigator.WriteContentSetmark();
                 if (Navigator.WentBad)
                 {
@@ -619,32 +752,36 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                     return TapeResult.Fail(this);
                 }
 
-                // The navigator now thinks we're past the end of content
+                // The navigator now thinks we're past the end of content.
                 Navigator.OnContentWritten();
 
-                // Remove the sets from the TOC: position to the set before the first
-                //  one to delete, then remove everything after it.
+                // Remove the sets from the TOC: position to the set before the first to delete, then
+                //  remove everything after it.
                 TOC.CurrentSetIndex = TOC.CurrentSetIndex - 1;
                 TOC.RemoveSetsAfterCurrent();
 
-                // Save the updated TOC to tape
+                // Save the updated TOC to tape. (Trailing delete never touches BOM, so the header is
+                //  untouched — no writeHeader flag involved here.)
                 return BackupTOC();
             }
         }
-        catch (Exception ex)
+        catch (System.Exception ex)
         {
             m_logger.LogWarning("Exception {Exception} in {Method}", ex, nameof(DeleteSetsFromCurrentSetUp));
             SetError(ex);
             return TapeResult.Fail(this);
         }
-    }
+    } // DeleteSetsFromCurrentSetUp()
 
-#endregion // *** TOC Backup ***
+    #endregion // *** TOC Backup ***
 
     #region *** TOC Restore ***
 
     private bool BeginReadTOC()
     {
+        // Do NOT EnsureHeaderResolved() here — TOC navigation works from end-of-content and never
+        //  needs header presence; resolving here would rewind to BOM and destroy the position.
+
         // If we were reading or writing, end it first - before setting the parameters for TOC reading
         if (!Manager.EndReadWrite())
         {

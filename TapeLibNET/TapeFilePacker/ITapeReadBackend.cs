@@ -8,11 +8,11 @@ namespace TapeLibNET.TapeFilePacker;
 ///  only). May be less than requested when a tapemark or EOM is encountered.
 /// </param>
 /// <param name="TapemarkEncountered">
-///  <c>true</c> when the read crossed a filemark/setmark boundary. Subsequent reads may
+///  <see langword="true"/> when the read crossed a filemark/setmark boundary. Subsequent reads may
 ///  return zero bytes until the position is moved past the mark.
 /// </param>
 /// <param name="EofEncountered">
-///  <c>true</c> when the drive reported end-of-data / end-of-medium during this read.
+///  <see langword="true"/> when the drive reported end-of-data / end-of-medium during this read.
 /// </param>
 /// <param name="Exception">
 ///  Non-<c>null</c> when the read failed for reasons other than tapemark/EOM
@@ -24,7 +24,7 @@ internal readonly record struct ReadResult(
     bool EofEncountered,
     Exception? Exception)
 {
-    /// <summary><c>true</c> when no exception occurred.</summary>
+    /// <summary><see langword="true"/> when no exception occurred.</summary>
     public bool Succeeded => Exception is null;
 }
 
@@ -42,7 +42,7 @@ internal delegate ReadResult TapeReadSink(byte[] buffer, int offset);
 
 /// <summary>
 /// Block-positioning callback the backend invokes to seek the tape head
-/// to a specific logical block. Returns <c>true</c> on success.
+/// to a specific logical block. Returns <see langword="true"/> on success.
 /// </summary>
 internal delegate bool TapeReadSeek(long blockNumber);
 
@@ -57,7 +57,7 @@ internal interface ITapeReadBackend : IDisposable
     uint BlockSize { get; }
 
     /// <summary>
-    ///  Reposition the drive head to <paramref name="blockNumber"/>. Returns <c>false</c>
+    ///  Reposition the drive head to <paramref name="blockNumber"/>. Returns <see langword="false"/>
     ///  on positioning failure (caller surfaces the error).
     /// </summary>
     bool MoveToBlock(long blockNumber);

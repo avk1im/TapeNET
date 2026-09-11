@@ -1,6 +1,11 @@
+﻿using Microsoft.Extensions.Logging;
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
+
+
+public sealed class TapeBackupAgentPackedTests_Headerless : TapeBackupAgentPackedTestsBase { protected override bool WithMediaHeader => false; }
+public sealed class TapeBackupAgentPackedTests_Headed : TapeBackupAgentPackedTestsBase { protected override bool WithMediaHeader => true; }
 
 /// <summary>
 /// Focused tests for the packed (shared-block) backup path on
@@ -16,8 +21,24 @@ namespace TapeLibNET.Tests;
 /// per-file block alignment.
 /// </para>
 /// </summary>
-public class TapeBackupAgentPackedTests
+public abstract class TapeBackupAgentPackedTestsBase
 {
+    #region *** Media Header ***
+
+    protected abstract bool WithMediaHeader { get; }
+
+    /// <summary>Fixture factory mirroring the ctor; injects the header axis. All tests funnel through here.</summary>
+    protected VirtualTapeFixture CreateFixture(
+        DriveProfile profile = DriveProfile.Setmarks,
+        long contentCapacity = VirtualTapeFixture.DefaultContentCapacity,
+        ILoggerFactory? loggerFactory = null,
+        string mediaDescription = "Test Media",
+        bool useMemoryMap = false)
+        => new(profile, contentCapacity, loggerFactory, mediaDescription, useMemoryMap,
+               withMediaHeader: WithMediaHeader);
+
+    #endregion
+
     #region *** Test Data ***
 
 #pragma warning disable CA1825
@@ -93,7 +114,7 @@ public class TapeBackupAgentPackedTests
         using var tree = new TempFileTree();
         tree.AddFile("single.dat", 4096);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();
 
         var result = BackupPacked(agent, fixture.TOC, tree.Files, description: "Packed Single");
@@ -110,7 +131,7 @@ public class TapeBackupAgentPackedTests
     [MemberData(nameof(AllProfiles))]
     public void Packed_EmptyFileList_TreatedAsSuccess(DriveProfile profile)
     {
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();
 
         var result = agent.BackupFileListToCurrentSet(
@@ -130,7 +151,7 @@ public class TapeBackupAgentPackedTests
         using var tree = new TempFileTree();
         tree.AddFiles("packed", count: 12, minSize: 100, maxSize: 8 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         var notifiable = new TestNotifiable();
         using var agent = fixture.CreateBackupAgent();
 
@@ -172,7 +193,7 @@ public class TapeBackupAgentPackedTests
         for (int i = 0; i < count; i++)
             tree.AddFile($"tiny_{i:D3}.dat", size);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();
 
         var result = BackupPacked(agent, fixture.TOC, tree.Files, description: "Packed Tiny");
@@ -202,7 +223,7 @@ public class TapeBackupAgentPackedTests
         using var tree = new TempFileTree();
         tree.AddFiles("ordered", count: 20, minSize: 100, maxSize: 8 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();
 
         var result = BackupPacked(agent, fixture.TOC, tree.Files, description: "Packed Order");
@@ -232,7 +253,7 @@ public class TapeBackupAgentPackedTests
         tree.AddFile("c.dat", 400);
         tree.AddFile("d.dat", 500);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();
 
         var result = BackupPacked(agent, fixture.TOC, tree.Files, description: "Packed Reload");
@@ -256,7 +277,7 @@ public class TapeBackupAgentPackedTests
     #endregion
 
 
-    #region *** Multiple Sets � Sequential Packed Backup ***
+    #region *** Multiple Sets — Sequential Packed Backup ***
 
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -268,7 +289,7 @@ public class TapeBackupAgentPackedTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("set2", count: 4, minSize: 200, maxSize: 6 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();
 
         Assert.True((bool)BackupPacked(agent, fixture.TOC, tree1.Files,
@@ -299,7 +320,7 @@ public class TapeBackupAgentPackedTests
         using var tree = new TempFileTree();
         tree.AddFiles("stats", count: 7, minSize: 100, maxSize: 4 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         var notifiable = new TestNotifiable();
         using var agent = fixture.CreateBackupAgent();
 
@@ -323,7 +344,7 @@ public class TapeBackupAgentPackedTests
         using var tree = new TempFileTree();
         tree.AddFiles("notify", count: 10, minSize: 100, maxSize: 4 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         var notifiable = new TestNotifiable();
         using var agent = fixture.CreateBackupAgent();
 
@@ -355,7 +376,7 @@ public class TapeBackupAgentPackedTests
         notifiable.FilesToSkip.Add(tree.Files[1]);
         notifiable.FilesToSkip.Add(tree.Files[3]);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();
 
         var result = BackupPacked(agent, fixture.TOC, tree.Files,
@@ -384,7 +405,7 @@ public class TapeBackupAgentPackedTests
 
         var notifiable = new TestNotifiable { FailedAction = FileFailedAction.Skip };
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();
 
         // Mirrors the legacy semantic: a per-file failure -- even when Skip is
@@ -411,7 +432,7 @@ public class TapeBackupAgentPackedTests
 
         var notifiable = new TestNotifiable { FailedAction = FileFailedAction.Abort };
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();
 
         // Configure set BEFORE the call, mirroring BackupPacked() helper but with
@@ -445,7 +466,7 @@ public class TapeBackupAgentPackedTests
         //  files. AbortAfterNPreProcessed is commit-timing-independent.
         var notifiable = new TestNotifiable { AbortAfterNPreProcessed = 3 };
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();
 
         var result = BackupPacked(agent, fixture.TOC, tree.Files,
@@ -478,7 +499,7 @@ public class TapeBackupAgentPackedTests
         using var tree2 = new TempFileTree(seed: 22);
         tree2.AddFiles("legacy", count: 4, minSize: 200, maxSize: 4 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();
 
         // Set 1 via packed

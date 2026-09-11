@@ -1,6 +1,8 @@
+using System.Reflection.PortableExecutable;
+using System.Timers;
+using TapeLibNET.Virtual;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices; // Helpers, Stopwatch
-using TapeLibNET.Virtual;
 using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
 
 namespace TapeLibNET.Services;
@@ -15,6 +17,24 @@ public partial class TapeServiceBase
     private const double c_recalEwShiftTolerance = 0.01;        // 1%
     private const double c_recalCapacityShiftTolerance = 0.01;  // 1%
     private const double c_recalPhantomShiftTolerance = 0.05;   // 5%
+
+
+    // ── Properties  ───────────────────────────────────────────────────────────
+
+    /// <summary>The loaded calibration run header, or null when the BOM header is a different kind / absent.</summary>
+    public TapeCalibrationHeader? CalibrationHeader => _loadedHeader as TapeCalibrationHeader;
+
+    /// <summary>
+    /// The last modal <see cref="InspectCalibrationInfoAsync"/> result for the loaded calibration
+    ///  cartridge (checkpoint-derived run state: resumable / complete / progress), or null until it is run.
+    ///  Tracks <see cref="_loadedHeader"/>: cleared on every media (re)load / eject / format, so it can
+    ///  never describe a previously-loaded cartridge.
+    /// </summary>
+    protected TapeCalibrationMediaInfo? _loadedCalibrationInfo;
+
+    /// <summary>The cached calibration run trail from the last Inspect, or null. See <see cref="CalibrationHeader"/>.</summary>
+    public TapeCalibrationMediaInfo? CalibrationInfo => _loadedCalibrationInfo;
+
 
     // ── Calibration ───────────────────────────────────────────────────────────
     /// <summary>
@@ -118,6 +138,58 @@ public partial class TapeServiceBase
                 return MakeResult(aborted: true, message: "For calibration, use a single-partition media", mode: request.Mode);
         }
 
+        // §10.7 — pre-run guard through the unified verdict channel. Format/backup heads the media, so a
+        //  cartridge carrying a MEDIA header is the wrong kind for a destructive calibration run.
+        //  Uses the cached load-time header; when null / not a media header, no prompt.
+        //  SkipMediaHeaderCheck bypasses the guard entirely (scripted/unattended scratch runs).
+        //  This composes with the post-run `ForeignHeader` reporting already present for Resume/Recalibrate: this
+        //  guard catches the destructive write up front; `ForeignHeader` still explains a failed Resume/Recalibrate.
+        if (!request.SkipMediaHeaderCheck)
+        {
+            while (_loadedHeader is TapeMediaHeader)
+            {
+                var choice = PresentVerdict(
+                    TapeMediaVerdict.WrongKind, MediaPromptContext.CalibrateScratch,
+                    suppress: false, allowRetry: true, allowProceedAlways: false); // calibration run is one-off ⇒ there's no "always"
+
+                if (choice == MediaMismatchChoice.Abort)
+                    return MakeResult(aborted: true,
+                        message: "Calibration cancelled — cartridge holds a backup", mode: request.Mode);
+
+                if (choice != MediaMismatchChoice.Retry)
+                    break;   // Proceed — erase and calibrate the loaded cartridge
+
+                // Retry: eject the wrong cartridge, prompt for a scratch one, reload, and re-probe its identity.
+                //  The loop then re-evaluates the freshly loaded cartridge (blank/scratch ⇒ _loadedHeader null ⇒ exit).
+                LogInfo("Ejecting cartridge for exchange...");
+                OnStatusUpdate("Waiting for a scratch cartridge...");
+
+                if (!_drive.UnloadMedia())
+                {
+                    LastError = _drive.LastErrorMessage;
+                    throw new InvalidOperationException($"Couldn't eject media: {LastError}");
+                }
+
+                // Reuse the existing insert prompt (virtual: opens the open-existing picker; physical: "insert &
+                //  continue"). The RestoreMode arg only colors the dialog wording — a minor cosmetic stretch for
+                //  calibration; swap for a dedicated calibration-insert host verb if that wording ever matters.
+                if (!_host.OnInsertMediaConfirm(volumeNeeded: 1, RestoreMode.Restore))
+                    return MakeResult(aborted: true,
+                        message: "Calibration cancelled — no scratch cartridge inserted", mode: request.Mode);
+
+                LogInfo("Loading media...");
+                OnStatusUpdate("Loading media...");
+                if (!_drive.ReloadMedia() || !_drive.PrepareMedia())
+                {
+                    LastError = _drive.LastErrorMessage;
+                    throw new InvalidOperationException($"Couldn't load media: {LastError}");
+                }
+
+                AutoLoadCalibrations();   // the profile key depends on the newly loaded medium
+                RefreshLoadedHeader();    // re-read identity; the while-condition re-checks it
+            }
+        }
+
         try
         {
             LogWarn("Calibration is destructive — use a scratch cartridge only");
@@ -166,6 +238,7 @@ public partial class TapeServiceBase
                     LogInfo("Resuming calibration from the last checkpoint on the cartridge...");
                     OnStatusUpdate("Resuming calibration...");
                     calibration = calibrator.Resume(progressHandler);
+
                     break;
 
                 case CalibrationMode.Recalibrate:
@@ -190,6 +263,7 @@ public partial class TapeServiceBase
                     (calibration, TapeRecalibrationDelta delta) = calibrator.Recalibrate(existing, progressHandler);
                     if (calibration is not null)
                         recalDelta = delta;
+
                     break;
                 }
 
@@ -197,6 +271,7 @@ public partial class TapeServiceBase
                 default:
                     OnStatusUpdate("Calibrating...");
                     calibration = calibrator.Run(progressHandler);
+
                     break;
             }
             timer.Stop();
@@ -212,18 +287,31 @@ public partial class TapeServiceBase
                     return MakeResult(aborted: true, message: "Calibration aborted", mode: request.Mode);
                 }
 
+                string logMsg, resultMsg;
                 // Resume/Recalibrate can legitimately fail to find a resumable trail on the cartridge;
                 //  surface a mode-appropriate message so the caller can offer a fresh run instead.
-                string failMsg = request.Mode switch
+                if ((request.Mode is CalibrationMode.Resume or CalibrationMode.Recalibrate)
+                    && calibrator.ForeignHeader is { } foreign)
                 {
-                    CalibrationMode.Resume      => $"Resume failed: no resumable run found on this cartridge ({LastError})",
-                    CalibrationMode.Recalibrate => $"Recalibration failed: no calibration trail on this cartridge ({LastError})",
-                    _                           => LastError,
-                };
+                    // For identifiable foreign header, offer a more detailed explanation
+                    //  Precise: "This is backup media — id …, volume … — not a calibration cartridge."
+                    logMsg = $"Not a calibration cartridge — {foreign}";
+                    resultMsg = $"This cartridge carries a different header:\n{foreign}\n" +
+                                "This operation needs a calibration cartridge.";
+                }
+                else
+                {
+                    logMsg = resultMsg = request.Mode switch
+                    {
+                        CalibrationMode.Resume => $"Resume failed: no resumable run found on this cartridge ({LastError})",
+                        CalibrationMode.Recalibrate => $"Recalibration failed: no calibration trail on this cartridge ({LastError})",
+                        _ => LastError,
+                    };
+                }
 
                 OnStatusUpdate("Calibration failed");
-                LogErr($"Calibration failed: {failMsg}");
-                return MakeResult(failed: true, message: failMsg, mode: request.Mode);
+                LogErr($"Calibration failed: {logMsg}");
+                return MakeResult(failed: true, message: resultMsg, mode: request.Mode);
             }
 
             OnStatusUpdate("Calibration complete");
@@ -375,6 +463,58 @@ public partial class TapeServiceBase
     }
 
     // ── Media inspection (read-only, optional convenience) ──────────────────────────────────────
+
+    /// <summary>
+    /// Lean, DISPLAY-ONLY probe of the loaded calibration cartridge: returns the raw
+    ///  <see cref="TapeCalibrationMediaInfo"/> from <see cref="TapeCalibrator.InspectMedia"/> under the
+    ///  operation lock. Deliberately omits the multi-partition confirm and the CalibrationStore
+    ///  baseline/recommended-mode policy of <see cref="InspectCalibrationForRecalibrationAsync"/> — those exist
+    ///  for the pre-recalibration flow, not for showing a cartridge's details. Use to enrich a
+    ///  calibration-cartridge pane with the checkpoint-derived fields (resumable / complete / progress)
+    ///  beyond the plain BOM header.
+    /// </summary>
+    /// <returns>The media info, or <see langword="null"/> when media isn't loaded or no readable trail exists.</returns>
+    /// <remarks>See also <seealso cref="InspectCalibrationForRecalibrationAsync"/>.</remarks>
+    public Task<bool> InspectCalibrationInfoAsync()
+    {
+        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
+
+        return Task.Run(async () =>
+        {
+            await _operationLock.WaitAsync().ConfigureAwait(false);
+
+            try
+            {
+                if (_drive is null || !_drive.IsMediaLoaded)
+                {
+                    LastError = "Media not loaded";
+                    return false;
+                }
+
+                if (!_drive.PrepareMedia())
+                {
+                    LastError = _drive.LastErrorMessage;
+                    return false;
+                }
+
+                var calibrator = new TapeCalibrator(_drive);
+                _loadedCalibrationInfo = calibrator.InspectMedia();   // cache for the UI (cleared on next reload)
+                return _loadedCalibrationInfo is not null;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                LogErr($"Calibration inspect failed: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                _operationLock.Release();
+                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
+            }
+        });
+    }
+
     /// <summary>
     /// Non-destructively probes the loaded cartridge for an existing calibration trail, combining the
     /// on-tape header/checkpoint (<see cref="TapeCalibrator.InspectMedia"/>) with a
@@ -382,6 +522,7 @@ public partial class TapeServiceBase
     /// This is a pure convenience for the UI — it doesn't gate New/Resume/Recalibrate, which all remain
     /// available regardless of the result, since Resume/Recalibrate will fail gracefully if the cartridge
     /// is unsuitable.
+    /// </summary>
     /// <remarks>
     /// <para>
     /// Recommendation logic. Resume AND Recalibrate both require a valid ON-TAPE checkpoint — no stored
@@ -397,9 +538,9 @@ public partial class TapeServiceBase
     ///  Complete run, no baseline  |   true      |     true        |   false     | Resume
     ///  Complete run + baseline    |   true      |     true        |   true      | Recalibrate
     /// </code>
+    /// See also <seealso cref="InspectCalibrationInfoAsync"/>.
     /// </remarks>
-    /// </summary>
-    public Task<InspectCalibrationMediaResult> ExecuteInspectCalibrationMediaAsync()
+    public Task<InspectCalibrationMediaResult> InspectCalibrationForRecalibrationAsync()
     {
         _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
 

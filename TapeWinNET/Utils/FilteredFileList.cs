@@ -170,7 +170,7 @@ public sealed class FilteredFileList(IReadOnlyList<TapeFileInfo> source) : IRead
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
     /// <summary>O(1) check whether a <see cref="TapeFileInfo"/> is in the current
-    ///  filtered view. Returns <c>true</c> for any item when no filter is active.</summary>
+    ///  filtered view. Returns <see langword="true"/> for any item when no filter is active.</summary>
     public bool Contains(TapeFileInfo item) => _filteredSet?.Contains(item) ?? true;
 
     /// <summary>Sum of <see cref="TapeFileDescriptor.Length"/> for the filtered files
@@ -225,8 +225,8 @@ public sealed class FilteredFileList(IReadOnlyList<TapeFileInfo> source) : IRead
     ///  batch — more efficient than calling <see cref="SetChecked(TapeFileInfo, bool)"/>
     ///  in a loop. Does not fire <see cref="CheckedChanged"/> per item.
     /// </summary>
-    /// <param name="clearTheRest">If <c>true</c>, unchecks all items not in the given list. Useful for "check
-    ///  only these" scenarios. Used only if <paramref name="isChecked"/> is <c>true</c>. <c>false</c> by default.
+    /// <param name="clearTheRest">If <see langword="true"/>, unchecks all items not in the given list. Useful for "check
+    ///  only these" scenarios. Used only if <paramref name="isChecked"/> is <see langword="true"/>. <see langword="false"/> by default.
     /// </param>
     public void SetChecked(IEnumerable<TapeFileInfo> items, bool isChecked, bool clearTheRest = false)
     {
@@ -323,8 +323,8 @@ public sealed class FilteredFileList(IReadOnlyList<TapeFileInfo> source) : IRead
 
     /// <summary>
     /// Tri-state checked indicator for the current filtered view:
-    ///  <c>true</c> if all filtered items are checked, <c>false</c> if none,
-    ///  <c>null</c> if some are checked (indeterminate). Returns <c>false</c>
+    ///  <see langword="true"/> if all filtered items are checked, <see langword="false"/> if none,
+    ///  <c>null</c> if some are checked (indeterminate). Returns <see langword="false"/>
     ///  for empty views.
     /// </summary>
     public bool? AreAllFilteredChecked

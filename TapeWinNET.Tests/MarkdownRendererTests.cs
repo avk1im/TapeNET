@@ -263,7 +263,7 @@ public sealed class MarkdownRendererTests
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Returns <c>true</c> if any <see cref="Hyperlink"/> in <paramref name="doc"/>
+    /// Returns <see langword="true"/> if any <see cref="Hyperlink"/> in <paramref name="doc"/>
     /// has a <see cref="Hyperlink.NavigateUri"/> whose string representation starts
     /// with or equals <paramref name="uri"/>.
     /// </summary>
@@ -271,7 +271,7 @@ public sealed class MarkdownRendererTests
         => ContainsUri(doc, uri);
 
     /// <summary>
-    /// Returns <c>true</c> when there is a glossary <see cref="Hyperlink"/> for
+    /// Returns <see langword="true"/> when there is a glossary <see cref="Hyperlink"/> for
     /// <paramref name="slug"/> that also has a non-null <see cref="FrameworkContentElement.ToolTip"/>.
     /// </summary>
     private static bool ContainsGlossaryTooltip(FlowDocument doc, string slug)

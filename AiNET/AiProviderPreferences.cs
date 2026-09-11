@@ -10,7 +10,7 @@ namespace AiNET;
 public sealed class AiProviderPreferences
 {
     /// <summary>
-    /// <c>true</c> once the user has been asked at least once whether to set
+    /// <see langword="true"/> once the user has been asked at least once whether to set
     /// up an AI provider. Used to suppress the first-run prompt on subsequent
     /// launches.
     /// </summary>

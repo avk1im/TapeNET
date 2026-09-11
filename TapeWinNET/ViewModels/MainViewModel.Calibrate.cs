@@ -87,12 +87,16 @@ public partial class MainViewModel
     public ICommand CalibrateMediaCommand { get; private set; } = null!;
     public ICommand AbortCalibrationCommand { get; private set; } = null!;
     public ICommand ShowCalibrationProfilesCommand { get; private set; } = null!;
+    public ICommand InspectCalibrationMediaCommand { get; private set; } = null!;
 
     private void InitializeCalibrationCommands()
     {
         CalibrateMediaCommand = new RelayCommand(ShowCalibrationWindow, _ => !IsBusy && _tapeService.IsMediaLoaded && !_tapeService.HasInitiatorPartition);
         AbortCalibrationCommand = new RelayCommand(AbortCalibration, _ => IsCalibrateInProgress);
         ShowCalibrationProfilesCommand = new RelayCommand(ShowCalibrationProfilesWindow);
+        InspectCalibrationMediaCommand = new AsyncRelayCommand(
+            InspectCalibrationMediaAsync,
+            () => !IsBusy && _tapeService.CalibrationHeader is not null && _tapeService.CalibrationInfo is null);
     }
 
     #endregion
@@ -224,6 +228,29 @@ public partial class MainViewModel
         _activeCalibrationViewModel.RequestAbort();
         IsAbortCalibrationEnabled = false;
         BusyMessage = "Aborting calibration...";
+    }
+
+    /// <summary>
+    /// Modal "Inspect Media" for a loaded calibration cartridge: reads the checkpoint trail via the lean
+    ///  service probe (standard IsBusy overlay, standard op lifecycle) and re-renders the calibration pane
+    ///  with the enriched rows. Header-only rows are already shown instantly on node-select; this adds the
+    ///  resumable / complete / progress detail on demand.
+    /// </summary>
+    private async Task InspectCalibrationMediaAsync()
+    {
+        if (_tapeService.CalibrationHeader is null || IsBusy)
+            return;
+
+        var calInfoLoaded = await RunBusyAsync(
+            "Inspecting calibration cartridge...",
+            _tapeService.InspectCalibrationInfoAsync);
+
+        // Re-render base + enrichment idempotently.
+        LoadCalibrationInfo();
+
+        StatusMessage = calInfoLoaded
+            ? "Calibration run details loaded"
+            : "Calibration cartridge — no readable checkpoint trail";
     }
 
     #endregion

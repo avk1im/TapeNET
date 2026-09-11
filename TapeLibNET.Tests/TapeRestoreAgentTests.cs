@@ -1,7 +1,12 @@
+using Microsoft.Extensions.Logging;
 using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
+
+
+public sealed class TapeRestoreAgentTests_Headerless : TapeRestoreAgentTestsBase { protected override bool WithMediaHeader => false; }
+public sealed class TapeRestoreAgentTests_Headed : TapeRestoreAgentTestsBase { protected override bool WithMediaHeader => true; }
 
 /// <summary>
 /// Focused tests for the restore agent hierarchy —
@@ -23,12 +28,28 @@ namespace TapeLibNET.Tests;
 /// All four tape organizations (Setmarks, Partitions, SeqFilemarks) are exercised.
 /// </para>
 /// </summary>
-public class TapeRestoreAgentTests
+public abstract class TapeRestoreAgentTestsBase
 {
+    #region *** Media Header ***
+
+    /// <summary>Subclasses fix whether the produced fixture writes a media header.</summary>
+    protected abstract bool WithMediaHeader { get; }
+
+    /// <summary>Fixture factory mirroring the ctor; injects the header axis. All tests funnel through here.</summary>
+    protected VirtualTapeFixture CreateFixture(
+        DriveProfile profile = DriveProfile.Setmarks,
+        long contentCapacity = VirtualTapeFixture.DefaultContentCapacity,
+        ILoggerFactory? loggerFactory = null,
+        string mediaDescription = "Test Media",
+        bool useMemoryMap = false)
+        => new(profile, contentCapacity, loggerFactory, mediaDescription, useMemoryMap,
+               withMediaHeader: WithMediaHeader);
+
+    #endregion // Media Header
+
     #region *** Test Data ***
 
     /// <summary>All three drive profiles for parameterized theories.</summary>
-#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> AllProfiles =>
     [
         DriveProfile.Setmarks,
@@ -36,7 +57,6 @@ public class TapeRestoreAgentTests
         DriveProfile.SeqFilemarks,
         DriveProfile.FilemarksOnly,
     ];
-#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     /// <summary>
     /// Cross-product of drive profile × hash algorithm.
@@ -153,7 +173,7 @@ public class TapeRestoreAgentTests
         using var tree = new TempFileTree();
         tree.AddFiles("data", count: 5, minSize: 100, maxSize: 8 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree.Files, description: "Single Restore");
 
         string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_AgentRestore_{Guid.NewGuid():N}");
@@ -182,7 +202,7 @@ public class TapeRestoreAgentTests
         using var tree = new TempFileTree();
         tree.AddFiles("hash_restore", count: 4, minSize: 256, maxSize: 8 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree.Files, description: $"Hash={hash}", hashAlgorithm: hash);
 
         string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_AgentRestore_{Guid.NewGuid():N}");
@@ -216,7 +236,7 @@ public class TapeRestoreAgentTests
         using var tree = new TempFileTree();
         tree.AddFiles("validate", count: 5, minSize: 100, maxSize: 8 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree.Files, hashAlgorithm: TapeHashAlgorithm.Crc64);
 
         var (success, notifiable) = ValidateSet(fixture, 1);
@@ -234,7 +254,7 @@ public class TapeRestoreAgentTests
         using var tree = new TempFileTree();
         tree.AddFiles("verify", count: 5, minSize: 100, maxSize: 8 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree.Files, hashAlgorithm: TapeHashAlgorithm.XxHash3);
 
         var (success, notifiable) = VerifySet(fixture, 1);
@@ -262,7 +282,7 @@ public class TapeRestoreAgentTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("set2", count: 3, minSize: 512, maxSize: 16 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
 
         fixture.BackupFiles(tree1.Files, description: "Set 1", hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(tree2.Files, description: "Set 2", hashAlgorithm: TapeHashAlgorithm.XxHash3);
@@ -299,7 +319,7 @@ public class TapeRestoreAgentTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("set2", count: 3, minSize: 512, maxSize: 16 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
 
         fixture.BackupFiles(tree1.Files, description: "Set 1", hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(tree2.Files, description: "Set 2", hashAlgorithm: TapeHashAlgorithm.XxHash3);
@@ -337,7 +357,7 @@ public class TapeRestoreAgentTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("set2", count: 3, minSize: 512, maxSize: 16 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
 
         fixture.BackupFiles(tree1.Files, description: "Set 1", hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(tree2.Files, description: "Set 2", hashAlgorithm: TapeHashAlgorithm.XxHash3);
@@ -390,7 +410,7 @@ public class TapeRestoreAgentTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("set2", count: 3, minSize: 512, maxSize: 16 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
 
         fixture.BackupFiles(tree1.Files, description: "Set 1", hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(tree2.Files, description: "Set 2", hashAlgorithm: TapeHashAlgorithm.XxHash3);
@@ -445,7 +465,7 @@ public class TapeRestoreAgentTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("set2", count: 3, minSize: 512, maxSize: 16 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree1.Files, description: "Set 1", hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(tree2.Files, description: "Set 2", hashAlgorithm: TapeHashAlgorithm.XxHash3);
 
@@ -474,7 +494,7 @@ public class TapeRestoreAgentTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("set2", count: 3, minSize: 512, maxSize: 16 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree1.Files, description: "Set 1", hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(tree2.Files, description: "Set 2", hashAlgorithm: TapeHashAlgorithm.XxHash3);
 
@@ -510,7 +530,7 @@ public class TapeRestoreAgentTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("set2", count: 3, minSize: 512, maxSize: 16 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree1.Files, description: "Set 1", hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(tree2.Files, description: "Set 2", hashAlgorithm: TapeHashAlgorithm.XxHash3);
 
@@ -546,7 +566,7 @@ public class TapeRestoreAgentTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("set2", count: 3, minSize: 512, maxSize: 16 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree1.Files, description: "Set 1", hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(tree2.Files, description: "Set 2", hashAlgorithm: TapeHashAlgorithm.XxHash3);
 
@@ -582,7 +602,7 @@ public class TapeRestoreAgentTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("set2", count: 3, minSize: 512, maxSize: 16 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree1.Files, description: "Set 1", hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(tree2.Files, description: "Set 2", hashAlgorithm: TapeHashAlgorithm.XxHash3);
 
@@ -644,7 +664,7 @@ public class TapeRestoreAgentTests
         using var tree3 = new TempFileTree(seed: 30);
         tree3.AddFiles("c", count: 2, minSize: 500, maxSize: 12 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree1.Files, description: "Set 1");
         fixture.BackupFiles(tree2.Files, description: "Set 2");
         fixture.BackupFiles(tree3.Files, description: "Set 3");
@@ -682,7 +702,7 @@ public class TapeRestoreAgentTests
         using var tree3 = new TempFileTree(seed: 30);
         tree3.AddFiles("c", count: 2, minSize: 500, maxSize: 12 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree1.Files, description: "Set 1", hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(tree2.Files, description: "Set 2", hashAlgorithm: TapeHashAlgorithm.XxHash3);
         fixture.BackupFiles(tree3.Files, description: "Set 3", hashAlgorithm: TapeHashAlgorithm.Crc64);
@@ -711,7 +731,7 @@ public class TapeRestoreAgentTests
         using var tree = new TempFileTree();
         tree.AddFile("zero.dat", 0);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree.Files, description: "Zero", hashAlgorithm: TapeHashAlgorithm.Crc64);
 
         string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_AgentRestore_{Guid.NewGuid():N}");
@@ -733,7 +753,7 @@ public class TapeRestoreAgentTests
     [MemberData(nameof(AllProfiles))]
     public void Restore_ExactBlockSizeFile_Succeeds(DriveProfile profile)
     {
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         uint blockSize = fixture.Drive.BlockSize;
 
         using var tree = new TempFileTree();
@@ -760,7 +780,7 @@ public class TapeRestoreAgentTests
     [MemberData(nameof(AllProfiles))]
     public void Restore_MixedEdgeCaseFiles_Succeeds(DriveProfile profile)
     {
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         uint blockSize = fixture.Drive.BlockSize;
 
         using var tree = new TempFileTree();
@@ -802,7 +822,7 @@ public class TapeRestoreAgentTests
         using var tree = new TempFileTree();
         tree.AddFiles("rstats", count: 7, minSize: 100, maxSize: 8 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree.Files, description: "Restore Stats",
             hashAlgorithm: TapeHashAlgorithm.Crc64);
 
@@ -833,7 +853,7 @@ public class TapeRestoreAgentTests
         using var tree = new TempFileTree();
         tree.AddFiles("bytes", count: 5, minSize: 1024, maxSize: 8 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree.Files, description: "BytesRestored");
 
         string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_AgentRestore_{Guid.NewGuid():N}");
@@ -871,7 +891,7 @@ public class TapeRestoreAgentTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("set2", count: 3, minSize: 512, maxSize: 16 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree1.Files, description: "Set 1", hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(tree2.Files, description: "Set 2", hashAlgorithm: TapeHashAlgorithm.XxHash3);
 
@@ -900,7 +920,7 @@ public class TapeRestoreAgentTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("set2", count: 3, minSize: 512, maxSize: 16 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree1.Files, description: "Set 1", hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(tree2.Files, description: "Set 2", hashAlgorithm: TapeHashAlgorithm.XxHash3);
 
@@ -934,7 +954,7 @@ public class TapeRestoreAgentTests
         using var tree3 = new TempFileTree(seed: 30);
         tree3.AddFiles("c", count: 2, minSize: 500, maxSize: 12 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree1.Files, description: "S1", hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(tree2.Files, description: "S2", hashAlgorithm: TapeHashAlgorithm.Crc64);
         fixture.BackupFiles(tree3.Files, description: "S3", hashAlgorithm: TapeHashAlgorithm.Crc64);
@@ -956,7 +976,7 @@ public class TapeRestoreAgentTests
         using var tree = new TempFileTree();
         tree.AddFiles("data", count: 5, minSize: 100, maxSize: 8 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
         fixture.BackupFiles(tree.Files, description: "Single",
             hashAlgorithm: TapeHashAlgorithm.Crc64);
 
@@ -984,7 +1004,7 @@ public class TapeRestoreAgentTests
         using var tree2 = new TempFileTree(seed: 200);
         tree2.AddFiles("s2", count: 3, minSize: 100, maxSize: 8 * 1024);
 
-        using var fixture = new VirtualTapeFixture(profile);
+        using var fixture = CreateFixture(profile);
 
         // Set 1 with 16K blocks
         fixture.BackupFiles(tree1.Files, description: "16K blocks",

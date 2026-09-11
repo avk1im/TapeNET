@@ -537,4 +537,92 @@ public class PhysicalConformanceTests(PhysicalDriveFixtureWrapper fixtureWrapper
     }
 
     #endregion
+
+    #region *** S10 — Overwrite from a mid-data logical block (the header's case B) ***
+    /// <summary>
+    /// Writes header(block 0) + trailing data (no marks), then overwrites from logical block 1 — the exact
+    /// begin-of-content write the media header performs on overwrite/delete. Verifies the header survives and
+    /// the tail is truncated. On a STRICT drive the block-1 write is rejected → the test fails loudly, telling
+    /// you this drive needs a filemark after the header (see S11).
+    /// </summary>
+    [SkippableFact, TestPriority(100)]
+    public void S10_MidBlockOverwrite_PreservesHeader()
+    {
+        var fixture = Init();
+        var drive = fixture.Drive;
+        Assert.True(fixture.RecoverAndReformat("Mid-block overwrite probe"), "reformat");
+
+        uint bs = drive.BlockSize;
+        Assert.True(drive.Rewind());
+
+        // header (block 0) + data (blocks 1..3), NO marks — mirrors headed media.
+        var a = new byte[bs * 4]; FillPattern(a, 0xA0);
+        Assert.Equal(a.Length, drive.WriteDirect(a, 0, a.Length));
+        Assert.True(drive.WriteFilemark(), "trailing filemark");
+
+        // Overwrite from logical block 1 (mid-data), truncating the rest — the header primitive.
+        Assert.True(drive.Rewind());
+        Assert.True(drive.MoveToBlock(1), "LOCATE to block 1");
+        var b = new byte[bs * 2]; FillPattern(b, 0xB0);
+        int w = drive.WriteDirect(b, 0, b.Length, out _, out _, out _);
+
+        if (w != b.Length)
+        {
+            _output.WriteLine($"[STRICT DRIVE] WriteDirect at block 1 rejected (w={w}, " +
+                $"err=0x{drive.LastError:X8}: {drive.LastErrorMessage}).");
+            Assert.Fail("This drive rejects mid-data overwrite from a logical block. The media header's " +
+                "begin-of-content write is UNSAFE here — reinstate a filemark after the header (cf. S11).");
+        }
+        Assert.True(drive.WriteFilemark());
+
+        // header intact, block 1..2 overwritten, tail truncated.
+        Assert.True(drive.Rewind());
+        var h = new byte[bs]; Assert.Equal((int)bs, drive.ReadDirect(h, 0, (int)bs));
+        AssertBufferEqual(a, h, (int)bs);                 // header (block 0) survived
+        var chk = new byte[bs * 2]; int r = drive.ReadDirect(chk, 0, chk.Length);
+        Assert.Equal(b.Length, r); AssertBufferEqual(b, chk, r);
+        _output.WriteLine("Mid-block overwrite preserved header + truncated tail ✓ — header design is write-safe here");
+    }
+    #endregion
+
+    #region *** S11 — Overwrite from just after a filemark (the header-FM insurance) ***
+    /// <summary>
+    /// Same overwrite, but with a filemark after the header so the content-start is a POST-MARK write.
+    /// Should pass even on strict drives. If S10 fails and S11 passes on a given drive, that drive requires
+    /// a filemark after the media header.
+    /// </summary>
+    [SkippableFact, TestPriority(110)]
+    public void S11_PostFilemarkOverwrite_PreservesHeader()
+    {
+        var fixture = Init();
+        var drive = fixture.Drive;
+        Assert.True(fixture.RecoverAndReformat("Post-filemark overwrite probe"), "reformat");
+
+        uint bs = drive.BlockSize;
+        Assert.True(drive.Rewind());
+
+        var hdr = new byte[bs]; FillPattern(hdr, 0xA0);
+        Assert.Equal(hdr.Length, drive.WriteDirect(hdr, 0, hdr.Length));   // header @ block 0
+        Assert.True(drive.WriteFilemark(), "header filemark");             // FM @ block 1
+        var data = new byte[bs * 3]; FillPattern(data, 0xC0);
+        Assert.Equal(data.Length, drive.WriteDirect(data, 0, data.Length)); // blocks 2..4
+        Assert.True(drive.WriteFilemark());
+
+        // Position just after the header filemark, then overwrite.
+        Assert.True(drive.Rewind());
+        var skip = new byte[bs]; Assert.Equal((int)bs, drive.ReadDirect(skip, 0, (int)bs)); // read header → at the FM
+        Assert.True(drive.MoveToNextFilemark(), "space over header filemark");              // now post-mark
+        var b = new byte[bs * 2]; FillPattern(b, 0xB0);
+        int w = drive.WriteDirect(b, 0, b.Length, out _, out _, out _);
+        Assert.Equal(b.Length, w);                                          // post-mark write must succeed
+        Assert.True(drive.WriteFilemark());
+
+        // header intact.
+        Assert.True(drive.Rewind());
+        var h = new byte[bs]; Assert.Equal((int)bs, drive.ReadDirect(h, 0, (int)bs));
+        AssertBufferEqual(hdr, h, (int)bs);
+        _output.WriteLine("Post-filemark overwrite preserved header ✓ (this layout is write-safe even on strict drives)");
+    }
+    #endregion
+
 }
