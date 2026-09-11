@@ -167,10 +167,42 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
                 capacityReportedAtBom, blockSize, DateTime.UtcNow, plan);
 
             using var records = new RecordBlockWriter(this, blockSize);
+
+            /*
+            // Legacy version without the standardized TapeHeaderBlock: the run header is written in the run-block shape
             if (!records.Emit(header, ref state.BytesWritten, writeLeadingFilemark: false))
             {
                 LogErrorAsDebug("Calibration: failed to write run header");
                 return null;
+            }
+            */
+
+            // The run header goes down as ONE STANDARD header block (not a run block), so a backup-side reader
+            //  can classify this cartridge and vice versa. Payload + checkpoints continue at the run block size;
+            //  TapeHeaderBlock restores it after the write.
+            if (TapeHeaderBlock.IsSupportedBy(Drive))
+            {
+                if (!TapeHeaderBlock.Write(Drive, header))
+                {
+                    SyncErrorFrom(Drive);
+                    LogErrorAsDebug("Calibration: failed to write run header");
+                    return null;
+                }
+                state.BytesWritten += TapeHeaderBlock.Size;
+            }
+            else
+            {
+                // Drive cannot carry a standard block (max block < 16 KiB, e.g. a tiny virtual medium):
+                //  fall back to the legacy run-block shape. Such a cartridge is not cross-classifiable.
+                m_logger.LogWarning("{Prefix}: Drive max block {Max} < standard header block {Std} — writing the run " +
+                    "header in the run block (legacy shape; not cross-classifiable)",
+                    LogPrefix, Drive.MaximumBlockSize, TapeHeaderBlock.Size);
+
+                if (!records.Emit(header, ref state.BytesWritten, writeLeadingFilemark: false))
+                {
+                    LogErrorAsDebug("Calibration: failed to write run header");
+                    return null;
+                }
             }
 
             m_logger.LogInformation(
@@ -383,7 +415,6 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
     {
         blockSize = 0;
         recordBuffer = [];
-
         ForeignHeader = null;
 
         if (!Drive.IsMediaLoaded)
@@ -396,8 +427,9 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         if (!PrepareDrive(out _, out blockSize))
             return null;
 
-        // Rewind to and read the header block (File 0 at BOM). PrepareDrive already positions at BOM;
-        //  the explicit rewind is belt-and-suspenders and matches the original resume path.
+        // Checkpoints ride in the RUN block; the header rides in the STANDARD header block.
+        recordBuffer = new byte[blockSize];
+
         if (!Drive.Rewind())
         {
             SyncErrorFrom(Drive);
@@ -405,16 +437,31 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
             return null;
         }
 
-        recordBuffer = new byte[blockSize];
-        int read = Drive.ReadDirect(recordBuffer, 0, recordBuffer.Length, out _, out _);
+        // 1) Standard header block — the current shape, and the one a backup-side reader also uses.
+        TapeHeader? any = null;
+        if (TapeHeaderBlock.IsSupportedBy(Drive))
+        {
+            var headerBuffer = new byte[TapeHeaderBlock.Size];
+            if (TapeHeaderBlock.Read(Drive, headerBuffer, out any) <= 0)
+                any = null;
+        }
 
-        // Polymorphic probe: classify whatever is at BOM, don't pre-commit to our kind.
-        TapeHeader? any = read > 0 ? TapeCalibrationFramer.Unpack<TapeHeader>(recordBuffer, read) : null;
-
+        // 2) Legacy shape — the header written in the run block. Re-rewind: attempt 1 moved the head.
+        if (any is null && blockSize != TapeHeaderBlock.Size)
+        {
+            if (Drive.Rewind())
+            {
+                int read = Drive.ReadDirect(recordBuffer, 0, recordBuffer.Length, out _, out _);
+                any = read > 0 ? TapeCalibrationFramer.Unpack<TapeHeader>(recordBuffer, read) : null;
 #if LEGACY_TapeCalibrationRunHeader
-        if (any is null && read > 0)
-            any = TapeCalibrationFramer.Unpack<TapeCalibrationRunHeader>(recordBuffer, read)?.ToHeader();
+                if (any is null && read > 0)
+                    any = TapeCalibrationFramer.Unpack<TapeCalibrationRunHeader>(recordBuffer, read)?.ToHeader();
 #endif
+                if (any is not null)
+                    m_logger.LogInformation("{Prefix}: Calibration header found in the legacy run-block shape", LogPrefix);
+            }
+            ResetError();   // a failed legacy probe is not the caller's error
+        }
 
         if (any is TapeCalibrationHeader header)
             return header;                                  // our kind — done
@@ -424,11 +471,10 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         {
             ForeignHeader = any;
             SetError(WIN32_ERROR.ERROR_INVALID_DATA);
-            LogErrorAsDebug($"Calibration inspect: foreign header — {any}");   // trace: "…backup media, id …"
+            LogErrorAsDebug($"Calibration inspect: foreign header — {any}");
             return null;
         }
 
-        // Nothing identifiable at all — blank / foreign / torn.
         SetError(WIN32_ERROR.ERROR_INVALID_DATA);
         LogErrorAsDebug("Calibration inspect: no valid calibration header on this cartridge");
         return null;

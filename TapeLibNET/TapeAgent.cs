@@ -371,18 +371,14 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     public TapeResult WriteHeader()
     {
         var header = TOC.CreateHeader(tocBlockSize: c_fixedTOCBlockSize, tapeTocPlacement: TOCPlacement);
-        byte[] frame = TapeFramer.Pack(header);
 
-        if (frame.Length > TapeHeader.FixedHeaderBlockSize)
+        byte[]? block = TapeHeaderBlock.Frame(header);      // pack + size guard + pad, single-point
+        if (block is null)
         {
-            m_logger.LogError("Media header frame ({Len} B) exceeds the fixed header block ({Bs} B)",
-                frame.Length, TapeHeader.FixedHeaderBlockSize);
+            m_logger.LogError("Media header frame exceeds the standard header block ({Bs} B)", TapeHeaderBlock.Size);
             SetError(WIN32_ERROR.ERROR_INSUFFICIENT_BUFFER, "Media header too large for its block");
             return TapeResult.Fail(this);
         }
-
-        var block = new byte[TapeHeader.FixedHeaderBlockSize];
-        Array.Copy(frame, block, frame.Length);              // remainder stays zero padding (ignored on read)
 
         if (!Manager.WriteHeaderBlock(block))
         {
@@ -390,10 +386,11 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
             return TapeResult.Fail(this);
         }
 
-        m_headerResolved = true;                              // we just wrote it — presence is Present
+        m_headerResolved = true;                            // we just wrote it — presence is Present
         m_logger.LogTrace("Media header written: {Header}", header);
         return TapeResult.OK;
     }
+
 
     /// <summary>
     /// Reads and classifies the BOM header, returning the polymorphic <see cref="TapeHeader"/> (media,
@@ -403,7 +400,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     ///  Present (a media header) vs Absent (anything else). Evaluation stays the service's job (D16).</remarks>
     public TapeHeader? ReadHeader()
     {
-        var buffer = new byte[TapeHeader.FixedHeaderBlockSize];
+        var buffer = new byte[TapeHeaderBlock.Size];
         int read = Manager.ReadHeaderBlock(buffer);
 
         m_headerResolved = true;
@@ -419,7 +416,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
             return null;
         }
 
-        TapeHeader? header = TapeFramer.Unpack<TapeHeader>(buffer, read);
+        TapeHeader? header = TapeHeaderBlock.Classify(buffer, read);
 
         // A readable block that is NOT our media header (calibration / foreign / torn) is likewise
         //  "no media header here" for navigation = Absent; the service still learns the concrete kind.

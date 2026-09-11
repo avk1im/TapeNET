@@ -1,331 +1,339 @@
-# Design — Tape Volume & Set Headers for TapeLibNET
+# Design — Tape Media Header for TapeLibNET
 
-**Status:** v10 for implementation · **Author:** (TapeNET / TapeLibNET) · **Depends on:** MediaId (Guid) in TapeTOC (shipped, tests green)
-
-> Major change in v10 vs. v8b: expanded §10 on service-layer implementation.
-> Phase A = media header; Phase B = set header; one branch, shipped together.
-
----
-
-## 0. Naming & files
-
-| Symbol | Kind | File | Notes |
-|--------|------|------|-------|
-| `TapeHeader` | **abstract base** | `TapeHeader.cs` | `protected Guid Id`; `protected uint BlockSize`; `Kind`, `CreatedUtc`; polymorphic `ConstructFrom`; abstract `ToString()`. |
-| `TapeMediaHeader` | `: TapeHeader` | `TapeMediaHeader.cs` | Kind = Media; `MediaId => Id`; **`TocBlockSize`** (= BlockSize); `Volume`, `TocPlacement`, `OriginalName`, `DisplayName`. |
-| `TapeSetHeader` | `: TapeHeader` | `TapeSetHeader.cs` | Kind = Set; `MediaId => Id`; `VolumeSetIndex` (0-based), `GlobalSetIndex` (1-based), `Volume`. (Phase B) |
-| `TapeCalibrationHeader` | `: TapeHeader` | (calibration file) | Kind = Calibration; `RunId => Id`; **`RunBlockSize`** (= BlockSize); `ProfileKey`, `CapacityReportedAtBom`, `Plan`; built via `CreateHeader()`. |
-| `TapeHeaderKind` | enum | with base | `Unknown=0, Media=1, Calibration=2, Set=3`. |
-| `TapeFramer` | static framing | `TapeFramer.cs` | `Pack`/`Unpack<T>`; `Unpack<TapeHeader>` is the polymorphic probe. |
-| `TapeCalibrationFramer` | static forwarder | (calibration file) | thin wrapper over `TapeFramer`. |
-| `TapeCalibrationRunHeader` | **legacy**, `#if LEGACY_TapeCalibrationRunHeader` | (calibration file) | pre-unification record + `ToHeader()` adapter; read-only fallback. |
+**Status:** v11 · **implemented, integrated, and green** across library, service, CLI, and WPF
+**Scope:** the media header (BOM identity record) and everything that consumes it
+**Depends on:** `MediaId` (Guid) in `TapeTOC`
 
 ---
 
-## 1. Purpose
+## 1. What the feature does
 
-Single-partition ("TOC-in-set") media stores the TOC at end-of-data, so loading a cartridge forces
-a seek to EOD just to learn whether a TOC exists. A **media header at BOM of the content partition**
-positively identifies the cartridge as "ours" in one cheap block read.
+Every medium TapeLibNET formats or writes from beginning-of-media now carries a **media header**: one
+16 KiB framed record at the beginning of the content partition that positively identifies the cartridge
+in a single cheap block read.
 
-The header's value has since grown beyond dodging that seek into **uniform, one-block identity &
-verification** — which is placement-independent and therefore now written on **every** medium,
-partitioned or not (see §4 for why the old exemption was retired). A **set header** in front of each
-backup set additionally lets the agent *verify* set navigation against the tape.
+This delivers four user-visible capabilities:
 
-`TapeCalibrator` writes a sibling BOM record. All records unify behind `TapeHeader`, so one framed
-read classifies **media**, **set**, **calibration**, or **foreign/blank** (§9, §16).
+- **No more churning on the wrong cartridge.** Loading a medium reads the header first. A calibration
+  cartridge is recognized and reported immediately — the library never seeks to end-of-data hunting for
+  a table of contents that cannot exist. Genuinely unidentified media asks the user before the costly
+  search.
+- **Identity verification before destructive work.** Overwrite, multi-volume continuation, restore, TOC
+  import, and calibration all compare the loaded header against what the operation expects, and surface
+  a typed verdict with a context-appropriate prompt.
+- **Precise cross-subsystem recognition.** Backup and calibration each recognize the other's media by
+  name: "this cartridge holds a backup" / "this is a calibration cartridge", rather than a blank failure.
+- **Graceful legacy coexistence.** Header-less media written by earlier versions still loads, restores,
+  and appends. Mixed series (legacy volume 1, headed volume 2+) restore correctly end to end.
 
----
-
-## 2. Goals / non-goals
-
-**Goals:** cheap positive "ours?" + identity on every load; verified set navigation; absolute
-preservation of the *counting* logic in the navigator; per-tape identity tied to TOC `MediaId`;
-graceful legacy & mixed-series coexistence; one framing classifies all kinds; each subsystem
-recognizes the other's media precisely.
-
-**Non-goals:** no retrofitting onto written legacy media; no TOC-format change beyond `MediaId`; no
-unification of the headers' *physical write paths*; **no change to setmark/filemark counting**.
+The header is **additive and non-destructive**: it is never inserted into already-written media, and it
+never alters setmark/filemark counting.
 
 ---
 
-## 3. Core decisions
+## 2. Design principles
 
-| # | Decision |
-|---|----------|
-| D1 | Media header: filemark-free record at BOM of the **content partition**, outside set-counting. |
-| D2 | **No trailing filemark** on any header. |
-| D3 | Presence/identity by **framed-CRC probe**, never mark-counting. |
-| D4 | **Fixed media/set header block = 16 KiB** (calibration header uses the run block). |
-| D5 | **CRC external** to the header struct — carried by `TapeFramer`. |
-| D6 | **`TapeHeaderKind` byte** after the signature discriminates all kinds. |
-| **D7** | **Media header on ALL formatted media**, single- and multi-partition, at content-partition BOM. `TapeTocPlacement` records where the TOC lives. *(Supersedes v6's "no header when `HasInitiatorPartition`".)* |
-| D8 | **Never insert** headers into already-written media. |
-| D9 | Headers written at format and on a **fresh (blank) volume**, from BOM / set start. |
-| D10 | Multi-volume: per-tape, self-describing; series tied by TOC `MediaId` + header `Volume`. |
-| D11 | `TapeMediaHeader`/`TapeSetHeader` factoried by **TapeTOC**; `TapeCalibrationHeader` by its own `CreateHeader()`. |
-| D12 | Calibration unified; **no `ITapeHeaderMaker`**. |
-| D13 | Header I/O via **dedicated `WritingHeader`/`ReadingHeader` states**. |
-| **D14** | Presence: **`TapeHeaderPresence { Unknown, Present, Absent }`** — `NotNeeded` retired (every navigator can carry a content-BOM header now). |
-| D15 | Position sentinel **`AtHeader = InTOCSet + 1`**. |
-| D16 | **Navigator never parses headers.** Agent parses/reads; Navigator counts + holds presence; Service evaluates. |
-| D17 | **Set header does NOT alter setmark counting.** |
-| D18 | **media-header-present ⟺ set-headers-present** per volume. |
-| **D19** | **`BlockSize` is a `protected` base slot** each kind reinterprets: media ⇒ `TocBlockSize`; calibration ⇒ `RunBlockSize`. |
-| **D20** | **Polymorphic classification** is `TapeFramer.Unpack<TapeHeader>`; the agent surfaces a polymorphic `TapeHeader?`. Wrong-kind is a first-class verdict. |
-| **D21** | **The agent writes the media header**, not the service/fixture. `TapeFileBackupAgent.BeginWriteContentForCurrentSet` writes it when `CurrentSetIndex == FirstSetOnVolume && WritesMediaHeader`, else calls `EnsureHeaderResolved()`. Pure mechanism — the service still owns the *load-time verdict*; the agent just executes the already-authorized "write from BOM = take over this tape". |
-| **D22** | Heading is gated by a mutable **`TapeFileBackupAgent.WritesMediaHeader`** property (default `false`). The service/fixture flips it; for Mixed multi-volume it varies per volume, set before each `ResumeBackupToNextVolume`. |
-| **D23** | Both test fixtures default to **headerless** (`WithMediaHeader = false` / `VolumeHeaderMode.None`) now that agent-driven heading + the base/derived matrix (§18) give explicit, opt-in header coverage. |
+| | |
+|---|---|
+| **Cheap positive identity** | One 16 KiB framed-CRC block answers "whose medium is this, which volume, which kind?" — no TOC parse, no EOD seek. |
+| **Uniform across layouts** | Written on *all* formatted media, single- and multi-partition alike, always at content-partition BOM. |
+| **Counting is sacred** | The header lives outside set counting. Setmark/filemark arithmetic is byte-for-byte unchanged. |
+| **Agent writes, service evaluates** | Writing is mechanism (agent); judging identity and prompting is policy (service). The navigator does neither — it counts and caches presence. |
+| **Positive classification only** | A medium is "ours" only when a framed CRC validates *and* the kind byte is known. Everything else is Unidentified and never blocks. |
 
 ---
 
-## 4. Why the header now goes on partitioned media too (retires the D7 exemption)
+## 3. Header types and framing
 
-In v5/v6 the header had one job — avoid the minutes-long EOD seek — which partitioned media never
-suffered, so it was exempt. Two later additions changed the economics:
-
-- **Uniform identity/verification.** The header hands back `MediaId` + `Volume` + `Kind` from ONE
-  16 KiB block, versus parsing a whole TOC. That value is placement-independent.
-- **Three flows now depend on a cheap per-volume identity:** overwrite validation (whose tape is
-  this before I destroy it?), multi-volume restore (we deliberately DON'T re-read the TOC per
-  volume — without a header a partitioned continuation volume has no cheap identity at all), and the
-  `SkipVolumeCheck` opt-out (only coherent if a *uniform* check exists to skip).
-
-**Placement — content-partition BOM, not the initiator partition:** restore then pays **zero**
-partition switches (identity → navigate content, same partition), set headers already live in the
-content partition (one skip rule covers both), and the initiator-TOC path — already fast and already
-carrying `MediaId` — is left untouched. No cross-partition clobber exists, because on partitioned
-media the content-BOM header and the initiator-partition TOC occupy *different* partitions.
-
-Consequence: **`NotNeeded` is retired** (D14); every navigator starts `Unknown` and the agent
-resolves; the partition navigator stops being a special case (§6.7).
-
----
-
-## 5. Media header — `TapeMediaHeader`
-
-Immutable identity projection of the TOC. Written once, never rewritten.
-
-### 5.1 Contents (framed into one 16 KiB block; CRC external)
-
-| Field | Where | Source |
-|-------|-------|--------|
-| Signature / **Kind** (Media) / **Id** (`MediaId`) / CreatedUtc / **BlockSize** | preamble | TOC |
-| **Volume** | body | TOC `Volume` — immutable per tape |
-| TocPlacement | body | `InSet` or `InPartition` (self-describes the layout) |
-| OriginalName | body | TOC `Description` snapshot, clamped to fit the frame; null ⇒ generated |
-
-**BlockSize is repurposed (D19).** It is *not* the header's own block (that's the caller's fixed
-16 KiB and is known before the field is read). It now records the **TOC's** on-tape block size,
-exposed as `TocBlockSize` — meaningful, immutable, and forward-looking (adopt larger TOC blocks
-later without probing). `protected` in the base; media reinterprets it.
-
-### 5.2 Factory
+### 3.1 The hierarchy
 
 ```csharp
-// TapeTOC — sole builder of the media header. tocBlockSize is the agent's fixed TOC block.
+public enum TapeHeaderKind : byte { Unknown = 0, Media = 1, Calibration = 2, Set = 3 }
+
+public abstract record TapeHeader : ITapeSerializable
+{
+    public const uint FixedHeaderBlockSize = 16 * 1024;   // media header; calibration uses the run block
+
+    public abstract TapeHeaderKind Kind { get; }
+    protected Guid Id        { get; init; }   // surfaced as MediaId / RunId
+    protected uint BlockSize { get; init; }   // surfaced as TocBlockSize / RunBlockSize
+    public DateTime CreatedUtc { get; init; }
+
+    protected void SerializePreamble(TapeSerializer s);           // sig, Kind, Id(16B), CreatedUtc, BlockSize
+    private static TapeHeaderPreamble? ReadPreamble(TapeDeserializer d);   // null on signature mismatch
+    public abstract void SerializeTo(TapeSerializer s);
+
+    public static ITapeSerializable? ConstructFrom(TapeDeserializer d)     // polymorphic probe entry
+    {
+        if (ReadPreamble(d) is not { } p) return null;
+        return p.Kind switch
+        {
+            TapeHeaderKind.Media       => TapeMediaHeader.ConstructBody(d, p),
+            TapeHeaderKind.Calibration => TapeCalibrationHeader.ConstructBody(d, p),
+            _ => null,
+        };
+    }
+
+    public abstract override string ToString();   // the human-readable "namely …" detail
+}
+```
+
+| Symbol | Kind | Notes |
+|---|---|---|
+| `TapeHeader` | abstract base | `Id`, `BlockSize` protected; `Kind`, `CreatedUtc`; polymorphic `ConstructFrom`; abstract `ToString()` |
+| `TapeMediaHeader` | `: TapeHeader` | `Kind = Media`; `MediaId ⇒ Id`; `TocBlockSize ⇒ BlockSize`; `Volume`, `TocPlacement`, `OriginalName`, `DisplayName` |
+| `TapeCalibrationHeader` | `: TapeHeader` | `Kind = Calibration`; `RunId ⇒ Id`; `RunBlockSize ⇒ BlockSize`; `ProfileKey`, `CapacityReportedAtBom`, `Plan` |
+| `TapeFramer` | static framing | `Pack` / `Unpack<T>`; `Unpack<TapeHeader>` is the polymorphic probe |
+| `TapeCalibrationFramer` | static forwarder | thin wrapper over `TapeFramer` |
+
+`ConstructFrom` is a compiler-checked switch. The hierarchy is closed, co-versioned, and
+single-assembly, so a self-registration registry stays YAGNI until cross-assembly kinds appear.
+
+### 3.2 `BlockSize` is a reinterpretable slot
+
+The base slot is *not* the header's own block size (that is the caller's fixed 16 KiB, known before any
+field is read). Each kind gives it meaning: `TapeMediaHeader.TocBlockSize` records the **TOC's** on-tape
+block size — immutable and forward-looking, so larger TOC blocks can be adopted later without probing —
+while `TapeCalibrationHeader.RunBlockSize` records the calibration run block. `Id` is likewise protected
+and surfaced as `MediaId` / `RunId`.
+
+### 3.3 Media header contents
+
+| Field | Where | Source |
+|---|---|---|
+| Signature / `Kind` (Media) / `Id` (MediaId) / `CreatedUtc` / `BlockSize` | preamble | TOC |
+| `Volume` | body | TOC `Volume` — immutable per tape |
+| `TocPlacement` | body | `InSet` or `InPartition` — self-describes the layout |
+| `OriginalName` | body | TOC `Description` snapshot, clamped to fit the frame; null ⇒ generated |
+
+`DisplayName` falls back to `Media {Id:N} · vol {Volume} · {CreatedUtc}` when `OriginalName` is null. The
+current, renameable name is never stored here — renaming rewrites the TOC, and UIs show the TOC's live
+description.
+
+### 3.4 Media headers: the TOC is the factory
+
+```csharp
+// TapeTOC — sole builder of the MEDIA header. tocBlockSize is the agent's fixed TOC block.
 public TapeMediaHeader CreateHeader(uint tocBlockSize, TapeTocPlacement placement) =>
     new()
     {
         MediaId      = EnsureMediaId(),
         CreatedUtc   = CreationTime,
-        TocBlockSize = tocBlockSize,                 // repurposed BlockSize slot
+        TocBlockSize = tocBlockSize,
         Volume       = Volume,
-        TocPlacement = placement,                    // InSet | InPartition — from HasInitiatorPartition
+        TocPlacement = placement,          // REQUIRED: the TOC cannot know where it resides
         OriginalName = TapeMediaHeader.ClampName(Description),
     };
 ```
 
-`DisplayName` falls back to `Media {Id:N} · vol {Volume} · {CreatedUtc}` when `OriginalName` is null.
-The current, renameable name is never stored here (rename rewrites the TOC); UIs show the TOC's live
-description.
+`placement` is a required parameter because the TOC genuinely does not know its own placement; the agent
+derives it from the navigator type (`TapeNavigatorTOCInPartition ? InPartition : InSet`).
 
----
+### 3.5 Calibration headers: the calibrator is the factory
 
-## 6. Navigation model (media header)
-
-### 6.1 Layout (`‹MH›` = media header block, no FM; `[SHk]` = set-k header)
-
-```
-Single-partition:  ‹MH›[SH0][set0][SM][SH1][set1][SM]…[SHn][setN][SM][toc1][FM][toc2][FM]
-Partitioned:       content: ‹MH›[SH0][set0][SM]…[SHn][setN][SM]   |   initiator: [toc1][FM][toc2][FM]
-```
-
-Header = one logical block at content-partition BOM (single `WriteDirect`); content begins at
-logical block 1. Each set header is the first block of its set's data, so **setmark counting is
-unchanged** (D17).
-
-### 6.2 Sentinels & presence
-
-`AtHeader = InTOCSet + 1`. `TapeHeaderPresence { Unknown, Present, Absent }` (**no `NotNeeded`**);
-field `HeaderPresence`. **Every** navigator starts `Unknown`; the agent resolves.
-
-### 6.3 `NavigateToHeader()`
-
-`Unknown`/`Present` → position at content-partition BOM, `CurrentContentSet = AtHeader`. `Absent` →
-**error** (seeking a header known absent is a bug).
-
-### 6.4 Reading resolves position (no FM to skip)
-
-`ReadHeader` (agent) = `NavigateToHeader` → `ReadDirect(16 KiB)` → `TapeFramer.Unpack<TapeHeader>`
-(§9). Media header ⇒ `Present`, `CurrentContentSet = 0`. Other kind / garbage ⇒ `Absent` for backup
-purposes (service still learns the kind), `Unknown` position. I/O failure ⇒ `Unknown`, `Unknown`.
-
-### 6.5 The one functional change: header-aware begin-of-content
-
-`MoveToBeginOfContent`: `Absent` → position at content BOM → 0; `Present` → content BOM → skip one
-header block → 0; `Unknown` → **error** (agent must have resolved; §4-layering). Skip = go to
-logical block 1.
-
-### 6.6 Guard fix in `MoveToTargetContentSet`
-
-Add `AtHeader` to the from-end guard so a negative target while `AtHeader` first moves to a known
-boundary. No new overloads; the positive branch already routes `AtHeader` through begin-of-content.
-
-### 6.7 REQUIRED: header-aware "assume-blank" fallbacks (INV-12)
-
-Every raw `Drive.Rewind()` "assume blank" fallback lands at BOM before the header and must route
-through `MoveToBeginOfContentFromBom()` (rewind → skip the header block when `Present`). Sites: the
-no-mark else-branches of the TOC-in-set navigators (§v5 list). **v7 addition:**
-`TapeNavigatorTOCInPartition.MoveToBeginOfContent` now switches to the content partition, rewinds,
-and skips the header when `Present` — no longer exempt. Its initiator-partition TOC positioning is
-untouched; no cross-partition clobber.
-
----
-
-## 7. Set header — `TapeSetHeader` (Phase B)
-
-Unchanged from v5/v6: one 16 KiB framed block at the front of each set's data, carrying
-`VolumeSetIndex` (0-based, drives navigation verification), `GlobalSetIndex` (1-based, TOC/attribution),
-`Volume`, and `MediaId`. The agent writes it before the packer anchors (so file `TapeAddress`es sit
-past it — no TOC-address surgery) and, on read, verifies `VolumeSetIndex` against the navigator's
-target, self-correcting within bounds, else escalating a `MediaInconsistent` verdict. Navigator
-counting untouched (D17). `TapeTOC.CreateSetHeader(int)` / `CreateSetHeaderForCurrentSet()`.
-
----
-
-## 8. TOC-in-partition · legacy · multi-volume
-
-- **Partitioned media (revised):** media header at content-partition BOM (§4). TOC still in the
-  initiator partition; its positioning unchanged. `TocPlacement = InPartition` recorded.
-- **Legacy media:** reading → `Absent` → ask once about the EOD seek (single-partition) / just load
-  the initiator TOC (partitioned). Never add headers to written media. media-header ⟺ set-headers per
-  volume.
-- **Multi-volume:** header per tape; series = `MediaId`; position = header `Volume`. Guard on each
-  inserted volume compares `Id`/`Volume`; proceed-on-confirm; suppressible via `SkipVolumeCheck` (§10).
-
----
-
-## 9. Classification & reporting (v7)
-
-### 9.1 The polymorphic probe (answers "which kind?")
-
-`TapeFramer.Unpack<TapeHeader>(block, len)` **is** the class-flexible reader: `TapeHeader.ConstructFrom`
-dispatches on the Kind byte and returns the concrete type, so:
+Each header kind is built by the subsystem that owns its identity — there is no single global factory, and
+no `ITapeHeaderMaker` abstraction. The TOC owns media identity; **`TapeCalibrator` owns run identity** and
+builds its own header:
 
 ```csharp
-switch (TapeFramer.Unpack<TapeHeader>(block, len))
-{
-    case TapeMediaHeader m:       /* backup media   — m.MediaId, m.Volume */          break;
-    case TapeSetHeader sh:        /* set header      — sh.VolumeSetIndex */            break;
-    case TapeCalibrationHeader c: /* calibration     — c.RunId */                      break;
-    case null:                    /* foreign / blank / torn */                        break;
-}
+var header = TapeCalibrationHeader.CreateHeader(
+    runId, drive.DriveProfileKey, capacityReportedAtBom, runBlockSize, DateTime.UtcNow, plan);
 ```
 
-- **Narrow** ("is it MY kind?") — `Unpack<TapeMediaHeader>` returns the media header or `null`
-  (wrong kind *or* foreign), because the inherited `ConstructFrom` dispatches then `as T` narrows.
-- **Polymorphic** ("what is it?") — `Unpack<TapeHeader>` returns the concrete kind or `null` only for
-  blank/foreign. No new framer is needed — the fixed-`T` `Unpack` already provides both modes.
+The two factories are peers. What they share is the **grammar** (`TapeHeader` preamble + `TapeFramer`) and
+the **block** (`TapeHeaderBlock`), not a construction path:
 
-### 9.2 Agent surface & service verdict (answers "report it precisely")
+| | Media header | Calibration header |
+|---|---|---|
+| Built by | `TapeTOC.CreateHeader` | `TapeCalibrationHeader.CreateHeader` (called by `TapeCalibrator`) |
+| Identity (`Id`) | `MediaId` — the TOC's series id | `RunId` — this calibration run |
+| `BlockSize` slot | `TocBlockSize` — the TOC's on-tape block | `RunBlockSize` — the run payload's block |
+| Written by | the agent, via `TapeStreamManager` (navigator-positioned) | the calibrator, directly (positioned by `PrepareDrive`) |
+| Block on tape | one standard `TapeHeaderBlock.Size` block | **the same** standard block |
 
-The agent's `ReadHeader()` returns the **polymorphic `TapeHeader?`**. The **service** maps
-`(concrete kind vs. expected)` to a verdict and uses `header?.ToString()` for the human-readable
-"namely …" detail (each kind's `ToString()` supplies it; `null` ⇒ "Unidentified media").
-
-```csharp
-public enum TapeMediaVerdict
-{
-    Match,             // right kind, right MediaId (+Volume when checked)
-    Unidentified,      // null — blank/foreign/legacy
-    WrongKind,         // e.g. a calibration cartridge met in a backup context (or vice-versa)
-    MediaIdMismatch,   // media header, different series
-    WrongVolume,       // media header, right series, wrong Volume
-    MediaInconsistent, // set-header verification failed unrecoverably (Phase B)
-}
-```
-
-Symmetric for calibration: `TapeCalibrator` reads the same polymorphic header, so
-`InspectMedia`/inspect can report "backup cartridge — namely {header}" (Kind = Media) instead of a
-blank "no calibration header". Concretely, the calibrator's inspect result gains a field for the
-foreign header's `ToString()`, populated when `Unpack<TapeHeader>` yields a non-calibration kind.
-
-### 9.3 Cross-detection read size (note for §16.6, not needed now)
-
-A subsystem classifying with a block **smaller** than 16 KiB (e.g. calibration on tiny virtual media)
-must size the read to hold a media/set header, or `Unpack`'s length-guard drops it:
-
-```csharp
-int probeLen = (int)Math.Max(runBlockSize, TapeHeader.FixedHeaderBlockSize);
-```
-
-Self-reading is already safe (write guard in `RecordBlockWriter.Emit`, read guard in `Unpack`); this
-guard is required only when cross-classification is implemented. On fixed-block backends note that
-`ReadDirect` reads in whole drive blocks — reaching 16 KiB may span several — verify against the
-backend at implementation time.
-
-### 9.4 Calibrator-side classification (symmetric to the agent)
-
-`TapeCalibrator` is dual-role like the agent (mechanism that also reports up to
-`TapeServiceBase.Calibrate.cs`), so it classifies with the **same polymorphic probe** and remembers
-a stranger for the service to name.
-
-- **Mechanism.** `ReadRunHeader` reads once, unpacks polymorphically, narrows to its own kind, and
-  captures anything foreign:
-
-  ```csharp
-  TapeHeader? any = read > 0 ? TapeCalibrationFramer.Unpack<TapeHeader>(recordBuffer, read) : null;
-  // (LEGACY fallback re-parses the SAME buffer as TapeCalibrationRunHeader → ToHeader())
-  if (any is TapeCalibrationHeader header) return header;                            // our kind
-  if (any is not null) { ForeignHeader = any; /* set error, trace */ return null; }  // Media/Set
-  /* else: blank / foreign / torn → null */
-  ```
+Because both kinds occupy the same standard block, either subsystem can classify the other's cartridge with
+one read — which is what makes "this is a calibration cartridge" / "this holds a backup" possible without a
+size-negotiation dance.
 
 ---
 
-## 10 — Service-layer header handling (FINAL)
+## 4. Why the header goes on partitioned media too
 
-> Supersedes the v8a §10 sketch, the §14.8/§14.9 scraps, and the intermediate UPDATED draft.
-> Reflects v8b (D21/§17.10: **`TapeFileAgent` writes the media header automatically**), so the
-> service's job is **check → decide → prompt** — it never writes headers itself, only sets the gate.
-> All review points (turns 39–40) are folded in. Verbs covered: format, load, backup, restore,
-> calibrate, delete, import-TOC.
+The header's original job was dodging the minutes-long EOD seek, which partitioned media never suffered.
+Three later capabilities made placement-independent identity worth having everywhere:
 
-### 10.0 Principle: agent writes, service evaluates (D16 realized)
+- **Uniform identity.** MediaId + Volume + Kind from one 16 KiB block, versus parsing an entire TOC.
+- **Cheap per-volume identity.** Overwrite validation ("whose tape is this before I destroy it?"),
+  multi-volume restore (which deliberately does *not* re-read the TOC per volume — without a header a
+  partitioned continuation volume would have no cheap identity at all), and the `SkipVolumeCheck`
+  opt-out, which is only coherent if a *uniform* check exists to skip.
+- **Cross-subsystem recognition** (§8), which is layout-agnostic by nature.
 
-- **Agent writes headers** (mechanism), at the two BOM moments:
-  - **format / fresh media** → in `BackupInitialTOC(writeHeader: true)` (§10.1),
-  - **fresh continuation volume** → in `BeginWriteContentForCurrentSet` at first-set-on-volume (§17.10).
-- **Service evaluates** the loaded header for *identity* (whose tape / which volume / which kind) and
-  drives all prompts. It holds **one stored value**, `_loadedHeader`, read at media load and
-  interpreted per operation — the verdict depends on the operation.
+**Placement is content-partition BOM, never the initiator partition.** Restore then pays zero partition
+switches for identity (identify → navigate content, same partition); the initiator-TOC path — already
+fast, already carrying MediaId — is untouched; and no cross-partition clobber is possible, since on
+partitioned media the content-BOM header and the initiator-partition TOC occupy different partitions.
 
-### 10.1 Format — agent auto-heads via `BackupInitialTOC(bool writeHeader)`
+---
 
-`BackupInitialTOC` builds the initial TOC anyway, so it builds the header from that same TOC and
-writes it first — no user interaction. **A parameter (not a mutable flag) selects heading**, removing
-the reentrancy footgun and expressing intent at the two call sites:
+## 5. Layout and navigation
+
+### 5.1 Layout
+
+```
+Single-partition:  ‹MH›[set0][SM][set1][SM]…[setN][SM][toc1][FM][toc2][FM]
+Partitioned:       content: ‹MH›[set0][SM]…[setN][SM]   |   initiator: [toc1][FM][toc2][FM]
+```
+
+`‹MH›` is one logical block at content-partition BOM, written with a single `WriteDirect`, with **no
+trailing filemark**. Content begins at logical block 1.
+
+### 5.2 Presence and sentinels
+
+`TapeHeaderPresence { Unknown, Present, Absent }` — held by the navigator as `HeaderPresence`. Every
+navigator starts `Unknown`; the agent resolves it. Position sentinel `AtHeader = InTOCSet + 1`.
+
+Presence resets to `Unknown` on every media (re)load, which is what makes mixed headed/headless series
+work (§10.3).
+
+### 5.3 Header-aware begin-of-content
+
+`MoveToBeginOfContent`:
+
+- **Present** → content BOM, skip one header block → logical block 1, `CurrentContentSet = 0`
+- **Absent** → content BOM → block 0, `CurrentContentSet = 0`
+- **Unknown** → treated permissively as Absent (no skip)
+
+`NavigateToHeader()` positions at content-partition BOM and sets `CurrentContentSet = AtHeader`;
+`MoveToTargetContentSet` includes `AtHeader` in its from-end guard so a negative target while at the
+header first moves to a known boundary.
+
+### 5.4 The navigator stays usable standalone
+
+`MoveToBeginOfContentFromBom` must **not** hard-fail on `Unknown`. The navigator has to work with no
+agent (unit tests, direct use), so **only `Present` triggers the skip**; `Unknown`/`Absent` assume no
+header and land at block 0 — the legacy-safe default. A strict "must be resolved" guard would break
+every standalone navigator test while defending against nothing real: every production path resolves
+presence at an agent choke-point before reaching here.
+
+### 5.5 `MoveToBeginOfContentFromBom` — the single assume-blank primitive
+
+On headed media, **"at BOM" ≠ "at the oldest set"**: the oldest set starts at block 1, BOM *is* the
+header. Every handler that treats a BOM landing as "we're at the oldest set / the tape is blank" routes
+through `MoveToBeginOfContentFromBom()`. **Eight sites**, two families:
+
+- **Five assume-blank fallbacks** (no-mark else-branches): `TapeNavigatorTOCInSet.MoveToBeginOfContent`;
+  `…WithSmks.MoveToEndOfContentInternal`; `…WithFmks.MoveToEndOfContentInternal`;
+  `…WithFmksAndTOCMark.MoveToBeginOfContent` **and** `.MoveToEndOfContent`.
+- **Three `ERROR_BEGINNING_OF_MEDIA` handlers** (where `ResetError()` means "fine, we're at the oldest
+  set"): `MoveToTargetContentSet` from-end branch; `MoveToTargetContentSet` from-beginning branch
+  (target 0); `…WithSmks.MoveToTargetContentSet` optimized-from-`InTOCSet` override.
+
+Maintenance rule: `grep -n "ERROR_BEGINNING_OF_MEDIA\|Drive.Rewind()" TapeNavigator.cs` — every
+**content-side** "assume at oldest/blank" hit routes through the primitive. The **TOC-side**
+`WithFmksAndTOCMark` `UnknownSet` rewind stays **raw**: it scans *forward* for the 3-filemark TOC mark
+and is header-transparent by construction.
+
+### 5.6 Partition navigator — combined LOCATE, and Absent still repositions
+
+`TapeNavigatorTOCInPartition` routes header I/O and begin-of-content to the **content** partition. Its
+`MoveToBeginOfContentFromBom` computes one target block (Present ⇒ 1, Absent ⇒ 0) and issues a single
+`MoveToPartition(Content, targetBlock)` — Win32 `SetTapePosition` takes partition and block together —
+with a stepwise fallback (switch → rewind → optional `MoveToBlock`). The **Absent branch still switches
+and rewinds**: it performs real repositioning, not a no-op, otherwise a legacy partitioned tape
+mis-navigates from a stale (e.g. initiator) position. The `CurrentContentSet == 0` fast path is retained
+so a header read that already set 0 doesn't redo the switch.
+
+---
+
+## 6. Header I/O
+
+### 6.1 Atomic block operations, no dedicated tape state
+
+The header is one 16 KiB block with no filemark, so write and read are single `WriteDirect` /
+`ReadDirect` operations rather than persistent streams. `WriteHeaderBlock` / `ReadHeaderBlock` do
+`EndReadWrite()` → position → one block op, staying in `MediaPrepared`. The `_operationLock` plus
+`EndReadWrite()` already provide interleaving safety, and the block ops never leave a restful
+externally-visible state.
+
+They **reset the content position on any early failure** (a torn write/read leaves position unknown) and,
+on success, leave `CurrentContentSet = 0` — because the media header lives at content BOM on every
+layout, so either way the tape sits at begin-of-content.
+
+### 6.2 `read ≤ 0` at BOM means Absent, not Unknown
+
+Reaching BOM and finding no data (blank tape, or at EOD) is a **definitive "no media header"** and
+resolves to `Absent`. It is not an unresolved state: nothing retries `EnsureHeaderResolved`, so leaving
+`Unknown` would wedge all later content navigation. `Absent` lets navigation proceed and skip nothing —
+exactly right for header-less media. A readable block that is not our media header (calibration,
+foreign, torn) likewise resolves `Absent` for backup purposes, while the service still learns the
+concrete kind from the polymorphic read.
+
+### 6.3 Presence resolves at content choke-points only — never TOC
+
+Header presence is a *content*-navigation concern. TOC navigation is **end-relative** (fast-forward, step
+back over the last mark) and never rewinds to BOM, so it must not resolve.
+
+| Path | Header presence | Rewinds to BOM? |
+|---|---|---|
+| TOC (read/write) | never resolve — end-relative, header-agnostic | no |
+| Content (read/write) | resolve first, at the agent choke-point | yes (skips header when Present) |
+| Navigator standalone | `Unknown` treated as `Absent` (no skip) | — |
+
+Choke-points calling `EnsureHeaderResolved`: `TapeFileBackupAgent.BeginWriteContentForCurrentSet`,
+`TapeFileRestoreBaseAgent.BeginReadContentForCurrentSet`, and
+`TapeFileAgent.DeleteSetsFromCurrentSetUp` (which navigates content directly, so it resolves before its
+begin-of-content move — otherwise delete-all on a headed tape would clobber the header).
+
+### 6.4 One physical read serves probe and parse
+
+`ProbeHeaderPresence` is `ReadHeader`-and-return-presence: the fixed 16 KiB block pulls the whole header
+in one `ReadDirect`, so a positive probe needs no re-read. The **agent** parses; the navigator only
+caches presence.
+
+---
+
+## 7. Writing the header
+
+> Two subsystems write headers, each for the kind it owns: the **agent** writes the media header (via
+> `TapeStreamManager`, so the navigator positions it and learns its presence), and the **calibrator** writes
+> the calibration run header (positioning itself at BOM in `PrepareDrive`). Neither goes through the other,
+> and the *service* writes none at all.
+>
+> What they share is the block primitive: both call **`TapeHeaderBlock`**, which owns the standard block
+> size, the framing, the size guard, and the set-and-restore block-size discipline. That single point ensures
+> that a header written by one subsystem is always readable by the other.
+
+### 7.1 Two BOM moments, one condition
 
 ```csharp
-// TapeFileAgent (base) — WritesMediaHeader lives here (Guid1 [DONE]); the base agent is used at format.
+// TapeFileAgent (base) — the format path uses the base agent, so the gate lives here.
 public bool WritesMediaHeader { get; set; } = true;
 
+// TapeFileBackupAgent.BeginWriteContentForCurrentSet
+if (CurrentSetIndex == FirstSetOnVolume && WritesMediaHeader)
+    WriteHeader();           // heads the (fresh / continuation) volume; sets Present, positions at block 1
+else
+    EnsureHeaderResolved();  // existing / legacy media: probe → Present or Absent
+```
+
+`CurrentSetIndex == FirstSetOnVolume` (⟺ `CurrentSetIndexOnVolume == 0` ⟺ "write content from BOM")
+fires precisely on volume 1's first set **and** every continuation volume's first set — one condition,
+both moments. `WriteHeader` resolves presence internally, so the `else` is correct with no redundant read.
+
+**Why the write lives inside the agent, not the service:** `ResumeBackupToNextVolume` performs
+`TOC.Volume++` and the first content write atomically, leaving no external seam to inject a
+correctly-numbered header between them. Writing from outside would record the *previous* volume number.
+Inside `BeginWriteContentForCurrentSet` the write runs *after* the volume bump, so `TOC.CreateHeader`
+reads the correct volume.
+
+### 7.2 Format writes the header with the initial TOC
+
+```csharp
 /// <param name="writeHeader">
-/// Write the media header before the initial TOC. TRUE only on the format / fresh-media path;
-///  FALSE on the delete-all path (which must preserve, never rewrite, the existing header — §10.8).
-///  Defaults to <see cref="WritesMediaHeader"/> so continuation heading (which sets the flag) works.
+/// Write the media header before the initial TOC. TRUE on the format / fresh-media path;
+///  FALSE on the delete-all path, which must preserve — never rewrite — the existing header.
+///  Defaults to <see cref="WritesMediaHeader"/>.
 /// </param>
 public TapeResult BackupInitialTOC(bool? writeHeader = null)
 {
@@ -339,79 +347,114 @@ public TapeResult BackupInitialTOC(bool? writeHeader = null)
 
     return BackupTOC();
 }
-```
 
-`WriteHeader()` derives everything internally — placement from the navigator, `Partition = Content`:
-
-```csharp
 public TapeResult WriteHeader()
 {
-    var placement = TOCPlacement;   // agent property: Navigator is TapeNavigatorTOCInPartition ? InPartition : InSet  [DONE]
-    var header = TOC.CreateHeader(c_fixedTOCBlockSize, placement);   // placement REQUIRED (TOC can't know where it resides)  [DONE]
-    // …frame + Manager.WriteHeaderBlock…  (§7)
+    var placement = TOCPlacement;   // Navigator is TapeNavigatorTOCInPartition ? InPartition : InSet
+    var header = TOC.CreateHeader(c_fixedTOCBlockSize, placement);
+    // …frame + Manager.WriteHeaderBlock…
 }
 ```
 
-Service format path (works for **all** media, incl. partitioned):
+`DeleteSetsFromCurrentSetUp`'s delete-all branch calls `BackupInitialTOC(writeHeader: false)`: it has
+already navigated to begin-of-content (block 1, past the header), so the fresh initial TOC overwrites
+content only and the header survives.
+
+### 7.3 Layering stays intact
+
+By backup time the service has already probed at load, shown any verdict, and obtained overwrite
+confirmation — so `TOC.MediaId` is "the identity we are authorized to write". The agent stamping it is
+mechanism executing a decision already made; the wrong-media *verdict* remains a load-time,
+service-owned concern.
+
+---
+
+## 8. Classification and cross-subsystem recognition
+
+### 8.1 The polymorphic probe
+
+`TapeFramer.Unpack<TapeHeader>(block, len)` is the class-flexible reader — `TapeHeader.ConstructFrom`
+dispatches on the Kind byte and returns the concrete type:
 
 ```csharp
-_agent = new TapeFileAgent(_drive, new TapeTOC(description));
-var initResult = _agent.BackupInitialTOC(writeHeader: true);   // header (from TOC) + initial TOC
+switch (TapeFramer.Unpack<TapeHeader>(block, len))
+{
+    case TapeMediaHeader m:       /* backup media  — m.MediaId, m.Volume */   break;
+    case TapeCalibrationHeader c: /* calibration   — c.RunId */               break;
+    case null:                    /* foreign / blank / torn */                break;
+}
 ```
 
-### 10.2 Loaded-header state + `RefreshLoadedHeader`
+Two modes, one framer: **narrow** (`Unpack<TapeMediaHeader>` → the media header, or null for wrong-kind
+*or* foreign) and **polymorphic** (`Unpack<TapeHeader>` → the concrete kind, null only for blank/foreign).
+
+### 8.2 The agent surface
+
+`TapeFileAgent.ReadHeader()` returns the **polymorphic `TapeHeader?`**, and caches presence on the
+navigator (`Present` for a media header, `Absent` for anything else). The service maps kind-versus-
+expectation to a verdict and uses `header?.ToString()` for the human-readable detail.
+
+### 8.3 Symmetric calibration-side classification
+
+`TapeCalibrator` is dual-role like the agent, so it classifies with the same polymorphic probe and
+remembers a stranger for the service to name:
+
+```csharp
+TapeHeader? any = read > 0 ? TapeCalibrationFramer.Unpack<TapeHeader>(recordBuffer, read) : null;
+if (any is TapeCalibrationHeader header) return header;                            // our kind
+if (any is not null) { ForeignHeader = any; /* set error, trace */ return null; }  // Media/Set
+/* else: blank / foreign / torn → null */
+```
+
+`ForeignHeader` (reset per verb) lets a failed Resume/Recalibrate report *"This cartridge carries a
+different header: …"* instead of a blank "no calibration header".
+
+**Cross-detection read size.** A subsystem classifying with a block smaller than 16 KiB must size the
+read to hold a media header, or `Unpack`'s length guard drops it:
+`int probeLen = (int)Math.Max(runBlockSize, TapeHeader.FixedHeaderBlockSize);`. Self-reading is already
+safe (write guard in `RecordBlockWriter.Emit`, read guard in `Unpack`).
+
+---
+
+## 9. Service layer — check, decide, prompt
+
+The service never writes headers; it reads one at every media load, judges it per operation, and drives
+every prompt.
+
+### 9.1 Loaded-header state
 
 ```csharp
 protected TapeHeader? _loadedHeader;
-public TapeHeader?      LoadedHeader      => _loadedHeader;
-public TapeMediaHeader? LoadedMediaHeader => _loadedHeader as TapeMediaHeader;
-
-/// <summary>
-/// Reads and classifies the loaded media's BOM header into <see cref="_loadedHeader"/> (one cheap BOM
-///  block). Non-throwing; any failure leaves it null. Uses the LIVE <see cref="_agent"/> when present so
-///  the agent that OWNS the navigator is the one moving the tape — keeping its presence + position
-///  coherent (§17.7); else a throwaway probe agent.
-/// </summary>
-/// <remarks>
-/// PRECONDITION: this MOVES the tape (rewinds to BOM). Call only at load / reload / between-volumes —
-///  NEVER mid-stream. Per-volume restore: <c>ResumeRestoreFromAnotherVolume</c> calls
-///  <c>RenewNavigator</c> afterward, which re-resolves presence via its own <c>EnsureHeaderResolved</c>
-///  (a harmless double read); <see cref="_loadedHeader"/> — what the service needs — survives.
-/// </remarks>
-protected void RefreshLoadedHeader()
-{
-    _loadedHeader = null;
-    if (_drive is null || !_drive.IsMediaLoaded) return;
-
-    try
-    {
-        if (!_drive.PrepareMedia()) return;
-
-        if (_agent is not null)
-            _loadedHeader = _agent.ReadHeader();
-        else
-        {
-            using var probe = new TapeFileAgent(_drive, _toc ?? new TapeTOC());
-            _loadedHeader = probe.ReadHeader();
-        }
-
-        if (_loadedHeader is not null)
-            LogInfoSub($"Media identity: {_loadedHeader}");   // trace-level surfacing only
-    }
-    catch { _loadedHeader = null; }
-}
+public TapeHeader?             LoadedHeader       => _loadedHeader;
+public TapeMediaHeader?        LoadedMediaHeader  => _loadedHeader as TapeMediaHeader;
+public TapeCalibrationHeader?  CalibrationHeader  => _loadedHeader as TapeCalibrationHeader;
+public TapeCalibrationMediaInfo? CalibrationInfo  => _loadedCalibrationInfo;
 ```
 
-**Call sites:** end of `LoadMediaAsync`; after the reload inside `FormatMediaAsync`; per inserted volume
-in the backup/restore continuation loops. **Eager at load** (§10.10-3): the UI learns identity
-immediately, one cheap BOM read.
+`RefreshLoadedHeader()` reads and classifies the BOM header into `_loadedHeader` (one cheap block).
+Non-throwing: any failure leaves it null. It prefers the **live `_agent`** when present, so the agent
+that owns the navigator is the one moving the tape, keeping its presence and position coherent;
+otherwise a throwaway probe agent is used.
 
-### 10.3 The verdict — `EvaluateLoadedHeader`
+> **Precondition:** this moves the tape (rewinds to BOM). Call only at load / reload / between volumes —
+> never mid-stream. The caller must hold `_operationLock`.
+
+It also clears `_loadedCalibrationInfo`, so a cached calibration trail can never describe a
+previously-loaded cartridge. Call sites: end of `LoadMediaAsync`; after the reload inside
+`FormatMediaAsync`; per inserted volume in the backup and restore continuation loops; and in
+`ClearTocState`.
+
+### 9.2 The verdict
 
 ```csharp
 public enum TapeMediaVerdict
 {
-    Match, Unidentified, WrongKind, MediaIdMismatch, WrongVolume, MediaInconsistent
+    Match,             // right kind, right MediaId (+ Volume when checked)
+    Unidentified,      // null — blank / legacy / foreign
+    WrongKind,         // e.g. a calibration cartridge met in a backup context
+    MediaIdMismatch,   // media header, different series
+    WrongVolume,       // media header, right series, wrong Volume
+    MediaInconsistent, // reserved for set-header verification (Outlook)
 }
 
 protected TapeMediaVerdict EvaluateLoadedHeader(Guid? expectedSeriesId = null, int? expectedVolume = null)
@@ -419,683 +462,301 @@ protected TapeMediaVerdict EvaluateLoadedHeader(Guid? expectedSeriesId = null, i
     {
         null                  => TapeMediaVerdict.Unidentified,
         TapeCalibrationHeader => TapeMediaVerdict.WrongKind,
-        TapeSetHeader         => TapeMediaVerdict.WrongKind,          // defensive: a set header at BOM is wrong
         TapeMediaHeader m when expectedSeriesId is { } s && m.MediaId != s => TapeMediaVerdict.MediaIdMismatch,
         TapeMediaHeader m when expectedVolume  is { } v && m.Volume  != v => TapeMediaVerdict.WrongVolume,
         _                     => TapeMediaVerdict.Match,
     };
 ```
 
-**Golden rule — `Unidentified` never prompts.** Blank/legacy/foreign can't be verified and a legacy
-volume is legitimate; restore proceeds, overwrite treats it as safe. Only the three positive mismatches
-(`WrongKind`, `MediaIdMismatch`, `WrongVolume`) prompt in verify contexts.
+**The golden rule: `Unidentified` never blocks an identity check.** Blank, legacy, and foreign media
+cannot be *verified*, and a legacy volume is perfectly legitimate — so restore proceeds and overwrite
+treats it as safe. Only the three positive mismatches prompt in verify contexts. (The one deliberate
+exception is `SearchForTOC`, §9.5, where "I cannot identify this" is precisely the question being asked.)
 
-### 10.4 Unified presentation + the host method (context-typed, localization-ready)
-
-The `overwriteOnProceed` bool couldn't express three distinct Proceed-meanings (overwrite / verify /
-use-anyway) and mislabeled import. Replace it with a **prompt-context enum** — richer, correctly
-labeled, and localization-friendly (the host builds the localized message from `verdict + context`;
-the library passes no free-form user text). Add `ProceedAlways` and gate it per context.
+### 9.3 Unified presentation
 
 ```csharp
-// ITapeServiceHost.cs
-
-/// <summary>What the user is being asked to proceed INTO — drives the host's localized wording/labels.</summary>
 public enum MediaPromptContext
 {
-    OverwriteBackup,     // backup, mode 3: this media holds content we'd destroy
-    ContinuationVolume,  // backup: fresh continuation volume carries a foreign/other-series header
-    VerifyRestore,       // restore/append: header should match the TOC we're using
-    ImportToc,           // import-TOC-from-file: header vs the imported TOC (one-off; no ProceedAlways)
+    OverwriteBackup,     // backup, overwrite mode: this medium holds content we would destroy
+    ContinuationVolume,  // backup: a fresh continuation volume carries a foreign / other-series header
+    VerifyRestore,       // restore / append: the header should match the TOC we are using
+    ImportToc,           // import-TOC-from-file: header vs. the imported TOC (one-off)
+    CalibrateScratch,    // calibration: the cartridge holds a backup we would erase
+    SearchForTOC,        // media load: no header — search end-of-data for a TOC, or not?
 }
 
 public enum MediaMismatchChoice { Retry, Proceed, ProceedAlways, Abort }
-//  ProceedAlways = "proceed AND stop asking for the rest of this operation".
 
-/// <summary>
-/// Presents an identified-media problem and the courses of action. The host builds its own LOCALIZED
-///  message from <paramref name="verdict"/> + <paramref name="context"/> + <paramref name="headerDescription"/>
-///  (the header's ToString()). When <paramref name="allowProceedAlways"/> is false, the host hides that option.
-/// </summary>
-/// <remarks>
-/// HOST GUIDANCE: a non-interactive / unattended host should return <see cref="MediaMismatchChoice.Proceed"/>
-///  (preserving legacy batch behavior — an unattended backup must not stall on an overwrite prompt) and LOG
-///  the auto-decision. A stricter host may return Abort. The library imposes no policy; it always asks.
-/// </remarks>
 MediaMismatchChoice OnMediaMismatchConfirm(
-    string headerDescription, TapeMediaVerdict verdict, MediaPromptContext context, bool allowProceedAlways);
+    string headerDescription, TapeMediaVerdict verdict, MediaPromptContext context,
+    bool allowRetry, bool allowProceedAlways);
 ```
 
-Library-side logging uses a culture-neutral string; the **prompt** text is the host's, localized:
+The **context enum** carries what the user is proceeding *into*, so each host builds its own localized
+wording, severity, and button labels from `(verdict, context)`; the library passes no user-facing text.
+`allowRetry` is offered only where eject/insert machinery exists (continuation loops, calibration
+scratch-swap); `allowProceedAlways` is hidden for one-off operations such as TOC import.
 
 ```csharp
-protected static string VerdictToString(TapeMediaVerdict v) => v switch
-{
-    TapeMediaVerdict.Match             => "Match",
-    TapeMediaVerdict.Unidentified      => "Unidentified",
-    TapeMediaVerdict.WrongKind         => "Wrong kind",
-    TapeMediaVerdict.MediaIdMismatch   => "Media ID mismatch",
-    TapeMediaVerdict.WrongVolume       => "Wrong volume",
-    TapeMediaVerdict.MediaInconsistent => "Media inconsistent",
-    _                                  => $"Unknown ({(int)v})",
-};
-
-/// <summary>Match/Unidentified → Proceed silently. Suppressed → Proceed (logged). Else host prompts.</summary>
 protected MediaMismatchChoice PresentVerdict(
-    TapeMediaVerdict verdict, MediaPromptContext context, bool suppress, bool allowRetry, bool allowProceedAlways)
+    TapeMediaVerdict verdict, MediaPromptContext context,
+    bool suppress, bool allowRetry = false, bool allowProceedAlways = true)
 {
-    if (verdict is TapeMediaVerdict.Match or TapeMediaVerdict.Unidentified)
+    // Match is always benign. Unidentified is benign for identity-VERIFY contexts, but under
+    //  SearchForTOC it is exactly the case we must ask about — do the lengthy EOD seek or not?
+    bool benign = verdict == TapeMediaVerdict.Match
+        || (verdict == TapeMediaVerdict.Unidentified && context != MediaPromptContext.SearchForTOC);
+    if (benign)
         return MediaMismatchChoice.Proceed;
 
     string text = _loadedHeader?.ToString() ?? "Unidentified media";
 
     if (suppress)
     {
-        LogWarn($"Media check ({VerdictToString(verdict)}/{context}) suppressed — proceeding: {text}");
+        LogWarn($"Media check ({VerdictToString(verdict)} / {context}) suppressed — proceeding: {text}");
         return MediaMismatchChoice.Proceed;
     }
 
-    LogWarn($"Media check ({VerdictToString(verdict)}/{context}): {text}");
-    return _host.OnMediaMismatchConfirm(text, verdict, context, allowProceedAlways);
+    LogWarn($"Media check ({VerdictToString(verdict)} / {context}): {text}");
+    return _host.OnMediaMismatchConfirm(text, verdict, context, allowRetry, allowProceedAlways);
 }
 ```
 
-`Retry` is a small per-operation loop (eject → insert-confirm → reload → `RefreshLoadedHeader` →
-re-evaluate), offered only where insert machinery already exists (continuation loops); operation-start
-checks offer Proceed/ProceedAlways/Abort only (§10.10-2).
+`VerdictToString` supplies a culture-neutral label for **logs only**; the prompt text is the host's and
+is localized there. **Host guidance:** a non-interactive host returns `Proceed` (preserving legacy batch
+behaviour — an unattended backup must not stall) and logs the auto-decision; the one exception is
+`CalibrateScratch`, where hosts return `Abort` so a quiet run never erases a backup to calibrate.
 
-### 10.5 Backup + `ForceVolumeOverwrite`
+### 9.4 Media load — identify, then dispatch
 
-`BackupRequest`: `public bool ForceVolumeOverwrite { get; init; } = false;`
-
-**Setup (start of `ExecuteBackupCore`):** `_agent.WritesMediaHeader = true;` — the agent's
-first-set-on-volume condition self-selects (append leaves it alone; overwrite / fresh-volume head).
-Use a **local latch** for run-scoped ProceedAlways rather than mutating the request:
+`RestoreTOCOrCalibrationAsync` is the header-gated entry point that delivers the headline capability:
 
 ```csharp
-bool suppress = request.ForceVolumeOverwrite;   // run-scoped; ProceedAlways flips it on
-```
-
-**(1) Overwrite (mode 3) — protect existing content.** Before `RemoveAllSets`:
-
-```csharp
-if (!append && _loadedHeader is not null)   // media OR calibration header ⇒ real content to destroy
+public enum RestoreTOCOrCalibrationOutcome
 {
-    var verdict = _loadedHeader is TapeMediaHeader
-        ? TapeMediaVerdict.MediaIdMismatch    // a different backup lives here
-        : TapeMediaVerdict.WrongKind;         // a calibration cartridge
-
-    var choice = PresentVerdict(verdict, MediaPromptContext.OverwriteBackup, suppress);
-    if (choice == MediaMismatchChoice.Abort)        return MakeResult(aborted: true);
-    if (choice == MediaMismatchChoice.ProceedAlways) suppress = true;
+    TocLoaded,         // backup media identified (or the user opted to search): TOC read
+    CalibrationMedia,  // a calibration cartridge — no TOC exists; details surfaced instead
+    Unidentified,      // no recognizable header and the user declined the end-of-data search
+    Failed,            // a genuine failure preparing the media or reading a TOC that should exist
 }
 ```
 
-**Overwrite resets MediaId (YES).** After `RemoveAllSets()` / `Volume = 1`, before the agent heads:
-`_toc.ResetMediaId();` — which sets `MediaId = Guid.Empty` so the existing idempotent `EnsureMediaId()`
-inside `CreateHeader` mints the fresh id (single minting path). A fresh series id avoids collisions with
-surviving volumes of the overwritten (legacy) series.
+After `PrepareMedia` and `RefreshLoadedHeader`, the three-way gate:
 
-**(2) Append — verify identity.**
+- **Calibration header** → no TOC exists. Log a one-line summary, **never seek to EOD**, return
+  `CalibrationMedia`.
+- **No header** → could be a legacy backup (which *has* a TOC) or blank/foreign (which does not).
+  `PresentVerdict(Unidentified, SearchForTOC, …)` asks at warning severity; Abort returns
+  `Unidentified` with no tape movement, Proceed falls through to the read.
+- **Media header** → identified backup media; the EOD TOC seek is justified work, not churn.
+
+The legacy `RestoreTOCAsync` (unconditional TOC read, `Task<bool>`) is retained — it is the low-level
+sub-step and many tests rightly depend on it.
+
+### 9.5 Per-verb integration
+
+**Backup.** `_agent.WritesMediaHeader = true` at the start of the run; the agent's
+first-set-on-volume condition self-selects (append leaves it alone, overwrite and fresh volumes head).
+A run-scoped local latch carries `ProceedAlways`:
+
+- *Overwrite* — prompts for a wrong-kind cartridge, a **different** MediaId, or a TOC that still holds
+  sets. Freshly-formatted or already-emptied own media overwrites silently, which is why
+  format-then-backup never nags. On Proceed, `_toc.ResetMediaId()` sets `MediaId = Guid.Empty` so the
+  idempotent `EnsureMediaId()` inside `CreateHeader` mints a **fresh series id** — avoiding collisions
+  with surviving volumes of the overwritten series.
+- *Append* — verifies series and volume against the loaded TOC.
+- *Fresh continuation volume* — after reload, `RefreshLoadedHeader()` then a verdict: same series ⇒
+  `WrongVolume` (an earlier volume of *this* series, almost certainly wrong); different series ⇒
+  `MediaIdMismatch`; calibration ⇒ `WrongKind`; null ⇒ blank, proceed silently. `allowRetry: true` here.
+
+**Restore.** Initial volume verified against the restored TOC; then a per-volume guard before each
+`ResumeRestoreFromAnotherVolume` — `RefreshLoadedHeader()` and a verdict against `volumeNeeded`. A legacy
+volume classifies `Unidentified` and proceeds silently, which is what makes mixed series work. Even under
+`SkipVolumeCheck` the header is still **read** (presence must stay correct for navigation); suppression
+silences only the prompt.
+
+**Calibration.** A pre-run guard through the same channel, with retry so the user can swap in a proper
+scratch cartridge without restarting:
 
 ```csharp
-if (append)
+if (!request.SkipMediaHeaderCheck)
 {
-    var verdict = EvaluateLoadedHeader(expectedSeriesId: _toc?.MediaId, expectedVolume: _toc?.Volume);
-    if (PresentVerdict(verdict, MediaPromptContext.VerifyRestore, suppress: false) == MediaMismatchChoice.Abort)
-        return MakeResult(aborted: true);
+    while (_loadedHeader is TapeMediaHeader)
+    {
+        var choice = PresentVerdict(TapeMediaVerdict.WrongKind, MediaPromptContext.CalibrateScratch,
+            suppress: false, allowRetry: true, allowProceedAlways: false);
+
+        if (choice == MediaMismatchChoice.Abort)
+            return MakeResult(aborted: true,
+                message: "Calibration cancelled — cartridge holds a backup", mode: request.Mode);
+        if (choice != MediaMismatchChoice.Retry)
+            break;   // Proceed — erase and calibrate the loaded cartridge
+
+        // Retry: eject → insert a scratch cartridge → reload → re-probe; the loop re-evaluates.
+        …UnloadMedia / OnInsertMediaConfirm / ReloadMedia + PrepareMedia…
+        AutoLoadCalibrations();
+        RefreshLoadedHeader();
+    }
 }
 ```
 
-**(3) Fresh continuation volume.** After reload+`PrepareMedia`, before `ResumeBackupToNextVolume`:
+This is the **only** pre-run guard that protects a New run, which reads no header of its own; the
+post-run `ForeignHeader` reporting still explains a failed Resume/Recalibrate after the fact.
 
-```csharp
-RefreshLoadedHeader();
-if (_loadedHeader is TapeMediaHeader mh)
-{
-    var verdict = mh.MediaId == _toc.MediaId
-        ? TapeMediaVerdict.WrongVolume        // an earlier volume of THIS series — almost certainly wrong
-        : TapeMediaVerdict.MediaIdMismatch;   // a different backup
-    var choice = PresentVerdict(verdict, MediaPromptContext.ContinuationVolume, suppress);
-    if (choice == MediaMismatchChoice.Abort)         { …break… }
-    if (choice == MediaMismatchChoice.ProceedAlways) suppress = true;
-}
-else if (_loadedHeader is TapeCalibrationHeader)
-{
-    var choice = PresentVerdict(TapeMediaVerdict.WrongKind, MediaPromptContext.ContinuationVolume, suppress);
-    if (choice == MediaMismatchChoice.Abort)         { …break… }
-    if (choice == MediaMismatchChoice.ProceedAlways) suppress = true;
-}
-// null ⇒ blank fresh volume ⇒ proceed silently. ResumeBackupToNextVolume → the agent heads this volume.
-```
+**TOC import.** Verified against the mounted medium; on Proceed the imported TOC **adopts `Volume` but
+not `MediaId`**. Volume is *functional* — multi-volume restore positions by `TOC.Volume`, so it must
+reflect the physically mounted volume. MediaId is *identity*: blind-adopting it would hide a wrong-tape
+error inside a good TOC, so it is left as imported and a later save re-surfaces the genuine
+inconsistency. Re-identifying is an explicit rename or format, never a silent side effect.
 
-A literal reading of "prompt whenever `_loadedHeader` is not null on overwrite" would nag on format →
-overwrite-backup since format writes a header. We implement switch prompts only for a wrong-kind cartridge,
-a different MediaId, or a TOC that still holds sets — so freshly-formatted/emptied own media overwrites
-silently. This is the one place we deviated from this doc's letter to serve its intent.
+**Delete / rename / TOC round-trip.** `DeleteSetsFromCurrentSetUp` resolves presence and preserves the
+header (§7.2). Rename and TOC save/restore are end-relative and header-agnostic — nothing needed.
 
-### 10.6 Restore + `SkipVolumeCheck`
-
-`RestoreRequest`: `public bool SkipVolumeCheck { get; init; } = false;` — local latch
-`bool suppress = request.SkipVolumeCheck;`.
-
-**Initial volume (after TOC restored):**
-
-```csharp
-var verdict = EvaluateLoadedHeader(expectedSeriesId: _toc.MediaId, expectedVolume: _toc.Volume);
-var choice = PresentVerdict(verdict, MediaPromptContext.VerifyRestore, suppress);
-if (choice == MediaMismatchChoice.Abort)         return MakeResult(aborted: true);
-if (choice == MediaMismatchChoice.ProceedAlways) suppress = true;
-```
-
-**Per-volume continuation guard (the staleness-fix payoff):** after reload+`PrepareMedia` for
-`volumeNeeded`, before `ResumeRestoreFromAnotherVolume`:
-
-```csharp
-RefreshLoadedHeader();   // re-read per volume; TOC stays the last volume's copy
-var verdict = EvaluateLoadedHeader(expectedSeriesId: _toc.MediaId, expectedVolume: volumeNeeded);
-var choice = PresentVerdict(verdict, MediaPromptContext.VerifyRestore, suppress);
-if (choice == MediaMismatchChoice.Abort)         { …break… }
-if (choice == MediaMismatchChoice.ProceedAlways) suppress = true;
-```
-
-`Unidentified` (a legacy volume) → proceeds silently — mixed headed/headless series just work
-(`_MixHeaded` proves it). Even with `SkipVolumeCheck`, `RefreshLoadedHeader` still **runs** (presence
-stays correct for navigation); suppression silences only the prompt.
-
-### 10.7 Calibration — separate `host.Confirm`, reuse `_loadedHeader`, no inline UI
-
-ROI confirmed (Option 1): reuses `_loadedHeader` + existing `host.Confirm`, CLI/WPF-symmetric for free,
-and closes the **New-calibration-destroys-a-backup gap** (New reads no header, so this is its only
-pre-run guard). `CalibrateRequest`: `public bool SkipMediaHeaderCheck { get; init; } = false;`.
-
-In `ExecuteCalibrateCore`, after the existing multi-partition confirm, before dispatching the mode:
-
-```csharp
-if (!request.SkipMediaHeaderCheck && _loadedHeader is TapeMediaHeader mh)
-{
-    if (!_host.Confirm(
-            $"This cartridge holds backup media:\n{mh}\nCalibration is destructive and will erase it. Continue?",
-            defaultAnswer: false))
-        return MakeResult(aborted: true, message: "Calibration cancelled — cartridge holds a backup", mode: request.Mode);
-}
-```
-
-Composes with the post-run `ForeignHeader` reporting (§9.4): this pre-run guard catches New *before* the
-first destructive write; `ForeignHeader` still explains a *failed* Resume/Recalibrate after the fact.
-
-### 10.8 Import-TOC-from-file, delete, and other verbs
-
-**`ImportTOCFromFileAsync` — verify, then adopt Volume but NOT MediaId.** After loading the file TOC,
-compare against the header (drive open; media may or may not be loaded — no media ⇒ `Unidentified` ⇒
-silent). `ProceedAlways` is disallowed (one-off operation):
-
-```csharp
-_agent.LoadTOCFromFile(filePath);
-
-var verdict = EvaluateLoadedHeader(expectedSeriesId: _toc.MediaId, expectedVolume: _toc.Volume);
-var choice = PresentVerdict(verdict, MediaPromptContext.ImportToc, suppress: false, allowProceedAlways: false);
-if (choice == MediaMismatchChoice.Abort)
-    return false;
-
-// On Proceed, reconcile the IMPORTED TOC to the mounted tape — asymmetrically:
-if (_loadedHeader is TapeMediaHeader mh)
-{
-    // Volume is FUNCTIONAL: multi-volume restore positions by TOC.Volume, so it must reflect the
-    //  physically mounted volume. Adopt it whenever a header is present.
-    _toc.Volume = mh.Volume;
-
-    // MediaId is IDENTITY: do NOT overwrite the imported TOC's MediaId from the tape.
-    //  "Proceed" on a MediaIdMismatch is ambiguous ("right tape, use my TOC" vs "right TOC, wrong tape");
-    //  blind-adopting would HIDE a wrong-tape error inside a good TOC. Leave MediaId as imported so a
-    //  later save re-surfaces the (genuine) inconsistency. Re-identifying is an explicit rename/format,
-    //  never a silent side effect of Proceed.
-}
-```
-
-**`DeleteSetsFromCurrentSetUp`** navigates content directly, so it resolves presence first and does NOT
-head (delete-all's `BackupInitialTOC` must preserve the header):
-
-```csharp
-public TapeResult DeleteSetsFromCurrentSetUp(bool navigateFromBegin = false)
-{
-    EnsureHeaderResolved();                    // §17.3 — MoveToBeginOfContent skips the header, never clobbers it
-    …
-    // delete-all branch:
-    return BackupInitialTOC(writeHeader: false);   // §10.1 — preserve, never rewrite, the header
-}
-```
-
-**`RenameMediaAsync` / `RenameBackupSetAsync`** — TOC-only (end-relative), never content-from-BOM:
-nothing needed. **`RestoreTOCAsync` / `CreateInitialTOCAsync`** — TOC-only, header-agnostic
-(create-initial is reached only on already-formatted media, headed at format).
-
-### 10.9 Suppression + request summary
+### 9.6 Suppression flags
 
 | Request | Flag | Effect |
-|---------|------|--------|
-| `BackupRequest` | `ForceVolumeOverwrite` | overwrite & continuation identified-media prompts → auto-Proceed |
+|---|---|---|
+| `BackupRequest` | `ForceVolumeOverwrite` | overwrite and continuation prompts → auto-Proceed |
 | `RestoreRequest` | `SkipVolumeCheck` | per-volume identity prompt → auto-Proceed (header still re-read) |
-| `CalibrateRequest` | `SkipMediaHeaderCheck` | pre-run backup-media confirm → skipped |
+| `CalibrateRequest` | `SkipMediaHeaderCheck` | pre-run backup-media guard → skipped |
 
-All default **false** (interactive safety). Suppression silences prompts only; header reads + presence
-resolution always run. `ProceedAlways` sets a **run-scoped local latch** (not the request record).
-
-### 10.10 Settled sub-decisions
-
-1. **Overwrite MediaId → reset** (`ResetMediaId()` → `Guid.Empty` → minted by `EnsureMediaId`). ✔
-2. **Retry depth →** continuation loops offer Retry; operation-start offers Proceed/ProceedAlways/Abort. ✔
-3. **`RefreshLoadedHeader` → eager at load.** ✔
-
-### 10.11 Implementation checklist: s. §14 steps 8 ff.
-
-The `allowRetry` parameter in `PresentVerdict` §10.4's signature — we distinguishe "continuation loops get
-Retry; operation-start doesn't," which a single flag couldn't express. Pass `allowRetry: true` only inside
-the multi-volume continuation loops (Step 9c/9d), false elsewhere.
+All default **false** (interactive safety). Suppression silences prompts only; header reads and presence
+resolution always run. `ProceedAlways` sets a **run-scoped local latch**, never mutating the request.
 
 ---
 
-## 11. Legacy calibration compatibility (`#if LEGACY_TapeCalibrationRunHeader`)
+## 10. Applications
 
-Retain the pre-unification `TapeCalibrationRunHeader` (original wire format, no kind byte) plus a
-one-line `ToHeader()` adapter, so already-measured scratch cartridges still resume:
+### 10.1 CLI (TapeConNET)
 
-```csharp
-recordBuffer = new byte[blockSize];
-int read = Drive.ReadDirect(recordBuffer, 0, recordBuffer.Length, out _, out _);
+`VerbHost` gained an `IdentifyMedia` lifecycle step (and the `FullOrCalibration` combination) that calls
+`RestoreTOCOrCalibrationAsync` and throws only on `Failed` — a calibration cartridge or unidentified
+medium is a valid state the verb renders. `list` and `info --full` use it; `backup`, `restore`,
+`validate`, and `verify` stay on the strict `RestoreTOC` step, because tolerating a null TOC there would
+make the restore engine re-read the TOC and reintroduce the very churn being eliminated.
 
-TapeCalibrationHeader? header = read > 0
-    ? TapeCalibrationFramer.Unpack<TapeCalibrationHeader>(recordBuffer, read) : null;
+`ListContentsAsync` short-circuits on a calibration cartridge and prints the calibration report, so both
+`list` and `info` present it without either command carrying calibration logic. The identify step logs a
+one-liner; `LogCalibrationInfo` (profile key, run id, started, reported capacity, planned
+samples/checkpoints, run block size) carries the detail — so nothing double-prints.
 
-#if LEGACY_TapeCalibrationRunHeader
-// Re-parse the SAME already-read block — a second ReadRecord would ReadDirect the NEXT block.
-if (header is null && read > 0)
-    header = TapeCalibrationFramer.Unpack<TapeCalibrationRunHeader>(recordBuffer, read)?.ToHeader();
-#endif
+The host implements `OnMediaMismatchConfirm` as a `Select` prompt over the allowed choices, with the
+non-interactive branch returning `Proceed` (and `Abort` for `CalibrateScratch`) and logging the
+auto-decision.
+
+### 10.2 WPF (TapeWinNET)
+
+- **Media load** routes through `LoadTOCOrCalibrationWithUIAsync`, which dispatches on the outcome:
+  `TocLoaded` → TOC tree; `CalibrationMedia` → a **Calibration Cartridge** tree node and its property
+  pane; `Unidentified` → drive-only tree with a status note; `Failed` → the existing "load a `.tapetoc`?"
+  recovery prompt. Because the outcome distinguishes these, that recovery dialog no longer fires for a
+  calibration cartridge.
+- **Calibration pane.** The upper Properties pane shows drive/media identity; the lower pane shows the
+  header's own detail. An **Inspect Media** button runs a modal, lean probe
+  (`ExecuteLoadCalibrationMediaInfoAsync` → `TapeCalibrator.InspectMedia()` under the operation lock)
+  and enriches the pane with the checkpoint-derived run trail (resumable, complete, checkpointed bytes,
+  progress). Modal rather than background: the app's model is *interactive UI* XOR *modal operation*, and
+  a live scan would introduce a new concurrency regime for a convenience read.
+- **Reread Media** (formerly "Reread TOC") resets and re-identifies, so it now re-scans TOC *or*
+  calibration. Refresh routines handle the calibration node; the view-model holds **no** tape-derived
+  calibration state — both the header and the inspect result come from the service, like `TOC`.
+- **Virtual drive dialog.** `VirtualDriveProber` reads the BOM header before assuming a TOC, and reports
+  a `VirtualMediaKind` (`Backup` / `Calibration` / `None`). A calibration `.vt` is now recognized as
+  **existing** media — the dialog auto-selects *Open existing*, shows "⚙ Calibration cartridge:
+  <profile>", and if the user overrides to *Create new* warns specifically that **calibration data will
+  be permanently erased**. Previously such a cartridge probed as "new media" and could be overwritten.
+
+### 10.3 Naming vocabulary
+
+One verb per lifecycle stage, applied across service and view-model:
+
+```
+Stage                        Verb              Meaning
+---------------------------  ----------------  ------------------------------------------------
+Drive handle                 Open / Close      acquire / release the drive
+Medium presence              Load / Eject      insert / remove the cartridge in the drive
+Medium identity + content    Identify          read the BOM header, then dispatch:
+                                                 load TOC  OR  report calibration
+On-tape TOC read (sub-step)  Restore           recover the TOC from tape into memory
+TOC <-> file                 Import / Export   .tapetoc round-trip
+New medium                   Format            erase + write initial TOC / header
+Calibration probe            Inspect           read the calibration checkpoint trail
+Redisplay, no I/O            Refresh (view)    rebuild the selected pane from in-memory data
+Reload content, with I/O     Reload            re-fetch the medium's content into the views
 ```
 
-**Caveat:** a legacy block's CRC still validates under the new reader, so classification then rests
-on the byte the new format treats as `Kind` (the 2nd `RunId` byte, ~random): ~98% ⇒ not 1/2/3 ⇒
-`Unknown` ⇒ fallback; the rest almost always throw in `DeserializeString` ⇒ caught ⇒ fallback. Sub-1%
-residual false-parse, acceptable for a temporary dev flag. To make it exact, bump `TapeSerializer.Version`
-so `ValidateSignature` cleanly separates old from new. Checkpoint format is unchanged either way.
+Two rules resolve the historical confusion: **"Identify" is the umbrella** and *contains* a "Restore TOC"
+sub-step; and **"Refresh" ≠ "Reload"** — Refresh is pure in-memory redisplay, Reload does tape I/O.
 
 ---
 
-## 12. Invariants
+## 11. Invariants
 
-- **INV-1** Header never increments `CurrentContentSet`.
-- **INV-2** Presence/identity only by framed-CRC probe.
-- **INV-3 (softened):** the *agent* guarantees presence is resolved before content navigation; the
-  navigator treats unresolved `Unknown` permissively as `Absent` (no skip) so it stays usable standalone —
-  only `Present` triggers the skip.- **INV-4** Headers written only from format / fresh-volume / set-write paths; never into written media.
-- ~~INV-5~~ *(retired — headers now on all media, incl. partitioned).* (`NotNeeded` retired; v7-D7).
-- **INV-6** Media/set header = one 16 KiB block, no trailing FM (calibration uses the run block).
-- **INV-7** Every header carries a `TapeHeaderKind` byte after the signature.
-- **INV-8** Classification positive-only: `Unknown` unless framed CRC validates **and** kind known.
-- **INV-9** Kinds mutually exclusive per block.
-- **INV-10** Presence reset to `Unknown` on every media (re)load.
-- **INV-11** `NavigateToHeader`/`WriteHeader` error on `Absent`.
-- **INV-12** No raw `Drive.Rewind()` "assume-blank" fallback survives — all route through
-  `MoveToBeginOfContentFromBom()` (now including the partition navigator).
-- **INV-13** Navigator never reads/parses a header; only the agent does.
-- **INV-14** Set headers do not change setmark/filemark counting.
-- **INV-15** media-header-present ⟺ set-headers-present, per volume.
-- **INV-16** `BlockSize` is a `protected` base slot; each kind exposes it under its own name
-  (`TocBlockSize` / `RunBlockSize`).
-
-**New in v8:**
-
-- **INV-17** header presence is resolved **only** at content choke-points; TOC navigation never
-  resolves it.
-- **INV-18** header block ops reset content position on failure, and leave begin-of-content on
-  success.
-- **INV-19** The agent writes the media header at `CurrentSetIndex == FirstSetOnVolume` when
-  `WritesMediaHeader`, gated by that mutable flag (default false); heading is mechanism, the
-  wrong-media verdict stays service/load-time.
-- **INV-20** Any "at BOM ⇒ oldest set / assume blank" navigator handler routes through
-  `MoveToBeginOfContentFromBom()` (8 sites, §17.12); TOC-side forward-scan rewinds stay raw.
-- **INV-21** `VirtualTapeMedia.SeekToBlock` positions the backing stream via `CurrentPositionBytes()`
-  for every landing (inside-data / mark / EOD), so write-after-seek never clobbers earlier data.
+| | |
+|---|---|
+| **INV-1** | The header never increments `CurrentContentSet`. |
+| **INV-2** | Presence and identity are established only by a framed-CRC probe, never by mark counting. |
+| **INV-3** | The *agent* guarantees presence is resolved before content navigation; the navigator treats unresolved `Unknown` permissively as `Absent` so it stays usable standalone — only `Present` triggers the skip. |
+| **INV-4** | Headers are written only from format / fresh-volume paths; never inserted into written media. |
+| **INV-5** | The media header is one 16 KiB block with no trailing filemark (calibration uses the run block). |
+| **INV-6** | Every header carries a `TapeHeaderKind` byte after the signature. |
+| **INV-7** | Classification is positive-only: `Unknown` unless the framed CRC validates **and** the kind is known. |
+| **INV-8** | Kinds are mutually exclusive per block. |
+| **INV-9** | Presence resets to `Unknown` on every media (re)load. |
+| **INV-10** | `NavigateToHeader` / `WriteHeader` error on `Absent`. |
+| **INV-11** | Any "at BOM ⇒ oldest set / assume blank" **content-side** handler routes through `MoveToBeginOfContentFromBom()` (8 sites, §5.5); TOC-side forward-scan rewinds stay raw. |
+| **INV-12** | The navigator never reads or parses a header; only the agent does. |
+| **INV-13** | `BlockSize` is a protected base slot; each kind exposes it under its own name (`TocBlockSize` / `RunBlockSize`). |
+| **INV-14** | Header presence is resolved only at content choke-points; TOC navigation never resolves it. |
+| **INV-15** | Header block operations reset the content position on failure and leave begin-of-content on success. |
+| **INV-16** | The agent writes the media header at `CurrentSetIndex == FirstSetOnVolume` when `WritesMediaHeader`; heading is mechanism, the wrong-media verdict stays service/load-time. |
+| **INV-17** | `VirtualTapeMedia.SeekToBlock` positions the backing stream via `CurrentPositionBytes()` for every landing (inside-data / mark / EOD), so a write after a seek never clobbers earlier data. |
+| **INV-18** | On-tape size accounting includes the header block per volume. |
 
 ---
 
-## 13. Test plan (additions over v6)
+## 12. Two fixes the header surfaced
 
-- **Partitioned media:** header written at content-partition BOM; TOC still loads from the initiator
-  partition; begin-of-content skips the header; restore across a partitioned volume incurs no extra
-  partition switch for identity.
-- **Polymorphic probe:** `Unpack<TapeHeader>` returns the right concrete kind for media/calibration/set;
-  `Unpack<TapeMediaHeader>` returns null for a calibration block; both return null for legacy content.
-- **WrongKind reporting:** backup load of a calibration cartridge → `WrongKind` + calibration `ToString`;
-  `TapeCalibrator` inspect of backup media → reports the media header text.
-- **TocBlockSize round-trip:** value persists and reads back; default equals the agent's TOC block.
-- **Legacy calibration:** a pre-unification cartridge resumes via the `#if` fallback (single ReadDirect,
-  re-parsed buffer); a unified cartridge still reads directly.
-- (Carry all v5/v6 tests: clobber regression incl. the partition navigator, presence re-eval per
-  volume, `SkipVolumeCheck`/`ForceVolumeOverwrite`, set-header self-correct, etc.)
-- **Calibrator foreign-header:** Resume/Recalibrate on a media cartridge → `ForeignHeader` set, service
-  reports the media `ToString()`; on small virtual media, the read block is sized ≥ 16 KiB (§9.3) so
-  a media header is still classified rather than dropped.
+### 12.1 `VirtualTapeMedia.SeekToBlock` at EOD
 
-### 13.1 Test-plan additions in v8 (delivered)
-
-Two new classes exercise the header; the existing 1701 remain the headerless baseline (unchanged).
-
-- **`TapeHeaderRoundTripTests`** (Tier-1, pure, no tape):
-  media-header all-fields round-trip; partition/placement matrix; null/empty-name → `null` +
-  `DisplayName` fallback; `ClampName` over-budget fit; **polymorphic vs narrow `Unpack`** (media,
-  calibration, cross-null); **legacy `TapeFileInfo` bytes → null** (no false-classify); blank → null;
-  calibration header through the base; `CreateHeader` mints/shares `MediaId`, idempotent, carries TOC
-  fields; `ToString` per kind.
-
-- **`TapeHeaderAgentTests`** (Tier-2, all four profiles):
-  write→read returns `TapeMediaHeader` with matching `MediaId` + presence `Present`; blank → `Absent`
-  (probe **and** read); **headed backup → restore byte-for-byte**; **clobber regression** (header survives
-  content + TOC); **TOC reload then restore** (MediaId preserved); multi-set headed restore; headerless
-  backup → `ReadHeader` null/`Absent`.
-
-**Recyclability seam (recommended, default-off so the 1701 never move):** add
-`VirtualTapeFixture(..., bool withMediaHeader = false)` that calls `agent.WriteHeader()` after
-`PrepareMedia()`. Flipping one arg turns any existing round-trip into a headed one; Phase B extends the
-same seam with `withSetHeaders`.
-
----
-
-## 14. Implementation status / plan
-
-**Phase A — media header**
-- [DONE] 0 `TapeFramer.cs` (+ `TapeCalibrationFramer` forwarder).
-- [DONE] 1 `TapeHeader.cs` — base; `Media`+`Calibration` wired in `ConstructFrom`; **`BlockSize` protected (D19)**.
-- [DONE] 2 `TapeMediaHeader.cs` — **`TocBlockSize`** exposes BlockSize.
-- [DONE] 3 `TapeTOC.CreateHeader(uint tocBlockSize, TapeTocPlacement placement)`.
-- [DONE] 4 `TapeSerializer.cs` — no change needed.
-- [DONE] 4a `TapeCalibrationHeader.cs` + calibrator wiring; **legacy fallback behind `LEGACY_TapeCalibrationRunHeader`**.
-- [DONE] 5 `TapeNavigator.cs` — presence `{Unknown,Present,Absent}`, `AtHeader`, `NavigateToHeader`,
-  header-aware begin-of-content, `MoveToBeginOfContentFromBom()` (incl. **partition navigator**),
-  `MoveToTargetContentSet` guard, `InvalidateHeaderPresence`.
-- [DONE] 5b Implement for `TapeNavigatorTOCInPartition`:`NavigateToHeader`/`MoveToBeginOfContent` overrides; retire `NotNeeded`; presence resolves like all navigators -- as per D7.
-- [DONE] 6 `TapeStreamManager.cs` — `WritingHeader`/`ReadingHeader` + producers.
-- [DONE] 7 `TapeAgent.cs` — `WriteHeader(placement)`/`ReadHeader`(polymorphic)/`EnsureHeaderResolved`.
-- [DONE] 7T: Test for Navigator and Agent functionality: `TapeHeaderRoundTripTests`, `TapeHeaderAgentTests`, and the
-  **header×profile matrix** across navigator + all agent suites (backup/restore/packed/pipelined) +
-  **multi-volume ×{None,All,Mixed}**
-- **Step 8 — `ITapeServiceHost.cs`:** `TapeMediaVerdict`, `MediaPromptContext`, `MediaMismatchChoice`,
-  `OnMediaMismatchConfirm(header, verdict, context, allowProceedAlways)`. WPF host: 3–4-button dialog
-  (ProceedAlways shown only when allowed), message localized from `(verdict, context)`. CLI host:
-  Retry/Proceed/ProceedAlways/Abort prompt; **non-interactive → Proceed + log** (legacy-compatible).
-- **Step 9a — base agent:** `WritesMediaHeader` [DONE]; `BackupInitialTOC(bool? writeHeader)` [DONE];
-  `DeleteSetsFromCurrentSetUp` → `EnsureHeaderResolved` + `BackupInitialTOC(writeHeader:false)`.
-- **Step 9b — `TapeServiceBase`:** `_loadedHeader`, `RefreshLoadedHeader`, `EvaluateLoadedHeader`,
-  `VerdictToString`, `PresentVerdict`, `ResolveMediaLoop`; `RefreshLoadedHeader` in load + format-reload.
-- **Step 9c — `.Backup.cs`:** `WritesMediaHeader=true`; overwrite (+`ResetMediaId`)/append/continuation
-  checks; `ForceVolumeOverwrite`; ProceedAlways latch.
-- **Step 9d — `.Restore.cs`:** initial + per-volume guards; `SkipVolumeCheck`; ProceedAlways latch.
-- **Step 9e — `.Calibrate.cs`:** pre-run `_loadedHeader is TapeMediaHeader` confirm; `SkipMediaHeaderCheck`.
-- **Step 9f — import & size:** `ImportTOCFromFileAsync` verdict + Volume-adopt (not MediaId); media-header
-  block in `ComputeTotalFileSizeOnTape` (§17.8).
-- **Step 10 — service tests:** §18 base/derived seam + a verdict/prompt axis (mock host returning
-  Proceed/ProceedAlways/Abort/Retry) × header modes; assert overwrite mints a new `MediaId`, mixed-series
-  restore proceeds silently, and import adopts Volume but not MediaId on mismatch. Service tests reuse
-  the §18 base/derived seam (add header × placement axis).
-
-**Phase B — set header** — 11 `TapeSetHeader.cs`; 12 `CreateSetHeader`; 13 write-at-set-start +
-`VerifyCurrentSetHeader`; 14 backup/restore verify + escalate `MediaInconsistent`; 15 service surfacing;
-16 tests.
-13a `TapeSetTOC.ComputeTotalFileSizeOnTape`: add + `TapeHeader.FixedHeaderBlockSize` to each set's footprint (both the packed and aligned return paths).
-
-### 14.2 Status update v8b
-
-**Phase A — Steps 0-7 DONE** incl. the pulled-forward tests (Step 7T):
-- Steps 0–7 (types, navigator incl. partition, stream manager, agent) — DONE.
-- **7T (was Step 10, partially pulled forward):** `TapeHeaderRoundTripTests`, `TapeHeaderAgentTests`, and the
-  **header×profile matrix** across navigator + all agent suites (backup/restore/packed/pipelined) +
-  **multi-volume ×{None,All,Mixed}** — DONE, green. Bugs found & fixed along the way: §17.11
-  (`SeekToBlock` EOD), §17.12 (8-site BOM sweep), plus the §17.1–17.3 resolve-placement corrections.
-  Service-layer tests remain Step 10.
-- Fixtures default **headerless** (D23); heading is agent-driven & opt-in (D21/D22).
-
-**Remaining Phase A — service layer:**
-- 8 `ITapeServiceHost.cs` — `MediaMismatchChoice` + `OnMediaMismatchConfirm`.
-- 9 `TapeServiceBase*.cs` — `EvaluateLoadedHeader` (WrongKind); **format sets
-  `WritesMediaHeader=true`** (all media, `TocPlacement` from `HasInitiatorPartition`); load-time probe;
-  restore per-volume re-read; `ForceVolumeOverwrite` / `SkipVolumeCheck`; `DeleteSetsFromCurrentSetUp`
-  resolve (§17.3 watch-item); trace logging; §17.8 size accounting.
-- Service tests reuse the §18 base/derived seam (add header × placement axis).
-
-**Phase B — set header** — unchanged plan; §13a size-accounting note stands.
-
----
-
-## 15. Sign-off
-
-v7 extends the header to **all** media at content-partition BOM (retiring `NotNeeded` and the
-partition exemption), repurposes `BlockSize` into `TocBlockSize`/`RunBlockSize` as a `protected`
-base slot, formalizes the **polymorphic `Unpack<TapeHeader>`** classifier and the `WrongKind`
-verdict, and adds temporary legacy-calibration compatibility. `ConstructFrom` stays a compiler-checked
-`switch` (closed, co-versioned, single-assembly hierarchy — a self-registration registry is YAGNI
-until cross-assembly kinds appear). 
-
----
-
-## 16. Unified hierarchy (reference)
-
-```csharp
-public enum TapeHeaderKind : byte { Unknown = 0, Media = 1, Calibration = 2, Set = 3 }
-
-public abstract record TapeHeader : ITapeSerializable
-{
-    public const uint FixedHeaderBlockSize = 16 * 1024;   // media/set; calibration uses the run block
-
-    public abstract TapeHeaderKind Kind { get; }
-
-    protected Guid Id         { get; init; }   // MediaId / RunId
-    protected uint BlockSize  { get; init; }   // TocBlockSize / RunBlockSize (D19)
-    public DateTime CreatedUtc { get; init; }
-
-    protected void SerializePreamble(TapeSerializer s) { /* sig, Kind, Id(16B), CreatedUtc, BlockSize */ }
-    private static TapeHeaderPreamble? ReadPreamble(TapeDeserializer d) { /* null if sig mismatch */ }
-
-    public abstract void SerializeTo(TapeSerializer s);
-
-    public static ITapeSerializable? ConstructFrom(TapeDeserializer d)   // POLYMORPHIC probe entry
-    {
-        if (ReadPreamble(d) is not { } p) return null;
-        return p.Kind switch
-        {
-            TapeHeaderKind.Media       => TapeMediaHeader.ConstructBody(d, p),
-            TapeHeaderKind.Calibration => TapeCalibrationHeader.ConstructBody(d, p),
-            // TapeHeaderKind.Set wired in Phase B
-            _ => null,
-        };
-    }
-
-    public abstract override string ToString();
-}
-```
-
-**§16.6 cross-detection benefit** — backup load sees `Kind.Calibration` → "scratch cartridge";
-`InspectMedia` sees `Kind.Media` → "holds a backup". Requires the §9.3 `probeLen` sizing when the
-reader's block < 16 KiB.
-
-**§16.8 boundary that stays separate** — only the record grammar + framing are shared; the
-calibration header rides in the run block via `RecordBlockWriter` (raw `WriteDirect`), the media/set
-headers flow through `TapeStreamManager` at the fixed 16 KiB block. Do not unify the I/O.
-
----
-
-## 17. Implementation insights (Phase A, learned against the live suite)
-
-These refine — and in three places correct — the earlier design once it met real navigator/agent code.
-
-### 17.1 `read ≤ 0` at BOM means **Absent**, not Unknown
-
-Reaching BOM and finding no data (blank tape, or at-EOD) is a **definitive "no media header"**, so it
-resolves to `Absent`. It is NOT an unresolved state: nothing retries `EnsureHeaderResolved`, so leaving
-`Unknown` here wedges *all* later content navigation (`MoveToBeginOfContentFromBom` rejects `Unknown`).
-`Absent` lets navigation proceed and skip nothing — correct for headerless media. A readable block that
-is not our media header (calibration / foreign / torn) likewise resolves `Absent` for backup purposes,
-while the service still learns the concrete kind from the polymorphic read.
-
-### 17.2 The navigator must stay usable **standalone** — `Unknown` is permissive, not fatal
-
-`MoveToBeginOfContentFromBom` must NOT hard-fail on `Unknown`. The navigator has to work with no agent
-(unit tests, direct use), so **only `Present` triggers the header-block skip**; `Unknown`/`Absent` assume
-no header and land at block 0 (legacy-safe default). The strict "must be resolved" guard broke every
-standalone navigator test and defended against nothing real — every production path resolves presence at
-an agent choke-point *before* reaching here. If belt-and-suspenders is wanted, put a `Debug.Assert` at the
-**write** choke-point (agent side), never in the navigator.
-
-### 17.3 Resolve presence at **content** choke-points only — never TOC
-
-Header presence is a *content*-navigation concern. TOC navigation is **end-relative** (fast-forward, step
-back over the last mark) and never rewinds to BOM, so it must not resolve. Placing `EnsureHeaderResolved`
-in `BeginWriteTOC`/`BeginReadTOC` rewound to BOM and destroyed the `-1` (end-of-content) position the
-TOC-mark navigator depends on — breaking `WithFmksAndTOCMark` specifically (single-mark profiles re-derived
-position and survived; the 3-FM TOC-mark profile could not). **Rule:**
-
-| Path | Header presence | Rewinds to BOM? |
-|------|-----------------|-----------------|
-| TOC (read/write) | never resolve — end-relative, header-agnostic | no |
-| Content (read/write) | resolve first (agent choke-point) | yes (skips header when Present) |
-| Navigator standalone | `Unknown` treated as `Absent` (no skip) | — |
-
-Choke-points that call `EnsureHeaderResolved`: `TapeFileBackupAgent.BeginWriteContentForCurrentSet`,
-`TapeFileRestoreBaseAgent.BeginReadContentForCurrentSet`. **Step-9 watch-item:**
-`DeleteSetsFromCurrentSetUp` navigates content directly and needs an `EnsureHeaderResolved` before its
-begin-of-content move once format writes headers, or delete-all on a headed tape clobbers the header.
-
-### 17.4 Header I/O is atomic — no dedicated `TapeState`
-
-The header is one 16 KiB block with no filemark, so write/read are single `WriteDirect`/`ReadDirect`
-operations, not persistent streams. `WriteHeaderBlock`/`ReadHeaderBlock` do `EndReadWrite()` → position →
-one block op, staying in `MediaPrepared`. This deviates from D13 (dedicated `WritingHeader`/`ReadingHeader`
-states) deliberately: `_operationLock` + `EndReadWrite()` already give the interleaving safety, and the
-block ops never leave a restful externally-visible state. They **must** `ResetContentSet()` on any early
-failure (torn write/read ⇒ unknown position); on success they set `CurrentContentSet = 0` (write) or leave
-it at 0 after a `Present` read, because the media header lives at content BOM on every layout — so we sit
-at begin-of-content (block 1) either way. `InTOCSet` is reserved for the future §4.1 initiator header.
-
-### 17.5 `MoveToBeginOfContentFromBom` — the single assume-blank primitive (INV-12)
-
-Every raw `Drive.Rewind()` "assume blank" fallback (in the TOC-in-set navigators' no-mark else-branches)
-now routes through `MoveToBeginOfContentFromBom` so the transient initial TOC can never overwrite the
-header. This fix is mandatory and independent of the dropped trailing filemark.
-
-### 17.6 Partition navigator — combined LOCATE, `Absent` must still reposition
-
-`TapeNavigatorTOCInPartition` overrides route header I/O and begin-of-content to the **content** partition.
-`MoveToBeginOfContentFromBom` there computes one target block (`Present` ⇒ 1, `Absent` ⇒ 0) and issues a
-single `MoveToPartition(Content, targetBlock)` (Win32 `SetTapePosition` takes partition + block together),
-with a stepwise fallback (switch → rewind → optional `MoveToBlock`). **The `Absent` branch must still switch
-+ rewind** — it does real repositioning, not a no-op — otherwise a legacy partitioned tape mis-navigates
-from a stale (e.g. initiator) position. The `CurrentContentSet == 0` fast path is retained so a header read
-that pre-set 0 doesn't redo the switch.
-
-### 17.7 Agent owns parsing; one physical read serves probe and read
-
-`ProbeHeaderPresence` == `ReadHeader`-and-return-presence: the fixed 16 KiB block pulls the whole header in
-one `ReadDirect`, so a positive probe needs **no** re-read. The navigator only caches presence + the parsed
-header; it never parses. `TapeCalibrator` mirrors this with `ForeignHeader` (reset per verb) so a
-calibration run met by a backup cartridge reports the media header via `ToString()`.
-
-### 17.8 On-tape size accounting must add the header block(s)
-
-Each media header consumes 16 KiB of content capacity per volume (Phase B: +16 KiB per set). Add the media
-header to `TapeTOC.ComputeTotalFileSizeOnTape` (per volume, or × distinct-volume-count when
-`onVolumeOnly: false`); `TapeServiceBase.Used` and the EW reserve then stay honest. Small VIRTUAL
-multivolume tests feel this first. Phase B adds the per-set block to `TapeSetTOC.ComputeTotalFileSizeOnTape`
-on both the packed and aligned paths.
-
-### 17.9 `BlockSize` is a `protected` reinterpretable slot (D19/INV-16)
-
-Repurposed from dead weight to meaning: `TapeMediaHeader.TocBlockSize` (the TOC's block size — immutable,
-forward-looking) and `TapeCalibrationHeader.RunBlockSize` (the run block). `Id` likewise `protected`,
-surfaced as `MediaId`/`RunId`. `CreateHeader` factories set both from within the hierarchy.
-
-### 17.10 Continuation-volume heading belongs in the agent (confirms D21)
-
-`ResumeBackupToNextVolume` does `TOC.Volume++` **and** the first content write atomically — leaving
-**no external seam** to inject a correctly-numbered header between the two. Writing the header from
-*outside* (fixture/service) records the *previous* volume number (cosmetic, but wrong).
-
-Moving the write **into** `BeginWriteContentForCurrentSet` dissolves this: it runs *after* `Resume`
-has bumped `TOC.Volume`, so `TOC.CreateHeader` reads the correct volume. The condition
-`CurrentSetIndex == FirstSetOnVolume` (⟺ `CurrentSetIndexOnVolume == 0` ⟺ "write content from BOM")
-fires precisely on volume 1's first set *and* every continuation volume's first set — one test, both
-moments. The write-XOR-resolve shape:
-
-```csharp
-if (CurrentSetIndex == FirstSetOnVolume && WritesMediaHeader)
-    WriteHeader();           // heads the (fresh/continuation) volume; sets Present, positions at block 1
-else
-    EnsureHeaderResolved();  // existing/legacy media: probe → Present or Absent
-```
-
-`WriteHeader` resolves presence internally (`OnHeaderWritten` → `Present`), so the `else` is correct
-(no redundant read). This is the exact shape step 8/9 (service) inherits — the service sets
-`WritesMediaHeader = true` at format / fresh-continuation time and never needs a separate header call.
-
-**Layering unchanged:** by backup time the service has already probed at load, shown any verdict, and
-obtained overwrite confirmation, so `TOC.MediaId` is "the identity we're authorized to write". The
-agent stamping it is mechanism executing a decision already made — the wrong-media *verdict* stays a
-load-time, service-owned concern (D16 intact).
-
-### 17.11 Virtual backend: `SeekToBlock` must position the stream for EOD/mark, not only inside-data
-
-A latent `VirtualTapeMedia` bug the header surfaced: `SeekToBlock` only set `m_stream.Position` when
-the target landed **inside a data block**. Seeking to **EOD** (`block == TotalBlockCount`, e.g. block
-1 just past a lone 16 KiB header) left the stream stale at 0, so the next `WriteBlocks` overwrote the
-header. (`WriteBlocks`'s own `TruncateFromCurrentPosition` returns early at EOD, so nothing
-self-corrected.) Fix: position the stream via the existing authority `CurrentPositionBytes()`, which
-is correct for **all** cases — inside-data, on-a-mark (walks back to nearest data end), and EOD
-(returns `m_bytesWritten`):
+`SeekToBlock` positioned the backing stream only when the target landed **inside a data block**. Seeking
+to **EOD** — e.g. block 1, just past a lone 16 KiB header — left the stream stale at 0, so the next
+`WriteBlocks` overwrote the header. (`WriteBlocks`'s own `TruncateFromCurrentPosition` returns early at
+EOD, so nothing self-corrected.) The fix positions the stream via the existing authority
+`CurrentPositionBytes()`, which is correct for all three landings:
 
 ```csharp
 try { m_stream.Position = CurrentPositionBytes(); }
 catch (Exception ex) { SetError(ex); LogErrorAsDebug("Stream seek failed"); return false; }
 ```
 
-Byte-identical to the old path for inside-data; two cases gained. Regression test:
-`SeekToBlock_AtEod_PositionsStreamAtEnd_SoNextWriteAppends`. This fix underpins the whole
-write-header-then-append-content flow.
+Byte-identical to the old path for inside-data; two cases gained. This underpins the entire
+write-header-then-append-content flow. Regression test:
+`SeekToBlock_AtEod_PositionsStreamAtEnd_SoNextWriteAppends`.
 
-### 17.12 The BOM-handler sweep — INV-12 is 8 sites, not 5
+### 12.2 On-tape size accounting
 
-On headed media, **"at BOM" ≠ "at the oldest set"**: the oldest set's start is block 1 (past the
-header), BOM is the header itself. Every handler that treats a BOM landing as "we're at the oldest
-set's start" must route through `MoveToBeginOfContentFromBom()`. Two families, **8 sites total**:
-
-- **5 assume-blank fallbacks** (no-mark else-branches): `TapeNavigatorTOCInSet.MoveToBeginOfContent`;
-  `…WithSmks.MoveToEndOfContentInternal`; `…WithFmks.MoveToEndOfContentInternal`;
-  `…WithFmksAndTOCMark.MoveToBeginOfContent` **and** `.MoveToEndOfContent`.
-- **3 `ERROR_BEGINNING_OF_MEDIA` handlers** (`ResetError()` "fine, we're at the oldest set"):
-  `MoveToTargetContentSet` from-end branch; `MoveToTargetContentSet` from-beginning branch (target 0);
-  `…WithSmks.MoveToTargetContentSet` optimized-from-`InTOCSet` override.
-
-Grep rule: `grep -n "ERROR_BEGINNING_OF_MEDIA\|Drive.Rewind()" TapeNavigator.cs` — every content-side
-"assume at oldest/blank" hit gets `MoveToBeginOfContentFromBom()`; the **TOC-side** `WithFmksAndTOCMark`
-`UnknownSet` rewind stays **raw** (it scans *forward* for the 3-FM TOC mark, header-transparent). These
-surfaced one-by-one as the headed test dimension flushed latent block-0 assumptions.
+Each media header consumes 16 KiB of content capacity per volume.
+`TapeTOC.ComputeTotalFileSizeOnTape` accounts for it (per volume, or × distinct-volume-count when
+`onVolumeOnly: false`), so `TapeServiceBase.Used` and the early-warning reserve stay honest. Small
+virtual multi-volume media feel this first.
 
 ---
 
-## 18. Test methodology — the header × profile matrix
+## 13. Validation
 
-The header pulled the agent- and navigator-level tests forward from Step 10 into the implementation
-loop (call it **Step 7T**), and drove a reusable pattern for running an existing suite under multiple
-header configurations with near-zero per-method churn.
+### 13.1 Test methodology — the header × profile matrix
 
-### 18.1 Base-class parametrization (the standing convention)
-
-Move all tests into an **abstract base** exposing the header axis as a property; **sealed subclasses**
-fix it. xUnit discovers inherited `[Theory]`/`[Fact]` per concrete class, so every test runs once per
-mode. One funnel method injects the axis; static helpers that take a fixture/agent are unchanged.
+An existing suite runs under multiple header configurations with near-zero per-method churn: move the
+tests into an **abstract base** exposing the header axis as a property, and let **sealed subclasses** fix
+it. xUnit discovers inherited `[Theory]`/`[Fact]` per concrete class, so every test runs once per mode;
+one funnel method (`CreateFixture`) injects the axis, and static helpers taking a fixture are unchanged.
 
 ```csharp
 public abstract class XxxBase
 {
-    protected abstract bool WithMediaHeader { get; }              // (or an enum for >2 modes)
+    protected abstract bool WithMediaHeader { get; }
     protected VirtualTapeFixture CreateFixture(/* mirrors ctor */)
         => new(/* … */, withMediaHeader: WithMediaHeader);
     // …tests verbatim, `new VirtualTapeFixture(` → `CreateFixture(`
@@ -1104,59 +765,216 @@ public sealed class Xxx_Headerless : XxxBase { protected override bool WithMedia
 public sealed class Xxx_Headed     : XxxBase { protected override bool WithMediaHeader => true;  }
 ```
 
-**Migration aid (the compiler as `#define`):** temporarily remove the fixture's `withMediaHeader`
-default → every un-migrated `new VirtualTapeFixture(...)` becomes a compile error → the build
-enumerates all call sites exhaustively. Restore the default (now **false**, D23) afterward.
+**Migration aid (the compiler as `#define`):** temporarily remove the fixture's `withMediaHeader` default
+so every un-migrated call site becomes a compile error — the build enumerates them exhaustively.
 
-Applied to: `TapeNavigatorTests`, `TapeStreamManagerTests` (optional), `TapeBackupAgentTests`,
-`TapeRestoreAgentTests`, `TapeRestoreAgentPipelinedTests`, `TapeBackupAgentPackedTests`,
-`TapeRestoreAgentPackedTests`.
+Applied to the navigator suite and all agent suites (backup, restore, packed, pipelined), plus
+multi-volume × `{None, All, Mixed}`. Header-unsuitable tests (those that raw-fill the tape and build
+their own TOC) stay in the base guarded by `Skip.If(WithMediaHeader, …)`. Assertions of an absolute block
+0 key off `fixture.FirstContentBlock` (1 headed / 0 headerless) rather than a literal.
 
-### 18.2 Fixtures simulate the service (agent-driven heading)
+### 13.2 Fixtures simulate the service
 
-Rather than pre-feed headed media, the fixtures **have the agent write the header** — a makeshift
-service layer proving the real path:
+Rather than pre-feeding headed media, the fixtures **have the agent write the header**, proving the real
+path: `VirtualTapeFixture.BackupFiles` sets `agent.WritesMediaHeader`, and
+`MultiVolumeVirtualTapeFixture` heads **per volume** via `ShouldHeadVolume(n)`, flipping the flag before
+each `ResumeBackupToNextVolume`. Restore needs **no** explicit header logic — `EnsureHeaderResolved()` at
+the restore content choke-point resolves presence per volume automatically, confirmed empirically by
+headed backup tests passing with zero restore-side header code.
 
-- **`VirtualTapeFixture.BackupFiles`** sets `agent.WritesMediaHeader = WithMediaHeader` (or writes the
-  header for the first set on volume) — the agent then heads via §17.10. Construction-time heading is
-  retained only for tests that never call `BackupFiles` (Navigator/StreamManager take media as-is).
-- **`MultiVolumeVirtualTapeFixture`** heads **per volume** via `ShouldHeadVolume(n)`, flipping
-  `WritesMediaHeader` before each `ResumeBackupToNextVolume`.
+### 13.3 `_MixHeaded` — the crown test
 
-Restore needs **no** explicit header logic — `EnsureHeaderResolved()` at the restore content
-choke-point (`BeginReadContentForCurrentSet`) resolves presence per volume automatically (confirmed
-empirically: headed backup tests pass with zero restore-side header code). This is D16 working.
+`VolumeHeaderMode.Mixed` (legacy volume 1, headed volume 2+) is the **only end-to-end validation of
+per-volume presence re-resolution**: during restore the last (headed) volume loads first → `Present` →
+content at block 1; swapping to the header-less volume 1 → `RenewNavigator` (presence → `Unknown`) →
+re-read → `Absent` → content at block 0. That `Present → Absent` transition is exactly what per-volume
+re-resolution exists for, and pre-heading every volume could never surface it.
 
-### 18.3 Three multi-volume modes — and why `_MixHeaded` is the crown test
+It is *correct* because the TOC records each file's **physical-per-volume** address, captured on that
+volume's own layout — so `MoveToBlock(addr)` lands right on each volume regardless of whether *this*
+volume is headed. Mixed series work because addresses are physical-per-volume and presence is resolved
+per volume.
 
-`MultiVolumeVirtualTapeFixture` gains `enum VolumeHeaderMode { None, All, Mixed }` → three sealed
-subclasses. `Mixed` (legacy vol 1, headed vol 2+) is the **only end-to-end validation of per-volume
-presence re-resolution (INV-10)**: during restore the last (headed) volume loads first → `Present` →
-content at block 1; swapping to the (headerless) vol 1 → `RenewNavigator` (presence → `Unknown`) →
-re-read → `Absent` → content at block 0. That `Present → Absent` transition is exactly what the
-staleness fix exists for, and pre-heading all volumes could never surface it. **Correct because**
-the TOC records each file's *physical-per-volume* address (captured on that volume's own layout), so
-`MoveToBlock(addr)` lands right on each volume regardless of *this* volume's heading — addresses are
-physical-per-volume and presence is re-resolved per volume; the mix composes those two facts.
+### 13.4 Service-level prompt assertions
 
-### 18.4 Header-unsuitable tests
+Service tests assert prompts exhaustively rather than waiving them. `ServiceTestBase` tracks every
+`TestTapeServiceHost` it creates; `AssertMediaPrompts(host, params (verdict, context)[])` drains the
+recorded prompts and requires an **exact, ordered match**, marking the host checked. At teardown, every
+**un-checked** host must have recorded **zero** prompts.
 
-A few `[Fact]`s raw-fill the tape / build their own TOC (e.g.
-`OverwriteFullTape_FromBeginning_…`). Keep them in the base but guard with SkippableFact:
-`Skip.If(WithMediaHeader, "raw-fills to EOM; a BOM header is N/A here")`, building the fixture
-explicitly headerless. (Alternatively, a standalone `_Special` class.)
+The result: a prompting test proves *what* prompted (a wrong context or a spurious second prompt fails
+the test), and every other test proves *nothing* prompted — so the happy paths are provably silent, not
+merely quiet.
 
-### 18.5 Header-dependent assertions
+### 13.5 Coverage
 
-Under the headed subclass, any assertion of an **absolute** block/position `0` (or "starts at BOM")
-must key off the mode — prefer `fixture.FirstContentBlock` (returns 1 headed / 0 headerless) as the
-single source of truth over a literal. The conversion itself flushes latent block-0 assumptions —
-that pressure is exactly what surfaced §17.11 and §17.12.
+- **Unit** — media header all-fields round-trip; placement matrix; null/empty name → `DisplayName`
+  fallback; `ClampName` budget fit; polymorphic vs. narrow `Unpack`; legacy `TapeFileInfo` bytes → null
+  (no false-classify); blank → null; `CreateHeader` mints/shares MediaId idempotently; `ToString` per kind.
+- **Agent** (all four drive profiles) — write→read returns the media header with matching MediaId and
+  `Present`; blank → `Absent`; headed backup → restore byte-for-byte; clobber regression (header survives
+  content + TOC); TOC reload then restore preserves MediaId; multi-set headed restore; header-less backup
+  → `ReadHeader` null.
+- **Service** — format heads the media (both placements); overwrite prompts, proceeds, and **mints a
+  fresh MediaId**; overwrite-abort preserves the medium; `ForceVolumeOverwrite` suppresses; append on
+  matching media is silent; a calibration cartridge met by backup-overwrite raises `WrongKind`; the
+  calibration guard aborts when declined and is skipped under `SkipMediaHeaderCheck`; legacy header-less
+  media restores with no prompt; and the load gate returns `TocLoaded` / `CalibrationMedia` /
+  `Unidentified` / `Failed` for each medium kind, including declining the EOD search without touching the
+  tape.
+- **Virtual backend** — `SeekToBlock` at EOD appends without clobbering (§12.1); strict-write-position
+  tests (below).
 
-### 18.6 Composability
+### 13.6 Real-hardware validation
 
-Each new fixture axis = one more abstract property/enum + one more set of sealed subclasses, tests
-untouched. Services will add **header × partition-placement**; Phase B adds **header × set-header** —
-same seam, same compiler-driven migration.
+The virtual backend models the tape rule that a write is accepted only at BOP, at EOD, or immediately
+after a mark (`VirtualTapeMedia.ResumeWriteFromMarkOnly`). Since the header's begin-of-content write
+lands at block 1 — which is **mid-data** whenever a transient TOC or an existing set follows the header —
+that write had to be validated, not assumed.
+
+Deterministic tests pin the behaviour under emulated strictness (mid-data rejected, EOD accepted,
+post-mark accepted). On hardware, two conformance probes isolate the primitive: **S10** overwrites from a
+mid-data logical block (the header's actual case) and **S11** overwrites from just after a filemark.
+**The AIT-2 accepts both**, confirming the design on a strict-family helical drive; LTO is permissive by
+construction. The dropped trailing filemark is therefore validated on hardware at both ends of the
+spectrum. Case A (header-only tape, so block 1 *is* EOD) is additionally covered by the existing physical
+scenarios' first backup.
+
+The physical fixture gained a per-format `forceNoPartition` override (with `EffectiveUsesPartition`) so a
+single test can exercise the TOC-in-set / case-B path on a partition-capable drive without changing the
+session's mode.
 
 ---
+
+## 14. Legacy calibration compatibility
+
+Behind `#if LEGACY_TapeCalibrationRunHeader`, the pre-unification `TapeCalibrationRunHeader` (original
+wire format, no kind byte) plus a one-line `ToHeader()` adapter let already-measured scratch cartridges
+still resume:
+
+```csharp
+recordBuffer = new byte[blockSize];
+int read = Drive.ReadDirect(recordBuffer, 0, recordBuffer.Length, out _, out _);
+TapeCalibrationHeader? header = read > 0
+    ? TapeCalibrationFramer.Unpack<TapeCalibrationHeader>(recordBuffer, read) : null;
+#if LEGACY_TapeCalibrationRunHeader
+// Re-parse the SAME already-read block — a second ReadRecord would ReadDirect the NEXT block.
+if (header is null && read > 0)
+    header = TapeCalibrationFramer.Unpack<TapeCalibrationRunHeader>(recordBuffer, read)?.ToHeader();
+#endif
+```
+
+**Caveat:** a legacy block's CRC still validates under the new reader, so classification rests on the
+byte the new format treats as `Kind` (the 2nd RunId byte, effectively random): ~98% are not 1/2/3 ⇒
+`Unknown` ⇒ fallback; the rest almost always throw in `DeserializeString` ⇒ caught ⇒ fallback. The
+sub-1% residual false-parse is acceptable for a temporary development flag. Bumping
+`TapeSerializer.Version` would make the separation exact; the checkpoint format is unchanged either way.
+
+---
+
+## 15. Known risks and watch-items
+
+The feature is complete and green, but three properties are worth keeping in view. None is currently
+observed as a defect; each is recorded with the shape of its fix so a future maintainer does not have to
+re-derive it.
+
+### 15.1 The header carries no trailing filemark — begin-of-content is a mid-data write
+
+**What.** By design the header block is followed immediately by content, with no mark between them
+(§5.1). Consequently every "write content from beginning-of-content" — the first set on a volume, an
+overwrite, a delete-all — resumes writing at logical block 1, which is **mid-data** whenever anything
+already follows the header (a transient initial TOC, or an existing set).
+
+**Why it is a risk.** Tape drives classically accept a write only at BOP, at EOD, or immediately after a
+mark. A drive family that enforces that strictly would reject the begin-of-content write outright — a
+showstopper, not a degradation.
+
+**Current evidence.** Accepted on **AIT-2** (conformance probes S10 mid-data vs. S11 post-mark both pass)
+and on **DLT-V4**; LTO is permissive by construction. The virtual backend models the strict rule via
+`VirtualTapeMedia.ResumeWriteFromMarkOnly`, and the deterministic tests pin the three cases (mid-data
+rejected, EOD accepted, post-mark accepted) so the hazard stays visible.
+
+**Resolution path.** Write one filemark after the header, making every content-start a legal post-mark
+write. Two consequences to handle:
+
+- `MoveToBeginOfContentFromBom` would space forward over one mark instead of `MoveToBlock(1)` — which is
+  arguably *more* robust on real hardware than absolute block arithmetic anyway.
+- **Legacy headed media written without the mark would mis-navigate**, so the two shapes must be
+  distinguishable. The cleanest form is to record the shape **in the header itself** (a
+  `HeaderTrailingMark` flag alongside `TocPlacement`, which is exactly the kind of self-description that
+  field already provides) and have the navigator honour it; probing for a mark after the header is
+  possible but costs a read and is ambiguous on a torn tape.
+
+**Window.** Adding the flag is a format change, so it is cheapest **before** the first release that writes
+headers in the field; afterwards the flag must default to "no mark" for media that predates it.
+
+### 15.2 Legacy calibration cartridges classify heuristically
+
+**What.** Behind `#if LEGACY_TapeCalibrationRunHeader` (§14), a pre-unification block's CRC still validates
+under the new reader, so classification falls to the byte the new format treats as `Kind` — effectively
+random in the legacy layout.
+
+**Exposure.** ~98% of legacy blocks yield a value that is not 1/2/3 ⇒ `Unknown` ⇒ the fallback parser runs;
+most of the remainder throw inside `DeserializeString` and are caught into the same fallback. The residual
+false-parse is sub-1%, and the flag is a temporary development affordance.
+
+**Resolution path.** Bump `TapeSerializer.Version` so `ValidateSignature` separates old from new cleanly,
+making classification exact rather than probabilistic. The checkpoint format is unaffected either way. The
+alternative is simply to retire the flag once no legacy scratch cartridges remain in use.
+
+### 15.3 A standard header block assumes the drive can carry 16 KiB
+
+**What.** Both header kinds now occupy one `TapeHeaderBlock.Size` (16 KiB) block. A drive whose *maximum*
+block is smaller cannot hold one.
+
+**Exposure.** No physical drive in scope is affected (the agent already requires 16 KiB for its TOC blocks,
+so any backup-capable drive qualifies). It can only arise for calibration on a deliberately tiny virtual
+medium. `TapeHeaderBlock.IsSupportedBy` guards it: the calibrator falls back to the legacy run-block shape
+and logs that the cartridge is not cross-classifiable.
+
+**Resolution path.** If such a drive ever matters, the header would need a size-negotiated form — read the
+preamble from the largest block the drive supports and treat the fixed 16 KiB as a maximum rather than an
+exact size. Not worth doing speculatively.
+
+### 15.4 Capacity evaluation side-effect due to the header block
+
+A side effect of the standard header block: the payload no longer divides the capacity evenly, so
+`PhantomFreeAtEom` is measured to a granularity of one run block (the trailing partial block is genuinely
+unwritable), and under a BOM over-report that stub is reported inflated by the same factor. Negligible
+against real media capacity; visible only on small virtual cartridges, where tests allow one boosted
+block of slack.
+
+---
+
+## 16. Outlook — the set header
+
+The natural next feature, deferred deliberately: a **`TapeSetHeader`** — one 16 KiB framed block at the
+front of each set's data, carrying `VolumeSetIndex` (0-based, drives navigation verification),
+`GlobalSetIndex` (1-based, TOC attribution), `Volume`, and `MediaId`.
+
+Its value is **verified set navigation**: on read, the agent compares `VolumeSetIndex` against the
+navigator's target, self-correcting within bounds and otherwise escalating the `MediaInconsistent`
+verdict that already exists in `TapeMediaVerdict`. Today set positioning is trusted; with set headers it
+becomes checked.
+
+The design fits the existing foundation without disturbing it:
+
+- **Counting stays untouched.** The set header is the first block of its set's data, so setmark and
+  filemark arithmetic is unchanged — the same property that makes the media header safe.
+- **Written before the packer anchors**, so file `TapeAddress`es sit past it and no TOC-address surgery
+  is needed.
+- **Factoried by the TOC**, as `CreateSetHeader(int)` / `CreateSetHeaderForCurrentSet()`, mirroring
+  `CreateHeader`.
+- **Wired into `ConstructFrom`** by adding the `TapeHeaderKind.Set` arm — the polymorphic probe and the
+  framing need nothing else.
+- **Paired per volume:** media-header-present ⟺ set-headers-present, so a volume is uniformly headed or
+  uniformly legacy.
+- **Size accounting** adds one 16 KiB block per set in `TapeSetTOC.ComputeTotalFileSizeOnTape`, on both
+  the packed and aligned paths.
+- **Tests** extend the §13.1 seam with one more axis (`header × set-header`), the same compiler-driven
+  migration.
+
+Other candidates, smaller in scope: surfacing the calibration **run trail** in the CLI `list` behind a
+`--calibration` flag (the WPF pane already offers it via Inspect Media); flagging remote virtual volumes
+by media kind in the server-side volume list; and a dedicated host verb for the calibration
+scratch-cartridge insert prompt, which today borrows the restore-insert wording.

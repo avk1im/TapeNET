@@ -480,14 +480,12 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
         if (!Navigator.NavigateToHeader(forWrite: true))
         {
-            SyncErrorFrom(Navigator);             // NavigateToHeader already reset on its own failure
+            SyncErrorFrom(Navigator);
             return false;
         }
 
-        Drive.SetBlockSize((uint)framedBlock.Length);
-
-        int written = Drive.WriteDirect(framedBlock, 0, framedBlock.Length, out _, out _, out _);
-        if (written != framedBlock.Length)
+        // Block size + WriteDirect via the single shared primitive (restores the previous block size).
+        if (!TapeHeaderBlock.WriteFramed(Drive, framedBlock))
         {
             SyncErrorFrom(Drive);
             Navigator.ResetContentSet();          // half-written header — unknown position
@@ -497,6 +495,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         Navigator.OnHeaderWritten();
         return true;
     }
+
 
     /// <summary>
     /// Reads the BOM header block into <paramref name="buffer"/> (sized to the fixed header block). Ends any
@@ -510,28 +509,29 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         if (!EndReadWrite())
         {
             SyncErrorFrom(this);
-            Navigator.ResetContentSet();     // teardown failed — position uncertain
+            Navigator.ResetContentSet();
             return -1;
         }
 
         if (!Navigator.NavigateToHeader(forWrite: false))
         {
-            SyncErrorFrom(Navigator);        // NavigateToHeader already reset on its own failure
+            SyncErrorFrom(Navigator);
             return -1;
         }
 
-        Drive.SetBlockSize((uint)buffer.Length);
-
-        int read = Drive.ReadDirect(buffer, 0, buffer.Length, out _, out _);
+        // Raw bytes only — the AGENT classifies (INV-12). TapeHeaderBlock.Read also classifies, but the
+        //  manager deliberately discards that so parsing stays on the agent side.
+        int read = TapeHeaderBlock.Read(Drive, buffer, out _);
         if (read != buffer.Length)
         {
             SyncErrorFrom(Drive);
-            Navigator.ResetContentSet();     // half-read header — unknown position
+            Navigator.ResetContentSet();          // half-read header — unknown position
             return -1;
         }
 
         return read;
     }
+
 
     #endregion // Header block I/O
 
