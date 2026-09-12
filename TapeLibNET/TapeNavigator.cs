@@ -128,6 +128,17 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     ///  <see cref="OnMediaHeaderWritten"/>); the navigator never parses a header itself.
     /// </summary>
     public TapeHeaderPresence MediaHeaderPresence { get; internal set; } = TapeHeaderPresence.Unknown;
+    /// <summary>
+    /// Whether the sets on this volume are expected to carry a <see cref="TapeSetHeader"/> — read
+    ///  from the media header's <see cref="TapeMediaHeader.HasSetHeaders"/>, never probed.
+    /// </summary>
+    /// <remarks>
+    /// Cached HERE, beside <see cref="MediaHeaderPresence"/>, precisely so the two reset together on
+    ///  every media (re)load: the navigator is renewed per volume, so per-volume re-resolution comes
+    ///  free and INV-9 extends to set headers with no new machinery. Meaningful only while presence is
+    ///  <see cref="TapeHeaderPresence.Present"/>; forced false otherwise (SH-1).
+    /// </remarks>
+    public bool SetHeadersExpected { get; internal set; } = false;
 
     /// <summary>
     /// Informs the navigator that the media is known to be blank (e.g. just formatted).
@@ -223,8 +234,11 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     /// Resets presence to <see cref="TapeHeaderPresence.Unknown"/> so the agent re-resolves it — call on
     ///  every media (re)load (INV-10). Preserves <see cref="TapeHeaderPresence.NotNeeded"/>.
     /// </summary>
-    internal void InvalidateMediaHeaderPresence() =>
+    internal void InvalidateMediaHeaderPresence()
+    {
         MediaHeaderPresence = TapeHeaderPresence.Unknown;
+        SetHeadersExpected = false;
+    }
 
     /// <summary>
     /// Positions the head at the BOM header block. Read intent errors when the header is known
@@ -254,10 +268,11 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     }
 
     /// <summary>Records that a media header was just written: presence becomes Present, head is at begin-of-content.</summary>
-    /// <remarks>The single header block was written at BOM, so we are physically at logical block 1 = content start.</remarks>
-    public virtual void OnMediaHeaderWritten()
+    /// <remarks>The single header block + trailing filemark were written at BOM, so we are physically at the content start.</remarks>
+    public virtual void OnMediaHeaderWritten(bool setHeadersExpected = false)
     {
         MediaHeaderPresence = TapeHeaderPresence.Present;
+        SetHeadersExpected = setHeadersExpected;
         CurrentContentSet = 0;
     }
 
@@ -266,9 +281,16 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     ///  at begin-of-content (the read advanced one block past BOM); anything else resets the content position,
     ///  since the consumed block was not a header we can align to.
     /// </summary>
-    internal void ResolveMediaHeaderPresence(TapeHeaderPresence presence)
+    /// <param name="presence">The media header's <see cref="TapeHeaderPresence"/> as resolved by the agent.</param>
+    /// <param name="setHeadersExpected">
+    /// The media header's <see cref="TapeMediaHeader.HasSetHeaders"/>. Ignored (forced false) unless
+    ///  <paramref name="presence"/> is <see cref="TapeHeaderPresence.Present"/> — no media header, no
+    ///  set headers (SH-1).
+    /// </param>
+    internal void ResolveMediaHeaderPresence(TapeHeaderPresence presence, bool setHeadersExpected = false)
     {
         MediaHeaderPresence = presence;
+        SetHeadersExpected = presence == TapeHeaderPresence.Present && setHeadersExpected;
 
         // A header READ consumes only the header block, leaving the head BEFORE its trailing filemark —
         //  NOT at begin-of-content. Park at the header sentinel so any later content navigation routes

@@ -77,7 +77,9 @@ public static class TapeHeaderBlock
     /// Writes a pre-framed, exactly <see cref="Size"/>-byte block at the CURRENT position. Used by
     ///  <see cref="TapeStreamManager"/>, which frames via <see cref="Frame"/> at the agent layer.
     /// </summary>
-    public static bool WriteFramed(TapeDrive drive, byte[] framedBlock, bool withFilemark = true)
+    /// <param name="withFilemark">If specified, overrules <see cref="WritesTrailingMark"/>:
+    ///  <see langword="true"/> writes a filemark, <see langword="false"/> does not.</param>
+    public static bool WriteFramed(TapeDrive drive, byte[] framedBlock, bool? withFilemark = null)
     {
         ArgumentNullException.ThrowIfNull(drive);
         ArgumentNullException.ThrowIfNull(framedBlock);
@@ -100,7 +102,7 @@ public static class TapeHeaderBlock
 
             // Terminate the header with a filemark — the single reason this constant exists (§15.1).
             //  Leaves the head PAST the mark, i.e. exactly at begin-of-content.
-            if (WritesTrailingMark && !drive.WriteFilemark(1))
+            if ((withFilemark ?? WritesTrailingMark) && !drive.WriteFilemark(1))
                 return false;
 
             return true;

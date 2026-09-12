@@ -467,7 +467,11 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     ///  read/write first, positions at BOM regardless of presence, then records the write on the navigator.
     /// </summary>
     /// <param name="framedBlock">The framed header padded to exactly the fixed header block size.</param>
-    public bool WriteMediaHeaderBlock(byte[] framedBlock)
+    /// <param name="setHeadersExpected">
+    /// The <see cref="TapeMediaHeader.HasSetHeaders"/> value carried by the block just written, so the
+    ///  navigator's cached expectation matches what is physically on tape.
+    /// </param>
+    public bool WriteMediaHeaderBlock(byte[] framedBlock, bool setHeadersExpected = false)
     {
         ResetError();
 
@@ -492,7 +496,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
             return false;
         }
 
-        Navigator.OnMediaHeaderWritten();
+        Navigator.OnMediaHeaderWritten(setHeadersExpected);
         return true;
     }
 

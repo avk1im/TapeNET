@@ -366,8 +366,8 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     /// </summary>
     public TapeResult WriteMediaHeader()
     {
-        var header = TOC.CreateHeader(tocBlockSize: c_fixedTOCBlockSize, tapeTocPlacement: TOCPlacement);
-
+        var header = TOC.CreateHeader(tocBlockSize: c_fixedTOCBlockSize, tapeTocPlacement: TOCPlacement,
+            hasSetHeaders: WritesSetHeaders);
         byte[]? block = TapeHeaderBlock.Frame(header);      // pack + size guard + pad, single-point
         if (block is null)
         {
@@ -376,7 +376,9 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
             return TapeResult.Fail(this);
         }
 
-        if (!Manager.WriteMediaHeaderBlock(block))
+        // Passing header.HasSetHeaders rather than WritesSetHeaders keeps the navigator describing what
+        //  actually went on tape, even if the property were mutated between framing and writing.
+        if (!Manager.WriteMediaHeaderBlock(block, setHeadersExpected: header.HasSetHeaders))
         {
             SyncErrorFrom(Manager);
             return TapeResult.Fail(this);
@@ -411,17 +413,21 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
 
         TapeHeader? header = TapeHeaderBlock.Classify(buffer, read);
 
-        // A readable block that is NOT our media header (calibration / foreign / torn) is likewise
-        //  "no media header here" for navigation = Absent; the service still learns the concrete kind.
-        Navigator.ResolveMediaHeaderPresence(
-            header is TapeMediaHeader ? TapeHeaderPresence.Present : TapeHeaderPresence.Absent);
+        // A readable block that is NOT our media header (calibration / set / foreign / torn) is
+        //  likewise "no media header here" for navigation = Absent; the service still learns the
+        //  concrete kind. Only a media header can declare set-header presence (SH-1).
+        if (header is TapeMediaHeader media)
+            Navigator.ResolveMediaHeaderPresence(TapeHeaderPresence.Present, media.HasSetHeaders);
+        else
+            Navigator.ResolveMediaHeaderPresence(TapeHeaderPresence.Absent);
 
         if (header is not null)
             m_logger.LogTrace("BOM header read: {Header}", header);
+        else
+            m_logger.LogTrace("BOM header read: none (legacy/blank/foreign)");
 
         return header;
     }
-
 
     /// <summary>Convenience: reads the header and returns just the resulting presence.</summary>
     public TapeHeaderPresence ProbeMediaHeaderPresence()
@@ -443,6 +449,21 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     }
 
     #endregion // *** Media Header ***
+
+    #region *** Set Header ***
+
+    /// <summary>
+    /// Whether sets written by this agent carry their own <see cref="TapeSetHeader"/>. Recorded into
+    ///  the media header as <see cref="TapeMediaHeader.HasSetHeaders"/>, so a reader knows without
+    ///  probing (SH-1).
+    /// </summary>
+    /// <remarks>
+    /// Defaults to <see langword="false"/> until the set-header WRITE path exists: a volume must never
+    ///  claim set headers it does not carry. Flip the default once <c>WriteSetHeader()</c> is wired in.
+    /// </remarks>
+    public bool WritesSetHeaders { get; set; } = false;
+
+    #endregion // *** Set Header ***
 
     #region *** TOC Backup ***
 

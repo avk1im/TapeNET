@@ -746,12 +746,20 @@ namespace TapeLibNET
         ///  once at format / on a fresh volume and never rewritten. Only ever produced for single-headerPartition
         ///  (TOC-in-set) media, hence <see cref="TapeTocPlacement.InSet"/>.
         /// </remarks>
-        /// <param name="tocBlockSize">The block size to use for the TOC on tape (NOT the header itself! This is always <see cref="TapeHeader.FixedHeaderBlockSize"/>).</param>
+        /// <param name="tocBlockSize">The block size to use for the TOC on tape (NOT the header itself!
+        ///  This is always <see cref="TapeHeader.FixedHeaderBlockSize"/>).</param>
         /// <param name="tapeTocPlacement">The placement of the TOC on tape (in-set or in-partition).</param>
         /// <param name="headerPartition">The partition in which this header resides. By default <see cref="MediaPartition.Content"/>.</param>
+        /// <param name="hasSetHeaders">
+        /// Whether this volume's sets carry their own set headers (SH-1). Sourced from the writing
+        ///  agent's <see cref="TapeFileAgent.WritesSetHeaders"/> — the TOC cannot know it, exactly as it
+        ///  cannot know its own <paramref name="tapeTocPlacement"/>.
+        /// </param>
+
         public TapeMediaHeader CreateHeader(uint tocBlockSize,
                 TapeTocPlacement tapeTocPlacement,
-                MediaPartition headerPartition = MediaPartition.Content) =>
+                MediaPartition headerPartition = MediaPartition.Content,
+                bool hasSetHeaders = false) =>
             new()
             {
                 MediaId = EnsureMediaId(),
@@ -761,6 +769,7 @@ namespace TapeLibNET
                 Partition = headerPartition,
                 TocPlacement = tapeTocPlacement,
                 OriginalName = TapeMediaHeader.ClampName(Description),
+                HasSetHeaders = hasSetHeaders,
             };
 
         // Set index conversion helpers (see class-level doc for indexation scheme).

@@ -294,7 +294,7 @@ public int  ReadBomHeaderBlock(byte[] buffer);         // was ReadHeaderBlock  �
 public bool WriteSetHeaderBlock(byte[] framedBlock)
 {
     ResetError();
-    if (!TapeHeaderBlock.WriteFramed(Drive, framedBlock, withFilemark: false))
+    if (!TapeHeaderBlock.WriteFramed(Drive, framedBlock, bool? withFilemark: null))
     {
         SyncErrorFrom(Drive);
         Navigator.ResetContentSet();      // SH-6: a torn write leaves the position unknown
@@ -317,7 +317,7 @@ public int ReadSetHeaderBlock(byte[] buffer)
 }
 ```
 
-`TapeHeaderBlock.WriteFramed` gains a `withFilemark` parameter (default `true`, preserving the media
+`TapeHeaderBlock.WriteFramed` gains a `withFilemark` parameter (default `null`, preserving the default media
 path). `TapeHeaderBlock.Read` needs **no change**: v12 already made it deliberately pure, leaving the
 head before any trailing mark. The write-after / read-before asymmetry documented in
 Design-TapeHeader.md §6.1 is precisely what the set header requires.
@@ -767,7 +767,7 @@ The **enum** `TapeHeaderPresence` keeps its name: it is kind-agnostic.
   INV-10 / INV-19 wording, which name `MoveToHeader` and `AtHeader`.
 - *Exit criteria:* clean build, full suite green, zero diff in test logic.
 
-**0c — `TapeHeaderBlock.WriteFramed(…, bool withFilemark = true)`.**
+**0c — `TapeHeaderBlock.WriteFramed(…, bool? withFilemark = null)`.**
 
 Signature-only preparation. The default preserves the media path byte-for-byte; no caller changes.
 
