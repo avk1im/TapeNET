@@ -220,18 +220,18 @@ work (§10.3).
 - **Absent** → content BOM → block 0, `CurrentContentSet = 0`
 - **Unknown** → treated permissively as Absent (no skip)
 
-`NavigateToHeader()` positions at content-partition BOM and sets `CurrentContentSet = AtHeader`;
+`MoveToHeader()` positions at content-partition BOM and sets `CurrentContentSet = AtHeader`;
 `MoveToTargetContentSet` includes `AtHeader` in its from-end guard so a negative target while at the
 header first moves to a known boundary.
 
-**`AtHeader` covers two physical positions, and both work.** `NavigateToHeader()` leaves the head *before*
+**`AtHeader` covers two physical positions, and both work.** `MoveToHeader()` leaves the head *before*
 the header block; `ResolveHeaderPresence(Present)` — after an agent read consumed the block — leaves it
 *after* the block but *before* the mark. One forward filemark space reaches begin-of-content from either,
 because the header block itself carries no marks. This is what lets the `AtHeader` fast paths skip the
 rewind entirely.
 
 > **`AtHeader` ≠ header present.** The sentinel says *where the head is*; `HeaderPresence` says *whether a
-> header exists*. They are set independently — `NavigateToHeader(forWrite: true)` parks at `AtHeader` on a
+> header exists*. They are set independently — `MoveToHeader(forWrite: true)` parks at `AtHeader` on a
 > not-yet-headed tape, which is exactly what the header *write* path does. Any `AtHeader` shortcut must
 > therefore test presence before spacing (INV-19); inferring one from the other spaces to the first mark
 > on tape, which on a setmark layout is the **TOC's** — far past all content.
@@ -768,7 +768,7 @@ sub-step; and **"Refresh" ≠ "Reload"** — Refresh is pure in-memory redisplay
 | **INV-7** | Classification is positive-only: `Unknown` unless the framed CRC validates **and** the kind is known. |
 | **INV-8** | Kinds are mutually exclusive per block. |
 | **INV-9** | Presence resets to `Unknown` on every media (re)load. |
-| **INV-10** | `NavigateToHeader` / `WriteHeader` error on `Absent`. |
+| **INV-10** | `MoveToHeader` / `WriteHeader` error on `Absent`. |
 | **INV-11** | Any "at BOM ⇒ oldest set / assume blank" **content-side** handler routes through `MoveToBeginOfContentFromBom()` (8 sites, §5.5); TOC-side forward-scan rewinds stay raw. |
 | **INV-12** | The navigator never reads or parses a header; only the agent does. |
 | **INV-13** | `BlockSize` is a protected base slot; each kind exposes it under its own name (`TocBlockSize` / `RunBlockSize`). |

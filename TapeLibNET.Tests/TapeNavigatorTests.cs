@@ -1543,7 +1543,7 @@ public abstract class TapeNavigatorTestsBase
     /// </remarks>
     private static void ParkAtHeader(TapeNavigator nav)
     {
-        Assert.True(nav.NavigateToHeader(forWrite: true), "failed to park at the header");
+        Assert.True(nav.MoveToHeader(forWrite: true), "failed to park at the header");
         Assert.Equal(TapeNavigator.AtHeader, nav.CurrentContentSet);
     }
 

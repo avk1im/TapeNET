@@ -232,14 +232,14 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     ///  (<paramref name="forWrite"/>) rewinds regardless, since a header is written at BOM whatever the
     ///  current presence. Both error on <see cref="TapeHeaderPresence.NotNeeded"/>.
     /// </summary>
-    public virtual bool NavigateToHeader(bool forWrite = false)
+    public virtual bool MoveToHeader(bool forWrite = false)
     {
         ResetError();
 
         if (!forWrite && HeaderPresence == TapeHeaderPresence.Absent)
         {
             LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
-            LogErrorAsDebug($"NavigateToHeader(forWrite={forWrite}) invalid with HeaderPresence={HeaderPresence}");
+            LogErrorAsDebug($"MoveToHeader(forWrite={forWrite}) invalid with HeaderPresence={HeaderPresence}");
             return false;
         }
 
@@ -618,14 +618,14 @@ public class TapeNavigatorTOCInPartition : TapeNavigator
     /// The media header lives at BOM of the CONTENT partition, so switch there, to block 0.
     /// </summary>
     /// <remarks>No need to call base since it would rewind -- unnecessary.</remarks>
-    public override bool NavigateToHeader(bool forWrite = false)
+    public override bool MoveToHeader(bool forWrite = false)
     {
         ResetError();
 
         if (!forWrite && HeaderPresence == TapeHeaderPresence.Absent)
         {
             LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
-            LogErrorAsDebug($"NavigateToHeader(forWrite={forWrite}) invalid with HeaderPresence={HeaderPresence}");
+            LogErrorAsDebug($"MoveToHeader(forWrite={forWrite}) invalid with HeaderPresence={HeaderPresence}");
             return false;
         }
 

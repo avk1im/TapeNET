@@ -478,7 +478,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
             return false;
         }
 
-        if (!Navigator.NavigateToHeader(forWrite: true))
+        if (!Navigator.MoveToHeader(forWrite: true))
         {
             SyncErrorFrom(Navigator);
             return false;
@@ -513,7 +513,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
             return -1;
         }
 
-        if (!Navigator.NavigateToHeader(forWrite: false))
+        if (!Navigator.MoveToHeader(forWrite: false))
         {
             SyncErrorFrom(Navigator);
             return -1;
