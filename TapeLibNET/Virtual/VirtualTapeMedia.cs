@@ -313,7 +313,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
     #endregion
 
     #region *** Properties ***
-
+    
     protected override string LogPrefix => m_name;
 
     public string Name => m_name;
@@ -352,6 +352,23 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
     private void AssertByteTotalConsistent() =>
     Debug.Assert(m_bytesWritten == CalculateStreamLength(),
         $"m_bytesWritten {m_bytesWritten} != CalculateStreamLength {CalculateStreamLength()}");
+
+    /// <summary>
+    /// Validates the two position invariants: the cached virtual-block index matches the logical block,
+    ///  and the backing stream sits where the logical position says it does. Call at the END of every
+    ///  positioning / write operation. Only active in <c>DEBUG</c> builds.
+    /// </summary>
+    [Conditional("DEBUG")]
+    private void AssertPositionConsistent()
+    {
+        int expectedIndex = FindVirtualBlockIndex(m_currentBlock);
+        Debug.Assert(m_currentVirtualBlockIndex == expectedIndex,
+            $"virtual-block index {m_currentVirtualBlockIndex} != expected {expectedIndex} for block {m_currentBlock}");
+
+        if (m_stream.CanSeek)
+            Debug.Assert(m_stream.Position == CurrentPositionBytes(),
+                $"stream position {m_stream.Position} != CurrentPositionBytes {CurrentPositionBytes()} at block {m_currentBlock}");
+    }
 
     #endregion
 
@@ -476,6 +493,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         }
 
         AssertByteTotalConsistent();
+        AssertPositionConsistent();
 
         return totalWritten;
     }
@@ -514,6 +532,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         m_stateDirty = true;
 
         AssertByteTotalConsistent();
+        AssertPositionConsistent();
 
         return true;
     }
@@ -663,6 +682,13 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
     #region *** Positioning Operations ***
 
+    // ── Positioning contract ──────────────────────────────────────────────────────
+    //  Every operation that changes m_currentBlock MUST end with:
+    //      SyncStreamPosition();        // physical follows logical (CurrentPositionBytes is the authority)
+    //      AssertPositionConsistent();  // DEBUG: index matches block, stream matches position
+    //  Logical position, cached virtual-block index, and stream position are ONE state in three fields;
+    //  updating a subset would cause e.g. SeekToBlock-at-EOD and SpaceMarks bugs!
+
     /// <summary>
     /// Seeks to the specified logical block position.
     /// </summary>
@@ -687,22 +713,10 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         SyncVirtualBlockIndex();
         AccumulateOdometer(fromBlock, block);
 
-        // Position the backing stream to match the logical block, so a subsequent read/write
-        //  operates at the correct byte offset. CurrentPositionBytes() is authoritative for ALL
-        //  cases — inside a data block, on a mark, and at EOD (== m_bytesWritten). The previous
-        //  "only if inside a data block" check left the stream stale at EOD (and on a mark), so a
-        //  write at EOD landed at the prior position (e.g. block 0), clobbering earlier data.
-        try
-        {
-            m_stream.Position = CurrentPositionBytes();
-        }
-        catch (Exception ex)
-        {
-            SetError(ex);
-            LogErrorAsDebug("Stream seek failed");
+        if (!SyncStreamPosition())
             return false;
-        }
 
+        AssertPositionConsistent();
         return true;
     }
 
@@ -771,6 +785,12 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         }
 
         AccumulateOdometer(fromBlock, m_currentBlock);
+
+        // Spacing moves the head, so the backing stream must follow — otherwise the next write lands
+        //  at a stale offset, which would let a post-filemark write clobber earlier data!
+        SyncStreamPosition();
+        AssertPositionConsistent();
+        
         return moved * direction;
     }
 
@@ -787,7 +807,9 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
         long fromBlock = m_currentBlock;
         SyncVirtualBlockIndex();
+
         int target = Math.Abs(count);
+        int result = 0;                       // 0 = not found; set to `count` on success
 
         if (count > 0)
         {
@@ -801,21 +823,15 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
                 if (vb.IsMark && vb.MarkType == markType)
                 {
                     consecutive++;
-                    if (consecutive >= target)
-                    {
-                        AccumulateOdometer(fromBlock, m_currentBlock);
-                        return count; // success
-                    }
+                    if (consecutive >= target) { result = count; break; }
                 }
                 else
-                {
-                    consecutive = 0; // non-matching block resets the consecutive count
-                }
+                    consecutive = 0;          // a non-matching block resets the run
             }
-
-            SetError(WIN32_ERROR.ERROR_NO_DATA_DETECTED);
+            if (result == 0)
+                SetError(WIN32_ERROR.ERROR_NO_DATA_DETECTED);
         }
-        else // count < 0
+        else
         {
             int consecutive = 0;
             while (m_currentVirtualBlockIndex > 0)
@@ -827,23 +843,24 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
                 if (vb.IsMark && vb.MarkType == markType)
                 {
                     consecutive++;
-                    if (consecutive >= target)
-                    {
-                        AccumulateOdometer(fromBlock, m_currentBlock);
-                        return count; // success
-                    }
+                    if (consecutive >= target) { result = count; break; }
                 }
                 else
-                {
-                    consecutive = 0; // non-matching block resets the consecutive count
-                }
+                    consecutive = 0;
             }
-
-            SetError(WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA);
+            if (result == 0)
+                SetError(WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA);
         }
 
+        // Single exit: odometer + stream sync happen on EVERY path, found or not.
         AccumulateOdometer(fromBlock, m_currentBlock);
-        return 0; // not found
+
+        // Spacing moves the head, so the backing stream must follow — otherwise the next write lands
+        //  at a stale offset, which would let a post-filemark write clobber earlier data!
+        SyncStreamPosition();
+        AssertPositionConsistent();
+        
+        return result;
     }
 
     /// <summary>Rewinds to beginning of tape.</summary>
@@ -855,14 +872,8 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         AccumulateOdometer(fromBlock, 0);
         ResetError();
 
-        try
-        {
-            m_stream.Position = 0;
-        }
-        catch
-        {
-            // Ignore - position will be set on next read
-        }
+        SyncStreamPosition();          // CurrentPositionBytes() == 0 at block 0
+        AssertPositionConsistent();
     }
 
     /// <summary>Seeks to end of data. Also positions the backing stream so writes append correctly.</summary>
@@ -871,12 +882,11 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         long fromBlock = m_currentBlock;
         m_currentVirtualBlockIndex = m_virtualBlocks.Count;
         m_currentBlock = TotalBlockCount;
-
-        // Position stream at end of written data so WriteBlocks appends (rather than overwrites)
-        try { m_stream.Position = m_bytesWritten; } catch { /* best effort */ }
-
         AccumulateOdometer(fromBlock, m_currentBlock);
         ResetError();
+
+        SyncStreamPosition();          // CurrentPositionBytes() == m_bytesWritten at EOD
+        AssertPositionConsistent();
     }
 
     #endregion
@@ -1027,17 +1037,32 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
     #region *** Private Helpers ***
 
     /// <summary>
-    /// Synchronizes m_currentVirtualBlockIndex with m_currentBlock.
+    /// Synchronizes <see cref="m_currentVirtualBlockIndex"/> with <see cref="m_currentBlock"/>.
+    /// No-op when the cached index is already correct — the overwhelmingly common case, since most
+    ///  callers sync defensively rather than because the position actually moved.
     /// </summary>
     private void SyncVirtualBlockIndex()
     {
+        int cur = m_currentVirtualBlockIndex;
+
+        // Already pointing at the block that contains the head.
+        if ((uint)cur < (uint)m_virtualBlocks.Count && m_virtualBlocks[cur].ContainsBlock(m_currentBlock))
+            return;
+
+        // Both sides already say "past the end" (EOD).
+        if (cur >= m_virtualBlocks.Count && m_currentBlock >= TotalBlockCount)
+            return;
+
         m_currentVirtualBlockIndex = FindVirtualBlockIndex(m_currentBlock);
     }
 
     /// <summary>
-    /// Finds the virtual block index that contains the given logical block.
-    /// Returns m_virtualBlocks.Count if block is at or past end.
-    /// <remarks>Complexity: O(log n) thanks to binary search.</remarks>
+    /// Finds the virtual block index containing <paramref name="logicalBlock"/>, or
+    ///  <c>m_virtualBlocks.Count</c> when at/past the end.
+    /// <remarks>
+    /// O(1) on the common paths — the cached index, or the one after it (sequential traversal) — falling
+    ///  back to O(log n) binary search. Sequential reads, spacing and appends nearly always hit the fast path.
+    /// </remarks>
     /// </summary>
     private int FindVirtualBlockIndex(long logicalBlock)
     {
@@ -1047,10 +1072,19 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         if (logicalBlock >= TotalBlockCount)
             return m_virtualBlocks.Count;
 
-        // Binary search for efficiency
+        // Fast path 1: the cached index already holds it (repeat queries, in-block reads).
+        int hint = m_currentVirtualBlockIndex;
+        if ((uint)hint < (uint)m_virtualBlocks.Count && m_virtualBlocks[hint].ContainsBlock(logicalBlock))
+            return hint;
+
+        // Fast path 2: the NEXT block (forward sequential traversal just crossed a boundary).
+        hint++;
+        if ((uint)hint < (uint)m_virtualBlocks.Count && m_virtualBlocks[hint].ContainsBlock(logicalBlock))
+            return hint;
+
+        // General case: binary search.
         int left = 0;
         int right = m_virtualBlocks.Count - 1;
-
         while (left <= right)
         {
             int mid = left + (right - left) / 2;
@@ -1063,7 +1097,6 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
             else
                 return mid;
         }
-
         return left;
     }
 
@@ -1175,6 +1208,32 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
     }
 
     /// <summary>
+    /// Positions the backing stream to match the current LOGICAL position, using the authoritative
+    ///  <see cref="CurrentPositionBytes"/> (correct inside data, on a mark, and at EOD).
+    /// <para>
+    /// EVERY positioning operation must end with this. Logical position and stream position are two
+    ///  halves of one state; updating only the logical half leaves a write landing at a stale offset —
+    ///  the defect class behind both the SeekToBlock-at-EOD and the SpaceMarks bugs.
+    /// </para>
+    /// </summary>
+    private bool SyncStreamPosition()
+    {
+        try
+        {
+            long pos = CurrentPositionBytes();
+            if (m_stream.Position != pos)
+                m_stream.Position = pos;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            LogErrorAsDebug("Stream seek failed");
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Truncates the backing stream to match the current virtual block state.
     /// </summary>
     private void TruncateStream()
@@ -1199,17 +1258,46 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
     }
 
     /// <summary>
-    /// Calculates total stream length based on all data virtual blocks.
+    /// Total stream length implied by the virtual-block list.
+    /// <remarks>
+    /// O(1) in practice: data blocks are laid out contiguously in the backing stream in block order
+    ///  (writes append; truncation removes a suffix), so the LAST data block's
+    ///  <c>StreamOffset + DataLength</c> IS the total. Marks contribute nothing, so the scan back over any
+    ///  trailing marks is a step or two. DEBUG builds cross-check against the full summation.
+    /// </remarks>
     /// </summary>
     private long CalculateStreamLength()
     {
         long length = 0;
-        foreach (var vb in m_virtualBlocks)
+
+        for (int i = m_virtualBlocks.Count - 1; i >= 0; i--)
         {
+            var vb = m_virtualBlocks[i];
             if (!vb.IsMark)
-                length += vb.DataLength;
+            {
+                length = vb.StreamOffset + vb.DataLength;
+                break;
+            }
         }
+
+        AssertStreamLengthMatchesSummation(length);
         return length;
+    }
+
+    /// <summary>
+    /// Cross-checks the O(1) last-data-block result against the O(n) summation — i.e. verifies that data
+    ///  blocks really are contiguous from offset 0. A mismatch means a write/truncate path left a gap.
+    /// </summary>
+    [Conditional("DEBUG")]
+    private void AssertStreamLengthMatchesSummation(long compLength)
+    {
+        long sum = 0;
+        foreach (var vb in m_virtualBlocks)
+            if (!vb.IsMark)
+                sum += vb.DataLength;
+
+        Debug.Assert(sum == compLength,
+            $"CalculateStreamLength fast {compLength} != summation {sum} — data blocks are not contiguous");
     }
 
     #endregion

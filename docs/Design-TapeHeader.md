@@ -1,6 +1,6 @@
 # Design — Tape Media Header for TapeLibNET
 
-**Status:** v11 · **implemented, integrated, and green** across library, service, CLI, and WPF
+**Status:** v12 · **implemented, integrated, and green** across library, service, CLI, and WPF
 **Scope:** the media header (BOM identity record) and everything that consumes it
 **Depends on:** `MediaId` (Guid) in `TapeTOC`
 
@@ -9,8 +9,8 @@
 ## 1. What the feature does
 
 Every medium TapeLibNET formats or writes from beginning-of-media now carries a **media header**: one
-16 KiB framed record at the beginning of the content partition that positively identifies the cartridge
-in a single cheap block read.
+16 KiB framed record, terminated by a filemark, at the beginning of the content partition, which
+positively identifies the cartridge in a single cheap block read.
 
 This delivers four user-visible capabilities:
 
@@ -26,8 +26,11 @@ This delivers four user-visible capabilities:
 - **Graceful legacy coexistence.** Header-less media written by earlier versions still loads, restores,
   and appends. Mixed series (legacy volume 1, headed volume 2+) restore correctly end to end.
 
-The header is **additive and non-destructive**: it is never inserted into already-written media, and it
-never alters setmark/filemark counting.
+The header is **additive and non-destructive**: it is never inserted into already-written media, and its
+own filemark is never counted as a set separator — setmark/filemark *arithmetic* is unchanged, because
+every content-side path reaches begin-of-content by spacing over the header's mark rather than by
+counting from BOM. **Exception:** some optimization paths that account for the header filemark for filemark
+movement operations -- yet only under strict checking for the header-present condition (s. §5.7)
 
 ---
 
@@ -37,7 +40,7 @@ never alters setmark/filemark counting.
 |---|---|
 | **Cheap positive identity** | One 16 KiB framed-CRC block answers "whose medium is this, which volume, which kind?" — no TOC parse, no EOD seek. |
 | **Uniform across layouts** | Written on *all* formatted media, single- and multi-partition alike, always at content-partition BOM. |
-| **Counting is sacred** | The header lives outside set counting. Setmark/filemark arithmetic is byte-for-byte unchanged. |
+| **Counting is sacred** | The header lives outside *set* counting. Its trailing filemark is never attributed to a set boundary: every content-side path spaces over it via one primitive, so set indices are unaffected. |
 | **Agent writes, service evaluates** | Writing is mechanism (agent); judging identity and prompting is policy (service). The navigator does neither — it counts and caches presence. |
 | **Positive classification only** | A medium is "ours" only when a framed CRC validates *and* the kind byte is known. Everything else is Unidentified and never blocks. |
 
@@ -181,12 +184,24 @@ partitioned media the content-BOM header and the initiator-partition TOC occupy 
 ### 5.1 Layout
 
 ```
-Single-partition:  ‹MH›[set0][SM][set1][SM]…[setN][SM][toc1][FM][toc2][FM]
-Partitioned:       content: ‹MH›[set0][SM]…[setN][SM]   |   initiator: [toc1][FM][toc2][FM]
+Single-partition:  ‹MH›<FM>[set0][SM][set1][SM]…[setN][SM][toc1][FM][toc2][FM]
+Partitioned:       content: ‹MH›<FM>[set0][SM]…[setN][SM]   |   initiator: [toc1][FM][toc2][FM]
 ```
 
-`‹MH›` is one logical block at content-partition BOM, written with a single `WriteDirect`, with **no
-trailing filemark**. Content begins at logical block 1.
+`‹MH›` is one logical block at content-partition BOM, written with a single `WriteDirect` and
+**terminated by one filemark**. Content begins immediately past that mark.
+
+**Why the mark exists.** Tape drives classically accept a write only at BOP, at EOD, or immediately after
+a mark. Without the filemark, every "write content from begin-of-content" — the first set on a volume, an
+overwrite, a delete-all — would be a **mid-data** write whenever anything already follows the header, and
+a strict drive family would reject it outright. The mark makes every content-start a legal **post-mark**
+write on every drive, at the cost of one mark per volume. (An earlier revision omitted it; §15.1 records
+the hazard and the hardware evidence that prompted the change.)
+
+**Position is reached by SPACING, never by block arithmetic.** Begin-of-content is `MoveToNextFilemark(1)`
+from BOM, not `MoveToBlock(n)`. Spacing needs no assumption about whether a drive numbers marks in its
+logical block space — real drives generally do not, while the virtual backend deliberately does — and it
+is the same primitive the TOC path already relies on.
 
 ### 5.2 Presence and sentinels
 
@@ -200,13 +215,26 @@ work (§10.3).
 
 `MoveToBeginOfContent`:
 
-- **Present** → content BOM, skip one header block → logical block 1, `CurrentContentSet = 0`
+- **Present** → content BOM, then **space forward over the header's filemark** → begin-of-content,
+  `CurrentContentSet = 0`
 - **Absent** → content BOM → block 0, `CurrentContentSet = 0`
 - **Unknown** → treated permissively as Absent (no skip)
 
 `NavigateToHeader()` positions at content-partition BOM and sets `CurrentContentSet = AtHeader`;
 `MoveToTargetContentSet` includes `AtHeader` in its from-end guard so a negative target while at the
 header first moves to a known boundary.
+
+**`AtHeader` covers two physical positions, and both work.** `NavigateToHeader()` leaves the head *before*
+the header block; `ResolveHeaderPresence(Present)` — after an agent read consumed the block — leaves it
+*after* the block but *before* the mark. One forward filemark space reaches begin-of-content from either,
+because the header block itself carries no marks. This is what lets the `AtHeader` fast paths skip the
+rewind entirely.
+
+> **`AtHeader` ≠ header present.** The sentinel says *where the head is*; `HeaderPresence` says *whether a
+> header exists*. They are set independently — `NavigateToHeader(forWrite: true)` parks at `AtHeader` on a
+> not-yet-headed tape, which is exactly what the header *write* path does. Any `AtHeader` shortcut must
+> therefore test presence before spacing (INV-19); inferring one from the other spaces to the first mark
+> on tape, which on a setmark layout is the **TOC's** — far past all content.
 
 ### 5.4 The navigator stays usable standalone
 
@@ -234,15 +262,46 @@ Maintenance rule: `grep -n "ERROR_BEGINNING_OF_MEDIA\|Drive.Rewind()" TapeNaviga
 `WithFmksAndTOCMark` `UnknownSet` rewind stays **raw**: it scans *forward* for the 3-filemark TOC mark
 and is header-transparent by construction.
 
-### 5.6 Partition navigator — combined LOCATE, and Absent still repositions
+### 5.6 Partition navigator — combined LOCATE for Absent, space for Present
 
-`TapeNavigatorTOCInPartition` routes header I/O and begin-of-content to the **content** partition. Its
-`MoveToBeginOfContentFromBom` computes one target block (Present ⇒ 1, Absent ⇒ 0) and issues a single
-`MoveToPartition(Content, targetBlock)` — Win32 `SetTapePosition` takes partition and block together —
-with a stepwise fallback (switch → rewind → optional `MoveToBlock`). The **Absent branch still switches
-and rewinds**: it performs real repositioning, not a no-op, otherwise a legacy partitioned tape
-mis-navigates from a stale (e.g. initiator) position. The `CurrentContentSet == 0` fast path is retained
-so a header read that already set 0 doesn't redo the switch.
+`TapeNavigatorTOCInPartition` routes header I/O and begin-of-content to the **content** partition.
+`MoveToPartition(Content, block)` sets partition and block in one Win32 `SetTapePosition`, so the
+**Absent/Unknown** case is a single combined LOCATE to block 0. The **Present** case cannot use a block
+number (that would assume how the drive counts marks), so it switches to the content partition at block 0
+and then spaces forward over the header's filemark.
+
+The Absent branch still performs a real repositioning rather than a no-op — otherwise a legacy partitioned
+tape would mis-navigate from a stale (e.g. initiator) position. The `CurrentContentSet == 0` fast path is
+retained so a header read that already set 0 does not redo the switch.
+
+### 5.7 Merging the header filemark into the forward set count (Optimization)
+
+On a **filemark-delimited** layout the header's trailing mark is the same mark type as the set
+separators, so it is indistinguishable from one to a forward SPACE. Counting from BOM:
+
+```
+       FM#1          FM#2          FM#3
+‹MH›  <FM>  [set0]  <FM>  [set1]  <FM>  [set2] …
+
+filemarksFromBom(N) = N + (headerPresent ? 1 : 0)
+```
+
+`TapeNavigatorTOCInSet.MoveToTargetContentSet` therefore takes a fast path when **all three** hold:
+`!UseSmks`, `TargetContentSet >= 0`, and `CurrentContentSet < 0` (i.e. `UnknownSet` / `InTOCSet` /
+`AtHeader` / a from-end index). It reaches set N with **one** space over `N + headerFilemarks` marks
+instead of "space past the header, then space N more" — saving one transport stop-and-restart per set
+navigation. From `AtHeader` no rewind is needed at all (§5.3).
+
+**The guard is `!UseSmks`, not the navigator type.** With real setmarks the layout is one *filemark* then
+N *setmarks* — two mark types, unmergeable. Since `UseSmks` can be false on a setmark-capable drive, the
+condition belongs on the flag. Placing the override in the shared `TapeNavigatorTOCInSet` base gives it to
+both filemark navigators (`…WithFmks`, the LTO single-partition path, and `…WithFmksAndTOCMark`) with **no
+hierarchy change** — which is why those two remain independent: `…WithFmksAndTOCMark` overrides everything
+`…WithFmks` defines (their TOC-locating strategies genuinely differ), so derivation would inherit nothing.
+
+The saving applies when a header is present and the target is ≥ 1. Because the *newest* set is usually
+reached by negative indexing, the win lands on older / middle sets — and it makes the header's navigation
+cost on this path provably **zero** rather than "one extra space".
 
 ---
 
@@ -250,15 +309,20 @@ so a header read that already set 0 doesn't redo the switch.
 
 ### 6.1 Atomic block operations, no dedicated tape state
 
-The header is one 16 KiB block with no filemark, so write and read are single `WriteDirect` /
-`ReadDirect` operations rather than persistent streams. `WriteHeaderBlock` / `ReadHeaderBlock` do
-`EndReadWrite()` → position → one block op, staying in `MediaPrepared`. The `_operationLock` plus
-`EndReadWrite()` already provide interleaving safety, and the block ops never leave a restful
-externally-visible state.
+The header is one 16 KiB block plus one filemark, so write and read remain single-shot operations rather
+than persistent streams. `WriteHeaderBlock` / `ReadHeaderBlock` do `EndReadWrite()` → position → the block
+op, staying in `MediaPrepared`. The `_operationLock` plus `EndReadWrite()` already provide interleaving
+safety, and the block ops never leave a restful externally-visible state.
 
-They **reset the content position on any early failure** (a torn write/read leaves position unknown) and,
-on success, leave `CurrentContentSet = 0` — because the media header lives at content BOM on every
-layout, so either way the tape sits at begin-of-content.
+`TapeHeaderBlock.WriteFramed` emits **block + filemark** as one unit, so the write path ends at
+begin-of-content and `OnHeaderWritten()` legitimately records `CurrentContentSet = 0`.
+
+`TapeHeaderBlock.Read` is deliberately **pure** — it reads the block and classifies, leaving the head
+*before* the trailing mark. `ResolveHeaderPresence(Present)` therefore parks at **`AtHeader`**, not at
+begin-of-content, so any later content navigation routes through the space-over-the-mark primitive. The
+write-after / read-before asymmetry is the one thing to keep in mind when touching either path.
+
+Both **reset the content position on any early failure** (a torn write or read leaves position unknown).
 
 ### 6.2 `read ≤ 0` at BOM means Absent, not Unknown
 
@@ -699,7 +763,7 @@ sub-step; and **"Refresh" ≠ "Reload"** — Refresh is pure in-memory redisplay
 | **INV-2** | Presence and identity are established only by a framed-CRC probe, never by mark counting. |
 | **INV-3** | The *agent* guarantees presence is resolved before content navigation; the navigator treats unresolved `Unknown` permissively as `Absent` so it stays usable standalone — only `Present` triggers the skip. |
 | **INV-4** | Headers are written only from format / fresh-volume paths; never inserted into written media. |
-| **INV-5** | The media header is one 16 KiB block with no trailing filemark (calibration uses the run block). |
+| **INV-5** | The media header is one 16 KiB block **terminated by one filemark**; begin-of-content is reached by spacing over that mark, never by block arithmetic. |
 | **INV-6** | Every header carries a `TapeHeaderKind` byte after the signature. |
 | **INV-7** | Classification is positive-only: `Unknown` unless the framed CRC validates **and** the kind is known. |
 | **INV-8** | Kinds are mutually exclusive per block. |
@@ -713,10 +777,13 @@ sub-step; and **"Refresh" ≠ "Reload"** — Refresh is pure in-memory redisplay
 | **INV-16** | The agent writes the media header at `CurrentSetIndex == FirstSetOnVolume` when `WritesMediaHeader`; heading is mechanism, the wrong-media verdict stays service/load-time. |
 | **INV-17** | `VirtualTapeMedia.SeekToBlock` positions the backing stream via `CurrentPositionBytes()` for every landing (inside-data / mark / EOD), so a write after a seek never clobbers earlier data. |
 | **INV-18** | On-tape size accounting includes the header block per volume. |
+| **INV-19** | `AtHeader` states *where the head is*; `HeaderPresence` states *whether a header exists*. Neither may be inferred from the other — every `AtHeader` shortcut tests presence before spacing. |
+| **INV-20** | The header's filemark is merged into the forward set count only when `UseSmks == false`; with setmark separators the two mark types cannot be combined. |
+| **INV-21** | Every `VirtualTapeMedia` operation that changes the logical position also syncs the backing stream via `CurrentPositionBytes()` — logical position, cached virtual-block index and stream position are one state in three fields. |
 
 ---
 
-## 12. Two fixes the header surfaced
+## 12. Three fixes the header surfaced
 
 ### 12.1 `VirtualTapeMedia.SeekToBlock` at EOD
 
@@ -741,6 +808,30 @@ Each media header consumes 16 KiB of content capacity per volume.
 `TapeTOC.ComputeTotalFileSizeOnTape` accounts for it (per volume, or × distinct-volume-count when
 `onVolumeOnly: false`), so `TapeServiceBase.Used` and the early-warning reserve stay honest. Small
 virtual multi-volume media feel this first.
+
+### 12.3 VirtualTapeMedia position synchronization
+
+Three defects in the virtual backend shared one shape — **logical position updated, physical position
+forgotten**: `SeekToBlock` at EOD (§12.1), byte drift in `TruncateFromCurrentPosition`, and finally
+`SpaceMarks` / `SpaceSequentialMarks`, which updated `m_currentBlock` and the cached virtual-block index
+but never `m_stream.Position`. The last surfaced precisely because the header's trailing filemark made
+*spacing* the normal route to begin-of-content, so a write after it landed at a stale offset.
+
+The fix is structural rather than local: one private `SyncStreamPosition()`, derived from the already
+authoritative `CurrentPositionBytes()`, called by **every** positioning operation — including `Rewind` and
+`SeekToEnd`, which had been hand-rolling the same computation. A DEBUG `AssertPositionConsistent()` pairs
+with the existing `AssertByteTotalConsistent()` to check both halves (cached index matches the logical
+block; stream matches the logical position), so the next positioning operation cannot silently opt out.
+
+Alongside it, three optimizations: hint-first `FindVirtualBlockIndex` (the cached index, then the next one
+— O(1) on sequential traversal, binary search otherwise), an early-out in `SyncVirtualBlockIndex`, and an
+O(1) `CalculateStreamLength` from the last data block, cross-checked in DEBUG against the full summation
+(which also verifies that data blocks really are contiguous from offset 0).
+
+**Test gap closed.** These bugs survived because `VirtualTapeMedia` had no dedicated suite — every test
+reached it *through* a `TapeDrive`, so its own invariants were only exercised incidentally. The new
+`VirtualTapeMediaTests` (~30 tests) asserts them directly, and every position test **reads back what
+physically landed** rather than trusting the logical state, which is what catches a stale stream.
 
 ---
 
@@ -772,6 +863,11 @@ Applied to the navigator suite and all agent suites (backup, restore, packed, pi
 multi-volume × `{None, All, Mixed}`. Header-unsuitable tests (those that raw-fill the tape and build
 their own TOC) stay in the base guarded by `Skip.If(WithMediaHeader, …)`. Assertions of an absolute block
 0 key off `fixture.FirstContentBlock` (1 headed / 0 headerless) rather than a literal.
+
+> Assertions of an absolute block 0 key off `fixture.FirstContentBlock`" → note it is now
+> **2 headed / 0 headerless** (one block + one filemark, since the virtual backend numbers marks), and
+> that it is derived from a `HeaderBlocks` constant rather than a literal so the on-tape shape can change
+> without touching assertions.
 
 ### 13.2 Fixtures simulate the service
 
@@ -824,6 +920,12 @@ merely quiet.
   tape.
 - **Virtual backend** — `SeekToBlock` at EOD appends without clobbering (§12.1); strict-write-position
   tests (below).
+- **Navigator** — forward navigation from `AtHeader` / `UnknownSet` / `InTOCSet` lands on the requested
+  set, verified by the set's own data (the ±1 guard for the merged
+  filemark count), across all four profiles × both header modes; plus the `UseSmks = false` case on a
+  setmark-capable drive."* and *"**Virtual media** — `VirtualTapeMediaTests`: position consistency after
+  every positioning op, block numbering, truncation and byte accounting, capacity enforcement, strict
+  write positioning, state round-trip.
 
 ### 13.6 Real-hardware validation
 
@@ -843,6 +945,8 @@ scenarios' first backup.
 The physical fixture gained a per-format `forceNoPartition` override (with `EffectiveUsesPartition`) so a
 single test can exercise the TOC-in-set / case-B path on a partition-capable drive without changing the
 session's mode.
+
+> S10 (mid-data) is now (v12) *background evidence*; **S11 (post-mark) matches production**.
 
 ---
 
@@ -874,39 +978,37 @@ sub-1% residual false-parse is acceptable for a temporary development flag. Bump
 
 ## 15. Known risks and watch-items
 
-The feature is complete and green, but three properties are worth keeping in view. None is currently
-observed as a defect; each is recorded with the shape of its fix so a future maintainer does not have to
-re-derive it.
+The feature is complete and green. The paramount risk of earlier revisions — the missing trailing
+filemark — is **resolved** (§15.1, retained for its rationale). Three properties remain worth keeping in
+view; none is currently observed as a defect, and each is recorded with the shape of its fix.
 
-### 15.1 The header carries no trailing filemark — begin-of-content is a mid-data write
+### 15.1 ~~No trailing filemark~~ — RESOLVED in v12
 
-**What.** By design the header block is followed immediately by content, with no mark between them
-(§5.1). Consequently every "write content from beginning-of-content" — the first set on a volume, an
-overwrite, a delete-all — resumes writing at logical block 1, which is **mid-data** whenever anything
-already follows the header (a transient initial TOC, or an existing set).
+**Resolved.** The header now carries a trailing filemark (§5.1), so begin-of-content is a **post-mark**
+write on every drive family and the showstopper risk is retired. The reasoning and evidence are kept here
+because they justify a mark that otherwise looks like pure overhead.
 
-**Why it is a risk.** Tape drives classically accept a write only at BOP, at EOD, or immediately after a
-mark. A drive family that enforces that strictly would reject the begin-of-content write outright — a
-showstopper, not a degradation.
+**The hazard.** Without the mark, a content-start at begin-of-content is a **mid-data** write whenever
+anything follows the header (a transient initial TOC, or an existing set). Tape drives classically accept
+writes only at BOP, at EOD, or immediately after a mark; a strict family would have rejected it outright.
 
-**Current evidence.** Accepted on **AIT-2** (conformance probes S10 mid-data vs. S11 post-mark both pass)
-and on **DLT-V4**; LTO is permissive by construction. The virtual backend models the strict rule via
-`VirtualTapeMedia.ResumeWriteFromMarkOnly`, and the deterministic tests pin the three cases (mid-data
-rejected, EOD accepted, post-mark accepted) so the hazard stays visible.
+**The evidence.** The virtual backend models the rule via `VirtualTapeMedia.ResumeWriteFromMarkOnly`, and
+deterministic tests pin all three cases (mid-data rejected, EOD accepted, post-mark accepted). On hardware
+two conformance probes isolate the primitive: **S10** overwrites from a mid-data logical block, **S11**
+from just after a filemark. **AIT-2 and DLT-V4 accept both**, and LTO is permissive by construction — so
+the mid-data shape was *not* observed failing anywhere. The mark was reinstated anyway: the untested drive
+families are the ones that would fail, and the failure mode is catastrophic rather than degraded.
 
-**Resolution path.** Write one filemark after the header, making every content-start a legal post-mark
-write. Two consequences to handle:
+**Why no compatibility flag was needed.** The feature had not shipped, so the only header-without-mark
+media in existence was development test cartridges, which were simply reformatted. A `HeaderTrailingMark`
+field would have added a permanent format concession to guard a transient condition. Had both shapes
+needed to coexist, the cheaper route would have been **auto-detect** (peek one block after the header: a
+tapemark ⇒ new shape and already positioned; data ⇒ old shape, reposition) rather than a serialized flag —
+one extra read, self-correcting on both shapes, no wire-format change.
 
-- `MoveToBeginOfContentFromBom` would space forward over one mark instead of `MoveToBlock(1)` — which is
-  arguably *more* robust on real hardware than absolute block arithmetic anyway.
-- **Legacy headed media written without the mark would mis-navigate**, so the two shapes must be
-  distinguishable. The cleanest form is to record the shape **in the header itself** (a
-  `HeaderTrailingMark` flag alongside `TocPlacement`, which is exactly the kind of self-description that
-  field already provides) and have the navigator honour it; probing for a mark after the header is
-  possible but costs a read and is ambiguous on a torn tape.
-
-**Window.** Adding the flag is a format change, so it is cheapest **before** the first release that writes
-headers in the field; afterwards the flag must default to "no mark" for media that predates it.
+**Bonus.** Spacing over a mark is *more* robust than the `MoveToBlock(1)` it replaced, since it assumes
+nothing about whether a drive numbers marks in its logical block space — and it enabled the forward-count
+merge of §5.7.
 
 ### 15.2 Legacy calibration cartridges classify heuristically
 
@@ -956,6 +1058,9 @@ Its value is **verified set navigation**: on read, the agent compares `VolumeSet
 navigator's target, self-correcting within bounds and otherwise escalating the `MediaInconsistent`
 verdict that already exists in `TapeMediaVerdict`. Today set positioning is trusted; with set headers it
 becomes checked.
+
+> The set header inherits the same rule: its block is followed by content with no mark,
+> so if verified set navigation ever writes from a set boundary, the §15.1 reasoning applies again.
 
 The design fits the existing foundation without disturbing it:
 

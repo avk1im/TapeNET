@@ -891,7 +891,8 @@ public abstract class TapeNavigatorTestsBase
         Assert.True(nav.WriteTOCFilemark());
 
         // Rewind and navigate forward past the first filemark to verify round-trip
-        nav.Drive.Rewind();
+        nav.Drive.Rewind(); nav.ResetContentSet();
+        nav.MoveToBeginOfContent(); // <- this guarantees we've skipped the header if there's one
         Assert.True(nav.MoveToNextTOCFilemark());
         Assert.Equal(afterFm, nav.GetCurrentBlock());
     }
@@ -1494,6 +1495,271 @@ public abstract class TapeNavigatorTestsBase
             Assert.Equal(positiveBlocks[i], negBlock);
             Assert.Equal(starts[i], negBlock);
         }
+    }
+
+    #endregion
+
+
+    #region *** Merged header filemark: forward navigation from outside content ***
+
+    // The forward fast path in TapeNavigatorTOCInSet merges the media header's trailing filemark into
+    //  the set-separator count: on a FILEMARK-delimited layout, set N is reached from BOM by ONE space
+    //  over (N + headerFilemarks) filemarks, instead of "space past the header, then space N more".
+    //
+    // The entire risk surface is that single adjustment:
+    //   +1 when the header is ABSENT  ⇒ lands one set LATE
+    //   +0 when the header is PRESENT ⇒ lands one set EARLY
+    // Both are invisible to a "did it succeed?" assertion, so every test here verifies the DATA of the
+    //  set it reached — the fill byte is unique per set, so landing on a neighbour fails loudly.
+    //
+    // Setmark profiles run the same tests unchanged (they take the base path), which is the point:
+    //  the fast path must be behaviourally indistinguishable.
+
+    /// <summary>
+    /// Reads one block at the current position and asserts it carries <paramref name="expectedFill"/> —
+    ///  i.e. that we landed on the intended SET, not merely on a plausible block number.
+    /// </summary>
+    /// <remarks>Consumes one block, so call it last for a given position (or re-navigate afterwards).</remarks>
+    private static void AssertSetDataAt(TapeNavigator nav, byte expectedFill)
+    {
+        var buffer = new byte[nav.Drive.BlockSize];
+        int read = nav.Drive.ReadDirect(buffer, 0, buffer.Length);
+
+        Assert.Equal(buffer.Length, read);
+        Assert.All(buffer, b => Assert.Equal(expectedFill, b));
+    }
+
+    /// <summary>Fill byte written for set <paramref name="setIndex"/> by <see cref="WriteFullTapeLayout"/>.</summary>
+    private static byte SetFill(int setIndex) => (byte)(0x10 * (setIndex + 1));
+
+    /// <summary>
+    /// Parks the navigator at <see cref="TapeNavigator.AtHeader"/> — the state the agent leaves behind
+    ///  after reading the media header, and the one the merged count must handle without a rewind.
+    /// </summary>
+    /// <remarks>
+    /// Uses write intent so this works for BOTH flavors: with no header present, read intent would
+    ///  (correctly) refuse. Write intent simply positions at BOM, which is what a headerless tape's
+    ///  begin-of-content is anyway.
+    /// </remarks>
+    private static void ParkAtHeader(TapeNavigator nav)
+    {
+        Assert.True(nav.NavigateToHeader(forWrite: true), "failed to park at the header");
+        Assert.Equal(TapeNavigator.AtHeader, nav.CurrentContentSet);
+    }
+
+    /// <summary>
+    /// THE off-by-one guard: from <c>AtHeader</c>, forward navigation must land on the requested set —
+    ///  verified by the set's own data, for every set on the tape.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void MoveToTargetContentSet_FromAtHeader_LandsOnRequestedSet(DriveProfile profile)
+    {
+        var (fixture, nav) = CreateNavigator(profile);
+        using var _ = fixture;
+
+        var starts = WriteFullTapeLayout(nav, setCount: 3, blocksPerSet: 4);
+
+        for (int i = 0; i < starts.Length; i++)
+        {
+            ParkAtHeader(nav);                       // re-park before each, so every hop is a fresh merge
+
+            nav.TargetContentSet = i;
+            Assert.True(nav.MoveToTargetContentSet(), $"failed to navigate to set {i} from AtHeader");
+
+            Assert.Equal(i, nav.CurrentContentSet);
+            Assert.Equal(starts[i], nav.GetCurrentBlock());
+            AssertSetDataAt(nav, SetFill(i));        // the set's OWN data — catches ±1 set
+        }
+    }
+
+    /// <summary>
+    /// Set 0 is the boundary case: with a header the merged count is exactly 1 filemark, without it 0.
+    ///  Landing must match <see cref="TapeNavigator.MoveToBeginOfContent"/> and the fixture's
+    ///  <c>FirstContentBlock</c>.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void MoveToTargetContentSet_FromAtHeader_ToSetZero_MatchesBeginOfContent(DriveProfile profile)
+    {
+        var (fixture, nav) = CreateNavigator(profile);
+        using var _ = fixture;
+
+        var starts = WriteFullTapeLayout(nav, setCount: 2, blocksPerSet: 4);
+        Assert.Equal(fixture.FirstContentBlock, starts[0]);   // sanity: set 0 begins at begin-of-content
+
+        // Route A — the merged fast path from AtHeader.
+        ParkAtHeader(nav);
+        nav.TargetContentSet = 0;
+        Assert.True(nav.MoveToTargetContentSet());
+        long viaTarget = nav.GetCurrentBlock();
+
+        // Route B — the established begin-of-content path.
+        nav.ResetContentSet();
+        Assert.True(nav.MoveToBeginOfContent());
+        long viaBeginOfContent = nav.GetCurrentBlock();
+
+        Assert.Equal(viaBeginOfContent, viaTarget);
+        Assert.Equal(fixture.FirstContentBlock, viaTarget);
+
+        AssertSetDataAt(nav, SetFill(0));
+    }
+
+    /// <summary>
+    /// The same merge applies from <c>UnknownSet</c> — the only difference being that a rewind precedes
+    ///  the single space. Pins that the header adjustment is not accidentally tied to the AtHeader entry.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void MoveToTargetContentSet_FromUnknown_LandsOnRequestedSet(DriveProfile profile)
+    {
+        var (fixture, nav) = CreateNavigator(profile);
+        using var _ = fixture;
+
+        var starts = WriteFullTapeLayout(nav, setCount: 3, blocksPerSet: 4);
+
+        for (int i = 0; i < starts.Length; i++)
+        {
+            nav.ResetContentSet();                   // UnknownSet ⇒ rewind + merged space
+
+            nav.TargetContentSet = i;
+            Assert.True(nav.MoveToTargetContentSet(), $"failed to navigate to set {i} from UnknownSet");
+
+            Assert.Equal(starts[i], nav.GetCurrentBlock());
+            AssertSetDataAt(nav, SetFill(i));
+        }
+    }
+
+    /// <summary>
+    /// From inside the TOC — the restore-side entry point — a positive target must still land correctly.
+    ///  (The TOC sits past all content, so this exercises rewind + merged space from the far end.)
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void MoveToTargetContentSet_FromInTOCSet_PositiveIndex_LandsOnRequestedSet(DriveProfile profile)
+    {
+        var (fixture, nav) = CreateNavigator(profile);
+        using var _ = fixture;
+
+        var starts = WriteFullTapeLayout(nav, setCount: 3, blocksPerSet: 4);
+
+        for (int i = 0; i < starts.Length; i++)
+        {
+            Assert.True(nav.MoveToBeginOfTOC());
+            Assert.Equal(TapeNavigator.InTOCSet, nav.CurrentContentSet);
+
+            nav.TargetContentSet = i;
+            Assert.True(nav.MoveToTargetContentSet(), $"failed to navigate to set {i} from InTOCSet");
+
+            Assert.Equal(starts[i], nav.GetCurrentBlock());
+            AssertSetDataAt(nav, SetFill(i));
+        }
+    }
+
+    /// <summary>
+    /// The merge must not disturb NEGATIVE (from-end) navigation, which never counts from BOM and so
+    ///  must never apply the header adjustment.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void MoveToTargetContentSet_FromAtHeader_NegativeIndex_StillCountsFromEnd(DriveProfile profile)
+    {
+        var (fixture, nav) = CreateNavigator(profile);
+        using var _ = fixture;
+
+        var starts = WriteFullTapeLayout(nav, setCount: 3, blocksPerSet: 4);
+
+        // -2 is the newest set (set 2) regardless of any header at BOM.
+        ParkAtHeader(nav);
+        nav.TargetContentSet = -2;
+        Assert.True(nav.MoveToTargetContentSet());
+
+        Assert.Equal(-2, nav.CurrentContentSet);
+        Assert.Equal(starts[2], nav.GetCurrentBlock());
+        AssertSetDataAt(nav, SetFill(2));
+    }
+
+    /// <summary>
+    /// Guard placement check: the merge is legal because SEPARATORS ARE FILEMARKS — a property of
+    ///  <see cref="TapeNavigator.UseSmks"/>, not of the drive profile. A setmark-capable drive running
+    ///  with <c>UseSmks = false</c> therefore writes filemark separators and must navigate correctly
+    ///  through the same path.
+    /// </summary>
+    [Fact]
+    public void MoveToTargetContentSet_SetmarkDriveWithUseSmksOff_UsesFilemarkSeparators_AndLandsCorrectly()
+    {
+        var (fixture, nav) = CreateNavigator(DriveProfile.Setmarks);
+        using var _ = fixture;
+
+        nav.UseSmks = false;                          // force filemark separators before anything is written
+        Assert.False(nav.UseSmks);
+
+        var starts = WriteFullTapeLayout(nav, setCount: 3, blocksPerSet: 4);
+
+        for (int i = 0; i < starts.Length; i++)
+        {
+            ParkAtHeader(nav);
+
+            nav.TargetContentSet = i;
+            Assert.True(nav.MoveToTargetContentSet(), $"failed to navigate to set {i} (UseSmks off)");
+
+            Assert.Equal(starts[i], nav.GetCurrentBlock());
+            AssertSetDataAt(nav, SetFill(i));
+        }
+    }
+
+    /// <summary>
+    /// Repeated AtHeader → set hops must not accumulate state drift: navigating to the same set twice,
+    ///  with a re-park in between, must land identically both times.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void MoveToTargetContentSet_FromAtHeader_RepeatedHops_AreStable(DriveProfile profile)
+    {
+        var (fixture, nav) = CreateNavigator(profile);
+        using var _ = fixture;
+
+        var starts = WriteFullTapeLayout(nav, setCount: 3, blocksPerSet: 4);
+
+        long first = 0;
+
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            ParkAtHeader(nav);
+
+            nav.TargetContentSet = 1;
+            Assert.True(nav.MoveToTargetContentSet());
+
+            long landed = nav.GetCurrentBlock();
+            if (attempt == 0)
+                first = landed;
+            else
+                Assert.Equal(first, landed);
+
+            Assert.Equal(starts[1], landed);
+        }
+    }
+
+    /// <summary>
+    /// A single-set tape is the tightest case for the merge: with a header the count is 1, without it 0,
+    ///  and there is no neighbouring set to mask an error — an over-count runs into the TOC region.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void MoveToTargetContentSet_FromAtHeader_SingleSetTape_LandsOnSetZero(DriveProfile profile)
+    {
+        var (fixture, nav) = CreateNavigator(profile);
+        using var _ = fixture;
+
+        var starts = WriteFullTapeLayout(nav, setCount: 1, blocksPerSet: 4);
+
+        ParkAtHeader(nav);
+        nav.TargetContentSet = 0;
+        Assert.True(nav.MoveToTargetContentSet());
+
+        Assert.Equal(0, nav.CurrentContentSet);
+        Assert.Equal(starts[0], nav.GetCurrentBlock());
+        AssertSetDataAt(nav, SetFill(0));
     }
 
     #endregion

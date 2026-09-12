@@ -111,7 +111,8 @@ public sealed class VirtualTapeFixture : IDisposable
     public VirtualTapeDriveBackend Backend { get; }
 
     public bool WithMediaHeader { get; init; }
-    public long FirstContentBlock => WithMediaHeader ? 1 : 0;
+    public long FirstContentBlock => WithMediaHeader ? HeaderBlocks : 0L;
+    private const long HeaderBlocks = 2;   // 1 block + 1 filemark
 
     #endregion
 
