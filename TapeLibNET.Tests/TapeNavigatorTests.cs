@@ -83,8 +83,8 @@ public abstract class TapeNavigatorTestsBase
         var nav = TapeNavigator.ProduceNavigator(fixture.Drive);
         Assert.NotNull(nav);
         
-        nav.ResolveHeaderPresence(fixture.WithMediaHeader ? TapeHeaderPresence.Present : TapeHeaderPresence.Absent);
-        nav.ResetContentSet(); // must reset since ResolveHeaderPresence(Present) would set CurrentContentSet to 0
+        nav.ResolveMediaHeaderPresence(fixture.WithMediaHeader ? TapeHeaderPresence.Present : TapeHeaderPresence.Absent);
+        nav.ResetContentSet(); // must reset since ResolveMediaHeaderPresence(Present) would set CurrentContentSet to 0
 
         return (fixture, nav!);
     }
@@ -610,6 +610,38 @@ public abstract class TapeNavigatorTestsBase
         Assert.True(nav.MoveToTargetContentSet());
         Assert.Equal(1, nav.CurrentContentSet);
         Assert.Equal(pos, nav.GetCurrentBlock());
+    }
+
+    /// <summary>
+    /// Pins SH-4 (design §14 Step 0d): once <see cref="TapeNavigator.CurrentContentSet"/> already equals
+    ///  <see cref="TapeNavigator.TargetContentSet"/>, a further <c>MoveToTargetContentSet()</c> call must
+    ///  perform NO physical transport move — not merely leave the position unchanged. Verified via the
+    ///  virtual media odometer (tape-equivalent distance traveled), which is zero only when no space/seek
+    ///  primitive executed. Covers both the base implementation and the two optimized fast-path overrides
+    ///  (§5.7 filemark-merge, TOC-in-set).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void MoveToTargetContentSet_WhenAlreadyAtTarget_PerformsNoTransportMove(DriveProfile profile)
+    {
+        var (fixture, nav) = CreateNavigator(profile);
+        using var _ = fixture;
+
+        WriteFullTapeLayout(nav, setCount: 3, blocksPerSet: 4);
+
+        nav.TargetContentSet = 1;
+        Assert.True(nav.MoveToTargetContentSet());
+        Assert.Equal(1, nav.CurrentContentSet);
+
+        var media = fixture.Backend.ContentMedia;
+        Assert.NotNull(media);
+        media!.OdometerEnabled = true;
+        media.ResetOdometer();
+
+        // Already at target — must be a genuine no-op: zero tape-equivalent distance traveled.
+        Assert.True(nav.MoveToTargetContentSet());
+        Assert.Equal(1, nav.CurrentContentSet);
+        Assert.Equal(0, media.OdometerBytes);
     }
 
     #endregion
@@ -1533,7 +1565,7 @@ public abstract class TapeNavigatorTestsBase
     private static byte SetFill(int setIndex) => (byte)(0x10 * (setIndex + 1));
 
     /// <summary>
-    /// Parks the navigator at <see cref="TapeNavigator.AtHeader"/> — the state the agent leaves behind
+    /// Parks the navigator at <see cref="TapeNavigator.AtBomHeader"/> — the state the agent leaves behind
     ///  after reading the media header, and the one the merged count must handle without a rewind.
     /// </summary>
     /// <remarks>
@@ -1543,12 +1575,12 @@ public abstract class TapeNavigatorTestsBase
     /// </remarks>
     private static void ParkAtHeader(TapeNavigator nav)
     {
-        Assert.True(nav.MoveToHeader(forWrite: true), "failed to park at the header");
-        Assert.Equal(TapeNavigator.AtHeader, nav.CurrentContentSet);
+        Assert.True(nav.MoveToBomHeader(forWrite: true), "failed to park at the header");
+        Assert.Equal(TapeNavigator.AtBomHeader, nav.CurrentContentSet);
     }
 
     /// <summary>
-    /// THE off-by-one guard: from <c>AtHeader</c>, forward navigation must land on the requested set —
+    /// THE off-by-one guard: from <c>AtBomHeader</c>, forward navigation must land on the requested set —
     ///  verified by the set's own data, for every set on the tape.
     /// </summary>
     [Theory]
@@ -1565,7 +1597,7 @@ public abstract class TapeNavigatorTestsBase
             ParkAtHeader(nav);                       // re-park before each, so every hop is a fresh merge
 
             nav.TargetContentSet = i;
-            Assert.True(nav.MoveToTargetContentSet(), $"failed to navigate to set {i} from AtHeader");
+            Assert.True(nav.MoveToTargetContentSet(), $"failed to navigate to set {i} from AtBomHeader");
 
             Assert.Equal(i, nav.CurrentContentSet);
             Assert.Equal(starts[i], nav.GetCurrentBlock());
@@ -1588,7 +1620,7 @@ public abstract class TapeNavigatorTestsBase
         var starts = WriteFullTapeLayout(nav, setCount: 2, blocksPerSet: 4);
         Assert.Equal(fixture.FirstContentBlock, starts[0]);   // sanity: set 0 begins at begin-of-content
 
-        // Route A — the merged fast path from AtHeader.
+        // Route A — the merged fast path from AtBomHeader.
         ParkAtHeader(nav);
         nav.TargetContentSet = 0;
         Assert.True(nav.MoveToTargetContentSet());
@@ -1607,7 +1639,7 @@ public abstract class TapeNavigatorTestsBase
 
     /// <summary>
     /// The same merge applies from <c>UnknownSet</c> — the only difference being that a rewind precedes
-    ///  the single space. Pins that the header adjustment is not accidentally tied to the AtHeader entry.
+    ///  the single space. Pins that the header adjustment is not accidentally tied to the AtBomHeader entry.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -1709,7 +1741,7 @@ public abstract class TapeNavigatorTestsBase
     }
 
     /// <summary>
-    /// Repeated AtHeader → set hops must not accumulate state drift: navigating to the same set twice,
+    /// Repeated AtBomHeader → set hops must not accumulate state drift: navigating to the same set twice,
     ///  with a re-park in between, must land identically both times.
     /// </summary>
     [Theory]

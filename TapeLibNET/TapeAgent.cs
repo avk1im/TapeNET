@@ -178,11 +178,6 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     /// <summary>Hashing for TOC, fixed since it needs to be known upfront for each tape.</summary>
     private readonly TapeHashAlgorithm c_hashForTOC = TapeHashAlgorithm.Crc64;
 
-    /// <summary>
-    /// Guards <see cref="EnsureHeaderResolved"/> so the one-time BOM probe runs at most once per agent.
-    /// </summary>
-    private bool m_headerResolved = false;
-
     /// <summary>Table of contents for this tape session.</summary>
     public TapeTOC TOC { get; init; } = legacyTOC ?? [];
     /// <summary>
@@ -277,7 +272,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
             // Optimization: consider Navigator's current position when chosing how to specify the content set for Navigator
             int toCurr; // use to determine if current set is closer to Navigator's current position than to begin or end
             if (Navigator.CurrentContentSet != TapeNavigator.UnknownSet && Navigator.CurrentContentSet != TapeNavigator.InTOCSet
-                && Navigator.CurrentContentSet != TapeNavigator.AtHeader)
+                && Navigator.CurrentContentSet != TapeNavigator.AtBomHeader)
             {
                 // translate Navigator.CurrentContentSet to the index on volume
                 int navCurr = (Navigator.CurrentContentSet >= 0) ? Navigator.CurrentContentSet :
@@ -369,7 +364,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     ///  at the start of a fresh content set on a new volume. Builds the header via the TOC (the sole
     ///  header authority), frames it, pads it to the fixed header block, and hands it to the manager.
     /// </summary>
-    public TapeResult WriteHeader()
+    public TapeResult WriteMediaHeader()
     {
         var header = TOC.CreateHeader(tocBlockSize: c_fixedTOCBlockSize, tapeTocPlacement: TOCPlacement);
 
@@ -381,13 +376,12 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
             return TapeResult.Fail(this);
         }
 
-        if (!Manager.WriteHeaderBlock(block))
+        if (!Manager.WriteMediaHeaderBlock(block))
         {
             SyncErrorFrom(Manager);
             return TapeResult.Fail(this);
         }
 
-        m_headerResolved = true;                            // we just wrote it — presence is Present
         m_logger.LogTrace("Media header written: {Header}", header);
         return TapeResult.OK;
     }
@@ -399,21 +393,19 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     /// </summary>
     /// <remarks>The service inspects the returned kind for its verdict; the navigator only learns
     ///  Present (a media header) vs Absent (anything else). Evaluation stays the service's job (D16).</remarks>
-    public TapeHeader? ReadHeader()
+    public TapeHeader? ReadBomHeader()
     {
         var buffer = new byte[TapeHeaderBlock.Size];
-        int read = Manager.ReadHeaderBlock(buffer);
-
-        m_headerResolved = true;
+        int read = Manager.ReadBomHeaderBlock(buffer);
 
         if (read <= 0)
         {
             // Reaching BOM and finding NO data is the blank / legacy / at-EOD case — a DEFINITIVE
             //  "no media header", i.e. Absent. It is NOT an unresolved state: nothing retries
-            //  EnsureHeaderResolved, so leaving Unknown wedges all later navigation
+            //  EnsureMediaHeaderResolved, so leaving Unknown wedges all later navigation
             //  (MoveToBeginOfContentFromBom rejects Unknown). Absent lets navigation proceed and
             //  skip nothing — exactly right for headerless media.
-            Navigator.ResolveHeaderPresence(TapeHeaderPresence.Absent);
+            Navigator.ResolveMediaHeaderPresence(TapeHeaderPresence.Absent);
             return null;
         }
 
@@ -421,7 +413,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
 
         // A readable block that is NOT our media header (calibration / foreign / torn) is likewise
         //  "no media header here" for navigation = Absent; the service still learns the concrete kind.
-        Navigator.ResolveHeaderPresence(
+        Navigator.ResolveMediaHeaderPresence(
             header is TapeMediaHeader ? TapeHeaderPresence.Present : TapeHeaderPresence.Absent);
 
         if (header is not null)
@@ -432,25 +424,22 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
 
 
     /// <summary>Convenience: reads the header and returns just the resulting presence.</summary>
-    public TapeHeaderPresence ProbeHeaderPresence()
+    public TapeHeaderPresence ProbeMediaHeaderPresence()
     {
-        ReadHeader();
-        return Navigator.HeaderPresence;
+        ReadBomHeader();
+        return Navigator.MediaHeaderPresence;
     }
 
     /// <summary>
     /// Resolves header presence before the first content/TOC navigation, if not already known. Idempotent
     ///  and best-effort: on I/O failure presence stays Unknown and downstream navigation surfaces the error.
     /// </summary>
-    internal void EnsureHeaderResolved()
+    internal void EnsureMediaHeaderResolved()
     {
-        if (m_headerResolved || Navigator.HeaderPresence != TapeHeaderPresence.Unknown)
-        {
-            m_headerResolved = true;
+        if (Navigator.MediaHeaderPresence != TapeHeaderPresence.Unknown)
             return;
-        }
 
-        ReadHeader();
+        ReadBomHeader();
     }
 
     #endregion // *** Media Header ***
@@ -459,7 +448,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
 
     private bool BeginWriteTOC()
     {
-        // Do NOT EnsureHeaderResolved() here — TOC navigation works from end-of-content and never
+        // Do NOT EnsureMediaHeaderResolved() here — TOC navigation works from end-of-content and never
         //  needs header presence; resolving here would rewind to BOM and destroy the position.
 
         // If we were reading or writing, end it first - before setting the parameters for TOC writing
@@ -614,7 +603,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
 
         if (writeHeader ?? WritesMediaHeader)
         {
-            var hr = WriteHeader();
+            var hr = WriteMediaHeader();
             if (!hr) return hr;
         }
 
@@ -674,7 +663,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
             //  so resolve header presence up front. Otherwise MoveToBeginOfContent / MoveToTargetContentSet
             //  on a headed tape would meet an unresolved Unknown → permissive Absent → no header skip →
             //  land at block 0 and clobber the media header. Idempotent / no-op once resolved.
-            EnsureHeaderResolved();
+            EnsureMediaHeaderResolved();
 
             if (deletingAll)
             {
@@ -780,7 +769,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
 
     private bool BeginReadTOC()
     {
-        // Do NOT EnsureHeaderResolved() here — TOC navigation works from end-of-content and never
+        // Do NOT EnsureMediaHeaderResolved() here — TOC navigation works from end-of-content and never
         //  needs header presence; resolving here would rewind to BOM and destroy the position.
 
         // If we were reading or writing, end it first - before setting the parameters for TOC reading

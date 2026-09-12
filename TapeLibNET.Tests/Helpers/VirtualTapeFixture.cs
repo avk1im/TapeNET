@@ -173,7 +173,7 @@ public sealed class VirtualTapeFixture : IDisposable
         if (withMediaHeader)
         {
             using var a = new TapeFileAgent(Drive, TOC);
-            Assert.True(a.WriteHeader(), "Fixture: WriteHeader failed");
+            Assert.True(a.WriteMediaHeader(), "Fixture: WriteMediaHeader failed");
         }
         WithMediaHeader = withMediaHeader;
     }

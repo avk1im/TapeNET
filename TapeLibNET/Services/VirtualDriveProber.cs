@@ -143,7 +143,7 @@ public static class VirtualDriveProber
                 drive.PrepareMedia();
                 agent = new TapeFileAgent(drive);
                 
-                var header = agent.ReadHeader();
+                var header = agent.ReadBomHeader();
 
                 if (header is TapeCalibrationHeader calHeader)
                 {

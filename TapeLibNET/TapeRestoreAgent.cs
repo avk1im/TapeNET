@@ -30,7 +30,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     }
     private bool BeginReadContentForCurrentSet()
     {
-        EnsureHeaderResolved(); // resolve presence before any content navigation (blank-media fallbacks skip the header)
+        EnsureMediaHeaderResolved(); // resolve presence before any content navigation (blank-media fallbacks skip the header)
 
         // If we were reading or writing, end it first - before setting the new set's parameters
         if (!Manager.EndReadWrite())

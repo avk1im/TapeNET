@@ -94,9 +94,9 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     private bool BeginWriteContentForCurrentSet(bool newSet)
     {
         if (TOC.CurrentSetIndex == TOC.FirstSetOnVolume && WritesMediaHeader)
-            WriteHeader();          // heads the fresh/continuation volume; sets presence Present, positions at block 1
+            WriteMediaHeader();          // heads the fresh/continuation volume; sets presence Present, positions at block 1
         else
-            EnsureHeaderResolved();  // existing volume / headerless: probe → Present or Absent
+            EnsureMediaHeaderResolved();  // existing volume / headerless: probe → Present or Absent
 
         // If we were reading or writing, end it first - before setting the new set's parameters
         if (!Manager.EndReadWrite())

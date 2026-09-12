@@ -1341,12 +1341,12 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
             if (_agent is not null)
             {
-                _loadedHeader = _agent.ReadHeader();
+                _loadedHeader = _agent.ReadBomHeader();
             }
             else
             {
                 using var probe = new TapeFileAgent(_drive, _toc ?? new TapeTOC());
-                _loadedHeader = probe.ReadHeader();
+                _loadedHeader = probe.ReadBomHeader();
             }
 
             if (_loadedHeader is not null)

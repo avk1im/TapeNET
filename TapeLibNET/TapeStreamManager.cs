@@ -467,7 +467,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     ///  read/write first, positions at BOM regardless of presence, then records the write on the navigator.
     /// </summary>
     /// <param name="framedBlock">The framed header padded to exactly the fixed header block size.</param>
-    public bool WriteHeaderBlock(byte[] framedBlock)
+    public bool WriteMediaHeaderBlock(byte[] framedBlock)
     {
         ResetError();
 
@@ -478,7 +478,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
             return false;
         }
 
-        if (!Navigator.MoveToHeader(forWrite: true))
+        if (!Navigator.MoveToBomHeader(forWrite: true))
         {
             SyncErrorFrom(Navigator);
             return false;
@@ -492,7 +492,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
             return false;
         }
 
-        Navigator.OnHeaderWritten();
+        Navigator.OnMediaHeaderWritten();
         return true;
     }
 
@@ -500,9 +500,9 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     /// <summary>
     /// Reads the BOM header block into <paramref name="buffer"/> (sized to the fixed header block). Ends any
     ///  active read/write and positions at BOM first. Returns bytes read, or ≤ 0 on failure. The AGENT
-    ///  unpacks the buffer and calls <see cref="TapeNavigator.ResolveHeaderPresence"/> — the manager never parses.
+    ///  unpacks the buffer and calls <see cref="TapeNavigator.ResolveMediaHeaderPresence"/> — the manager never parses.
     /// </summary>
-    public int ReadHeaderBlock(byte[] buffer)
+    public int ReadBomHeaderBlock(byte[] buffer)
     {
         ResetError();
 
@@ -513,7 +513,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
             return -1;
         }
 
-        if (!Navigator.MoveToHeader(forWrite: false))
+        if (!Navigator.MoveToBomHeader(forWrite: false))
         {
             SyncErrorFrom(Navigator);
             return -1;
@@ -1218,9 +1218,17 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     /// Opens a packer-backed content read stream for one logical file located at
     ///  <paramref name="addr"/> and spanning <paramref name="length"/> bytes.
     ///  Transitions to <see cref="TapeState.ReadingContent"/> if needed.
-    /// <para>The returned <see cref="TapeReadStreamFacade"/> hides tape block boundaries
+    /// <para>
+    /// The returned <see cref="TapeReadStreamFacade"/> hides tape block boundaries
     ///  and intra-block file offsets. Disposing the stream closes the packer's open-read
-    ///  slot but retains cached blocks for the next caller.</para>
+    ///  slot but retains cached blocks for the next caller.
+    ///  </para>
+    ///  <para>
+    ///  The pipelined reader is constructed lazily in this call via <see cref="EnsureReadPackerCreated"/>.
+    ///  Therefore, the <b>raw block I/O in <see cref="TapeState.ReadingContent"/> mode</b>, as needed for
+    ///  <see cref="ReadSetHeaderBlock"/>, is legal only before the first call to this method.
+    ///  </para>
+    ///  
     /// </summary>
     internal TapeReadStreamFacade? BeginPackedFileRead(TapeAddress addr, long length)
     {

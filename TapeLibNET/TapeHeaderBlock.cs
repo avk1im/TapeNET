@@ -77,7 +77,7 @@ public static class TapeHeaderBlock
     /// Writes a pre-framed, exactly <see cref="Size"/>-byte block at the CURRENT position. Used by
     ///  <see cref="TapeStreamManager"/>, which frames via <see cref="Frame"/> at the agent layer.
     /// </summary>
-    public static bool WriteFramed(TapeDrive drive, byte[] framedBlock)
+    public static bool WriteFramed(TapeDrive drive, byte[] framedBlock, bool withFilemark = true)
     {
         ArgumentNullException.ThrowIfNull(drive);
         ArgumentNullException.ThrowIfNull(framedBlock);
