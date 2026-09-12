@@ -276,7 +276,8 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
 
             // Optimization: consider Navigator's current position when chosing how to specify the content set for Navigator
             int toCurr; // use to determine if current set is closer to Navigator's current position than to begin or end
-            if (Navigator.CurrentContentSet != TapeNavigator.UnknownSet && Navigator.CurrentContentSet != TapeNavigator.InTOCSet)
+            if (Navigator.CurrentContentSet != TapeNavigator.UnknownSet && Navigator.CurrentContentSet != TapeNavigator.InTOCSet
+                && Navigator.CurrentContentSet != TapeNavigator.AtHeader)
             {
                 // translate Navigator.CurrentContentSet to the index on volume
                 int navCurr = (Navigator.CurrentContentSet >= 0) ? Navigator.CurrentContentSet :

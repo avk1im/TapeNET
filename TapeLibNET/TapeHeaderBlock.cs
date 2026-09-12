@@ -19,8 +19,15 @@ namespace TapeLibNET;
 /// </remarks>
 public static class TapeHeaderBlock
 {
-    /// <summary>The standard header block size — one block, no trailing mark.</summary>
+    /// <summary>The standard header block size — one block, terminated by one filemark.</summary>
     public const int Size = (int)TapeHeader.FixedHeaderBlockSize;   // 16 KiB
+
+    /// <summary>
+    /// A filemark terminates the header record on tape, so the first content write is always a
+    ///  POST-MARK write. Tape drives classically accept a write only at BOP, at EOD, or immediately
+    ///  after a mark; without this the begin-of-content write is mid-data and drive-dependent.
+    /// </summary>
+    public const bool WritesTrailingMark = true;
 
     /// <summary>
     /// Frames <paramref name="header"/> into exactly <see cref="Size"/> bytes (remainder left as zero
@@ -88,7 +95,15 @@ public static class TapeHeaderBlock
                 return false;
 
             int written = drive.WriteDirect(framedBlock, 0, Size, out _, out _, out _);
-            return written == Size;
+            if (written != Size)
+                return false;
+
+            // Terminate the header with a filemark — the single reason this constant exists (§15.1).
+            //  Leaves the head PAST the mark, i.e. exactly at begin-of-content.
+            if (WritesTrailingMark && !drive.WriteFilemark(1))
+                return false;
+
+            return true;
         }
         finally
         {

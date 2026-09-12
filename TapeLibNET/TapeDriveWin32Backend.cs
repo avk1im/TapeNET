@@ -652,8 +652,8 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         uint win32Partition = MapPartitionToWin32(partition);
 
         // QUIRK Sony AIT: must go to partition 1 before partition 2+
-        //  No need for LTO
-        if (!IsLto && win32Partition > 1)
+        //  No need for real LTO
+        if (LtoGeneration < 1 && win32Partition > 1)
         {
             Op(() => InvokeSetPosition(TAPE_POSITION_METHOD.TAPE_LOGICAL_BLOCK, 1, 0)).WithRetry().Run();
         }
@@ -663,7 +663,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         if (WentOK)
             m_logger.LogTrace("{Prefix}: Moved to partition {Partition} block {Block}", LogPrefix, partition, block);
         else
-            LogErrorAsDebug("Failed to move to partition");
+            m_logger.LogDebug("{Prefix}: Failed to move to partition {Partition} block {Block}", LogPrefix, partition, block);
 
         return WentOK;
     }
