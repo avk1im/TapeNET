@@ -110,9 +110,24 @@ public sealed class VirtualTapeFixture : IDisposable
     public VirtualTapeDriveCapabilities Capabilities { get; }
     public VirtualTapeDriveBackend Backend { get; }
 
+    #endregion
+
+    #region *** Media Header and Set Headers ***
+
+    /// <summary>
+    /// Whether the fixture's backup agents write a <see cref="TapeMediaHeader"/> to the tape at creation.
+    /// </summary>
     public bool WithMediaHeader { get; init; }
+    /// <summary>First block of the content area — past the media header block and its filemark.</summary>
     public long FirstContentBlock => WithMediaHeader ? HeaderBlocks : 0L;
-    private const long HeaderBlocks = 2;   // 1 block + 1 filemark
+    private const long HeaderBlocks = 2L;   // 1 block + 1 filemark COUNTED AS BLOCK by VirtualTapeMedia
+
+    /// <summary>Whether the fixture's backup agents stamp a <see cref="TapeSetHeader"/> per set.</summary>
+    public bool WithSetHeaders { get; init; }
+    /// <summary>
+    /// Block holding the first FILE of the first set — one further along when a set header is present.
+    /// </summary>
+    public long FirstFileBlock => FirstContentBlock + (WithSetHeaders ? 1 : 0);
 
     #endregion
 
@@ -135,14 +150,25 @@ public sealed class VirtualTapeFixture : IDisposable
     /// When <see langword="true"/>, writes a <see cref="TapeMediaHeader"/> to the tape.
     /// Set to <see langword="false"/> by default (no header).
     /// </param>
+    /// <param name="withSetHeaders">
+    /// When <see langword="true"/>, each set receives a <see cref="TapeSetHeader"/>. Requires
+    ///  <paramref name="withMediaHeader"/> — a volume that carries no media header can declare no set
+    ///  headers either (SH-1), so the combination is rejected rather than silently downgraded.
+    /// </param>
     public VirtualTapeFixture(
         DriveProfile profile = DriveProfile.Setmarks,
         long contentCapacity = DefaultContentCapacity,
         ILoggerFactory? loggerFactory = null,
         string mediaDescription = "Test Media",
         bool useMemoryMap = false,
-        bool withMediaHeader = false)
+        bool withMediaHeader = false,
+        bool withSetHeaders = false)
     {
+        if (withSetHeaders && !withMediaHeader) // cannot have set headers without a media header (SH-1)
+            throw new ArgumentException("Set headers require a media header (SH-1)", nameof(withSetHeaders));
+        WithMediaHeader = withMediaHeader;
+        WithSetHeaders = withSetHeaders;   // BEFORE the header write below — CreateHeader reads it
+
         LoggerFactory = loggerFactory ?? TestLoggerFactory.Default;
         Capabilities = ProfileToCapabilities(profile);
 
@@ -165,17 +191,15 @@ public sealed class VirtualTapeFixture : IDisposable
         Assert.True(Drive.ReloadMedia(), "Failed to load virtual media");
         Assert.True(Drive.PrepareMedia(), "Failed to prepare virtual media");
 
-
         // Create initial TOC
         TOC = new TapeTOC(mediaDescription);
         
         // Write header if requested (Notice some tests want to start with a blank tape)
         if (withMediaHeader)
         {
-            using var a = new TapeFileAgent(Drive, TOC);
-            Assert.True(a.WriteMediaHeader(), "Fixture: WriteMediaHeader failed");
+            using var agent = new TapeFileAgent(Drive, TOC) { WritesSetHeaders = withSetHeaders };
+            Assert.True(agent.WriteMediaHeader(), "Fixture: WriteMediaHeader failed");
         }
-        WithMediaHeader = withMediaHeader;
     }
 
     /// <summary>
@@ -199,9 +223,10 @@ public sealed class VirtualTapeFixture : IDisposable
     public TapeFileBackupAgent CreateBackupAgent()
     {
         return new TapeFileBackupAgent(Drive, TOC)
-            {
-                WritesMediaHeader = WithMediaHeader
-            };
+        {
+            WritesMediaHeader = WithMediaHeader,
+            WritesSetHeaders = WithSetHeaders,
+        };
     }
 
     /// <summary>

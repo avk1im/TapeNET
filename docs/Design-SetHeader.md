@@ -846,6 +846,13 @@ the shipping window (§15.1) closes exactly once.
   multi-volume backups produce a header per set with correct indices.
 - *Exit criteria:* headed tapes carry set headers; **restore still ignores them entirely** and all
   existing restore tests pass untouched. This step is independently revertible.
+  - Headed tapes carry one set header per set, at the set's first block, with correct indices.
+  - The first file's `TapeAddress` sits exactly one block past the set start — which is simultaneously the
+    SH-4 assertion: a redundant second positioning would move the packer's anchor.
+  - `WritesSetHeaders = false` produces the `_MediaOnly` shape and restores silently.
+  - Legacy media (no media header) never receives a set header, whatever the flag says.
+  - **Restore is untouched**: headed tapes restore byte-for-byte through unmodified restore code, and the
+    full existing suite passes without edits.
 
 ---
 

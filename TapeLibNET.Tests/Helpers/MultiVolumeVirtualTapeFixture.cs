@@ -84,7 +84,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
     #endregion
 
-    #region *** Media Header ***
+    #region *** Media Header and Set Headers ***
 
     VolumeHeaderMode HeaderMode { get; init; }
 
@@ -94,6 +94,9 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
         VolumeHeaderMode.Mixed => volumeNumber >= 2,   // legacy vol 1, modern vol 2+  (design §10.4)
         _ => false,
     };
+
+    /// <summary>Whether headed volumes also carry per-set headers.</summary>
+    public bool WithSetHeaders { get; init; }
 
     #endregion
 
@@ -175,17 +178,28 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// <param name="loggerFactory">Optional logger factory.</param>
     /// <param name="mediaDescription">Description for the initial TOC.</param>
     /// <param name="headerMode">How the volumes of the series receive media headers.</param>
+    /// <param name="withSetHeaders">
+    /// When <see langword="true"/>, each set receives a <see cref="TapeSetHeader"/>. Requires
+    ///  that <paramref name="headerMode"/> is NOT <see cref="VolumeHeaderMode.None"/> since
+    ///  a volume that carries no media header can declare no set headers either (SH-1), so
+    ///  the combination is rejected rather than silently downgraded.
+    /// </param>
     public MultiVolumeVirtualTapeFixture(
         DriveProfile profile = DriveProfile.Setmarks,
         long contentCapacity = DefaultContentCapacity,
         ILoggerFactory? loggerFactory = null,
         string mediaDescription = "Multi-Volume Test Media",
-        VolumeHeaderMode headerMode = VolumeHeaderMode.None)
+        VolumeHeaderMode headerMode = VolumeHeaderMode.None,
+        bool withSetHeaders = false)
     {
+        if (withSetHeaders && headerMode == VolumeHeaderMode.None)
+            throw new ArgumentException("Cannot have set headers without a media header", nameof(withSetHeaders));
+        
         ContentCapacity = contentCapacity;
         LoggerFactory = loggerFactory ?? TestLoggerFactory.Default;
         Capabilities = VirtualTapeFixture.ProfileToCapabilities(profile);
         HeaderMode = headerMode;
+        WithSetHeaders = withSetHeaders;
 
         long initCap = Capabilities.SupportsInitiatorPartition
             ? DefaultInitiatorCapacity : 0;
@@ -220,9 +234,12 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     public TapeFileBackupAgent CreateBackupAgent()
     {
         var agent = new TapeFileBackupAgent(Drive, TOC)
-            {
-                WritesMediaHeader = ShouldHeadVolume(TOC.Volume)
-            };
+        {
+            WritesMediaHeader = ShouldHeadVolume(TOC.Volume),
+            // A volume writes set headers only if it is itself headed (SH-1) — so on a Mixed series
+            //  volume 1 stays fully legacy (no headers) while volumes 2+ carry both headers.
+            WritesSetHeaders = WithSetHeaders && ShouldHeadVolume(TOC.Volume),
+        };
         agent.Navigator.TOCCapacity = TOCCapacityOverride;
         return agent;
     }

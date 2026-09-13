@@ -561,7 +561,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     /// <para>
     /// <b>Preconditions.</b> The caller has already positioned at the set's first block and has NOT yet
     ///  entered <see cref="TapeState.WritingContent"/>. Both matter: <c>EnsurePackerCreated()</c> anchors
-    ///  the packer on <see cref="TapeDrive.BlockCounter"/>, so the header must reach tape BEFORE the
+    ///  the packer on <see cref="TapeDrive.CurrentBlock"/>, so the header must reach tape BEFORE the
     ///  packer exists — which is exactly what makes every file's <c>TapeAddress</c> land past it with no
     ///  TOC-address surgery. A live packer would additionally mean a worker thread racing this raw
     ///  <c>WriteDirect</c>.
@@ -590,7 +590,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
             return false;
         }
 
-        long atBlock = Drive.BlockCounter;   // capture before the write advances it
+        long atBlock = Drive.CurrentBlock;   // capture before the write advances it
 
         // withFilemark: false overrules TapeHeaderBlock.WritesTrailingMark — the media header's mark
         //  exists because begin-of-content is a repeated WRITE ENTRY POINT; a set start never is.
@@ -1113,9 +1113,9 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
         // Anchor packer to the current absolute drive block so the TapeAddress values
         //  it surfaces (and we store in the TOC) match the legacy backup's convention
-        //  of recording Drive.BlockCounter -- required for correct packed restore on
+        //  of recording Drive.CurrentBlock -- required for correct packed restore on
         //  multi-set tapes.
-        long startBlock = Drive.BlockCounter;
+        long startBlock = Drive.CurrentBlock;
         if (startBlock < 0)
             startBlock = 0;
 

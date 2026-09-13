@@ -226,7 +226,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         : EnsureMediaParams()?.BlockSize ?? 0U;
 
     /// <summary>Current logical block address from the device.</summary>
-    internal long BlockCounter => GetCurrentBlock();
+    internal long CurrentBlock => GetCurrentBlock();
 
     /// <summary>Total capacity of the current partition, in bytes.</summary>
     public long Capacity => EnsureMediaParams()?.Capacity ?? 0L;
@@ -1381,7 +1381,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         if (!IsMediaLoaded)
             return false;
 
-        long currBlock = BlockCounter;
+        long currBlock = CurrentBlock;
 
         if (block == currBlock)
             return true;
@@ -1490,7 +1490,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         if (m_onContentPartition && backwards) // we moved backwards ⇒ might've left the EW zone!
         {
             if (toBlock < 0)
-                toBlock = BlockCounter;
+                toBlock = CurrentBlock;
             ReevaluateEarlyWarningAfterReposition(toBlock);
         }
     }

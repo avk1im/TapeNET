@@ -122,8 +122,8 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 return false;
             }
 
-            // Important: we must get the content read stream first, since this will reset the BlockCounter
-            //  when changing to content read mode -- BlockCounter can be used laster to move to tfi.Block
+            // Important: we must get the content read stream first, since this will reset the CurrentBlock
+            //  when changing to content read mode -- CurrentBlock can be used laster to move to tfi.Block
             using var rstream = OpenReadContentStream();
             if (rstream == null)
             {
@@ -559,7 +559,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 
             if (!doMove) // validate we're at the right block
             {
-                long currentBlock = Drive.BlockCounter;
+                long currentBlock = Drive.CurrentBlock;
                 if (currentBlock != tfi.Block)
                 {
                     m_logger.LogWarning("Unexpected block {Block} (expected {ExpectedBlock}) for file >{File}< in {Method}",

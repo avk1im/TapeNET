@@ -458,10 +458,53 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     ///  probing (SH-1).
     /// </summary>
     /// <remarks>
-    /// Defaults to <see langword="false"/> until the set-header WRITE path exists: a volume must never
-    ///  claim set headers it does not carry. Flip the default once <c>WriteSetHeader()</c> is wired in.
+    /// The flag is stamped into the media header when THAT header is written, and cannot be revised
+    ///  afterwards — so heading a volume with one agent and then writing its sets with another whose
+    ///  setting differs would leave the declaration lying. Both default to <see langword="true"/>, so
+    ///  the mismatch cannot arise in practice.
     /// </remarks>
-    public bool WritesSetHeaders { get; set; } = false;
+    public bool WritesSetHeaders { get; set; } = true;
+
+    /// <summary>
+    /// Writes the set header for <see cref="TapeTOC.CurrentSetIndex"/> at the CURRENT tape position.
+    ///  Builds the record via the TOC (the sole set-header authority), frames it, and hands it to the
+    ///  manager. Mirrors <see cref="WriteMediaHeader"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The caller owns the positioning.</b> This must run with the head at the set's first block and
+    ///  with the manager still in <see cref="TapeState.MediaPrepared"/> — see
+    ///  <c>TapeFileBackupAgent.BeginWriteContentForCurrentSet</c>, which hoists
+    ///  <see cref="TapeNavigator.MoveToTargetContentSet"/> ahead of <c>Manager.BeginWriteContent</c>
+    ///  precisely to create that window (SH-4).
+    /// </para>
+    /// <para>
+    /// A failure here aborts the set: <see cref="TapeStreamManager.WriteSetHeaderBlock"/> resets the
+    ///  content position on a torn write (SH-6), so the head is no longer where anyone believes it is
+    ///  and writing content on top would be reckless.
+    /// </para>
+    /// </remarks>
+    public TapeResult WriteSetHeader()
+    {
+        var header = TOC.CreateSetHeaderForCurrentSet();
+
+        byte[]? block = TapeHeaderBlock.Frame(header);      // pack + size guard + pad, single-point
+        if (block is null)
+        {
+            m_logger.LogError("Set header frame exceeds the standard header block ({Bs} B)", TapeHeaderBlock.Size);
+            SetError(WIN32_ERROR.ERROR_INSUFFICIENT_BUFFER, "Set header too large for its block");
+            return TapeResult.Fail(this);
+        }
+
+        if (!Manager.WriteSetHeaderBlock(block))
+        {
+            SyncErrorFrom(Manager);
+            return TapeResult.Fail(this);
+        }
+
+        m_logger.LogTrace("Set header written: {Header}", header);
+        return TapeResult.OK;
+    }
 
     #endregion // *** Set Header ***
 

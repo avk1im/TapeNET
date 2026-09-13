@@ -1,10 +1,13 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using Grpc.Net.Client.Balancer;
+using Microsoft.Extensions.Logging;
 using System.Diagnostics;
+using System.Reflection.PortableExecutable;
 using TapeLibNET;
 using TapeLibNET.Remote;
 using TapeLibNET.TapeFilePacker;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 
 namespace TapeLibNET;
@@ -111,8 +114,6 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         //  so that Navigator can optimize moving to the target content set once we call BeginWriteContent()
         Navigator.TargetContentSet = newSet ? ((TOC.CurrentSetIndexOnVolume > 0) ? -1 : 0) : CurrentSetAsNavigatorContentSet;
 
-        var remainingCapacity = ComputeRemainingCapacity();
-
         BytesBackedupMarker = BytesBackedup; // important in case of multi-volume backup continuation
 
         // Apply the set's preferred block size BEFORE entering the writing-content state.
@@ -151,6 +152,45 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 : TOC.ComputeContentSizeOnTapeBeforeCurrentSet(Drive.BlockSize);
             Drive.NotifyNextContentWritePosition(approxWritten);
         }
+
+        // ── Set header (SH-2, SH-4) ──────────────────────────────────────
+        //  Deliberately placed JUST BEFORE Manager.BeginWriteContent():
+        //   * AFTER SetBlockSize + the TOC reconciliation, so the header records the block size the
+        //     drive ACTUALLY accepted rather than the one we asked for;
+        //   * AFTER SetEarlyWarning / NotifyNextContentWritePosition, so the header's 16 KiB counts
+        //     against the TOC reserve like any other content byte;
+        //   * BEFORE Manager.BeginWriteContent, because that call runs MoveToTargetContentSet() and
+        //     EnsurePackerCreated() back to back with no seam — and the packer anchors on
+        //     Drive.CurrentBlock, so the header must already be on tape for every file address to land
+        //     past it (no TOC-address surgery — §7.3).
+        //  TapeHeaderBlock sets and restores the 16 KiB header block size around its own write, so the
+        //   set's block size survives untouched.
+        // Why we tests MediaHeaderPresence, not just the flag: SH-1: no media header, no set headers.
+        //  On a legacy volume nothing declares the header's existence, so writing one would produce a block no
+        //  reader can be told about.The media - header gate at the top of this method has already run
+        //  (WriteMediaHeader() on a fresh/ continuation volume, EnsureMediaHeaderResolved() otherwise), so
+        //  presence is resolved by the time we get here.
+        if (WritesSetHeaders && Navigator.MediaHeaderPresence == TapeHeaderPresence.Present)
+        {
+            // SH-4: this positioning is idempotent, so BeginWriteContent's own MoveToTargetContentSet
+            //  short-circuits — no second transport move, no re-derivation.
+            if (!Navigator.MoveToTargetContentSet())
+            {
+                m_logger.LogWarning("Failed to position at the target content set in {Method}",
+                    nameof(BeginWriteContentForCurrentSet));
+                SyncErrorFrom(Navigator);
+                return false;
+            }
+
+            if (!WriteSetHeader())
+            {
+                m_logger.LogWarning("Failed to write the set header in {Method}",
+                    nameof(BeginWriteContentForCurrentSet));
+                return false;   // WriteSetHeader already set the error; SH-6 reset the position
+            }
+        }
+
+        long remainingCapacity = ComputeRemainingCapacity();   // moved down — see 2a
 
         if (!Manager.BeginWriteContent(remainingCapacity))
         {
@@ -428,9 +468,9 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             FileInfo fileInfo = new (fileName);
             // Create the real TapeFileInfo upfront — BackupFile() only handles tape I/O,
             //  TOC.Append() happens here on success.
-            // Note: tfi.Block captures Drive.BlockCounter at construction time — used to
+            // Note: tfi.Block captures Drive.CurrentBlock at construction time — used to
             //  rewind the tape on failure so the next file starts at the correct position.
-            TapeFileInfo tfi = new(TOC.GenerateUID(), Drive.BlockCounter, fileInfo);
+            TapeFileInfo tfi = new(TOC.GenerateUID(), Drive.CurrentBlock, fileInfo);
 
             // Track whether the file made it onto the tape AND into the TOC. Only then are
             //  we allowed to call NotifyPostProcessFile — and we MUST do so AFTER the
