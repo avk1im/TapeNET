@@ -5,8 +5,17 @@ using TapeLibNET.Virtual;
 namespace TapeLibNET.Tests;
 
 
-public sealed class TapeBackupAgentTests_Headerless : TapeBackupAgentTestsBase { protected override bool WithMediaHeader => false; }
-public sealed class TapeBackupAgentTests_Headed : TapeBackupAgentTestsBase { protected override bool WithMediaHeader => true; }
+public sealed class TapeBackupAgentTests_Headerless : TapeBackupAgentTestsBase
+{
+    protected override bool WithMediaHeader => false;
+    protected override bool WithSetHeaders => false;
+}
+
+public sealed class TapeBackupAgentTests_SetHeaders : TapeBackupAgentTestsBase
+{
+    protected override bool WithMediaHeader => true;
+    protected override bool WithSetHeaders => true;
+}
 
 /// <summary>
 /// Focused tests for <see cref="TapeFileBackupAgent"/> — the middle layer between
@@ -30,6 +39,8 @@ public abstract class TapeBackupAgentTestsBase
 
     /// <summary>Subclasses fix whether the produced fixture writes a media header.</summary>
     protected abstract bool WithMediaHeader { get; }
+    /// <summary>Subclasses fix whether the produced fixture writes a set header for each backup set.</summary>
+    protected abstract bool WithSetHeaders { get; }
 
     /// <summary>Fixture factory mirroring the ctor; injects the header axis. All tests funnel through here.</summary>
     protected VirtualTapeFixture CreateFixture(
@@ -39,7 +50,7 @@ public abstract class TapeBackupAgentTestsBase
             string mediaDescription = "Test Media",
             bool useMemoryMap = false)
         => new(profile, contentCapacity, loggerFactory, mediaDescription, useMemoryMap,
-               withMediaHeader: WithMediaHeader);
+               withMediaHeader: WithMediaHeader, withSetHeaders: WithSetHeaders);
 
     #endregion
 

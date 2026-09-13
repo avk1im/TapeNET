@@ -567,7 +567,8 @@ public class TapeSetTOC : ITapeSerializable, IReadOnlyList<TapeFileInfo>
     internal void InvalidateLayoutCache() => m_isPackedLayout = null;
 
     /// <summary>
-    /// Computes the total size of all files in the set on tape, considering the block size.
+    /// Computes the total size of all files in the set on tape, considering the block size
+    /// and file block alignment or packing, plus the set header block when present (SH-12).
     /// <para>Works properly for both packed and aligned (deprecated) layouts.</para>
     /// </summary>
     /// <param name="defaultBlockSize">The default block size to use if the set's block size is not specified.</param>
@@ -576,7 +577,14 @@ public class TapeSetTOC : ITapeSerializable, IReadOnlyList<TapeFileInfo>
     //  offset (Address.Offset != 0), the set is packed and files share blocks, so we
     //  only round the *total* of (file + header) sizes up to one block boundary
     //  rather than rounding each file individually. The detection result is cached.
-    public long ComputeTotalFileSizeOnTape(uint defaultBlockSize = 0)
+    /// <param name="blockSize">
+    /// Block size to assume; 0 uses the set's own <see cref="BlockSize"/>.
+    /// </param>
+    /// <param name="withSetHeader">
+    /// Whether this set carries a <see cref="TapeSetHeader"/>. The set TOC cannot know this itself — the
+    ///  media header declares it per volume (SH-1) — so the caller supplies it.
+    /// </param>
+    public long ComputeTotalFileSizeOnTape(uint defaultBlockSize = 0, bool withSetHeader = false)
     {
         if (Count == 0)
             return 0L;
@@ -606,7 +614,15 @@ public class TapeSetTOC : ITapeSerializable, IReadOnlyList<TapeFileInfo>
         }
 
         m_isPackedLayout = packed;
-        return packed ? RoundUpToBlock(rawTotal, blockSize) : alignedTotal;
+        long total = packed ? RoundUpToBlock(rawTotal, blockSize) : alignedTotal;
+
+        // The set header is one fixed block at the head of the set's data, written BEFORE the first
+        //  file and at the header block size, independent of the set's own block size (SH-12). It is
+        //  content: it draws on the same capacity the files do, and the early-warning reserve must see it.
+        if (withSetHeader)
+            total += TapeHeaderBlock.Size;
+
+        return total;
 
         long SumRawFileSizes()
         {
@@ -1604,12 +1620,17 @@ public class TapeTOC : ITapeSerializable, IEnumerable<TapeSetTOC>
     }
 
     /// <summary>
-    /// Computes the total file size on tape for all sets considering block sizes per set, optionally restricted to the current volume.
+    /// Computes the total file size on tape for all sets considering block sizes per set (incl. per-set headers SH-12),
+    ///  optionally restricted to the current volume.
     /// </summary>
     /// <param name="defaultBlockSize">The default block size to use if a set does not specify one.</param>
     /// <param name="onVolumeOnly">If true, only compute for sets on the current volume; otherwise, compute for all sets.</param>
+    /// <param name="withSetHeaders">
+    /// Whether the sets carry set headers — from <see cref="TapeMediaHeader.HasSetHeaders"/> via the
+    ///  service, or from <see cref="TapeNavigator.SetHeadersExpected"/> inside the library.
+    /// </param>
     /// <returns>The total file size on tape.</returns>
-    public long ComputeTotalFileSizeOnTape(uint defaultBlockSize = 0, bool onVolumeOnly = true)
+    public long ComputeTotalFileSizeOnTape(uint defaultBlockSize = 0, bool onVolumeOnly = true, bool withSetHeaders = false)
     {
         if (Count == 0)
             return 0L;
@@ -1619,19 +1640,18 @@ public class TapeTOC : ITapeSerializable, IEnumerable<TapeSetTOC>
         {
             for (int i = FirstSetInternalOnVolume; i <= LastSetInternalOnVolume; i++)
             {
-                totalSize += m_setTOCs[i].ComputeTotalFileSizeOnTape(defaultBlockSize);
+                totalSize += m_setTOCs[i].ComputeTotalFileSizeOnTape(defaultBlockSize, withSetHeader: withSetHeaders);
             }
         }
         else
         {
             foreach (var setTOC in m_setTOCs)
             {
-                totalSize += setTOC.ComputeTotalFileSizeOnTape(defaultBlockSize);
+                totalSize += setTOC.ComputeTotalFileSizeOnTape(defaultBlockSize, withSetHeader: withSetHeaders);
             }
         }
 
         // Media header overhead: one media header block at content BOM per volume.
-        //  (Phase B adds one set-header block per set — see TapeSetTOC.ComputeTotalFileSizeOnTape.)
         //  Counted for write-planning / remaining-capacity; freshly formatted media always carries it.
         if (onVolumeOnly)
             totalSize += TapeHeader.FixedHeaderBlockSize;                 // this volume's media header
@@ -1643,19 +1663,29 @@ public class TapeTOC : ITapeSerializable, IEnumerable<TapeSetTOC>
 
     /// <summary>
     /// Cumulative on-tape size of the sets on the current volume that PRECEDE the current set — i.e.
-    /// the approximate byte offset from the start of the volume's content to where the current set
-    /// begins. Used to anchor <see cref="TapeDrive.NotifyNextContentWritePosition"/> when overwriting
-    /// an existing set. Per-set block-size and software-compression aware, but oblivious to hardware
-    /// compression and setmark/gap overhead — sufficient as a rough, temporary anchor.
+    ///  the approximate byte offset from the start of the volume's content to where the current set
+    ///  begins. Used to anchor <see cref="TapeDrive.NotifyNextContentWritePosition"/> when overwriting
+    ///  an existing set. Per-set block-size and software-compression aware, but oblivious to hardware
+    ///  compression and setmark/gap overhead — sufficient as a rough, temporary anchor.
     /// </summary>
-    public long ComputeContentSizeOnTapeBeforeCurrentSet(uint defaultBlockSize = 0)
+    /// <remarks>
+    /// Feeds <see cref="TapeDrive.NotifyNextContentWritePosition"/> on the OVERWRITE path, where the
+    ///  drive's own <c>capacity − EOD</c> figure is stale after a backward seek. Including the preceding
+    ///  sets' headers (SH-12) keeps that anchor honest — under-reporting would tell the drive more room
+    ///  remains than actually does, and the early warning would fire too late to reserve the TOC.
+    /// </remarks>
+    /// <param name="withSetHeaders">
+    /// Whether the sets carry set headers — from <see cref="TapeMediaHeader.HasSetHeaders"/> via the
+    ///  service, or from <see cref="TapeNavigator.SetHeadersExpected"/> inside the library.
+    /// </param>
+
+    public long ComputeContentSizeOnTapeBeforeCurrentSet(uint defaultBlockSize = 0, bool withSetHeaders = false)
     {
         long totalSize = 0L;
         for (int i = FirstSetInternalOnVolume; i < m_currSetInternal; i++)
-            totalSize += m_setTOCs[i].ComputeTotalFileSizeOnTape(defaultBlockSize);
+            totalSize += m_setTOCs[i].ComputeTotalFileSizeOnTape(defaultBlockSize, withSetHeader: withSetHeaders);
 
         // Media header overhead: one media header block at content BOM per volume.
-        //  (Phase B adds one set-header block per set — see TapeSetTOC.ComputeTotalFileSizeOnTape.)
         //  Counted for write-planning / remaining-capacity; freshly formatted media always carries it.
         totalSize += TapeHeader.FixedHeaderBlockSize;                 // this volume's media header
 

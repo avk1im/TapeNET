@@ -422,8 +422,7 @@ public class TapeSetHeaderWriteTests
 
         using var fixture = new MultiVolumeVirtualTapeFixture(
             DriveProfile.Setmarks,
-            headerMode: VolumeHeaderMode.All,
-            withSetHeaders: true);
+            headerMode: VolumeHeaderMode.All);
 
         fixture.BackupFiles(tree.Files, description: "Spanning");
 

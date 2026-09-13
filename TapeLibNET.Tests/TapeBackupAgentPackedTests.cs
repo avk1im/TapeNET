@@ -4,8 +4,17 @@ using TapeLibNET.Tests.Helpers;
 namespace TapeLibNET.Tests;
 
 
-public sealed class TapeBackupAgentPackedTests_Headerless : TapeBackupAgentPackedTestsBase { protected override bool WithMediaHeader => false; }
-public sealed class TapeBackupAgentPackedTests_Headed : TapeBackupAgentPackedTestsBase { protected override bool WithMediaHeader => true; }
+public sealed class TapeBackupAgentPackedTests_Headerless : TapeBackupAgentPackedTestsBase
+{
+    protected override bool WithMediaHeader => false;
+    protected override bool WithSetHeaders => false;
+}
+
+public sealed class TapeBackupAgentPackedTests_SetHeaders : TapeBackupAgentPackedTestsBase
+{
+    protected override bool WithMediaHeader => true;
+    protected override bool WithSetHeaders => true;
+}
 
 /// <summary>
 /// Focused tests for the packed (shared-block) backup path on
@@ -25,7 +34,10 @@ public abstract class TapeBackupAgentPackedTestsBase
 {
     #region *** Media Header ***
 
+    /// <summary>Subclasses fix whether the produced fixture writes a media header.</summary>
     protected abstract bool WithMediaHeader { get; }
+    /// <summary>Subclasses fix whether the produced fixture writes a set header for each backup set.</summary>
+    protected abstract bool WithSetHeaders { get; }
 
     /// <summary>Fixture factory mirroring the ctor; injects the header axis. All tests funnel through here.</summary>
     protected VirtualTapeFixture CreateFixture(
@@ -35,13 +47,12 @@ public abstract class TapeBackupAgentPackedTestsBase
         string mediaDescription = "Test Media",
         bool useMemoryMap = false)
         => new(profile, contentCapacity, loggerFactory, mediaDescription, useMemoryMap,
-               withMediaHeader: WithMediaHeader);
+               withMediaHeader: WithMediaHeader, withSetHeaders: WithSetHeaders);
 
     #endregion
 
     #region *** Test Data ***
 
-#pragma warning disable CA1825
     public static TheoryData<DriveProfile> AllProfiles =>
     [
         DriveProfile.Setmarks,
@@ -49,7 +60,6 @@ public abstract class TapeBackupAgentPackedTestsBase
         DriveProfile.SeqFilemarks,
         DriveProfile.FilemarksOnly,
     ];
-#pragma warning restore CA1825
 
     public static TheoryData<DriveProfile, TapeHashAlgorithm> ProfilesAndHashes
     {

@@ -488,7 +488,7 @@ public enum TapeSetHeaderVerdict
 | `Unreadable` | **warn, proceed** | an unverifiable record removes a net, not the data (§4.4) |
 | `WrongMedia` | **fail the set** | every in-memory assumption is void, including the TOC; nothing is correctable |
 | `WrongVolume` | **fail the set** | file addresses are physical-per-volume, so a right-series wrong-volume tape yields garbage at every address |
-| `SetIndexDrift` | **correct once, re-verify** | identity confirmed ⇒ the fault is positional and bounded (§9.3) |
+| `SetIndexDrift` | **correct once, re-verify** | attempt to correct the fault once, re-verify — bounded by a re-entrancy guard (§9.3) |
 
 `GlobalSetIndex` is **checked but never gating** — a mismatch logs a warning and nothing more. This
 mirrors the TOC-import reasoning in Design-TapeHeader.md §9.5: `Volume` is *functional*, `MediaId` is
@@ -529,46 +529,84 @@ untouched.
 ```csharp
 // TapeFileRestoreBaseAgent — the correction, in full
 case TapeSetHeaderVerdict.SetIndexDrift:
-{
-    int actual   = header.VolumeSetIndex;
-    int expected = TOC.CurrentSetIndexOnVolume;
-    m_logger.LogWarning(
-        "Set navigation drift: navigator reported set {Expected} on volume, header says {Actual}; correcting by {Delta}",
-        expected, actual, expected - actual);
+    // Proceed with the bounded relative correction (Step 6). This replaces raising a hard
+    //  failure error — restoring from the wrong set would silently deliver wrong bytes.
+    m_logger.LogError(
+        "Set navigation drift at set #{Set}: navigator reported on-volume set {Expected}, " +
+        "header says {Actual} (delta {Delta})",
+        TOC.CurrentSetIndex, TOC.CurrentSetIndexOnVolume, header!.VolumeSetIndex,
+        TOC.CurrentSetIndexOnVolume - header.VolumeSetIndex);
+    // SetError(WIN32_ERROR.ERROR_INVALID_DATA,
+    //    $"Set navigation drift at set #{TOC.CurrentSetIndex}: positioned at on-volume set " +
+    //    $"{header.VolumeSetIndex}, expected {TOC.CurrentSetIndexOnVolume}");
+    // return false;
+    return CorrectSetNavigation(header!);
+    ...
 
-    Navigator.ReconcileContentSet(actual);        // believe the header — SH-9
-    Navigator.TargetContentSet = expected;        // relative delta from the TRUE position
-    if (!Navigator.MoveToTargetContentSet())
+    private bool CorrectSetNavigation(TapeSetHeader header)
     {
-        SyncErrorFrom(Navigator);
-        return false;
+        int actual = header.VolumeSetIndex;
+        int expected = TOC.CurrentSetIndexOnVolume;
+
+        if (m_correctingSetNavigation)
+        {
+            // Second disagreement within one correction — stop (SH-10).
+            SetError(WIN32_ERROR.ERROR_INVALID_DATA,
+                $"Set navigation could not be corrected for set #{TOC.CurrentSetIndex}");
+            return false;
+        }
+
+        // Believe the header and move the RELATIVE delta (§9.3a). Re-navigating from an anchor would
+        //  reproduce the very miscount we are correcting.
+        if (!Navigator.ReconcileContentSetAndMove(actual, expected))
+        {
+            SyncErrorFrom(Navigator);
+            return false;
+        }
+
+        // Re-verify exactly once. The guard makes any further drift terminal rather than recursive.
+        m_correctingSetNavigation = true;
+        try
+        {
+            var again = ReadSetHeader();
+            var verdict = ClassifySetHeader(again);
+
+            if (verdict != TapeSetHeaderVerdict.Match)
+            {
+                // Route through the ladder so each failure mode keeps its own diagnosis and error code.
+                //  A drift here re-enters CorrectSetNavigation, which the guard turns into a clean stop.
+                return HandleSetHeaderVerdict(verdict, again);
+            }
+
+            // Successfully corrected and re-verified.
+            return true;
+        }
+        finally
+        {
+            m_correctingSetNavigation = false;
+        }
     }
 
-    var again = ReadSetHeader();                  // re-verify — exactly once
-    if (again is null || again.VolumeSetIndex != expected)
-    {
-        SetError(WIN32_ERROR.ERROR_INVALID_DATA,
-            $"Set navigation could not be corrected for set #{TOC.CurrentSetIndex}");
-        return false;
-    }
-    m_logger.LogWarning("Set navigation corrected — now positioned at set {Set} on volume", expected);
-    return true;
-}
 ```
 
-### 9.4 The one navigator addition
+### 9.4 The navigator addition for reconciliation
 
 ```csharp
 /// <summary>
-/// Adopts a content-set position established by a POSITIVELY VERIFIED set header (SH-9).
-/// The only path that may set CurrentContentSet without having moved the tape.
+/// Adopts a content-set position established by a POSITIVELY VERIFIED set header and moves the
+///  RELATIVE delta to the intended set (SH-9, SH-10).
 /// </summary>
-internal void ReconcileContentSet(int setIndexOnVolume) => CurrentContentSet = setIndexOnVolume;
+internal bool ReconcileContentSetAndMove(int actualContentSet, int targetContentSet)
 ```
 
 `internal`, single caller, documented precondition. The head sits one block *into* the set when this
 runs — semantically still "in set *y*", and correct for relative mark spacing, which is
 position-relative rather than block-relative.
+
+> **Why not "set the position, then re-target".** `MoveToTargetContentSet` opens with the SH-4
+> idempotence check, and on the drift path `TargetContentSet` already holds the intended set — so setting
+> `CurrentContentSet` and calling it again returns `true` without moving. The correction must express the
+> delta explicitly!
 
 ---
 
@@ -867,6 +905,13 @@ The first shippable milestone: detection and reporting, no self-correction.
   `Unreadable` warns and completes; `WrongMedia` / `WrongVolume` fail with the expected error code.
 - *Exit criteria:* full round-trip suite green under `_FullyHeaded`; drift detected and reported
   under `SimulateSetMiscount` (introduced early here if convenient, or stubbed until Step 6).
+  - `Match` proceeds silently and restores byte-for-byte on all four profiles.
+  - `NotExpected` on legacy and `_MediaOnly` media proceeds with no read at all.
+  - `Unreadable` (corrupted header, and read fault) warns and completes byte-for-byte.
+  - `WrongVolume` fails the set with `ERROR_INVALID_DATA`.
+  - `SetIndexDrift` is detected and fails the set — corrected in Step 6.
+  - SH-8: a second restore of the same set consumes no block (first file still restores intact).
+  - Full existing suite green: `_Headerless` and `_MediaOnly` tapes take no new code path.
 
 ---
 
@@ -879,6 +924,14 @@ The first shippable milestone: detection and reporting, no self-correction.
 - *Tests:* the §13.3 **Correction** crown suite in full.
 - *Exit criteria:* all four miscount offsets corrected and verified; uncorrectable drift fails cleanly;
   the simulator asserts back to `0` at teardown.
+  - All four offsets ∈ {−2, −1, +1, +2}: drift detected, corrected, re-verified, restore byte-for-byte.
+  - Exactly one warning pair (drift detected → corrected) per correction.
+  - Correction to set 0 works, including the backward-to-BOM path.
+  - Uncorrectable drift (a second disagreement) fails cleanly with `ERROR_INVALID_DATA`.
+  - `WrongMedia` / `WrongVolume` still fail **without** attempting a correction.
+  - `Unreadable` still warns and completes.
+  - The simulator asserts back to `0` after every test.
+  - Full suite green — the correction path is unreachable without an injected miscount.
 
 ---
 
@@ -890,6 +943,12 @@ The first shippable milestone: detection and reporting, no self-correction.
   several sets; the overwrite path's `NotifyNextContentWritePosition` anchor stays correct (regression:
   no premature early warning on a multi-set overwrite).
 - *Exit criteria:* multi-volume capacity tests green on small virtual media, where the drift is largest.
+  - `Used` grows by exactly `TapeHeaderBlock.Size` per set on headed media, and not at all on legacy media.
+  - The overwrite anchor includes preceding sets' headers — no premature early warning on a multi-set
+    overwrite, and no *late* one either.
+  - Multi-volume capacity tests stay green on small virtual media, where the 16 KiB per set is a
+    measurable fraction.
+  - Full suite green: the default `false` keeps every existing caller's arithmetic unchanged.
 
 ---
 
@@ -902,6 +961,11 @@ The first shippable milestone: detection and reporting, no self-correction.
 - Extend `VolumeHeaderMode` with the `MediaOnly` case for multi-volume suites.
 - *Exit criteria:* the full matrix green; the `_MixHeaded` crown test additionally proves per-volume
   `SetHeadersExpected` re-resolution.
+  - The full matrix green: 2 + 2 + 2 + 3 + 3 + 3 flavours single-volume, 4 multi-volume.
+  - `_MediaHeader` restore flavours prove `HasSetHeaders = false` media restores with no header read.
+  - `_MixHeaded` proves per-volume re-resolution across all three states — also the §10 regression test.
+  - `Fixture_ProducesTheDeclaredHeaderShape` green on every flavour, so no flavour passes vacuously --
+    for both `VirtualTapeFixture` and `MultiVolumeVirtualTapeFixture`.
 
 ---
 

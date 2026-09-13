@@ -149,7 +149,9 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         {
             long approxWritten = newSet
                 ? (TOC.CurrentSetIndexOnVolume > 0 ? -1L : 0L)
-                : TOC.ComputeContentSizeOnTapeBeforeCurrentSet(Drive.BlockSize);
+                : TOC.ComputeContentSizeOnTapeBeforeCurrentSet(Drive.BlockSize,
+                    withSetHeaders: Navigator.SetHeadersExpected); // by now the header presence has
+                                                                   //  already been resolved
             Drive.NotifyNextContentWritePosition(approxWritten);
         }
 
@@ -214,6 +216,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             ? TapeSetTOC.EstimateFileSizeOnTape(length, Drive.BlockSize)
             : length;
 
+        // The aligned path is obsolete, and the value feeds only a coarse pre-check that the packed path no longer enforces,
+        //  therefore we live with the default arguments for TOC.CurrentSetTOC.ComputeTotalFileSizeOnTape()
         var stream = Manager.ProduceWriteContentStream(estimatedTapeSize, TOC.CurrentSetTOC.ComputeTotalFileSizeOnTape());
         if (stream == null)
             SyncErrorFrom(Manager);

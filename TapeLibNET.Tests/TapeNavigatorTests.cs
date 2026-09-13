@@ -7,11 +7,16 @@ namespace TapeLibNET.Tests;
 public sealed class TapeNavigatorTests_Headerless : TapeNavigatorTestsBase
 {
     protected override bool WithMediaHeader => false;
+    protected override bool WithSetHeaders => false;
 }
 
 public sealed class TapeNavigatorTests_Headed : TapeNavigatorTestsBase
 {
     protected override bool WithMediaHeader => true;
+    // Notice: for Navigator tests, we keep WithSetHeaders => false in both profiles! Its layouts are written
+    //  with raw WriteDataBlocks() + WriteContentSetmark(), never through a backup agent, so no set header can
+    //  ever appear.A third flavour — or even a `true` here — would change nothing observable.
+    protected override bool WithSetHeaders => false; // <- sic! S. comment above
 }
 
 /// <summary>
@@ -34,8 +39,10 @@ public abstract class TapeNavigatorTestsBase
 
     /// <summary>Subclasses fix whether the produced fixture writes a media header.</summary>
     protected abstract bool WithMediaHeader { get; }
+    /// <summary>Subclasses fix whether the produced fixture writes a set header for each backup set.</summary>
+    protected abstract bool WithSetHeaders { get; }
 
-    /// <summary>All three drive profiles for parameterized theories.</summary>
+    /// <summary>All four drive profiles for parameterized theories.</summary>
     public static TheoryData<DriveProfile> AllProfiles =>
     [
         DriveProfile.Setmarks,
@@ -79,7 +86,7 @@ public abstract class TapeNavigatorTestsBase
     /// </summary>
     private (VirtualTapeFixture fixture, TapeNavigator nav) CreateNavigator(DriveProfile profile)
     {
-        var fixture = new VirtualTapeFixture(profile, withMediaHeader: WithMediaHeader);
+        var fixture = new VirtualTapeFixture(profile, withMediaHeader: WithMediaHeader, withSetHeaders: WithSetHeaders);
         var nav = TapeNavigator.ProduceNavigator(fixture.Drive);
         Assert.NotNull(nav);
         

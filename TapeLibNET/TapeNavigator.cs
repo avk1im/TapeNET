@@ -163,7 +163,6 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     #endregion // Properties
 
 
-
     #region *** Constructors and factories ***
 
     public TapeNavigator(TapeDrive drive) : base(drive)
@@ -557,6 +556,126 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
         return WentOK;
     }
 
+    /// <summary>
+    /// Moves by the <paramref name="delta"/> from the current content set to the <paramref name="targetContentSet"/>.
+    ///  Called by <see cref="ReconcileContentSetAndMove"/> to perform the actual move.
+    /// </summary>
+    /// <param name="targetContentSet">The target content set to move to.</param>
+    /// <param name="delta">The number of content sets to move by. Can be negative to move backward.</param>
+    /// <returns><see langword="true"/> if the move was successful; otherwise, <see langword="false"/>.</returns>
+    private bool MoveToContentSetByDeltaToReconcile(int targetContentSet, int delta)
+    {
+        if (delta < 0)
+        {
+            // Backward: space to just BEFORE the target set's opening mark, then forward over it — the
+            //  same two-step the main navigation path uses, for the same reason (a backward space lands
+            //  before the mark, not after it).
+            if (!MoveToNextContentSetmark(delta - 1))
+            {
+                if ((WIN32_ERROR)LastError == WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA && targetContentSet == 0)
+                {
+                    // Hit BOM: the oldest set has no preceding mark, so we are already at its start.
+                    ResetError();
+                    if (!MoveToBeginOfContentFromBom(rewindFirst: false))
+                    {
+                        LogErrorAsDebug("Failed to settle at begin-of-content during reconciliation");
+                        ResetContentSet();
+                        return false;
+                    }
+                    CurrentContentSet = targetContentSet;
+                    m_logger.LogWarning("Drive #{Drive}: Content set reconciled — now at set {Set}",
+                        DriveNumber, targetContentSet);
+                    return true;
+                }
+
+                LogErrorAsDebug("Failed to move the reconciliation delta backward");
+                ResetContentSet();
+                return false;
+            }
+
+            if (!MoveToNextContentSetmark(1))
+            {
+                LogErrorAsDebug("Failed to settle after the backward reconciliation delta");
+                ResetContentSet();
+                return false;
+            }
+        }
+        else if (!MoveToNextContentSetmark(delta))
+        {
+            LogErrorAsDebug("Failed to move forward by the reconciliation delta");
+            ResetContentSet();          // we no longer know where we are
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Adopts a content-set position established by a POSITIVELY VERIFIED set header and moves the
+    ///  RELATIVE delta to the intended set (SH-9, SH-10).
+    /// </summary>
+    /// <param name="actualContentSet">Where the head demonstrably IS, per the set header just read.</param>
+    /// <param name="targetContentSet">Where the caller intended to be.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>The only path that may set <see cref="CurrentContentSet"/> without having moved the tape.</b>
+    ///  Callable only when a set header classified positively AND its media id and volume matched — a
+    ///  header from another cartridge says nothing about where this head sits.
+    /// </para>
+    /// <para>
+    /// <b>Relative, never absolute (§9.3a).</b> If navigation reached <paramref name="actualContentSet"/>
+    ///  while aiming at <paramref name="targetContentSet"/>, re-navigating from BOM would reproduce the
+    ///  miscount exactly — the fault is in the physical mark structure, not the arithmetic. Only the
+    ///  delta exploits the new information, so this moves by
+    ///  <c>targetContentSet − actualContentSet</c> marks from where we stand.
+    /// </para>
+    /// <para>
+    /// Deliberately NOT expressible as "set CurrentContentSet, then call MoveToTargetContentSet": that
+    ///  sequence trips the SH-4 idempotence check, because on the drift path <c>TargetContentSet</c>
+    ///  already equals the intended set. The move would be skipped and the correction would silently do
+    ///  nothing.
+    /// </para>
+    /// </remarks>
+    internal bool ReconcileContentSetAndMove(int actualContentSet, int targetContentSet)
+    {
+        ResetError();
+
+        m_logger.LogWarning(
+            "Drive #{Drive}: Reconciling content set — believed {Believed}, actually {Actual}, moving to {Target}",
+            DriveNumber, CurrentContentSet, actualContentSet, targetContentSet);
+
+        // Adopt the verified truth. From here the navigator's belief matches the tape, so the relative
+        //  move below computes the right delta.
+        CurrentContentSet = actualContentSet;
+        TargetContentSet = targetContentSet;
+
+        int delta = targetContentSet - actualContentSet;
+        if (delta == 0)
+        {
+            // The header agreed after all — nothing to move. Reachable only via the re-verify path.
+            m_logger.LogTrace("Drive #{Drive}: Reconciled position already matches the target", DriveNumber);
+            return true;
+        }
+
+        // Move the delta from HERE. Both directions are supported: MoveToNextContentSetmark takes a
+        //  signed count, and the head sits at the START of a set's data, so N marks forward/back lands
+        //  at the start of the set N away. (The head is one block INTO the set, past the set header,
+        //  which is immaterial: mark spacing is position-relative, not block-relative.)
+        if (!MoveToContentSetByDeltaToReconcile(targetContentSet: targetContentSet, delta: delta))
+        {
+            return false; // error handling & tracing done by MoveToContentSetByDeltaToReconcile, incl. CurrentContentSet reset
+        }
+
+        // MoveToContentSetByDeltaToReconcile() already advanced CurrentContentSet by delta, so it now reads
+        //  targetContentSet. Assert rather than assign, to catch any future divergence.
+        Debug.Assert(CurrentContentSet == targetContentSet,
+            $"Reconciliation landed at {CurrentContentSet}, expected {targetContentSet}");
+
+        m_logger.LogWarning("Drive #{Drive}: Content set reconciled — now at set {Set}",
+            DriveNumber, targetContentSet);
+        return true;
+    }
+
     #endregion // Content positioning
 
 
@@ -570,14 +689,24 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
             return true;
         }
 
-        if (UseSmks)
-            // move forward by 'count' setmarks
-            Drive.MoveToNextSetmark(count);
-        else // use filemarks to emulate setmarks
-            Drive.MoveToNextFilemark(count);
+        int physical = count;
+#if DEBUG
+        physical += TakeSimulatedMiscount(); // DEBUG: simulate a miscount offset injected by a test
+#endif
+
+        if (physical == 0)
+        {
+            // DEBUG: The injected offset cancelled the move exactly. Skip the transport op,
+            //  but still record the believed arrival, which is the whole point of the simulation.
+            ResetError();
+        }
+        else if (UseSmks)
+            Drive.MoveToNextSetmark(physical);
+        else
+            Drive.MoveToNextFilemark(physical);
 
         if (WentOK)
-            CurrentContentSet += count;
+            CurrentContentSet += count;   // DEBUG: the LIE: the navigator believes it moved by `count`
 
         if (WentOK)
             m_logger.LogTrace("Drive #{Drive}: Moved by {Count} content setmarks -> CurrentContentSet = {Set}",
@@ -635,6 +764,50 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     }
 
     #endregion // Content mark handling
+
+
+    #region Error simulation
+
+#if DEBUG
+    /// <summary>
+    /// Offset injected into the NEXT content-set positioning, so the navigator lands this many sets away
+    ///  from its target while still believing it arrived. Drives the set-header drift tests.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>One-shot by design.</b> Consumed (and cleared) by the first positioning that follows, so a
+    ///  correction retry can succeed — a persistent offset would sabotage the very recovery Step 6 adds,
+    ///  making the corrected path untestable.
+    /// </para>
+    /// <para>
+    /// Instance-level, like <c>SimulateFileFailures</c> and <c>SimulateTOCFailureMask</c>, so parallel
+    ///  tests never interfere. <c>#if DEBUG</c> so it can never reach Release (§15.4).
+    /// </para>
+    /// </remarks>
+    public int SimulateSetMiscount { get; set; } = 0;
+
+    /// <summary>
+    /// When <see langword="true"/>, the <see cref="SimulateSetMiscount"/> offset is NOT cleared after the next
+    ///  positioning, allowing it to persist for multiple positionings.
+    /// </summary>
+    public bool SimulateSetMiscountPersistent { get; set; } = false;
+
+    /// <summary>Consumes the pending miscount offset, if any.</summary>
+    private protected int TakeSimulatedMiscount()
+    {
+        int offset = SimulateSetMiscount;
+        if (offset != 0)
+        {
+            if (!SimulateSetMiscountPersistent)
+                SimulateSetMiscount = 0;
+            m_logger.LogWarning("Drive #{Drive}: SIMULATING a set miscount of {Offset} ({How})", DriveNumber, offset,
+                SimulateSetMiscountPersistent ? "persistently" : "once");
+        }
+        return offset;
+    }
+#endif
+
+    #endregion // Error simulation
 
 } // TapeNavigator
 
@@ -895,12 +1068,16 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
             //  Unknown presence is treated as Absent — the legacy-safe default used everywhere (INV-3).
             int filemarks = TargetContentSet
                 + (MediaHeaderPresence == TapeHeaderPresence.Present ? 1 : 0);
+#if DEBUG
+            // For error simulation, we need a separate treatment here since we skip the base
+            filemarks += TakeSimulatedMiscount(); // DEBUG: simulate a miscount offset injected by a test
+#endif
 
             if (WentOK && filemarks > 0)
                 Drive.MoveToNextFilemark(filemarks);
 
             if (WentOK)
-                CurrentContentSet = TargetContentSet;
+                CurrentContentSet = TargetContentSet; // DEBUG: the LIE: the navigator believes it moved by `filemarks`
             else
                 ResetContentSet();   // position uncertain
 
@@ -914,7 +1091,6 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
 
         return base.MoveToTargetContentSet();
     }
-
 
     #endregion // Content positioning
 }

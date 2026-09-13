@@ -200,6 +200,11 @@ public class ServiceBaselineTests : ServiceTestBase
     ///  <see cref="TapeServiceBase.OperationCancellationToken"/> returns
     ///  <see cref="CancellationToken.None"/> on the base class; the CT→agent bridge
     ///  is only wired in the <c>TapeService</c> subclass.
+    /// <para>
+    /// <b>Notice</b> this test proved susceptible to a race condition with the abort
+    ///  flag application. Re-run it if it fails to confirm if it's been a spurious
+    ///  timing issue.
+    /// </para>
     /// </remarks>
     [Fact]
     public async Task Backup_Abort_SetEntriesAreIntact()

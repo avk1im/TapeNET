@@ -205,12 +205,16 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         get
         {
             if (_toc is null) return 0;
-            var used = _toc.ComputeTotalFileSizeOnTape(DefaultBlockSize);
+            // The loaded media header declares whether the sets carry set headers (SH-1); when no header
+            //  is loaded the medium is legacy and carries none.
+            bool withSetHeaders = LoadedMediaHeader?.HasSetHeaders ?? false;
+            var used = _toc.ComputeTotalFileSizeOnTape(DefaultBlockSize, withSetHeaders);
             if (!HasInitiatorPartition)
                 used += DefaultTOCCapacity;
             return used;
         }
     }
+
 
     /// <summary>
     /// Quantity (3) — the RAW remaining capacity as reported by the drive/backend, for diagnostics and

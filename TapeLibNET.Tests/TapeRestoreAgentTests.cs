@@ -5,8 +5,29 @@ using TapeLibNET.Virtual;
 namespace TapeLibNET.Tests;
 
 
-public sealed class TapeRestoreAgentTests_Headerless : TapeRestoreAgentTestsBase { protected override bool WithMediaHeader => false; }
-public sealed class TapeRestoreAgentTests_Headed : TapeRestoreAgentTestsBase { protected override bool WithMediaHeader => true; }
+public sealed class TapeRestoreAgentTests_Headerless : TapeRestoreAgentTestsBase
+{
+    protected override bool WithMediaHeader => false;
+    protected override bool WithSetHeaders => false;
+}
+
+/// <remarks>
+/// SH-1's middle state — a headed volume that declares NO set headers. The only flavour that catches a
+///  read gated on <c>MediaHeaderPresence</c> instead of <c>SetHeadersExpected</c>: Headerless never
+///  reaches the gate, and SetHeaders finds a real header there, so both would pass while this one
+///  consumes a CONTENT block as a header and corrupts the first file.
+/// </remarks>
+public sealed class TapeRestoreAgentTests_MediaHeader : TapeRestoreAgentTestsBase
+{
+    protected override bool WithMediaHeader => true;
+    protected override bool WithSetHeaders => false;
+}
+
+public sealed class TapeRestoreAgentTests_SetHeaders : TapeRestoreAgentTestsBase
+{
+    protected override bool WithMediaHeader => true;
+    protected override bool WithSetHeaders => true;
+}
 
 /// <summary>
 /// Focused tests for the restore agent hierarchy —
@@ -34,6 +55,8 @@ public abstract class TapeRestoreAgentTestsBase
 
     /// <summary>Subclasses fix whether the produced fixture writes a media header.</summary>
     protected abstract bool WithMediaHeader { get; }
+    /// <summary>Subclasses fix whether the produced fixture writes a set header for each backup set (SH-1).</summary>
+    protected abstract bool WithSetHeaders { get; }
 
     /// <summary>Fixture factory mirroring the ctor; injects the header axis. All tests funnel through here.</summary>
     protected VirtualTapeFixture CreateFixture(
@@ -43,7 +66,7 @@ public abstract class TapeRestoreAgentTestsBase
         string mediaDescription = "Test Media",
         bool useMemoryMap = false)
         => new(profile, contentCapacity, loggerFactory, mediaDescription, useMemoryMap,
-               withMediaHeader: WithMediaHeader);
+               withMediaHeader: WithMediaHeader, withSetHeaders: WithSetHeaders);
 
     #endregion // Media Header
 
@@ -163,6 +186,35 @@ public abstract class TapeRestoreAgentTestsBase
 
     #endregion
 
+    #region *** Fixture Validation ***
+
+    /// <summary>
+    /// The matrix's own guard: the media header on tape must DECLARE exactly what the flavour requested.
+    ///  Without this, a fixture that quietly dropped the set-header request would make an entire flavour
+    ///  pass for the wrong reason.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Fixture_ProducesTheDeclaredHeaderShape(DriveProfile profile)
+    {
+        using var fixture = CreateFixture(profile);
+        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+
+        var header = agent.ReadBomHeader() as TapeMediaHeader;
+
+        if (!WithMediaHeader)
+        {
+            Assert.Null(header);
+            Assert.False(agent.Navigator.SetHeadersExpected);
+            return;
+        }
+
+        Assert.NotNull(header);
+        Assert.Equal(WithSetHeaders, header!.HasSetHeaders);
+        Assert.Equal(WithSetHeaders, agent.Navigator.SetHeadersExpected);
+    }
+
+    #endregion
 
     #region *** Single-Set Restore ***
 
