@@ -339,23 +339,49 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
 
     #region *** TOC positioning ***
 
-    /// <summary>Positions the tape at the start of the TOC area. Subclasses implement the physical seek.</summary>
-    public virtual bool MoveToBeginOfTOC()
+    /// <summary>Positions the tape at the start of the TOC area.</summary>
+    /// <remarks>
+    /// <para>
+    /// Template method: <see cref="MoveToBeginOfTOCCore"/> performs the layout-specific seek, while this
+    ///  wrapper owns the error reset, the final <see cref="CurrentContentSet"/> on BOTH outcomes, and the
+    ///  logging. Non-virtual by design — an override could skip the bookkeeping, which is exactly the
+    ///  defect class this shape removes.
+    /// </para>
+    /// <para>
+    /// Unlike the two content entry points, there is deliberately NO already-there short-circuit here:
+    ///  "already at the beginning of TOC" means different things per layout (end-of-content plus a valid
+    ///  TOC mark on one, plain end-of-content on another), so each <c>Core</c> decides for itself.
+    /// </para>
+    /// </remarks>
+    public bool MoveToBeginOfTOC()
     {
-        // Actual implementation by the derived classes — we just finalize here
+        ResetError();
 
-        if (WentOK)
-            CurrentContentSet = InTOCSet; // if we're in TOC area, we aren't in any content set!
-        else
-            ResetContentSet(); // since we don't know where we ended up
+        bool moved = MoveToBeginOfTOCCore();
 
-        if (WentOK)
+        if (moved && WentOK)
+        {
+            CurrentContentSet = InTOCSet;   // inside the TOC area we are in NO content set at all
             m_logger.LogTrace("Drive #{Drive}: Moved to the beginning of TOC", DriveNumber);
-        else
-            LogErrorAsDebug("Failed to move to the beginning of TOC");
+            return true;
+        }
 
-        return WentOK;
-    } // MoveToBeginOfTOC
+        ResetContentSet();                  // we do not know where we ended up
+        LogErrorAsDebug("Failed to move to the beginning of TOC");
+        return false;
+    }
+
+    /// <summary>
+    /// Performs the layout-specific seek to the start of the TOC area. Called only by
+    ///  <see cref="MoveToBeginOfTOC"/>, which owns the surrounding bookkeeping.
+    /// </summary>
+    /// <remarks>
+    /// May move <see cref="CurrentContentSet"/> through intermediate states — <see cref="MoveToNextContentSetmark"/>
+    ///  updates it as it goes — but must NOT try to establish the final value: the wrapper does that, and
+    ///  does it correctly on both outcomes. Returning <see langword="true"/> with a drive error pending is
+    ///  treated as failure, so <c>return WentOK;</c> is the normal ending.
+    /// </remarks>
+    protected abstract bool MoveToBeginOfTOCCore();
 
     #endregion // TOC positioning
 
@@ -363,38 +389,66 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     #region *** Content positioning ***
 
     /// <summary>Positions the tape at the start of the content area (set 0).</summary>
-    public virtual bool MoveToBeginOfContent()
+    /// <remarks>
+    /// Template method — see <see cref="MoveToBeginOfTOC"/> for the division of responsibility. The
+    ///  already-there short-circuit lives here rather than in each <c>Core</c>: begin-of-content is
+    ///  begin-of-content on every layout.
+    /// </remarks>
+    public bool MoveToBeginOfContent()
     {
-        // Actual implementation by the derived classes — we just finalize here
+        ResetError();
 
-        if (WentOK)
-            CurrentContentSet = 0; // we're at the beginning of content
+        if (CurrentContentSet == 0)
+        {
+            m_logger.LogTrace("Drive #{Drive}: Already at the beginning of content", DriveNumber);
+            return true;
+        }
 
-        if (WentOK)
+        bool moved = MoveToBeginOfContentCore();
+
+        if (moved && WentOK)
+        {
+            CurrentContentSet = 0;
             m_logger.LogTrace("Drive #{Drive}: Moved to the beginning of content", DriveNumber);
-        else
-            LogErrorAsDebug("Failed to move to the beginning of content");
+            return true;
+        }
 
-        return WentOK;
+        ResetContentSet();                  // we do not know where we ended up
+        LogErrorAsDebug("Failed to move to the beginning of content");
+        return false;
     }
+
+    /// <inheritdoc cref="MoveToBeginOfTOCCore"/>
+    protected abstract bool MoveToBeginOfContentCore();
 
     /// <summary>Positions the tape at the end of the content area (write position for new sets).</summary>
-    public virtual bool MoveToEndOfContent()
+    /// <remarks>Template method — see <see cref="MoveToBeginOfTOC"/>.</remarks>
+    public bool MoveToEndOfContent()
     {
-        // Actual implementation by the derived classes — we just finalize here
+        ResetError();
 
-        if (WentOK)
-            CurrentContentSet = -1; // we're at the end of content
-        else
-            ResetContentSet(); // since we don't know where we ended up
+        if (CurrentContentSet == -1)
+        {
+            m_logger.LogTrace("Drive #{Drive}: Already at the end of content", DriveNumber);
+            return true;
+        }
 
-        if (WentOK)
+        bool moved = MoveToEndOfContentCore();
+
+        if (moved && WentOK)
+        {
+            CurrentContentSet = -1;
             m_logger.LogTrace("Drive #{Drive}: Moved to the end of content", DriveNumber);
-        else
-            LogErrorAsDebug("Failed to move to the end of content");
+            return true;
+        }
 
-        return WentOK;
+        ResetContentSet();                  // we do not know where we ended up
+        LogErrorAsDebug("Failed to move to the end of content");
+        return false;
     }
+
+    /// <inheritdoc cref="MoveToBeginOfTOCCore"/>
+    protected abstract bool MoveToEndOfContentCore();
 
     /// <summary>
     /// Navigates to <see cref="TargetContentSet"/> using bidirectional setmark traversal.
@@ -621,19 +675,17 @@ public class TapeNavigatorTOCInPartition : TapeNavigator
 
     #region *** TOC positioning ***
 
-    public override bool MoveToBeginOfTOC()
+    /// <inheritdoc/>
+    protected override bool MoveToBeginOfTOCCore()
     {
         m_logger.LogTrace("Drive #{Drive}: Moving to the beginning of TOC partition", DriveNumber);
 
-        ResetError();
-
         Drive.MoveToPartition(MediaPartition.Initiator); // TOCPartition
-
         m_logger.LogTrace("Drive #{Drive}: Current partition after moving to Initiator is >{Partition}<",
             DriveNumber, Drive.GetCurrentPartition());
 
-        return base.MoveToBeginOfTOC();
-    } // MoveToBeginOfTOC
+        return WentOK;
+    }
 
     #endregion // TOC positioning
 
@@ -694,11 +746,9 @@ public class TapeNavigatorTOCInPartition : TapeNavigator
         return WentOK;
     }
 
-    public override bool MoveToBeginOfContent()
+    /// <inheritdoc/>
+    protected override bool MoveToBeginOfContentCore()
     {
-        if (CurrentContentSet == 0)
-            return true;   // already at begin-of-content — skip the partition switch + locate
-
         if (CurrentContentSet == AtBomHeader)
         {
             // AtBomHeader ⇒ the head is at (content-partition) BOM, or just past the header block if it was
@@ -707,39 +757,31 @@ public class TapeNavigatorTOCInPartition : TapeNavigator
             //  filemark on tape, which on a setmark layout is the TOC's, far past the content.
             if (MediaHeaderPresence == TapeHeaderPresence.Present && !Drive.MoveToNextFilemark(1))
                 return false;
-        }
-        else if (!MoveToBeginOfContentFromBom())
-            return false;
 
-        return base.MoveToBeginOfContent();
+            return WentOK;
+        }
+
+        return MoveToBeginOfContentFromBom();
     }
 
-    public override bool MoveToEndOfContent()
+    /// <inheritdoc/>
+    protected override bool MoveToEndOfContentCore()
     {
         m_logger.LogTrace("Drive #{Drive}: Moving to the end of content partition", DriveNumber);
 
-        if (CurrentContentSet == -1) // already at the end of content
-        {
-            m_logger.LogTrace("Drive #{Drive}: Already at the end of content", DriveNumber);
-            return true;
-        }
-
         Drive.MoveToPartition(MediaPartition.Content); // ContentPartition
-
         m_logger.LogTrace("Drive #{Drive}: Current partition after moving to Content is >{Partition}<",
             DriveNumber, Drive.GetCurrentPartition());
 
         Drive.FastforwardToEnd(partition: MediaPartition.Current); // ContentPartition
-
         m_logger.LogTrace("Drive #{Drive}: Current partition after ffwd'ing to end is >{Partition}<",
             DriveNumber, Drive.GetCurrentPartition());
 
         // [content][SM][EOM] <-- we're here
         if (WentOK)
             MoveToNextContentSetmark(-1); // this will bring us to right before the last setmark
-        
         if (WentOK)
-            MoveToNextContentSetmark(1); // Finally go 1 setmark forward to after the setmark -- the to-be-written content data
+            MoveToNextContentSetmark(1);  // Finally go 1 setmark forward to after the setmark -- the to-be-written content data
         else
         {
             // No setmark ⇒ no content yet. Go to begin-of-content in the content partition,
@@ -748,7 +790,7 @@ public class TapeNavigatorTOCInPartition : TapeNavigator
             MoveToBeginOfContentFromBom(rewindFirst: true); // do rewind to make sure we're at BOM
         }
 
-        return base.MoveToEndOfContent();
+        return WentOK;
     }
 
     #endregion // Content positioning
@@ -795,30 +837,27 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
 
     #region *** Content positioning ***
 
-    public override bool MoveToBeginOfContent()
+    /// <inheritdoc/>
+    protected override bool MoveToBeginOfContentCore()
     {
         m_logger.LogTrace("Drive #{Drive}: Moving to the beginning of content in set", DriveNumber);
 
-        if (CurrentContentSet == 0) // already at the beginning of content
-        {
-            m_logger.LogTrace("Drive #{Drive}: Already at the beginning of content", DriveNumber);
-            return true;
-        }
-
         if (CurrentContentSet == AtBomHeader)
         {
-            // AtBomHeader ⇒ the head is at (content-partition) BOM, or just past the header block if it was
-            //  read — either way one forward filemark reaches begin-of-content WHEN A HEADER EXISTS.
-            //  With Absent/Unknown, BOM already IS begin-of-content: spacing would overshoot to the first
-            //  filemark on tape, which on a setmark layout is the TOC's, far past the content.
+            // AtBomHeader ⇒ the head is at BOM, or just past the header block if it was read — either way
+            //  one forward filemark reaches begin-of-content WHEN A HEADER EXISTS. With Absent/Unknown,
+            //  BOM already IS begin-of-content: spacing would overshoot to the first filemark on tape,
+            //  which on a setmark layout is the TOC's, far past the content.
             if (MediaHeaderPresence == TapeHeaderPresence.Present && !Drive.MoveToNextFilemark(1))
                 return false;
-        }
-        else if (!MoveToBeginOfContentFromBom())
-            return false;
 
-        return base.MoveToBeginOfContent();
+            return WentOK;
+        }
+
+        return MoveToBeginOfContentFromBom();
     }
+
+    // MoveToBeginOfTOCCore() and MoveToEndOfContentCore(`) remain up to descendants to implement
 
     /// <summary>
     /// Oprtimized path for forward navigation on a FILEMARK-delimited layout: the media header's trailing
@@ -899,23 +938,19 @@ public class TapeNavigatorTOCInSetWithSmks : TapeNavigatorTOCInSet
 
     #region *** TOC positioning ***
 
-    // The TOC is in the last set of the only partion [content][SM][toc1][FM][toc1][FM]
-    public override bool MoveToBeginOfTOC()
+    /// <inheritdoc/>
+    protected override bool MoveToBeginOfTOCCore()
     {
+        // The TOC is in the last set of the only partion [content][SM][toc1][FM][toc1][FM]
+
         m_logger.LogTrace("Drive #{Drive}: Moving to the beginning of TOC in set with setmarks", DriveNumber);
 
-        ResetError();
-
-        if (CurrentContentSet == -1)  // else if we're at the end of content, we're already at the beginning of TOC
-        {
+        if (CurrentContentSet == -1)  // at the end of content we are already at the beginning of TOC
             m_logger.LogTrace("Drive #{Drive}: Already at the beginning of TOC", DriveNumber);
-        }
-        else          
-        {
+        else
             MoveToEndOfContentInternal();
-        }
 
-        return base.MoveToBeginOfTOC();
+        return WentOK;
     }
 
     #endregion // TOC positioning
@@ -942,19 +977,14 @@ public class TapeNavigatorTOCInSetWithSmks : TapeNavigatorTOCInSet
         }
     }
 
-    public override bool MoveToEndOfContent()
+    /// <inheritdoc/>
+    protected override bool MoveToEndOfContentCore()
     {
         m_logger.LogTrace("Drive #{Drive}: Moving to the end of content in set with setmarks", DriveNumber);
 
-        if (CurrentContentSet == -1) // already at the end of content
-        {
-            m_logger.LogTrace("Drive #{Drive}: Already at the end of content", DriveNumber);
-            return true;
-        }
-
         MoveToEndOfContentInternal();
 
-        return base.MoveToEndOfContent();
+        return WentOK;
     }
 
     // optimized version for the case when we're inside TOC
@@ -1023,23 +1053,21 @@ public class TapeNavigatorTOCInSetWithFmks : TapeNavigatorTOCInSet
 
 
     #region *** TOC positioning ***
-    // The TOC is in the last two files: [content][FM][toc1][FM][toc2][FM]
 
-    public override bool MoveToBeginOfTOC()
+    /// <inheritdoc/>
+    protected override bool MoveToBeginOfTOCCore()
     {
+        // The TOC is in the last two files: [content][FM][toc1][FM][toc2][FM]
+
         m_logger.LogTrace("Drive #{Drive}: Moving to the beginning of TOC in set with filemarks", DriveNumber);
 
-        if (CurrentContentSet == -1) // if we're at the end of content, we're already at the beginning of TOC
-        {
+        if (CurrentContentSet == -1) // at the end of content we are already at the beginning of TOC
             m_logger.LogTrace("Drive #{Drive}: Already at the beginning of TOC", DriveNumber);
-        }
         else
-        {
             MoveToEndOfContentInternal();
-        }
 
-        return base.MoveToBeginOfTOC();
-    } // MoveToBeginOfTOC
+        return WentOK;
+    }
 
     #endregion // TOC positioning
 
@@ -1069,20 +1097,15 @@ public class TapeNavigatorTOCInSetWithFmks : TapeNavigatorTOCInSet
         }
     }
 
-    public override bool MoveToEndOfContent()
+    /// <inheritdoc/>
+    protected override bool MoveToEndOfContentCore()
     {
         m_logger.LogTrace("Drive #{Drive}: Moving to the end of content in set with filemarks", DriveNumber);
 
-        if (CurrentContentSet == -1) // already at the end of content
-        {
-            m_logger.LogTrace("Drive #{Drive}: Already at the end of content", DriveNumber);
-            return true;
-        }
-
         MoveToEndOfContentInternal();
 
-        return base.MoveToEndOfContent();
-    } // MoveToEndOfContent()
+        return WentOK;
+    }
 
     #endregion // Content positioning
 
@@ -1150,11 +1173,12 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
 
     #region *** TOC positioning ***
 
-    // The TOC is in the last two files, separated by additional "TOC marker" (c_fmksAsTOCMark filemarks):
-    //  [content][FM][gap][FM][FM][toc1][FM][toc2][FM]
-
-    public override bool MoveToBeginOfTOC()
+    /// <inheritdoc/>
+    protected override bool MoveToBeginOfTOCCore()
     {
+        // The TOC is in the last two files, separated by additional "TOC marker" (c_fmksAsTOCMark filemarks):
+        //  [content][FM][gap][FM][FM][toc1][FM][toc2][FM]
+
         m_logger.LogTrace("Drive #{Drive}: Moving to the beginning of TOC in set with filemarks and TOC mark", DriveNumber);
 
         if (CurrentContentSet == -1)
@@ -1179,12 +1203,12 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
         {
             // First move to the very beginning
             Drive.Rewind(); // no need to account for media header via MoveToBeginOfContentFromBom()
-                            //  since the header bears no filemarks
+                            //  since the header bears no multiple filemarks
             if (WentOK)
                 SeekForwardPastTOCMark();
 
             /*
-            // The following doesn't work on DLT-V4
+            // The following doesn't work on DLT-V4 -- FIXME: reevaluate on occasion
             // First go to the end. Notice this will fail on an empty tape
             FastforwardToEnd(partition: 1);
             if (WentOK)
@@ -1198,28 +1222,22 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
             SeekForwardPastTOCMark();
         }
 
-        return base.MoveToBeginOfTOC();
-    } // MoveToBeginOfTOC
+        return WentOK;
+    }
+
 
     #endregion // TOC positioning
 
 
     #region *** Content positioning ***
 
-    // public override bool MoveToBeginOfContent() -- inherit from TapeNavigatorTOCInSet
-
-    public override bool MoveToEndOfContent()
+    /// <inheritdoc/>
+    protected override bool MoveToEndOfContentCore()
     {
-        m_logger.LogTrace("Drive #{Drive}: Moving to the end of content in set with filemarks and TOC mark", DriveNumber);
-
-        if (CurrentContentSet == -1) // already at the end of content
-        {
-            m_logger.LogTrace("Drive #{Drive}: Already at the end of content", DriveNumber);
-            return true;
-        }
-
         // The TOC is in the last two files, separated by additional c_fmksAsTOCMark filemarks ("TOC marker"):
         //  [content][FM][gap][FM][FM][toc1][FM][toc2][FM]
+
+        m_logger.LogTrace("Drive #{Drive}: Moving to the end of content in set with filemarks and TOC mark", DriveNumber);
 
         if (CurrentContentSet == UnknownSet)
             Drive.FastforwardToEnd(partition: MediaPartition.Content); // CommonPartition
@@ -1229,6 +1247,7 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
 
         if (WentOK)
             SeekBackwardBeforeTOCMark();
+
         if (WentOK)
         {
             Drive.MoveToNextFilemark(-1); // move to before the last content FM
@@ -1243,7 +1262,7 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
             MoveToBeginOfContentFromBom(rewindFirst: true); // do rewind to make sure we're at BOM
         }
 
-        return base.MoveToEndOfContent();
+        return WentOK;
     }
 
     #endregion // Content positioning

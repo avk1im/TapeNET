@@ -460,7 +460,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     #endregion // State management operations
 
 
-    #region *** Header block I/O ***
+    #region *** BOM header block I/O ***
 
     /// <summary>
     /// Writes a pre-framed, block-sized header at BOM as one direct block (no filemark). Ends any active
@@ -536,8 +536,142 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         return read;
     }
 
+    #endregion // BOM header block I/O
 
-    #endregion // Header block I/O
+
+    #region *** Set header block I/O ***
+
+    //  The SET-header pair is the deliberate opposite of the BOM pair above:
+    //
+    //    BOM header                          Set header
+    //    ------------------------------      ------------------------------------------------
+    //    EndReadWrite() first                caller owns the session — tearing it down is wrong
+    //    MoveToBomHeader() itself            operates at the CURRENT position, already set up
+    //    filemark after the block            NO tapemark at all (SH-2)
+    //    records presence on the navigator   leaves the navigator untouched on success (SH-6)
+    //
+    //  Both still share TapeHeaderBlock, so the framing, the size guard and the set-and-restore
+    //   block-size discipline stay defined exactly once.
+
+    /// <summary>
+    /// Writes a pre-framed, block-sized SET header at the CURRENT tape position — no positioning, no
+    ///  tapemark, and no navigator mutation on success.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Preconditions.</b> The caller has already positioned at the set's first block and has NOT yet
+    ///  entered <see cref="TapeState.WritingContent"/>. Both matter: <c>EnsurePackerCreated()</c> anchors
+    ///  the packer on <see cref="TapeDrive.BlockCounter"/>, so the header must reach tape BEFORE the
+    ///  packer exists — which is exactly what makes every file's <c>TapeAddress</c> land past it with no
+    ///  TOC-address surgery. A live packer would additionally mean a worker thread racing this raw
+    ///  <c>WriteDirect</c>.
+    /// </para>
+    /// <para>
+    /// <b>No tapemark (SH-2).</b> The set header is always the FIRST thing written at an already-legal
+    ///  position (post-mark, at begin-of-content, or at EOD), and the write truncates — so everything
+    ///  after it is a sequential append. It needs no mark to make the following writes legal, and
+    ///  contributes none to set counting (SH-3).
+    /// </para>
+    /// <para>
+    /// <b>On failure</b> the content position is reset (SH-6): a torn write leaves the head unknowable,
+    ///  and a stale <c>CurrentContentSet</c> would feed a falsehood into the very verification this
+    ///  feature exists to power.
+    /// </para>
+    /// </remarks>
+    /// <param name="framedBlock">The framed header padded to exactly <see cref="TapeHeaderBlock.Size"/>.</param>
+    public bool WriteSetHeaderBlock(byte[] framedBlock)
+    {
+        ResetError();
+
+        if (State != TapeState.MediaPrepared || m_packer is not null)
+        {
+            LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
+            LogErrorAsDebug($"WriteSetHeaderBlock requires {TapeState.MediaPrepared} with no active packer (state={State})");
+            return false;
+        }
+
+        long atBlock = Drive.BlockCounter;   // capture before the write advances it
+
+        // withFilemark: false overrules TapeHeaderBlock.WritesTrailingMark — the media header's mark
+        //  exists because begin-of-content is a repeated WRITE ENTRY POINT; a set start never is.
+        if (!TapeHeaderBlock.WriteFramed(Drive, framedBlock, withFilemark: false))
+        {
+            SyncErrorFrom(Drive);
+            Navigator.ResetContentSet();          // SH-6
+            return false;
+        }
+
+        m_logger.LogTrace("Drive #{Drive}: Set header block written at block {Block}", DriveNumber, atBlock);
+        return true;
+    }
+
+    /// <summary>
+    /// Reads one standard block at the CURRENT tape position into <paramref name="buffer"/> (which must be
+    ///  at least <see cref="TapeHeaderBlock.Size"/> bytes). Returns bytes read, or ≤ 0 on failure.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Raw bytes only</b> — the AGENT classifies (INV-12). <see cref="TapeHeaderBlock.Read"/> also
+    ///  classifies, but that result is deliberately discarded here so parsing stays on the agent side,
+    ///  exactly as in <see cref="ReadBomHeaderBlock"/>.
+    /// </para>
+    /// <para>
+    /// <b>Preconditions.</b> <see cref="TapeState.ReadingContent"/>, positioned at the set start, and
+    ///  strictly BEFORE the first <see cref="BeginPackedFileRead"/> of this set (SH-7) — the pipelined
+    ///  reader owns a prefetch worker thread that would otherwise race this raw <c>ReadDirect</c>. Because
+    ///  that reader is constructed lazily inside <see cref="BeginPackedFileRead"/>, "not yet created" is
+    ///  precisely the legal window, and this method enforces it.
+    /// </para>
+    /// <para>
+    /// <b>The caller gates the call, not this method.</b> A read is issued only when the navigator's
+    ///  <see cref="TapeNavigator.SetHeadersExpected"/> says one exists — on legacy media the set's first
+    ///  block is file content, possibly of a different block size, and reading it as a header would be
+    ///  both pointless and position-disturbing.
+    /// </para>
+    /// </remarks>
+    public int ReadSetHeaderBlock(byte[] buffer)
+    {
+        ResetError();
+
+        if (State != TapeState.ReadingContent)
+        {
+            LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
+            LogErrorAsDebug($"ReadSetHeaderBlock requires {TapeState.ReadingContent} (state={State})");
+            return -1;
+        }
+
+        // SH-7. A hard guard rather than a Debug.Assert: the consequence of getting this wrong is a data
+        //  race against the prefetch worker, so it must fail identically in Debug and Release — and an
+        //  assert would make the violation untestable (the test would trip the dialog, not the branch).
+        if (m_readPacker is not null)
+        {
+            LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
+            LogErrorAsDebug("ReadSetHeaderBlock called with the pipelined reader already active (SH-7)");
+            return -1;
+        }
+
+        // The set header is invisible to this session's byte accounting: it is metadata the caller never
+        //  asked to read, and BeginReadWrite has just zeroed the counter for the set's FILES. (The write
+        //  side needs no such care — it runs in MediaPrepared, before BeginWriteContent zeroes it.)
+        long byteCounterBefore = Drive.ByteCounter;
+
+        int read = TapeHeaderBlock.Read(Drive, buffer, out _);
+
+        Drive.ByteCounter = byteCounterBefore;
+
+        // Compare against the BLOCK size, not buffer.Length: an over-sized buffer is legitimate (the
+        //  block is what it is), and TapeHeaderBlock.Read already rejects an under-sized one.
+        if (read != TapeHeaderBlock.Size)
+        {
+            SyncErrorFrom(Drive);
+            Navigator.ResetContentSet();          // SH-6
+            return -1;
+        }
+
+        return read;
+    }
+
+    #endregion // Set header block I/O
 
 
     #region *** File and set state operations ***

@@ -452,6 +452,15 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
                 return 0;
         }
 
+#if DEBUG
+        // Evaluated AFTER validation, truncation and the capacity check, so an injected fault models a
+        //  genuine MEDIUM fault rather than a rejected request — and so the caller meets exactly the
+        //  error path a real drive would produce. Note the truncation has already happened by here: a
+        //  write that errors still destroyed EOD, which is faithful to real tape.
+        if (WriteFaults is { } wf && wf.ShouldInjectNow())
+            return ApplyInjectedWriteFault(wf, buffer, offset, count);
+#endif
+
         int totalWritten = 0;
         long streamOffset = m_stream.Position;
 
@@ -609,6 +618,12 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
             SetError(WIN32_ERROR.ERROR_NO_DATA_DETECTED);
             return 0;
         }
+
+#if DEBUG
+        // After the EOD check, so an injected read fault is a MEDIUM fault, never a disguised EOD.
+        if (ReadFaults is { } rf && rf.ShouldInjectNow())
+            return ApplyInjectedReadFault(rf, buffer, offset, count);
+#endif
 
         int totalRead = 0;
 
@@ -1301,4 +1316,5 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
     }
 
     #endregion
+
 }

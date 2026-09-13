@@ -1187,6 +1187,8 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             return false;
         }
 
+        ResetError(); // clear any stale errors (e.g. from prior I/O failures) for the new (or renewed) partition
+
         // Track which partition we're on for content capacity caching
         if (partition != MediaPartition.Current)
             m_onContentPartition = (partition == MediaPartition.Content);
