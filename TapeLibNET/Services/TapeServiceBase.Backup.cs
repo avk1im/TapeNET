@@ -255,9 +255,10 @@ public partial class TapeServiceBase
 
             do
             {
+                // --- Invoke the agent ---
                 _drive.IoTimeCounterUs = 0; // reset I/O time counter for this volume
                 dataTimer.Restart();
-                bool result = agent.CanResumeToNextVolume
+                var agentResult = agent.CanResumeToNextVolume
                     ? agent.ResumeBackupToNextVolume()
                     : request.ListContainsPatterns
                         ? agent.BackupFilesToCurrentSet(newSet, request.FileList, request.IncludeSubdirectories,
@@ -267,6 +268,7 @@ public partial class TapeServiceBase
                 dataTimer.Stop();
                 dataElapsedUs += dataTimer.ElapsedMicroseconds;
                 dataIoElapsedUs += _drive.IoTimeCounterUs;
+                bool result = (bool)agentResult;
 
                 // The agent catches TapeAbortRequestedException internally and returns false,
                 //  so abort is detected via the flag rather than catching the exception.
@@ -388,6 +390,7 @@ public partial class TapeServiceBase
                             LogInfo("Abort requested — saving TOC to preserve media integrity...");
                         }
 
+                        // --- Invoke the agent to save the TOC ---
                         var tocResult = agent.BackupTOC();
                         if (!tocResult)
                         {
@@ -416,6 +419,7 @@ public partial class TapeServiceBase
                                         break;
                                     }
 
+                                    // --- Emergency export TOC to file ---
                                     var saveResult = agent.SaveTOCToFile(chosenPath);
                                     if (saveResult)
                                     {
@@ -463,6 +467,14 @@ public partial class TapeServiceBase
                 } // if (!skipTOCSave)
 
                 // Log results for this volume — headline level + uniform stats
+                var volumeResult = MakeResult();
+                ReportFileOperationOutcome(volumeResult, "Backup", agentResult,
+                    pendingContinuation: agent.CanResumeToNextVolume);
+                ReportBackupStats(volumeResult,
+                    dataSecs: dataElapsedUs / 1e6, ioSecs: dataIoElapsedUs / 1e6, tocSecs: tocElapsedUs / 1e6);
+
+                /*
+                // Log results for this volume — headline level + uniform stats
                 ServiceReportLevel headlineLevel;
                 string headlineMsg;
                 if (progressHandler.FilesFailed > 0)
@@ -509,7 +521,8 @@ public partial class TapeServiceBase
                     if (tocSecs >= 1.0) timingParts.Add($"TOC save {FormatElapsed(tocSecs)}");
                     LogInfoSub(string.Join(", ", timingParts));
                 }
-                LogInfoSub($"Remaining media capacity (reported): {Helpers.BytesToStringLong(_drive.GetReportedContentRemaining())}");
+                LogInfoSub($"Remaining media capacity (b1): {Helpers.BytesToStringLong(_drive.GetReportedContentRemaining())}");
+                */
 
                 // If backup was aborted, TOC has been saved — break out
                 if (wasAborted)

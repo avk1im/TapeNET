@@ -403,8 +403,14 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     /// </summary>
     public TapeResult ResumeBackupToNextVolume()
     {
+        // Deliberately NO ResetLatchedFailure(): a multi-volume backup is ONE operation. A per-file
+        //  failure on an earlier volume must still surface in the final result, and the EOM stop that
+        //  brought us here does not latch (it is not a fault) — so the only thing carried across the
+        //  swap is a genuine failure. Mirrors _stats, which likewise never resets between volumes.
+        // NO ResetLatchedFailure();
+
         if (!CanResumeToNextVolume)
-            return TapeResult.Fail(this);
+            return FailedOperationResult;
 
         m_logger.LogTrace("Resuming multi-volume backup for volume #{Volume}", TOC.Volume + 1);
 
@@ -412,7 +418,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         if (!Manager.RenewNavigator())
         {
             LogErrorAsDebug("Failed to renew Navigator");
-            return TapeResult.Fail(this);
+            return FailedOperationResult;
         }
 
         Debug.Assert(MultiVolumeContext != null);
@@ -438,7 +444,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             ? BackupFilesToCurrentSet(newSet: true)
             : BackupFilesToCurrentSetAligned(newSet: true);
 #pragma warning restore CS0618 // Type or member is obsolete
-        return ok ? TapeResult.OK : TapeResult.Fail(this);
+        return ok ? TapeResult.OK : FailedOperationResult;
     }
 
     [Obsolete("Use the non-Aligned (Packed) version")]
@@ -529,6 +535,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 m_logger.LogTrace("{Method}: Abort requested before file #{Number} >{File}< was written",
                     nameof(BackupFilesToCurrentSetAligned), _stats.FilesProcessed + 1, fileName);
                 bc.overallSuccess = false;
+                // no need for caller-requested abort to LatchFailure()
                 break;
             }
             catch (Exception ex)
@@ -598,10 +605,13 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 if (retryAction == FileFailedAction.Abort)
                 {
                     bc.overallSuccess = false;
+                    LatchFailure();
                     break;
                 }
                 else if (retryAction == FileFailedAction.Retry)
                 {
+                    ResetError(); // give the retry a clean slate
+
                     bc.fileIndex--; // decrement to retry same file
                     StatsUndoFailure(); // don't double-count
                     continue;
@@ -609,6 +619,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 // else Skip - continue to next file
 
                 bc.overallSuccess = false;
+                LatchFailure();
                 if (!bc.ignoreFailures)
                     break;
             } // catch
@@ -628,6 +639,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                     m_logger.LogTrace("{Method}: Abort requested while post-processing file #{Number} >{File}<",
                         nameof(BackupFilesToCurrentSetAligned), _stats.FilesProcessed, fileName);
                     bc.overallSuccess = false;
+                    // no need for caller-requested abort to LatchFailure()
                     break;
                 }
 
@@ -675,6 +687,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         }
 
         _stats.Reset();
+        ResetLatchedFailure();
         NotifyBatchStart(fileNotify, fileList.Count);
 
         m_logger.LogTrace("Starting backing up {Count} files to current set #{Set}", fileList.Count, TOC.CurrentSetIndex);
@@ -684,7 +697,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         MultiVolumeContext = new(fileList, ignoreFailures, fileNotify, TOC.CurrentSetTOC.Incremental, packed: false);
 
         return BackupFilesToCurrentSetAligned(newSet)
-            ? TapeResult.OK : TapeResult.Fail(this);
+            ? TapeResult.OK : FailedOperationResult;
     } // BackupFilesToCurrentSetAligned()
 
 
@@ -924,7 +937,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             TOC.ContinuedOnNextVolume = true;
             Debug.Assert(CanResumeToNextVolume);
             return true;
-        }
+        } // HandleEom()
 
         try
         {
@@ -974,6 +987,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                     m_logger.LogTrace("{Method}: Abort requested before file #{Number} >{File}< was written",
                         nameof(BackupFilesToCurrentSet), bc.fileIndex + 1, fileName);
                     bc.overallSuccess = false;
+                    // no need for caller-requested abort to LatchFailure()
                     break;
                 }
                 catch (TapePackerEndOfMediaException eomEx)
@@ -999,16 +1013,21 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                     if (retryAction == FileFailedAction.Abort)
                     {
                         bc.overallSuccess = false;
+                        LatchFailure(); // latch the failure for the final result
                         break;
                     }
                     else if (retryAction == FileFailedAction.Retry)
                     {
+                        ResetError(); // give the retry a clean slate
+
                         bc.fileIndex--;
                         StatsUndoFailure();
                         continue;
                     }
+                    // else Skip - continue the loop to the next file
 
                     bc.overallSuccess = false;
+                    LatchFailure();
                     if (!bc.ignoreFailures)
                         break;
                 }
@@ -1020,6 +1039,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 if (!tracker.DrainPostProcess(tfi => NotifyPostProcessFile(bc.fileNotify, tfi)))
                 {
                     bc.overallSuccess = false;
+                    LatchFailure();
                     break;
                 }
 
@@ -1039,6 +1059,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                     SyncErrorFrom(Manager);
                     m_logger.LogWarning("EndWriteContent failed during {Method}", nameof(BackupFilesToCurrentSet));
                     bc.overallSuccess = false;
+                    LatchFailure();
                 }
             }
             catch (TapePackerEndOfMediaException eomEx)
@@ -1048,13 +1069,17 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
             // Drain post-process for tail commits that arrived during EndWriteContent.
             if (!tracker.DrainPostProcess(tfi => NotifyPostProcessFile(bc.fileNotify, tfi)))
+            {
                 bc.overallSuccess = false;
+                LatchFailure();
+            }
 
             if (tracker.PendingCount > 0)
             {
                 m_logger.LogWarning("{Method}: {Count} pending file(s) never received commit notification",
                     nameof(BackupFilesToCurrentSet), tracker.PendingCount);
                 bc.overallSuccess = false;
+                LatchFailure();
             }
         }
         finally
@@ -1066,7 +1091,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         {
             Debug.Assert(CanResumeToNextVolume);
             bc.overallSuccess = false;
-            
+            // do NOT LatchFailure(): we can continue to the next volume, hence no hard failure
+
             m_logger.LogTrace("{Method}: EOM was encountered & handled during backup; MultiVolumeContext set up",
                 nameof(BackupFilesToCurrentSet));
             
@@ -1107,6 +1133,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         }
 
         _stats.Reset();
+        ResetLatchedFailure();
         // Background estimation: source files can be scanned (stat'd) concurrently with the
         //  backup itself, progressively growing Statistics.BytesTotal as the scan proceeds.
         StartBackgroundSizeEstimate(fileList);
@@ -1120,7 +1147,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         MultiVolumeContext = new(fileList, ignoreFailures, fileNotify, TOC.CurrentSetTOC.Incremental, packed: true);
 
         var result = BackupFilesToCurrentSet(newSet)
-            ? TapeResult.OK : TapeResult.Fail(this);
+            ? TapeResult.OK : FailedOperationResult;
 
         // Only stop the estimate once the operation is truly done (not just paused for a
         //  multi-volume media swap) — ResumeBackupToNextVolume continues the same fileList.

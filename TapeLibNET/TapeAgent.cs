@@ -8,169 +8,12 @@ namespace TapeLibNET;
 
 
 /// <summary>
-/// Exception thrown when user requests to abort a tape operation.
-/// </summary>
-public class TapeAbortRequestedException(string? message = null) :
-    OperationCanceledException(message ?? "Operation aborted by user request.")
-{
-}
-
-/// <summary>Action chosen by <see cref="ITapeFileNotifiable.OnFileFailed"/> when a file operation fails.</summary>
-public enum FileFailedAction
-{
-    /// <summary>Skip this file and continue with the next.</summary>
-    Skip,
-    /// <summary>Retry the same file from the beginning.</summary>
-    Retry,
-    /// <summary>Abort the entire operation.</summary>
-    Abort,
-    /// <summary>Skip this file and all future failures without prompting.</summary>
-    SkipAll
-}
-
-/// <summary>
-/// Result type for compound tape operations that cross the Agent → Service boundary.
-/// Carries error context as a value, immune to later state resets on Drive/Manager.
-/// <para>
-/// The internal layer (Drive, Navigator, Manager) continues to use <c>bool</c> + state;
-///  <see cref="TapeResult"/> is applied at the public Agent API surface only.
-/// </para>
-/// </summary>
-public readonly record struct TapeResult(bool Success, uint ErrorCode = 0, string ErrorMessage = "")
-{
-    /// <summary>Successful result with no error.</summary>
-    public static TapeResult OK => new(true);
-
-    /// <summary>Creates a failure result from an explicit error code and message.</summary>
-    public static TapeResult Fail(uint code, string msg) => new(false, code, msg);
-
-    /// <summary>Creates a failure result by capturing the current error state of an <see cref="ErrorManageableBase"/>.</summary>
-    public static TapeResult Fail(ErrorManageableBase source) => new(false, source.LastError, source.LastErrorMessage);
-
-    /// <summary>Creates a failure result from an exception, extracting HResult/NativeErrorCode where available.</summary>
-    public static TapeResult Fail(Exception ex)
-    {
-        uint code = ex switch
-        {
-            // Catches our TapeAbortRequestedException (derived from OperationCanceledException)
-            TapeAbortRequestedException or OperationCanceledException => (uint)WIN32_ERROR.ERROR_CANCELLED,
-            IOException ioex => (uint)ioex.HResult,
-            Win32Exception w32ex => (uint)w32ex.NativeErrorCode,
-            _ => (uint)WIN32_ERROR.ERROR_UNHANDLED_EXCEPTION
-        };
-        return new(false, code, ex.Message);
-    }
-
-    /// <summary>
-    /// Creates a failure result from a <see cref="TapeIOException"/>, preserving
-    /// the trail text in the error message for downstream display.
-    /// </summary>
-    public static TapeResult Fail(TapeIOException ex) =>
-        new(false, ex.Error, ex.TrailText.Length > 0
-            ? $"{ex.ErrorMessage} [Trail: {ex.TrailText}]"
-            : ex.ErrorMessage);
-
-    /// <summary>Allows <c>if (result)</c> and <c>if (!result)</c> usage, preserving existing call-site patterns.</summary>
-    public static implicit operator bool(TapeResult r) => r.Success;
-}
-
-/// <summary>
-/// Cumulative file-operation statistics maintained by the tape agent.
-/// A snapshot is passed to every <see cref="ITapeFileNotifiable"/> callback so
-/// the caller never needs to track its own counters.
-/// <para>Invariant: <c>FilesProcessed == FilesSucceeded + FilesFailed + FilesSkipped</c></para>
-/// </summary>
-public struct TapeFileStatistics
-{
-    /// <summary>Total files expected for the entire operation (across all batches/volumes).</summary>
-    public int FilesTotal;
-    /// <summary>
-    /// Total logical (actual file-length) bytes estimated for the entire operation
-    ///  (across all batches/volumes). May keep growing as the operation progresses
-    ///  — see the background size estimation started by <c>TapeFileBackupAgent</c>/
-    ///  <c>TapeFileRestoreBaseAgent</c>.
-    /// </summary>
-    public long BytesTotal;
-    /// <summary>Files finished (succeeded + failed + skipped). Retried files are counted once.</summary>
-    public int FilesProcessed;
-    /// <summary>Files completed without error.</summary>
-    public int FilesSucceeded;
-    /// <summary>Files that hit an error and were not retried.</summary>
-    public int FilesFailed;
-    /// <summary>Files skipped (by pre-processor, incremental, or user choice).</summary>
-    public int FilesSkipped;
-    /// <summary>
-    /// Total logical (actual file-length) bytes of succeeded files. Comparable to
-    ///  <see cref="BytesTotal"/> for computing a logical-size-based completion share.
-    /// </summary>
-    public long FileBytesProcessed;
-    /// <summary>
-    /// Total on-tape footprint (header + body, after any software compression) of succeeded
-    ///  files, as recorded via <see cref="TapeFileInfo.SizeOnTape"/>. This can diverge from
-    ///  <see cref="FileBytesProcessed"/> when software compression is in effect — it never
-    ///  reflects hardware tape-drive compression, which isn't observable above the drive I/O.
-    /// </summary>
-    public long BytesOnTapeProcessed;
-
-    /// <summary>Reset all counters to zero.</summary>
-    public void Reset() => this = default;
-
-    /// <summary>
-    /// Returns a new <see cref="TapeFileStatistics"/> whose counters are the difference
-    ///  between this snapshot and an earlier <paramref name="baseline"/> snapshot.
-    ///  Useful for computing per-batch statistics from the running totals.
-    /// </summary>
-    public readonly TapeFileStatistics Delta(in TapeFileStatistics baseline) => new()
-    {
-        FilesTotal = FilesTotal,
-        BytesTotal = BytesTotal,
-        FilesProcessed = FilesProcessed - baseline.FilesProcessed,
-        FilesSucceeded = FilesSucceeded - baseline.FilesSucceeded,
-        FilesFailed = FilesFailed - baseline.FilesFailed,
-        FilesSkipped = FilesSkipped - baseline.FilesSkipped,
-        FileBytesProcessed = FileBytesProcessed - baseline.FileBytesProcessed,
-        BytesOnTapeProcessed = BytesOnTapeProcessed - baseline.BytesOnTapeProcessed
-    };
-}
-
-/// <summary>
-/// Callback interface for file-level progress notifications during backup, restore, and verify operations.
-/// <para>Implementations control the UI (progress bars, logs) and can influence the operation:
-///  <see cref="PreProcessFile"/> can skip files, <see cref="OnFileFailed"/> can retry or abort.
-///  Any callback may throw <see cref="TapeAbortRequestedException"/> to abort immediately.</para>
-/// <para>Every callback receives a <see cref="TapeFileStatistics"/> snapshot reflecting the
-///  state <em>after</em> the event (e.g. counters are incremented before the call).</para>
-/// </summary>
-public interface ITapeFileNotifiable
-{
-    /// <summary>Called when a new batch (set) begins processing. <paramref name="setIndex"/> is 1-based.</summary>
-    void BatchStart(int setIndex, in TapeFileStatistics stats);
-    /// <summary>Called when a batch (set) finishes processing.</summary>
-    void BatchEnd(int setIndex, in TapeFileStatistics stats);
-
-    // The following methods may throw TapeAbortRequestedException to abort the entire operation (not just the file)
-
-    /// <summary>Called before processing a file. Return false to skip the file.</summary>
-    bool PreProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats);
-
-    /// <summary>Called after successfully processing a file. Return false to skip applying file attributes.</summary>
-    bool PostProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats);
-
-    /// <summary>Called when a file error occurs. Returns how to proceed.</summary>
-    FileFailedAction OnFileFailed(TapeFileInfo fileInfo, TapeResult result, in TapeFileStatistics stats);
-
-    /// <summary>Called when a file is skipped.</summary>
-    void OnFileSkipped(TapeFileInfo fileInfo, in TapeFileStatistics stats);
-}
-
-
-/// <summary>
 /// Base agent handling TOC backup/restore (dual-copy with CRC), TOC file I/O,
 ///  set deletion, and the <see cref="ITapeFileNotifiable"/> notification wrappers.
 /// <para>Subclasses: <see cref="TapeFileBackupAgent"/> (backup), <see cref="TapeFileRestoreBaseAgent"/>
 ///  (restore/verify). Owns a <see cref="TapeStreamManager"/> and a <see cref="TapeTOC"/>.</para>
 /// </summary>
-public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDriveHolder<TapeFileAgent>(drive), IDisposable
+public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
 {
     /// <summary>BlockSize used for header and TOC read / write, fixed since it needs to be known upfront.</summary>
     private const uint c_fixedTOCBlockSize = 16 * 1024; // 16 KiB
@@ -178,15 +21,17 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     /// <summary>Hashing for TOC, fixed since it needs to be known upfront for each tape.</summary>
     private readonly TapeHashAlgorithm c_hashForTOC = TapeHashAlgorithm.Crc64;
 
+    #region Properties
+
     /// <summary>Table of contents for this tape session.</summary>
-    public TapeTOC TOC { get; init; } = legacyTOC ?? [];
+    public TapeTOC TOC { get; init; }
     /// <summary>
     /// Where the TOC is stored on tape, determined based on the type of <see cref="Navigator"/> in use.
     /// </summary>
     public TapeTocPlacement TOCPlacement =>
         Navigator is TapeNavigatorTOCInPartition ? TapeTocPlacement.InPartition : TapeTocPlacement.InSet;
     /// <summary>Stream manager providing state-guarded read/write stream provisioning.</summary>
-    public TapeStreamManager Manager { get; init; } = new(drive);
+    public TapeStreamManager Manager { get; init; }
     /// <summary>Shortcut to <see cref="Manager"/>.<see cref="TapeStreamManager.Navigator"/>.</summary>
     public TapeNavigator Navigator => Manager.Navigator;
 
@@ -200,20 +45,56 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     /// a snapshot is passed to every <see cref="ITapeFileNotifiable"/> callback.
     /// </summary>
     protected TapeFileStatistics _stats;
-
     /// <summary>Read-only reference to the current statistics.</summary>
     public ref readonly TapeFileStatistics Statistics => ref _stats;
+
+    /// <summary>
+    /// Builder for the current file-operation result latching on the first error.
+    /// </summary>
+    private readonly TapeResultBuilder _resultBuilder;
+    /// <summary>
+    /// Latches the first failure encountered during a multi-step operation. Call whenever a failure
+    ///  is detected, AFTER the error on <see langword="this"/> has been set (e.g. via <see cref="ErrorManageableBase.SetError"/>).
+    /// </summary>
+    protected void LatchFailure() => _resultBuilder.LatchFailure();
+    /// <summary>
+    /// Clears the latched failure. Call at the start of a multi-step operation to reset the latch.
+    /// </summary>
+    protected void ResetLatchedFailure() => _resultBuilder.Reset();
+    /// <summary>
+    /// Build the result of the failed operation, considering first the history captured by
+    ///  <see cref="_resultBuilder"/>, then the current error state of <see langword="this"/>.
+    ///  Use everywhere to return a <see cref="TapeResult"/> from a failed multi-step operation
+    ///  (instead of <c>TapeResult.Fail(this)</c>).
+    /// </summary>
+    protected TapeResult FailedOperationResult => _resultBuilder.BuildFailure(
+        IsAbortRequested ? (uint)WIN32_ERROR.ERROR_CANCELLED : (uint)WIN32_ERROR.ERROR_INVALID_STATE,
+        IsAbortRequested ? "Operation aborted by user request" : "Operation did not complete");
+
+    /// <summary>
+    /// Diagnosis of the last run verb: the first failure it encountered, or <see cref="TapeResult.OK"/>
+    ///  when it succeeded. Read it when a verb returns <see langword="null"/>.
+    /// </summary>
+    /// <remarks>
+    /// Complements — does not replace — the <c>ITapeCalibration?</c> return: a run yields an ARTIFACT on
+    ///  success, and artifact-or-null is the honest shape for that. This carries the WHY, captured at the
+    ///  moment of failure rather than reconstructed afterwards from a live error state that intervening
+    ///  tolerated steps (<c>FindLastCheckpoint</c>'s BOP resets, <c>InspectMedia</c>'s final reset) have
+    ///  since cleared.
+    /// </remarks>
+    public TapeResult LastResult => _resultBuilder.Result;
 
     /// <summary>
     /// Refreshes <see cref="TapeFileStatistics.BytesTotal"/> from whatever total-size estimation
     ///  mechanism the derived agent uses. Called before every <see cref="ITapeFileNotifiable"/>
     ///  notification so subscribers always see the latest estimate.
-    /// <para><see cref="TapeFileBackupAgent"/> overrides this to pull from a background
+    /// </summary>
+    /// <remarks><see cref="TapeFileBackupAgent"/> overrides this to pull from a background
     ///  <see cref="FileSizeAggregator"/> (source files are scanned concurrently with the backup).
     ///  Restore doesn't need to override it: all file sizes are known upfront from the TOC, so
     ///  <see cref="TapeFileRestoreBaseAgent"/> sets <see cref="TapeFileStatistics.BytesTotal"/>
-    ///  once, synchronously, before the notification loop begins.</para>
-    /// </summary>
+    ///  once, synchronously, before the notification loop begins.
+    /// </remarks>
     protected virtual void RefreshBytesTotalEstimate()
     {
         // no-op by default; overridden by TapeFileBackupAgent
@@ -255,7 +136,6 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     /// </summary>
     protected int _tocCopyCounter = 0;
 #endif
-
 
     /// <summary>
     /// Translates <see cref="TapeTOC.CurrentSetIndex"/> to a <see cref="TapeNavigator.TargetContentSet"/> value,
@@ -299,6 +179,21 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
         }
     }
 
+    #endregion
+
+    #region Constructors
+
+    public TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : base(drive)
+    {
+        _resultBuilder = new(this);
+        TOC = legacyTOC ?? [];
+        Manager = new(drive);
+    }
+
+    #endregion
+
+    #region IDisposable and destructor
+
     // implement IDisposable - do not override
     public void Dispose()
     {
@@ -332,6 +227,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
         Dispose(disposing: false);
     }
 
+    #endregion
 
     protected static NonCryptographicHashAlgorithm? CreateHasher(TapeHashAlgorithm hashAlgorithm)
     {
@@ -373,7 +269,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
         {
             m_logger.LogError("Media header frame exceeds the standard header block ({Bs} B)", TapeHeaderBlock.Size);
             SetError(WIN32_ERROR.ERROR_INSUFFICIENT_BUFFER, "Media header too large for its block");
-            return TapeResult.Fail(this);
+            return FailedOperationResult;
         }
 
         // Passing header.HasSetHeaders rather than WritesSetHeaders keeps the navigator describing what
@@ -381,7 +277,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
         if (!Manager.WriteMediaHeaderBlock(block, setHeadersExpected: header.HasSetHeaders))
         {
             SyncErrorFrom(Manager);
-            return TapeResult.Fail(this);
+            return FailedOperationResult;
         }
 
         m_logger.LogTrace("Media header written: {Header}", header);
@@ -493,13 +389,13 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
         {
             m_logger.LogError("Set header frame exceeds the standard header block ({Bs} B)", TapeHeaderBlock.Size);
             SetError(WIN32_ERROR.ERROR_INSUFFICIENT_BUFFER, "Set header too large for its block");
-            return TapeResult.Fail(this);
+            return FailedOperationResult;
         }
 
         if (!Manager.WriteSetHeaderBlock(block))
         {
             SyncErrorFrom(Manager);
-            return TapeResult.Fail(this);
+            return FailedOperationResult;
         }
 
         m_logger.LogTrace("Set header written: {Header}", header);
@@ -521,6 +417,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
             m_logger.LogWarning("Failed to end read/write in {Method}",
                 nameof(BeginWriteTOC));
             SyncErrorFrom(Manager);
+            LatchFailure();
             return false;
         }
 
@@ -529,6 +426,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
             m_logger.LogWarning("Failed to begin write TOC in {Method}",
                 nameof(BeginWriteTOC));
             SyncErrorFrom(Manager);
+            LatchFailure();
             return false;
         }
 
@@ -587,20 +485,31 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
         }
         catch (Exception ex)
         {
+            SetError(ex);
+
             m_logger.LogWarning("Exception {Exception} in {Method}", ex, nameof(BackupTOCCore));
+            LatchFailure();
             return false;
         }
     }
 
     /// <summary>
     /// Writes two copies of the <see cref="TOC"/> to tape with CRC integrity hashing.
-    /// <para>Succeeds if at least one copy is written successfully. The dual-copy
-    ///  strategy ensures TOC recoverability even with partial media damage.</para>
+    /// <para>
+    /// Succeeds if at least one copy is written successfully. The dual-copy
+    ///  strategy ensures TOC recoverability even with partial media damage.
+    /// </para>
+    /// <para>
+    /// <b>Notice</b> this public call <b>resets the latched error</b>, hence make sure
+    ///  to capture it before calling.
+    /// </para>
     /// </summary>
     /// <param name="enforce">When <see langword="true"/>, resets navigator state before writing
     ///  (use after operations that may leave the tape position uncertain).</param>
     public TapeResult BackupTOC(bool enforce = false)
     {
+        ResetLatchedFailure();
+
         // We stamp a stable media identity before the first durable write. New media (just
         //  formatted) and legacy Guid-less media (just loaded) both reach here with an empty
         //  MediaId; we mint once, then it persists across every rewrite and across all volumes.
@@ -622,7 +531,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                 // Do NOT try to navigate if TOC-in-set has been invalidated -- we may end up overwriting content
                 //  -> fail instead to allow the user to save TOC to a file
                 m_logger.LogTrace("Cannot enforce TOC backup by resetting content set since TOC has been invalidated");
-                return TapeResult.Fail(this);
+                return FailedOperationResult;
             }
 
             m_logger.LogTrace("Enforcing TOC backup by resetting content set");
@@ -631,7 +540,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
         if (!BeginWriteTOC())
         {
             m_logger.LogError("Failed to begin TOC write in {Method}", nameof(BackupTOC));
-            return TapeResult.Fail(this);
+            return FailedOperationResult;
         }
 
         // To ensure TOC integrity, backup TOC twice
@@ -642,13 +551,16 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
             m_logger.LogWarning("TOC 1st copy backup failed");
 
         m_logger.LogTrace("Backing up TOC, 2nd copy");
+        ResetError();
+        ResetLatchedFailure(); // if the 2nd copy succeeds, we treat it as the overall success
+
         bool result2 = BackupTOCCore();
         if (result2)
             m_logger.LogTrace("TOC 2nd copy backed up ok");
         else
             m_logger.LogWarning("TOC 2nd copy backup failed");
 
-        return (result1 || result2) ? TapeResult.OK : TapeResult.Fail(this);
+        return (result1 || result2) ? TapeResult.OK : FailedOperationResult;
     }
 
     /// <summary>
@@ -706,7 +618,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
             m_logger.LogWarning("Current set #{Set} is not on volume #{Volume}", TOC.CurrentSetIndex, TOC.Volume);
             SetError(WIN32_ERROR.ERROR_INVALID_PARAMETER,
                 $"Current set #{TOC.CurrentSetIndex} is not on volume #{TOC.Volume}");
-            return TapeResult.Fail(this);
+            return FailedOperationResult;
         }
 
         bool deletingAll = TOC.CurrentSetIndex == TOC.FirstSetOnVolume;
@@ -718,7 +630,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
             m_logger.LogWarning("Cannot delete all sets when TOC is in partition — format the media instead");
             SetError(WIN32_ERROR.ERROR_NOT_SUPPORTED,
                 "Cannot delete all sets when TOC is in partition — format the media instead");
-            return TapeResult.Fail(this);
+            return FailedOperationResult;
         }
 
         try
@@ -741,7 +653,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                 if (Navigator.WentBad)
                 {
                     SyncErrorFrom(Navigator);
-                    return TapeResult.Fail(this);
+                    return FailedOperationResult;
                 }
 
                 // Remove sets on this volume from the TOC.
@@ -786,7 +698,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                 if (Navigator.WentBad)
                 {
                     SyncErrorFrom(Navigator);
-                    return TapeResult.Fail(this);
+                    return FailedOperationResult;
                 }
 
                 // Step back one setmark — to just before the setmark separating the last retained set
@@ -795,7 +707,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                 if (Navigator.WentBad)
                 {
                     SyncErrorFrom(Navigator);
-                    return TapeResult.Fail(this);
+                    return FailedOperationResult;
                 }
 
                 // Rewrite the content setmark here — physically overwrites the zombie data and advances EOD.
@@ -803,7 +715,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                 if (Navigator.WentBad)
                 {
                     SyncErrorFrom(Navigator);
-                    return TapeResult.Fail(this);
+                    return FailedOperationResult;
                 }
 
                 // The navigator now thinks we're past the end of content.
@@ -823,7 +735,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
         {
             m_logger.LogWarning("Exception {Exception} in {Method}", ex, nameof(DeleteSetsFromCurrentSetUp));
             SetError(ex);
-            return TapeResult.Fail(this);
+            return FailedOperationResult;
         }
     } // DeleteSetsFromCurrentSetUp()
 
@@ -842,6 +754,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
             m_logger.LogWarning("Failed to end read/write in {Method}",
                 nameof(BeginReadTOC));
             SyncErrorFrom(Manager);
+            LatchFailure();
             return false;
         }
 
@@ -850,6 +763,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
             m_logger.LogWarning("Failed to begin read TOC in {Method}",
                 nameof(BeginReadTOC));
             SyncErrorFrom(Manager);
+            LatchFailure();
             return false;
         }
 
@@ -877,6 +791,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                     SetError(Manager.LastError, Manager.LastErrorMessage);
                 else
                     SetError(WIN32_ERROR.ERROR_INVALID_STATE, "Failed to open TOC read stream");
+                LatchFailure();
                 return false;
             }
 
@@ -904,6 +819,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                 {
                     m_logger.LogWarning("Failed to deserialize TOC in {Method}", nameof(RestoreTOCCore));
                     SetError(WIN32_ERROR.ERROR_INVALID_DATA, "Failed to deserialize TOC: data not found or unreadable");
+                    LatchFailure();
                     return false;
                 }
             }
@@ -937,6 +853,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                 {
                     m_logger.LogWarning("Failed to deserialize TOC in {Method}", nameof(RestoreTOCCore));
                     SetError(WIN32_ERROR.ERROR_INVALID_DATA, "Failed to deserialize TOC: data not found or unreadable");
+                    LatchFailure();
                     return false;
                 }
 
@@ -944,10 +861,12 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
         }
         catch (Exception ex)
         {
+            SetError(ex);
+
             m_logger.LogWarning("Exception {Exception} while restoring TOC", ex);
             // Stream disposal (using var) already cleared Manager/Drive errors;
             //  capture the exception on the agent so callers see a meaningful message
-            SetError(ex);
+            LatchFailure();
             return false;
         }
     }
@@ -956,9 +875,15 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
     /// Reads the <see cref="TOC"/> from tape, trying up to three strategies:
     ///  1st copy → 2nd copy (sequential) → 2nd copy (direct seek).
     /// <para>On success, replaces the current <see cref="TOC"/> content.</para>
+    /// <para>
+    /// <b>Notice</b> this public call <b>resets the latched error</b>, hence make sure
+    ///  to capture it before calling.
+    /// </para>
     /// </summary>
     public TapeResult RestoreTOC()
     {
+        ResetLatchedFailure();
+
 #if DEBUG
         _tocCopyCounter = 0;
 #endif
@@ -968,7 +893,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
         if (!BeginReadTOC())
         {
             m_logger.LogError("Failed to begin TOC read in {Method}", nameof(RestoreTOC));
-            return TapeResult.Fail(this);
+            return FailedOperationResult;
         }
 
         bool result = RestoreTOCCore();
@@ -980,6 +905,9 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
             m_logger.LogWarning("TOC restore from 1st copy failed. Trying 2nd copy");
             // Notice we now must be at the beginning of the 2nd copy, as Manager calls Navigator.MoveToNextTOCFilemark()
             //  from Manager.EndReadFile() when disposing the 1st read TOC sytream
+            ResetError();
+            ResetLatchedFailure(); // if we succeed on the 2nd copy, we treat it as the overall success
+
             result = RestoreTOCCore();
             if (result)
                 m_logger.LogTrace("TOC restored from 2nd copy");
@@ -1008,7 +936,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
             SetError(WIN32_ERROR.ERROR_CANCELLED, "TOC loading aborted by user");
         }
 
-        return result ? TapeResult.OK : TapeResult.Fail(this);
+        return result ? TapeResult.OK : FailedOperationResult;
     }
 
     #endregion // *** TOC Restore ***
@@ -1047,16 +975,16 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                 serializer.Serialize(TOC);
                 serializer.Serialize(hasher.GetCurrentHash());
             }
-
-            m_logger.LogTrace("TOC saved to file successfully");
-            return TapeResult.OK;
         }
         catch (Exception ex)
         {
-            m_logger.LogWarning("Exception {Exception} saving TOC to file {Path}", ex, filePath);
             SetError(ex, $"Failed to save TOC to file: {ex.Message}");
-            return TapeResult.Fail(this);
+            m_logger.LogWarning("Exception {Exception} saving TOC to file {Path}", ex, filePath);
+            return FailedOperationResult;
         }
+
+        m_logger.LogTrace("TOC saved to file successfully");
+        return TapeResult.OK;
     }
 
     /// <summary>
@@ -1083,7 +1011,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                 {
                     m_logger.LogWarning("Failed to deserialize TOC from file {Path}", filePath);
                     SetError(WIN32_ERROR.ERROR_INVALID_DATA, "Failed to deserialize TOC from file");
-                    return TapeResult.Fail(this);
+                    return FailedOperationResult;
                 }
                 TOC.CopyFrom(toc);
             }
@@ -1096,7 +1024,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                 {
                     m_logger.LogWarning("Failed to deserialize TOC from file {Path}", filePath);
                     SetError(WIN32_ERROR.ERROR_INVALID_DATA, "Failed to deserialize TOC from file");
-                    return TapeResult.Fail(this);
+                    return FailedOperationResult;
                 }
 
                 byte[] hashBytesCheck1 = hasher.GetCurrentHash();
@@ -1105,7 +1033,7 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
                 {
                     m_logger.LogWarning("CRC check failed for TOC file {Path}", filePath);
                     SetError(WIN32_ERROR.ERROR_CRC, $"CRC check failed for TOC file. Hasher: {c_hashForTOC}");
-                    return TapeResult.Fail(this);
+                    return FailedOperationResult;
                 }
 
                 TOC.CopyFrom(toc);
@@ -1116,9 +1044,9 @@ public class TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeDri
         }
         catch (Exception ex)
         {
-            m_logger.LogWarning("Exception {Exception} loading TOC from file {Path}", ex, filePath);
             SetError(ex, $"Failed to load TOC from file: {ex.Message}");
-            return TapeResult.Fail(this);
+            m_logger.LogWarning("Exception {Exception} loading TOC from file {Path}", ex, filePath);
+            return FailedOperationResult;
         }
     }
 

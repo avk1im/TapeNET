@@ -747,11 +747,14 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         FAILURE:
             if (fileFailedAction == FileFailedAction.Retry && tfi != null && tfi.IsValid)
             {
+                ResetError(); // give the retry a clean slate
+
                 m_logger.LogTrace("Retrying (packed) file >{File}< as per file failed action", tfi.FileDescr.FullName);
                 StatsUndoFailure();
                 goto RETRY;
             }
 
+            LatchFailure();
             overallSuccess = false;
 
             if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
@@ -812,11 +815,13 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         FAILURE:
             if (fileFailedAction == FileFailedAction.Retry && tfi != null && tfi.IsValid)
             {
+                ResetError(); // give the retry a clean slate
                 m_logger.LogTrace("Retrying (packed) file >{File}< as per file failed action", tfi.FileDescr.FullName);
                 StatsUndoFailure();
                 goto RETRY;
             }
 
+            LatchFailure();
             overallSuccess = false;
 
             if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
@@ -843,8 +848,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             TOC.CurrentSetIndex);
 
         _stats.Reset();
+        ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, fileFilter), ignoreFailures, fileNotify, packed: true)
-            ? TapeResult.OK : TapeResult.Fail(this);
+            ? TapeResult.OK : FailedOperationResult;
     }
 
     /// <summary>
@@ -858,8 +864,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             TOC.CurrentSetIndex);
 
         _stats.Reset();
+        ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filter: null), ignoreFailures, fileNotify, packed: true)
-            ? TapeResult.OK : TapeResult.Fail(this);
+            ? TapeResult.OK : FailedOperationResult;
     }
 
 
@@ -948,15 +955,18 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             continue;
 
         FAILURE:
-           lastFileFailed = true; // must indicate this so that the tape moves back if we retry
+            lastFileFailed = true; // must indicate this so that the tape moves back if we retry
 
-           if (fileFailedAction == FileFailedAction.Retry && tfi != null && tfi.IsValid)
-           {
+            if (fileFailedAction == FileFailedAction.Retry && tfi != null && tfi.IsValid)
+            {
+                ResetError(); // give the retry a clean slate
+
                 m_logger.LogTrace("Retrying file >{File}< as per file failed action", tfi.FileDescr.FullName);
                 StatsUndoFailure(); // don't double-count
                 goto RETRY;
-           }
+            }
 
+            LatchFailure();
             overallSuccess = false;
 
             if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
@@ -1030,12 +1040,15 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 
             if (fileFailedAction == FileFailedAction.Retry && tfi != null && tfi.IsValid)
             {
+                ResetError(); // give the retry a clean slate
+
                 m_logger.LogTrace("Retrying file >{File}< as per file failed action", tfi.FileDescr.FullName);
                 // Block-based positioning handles retry: the next iteration will MoveToBlock(tfi.Block)
                 StatsUndoFailure(); // don't double-count
                 goto RETRY;
             }
 
+            LatchFailure();
             overallSuccess = false;
 
             if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
@@ -1077,7 +1090,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     public TapeResult ResumeRestoreFromAnotherVolume()
     {
         if (!CanResumeFromAnotherVolume)
-            return TapeResult.Fail(this);
+            return FailedOperationResult;
 
         m_logger.LogTrace("Resuming multi-volume restore from new volume #{Volume}", VolumeToResumeFrom);
 
@@ -1088,7 +1101,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         if (!Manager.RenewNavigator())
         {
             LogErrorAsDebug("Failed to renew Navigator");
-            return TapeResult.Fail(this);
+            return FailedOperationResult;
         }
 
         // Check if the newly provided volume is the right one by analyzing its TOC
@@ -1099,20 +1112,20 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             if (!RestoreTOC())
             {
                 LogErrorAsWarning("Failed to restore TOC for new volume");
-                return TapeResult.Fail(this);
+                return FailedOperationResult;
             }
             // Check if the new volume has the right volume number
             if (TOC.Volume != VolumeToResumeFrom)
             {
                 LogErrorAsWarning("Volume mismatch for new volume");
-                return TapeResult.Fail(this);
+                return FailedOperationResult;
             }
             // As the final test, check the size of the next backup set to restore
             int setIdx = MultiVolumeContext.Value.initialCurrSetIdx - MultiVolumeContext.Value.filesSelectedIdx;
             if (TOC[setIdx].Count != orgTOC[setIdx].Count)
             {
                 LogErrorAsWarning($"Set size mismatch on new volume for set #{setIdx}");
-                return TapeResult.Fail(this);
+                return FailedOperationResult;
             }
         }
         finally
@@ -1124,7 +1137,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         // Ok to proceed with the new volume. Notice: Keep our current TOC, since we're restoring the whole file series using it
 
         return RestoreFilesFromCurrentSetDownInt(null, MultiVolumeContext.Value.ignoreFailures, MultiVolumeContext.Value.fileNotify, MultiVolumeContext.Value.packed)
-            ? TapeResult.OK : TapeResult.Fail(this);
+            ? TapeResult.OK : FailedOperationResult;
     } // ResumeRestoreOnAnotherVolume()
 
     private bool RestoreFilesFromCurrentSetDownInt(List<TapeFileInfo>?[]? filesSelected, bool ignoreFailures, ITapeFileNotifiable? fileNotify, bool packed)
@@ -1142,8 +1155,8 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         if (!CanResumeFromAnotherVolume)
             _stats.BytesTotal = TOC.GetTotalFileSize(filesSelected!, TOC.CurrentSetIndex);
 
-        m_logger.LogTrace("RestoreFilesFromCurrentSetDownInt: incoming rc.overallSuccess={Success}, filesSelectedIdx={Idx}, initialCurrSetIdx={Init}, isResume={Resume}",
-            rc.overallSuccess, rc.filesSelectedIdx, rc.initialCurrSetIdx, CanResumeFromAnotherVolume);
+        m_logger.LogTrace("{Method}: incoming rc.overallSuccess={Success}, filesSelectedIdx={Idx}, initialCurrSetIdx={Init}, isResume={Resume}",
+            nameof(RestoreFilesFromCurrentSetDownInt), rc.overallSuccess, rc.filesSelectedIdx, rc.initialCurrSetIdx, CanResumeFromAnotherVolume);
 
         for (int s = 0; s < TOC.Count; s++)
             m_logger.LogTrace("  TOC set #{Idx}: Volume={Vol}, ContFromPrev={CFP}, Count={Count}",
@@ -1183,9 +1196,13 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 #pragma warning restore CS0618 // Type or member is obsolete
             if (!result)
             {
-                m_logger.LogWarning("Inner restore returned false: filesSelectedIdx={Idx}, set #{Set}",
-                    rc.filesSelectedIdx, TOC.CurrentSetIndex);
+                m_logger.LogWarning("{Method}: Inner restore returned false: filesSelectedIdx={Idx}, set #{Set}",
+                    nameof(RestoreFilesFromCurrentSetDownInt), rc.filesSelectedIdx, TOC.CurrentSetIndex);
+
                 rc.overallSuccess = false;
+                if (!CanResumeFromAnotherVolume) // media full isn't an unrecoverable error
+                    LatchFailure(); // latch the failure for the final result
+                
                 if (!ignoreFailures || IsAbortRequested)
                     break;
             }
@@ -1199,8 +1216,8 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 
         TOC.CurrentSetIndex = rc.initialCurrSetIdx; // restore the initial current set index
 
-        m_logger.LogTrace("RestoreFilesFromCurrentSetDownInt exiting: overallSuccess={Success}, filesSelectedIdx={Idx}, MultiVolumeContext set={Pending}",
-            rc.overallSuccess, rc.filesSelectedIdx, MultiVolumeContext != null);
+        m_logger.LogTrace("{Method} exiting: overallSuccess={Success}, filesSelectedIdx={Idx}, MultiVolumeContext set={Pending}",
+            nameof(RestoreFilesFromCurrentSetDownInt), rc.overallSuccess, rc.filesSelectedIdx, MultiVolumeContext != null);
         return rc.overallSuccess;
     } // RestoreFilesFromCurrentSetDownInt(List<string>)
 
@@ -1216,8 +1233,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting restoring pre-selected files from current set #{Set} down", TOC.CurrentSetIndex);
 
         _stats.Reset();
+        ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(filesSelected, ignoreFailures, fileNotify, packed: false)
-            ? TapeResult.OK : TapeResult.Fail(this);
+            ? TapeResult.OK : FailedOperationResult;
     } // RestoreFilesFromCurrentSetDownAligned(List<string>)
 
     /// <summary>
@@ -1229,8 +1247,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting restoring (packed) pre-selected files from current set #{Set} down", TOC.CurrentSetIndex);
 
         _stats.Reset();
+        ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(filesSelected, ignoreFailures, fileNotify, packed: true)
-            ? TapeResult.OK : TapeResult.Fail(this);
+            ? TapeResult.OK : FailedOperationResult;
     }
 
 
@@ -1241,8 +1260,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting restoring files from current set #{Set}", TOC.CurrentSetIndex);
 
         _stats.Reset();
+        ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, fileFilter), ignoreFailures, fileNotify, packed: false)
-            ? TapeResult.OK : TapeResult.Fail(this);
+            ? TapeResult.OK : FailedOperationResult;
     } // RestoreFilesFromCurrentSetAligned(ITapeFileFilter?)
 
     /// <summary>Restores filtered files from the current set and its incremental chain.</summary>
@@ -1252,8 +1272,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting incrementally restoring files from current set #{Set}", TOC.CurrentSetIndex);
 
         _stats.Reset();
+        ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, fileFilter), ignoreFailures, fileNotify, packed: false)
-            ? TapeResult.OK : TapeResult.Fail(this);
+            ? TapeResult.OK : FailedOperationResult;
     } // RestoreFilesFromCurrentSetIncAligned(ITapeFileFilter?)
 
     /// <summary>Restores all files from the current set (no filter).</summary>
@@ -1263,8 +1284,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting restoring all files from current set #{Set}", TOC.CurrentSetIndex);
 
         _stats.Reset();
+        ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filter: null), ignoreFailures, fileNotify, packed: false)
-            ? TapeResult.OK : TapeResult.Fail(this);
+            ? TapeResult.OK : FailedOperationResult;
     } // RestoreAllFilesFromCurrentSetAligned()
 
     /// <summary>Restores all files from the current set and its incremental chain (no filter).</summary>
@@ -1274,8 +1296,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting incrementally restoring all files from current set #{Set}", TOC.CurrentSetIndex);
 
         _stats.Reset();
+        ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, filter: null), ignoreFailures, fileNotify, packed: false)
-            ? TapeResult.OK : TapeResult.Fail(this);
+            ? TapeResult.OK : FailedOperationResult;
     } // RestoreAllFilesFromCurrentSetIncAligned()
 
     /// <summary>Packed pendant of <see cref="RestoreFilesFromCurrentSetIncAligned"/>.</summary>
@@ -1284,8 +1307,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting incrementally restoring (packed) files from current set #{Set}", TOC.CurrentSetIndex);
 
         _stats.Reset();
+        ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, fileFilter), ignoreFailures, fileNotify, packed: true)
-            ? TapeResult.OK : TapeResult.Fail(this);
+            ? TapeResult.OK : FailedOperationResult;
     }
 
     /// <summary>Packed pendant of <see cref="RestoreAllFilesFromCurrentSetIncAligned"/>.</summary>
@@ -1294,8 +1318,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting incrementally restoring (packed) all files from current set #{Set}", TOC.CurrentSetIndex);
 
         _stats.Reset();
+        ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, filter: null), ignoreFailures, fileNotify, packed: true)
-            ? TapeResult.OK : TapeResult.Fail(this);
+            ? TapeResult.OK : FailedOperationResult;
     }
 
 
@@ -1322,6 +1347,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             return TapeResult.OK;
 
         _stats.Reset();
+        ResetLatchedFailure();
 
         m_logger.LogTrace("Restoring files from {Count} set(s): {Sets}",
             setIndexes.Count, string.Join(", ", setIndexes.Select(i => $"#{i}")));
@@ -1373,6 +1399,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             return TapeResult.OK;
 
         _stats.Reset();
+        ResetLatchedFailure();
 
         m_logger.LogTrace("Restoring (packed) files from {Count} set(s): {Sets}",
             setIndexes.Count, string.Join(", ", setIndexes.Select(i => $"#{i}")));

@@ -18,7 +18,6 @@ public class ErrorHandlingTests
     #region *** Test Data ***
 
     /// <summary>All three drive profiles for parameterized theories.</summary>
-#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> AllProfiles =>
     [
         DriveProfile.Setmarks,
@@ -26,7 +25,6 @@ public class ErrorHandlingTests
         DriveProfile.SeqFilemarks,
         DriveProfile.FilemarksOnly,
     ];
-#pragma warning restore CA1825
 
     /// <summary>
     /// Profiles with partitioned TOC storage. SeqFilemarks stores the TOC
@@ -34,13 +32,11 @@ public class ErrorHandlingTests
     /// is unreliable (the tape navigator cannot reliably skip past the
     /// damaged data to reach the 2nd copy).
     /// </summary>
-#pragma warning disable CA1825
     public static TheoryData<DriveProfile> PartitionedTOCProfiles =>
     [
         DriveProfile.Setmarks,
         DriveProfile.Partitions,
     ];
-#pragma warning restore CA1825
 
     #endregion
 

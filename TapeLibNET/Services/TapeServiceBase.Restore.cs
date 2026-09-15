@@ -228,13 +228,15 @@ public partial class TapeServiceBase
             long dataElapsedUs = 0;
             long dataIoElapsedUs = 0;
 
+            // ── Agent invocation ────────────────────────────────
             _drive.IoTimeCounterUs = 0; // reset I/O time counter for this volume
             dataTimer.Start();
-            bool success = agent.RestoreFilesFromCurrentSetDown(
+            var agentResult = agent.RestoreFilesFromCurrentSetDown(
                 combined, ignoreFailures: true, progressHandler);
             dataTimer.Stop();
             dataElapsedUs += dataTimer.ElapsedMicroseconds;
             dataIoElapsedUs += _drive.IoTimeCounterUs;
+            bool success = (bool)agentResult;
 
             // The agent catches TapeAbortRequestedException internally and returns false,
             //  so abort is detected via the flag rather than catching the exception.
@@ -325,9 +327,11 @@ public partial class TapeServiceBase
                 OnStatusUpdate($"{modeName} files...");
 
                 // Step 6: Resume restore on the new volume
+                // ── Agent invocation ────────────────────────────────
                 _drive.IoTimeCounterUs = 0; // reset I/O time counter for this volume
                 dataTimer.Restart();
-                success = agent.ResumeRestoreFromAnotherVolume();
+                agentResult = agent.ResumeRestoreFromAnotherVolume();
+                success = (bool)agentResult;
                 dataTimer.Stop();
                 dataElapsedUs += dataTimer.ElapsedMicroseconds;
                 dataIoElapsedUs += _drive.IoTimeCounterUs;
@@ -335,9 +339,33 @@ public partial class TapeServiceBase
             } // while multi-volume continuation
             // ─────────────────────────────────────────────────────────────────
 
-            var result = progressHandler.GenerateResult();
+            var result = progressHandler.GenerateResult() with
+            {
+                Message = agentResult.Success ? null : agentResult.ErrorMessage,
+            };
 
-            // Handle abort path
+            // Handle abort path first
+            if (wasAborted)
+            {
+                // BytesProcessed from progressHandler may be 0 if BatchEnd wasn't called
+                result = result with { WasAborted = true,
+                    BytesProcessed = long.Max(result.BytesProcessed, agent.BytesRestored) };
+
+                ReportFileOperationOutcome(result, modeName, agentResult);
+                ReportFileOperationStats(result, secsTotal: dataElapsedUs / 1e6, secsIo: dataIoElapsedUs / 1e6);
+
+                OnStatusUpdate($"{modeName} aborted");
+
+                return result;
+            }
+
+            ReportFileOperationOutcome(result, modeName, agentResult,
+                pendingContinuation: agent.CanResumeFromAnotherVolume);
+            ReportFileOperationStats(result, secsTotal: dataElapsedUs / 1e6, secsIo: dataIoElapsedUs / 1e6);
+
+            return result;
+
+            /*
             if (wasAborted)
             {
                 LogWarn($"{modeName} of {result.FilesTotal:N0} file(s): aborting per user request");
@@ -401,9 +429,8 @@ public partial class TapeServiceBase
             if (result.FilesMissing > 0)
                 LogWarnSub($"{result.FilesMissing:N0} file(s) not found on tape");
 
-            OnStatusUpdate($"{modeName} complete");
-
             return result;
+            */
         }
         catch (Exception ex)
         {

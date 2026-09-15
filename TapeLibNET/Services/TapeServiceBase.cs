@@ -159,6 +159,12 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// <summary>True when the running agent has been asked to abort.</summary>
     public bool IsAbortRequested => _agent?.IsAbortRequested ?? false;
 
+    /// <summary>
+    /// Default name for newly created media, based on the current date/time.
+    /// Used across all apps and dialogs that need to pre-populate a media name.
+    /// </summary>
+    public static string DefaultNewMediaName => $"Media created {DateTime.Now:yyyy-MM-dd HH:mm}";
+
     #endregion
 
     #region Drive capability properties
@@ -1860,36 +1866,6 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
     #endregion // TOC operations
 
-    #region Timing / formatting helpers
-    // ── Timing / formatting helpers ──────────────────────────────────────────
-
-    /// <summary>
-    /// Default name for newly created media, based on the current date/time.
-    /// Used across all apps and dialogs that need to pre-populate a media name.
-    /// </summary>
-    public static string DefaultNewMediaName => $"Media created {DateTime.Now:yyyy-MM-dd HH:mm}";
-
-    /// <summary>Formats an elapsed duration as a human-readable string.</summary>
-    public static string FormatElapsed(double totalSeconds)
-    {
-        if (totalSeconds < 1.0) return "< 1s";
-        var ts = TimeSpan.FromSeconds(totalSeconds);
-        if (ts.TotalMinutes < 1) return $"{ts.Seconds}s";
-        if (ts.TotalHours < 1) return $"{ts.Minutes}m {ts.Seconds:D2}s";
-        return $"{(int)ts.TotalHours}h {ts.Minutes:D2}m {ts.Seconds:D2}s";
-    }
-
-    /// <summary>
-    /// Formats a data rate as <c>"X.XX MB/s"</c>; returns an empty string
-    ///  when the duration is too short or no bytes were processed.
-    /// </summary>
-    public static string FormatDataIoRate(long bytes, double totalSeconds)
-    {
-        if (totalSeconds < 0.001 || bytes <= 0) return string.Empty;
-        long bytesPerSecond = (long)(bytes / totalSeconds);
-        return $"{Helpers.BytesToString(bytesPerSecond)}/s";
-    }
-    #endregion
 }
 
 

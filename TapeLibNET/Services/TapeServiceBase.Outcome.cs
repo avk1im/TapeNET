@@ -1,0 +1,236 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using TapeLibNET;
+using TapeLibNET.Services;
+using Windows.Win32.System.SystemServices;
+
+
+namespace TapeLibNET.Services;
+
+/// <summary>
+/// Severity classification for service-level log entries and operation outcomes.
+/// Replaces the per-app <c>WarningLevel</c> enums in TapeWinNET and TapeConNET.
+/// The name uses "Report" rather than "Warning" because <see cref="Info"/> and
+/// <see cref="Completed"/> are not warnings.
+/// </summary>
+public enum ServiceReportLevel
+{
+    /// <summary>Plain informational text without any severity emphasis.</summary>
+    None,
+    /// <summary>General informational message.</summary>
+    Info,
+    /// <summary>Successful completion of a step or operation.</summary>
+    Completed,
+    /// <summary>Recoverable issue worth surfacing.</summary>
+    Warning,
+    /// <summary>Operation failed but the program can continue.</summary>
+    Failed,
+    /// <summary>Unrecoverable error.</summary>
+    Error,
+}
+
+/// <summary>
+/// Classification of a completed file operation (backup / restore / validate / verify), derived from its
+/// counters plus the agent's diagnosis. Policy lives in <see cref="TapeServiceBase.JudgeFileOperation"/>;
+/// wording lives in <see cref="TapeServiceBase.VerbalizeFileOperation"/>.
+/// </summary>
+/// <remarks>
+/// Separated from <see cref="ServiceReportLevel"/> on purpose: the verdict says WHAT happened, the level
+///  says how loudly to say it. One verdict maps to exactly one level, but the reverse does not hold —
+///  three different verdicts all report at Warning.
+/// </remarks>
+public enum FileOperationVerdict
+{
+    /// <summary>Every selected file was processed successfully.</summary>
+    FullSuccess,
+
+    /// <summary>All attempted files succeeded, but some were skipped.</summary>
+    CompletedWithSkips,
+
+    /// <summary>Some files failed; the rest completed.</summary>
+    CompletedWithFailures,
+
+    /// <summary>The operation ran to completion but touched no files at all.</summary>
+    NothingProcessed,
+
+    /// <summary>Stopped at the user's request.</summary>
+    Aborted,
+
+    /// <summary>A catastrophic error terminated the operation.</summary>
+    Failed,
+}
+
+public partial class TapeServiceBase
+{
+    // ── Outcome judgment (policy) ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Classifies a finished file operation. Pure and side-effect free — the counterpart to
+    ///  <see cref="JudgeRecalibration"/>, and deliberately separate from the wording so that the
+    ///  classification can be tested, and reused by callers that render their own UI.
+    /// </summary>
+    /// <param name="pendingContinuation">
+    /// True when the agent stopped only because it needs another volume. Such a stop is NOT a failure,
+    ///  and conflating the two is the single easiest mistake here.
+    /// </param>
+    protected static FileOperationVerdict JudgeFileOperation(
+        in FileOperationResult result, bool pendingContinuation = false)
+    {
+        if (result.WasAborted) return FileOperationVerdict.Aborted;
+        if (result.HasFailed) return FileOperationVerdict.Failed;
+
+        if (result.FilesFailed > 0) return FileOperationVerdict.CompletedWithFailures;
+        if (result.FilesProcessed == 0) return FileOperationVerdict.NothingProcessed;
+        if (result.FilesSkipped > 0) return FileOperationVerdict.CompletedWithSkips;
+
+        // A pending continuation with everything so far successful is still a success for THIS volume.
+        _ = pendingContinuation;
+        return FileOperationVerdict.FullSuccess;
+    }
+
+    /// <summary>
+    /// Renders a verdict as a headline: the severity to report at, and the user-facing text.
+    /// </summary>
+    /// <param name="operationName">"Backup", "Restore", "Validate", "Verify" — the caller's verb.</param>
+    /// <param name="diagnosis">
+    /// The agent's first failure, when one was captured. Appended to the headline for the verdicts where
+    ///  it explains something the counters cannot — above all <see cref="FileOperationVerdict.NothingProcessed"/>,
+    ///  where "no files processed" is otherwise a statement with no cause attached.
+    /// </param>
+    protected static (ServiceReportLevel Level, string Message) VerbalizeFileOperation(
+        FileOperationVerdict verdict,
+        in FileOperationResult result,
+        string operationName,
+        TapeResult diagnosis = default)
+    {
+        string reason = !diagnosis.Success && !string.IsNullOrWhiteSpace(diagnosis.ErrorMessage)
+            ? $" — {diagnosis.ErrorMessage}"
+            : string.Empty;
+
+        return verdict switch
+        {
+            FileOperationVerdict.FullSuccess => (
+                ServiceReportLevel.Completed,
+                $"{operationName} of {result.FilesTotal:N0} file(s) completed successfully"),
+
+            FileOperationVerdict.CompletedWithSkips => (
+                ServiceReportLevel.Warning,
+                $"{operationName} of {result.FilesTotal:N0} file(s) completed with " +
+                $"{result.FilesSkipped:N0} skipped"),
+
+            FileOperationVerdict.CompletedWithFailures => (
+                ServiceReportLevel.Failed,
+                $"{operationName} of {result.FilesTotal:N0} file(s) completed with " +
+                $"{result.FilesFailed:N0} failed{reason}"),
+
+            // The verdict that most needs the diagnosis: without it the user is told only that nothing
+            //  happened, with no indication of why — the exact gap a rejected set used to fall into.
+            FileOperationVerdict.NothingProcessed => (
+                ServiceReportLevel.Warning,
+                $"{operationName} of {result.FilesTotal:N0} file(s) completed — no files processed{reason}"),
+
+            FileOperationVerdict.Aborted => (
+                ServiceReportLevel.Failed,
+                $"{operationName} of {result.FilesTotal:N0} file(s): aborted per user request"),
+
+            FileOperationVerdict.Failed => (
+                ServiceReportLevel.Error,
+                $"{operationName} failed{reason}"),
+
+            _ => (ServiceReportLevel.Info, $"{operationName} finished"),
+        };
+    }
+
+    /// <summary>
+    /// Judges, verbalizes, and reports a finished file operation in one call — the common ending for
+    ///  backup and restore alike. Returns the verdict so the caller can branch on it.
+    /// </summary>
+    protected FileOperationVerdict ReportFileOperationOutcome(
+        in FileOperationResult result,
+        string operationName,
+        TapeResult diagnosis = default,
+        bool pendingContinuation = false)
+    {
+        var verdict = JudgeFileOperation(result, pendingContinuation);
+        var (level, message) = VerbalizeFileOperation(verdict, result, operationName, diagnosis);
+        _host.Report(level, message);
+        return verdict;
+    }
+
+    /// <summary>
+    /// Reports the uniform per-operation statistics sub-line ("N succeeded, M failed, … X processed").
+    ///  Shared so backup and restore cannot drift apart in wording.
+    /// </summary>
+    protected void ReportFileOperationStats(in FileOperationResult result,
+        double secsTotal, double secsIo, string processedVerb = "processed")
+    {
+        if (result.FilesProcessed == 0)
+            return;
+
+        var parts = new List<string>(4) { $"{result.FilesSucceeded:N0} succeeded" };
+        if (result.FilesFailed > 0) parts.Add($"{result.FilesFailed:N0} failed");
+        if (result.FilesSkipped > 0) parts.Add($"{result.FilesSkipped:N0} skipped");
+        parts.Add($"{Helpers.BytesToString(result.BytesProcessed)} {processedVerb}");
+
+        var timingParts = new List<string>(2) { FormatElapsed(secsTotal) + " elapsed" };
+        string rate = FormatDataIoRate(result.BytesProcessed, secsIo);
+        if (rate.Length > 0) timingParts.Add(rate);
+
+        LogInfoSub(string.Join(", ", parts));
+        LogInfoSub(string.Join(", ", timingParts));
+    }
+
+    protected void ReportRestoreStats(in RestoreResult result,
+        double dataSecs, double ioSecs)
+    {
+        ReportFileOperationStats(result, dataSecs, ioSecs, "restored");
+
+        if (result.FilesMissing > 0)
+            LogWarnSub($"{result.FilesMissing:N0} file(s) not found on media");
+    }
+
+    protected void ReportBackupStats(in BackupResult result,
+        double dataSecs, double ioSecs, double tocSecs)
+    {
+        ReportFileOperationStats(result, dataSecs, ioSecs, "written to media");
+
+        if (tocSecs >= 0.5)
+            LogInfoSub($"TOC saved in {FormatElapsed(tocSecs)}");
+
+        LogInfoSub($"Remaining writable media capacity  (est.): {Helpers.BytesToStringLong(WritableRemaining)}");
+        // A (much) more detailed version:
+        //static string triple(long b1, long b2, long b3)
+        //    => $"{Helpers.BytesToStringLong(b1)} / {Helpers.BytesToStringLong(b2)} / {Helpers.BytesToStringLong(b3)}";
+        //LogInfoSub($"Remaining media capacity (reported/estimated/writable): {triple(ReportedContentRemaining, EstimatedContentRemaining, WritableRemaining)}");
+    }
+
+    #region Timing formatting helpers
+
+    // ── Timing formatting helpers ──────────────────────────────────────────
+
+    /// <summary>Formats an elapsed duration as a human-readable string.</summary>
+    public static string FormatElapsed(double totalSeconds)
+    {
+        if (totalSeconds < 1.0) return "< 1s";
+        var ts = TimeSpan.FromSeconds(totalSeconds);
+        if (ts.TotalMinutes < 1) return $"{ts.Seconds}s";
+        if (ts.TotalHours < 1) return $"{ts.Minutes}m {ts.Seconds:D2}s";
+        return $"{(int)ts.TotalHours}h {ts.Minutes:D2}m {ts.Seconds:D2}s";
+    }
+
+    /// <summary>
+    /// Formats a data rate as <c>"X.XX MB/s"</c>; returns an empty string
+    ///  when the duration is too short or no bytes were processed.
+    /// </summary>
+    public static string FormatDataIoRate(long bytes, double totalSeconds)
+    {
+        if (totalSeconds < 0.001 || bytes <= 0) return string.Empty;
+        long bytesPerSecond = (long)(bytes / totalSeconds);
+        return $"{Helpers.BytesToString(bytesPerSecond)}/s";
+    }
+
+    #endregion
+}
