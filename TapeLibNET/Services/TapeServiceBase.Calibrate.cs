@@ -79,8 +79,9 @@ public partial class TapeServiceBase
             ITapeCalibration? calibration = null,
             bool aborted = false,
             bool failed = false,
+            uint error = (uint)WIN32_ERROR.NO_ERROR,
             string? message = null,
-            Exception? error = null,
+            Exception? errorEx = null,
             CalibrationMode mode = CalibrationMode.New,
             TapeRecalibrationDelta? delta = null,
             RecalibrationVerdict? verdict = null)
@@ -90,8 +91,9 @@ public partial class TapeServiceBase
                     aborted: aborted,
                     failed: failed,
                     duration: timer.ElapsedTimeSpan,
+                    error: error,
                     message: message,
-                    error: error)
+                    errorEx: errorEx)
                ?? new CalibrateResult
                {
                    Calibration      = calibration,
@@ -110,8 +112,9 @@ public partial class TapeServiceBase
                                     : failed  ? ServiceReportLevel.Error
                                     :           ServiceReportLevel.Completed,
                    Duration         = timer.ElapsedTimeSpan,
+                   ErrorCode        = error,
                    Message          = message,
-                   Error            = error,
+                   ErrorException   = errorEx,
                };
 
             // Tag the mode/recalibration fields uniformly, regardless of which branch built baseResult.
@@ -135,7 +138,8 @@ public partial class TapeServiceBase
             if (!host.Confirm(
                     "Calibrating a multi-partition media will have no effect.\nWould you still like to continue?",
                     defaultAnswer: false))
-                return MakeResult(aborted: true, message: "For calibration, use a single-partition media", mode: request.Mode);
+                return MakeResult(aborted: true, error: (uint)WIN32_ERROR.ERROR_CANCELLED,
+                    message: "For calibration, use a single-partition media", mode: request.Mode);
         }
 
         // §10.7 — pre-run guard through the unified verdict channel. Format/backup heads the media, so a
@@ -153,7 +157,7 @@ public partial class TapeServiceBase
                     suppress: false, allowRetry: true, allowProceedAlways: false); // calibration run is one-off ⇒ there's no "always"
 
                 if (choice == MediaMismatchChoice.Abort)
-                    return MakeResult(aborted: true,
+                    return MakeResult(aborted: true, error: (uint)WIN32_ERROR.ERROR_CANCELLED,
                         message: "Calibration cancelled — cartridge holds a backup", mode: request.Mode);
 
                 if (choice != MediaMismatchChoice.Retry)
@@ -174,7 +178,7 @@ public partial class TapeServiceBase
                 //  continue"). The RestoreMode arg only colors the dialog wording — a minor cosmetic stretch for
                 //  calibration; swap for a dedicated calibration-insert host verb if that wording ever matters.
                 if (!_host.OnInsertMediaConfirm(volumeNeeded: 1, RestoreMode.Restore))
-                    return MakeResult(aborted: true,
+                    return MakeResult(aborted: true, error: (uint)WIN32_ERROR.ERROR_CANCELLED,
                         message: "Calibration cancelled — no scratch cartridge inserted", mode: request.Mode);
 
                 LogInfo("Loading media...");
@@ -254,7 +258,8 @@ public partial class TapeServiceBase
                         LastError = "Recalibrate needs an existing calibration to compare against";
                         LogErr(LastError);
                         OnStatusUpdate("Recalibration failed");
-                        return MakeResult(failed: true, message: LastError, mode: CalibrationMode.Recalibrate);
+                        return MakeResult(failed: true, error: (uint)WIN32_ERROR.ERROR_APP_DATA_NOT_FOUND,
+                            message: LastError, mode: CalibrationMode.Recalibrate);
                     }
 
                     LogInfo("Recalibrating: re-measuring the tail against the existing calibration...");
@@ -284,7 +289,8 @@ public partial class TapeServiceBase
                 {
                     OnStatusUpdate("Calibration aborted");
                     LogFail("Calibration aborted");
-                    return MakeResult(aborted: true, message: "Calibration aborted", mode: request.Mode);
+                    return MakeResult(aborted: true, error: (uint)WIN32_ERROR.ERROR_CANCELLED,
+                        message: "Calibration aborted", mode: request.Mode);
                 }
 
                 string logMsg, resultMsg;
@@ -311,7 +317,7 @@ public partial class TapeServiceBase
 
                 OnStatusUpdate("Calibration failed");
                 LogErr($"Calibration failed: {logMsg}");
-                return MakeResult(failed: true, message: resultMsg, mode: request.Mode);
+                return MakeResult(failed: true, error: calibrator.LastError, message: resultMsg, mode: request.Mode);
             }
 
             OnStatusUpdate("Calibration complete");
@@ -392,7 +398,7 @@ public partial class TapeServiceBase
             LastError = "Calibration aborted";
             OnStatusUpdate("Calibration aborted");
             LogFail("Calibration aborted");
-            return MakeResult(aborted: true, message: LastError, mode: request.Mode);
+            return MakeResult(aborted: true, error: (uint)WIN32_ERROR.ERROR_CANCELLED, message: LastError, mode: request.Mode);
         }
         catch (Exception ex)
         {
@@ -400,7 +406,8 @@ public partial class TapeServiceBase
             LastError = ex.Message;
             OnStatusUpdate("Calibration failed");
             LogErr($"Calibration failed: {ex.Message}");
-            return MakeResult(failed: true, message: ex.Message, error: ex, mode: request.Mode);
+            return MakeResult(failed: true, error: ErrorManageableBase.ExceptionToErrorCode(ex),
+                message: ex.Message, errorEx: ex, mode: request.Mode);
         }
         finally
         {
@@ -668,7 +675,7 @@ public partial class TapeServiceBase
                     Success = false,
                     Outcome = ServiceReportLevel.Error,
                     Message = ex.Message,
-                    Error = ex,
+                    ErrorException = ex,
                 };
             }
             finally

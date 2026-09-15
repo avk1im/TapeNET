@@ -111,6 +111,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     private bool _disposed;
 
     #endregion
+
     #region Construction / destruction
 
     #endregion
@@ -1865,6 +1866,13 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     }
 
     #endregion // TOC operations
+
+    #region Test and Debug mechanisms
+    // ── Test and Debug mechanisms ───────────────────────────────────────────
+
+    internal VirtualTapeDriveBackend? VirtualBackend => _drive?.Backend as VirtualTapeDriveBackend;
+
+    #endregion
 
 }
 

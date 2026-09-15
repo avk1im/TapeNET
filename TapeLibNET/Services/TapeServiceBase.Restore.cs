@@ -62,6 +62,23 @@ public partial class TapeServiceBase
         ServiceRestoreProgressHandler? progressHandler = null;
         TapeFileRestoreBaseAgent? agent = null;
 
+        // +-------------------------------+--------------------------------------+-----------------------------------------------+
+        // | Figure                        | Scope                                | Notes                                         |
+        // +-------------------------------+--------------------------------------+-----------------------------------------------+
+        // | FilesTotal                    | Whole operation                      | From fileList.Count, set once                 |
+        // | BytesTotal                    | Whole operation                      | Background aggregator over the full list      |
+        // | FilesProcessed                | Running total across all volumes     | _stats never resets between volumes           |
+        // | Succeeded                     | Running total across all volumes     | _stats never resets between volumes           |
+        // | Failed                        | Running total across all volumes     | _stats never resets between volumes           |
+        // | Skipped                       | Running total across all volumes     | _stats never resets between volumes           |
+        // | BytesProcessed                | Running total, includes TOC bytes    | agent.BytesBackedup; BackupTOCCore adds       |
+        // | (= agent.BytesBackedup)       |                                      | wstream.Length                                |
+        // | dataElapsedUs                 | Running total                        | Accumulated via += across iterations          |
+        // | dataIoElapsedUs               | Running total                        | Accumulated via += across iterations          |
+        // | tocElapsedUs                  | Running total                        | Accumulated via += across iterations          |
+        // | agentResult                   | Earliest failure of whole operation  | Failure latch carried across volume swaps     |
+        // +-------------------------------+--------------------------------------+-----------------------------------------------+
+
         // Factory for early-exit result paths before the progress handler is set up
         RestoreResult MakeResult(bool aborted = false, bool failed = false) => new()
         {
@@ -341,13 +358,14 @@ public partial class TapeServiceBase
 
             var result = progressHandler.GenerateResult() with
             {
+                ErrorCode = agent.LastError,
                 Message = agentResult.Success ? null : agentResult.ErrorMessage,
             };
 
             // Handle abort path first
             if (wasAborted)
             {
-                // BytesProcessed from progressHandler may be 0 if BatchEnd wasn't called
+                // BytesProcessed from progressHandler may be 0 if SetEnd wasn't called
                 result = result with { WasAborted = true,
                     BytesProcessed = long.Max(result.BytesProcessed, agent.BytesRestored) };
 
@@ -369,7 +387,7 @@ public partial class TapeServiceBase
             if (wasAborted)
             {
                 LogWarn($"{modeName} of {result.FilesTotal:N0} file(s): aborting per user request");
-                // BytesProcessed from progressHandler may be 0 if BatchEnd wasn't called
+                // BytesProcessed from progressHandler may be 0 if SetEnd wasn't called
                 var bytesProcessed = long.Max(result.BytesProcessed, agent.BytesRestored);
                 double abortSecs   = dataElapsedUs / 1e6;
                 var abortParts = new List<string>(3)

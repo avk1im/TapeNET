@@ -109,11 +109,11 @@ public class StatisticsTests
 
         AssertFullSuccess(notifiable, tree.Files.Count, tree.TotalSize);
 
-        // BatchStart should have been called exactly once
+        // SetStart should have been called exactly once
         Assert.Single(notifiable.BatchStarts);
         Assert.Equal(tree.Files.Count, notifiable.BatchStarts[0].Stats.FilesTotal);
 
-        // BatchEnd should have been called exactly once
+        // SetEnd should have been called exactly once
         Assert.Single(notifiable.BatchEnds);
     }
 
@@ -691,7 +691,7 @@ public class StatisticsTests
     #region *** BatchStart Snapshot ***
 
     /// <summary>
-    /// Asserts that the <c>BatchStart</c> callback delivers a snapshot where
+    /// Asserts that the <c>SetStart</c> callback delivers a snapshot where
     /// <c>FilesTotal</c> is already set but no files have been processed yet.
     /// </summary>
     [Theory]

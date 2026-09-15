@@ -295,7 +295,7 @@ public class FclFilterTests
         Assert.Equal(TapeConExitCode.UsageError, r.Exit);
     }
 
-    // ─── Error paths ────────────────────────────────────────────────────
+    // ─── ErrorException paths ────────────────────────────────────────────────────
 
     [Fact]
     public async Task List_WithMalformedFilter_ReturnsUsageError()

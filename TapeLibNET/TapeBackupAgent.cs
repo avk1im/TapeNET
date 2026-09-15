@@ -20,8 +20,16 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 {
     // bytes backed up so far before we start writing a new set
     private long BytesBackedupMarker { get; set; } = 0L;
-    // payload bytes backed up so far in the current set (since the last marker)
-    private long BytesBackedupInCurrentSet => BytesBackedup - BytesBackedupMarker;
+    /// <summary>
+    /// Tape bytes written since the current set began — the one genuinely PER-SET figure the agent
+    ///  exposes, and the counterpart to the cumulative <see cref="BytesBackedup"/>.
+    /// </summary>
+    /// <remarks>
+    /// Anchored once, by <see cref="BeginWriteContentForCurrentSet"/>, and deliberately not re-anchored at set
+    ///  end: the value must survive until the caller has reported it. Includes this set's TOC bytes when
+    ///  read after the TOC save, hence reports exactly "what has been written to this volume".
+    /// </remarks>
+    public long BytesBackedupInCurrentSet => BytesBackedup - BytesBackedupMarker;
 
     // ── Software-compression session state ───────────────────────────────
     //  Allocated lazily on first use of the Software compression path and
@@ -379,12 +387,22 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         internal int fileIndex = 0;
         internal bool overallSuccess = true;
-        internal bool prevVolumeHasFiles = false; // true when the set on the previous volume had files written
 
-        // Snapshot of the previous-volume set's metadata, captured at EOM time. The next
-        //  volume creates a fresh continuation set from these params (no cloning) -- the
-        //  previous-volume set instance may have been removed (RemoveLastEmptySet) before
-        //  saving the full volume's TOC, so we cannot rely on it being there at resume.
+        /// <summary>
+        /// <see langword="true"> once this context has survived an EOM and is resuming on a fresh volume.
+        ///  Explicit rather than inferred from <see cref="fileIndex"/>, which can legitimately be <c>0</c>
+        ///  on a continuation when end-of-media struck on the very first file.
+        /// </summary>
+        internal bool isContinuation = false;
+        /// <summary><see langword="true"/> when the set on the previous volume had files written.</summary>
+        internal bool prevVolumeHasFiles = false;
+
+        /// <summary>
+        /// Snapshot of the previous-volume set's metadata, captured at EOM time. The next
+        ///  volume creates a fresh continuation set from these params (no cloning) -- the
+        ///  previous-volume set instance may have been removed (RemoveLastEmptySet) before
+        ///  saving the full volume's TOC, so we cannot rely on it being there at resume.
+        /// </summary>
         internal TapeSetTOCParams? continuationSetParams = null;
     }
     private TapeBackupContext? MultiVolumeContext { get; set; } = null;
@@ -462,7 +480,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         if (!BeginWriteContentForCurrentSet(newSet)) // start conent writing mode in tape manager so that tape positioning works correctly
         {
-            NotifyBatchEnd(bc.fileNotify);
+            NotifySetEnd(bc.fileNotify);
             m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSetAligned));
             return false;
         }
@@ -583,7 +601,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                         break;
                     StatsUndoFailure(); // the file will be re-tried on next volume
 
-                    NotifyBatchEnd(bc.fileNotify);
+                    NotifySetEnd(bc.fileNotify);
 
                     TOC.ContinuedOnNextVolume = true;
                     Debug.Assert(CanResumeToNextVolume); // we're ready to continue with multi-volume backup
@@ -649,7 +667,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         } // foreach bc.fileIndex
 
         BytesBackedupMarker = BytesBackedup;
-        NotifyBatchEnd(bc.fileNotify);
+        NotifySetEnd(bc.fileNotify);
 
         MultiVolumeContext = null; // clear multi-volume context -- if we got here we're done with [multi-volume] backup
 
@@ -688,7 +706,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         _stats.Reset();
         ResetLatchedFailure();
-        NotifyBatchStart(fileNotify, fileList.Count);
+        // Do NOT call NotifySetStart(fileNotify, fileList.Count) here -- we do so once per set,
+        //  ONLY in our private BackupFilesToCurrentSet()
 
         m_logger.LogTrace("Starting backing up {Count} files to current set #{Set}", fileList.Count, TOC.CurrentSetIndex);
         if (TOC.CurrentSetTOC.Incremental)
@@ -822,11 +841,9 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         }
     } // BackupFile()
 
-
     private bool BackupFilesToCurrentSet(bool newSet = true)
     {
         Debug.Assert(MultiVolumeContext != null);
-
         TapeBackupContext bc = MultiVolumeContext.Value;
 
         if (bc.fileList.Count == 0)
@@ -835,9 +852,13 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             return true;
         }
 
+        // One Start per SET, matching the Ends below. The count is contributed only by the first set of
+        //  the operation — see NotifySetStart.
+        NotifySetStart(bc.fileNotify, filesAdded: bc.isContinuation ? 0 : bc.fileList.Count);
+
         if (!BeginWriteContentForCurrentSet(newSet))
         {
-            NotifyBatchEnd(bc.fileNotify);
+            NotifySetEnd(bc.fileNotify);
             m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSet));
             return false;
         }
@@ -890,12 +911,14 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             if (skipsToUndo > 0)
                 StatsUndoSkips(skipsToUndo);
 
-            BytesBackedupMarker = BytesBackedup;
+            // Do NOT BytesBackedupMarker = BytesBackedup here -- we anchor ONLY in BeginWriteContentForCurrentSet()!
+            
             // Snapshot continuation metadata BEFORE EndWriteContent (which may finalize/clear
             //  the current set). prevVolumeHasFiles reflects what was actually committed.
             bc.prevVolumeHasFiles = TOC.CurrentSetTOC.Count > 0;
             bc.continuationSetParams = TOC.CurrentSetTOC.ToParams();
             bc.fileIndex = earliestRolledIndex;
+            bc.isContinuation = true; // the next pass through this method continues the same batch
             MultiVolumeContext = bc;
 
             // Always close the write session so the packer/state are clean for the
@@ -932,7 +955,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             }
             */
 
-            NotifyBatchEnd(bc.fileNotify);
+            NotifySetEnd(bc.fileNotify);
 
             TOC.ContinuedOnNextVolume = true;
             Debug.Assert(CanResumeToNextVolume);
@@ -1099,8 +1122,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             return false;
         }
 
-        BytesBackedupMarker = BytesBackedup;
-        NotifyBatchEnd(bc.fileNotify);
+        // Do NOT BytesBackedupMarker = BytesBackedup here -- we anchor ONLY in BeginWriteContentForCurrentSet()!
+        NotifySetEnd(bc.fileNotify);
 
         MultiVolumeContext = null;
 
@@ -1137,7 +1160,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         // Background estimation: source files can be scanned (stat'd) concurrently with the
         //  backup itself, progressively growing Statistics.BytesTotal as the scan proceeds.
         StartBackgroundSizeEstimate(fileList);
-        NotifyBatchStart(fileNotify, fileList.Count);
+        // Do NOT call NotifySetStart(fileNotify, fileList.Count) here -- we do so once per set,
+        //  ONLY in our private BackupFilesToCurrentSet()
 
         m_logger.LogTrace("Starting backing up (packed) {Count} files to current set #{Set}",
             fileList.Count, TOC.CurrentSetIndex);

@@ -97,7 +97,7 @@ public partial class SimpleBox : Window
     {
         return icon switch
         {
-            ImageComplete => "✔",   // pairs with "✖" for Error
+            ImageComplete => "✔",   // pairs with "✖" for ErrorException
             ImageFailed => "✖",     // pairs with "✔" for ImageComplete
             MessageBoxImage.Information => "ℹ",
             MessageBoxImage.Warning => "⚠",

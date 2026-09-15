@@ -704,11 +704,11 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         if (tfis == null) // null means restore all files
             return RestoreAllFilesFromCurrentSetInt(ignoreFailures, fileNotify);
 
-        NotifyBatchStart(fileNotify, tfis.Count);
+        NotifySetStart(fileNotify, tfis.Count);
 
         if (!BeginReadContentForCurrentSet())
         {
-            NotifyBatchEnd(fileNotify);
+            NotifySetEnd(fileNotify);
             m_logger.LogWarning("Failed to begin reading content in {Method}",
                 nameof(RestoreFilesFromCurrentSet));
             return false;
@@ -763,7 +763,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 break;
         }
 
-        NotifyBatchEnd(fileNotify);
+        NotifySetEnd(fileNotify);
 
         m_logger.LogTrace("RestoreFilesFromCurrentSet(tfis) exiting: overallSuccess={Success}", overallSuccess);
         return overallSuccess;
@@ -773,7 +773,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     // Restore ALL files from the current set via the packer.
     private bool RestoreAllFilesFromCurrentSetInt(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
     {
-        NotifyBatchStart(fileNotify, TOC.CurrentSetTOC.Count);
+        NotifySetStart(fileNotify, TOC.CurrentSetTOC.Count);
 
         if (!BeginReadContentForCurrentSet())
         {
@@ -830,7 +830,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 break;
         }
 
-        NotifyBatchEnd(fileNotify);
+        NotifySetEnd(fileNotify);
 
         m_logger.LogTrace("RestoreAllFilesFromCurrentSetInt exiting: overallSuccess={Success}", overallSuccess);
         return overallSuccess;
@@ -879,11 +879,11 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         if (tfis == null) // null means restore all files
             return RestoreFilesFromCurrentSetAligned(ignoreFailures, fileNotify);
 
-        NotifyBatchStart(fileNotify, tfis.Count);
+        NotifySetStart(fileNotify, tfis.Count);
 
         if (!BeginReadContentForCurrentSet()) // start conent reading mode in tape manager so that tape positioning works correctly
         {
-            NotifyBatchEnd(fileNotify);
+            NotifySetEnd(fileNotify);
             m_logger.LogWarning("Failed to begin reading content in {Method}", nameof(RestoreFilesFromCurrentSetAligned));
             return false;
         }
@@ -975,7 +975,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 break;
         }
 
-        NotifyBatchEnd(fileNotify);
+        NotifySetEnd(fileNotify);
 
         return overallSuccess;
     }
@@ -984,7 +984,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     [Obsolete("Use the non-Aligned (Packed) version")]
     private bool RestoreFilesFromCurrentSetAligned(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
     {
-        NotifyBatchStart(fileNotify, TOC.CurrentSetTOC.Count);
+        NotifySetStart(fileNotify, TOC.CurrentSetTOC.Count);
 
         if (!BeginReadContentForCurrentSet())
         {
@@ -1057,7 +1057,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 break;
         }
 
-        NotifyBatchEnd(fileNotify);
+        NotifySetEnd(fileNotify);
 
         return overallSuccess;
     }

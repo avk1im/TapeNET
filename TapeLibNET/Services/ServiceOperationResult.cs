@@ -26,11 +26,18 @@ public abstract record ServiceOperationResult
     /// </summary>
     public ServiceReportLevel Outcome { get; init; }
 
+    /// <summary>
+    /// Win32 error code of the operation's first failure, or 0. Complements
+    ///  <see cref="Message"/> for callers that branch on the cause rather than
+    ///  display it.
+    /// </summary>
+    public uint ErrorCode { get; init; }
+
     /// <summary>Optional human-readable summary message set by the service.</summary>
     public string? Message { get; init; }
 
     /// <summary>Non-null when a catastrophic exception terminated the operation.</summary>
-    public Exception? Error { get; init; }
+    public Exception? ErrorException { get; init; }
 
     /// <summary>Wall-clock duration of the operation, excluding user-interaction time.</summary>
     public TimeSpan Duration { get; init; }
@@ -257,7 +264,7 @@ public sealed record ListResult : ServiceOperationResult
         Success = false,
         Outcome = ServiceReportLevel.Error,
         Message = message,
-        Error   = error,
+        ErrorException   = error,
     };
 
     /// <summary>Creates a successful <see cref="ListResult"/> with the given counts.</summary>

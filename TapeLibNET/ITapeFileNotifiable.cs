@@ -96,10 +96,10 @@ public struct TapeFileStatistics
 /// </summary>
 public interface ITapeFileNotifiable
 {
-    /// <summary>Called when a new batch (set) begins processing. <paramref name="setIndex"/> is 1-based.</summary>
-    void BatchStart(int setIndex, in TapeFileStatistics stats);
-    /// <summary>Called when a batch (set) finishes processing.</summary>
-    void BatchEnd(int setIndex, in TapeFileStatistics stats);
+    /// <summary>Called when a new set begins processing. <paramref name="setIndex"/> is 1-based.</summary>
+    void SetStart(int setIndex, in TapeFileStatistics stats);
+    /// <summary>Called when a set finishes processing.</summary>
+    void SetEnd(int setIndex, in TapeFileStatistics stats);
 
     // The following methods may throw TapeAbortRequestedException to abort the entire operation (not just the file)
 

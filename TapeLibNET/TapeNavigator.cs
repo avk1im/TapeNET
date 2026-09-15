@@ -807,7 +807,7 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     }
 #endif
 
-    #endregion // Error simulation
+    #endregion // ErrorException simulation
 
 } // TapeNavigator
 

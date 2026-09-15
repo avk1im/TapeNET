@@ -83,12 +83,12 @@ public class TestNotifiable : ITapeFileNotifiable
 
     #region *** ITapeFileNotifiable ***
 
-    public void BatchStart(int setIndex, in TapeFileStatistics stats)
+    public void SetStart(int setIndex, in TapeFileStatistics stats)
     {
         BatchStarts.Add(new BatchStartEvent(setIndex, stats));
     }
 
-    public void BatchEnd(int setIndex, in TapeFileStatistics stats)
+    public void SetEnd(int setIndex, in TapeFileStatistics stats)
     {
         BatchEnds.Add(new BatchEndEvent(setIndex, stats));
     }

@@ -47,9 +47,9 @@ public abstract class ServiceOperationProgressHandler(
     public long BytesTotal { get; private set; }
     /// <summary>Files finished (succeeded + failed + skipped).</summary>
     public int FilesProcessed { get; private set; }
-    /// <summary>Files completed without error.</summary>
+    /// <summary>Files completed without errorEx.</summary>
     public int FilesSucceeded { get; private set; }
-    /// <summary>Files that hit an error and were not retried.</summary>
+    /// <summary>Files that hit an errorEx and were not retried.</summary>
     public int FilesFailed { get; private set; }
     /// <summary>Files skipped (by pre-processor, incremental, or user choice).</summary>
     public int FilesSkipped { get; private set; }
@@ -96,7 +96,7 @@ public abstract class ServiceOperationProgressHandler(
     // ── ITapeFileNotifiable ───────────────────────────────────────────────────
 
     /// <inheritdoc/>
-    public virtual void BatchStart(int setIndex, in TapeFileStatistics stats)
+    public virtual void SetStart(int setIndex, in TapeFileStatistics stats)
     {
         _batchStartSnapshot = stats;
         Sync(stats);
@@ -110,7 +110,7 @@ public abstract class ServiceOperationProgressHandler(
     }
 
     /// <inheritdoc/>
-    public virtual void BatchEnd(int setIndex, in TapeFileStatistics stats)
+    public virtual void SetEnd(int setIndex, in TapeFileStatistics stats)
     {
         Sync(stats);
         var toc = Agent.TOC;
@@ -168,7 +168,7 @@ public abstract class ServiceOperationProgressHandler(
         if (_skipAllErrors)
             return FileFailedAction.Skip;
 
-        // Route to the host's structured file-error prompt.
+        // Route to the host's structured file-errorEx prompt.
         //  The host shows the appropriate dialog (WPF FileErrorDialog, CLI menu, etc.)
         //  and returns the chosen action, including the SkipAll sentinel.
         var action = _host.OnFileErrorSelect(
@@ -422,8 +422,9 @@ public class ServiceCalibrateProgressHandler(
         bool aborted = false,
         bool failed = false,
         TimeSpan duration = default,
+        uint error = (uint)WIN32_ERROR.NO_ERROR,
         string? message = null,
-        Exception? error = null) => new()
+        Exception? errorEx = null) => new()
     {
         FilesTotal      = FilesTotal,
         BytesTotal      = BytesTotal,
@@ -439,8 +440,9 @@ public class ServiceCalibrateProgressHandler(
                         : failed  ? ServiceReportLevel.Error
                         :           ServiceReportLevel.Completed,
         Duration        = duration,
+        ErrorCode       = error,
         Message         = message,
-        Error           = error,
+        ErrorException  = errorEx,
         Calibration     = calibration,
         ProfileKey      = calibration?.ProfileKey ?? string.Empty,
         ReportedCapacityAtBom = calibration?.ReportedCapacityAtBom ?? BytesTotal,

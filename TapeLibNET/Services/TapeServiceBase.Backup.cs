@@ -2,6 +2,7 @@ using System.IO;
 using System.Reflection.PortableExecutable;
 using System.Runtime.ConstrainedExecution;
 using TapeLibNET;
+using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices; // Helpers, Stopwatch
 using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
 
@@ -62,6 +63,23 @@ public partial class TapeServiceBase
         ServiceBackupProgressHandler? progressHandler = null;
         TapeFileBackupAgent? agent = null;
 
+        // +-------------------------------+--------------------------------------+-----------------------------------------------+
+        // | Figure                        | Scope                                | Notes                                         |
+        // +-------------------------------+--------------------------------------+-----------------------------------------------+
+        // | FilesTotal                    | Whole operation                      | From fileList.Count, set once                 |
+        // | BytesTotal                    | Whole operation                      | Background aggregator over the full list      |
+        // | FilesProcessed                | Running total across all volumes     | _stats never resets between volumes           |
+        // | Succeeded                     | Running total across all volumes     | _stats never resets between volumes           |
+        // | Failed                        | Running total across all volumes     | _stats never resets between volumes           |
+        // | Skipped                       | Running total across all volumes     | _stats never resets between volumes           |
+        // | BytesProcessed                | Running total, includes TOC bytes    | agent.BytesBackedup; BackupTOCCore adds       |
+        // | (= agent.BytesBackedup)       |                                      | wstream.Length                                |
+        // | dataElapsedUs                 | Running total                        | Accumulated via += across iterations          |
+        // | dataIoElapsedUs               | Running total                        | Accumulated via += across iterations          |
+        // | tocElapsedUs                  | Running total                        | Accumulated via += across iterations          |
+        // | agentResult                   | Earliest failure of whole operation  | Failure latch carried across volume swaps     |
+        // +-------------------------------+--------------------------------------+-----------------------------------------------+
+
         // Factory for early-exit result paths before the progress handler is set up
         BackupResult MakeResult(bool aborted = false, bool failed = false) => new()
         {
@@ -78,6 +96,9 @@ public partial class TapeServiceBase
             Outcome        = aborted ? ServiceReportLevel.Failed
                            : failed  ? ServiceReportLevel.Error
                            :           ServiceReportLevel.Completed,
+            ErrorCode      = agent?.LastError ?? (aborted
+                                ? (uint)WIN32_ERROR.ERROR_CANCELLED
+                                : (uint)WIN32_ERROR.NO_ERROR),
         };
 
         if (_drive is null || !_drive.IsMediaLoaded)
@@ -222,6 +243,7 @@ public partial class TapeServiceBase
             toc.CurrentSetTOC.BlockSize         = request.BlockSize;
             toc.CurrentSetTOC.Compression       = request.Compression;
             toc.CurrentSetTOC.CompressionLevel  = request.CompressionLevel;
+            int startVolume = toc.Volume;
 
             LogInfo($"Backup set: >{request.Description}<");
             LogInfoSub($"Block size: {Helpers.BytesToString(request.BlockSize)}");
@@ -395,8 +417,13 @@ public partial class TapeServiceBase
                         if (!tocResult)
                         {
                             LogErr($"Couldn't backup TOC. Error: {tocResult.ErrorMessage}");
-                            LogInfo("Attempting to enforce TOC backup...");
 
+                            // A TOC failure outranks a clean file loop in the headline: every file is on
+                            //  tape, and none of them is reachable without a TOC!
+                            if (agentResult.Success)
+                                agentResult = tocResult;
+
+                            LogInfo("Attempting to enforce TOC backup...");
                             var enforceResult = agent.BackupTOC(enforce: true);
                             if (!enforceResult)
                             {
@@ -466,12 +493,27 @@ public partial class TapeServiceBase
                     }
                 } // if (!skipTOCSave)
 
-                // Log results for this volume — headline level + uniform stats
-                var volumeResult = MakeResult();
-                ReportFileOperationOutcome(volumeResult, "Backup", agentResult,
-                    pendingContinuation: agent.CanResumeToNextVolume);
-                ReportBackupStats(volumeResult,
+                // Log results for this volume: first the headline, then the uniform stats
+                var resultSoFar = MakeResult();
+                // Our stats figures are CUMULATIVE across the volumes written so far — the agent's
+                //  statistics never reset between volumes, and agentResult carries the earliest failure
+                //  of the whole operation. Hence we differentiate per-volume vs. the overall outcome.
+                if (agent.CanResumeToNextVolume && !request.NoMultivolume)
+                {
+                    // Progress notice upon this volume, not a verdict: the operation continues on the next volume.
+                    LogInfo($"Volume #{toc.Volume} complete — {resultSoFar.FilesSucceeded:N0} of " +
+                            $"{resultSoFar.FilesTotal:N0} file(s) written so far");
+                    LogInfoSub($"{Helpers.BytesToStringLong(agent.BytesBackedupInCurrentSet)} written to this volume");
+                }
+                else
+                {
+                    // The whole operation outcome
+                    ReportFileOperationOutcome(resultSoFar, "Backup", agentResult);
+                }
+                // Current statistics we report for each volume.
+                ReportBackupStats(resultSoFar,
                     dataSecs: dataElapsedUs / 1e6, ioSecs: dataIoElapsedUs / 1e6, tocSecs: tocElapsedUs / 1e6);
+
 
                 /*
                 // Log results for this volume — headline level + uniform stats
@@ -524,6 +566,8 @@ public partial class TapeServiceBase
                 LogInfoSub($"Remaining media capacity (b1): {Helpers.BytesToStringLong(_drive.GetReportedContentRemaining())}");
                 */
 
+                // --- Check for finish conditions ---
+
                 // If backup was aborted, TOC has been saved — break out
                 if (wasAborted)
                     break;
@@ -538,6 +582,8 @@ public partial class TapeServiceBase
                     LogInfo("Multi-volume continuation skipped (no-multivolume mode)");
                     break;
                 }
+
+                // --- Handle media swap for multivolume continuation ---
 
                 // Step 1: Ask user if they want to continue on a new volume
                 if (!_host.OnVolumeFullConfirm(toc.Volume, toc.Volume + 1,
@@ -628,6 +674,12 @@ public partial class TapeServiceBase
 
             progressHandler.CompleteProgress();
 
+            // After the loop, we need no addtl. report — the final iteration's numbers are the totals.
+            //  Output just one line to finalize the multi-volume statistics.
+            int volumes = toc.Volume - startVolume + 1;
+            if (volumes > 0)
+                LogInfoSub($"Across {volumes} volume(s)");
+
             if (wasAborted)
             {
                 LogOk("TOC saved after abort");
@@ -644,8 +696,6 @@ public partial class TapeServiceBase
                 return MakeResult(aborted: true);
             }
 
-            OnStatusUpdate("Backup complete");
-
             var backupResult = MakeResult();
 
             if (backupResult is { HasFailed: true })
@@ -654,6 +704,8 @@ public partial class TapeServiceBase
                 LogOk("Backup completed successfully");
             else
                 LogInfo("Backup completed");
+
+            OnStatusUpdate("Backup complete");
 
             return backupResult;
         }

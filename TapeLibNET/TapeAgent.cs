@@ -72,15 +72,19 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
         IsAbortRequested ? "Operation aborted by user request" : "Operation did not complete");
 
     /// <summary>
-    /// Diagnosis of the last run verb: the first failure it encountered, or <see cref="TapeResult.OK"/>
-    ///  when it succeeded. Read it when a verb returns <see langword="null"/>.
+    /// Diagnosis of the current (or most recent) compound operation: its first failure, or
+    ///  <see cref="TapeResult.OK"/> when none occurred.
     /// </summary>
     /// <remarks>
-    /// Complements — does not replace — the <c>ITapeCalibration?</c> return: a run yields an ARTIFACT on
-    ///  success, and artifact-or-null is the honest shape for that. This carries the WHY, captured at the
-    ///  moment of failure rather than reconstructed afterwards from a live error state that intervening
-    ///  tolerated steps (<c>FindLastCheckpoint</c>'s BOP resets, <c>InspectMedia</c>'s final reset) have
-    ///  since cleared.
+    /// <para>
+    /// COMPLEMENTS the <see cref="TapeResult"/> returned by each public verb — it does not replace it.
+    ///  The return value is a snapshot immune to later state changes; this property is LIVE and is reset
+    ///  by the next verb that starts. Where they disagree, the return value wins.
+    /// </para>
+    /// <para>
+    /// Chiefly useful for capturing a diagnosis mid-operation — e.g. before calling
+    ///  <see cref="BackupTOC"/>, which resets the latch.
+    /// </para>
     /// </remarks>
     public TapeResult LastResult => _resultBuilder.Result;
 
@@ -1058,15 +1062,21 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
     //  All exceptions are caught and logged as warnings -- except for TapeAbortRequestedException, which is rethrown
     //  The _stats struct is updated BEFORE the callback is invoked, so the callback always sees current totals.
 
-    protected void NotifyBatchStart(ITapeFileNotifiable? fileNotify, int filesFound)
+    /// <param name="filesAdded">
+    /// How many NEWLY discovered files this set contributes to the operation total. Restore passes each
+    ///  set's own count, since sets hold distinct files. Backup passes the list count on the FIRST set
+    ///  and ZERO on every continuation set: one file list spans all volumes, and a continuation
+    ///  re-attempts files that were already counted (and un-counted by the EOM rollback).
+    /// </param>
+    protected void NotifySetStart(ITapeFileNotifiable? fileNotify, int filesAdded)
     {
-        _stats.FilesTotal += filesFound;
+        _stats.FilesTotal += filesAdded;
         RefreshBytesTotalEstimate();
         if (fileNotify != null)
         {
             try
             {
-                fileNotify.BatchStart(TOC.CurrentSetIndex, in _stats);
+                fileNotify.SetStart(TOC.CurrentSetIndex, in _stats);
             }
             catch (Exception ex2)
             {
@@ -1075,14 +1085,14 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
             }
         }
     }
-    protected void NotifyBatchEnd(ITapeFileNotifiable? fileNotify)
+    protected void NotifySetEnd(ITapeFileNotifiable? fileNotify)
     {
         RefreshBytesTotalEstimate();
         if (fileNotify != null)
         {
             try
             {
-                fileNotify.BatchEnd(TOC.CurrentSetIndex, in _stats);
+                fileNotify.SetEnd(TOC.CurrentSetIndex, in _stats);
             }
             catch (Exception ex2)
             {

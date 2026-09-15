@@ -1,4 +1,4 @@
-using TapeLibNET.Tests.Helpers;
+﻿using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
@@ -107,7 +107,7 @@ public class ErrorHandlingTests
 
     #endregion
 
-    #region *** (A) Backup IO Failure � Skip / Retry / Abort ***
+    #region *** (A) Backup IO Failure — Skip / Retry / Abort ***
 
 #if DEBUG
 
@@ -287,7 +287,7 @@ public class ErrorHandlingTests
                 .Select(p => p.FileInfo.FileDescr.FullName)
                 .ToList();
 
-            // Restore � all TOC-registered (succeeded) files should restore correctly
+            // Restore — all TOC-registered (succeeded) files should restore correctly
             var restoreNotify = new TestNotifiable();
             using var restoreAgent = fixture.CreateRestoreAgent(restoreDir);
             bool restoreOk = restoreAgent.RestoreAllFilesFromCurrentSet(ignoreFailures: false, restoreNotify);
@@ -298,7 +298,7 @@ public class ErrorHandlingTests
             Assert.Equal(succeededCount, restoreStats.FilesSucceeded);
             Assert.Equal(0, restoreStats.FilesFailed);
 
-            // Byte-for-byte content verification � the restore agent mirrors the original
+            // Byte-for-byte content verification — the restore agent mirrors the original
             //  absolute path structure under restoreDir (stripped of the drive root)
             string restoreEquivalent1 = Path.Combine(
                 restoreDir, Path.GetRelativePath(Path.GetPathRoot(tree.RootPath)!, tree.RootPath));
@@ -375,7 +375,7 @@ public class ErrorHandlingTests
             Assert.Equal(succeededCount, restoreStats.FilesSucceeded);
             Assert.Equal(0, restoreStats.FilesFailed);
 
-            // Byte-for-byte content verification � mirror the original path structure under restoreDir
+            // Byte-for-byte content verification — mirror the original path structure under restoreDir
             string restoreEquivalent2 = Path.Combine(
                 restoreDir, Path.GetRelativePath(Path.GetPathRoot(tree.RootPath)!, tree.RootPath));
             FileComparer.AssertFilesMatch(tree.RootPath, succeededPaths, restoreEquivalent2);
@@ -443,7 +443,7 @@ public class ErrorHandlingTests
 
     #endregion
 
-    #region *** (B) Backup Empty Set � All Files Fail / All Files Skipped ***
+    #region *** (B) Backup Empty Set — All Files Fail / All Files Skipped ***
 
 #if DEBUG
 
@@ -648,7 +648,7 @@ public class ErrorHandlingTests
 
     #endregion
 
-    #region *** (D) Restore IO Failure � Skip / Retry / Abort ***
+    #region *** (D) Restore IO Failure — Skip / Retry / Abort ***
 
 #if DEBUG
 
@@ -890,7 +890,7 @@ public class ErrorHandlingTests
         bool tocWriteOk = writeAgent.BackupTOC();
         Assert.True(tocWriteOk, "BackupTOC should succeed when only 1st copy fails");
 
-        // Restore TOC � should recover from the 2nd copy
+        // Restore TOC — should recover from the 2nd copy
         using var readAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
         bool tocReadOk = readAgent.RestoreTOC();
         Assert.True(tocReadOk, "RestoreTOC should succeed from 2nd copy");
@@ -985,4 +985,389 @@ public class ErrorHandlingTests
 #endif // DEBUG
 
     #endregion
+
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Step 9.0 addendum to ErrorHandlingTests.cs
+    //
+    //  The existing suite asserts COUNTERS ("4 failed"). These assert the
+    //  DIAGNOSIS ("…and here is why") — the thing the latch was built to preserve
+    //  and the thing no existing test would notice the loss of.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #region *** (H) Failure diagnosis survives the operation ***
+
+#if DEBUG
+
+    /// <summary>
+    /// The core latch property: a failure on an early file must still be reported after LATER files
+    ///  succeed — every success calls <c>ResetError()</c>, so the live error state is long gone by the
+    ///  time the operation returns.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately fails only the FIRST file (<c>Counter = EveryNth - 1</c> fires immediately, then
+    ///  <c>EveryNth</c> is large enough that nothing else fails). Without the latch the returned result
+    ///  would be <c>(false, 0, "")</c> — a failure with no diagnosis, which is precisely the defect.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Backup_EarlyFailure_LateSuccesses_DiagnosisSurvives(DriveProfile profile)
+    {
+        const int fileCount = 8;
+
+        using var tree = new TempFileTree();
+        tree.AddFiles("earlyfail", count: fileCount, minSize: 512, maxSize: 4 * 1024);
+
+        var notifiable = new TestNotifiable { FailedAction = FileFailedAction.Skip };
+
+        using var fixture = new VirtualTapeFixture(profile);
+        fixture.TOC.AddNewSetTOC(0, incremental: false);
+        fixture.TOC.CurrentSetTOC.Description = "Early failure";
+        fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
+        fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
+
+        using var agent = fixture.CreateBackupAgent();
+        agent.SimulateFileFailures.Enabled = true;
+        agent.SimulateFileFailures.EveryNth = 100;          // effectively "never again"
+        agent.SimulateFileFailures.Counter = 99;            // …but fire on the very first file
+
+        TapeResult result = agent.BackupFileListToCurrentSet(
+            newSet: true, tree.Files, ignoreFailures: true, notifiable);
+
+        Assert.False(result.Success, "one file failed, so the operation must report failure");
+
+        // THE assertion: the diagnosis survived seven subsequent successes.
+        Assert.NotEqual(0u, result.ErrorCode);
+        Assert.False(string.IsNullOrWhiteSpace(result.ErrorMessage),
+            "the latched diagnosis must survive later successes");
+        Assert.Contains("Simulated", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        // …and the counters confirm the later files really did succeed.
+        var stats = notifiable.BatchEnds[^1].Stats;
+        Assert.Equal(1, stats.FilesFailed);
+        Assert.Equal(fileCount - 1, stats.FilesSucceeded);
+    }
+
+    /// <summary>
+    /// FIRST failure, not last: later failures are usually consequences, so the earliest one names the
+    ///  cause. Two distinct failure kinds are injected; the result must carry the first.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Backup_MultipleFailures_ReportsTheFirst(DriveProfile profile)
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("multifail", count: 6, minSize: 512, maxSize: 4 * 1024);
+
+        // A missing file inserted mid-list produces a DIFFERENT exception (FileNotFound) than the
+        //  simulator's TapeIOException — so the message alone identifies which one was latched.
+        var fileList = new List<string>(tree.Files);
+        fileList.Insert(4, Path.Combine(tree.RootPath, "does_not_exist.dat"));
+
+        var notifiable = new TestNotifiable { FailedAction = FileFailedAction.Skip };
+
+        using var fixture = new VirtualTapeFixture(profile);
+        fixture.TOC.AddNewSetTOC(0, incremental: false);
+        fixture.TOC.CurrentSetTOC.Description = "Multiple failures";
+        fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
+        fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
+
+        using var agent = fixture.CreateBackupAgent();
+        agent.SimulateFileFailures.Enabled = true;
+        agent.SimulateFileFailures.EveryNth = 100;
+        agent.SimulateFileFailures.Counter = 99;            // file #1 fails (simulated)
+
+        TapeResult result = agent.BackupFileListToCurrentSet(
+            newSet: true, fileList, ignoreFailures: true, notifiable);
+
+        Assert.False(result.Success);
+        Assert.True(notifiable.FilesFailed.Count >= 2, "both failures must have occurred");
+
+        // The FIRST failure (simulated, file #1) — not the later FileNotFound.
+        Assert.Contains("Simulated", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A user-requested abort deliberately does NOT latch (it is not a fault), so the fallback in
+    ///  <c>BuildFailure</c> is what supplies the diagnosis. Without it the result would be
+    ///  <c>(false, 0, "")</c> — failure with nothing to say.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Backup_Abort_YieldsCancelledNotEmptyDiagnosis(DriveProfile profile)
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("abortdiag", count: 10, minSize: 512, maxSize: 4 * 1024);
+
+        var notifiable = new TestNotifiable { AbortAfterNPreProcessed = 3 };
+
+        using var fixture = new VirtualTapeFixture(profile);
+        fixture.TOC.AddNewSetTOC(0, incremental: false);
+        fixture.TOC.CurrentSetTOC.Description = "Abort diagnosis";
+        fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
+        fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
+
+        using var agent = fixture.CreateBackupAgent();
+        TapeResult result = agent.BackupFileListToCurrentSet(
+            newSet: true, tree.Files, ignoreFailures: true, notifiable);
+
+        Assert.False(result.Success);
+        Assert.True(agent.IsAbortRequested);
+
+        // Never a silent failure: the fallback names the cause.
+        Assert.NotEqual(0u, result.ErrorCode);
+        Assert.False(string.IsNullOrWhiteSpace(result.ErrorMessage),
+            "an aborted operation must still carry a diagnosis");
+    }
+
+    /// <summary>
+    /// A successful operation must leave NO latched failure — otherwise a later
+    ///  <c>FailedOperationResult</c> on the same agent would report a stale diagnosis.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Backup_CleanRun_LeavesNoLatchedFailure(DriveProfile profile)
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("clean", count: 5, minSize: 512, maxSize: 4 * 1024);
+
+        using var fixture = new VirtualTapeFixture(profile);
+        fixture.TOC.AddNewSetTOC(0, incremental: false);
+        fixture.TOC.CurrentSetTOC.Description = "Clean run";
+        fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
+        fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
+
+        using var agent = fixture.CreateBackupAgent();
+        Assert.True(agent.BackupFileListToCurrentSet(
+            newSet: true, tree.Files, ignoreFailures: false, fileNotify: null));
+
+        Assert.True(agent.LastResult.Success, "a clean run must leave LastResult clean");
+    }
+
+    /// <summary>
+    /// A retry that succeeds must clear the way for a clean result: the retry path calls
+    ///  <c>ResetError()</c>, and nothing should latch a failure the retry then repaired.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Backup_SuccessfulRetry_LeavesCleanResult(DriveProfile profile)
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("retrydiag", count: 6, minSize: 512, maxSize: 4 * 1024);
+
+        var retried = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var notifiable = new TestNotifiable
+        {
+            FailedActionFunc = (fd, _) =>
+                retried.Add(fd.FileDescr.FullName) ? FileFailedAction.Retry : FileFailedAction.Skip
+        };
+
+        using var fixture = new VirtualTapeFixture(profile);
+        fixture.TOC.AddNewSetTOC(0, incremental: false);
+        fixture.TOC.CurrentSetTOC.Description = "Retry diagnosis";
+        fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
+        fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
+
+        using var agent = fixture.CreateBackupAgent();
+        agent.SimulateFileFailures.Enabled = true;
+        agent.SimulateFileFailures.EveryNth = 3;
+
+        TapeResult result = agent.BackupFileListToCurrentSet(
+            newSet: true, tree.Files, ignoreFailures: true, notifiable);
+
+        Assert.True(result.Success, "every file succeeded after its retry");
+        Assert.True(agent.LastResult.Success,
+            "a repaired failure must not linger in the latch");
+        Assert.True(notifiable.FilesFailed.Count > 0, "retries must actually have been exercised");
+    }
+
+    /// <summary>
+    /// The dual-copy rescue: a failed FIRST TOC copy that the second copy saves must leave the agent
+    ///  reporting success — the reset before the second attempt is what makes this true.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(PartitionedTOCProfiles))]
+    public void TOCBackup_FirstCopyRescued_LeavesCleanResult(DriveProfile profile)
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("tocrescue", count: 3, minSize: 512, maxSize: 4 * 1024);
+
+        using var fixture = new VirtualTapeFixture(profile);
+        fixture.BackupFiles(tree.Files);
+
+        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        agent.SimulateTOCFailureMask = 1;   // 1st copy fails, 2nd succeeds
+
+        TapeResult result = agent.BackupTOC();
+
+        Assert.True(result.Success, "one good copy is enough");
+        Assert.True(agent.LastResult.Success,
+            "the rescued first copy must not leave a latched failure behind");
+    }
+
+    /// <summary>
+    /// Both copies failing must yield a diagnosis, not a bare false.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void TOCBackup_BothCopiesFail_CarriesDiagnosis(DriveProfile profile)
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("tocboth", count: 3, minSize: 512, maxSize: 4 * 1024);
+
+        using var fixture = new VirtualTapeFixture(profile);
+        fixture.BackupFiles(tree.Files);
+
+        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        agent.SimulateTOCFailureMask = 3;
+
+        TapeResult result = agent.BackupTOC(enforce: true);
+
+        Assert.False(result.Success);
+        Assert.NotEqual(0u, result.ErrorCode);
+        Assert.False(string.IsNullOrWhiteSpace(result.ErrorMessage),
+            "a total TOC failure must explain itself");
+    }
+
+#endif // DEBUG
+
+    #endregion
+
+    #region *** (I) Medium-level faults — the injector as a real drive error ***
+
+#if DEBUG
+    /// <summary>
+    /// A genuine drive-level write fault, injected below the agent. Unlike <c>SimulateFileFailures</c>
+    ///  — which fabricates an exception inside the agent — this is an error the MEDIUM produces, so it
+    ///  exercises the real error-propagation chain: medium → drive → manager → agent.
+    /// </summary>
+    /// <remarks>
+    /// <c>EveryNth</c> rather than <c>FailOnce</c>: a single block failure inside the packer may be
+    ///  absorbed by buffering, so a recurring fault is needed to guarantee the agent sees one.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Backup_MediaWriteFaults_ProduceADiagnosis(DriveProfile profile)
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("mwfault", count: 10, minSize: 8 * 1024, maxSize: 32 * 1024);
+
+        var notifiable = new TestNotifiable { FailedAction = FileFailedAction.Skip };
+
+        using var fixture = new VirtualTapeFixture(profile);
+        fixture.TOC.AddNewSetTOC(0, incremental: false);
+        fixture.TOC.CurrentSetTOC.Description = "Media write faults";
+        fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
+        fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
+
+        // Fault the medium itself, not the agent.
+        fixture.Backend.ContentWriteFaults.Enabled = true;
+        fixture.Backend.ContentWriteFaults.EveryNth = 4;
+
+        using var agent = fixture.CreateBackupAgent();
+        TapeResult result = agent.BackupFileListToCurrentSet(
+            newSet: true, tree.Files, ignoreFailures: true, notifiable);
+
+        fixture.Backend.ContentWriteFaults.Reset();
+
+        Assert.True(fixture.Backend.ContentWriteFaults.Occurrences > 0,
+            "the injector must actually have fired");
+
+        // Whatever the agent made of them, a medium fault must never yield a silent failure.
+        if (!result.Success)
+        {
+            Assert.NotEqual(0u, result.ErrorCode);
+            Assert.False(string.IsNullOrWhiteSpace(result.ErrorMessage),
+                "a medium-level write fault must carry a diagnosis");
+        }
+    }
+
+    /// <summary>
+    /// Read faults on restore: the agent must surface them as per-file failures WITH a reason, and the
+    ///  files that were not faulted must still restore.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Restore_MediaReadFaults_ProduceADiagnosis(DriveProfile profile)
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("mrfault", count: 10, minSize: 8 * 1024, maxSize: 32 * 1024);
+
+        string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_MRFault_{Guid.NewGuid():N}");
+        try
+        {
+            using var fixture = new VirtualTapeFixture(profile);
+            fixture.BackupFiles(tree.Files);
+
+            var notifiable = new TestNotifiable { FailedAction = FileFailedAction.Skip };
+
+            fixture.Backend.ContentReadFaults.Enabled = true;
+            fixture.Backend.ContentReadFaults.EveryNth = 6;
+
+            using var agent = fixture.CreateRestoreAgent(restoreDir);
+            TapeResult result = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, notifiable);
+
+            fixture.Backend.ContentReadFaults.Reset();
+
+            Assert.True(fixture.Backend.ContentReadFaults.Occurrences > 0,
+                "the injector must actually have fired");
+
+            if (!result.Success)
+            {
+                Assert.NotEqual(0u, result.ErrorCode);
+                Assert.False(string.IsNullOrWhiteSpace(result.ErrorMessage),
+                    "a medium-level read fault must carry a diagnosis");
+            }
+
+            notifiable.AssertStatsInvariant();
+        }
+        finally
+        {
+            TryDeleteDirectory(restoreDir);
+        }
+    }
+
+    /// <summary>
+    /// SILENT corruption — the mode no error code can describe. The drive reports success, the bytes are
+    ///  wrong, and only the per-file CRC catches it. This is the end-to-end proof that the hash chain
+    ///  earns its keep, and that the resulting failure carries a CRC diagnosis rather than a generic one.
+    /// </summary>
+    /// <remarks>
+    /// Corrupting on the READ side keeps the tape itself intact, so the failure is attributable purely to
+    ///  the delivered bytes. The agent should raise <c>ERROR_CRC</c> for the affected file.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Restore_SilentCorruption_IsCaughtByCrc(DriveProfile profile)
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("corrupt", count: 6, minSize: 16 * 1024, maxSize: 32 * 1024);
+
+        using var fixture = new VirtualTapeFixture(profile);
+        fixture.BackupFiles(tree.Files, hashAlgorithm: TapeHashAlgorithm.Crc64);
+
+        var notifiable = new TestNotifiable { FailedAction = FileFailedAction.Skip };
+
+        // Silent: full byte count, no error, a couple of bits wrong near the front of a block.
+        fixture.Backend.ContentReadFaults.CorruptOnce(bits: 2, offset: 64);
+
+        using var agent = fixture.CreateValidateAgent();
+        TapeResult result = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, notifiable);
+
+        Assert.Equal(1, fixture.Backend.ContentReadFaults.Occurrences);
+        fixture.Backend.ContentReadFaults.Reset();
+
+        // The drive said nothing was wrong — only the CRC knows.
+        Assert.False(result.Success, "silent corruption must be caught by the per-file hash");
+        Assert.False(string.IsNullOrWhiteSpace(result.ErrorMessage));
+        Assert.Contains("CRC", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+
+        var stats = notifiable.BatchEnds[^1].Stats;
+        Assert.True(stats.FilesFailed >= 1, "at least the corrupted file must fail");
+    }
+
+#endif // DEBUG
+
+    #endregion
+
 }

@@ -6,7 +6,7 @@ namespace TapeWinNET;
 
 /// <summary>
 /// Severity of a media-identity prompt, driving the detail pane's colour and glyph. Distinct from the
-///  outcome — a Warning-severity <see cref="TapeMediaVerdict.WrongVolume"/> and an Error-severity
+///  outcome — a Warning-severity <see cref="TapeMediaVerdict.WrongVolume"/> and an ErrorException-severity
 ///  <see cref="TapeMediaVerdict.WrongKind"/> both still ask the same three/four questions.
 /// </summary>
 public enum MediaMismatchSeverity
