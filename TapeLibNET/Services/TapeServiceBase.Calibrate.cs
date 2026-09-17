@@ -79,13 +79,16 @@ public partial class TapeServiceBase
             ITapeCalibration? calibration = null,
             bool aborted = false,
             bool failed = false,
-            uint error = (uint)WIN32_ERROR.NO_ERROR,
+            TapeResult? diagnosis = null,       // ← replaces `uint error` error code
             string? message = null,
             Exception? errorEx = null,
             CalibrationMode mode = CalibrationMode.New,
             TapeRecalibrationDelta? delta = null,
             RecalibrationVerdict? verdict = null)
         {
+            // TapeResult.OK, NOT default — a default TapeResult means FAILURE.
+            TapeResult diag = diagnosis ?? calibrator?.LastResult ?? TapeResult.OK;
+
             CalibrateResult baseResult = progressHandler?.GenerateResult(
                     calibration,
                     aborted: aborted,
@@ -95,34 +98,35 @@ public partial class TapeServiceBase
                     errorEx: errorEx)
                ?? new CalibrateResult
                {
-                   Calibration          = calibration,
-                   ProfileKey           = calibration?.ProfileKey ?? _drive?.DriveProfileKey ?? string.Empty,
-                   ReportedCapacityAtBom = calibration?.ReportedCapacityAtBom ?? _drive?.Capacity ?? 0,
-                   PhantomFreeAtEom     = calibration?.PhantomFreeAtEom ?? 0,
-                   CapacityActual       = calibration?.CapacityActual ?? 0,
-                   EarlyWarning         = calibration?.EarlyWarning,
-                   EwToEomDistance      = calibration?.EwToEomDistance ?? 0,
-                   BytesTotal           = _drive?.Capacity ?? 0,
-                   BytesProcessed       = calibration?.CapacityActual ?? 0,
-                   WasAborted           = aborted,
-                   HasFailed            = failed,
-                   Success              = !aborted && !failed && calibration is not null,
-                   Outcome              = aborted
-                                            ? ServiceReportLevel.Failed
-                                            : failed 
-                                                ? ServiceReportLevel.Error
-                                                : ServiceReportLevel.Completed,
-                   Duration              = timer.ElapsedTimeSpan,
-                   Message               = message,
-                   ErrorException        = errorEx,
+                   Calibration              = calibration,
+                   ProfileKey               = calibration?.ProfileKey ?? _drive?.DriveProfileKey ?? string.Empty,
+                   ReportedCapacityAtBom    = calibration?.ReportedCapacityAtBom ?? _drive?.Capacity ?? 0,
+                   PhantomFreeAtEom         = calibration?.PhantomFreeAtEom ?? 0,
+                   CapacityActual           = calibration?.CapacityActual ?? 0,
+                   EarlyWarning             = calibration?.EarlyWarning,
+                   EwToEomDistance          = calibration?.EwToEomDistance ?? 0,
+                   BytesTotal               = _drive?.Capacity ?? 0,
+                   BytesProcessed           = calibration?.CapacityActual ?? 0,
+                   WasAborted               = aborted,
+                   HasFailed                = failed,
+                   Success                  = !aborted && !failed && calibration is not null,
+                   Outcome                  = aborted
+                                                ? ServiceReportLevel.Failed
+                                                : failed
+                                                    ? ServiceReportLevel.Error
+                                                    : ServiceReportLevel.Completed,
+                   Duration                 = timer.ElapsedTimeSpan,
+                   Message                  = message,   // explicit override; ErrorCode derives from Diagnosis
+                   ErrorException           = errorEx,
                };
 
-            // Tag the mode/recalibration fields uniformly, regardless of which branch built baseResult.
+            // Tag the diag/mode/recalibration fields uniformly, regardless of which branch built baseResult!
             return baseResult with
             {
-                Mode                 = mode,
-                RecalibrationDelta   = delta,
-                RecalibrationVerdict = verdict,
+                Diagnosis                = diag,        // tag ANY branch, also the progress-handler one!
+                Mode                     = mode,
+                RecalibrationDelta       = delta,
+                RecalibrationVerdict     = verdict,
             };
         }
 
@@ -138,8 +142,11 @@ public partial class TapeServiceBase
             if (!host.Confirm(
                     "Calibrating a multi-partition media will have no effect.\nWould you still like to continue?",
                     defaultAnswer: false))
-                return MakeResult(aborted: true, error: (uint)WIN32_ERROR.ERROR_CANCELLED,
-                    message: "For calibration, use a single-partition media", mode: request.Mode);
+                // Multi-partition decline — the user's choice, not a fault.
+                return MakeResult(aborted: true,
+                    diagnosis: TapeResult.Fail((uint)WIN32_ERROR.ERROR_CANCELLED,
+                        "For calibration, use a single-partition media"),
+                    message: "Calibration aborted", mode: request.Mode);
         }
 
         // §10.7 — pre-run guard through the unified verdict channel. Format/backup heads the media, so a
@@ -157,8 +164,9 @@ public partial class TapeServiceBase
                     suppress: false, allowRetry: true, allowProceedAlways: false); // calibration run is one-off ⇒ there's no "always"
 
                 if (choice == MediaMismatchChoice.Abort)
-                    return MakeResult(aborted: true, error: (uint)WIN32_ERROR.ERROR_CANCELLED,
-                        message: "Calibration cancelled — cartridge holds a backup", mode: request.Mode);
+                    return MakeResult(aborted: true, diagnosis: TapeResult.Fail((uint)WIN32_ERROR.ERROR_CANCELLED,
+                        "Calibration cancelled — cartridge holds a backup"),
+                        message: "Calibration aborted", mode: request.Mode);
 
                 if (choice != MediaMismatchChoice.Retry)
                     break;   // Proceed — erase and calibrate the loaded cartridge
@@ -178,8 +186,9 @@ public partial class TapeServiceBase
                 //  continue"). The RestoreMode arg only colors the dialog wording — a minor cosmetic stretch for
                 //  calibration; swap for a dedicated calibration-insert host verb if that wording ever matters.
                 if (!_host.OnInsertMediaConfirm(volumeNeeded: 1, RestoreMode.Restore))
-                    return MakeResult(aborted: true, error: (uint)WIN32_ERROR.ERROR_CANCELLED,
-                        message: "Calibration cancelled — no scratch cartridge inserted", mode: request.Mode);
+                    return MakeResult(aborted: true, diagnosis: TapeResult.Fail((uint)WIN32_ERROR.ERROR_CANCELLED,
+                        "Calibration cancelled — no scratch cartridge inserted"),
+                        message: "Calibration aborted", mode: request.Mode);
 
                 LogInfo("Loading media...");
                 OnStatusUpdate("Loading media...");
@@ -258,7 +267,8 @@ public partial class TapeServiceBase
                         LastError = "Recalibrate needs an existing calibration to compare against";
                         LogErr(LastError);
                         OnStatusUpdate("Recalibration failed");
-                        return MakeResult(failed: true, error: (uint)WIN32_ERROR.ERROR_APP_DATA_NOT_FOUND,
+                        return MakeResult(failed: true,
+                            diagnosis: TapeResult.Fail((uint)WIN32_ERROR.ERROR_APP_DATA_NOT_FOUND, LastError),
                             message: LastError, mode: CalibrationMode.Recalibrate);
                     }
 
@@ -283,24 +293,26 @@ public partial class TapeServiceBase
 
             if (calibration is null)
             {
-                LastError = calibrator.LastErrorMessage;
+                // ONE diagnosis, latched by the calibrator at the moment of failure — not reassembled
+                //  afterwards from a live error state that tolerated steps may have cleared.
+                TapeResult diag = calibrator.LastResult;
+                LastError = diag.ErrorMessage;
 
-                if (calibrator.LastError == (uint)WIN32_ERROR.ERROR_CANCELLED || calibrator.IsAbortRequested)
+                if (diag.ErrorCode == (uint)WIN32_ERROR.ERROR_CANCELLED || calibrator.IsAbortRequested)
                 {
                     OnStatusUpdate("Calibration aborted");
                     LogFail("Calibration aborted");
-                    return MakeResult(aborted: true, error: (uint)WIN32_ERROR.ERROR_CANCELLED,
+                    return MakeResult(aborted: true, diagnosis: diag,
                         message: "Calibration aborted", mode: request.Mode);
                 }
 
                 string logMsg, resultMsg;
-                // Resume/Recalibrate can legitimately fail to find a resumable trail on the cartridge;
-                //  surface a mode-appropriate message so the caller can offer a fresh run instead.
+
+                // ForeignHeader stays a SEPARATE, TYPED channel: "which header is actually on this
+                //  cartridge" is richer than any message string, and the UI renders it structurally.
                 if ((request.Mode is CalibrationMode.Resume or CalibrationMode.Recalibrate)
                     && calibrator.ForeignHeader is { } foreign)
                 {
-                    // For identifiable foreign header, offer a more detailed explanation
-                    //  Precise: "This is backup media — id …, volume … — not a calibration cartridge."
                     logMsg = $"Not a calibration cartridge — {foreign}";
                     resultMsg = $"This cartridge carries a different header:\n{foreign}\n" +
                                 "This operation needs a calibration cartridge.";
@@ -317,7 +329,7 @@ public partial class TapeServiceBase
 
                 OnStatusUpdate("Calibration failed");
                 LogErr($"Calibration failed: {logMsg}");
-                return MakeResult(failed: true, error: calibrator.LastError, message: resultMsg, mode: request.Mode);
+                return MakeResult(failed: true, diagnosis: diag, message: resultMsg, mode: request.Mode);
             }
 
             OnStatusUpdate("Calibration complete");
@@ -394,11 +406,19 @@ public partial class TapeServiceBase
         }
         catch (TapeAbortRequestedException)
         {
+            // Defensive: the calibrator itself never throws this — its abort channel is the single
+            //  cooperative IsAbortRequested flag, observed by CheckForAbort, which returns null rather
+            //  than throwing. (Contrast the file agents, where a void ITapeFileNotifiable callback can
+            //  only request an abort BY throwing.) Kept in case a future TapeDrive path propagates one.
+
             timer.Stop();
             LastError = "Calibration aborted";
             OnStatusUpdate("Calibration aborted");
             LogFail("Calibration aborted");
-            return MakeResult(aborted: true, error: (uint)WIN32_ERROR.ERROR_CANCELLED, message: LastError, mode: request.Mode);
+
+            return MakeResult(aborted: true,
+                diagnosis: TapeResult.Fail((uint)WIN32_ERROR.ERROR_CANCELLED, "Calibration aborted"),
+                message: "Calibration aborted", mode: request.Mode);
         }
         catch (Exception ex)
         {
@@ -406,7 +426,7 @@ public partial class TapeServiceBase
             LastError = ex.Message;
             OnStatusUpdate("Calibration failed");
             LogErr($"Calibration failed: {ex.Message}");
-            return MakeResult(failed: true, error: ErrorManageableBase.ExceptionToErrorCode(ex),
+            return MakeResult(failed: true, diagnosis: TapeResult.Fail(ex),
                 message: ex.Message, errorEx: ex, mode: request.Mode);
         }
         finally

@@ -40,6 +40,7 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
     /// <summary>Cumulative bytes read from tape (content + TOC) during this agent's lifetime.</summary>
     public long BytesRestored { get; protected set; } = 0L;
 
+
     /// <summary>
     /// Cumulative file-operation statistics. Updated by the Notify* methods;
     /// a snapshot is passed to every <see cref="ITapeFileNotifiable"/> callback.
@@ -47,6 +48,8 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
     protected TapeFileStatistics _stats;
     /// <summary>Read-only reference to the current statistics.</summary>
     public ref readonly TapeFileStatistics Statistics => ref _stats;
+
+    #region *** Error latching and result building
 
     /// <summary>
     /// Builder for the current file-operation result latching on the first error.
@@ -87,6 +90,8 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
     /// </para>
     /// </remarks>
     public TapeResult LastResult => _resultBuilder.Result;
+
+    #endregion
 
     /// <summary>
     /// Refreshes <see cref="TapeFileStatistics.BytesTotal"/> from whatever total-size estimation

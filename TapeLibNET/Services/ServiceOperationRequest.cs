@@ -115,6 +115,17 @@ public sealed record CalibrateRequest(
     ITapeCalibration? ExistingCalibration = null,
     bool ConfirmFullRecalibrationInline = true) : ServiceOperationRequest
 {
+    /// <summary>
+    /// Skips the pre-run guard that refuses to calibrate a cartridge carrying a BACKUP media header
+    ///  (§10.7). Calibration is destructive and irreversible, so the guard exists to stop a user
+    ///  erasing an archive by mistake.
+    /// </summary>
+    /// <remarks>
+    /// Set only for scripted / unattended scratch runs where the cartridge is known to be disposable.
+    ///  The parallel to <seealso cref="RestoreRequest.SkipVolumeCheck"/> and
+    ///  <seealso cref="BackupRequest.ForceVolumeOverwrite"/>: each suppresses an interactive identity prompt
+    ///  that a non-interactive host cannot answer — never the underlying CHECK's ability to detect.
+    /// </remarks>
     public bool SkipMediaHeaderCheck { get; init; } = false;   // skip the pre-run "holds a backup?" confirm
 }
 
