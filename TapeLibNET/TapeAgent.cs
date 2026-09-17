@@ -1132,6 +1132,9 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
             catch (TapeAbortRequestedException ex1)
             {
                 m_logger.LogInformation("Abort requested while notifying pre-process file: {Exception}", ex1);
+                // Record the request HERE, at the point of observation — not in whichever catch handler
+                //  happens to receive the rethrow.
+                IsAbortRequested = true;
                 throw; // rethrow to abort the entire operation
             }
             catch (Exception ex2)
@@ -1160,6 +1163,11 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
             catch (TapeAbortRequestedException ex1)
             {
                 m_logger.LogInformation("Abort requested while notifying post-process file: {Exception}", ex1);
+                // Record the request HERE, at the point of observation — not in whichever catch handler
+                //  happens to receive the rethrow. In particular, the packed path routes this through
+                //  PackedCommitTracker.DrainPostProcess, which converts the exception into a bool and
+                //  loses its identity; by then the loop can no longer tell an abort from a drain failure.
+                IsAbortRequested = true;
                 throw; // rethrow to abort the entire operation
             }
             catch (Exception ex2)
@@ -1221,6 +1229,9 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
             catch (TapeAbortRequestedException ex1)
             {
                 m_logger.LogInformation("Abort requested while notifying file skipped: {Exception}", ex1);
+                // Record the request HERE, at the point of observation — not in whichever catch handler
+                //  happens to receive the rethrow.
+                IsAbortRequested = true;
                 throw; // rethrow to abort the entire operation
             }
             catch (Exception ex2)

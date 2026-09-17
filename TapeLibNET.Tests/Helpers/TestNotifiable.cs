@@ -49,6 +49,18 @@ public class TestNotifiable : ITapeFileNotifiable
     public Func<TapeFileInfo, TapeResult, FileFailedAction>? FailedActionFunc { get; set; }
 
     /// <summary>
+    /// Optional callback invoked from <see cref="PreProcessFile"/> AFTER the event is recorded and the
+    ///  proactive-abort triggers are evaluated. Returning <see langword="false"/> suppresses further
+    ///  processing of the file, exactly as the interface contract allows.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="AbortInPreProcessAfterN"/>, which THROWS. This hook lets a test act
+    ///  without throwing — e.g. to set <see cref="TapeFileAgent.IsAbortRequested"/> directly,
+    ///  exercising the caller's abort channel rather than the exception one.
+    /// </remarks>
+    public Func<TapeFileInfo, TapeFileStatistics, bool>? PreProcessFunc { get; set; }
+
+    /// <summary>
     /// Optional callback invoked from <see cref="PostProcessFile"/> AFTER the event is recorded and the
     ///  proactive-abort triggers are evaluated. Returning <see langword="false"/> suppresses further
     ///  processing of the file, exactly as the interface contract allows.
@@ -114,7 +126,8 @@ public class TestNotifiable : ITapeFileNotifiable
             throw new TapeAbortRequestedException($"Test abort at PreProcess #{PreProcessed.Count}");
 
         // Skip if in the skip set
-        return !FilesToSkip.Contains(fileInfo.FileDescr.FullName);
+        return !FilesToSkip.Contains(fileInfo.FileDescr.FullName)
+            && (PreProcessFunc?.Invoke(fileInfo, stats) ?? true);
     }
 
     public bool PostProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats)

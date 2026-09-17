@@ -1418,17 +1418,39 @@ public class ErrorHandlingTests
     }
 
     /// <summary>
-    /// Asserts the outcome every abort channel must produce, whatever route the request took.
+    /// Asserts what every abort channel must produce, whatever route the request took.
     /// </summary>
+    /// <remarks>
+    /// The error CODE is deliberately not part of the convergence. <see cref="AbortChannel.Flag"/> and
+    ///  <see cref="AbortChannel.Exception"/> abort a healthy operation, so nothing is latched and the
+    ///  <c>ERROR_CANCELLED</c> fallback applies. <see cref="AbortChannel.FailedAction"/> aborts IN RESPONSE
+    ///  to a genuine fault, which the handler latches — and the latched cause rightly outranks the user's
+    ///  reaction to it. What all three DO share is that the operation fails, the abort is recorded, and
+    ///  the diagnosis is never empty.
+    /// </remarks>
     private static void AssertCleanAbort(TapeResult result, TapeFileAgent agent, AbortChannel channel)
     {
         Assert.False(result.Success, $"{channel}: an aborted operation must report failure");
+
         Assert.True(agent.IsAbortRequested,
             $"{channel}: the abort must be RECORDED on the agent — the service reads this flag to " +
             "classify the operation as aborted rather than failed");
-        Assert.Equal((uint)WIN32_ERROR.ERROR_CANCELLED, result.ErrorCode);
+
+        Assert.NotEqual(0u, result.ErrorCode);
         Assert.False(string.IsNullOrWhiteSpace(result.ErrorMessage),
             $"{channel}: an abort must never yield an empty diagnosis");
+
+        if (channel == AbortChannel.FailedAction)
+        {
+            // Aborting because a file failed: the FAULT is the diagnosis, not the reaction to it.
+            Assert.NotEqual((uint)WIN32_ERROR.ERROR_CANCELLED, result.ErrorCode);
+        }
+        else
+        {
+            // Nothing was latched, so the fallback supplies the code — the case that silently yielded
+            //  ERROR_INVALID_STATE before the catch handlers began recording the flag.
+            Assert.Equal((uint)WIN32_ERROR.ERROR_CANCELLED, result.ErrorCode);
+        }
     }
 
     /// <summary>Prepares a fresh set on the fixture's TOC — the shape every direct-agent test needs.</summary>
@@ -1454,7 +1476,7 @@ public class ErrorHandlingTests
     /// </remarks>
     [Theory]
     [MemberData(nameof(ProfilesAndAbortChannels))]
-    public void Backup_EveryAbortChannel_YieldsCancelled(DriveProfile profile, AbortChannel channel)
+    public void Backup_EveryAbortChannel_AbortsCleanly(DriveProfile profile, AbortChannel channel)
     {
         const int fileCount = 10;
         const int abortAfter = 3;
@@ -1473,9 +1495,9 @@ public class ErrorHandlingTests
             case AbortChannel.Flag:
                 // The caller's channel: set the flag from a callback, mimicking a UI button pressed
                 //  mid-operation. The loop's next ThrowIfAbortRequested picks it up.
-                notifiable.PostProcessFunc = (_, stats) =>
+                notifiable.PreProcessFunc = (_, stats) =>
                 {
-                    if (stats.FilesSucceeded >= abortAfter)
+                    if (notifiable.PreProcessed.Count >= abortAfter)
                         agent.IsAbortRequested = true;
                     return true;
                 };
@@ -1517,7 +1539,7 @@ public class ErrorHandlingTests
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
-    public void Backup_AbortByExceptionFromPostProcess_YieldsCancelled(DriveProfile profile)
+    public void Backup_AbortByExceptionFromPostProcess_AbortsCleanly(DriveProfile profile)
     {
         using var tree = new TempFileTree();
         tree.AddFiles("abortpost", count: 8, minSize: 512, maxSize: 4 * 1024);
@@ -1543,7 +1565,7 @@ public class ErrorHandlingTests
     /// </summary>
     [Theory]
     [MemberData(nameof(ProfilesAndAbortChannels))]
-    public void Restore_EveryAbortChannel_YieldsCancelled(DriveProfile profile, AbortChannel channel)
+    public void Restore_EveryAbortChannel_AbortsCleanly(DriveProfile profile, AbortChannel channel)
     {
         const int fileCount = 10;
         const int abortAfter = 3;

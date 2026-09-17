@@ -573,8 +573,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         {
             SetError(ex); // we've already set the right error code & message in the exception
 
-            try { fileFailedAction = NotifyFileFailed(fileNotify, tfi, ex); }
-            catch (TapeAbortRequestedException) { IsAbortRequested = true; }
+            // NotifyFileFailed wrapper will catch TapeAbortRequestedException and set IsAbortRequested
+            //  if the caller requested abort, so we don't need to worry here
+            fileFailedAction = NotifyFileFailed(fileNotify, tfi, ex);
 
             m_logger.LogWarning("Exception {Exception} while processing file >{File}<", ex, tfi.FileDescr.FullName);
             return false;
@@ -697,7 +698,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         }
         catch (TapeAbortRequestedException)
         {
-            IsAbortRequested = true;
+            IsAbortRequested = true; // the callback wrapper might've already set it - but we want to be sure
             fileFailedAction = FileFailedAction.Abort;
             m_logger.LogTrace("Abort requested while processing (packed) file >{File}< in {Method}",
                 tfi.FileDescr.FullName, nameof(RestoreNextFile));
@@ -707,9 +708,10 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         {
             SetError(ex);
 
-            try { fileFailedAction = NotifyFileFailed(fileNotify, tfi, ex); }
-            catch (TapeAbortRequestedException) { IsAbortRequested = true; }
-            
+            // NotifyFileFailed wrapper will catch TapeAbortRequestedException and set IsAbortRequested
+            //  if the caller requested abort, so we don't need to worry here
+            fileFailedAction = NotifyFileFailed(fileNotify, tfi, ex);
+
             m_logger.LogWarning("Exception {Exception} while processing (packed) file >{File}<", ex, tfi.FileDescr.FullName);
             return false;
         }

@@ -575,7 +575,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 // A callback threw to request the abort — the only channel a void notification has.
                 //  Record it so FailedOperationResult reports ERROR_CANCELLED and the service classifies
                 //  the operation as aborted, exactly as when the flag was set directly.
-                IsAbortRequested = true;
+                IsAbortRequested = true; // the callback wrapper might've already set it - but we want to be sure
                 bc.overallSuccess = false;
                 // no need for caller-requested abort to LatchFailure()
                 break;
@@ -683,7 +683,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                     // A callback threw to request the abort — the only channel a void notification has.
                     //  Record it so FailedOperationResult reports ERROR_CANCELLED and the service classifies
                     //  the operation as aborted, exactly as when the flag was set directly.
-                    IsAbortRequested = true;
+                    IsAbortRequested = true; // the callback wrapper might've already set it - but we want to be sure
                     bc.overallSuccess = false;
                     // no need for caller-requested abort to LatchFailure()
                     break;
@@ -1042,7 +1042,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                     // A callback threw to request the abort — the only channel a void notification has.
                     //  Record it so FailedOperationResult reports ERROR_CANCELLED and the service classifies
                     //  the operation as aborted, exactly as when the flag was set directly.
-                    IsAbortRequested = true;
+                    IsAbortRequested = true; // the callback wrapper might've already set it - but we want to be sure
                     bc.overallSuccess = false;
                     // no need for caller-requested abort to LatchFailure()
                     break;
@@ -1093,10 +1093,14 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 //  iteration. Same abort semantics as the legacy path: an abort here
                 //  breaks the loop without rewinding -- the file is already on tape and
                 //  in the TOC.
+                //  If the caller throws a TapeAbortRequestedException during post-notify,
+                //  NotifyPostProcessFile will register it and set IsAbortRequested,
+                //  while tracker.DrainPostProcess will NOT re-throw it. So all good.
                 if (!tracker.DrainPostProcess(tfi => NotifyPostProcessFile(bc.fileNotify, tfi)))
                 {
                     bc.overallSuccess = false;
-                    LatchFailure();
+                    if (!IsAbortRequested) // user-requested abort is not a failure
+                        LatchFailure();
                     break;
                 }
 
@@ -1125,10 +1129,14 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             }
 
             // Drain post-process for tail commits that arrived during EndWriteContent.
+            //  If the caller throws a TapeAbortRequestedException during post-notify,
+            //  NotifyPostProcessFile will register it and set IsAbortRequested,
+            //  while tracker.DrainPostProcess will NOT re-throw it. So all good.
             if (!tracker.DrainPostProcess(tfi => NotifyPostProcessFile(bc.fileNotify, tfi)))
             {
                 bc.overallSuccess = false;
-                LatchFailure();
+                if (!IsAbortRequested) // user-requested abort is not a failure
+                    LatchFailure();
             }
 
             if (tracker.PendingCount > 0)
