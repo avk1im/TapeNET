@@ -49,6 +49,25 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     private FileSizeAggregator? _sizeAggregator;
 
     /// <summary>
+    /// Whether this agent has stamped a media header — and with it the TOC's <c>MediaId</c> — onto ANY
+    ///  volume during the current operation.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Operation-scoped, deliberately NOT reset per volume</b>, despite the header itself being a
+    ///  per-volume artifact. Its one consumer is the service's TOC-rollback guard, and the thing that
+    ///  rollback would restore is the <c>MediaId</c> — a SERIES identity. Once any volume carries the new
+    ///  id, reverting the TOC to the old one describes a series that no longer exists, whatever the
+    ///  current volume's state.
+    /// </para>
+    /// <para>
+    /// Distinct from <see cref="TapeStreamManager.ContentWritten"/>: the header is written as a RAW BLOCK
+    ///  at the top of <see cref="BeginWriteContentForCurrentSet"/>, before the content session opens, so a
+    ///  failure between the two leaves a fresh header on tape with <c>ContentWritten == false</c>.
+    /// </para>
+    /// </remarks>
+    public bool MediaHeaderStamped { get; private set; }
+    /// <summary>
     /// Starts (or restarts) a background estimate of the total logical size of <paramref name="files"/>,
     ///  progressively refreshed into <see cref="TapeFileStatistics.BytesTotal"/> — see
     ///  <see cref="RefreshBytesTotalEstimate"/>.
@@ -105,7 +124,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     private bool BeginWriteContentForCurrentSet(bool newSet)
     {
         if (TOC.CurrentSetIndex == TOC.FirstSetOnVolume && WritesMediaHeader)
-            WriteMediaHeader();          // heads the fresh/continuation volume; sets presence Present, positions at block 1
+            MediaHeaderStamped = WriteMediaHeader();          // heads the fresh/continuation volume; sets presence Present, positions at block 1
         else
             EnsureMediaHeaderResolved();  // existing volume / headerless: probe → Present or Absent
 
@@ -426,6 +445,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         //  brought us here does not latch (it is not a fault) — so the only thing carried across the
         //  swap is a genuine failure. Mirrors _stats, which likewise never resets between volumes.
         // NO ResetLatchedFailure();
+        // NO MediaHeaderStamped = false; // likewise: the header is a series-level artifact, not per-volume
 
         if (!CanResumeToNextVolume)
             return FailedOperationResult;
@@ -552,6 +572,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 //  is contractually bool/TapeResult based.
                 m_logger.LogTrace("{Method}: Abort requested before file #{Number} >{File}< was written",
                     nameof(BackupFilesToCurrentSetAligned), _stats.FilesProcessed + 1, fileName);
+                // A callback threw to request the abort — the only channel a void notification has.
+                //  Record it so FailedOperationResult reports ERROR_CANCELLED and the service classifies
+                //  the operation as aborted, exactly as when the flag was set directly.
+                IsAbortRequested = true;
                 bc.overallSuccess = false;
                 // no need for caller-requested abort to LatchFailure()
                 break;
@@ -656,6 +680,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 {
                     m_logger.LogTrace("{Method}: Abort requested while post-processing file #{Number} >{File}<",
                         nameof(BackupFilesToCurrentSetAligned), _stats.FilesProcessed, fileName);
+                    // A callback threw to request the abort — the only channel a void notification has.
+                    //  Record it so FailedOperationResult reports ERROR_CANCELLED and the service classifies
+                    //  the operation as aborted, exactly as when the flag was set directly.
+                    IsAbortRequested = true;
                     bc.overallSuccess = false;
                     // no need for caller-requested abort to LatchFailure()
                     break;
@@ -706,6 +734,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         _stats.Reset();
         ResetLatchedFailure();
+        MediaHeaderStamped = false; // reset for the new series (per-series, cross-volume artifact)
+
         // Do NOT call NotifySetStart(fileNotify, fileList.Count) here -- we do so once per set,
         //  ONLY in our private BackupFilesToCurrentSet()
 
@@ -1009,6 +1039,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 {
                     m_logger.LogTrace("{Method}: Abort requested before file #{Number} >{File}< was written",
                         nameof(BackupFilesToCurrentSet), bc.fileIndex + 1, fileName);
+                    // A callback threw to request the abort — the only channel a void notification has.
+                    //  Record it so FailedOperationResult reports ERROR_CANCELLED and the service classifies
+                    //  the operation as aborted, exactly as when the flag was set directly.
+                    IsAbortRequested = true;
                     bc.overallSuccess = false;
                     // no need for caller-requested abort to LatchFailure()
                     break;
@@ -1157,6 +1191,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         _stats.Reset();
         ResetLatchedFailure();
+        MediaHeaderStamped = false; // reset for the new series (per-series, cross-volume artifact)
+
         // Background estimation: source files can be scanned (stat'd) concurrently with the
         //  backup itself, progressively growing Statistics.BytesTotal as the scan proceeds.
         StartBackgroundSizeEstimate(fileList);

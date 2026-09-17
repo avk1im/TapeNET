@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 
 using TapeLibNET;
 using TapeLibNET.Services;
@@ -20,8 +21,17 @@ namespace TapeLibNET.Tests.Helpers;
 ///  layer — a recording stub that lets round-trip tests assert on log output
 ///  without any UI dependency.
 /// </remarks>
-public class TestTapeServiceHost : ITapeServiceHost
+/// <param name="logger">
+/// Optional sink so recorded reports are also VISIBLE during a test run, not merely recorded.
+/// A failing assertion on <see cref="ContainsMessage"/> is nearly undiagnosable without it —
+/// the expected text is somewhere in a queue nobody prints.
+/// </param>
+public class TestTapeServiceHost(ILogger? logger = null) : ITapeServiceHost
 {
+    // ── Debug logging ─────────────────────────────────────────────────────────
+
+    private readonly ILogger _logger = logger ?? TestLoggerFactory.Default.CreateLogger<TestTapeServiceHost>();
+
     // ── Recorded data ─────────────────────────────────────────────────────────
 
     /// <summary>
@@ -101,7 +111,33 @@ public class TestTapeServiceHost : ITapeServiceHost
 
     /// <inheritdoc/>
     public void Report(ServiceReportLevel level, string message, bool isSubEntry = false)
-        => Reports.Enqueue(new ReportEntry(level, message, isSubEntry, DateTime.Now));
+    {
+        Reports.Enqueue(new ReportEntry(level, message, isSubEntry, DateTime.Now));
+
+        // Mirror to the test logger at a severity matching the report level, so the run transcript
+        //  shows what the user would have seen.
+        var logLevel = level switch
+        {
+            ServiceReportLevel.Error => LogLevel.Error,
+            ServiceReportLevel.Failed => LogLevel.Error,
+            ServiceReportLevel.Warning => LogLevel.Warning,
+            _ => LogLevel.Information,
+        };
+        _logger.Log(logLevel, "[{Level}]{Indent} {Message}", level, isSubEntry ? "  ·" : "", message);
+    }
+
+    /// <summary>
+    /// All recorded reports as one newline-separated transcript, for embedding in an assertion message.
+    /// </summary>
+    /// <remarks>
+    /// Use as <c>Assert.True(host.ContainsMessage("…"), host.DumpReports())</c>: the failure then SHOWS
+    ///  what was reported instead of merely stating that the expected fragment was absent.
+    /// </remarks>
+    public string DumpReports()
+        => Reports.IsEmpty
+            ? "(no reports recorded)"
+            : string.Join(Environment.NewLine,
+                Reports.Select(r => $"  [{r.Level}]{(r.IsSubEntry ? "  ·" : "")} {r.Message}"));
 
     // ── ITapeServiceHost — Prompts ────────────────────────────────────────────
 

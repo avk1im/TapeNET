@@ -61,6 +61,7 @@ public partial class TapeServiceBase
     {
         ServiceRestoreProgressHandler? progressHandler = null;
         TapeFileRestoreBaseAgent? agent = null;
+        TapeResult agentResult = TapeResult.OK;  // Note TapeResult.OK, NOT default — a default TapeResult means FAILURE 
 
         // +-------------------------------+--------------------------------------+-----------------------------------------------+
         // | Figure                        | Scope                                | Notes                                         |
@@ -79,25 +80,31 @@ public partial class TapeServiceBase
         // | agentResult                   | Earliest failure of whole operation  | Failure latch carried across volume swaps     |
         // +-------------------------------+--------------------------------------+-----------------------------------------------+
 
-        // Factory for early-exit result paths before the progress handler is set up
-        RestoreResult MakeResult(bool aborted = false, bool failed = false) => new()
-        {
-            FilesTotal     = progressHandler?.FilesTotal ?? 0,
-            FilesProcessed = progressHandler?.FilesProcessed ?? 0,
-            FilesSucceeded = progressHandler?.FilesSucceeded ?? 0,
-            FilesFailed    = progressHandler?.FilesFailed ?? 0,
-            FilesSkipped   = progressHandler?.FilesSkipped ?? 0,
+        // Factory for early-exit result paths before the progress handler is set up or outside its scope (e.g. exception).
+        //  Allow to override diagnostics if the default agent's doesn't fit (e.g. an exception outside the agent).
+        RestoreResult MakeResult(bool aborted = false, bool failed = false, TapeResult? diagnosis = null)
+            => new()
+            {
+                Diagnosis       = diagnosis ?? agentResult,
 
-            BytesTotal     = progressHandler?.BytesTotal ?? 0,
-            BytesProcessed = progressHandler?.BytesProcessed ?? 0,
+                FilesTotal      = progressHandler?.FilesTotal ?? 0,
+                FilesProcessed  = progressHandler?.FilesProcessed ?? 0,
+                FilesSucceeded  = progressHandler?.FilesSucceeded ?? 0,
+                FilesFailed     = progressHandler?.FilesFailed ?? 0,
+                FilesSkipped    = progressHandler?.FilesSkipped ?? 0,
 
-            WasAborted     = aborted,
-            HasFailed      = failed,
-            Success        = !failed,
-            Outcome        = aborted ? ServiceReportLevel.Failed
-                           : failed  ? ServiceReportLevel.Error
-                           :           ServiceReportLevel.Completed,
-        };
+                BytesTotal      = progressHandler?.BytesTotal ?? 0,
+                BytesProcessed  = progressHandler?.BytesProcessed ?? 0,
+
+                WasAborted      = aborted,
+                HasFailed       = failed,
+                Success         = !failed,
+                Outcome         = aborted
+                                    ? ServiceReportLevel.Failed
+                                    : failed
+                                        ? ServiceReportLevel.Error
+                                        : ServiceReportLevel.Completed,
+            };
 
         if (_drive is null || !_drive.IsMediaLoaded)
         {
@@ -157,7 +164,8 @@ public partial class TapeServiceBase
             {
                 var v0 = EvaluateLoadedHeader(expectedSeriesId: toc.MediaId, expectedVolume: toc.Volume);
                 var c0 = PresentVerdict(v0, MediaPromptContext.VerifyRestore, suppress);
-                if (c0 == MediaMismatchChoice.Abort) return MakeResult(aborted: true);
+                if (c0 == MediaMismatchChoice.Abort)
+                    return MakeResult(aborted: true);
                 if (c0 == MediaMismatchChoice.ProceedAlways) suppress = true;
             }
 
@@ -248,7 +256,7 @@ public partial class TapeServiceBase
             // ── Agent invocation ────────────────────────────────
             _drive.IoTimeCounterUs = 0; // reset I/O time counter for this volume
             dataTimer.Start();
-            var agentResult = agent.RestoreFilesFromCurrentSetDown(
+            agentResult = agent.RestoreFilesFromCurrentSetDown(
                 combined, ignoreFailures: true, progressHandler);
             dataTimer.Stop();
             dataElapsedUs += dataTimer.ElapsedMicroseconds;
@@ -358,8 +366,7 @@ public partial class TapeServiceBase
 
             var result = progressHandler.GenerateResult() with
             {
-                ErrorCode = agent.LastError,
-                Message = agentResult.Success ? null : agentResult.ErrorMessage,
+                Diagnosis = agentResult,
             };
 
             // Handle abort path first
@@ -377,85 +384,20 @@ public partial class TapeServiceBase
                 return result;
             }
 
-            ReportFileOperationOutcome(result, modeName, agentResult,
+            ReportFileOperationOutcome(result, modeName,
                 pendingContinuation: agent.CanResumeFromAnotherVolume);
             ReportFileOperationStats(result, secsTotal: dataElapsedUs / 1e6, secsIo: dataIoElapsedUs / 1e6);
 
             return result;
 
-            /*
-            if (wasAborted)
-            {
-                LogWarn($"{modeName} of {result.FilesTotal:N0} file(s): aborting per user request");
-                // BytesProcessed from progressHandler may be 0 if SetEnd wasn't called
-                var bytesProcessed = long.Max(result.BytesProcessed, agent.BytesRestored);
-                double abortSecs   = dataElapsedUs / 1e6;
-                var abortParts = new List<string>(3)
-                {
-                    $"Before abort: {result.FilesSucceeded:N0} succeeded",
-                    $"{Helpers.BytesToString(bytesProcessed)} processed"
-                };
-                string abortRate = FormatDataIoRate(bytesProcessed, abortSecs);
-                if (abortRate.Length > 0) abortParts.Add(abortRate);
-                LogInfoSub(string.Join(", ", abortParts));
-                OnStatusUpdate($"{modeName} aborted");
-                return result with { WasAborted = true };
-            }
-
-            // Determine headline level and message
-            ServiceReportLevel headlineLevel;
-            string             headlineMsg;
-            if (result.IsFullSuccess && (success || agent.CanResumeFromAnotherVolume))
-            {
-                headlineLevel = ServiceReportLevel.Completed;
-                headlineMsg   = $"{modeName} of {result.FilesTotal:N0} file(s) completed successfully";
-            }
-            else if (result.FilesFailed > 0)
-            {
-                headlineLevel = ServiceReportLevel.Failed;
-                headlineMsg   = $"{modeName} of {result.FilesTotal:N0} file(s) completed with {result.FilesFailed:N0} failed";
-            }
-            else if (result.FilesProcessed == 0)
-            {
-                headlineLevel = ServiceReportLevel.Warning;
-                headlineMsg   = $"{modeName} of {result.FilesTotal:N0} file(s) completed — no files processed";
-            }
-            else
-            {
-                headlineLevel = ServiceReportLevel.Warning;
-                headlineMsg   = $"{modeName} of {result.FilesTotal:N0} file(s) completed with issues";
-            }
-
-            _host.Report(headlineLevel, headlineMsg);
-
-            // Uniform stats sub-lines (shown when at least one file was processed)
-            if (result.FilesProcessed > 0)
-            {
-                var parts = new List<string>(4) { $"{result.FilesSucceeded:N0} succeeded" };
-                if (result.FilesFailed  > 0) parts.Add($"{result.FilesFailed:N0} failed");
-                if (result.FilesSkipped > 0) parts.Add($"{result.FilesSkipped:N0} skipped");
-                parts.Add($"{Helpers.BytesToString(result.BytesProcessed)} processed");
-                LogInfoSub(string.Join(", ", parts));
-
-                double dataSecs = dataElapsedUs / 1e6;
-                double dataIoSecs = dataIoElapsedUs / 1e6;
-                var timingParts = new List<string>(2) { FormatElapsed(dataSecs) };
-                string rate     = FormatDataIoRate(result.BytesProcessed, dataIoSecs);
-                if (rate.Length > 0) timingParts.Add(rate);
-                LogInfoSub(string.Join(", ", timingParts));
-            }
-            if (result.FilesMissing > 0)
-                LogWarnSub($"{result.FilesMissing:N0} file(s) not found on tape");
-
-            return result;
-            */
         }
         catch (Exception ex)
         {
             LastError = ex.Message;
             OnStatusUpdate($"{modeName} failed");
             LogErr($"{modeName} failed: {ex.Message}");
-            return MakeResult(failed: true);
+            // The exception did not come through the agent, so build the diagnosis from it directly.
+            return MakeResult(failed: true, diagnosis: TapeResult.Fail(ex)) with { ErrorException = ex };
         }
         finally
         {

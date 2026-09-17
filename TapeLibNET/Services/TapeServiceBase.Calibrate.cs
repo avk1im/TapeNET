@@ -91,30 +91,30 @@ public partial class TapeServiceBase
                     aborted: aborted,
                     failed: failed,
                     duration: timer.ElapsedTimeSpan,
-                    error: error,
                     message: message,
                     errorEx: errorEx)
                ?? new CalibrateResult
                {
-                   Calibration      = calibration,
-                   ProfileKey       = calibration?.ProfileKey ?? _drive?.DriveProfileKey ?? string.Empty,
+                   Calibration          = calibration,
+                   ProfileKey           = calibration?.ProfileKey ?? _drive?.DriveProfileKey ?? string.Empty,
                    ReportedCapacityAtBom = calibration?.ReportedCapacityAtBom ?? _drive?.Capacity ?? 0,
-                   PhantomFreeAtEom = calibration?.PhantomFreeAtEom ?? 0,
-                   CapacityActual   = calibration?.CapacityActual ?? 0,
-                   EarlyWarning     = calibration?.EarlyWarning,
-                   EwToEomDistance  = calibration?.EwToEomDistance ?? 0,
-                   BytesTotal       = _drive?.Capacity ?? 0,
-                   BytesProcessed   = calibration?.CapacityActual ?? 0,
-                   WasAborted       = aborted,
-                   HasFailed        = failed,
-                   Success          = !aborted && !failed && calibration is not null,
-                   Outcome          = aborted ? ServiceReportLevel.Failed
-                                    : failed  ? ServiceReportLevel.Error
-                                    :           ServiceReportLevel.Completed,
-                   Duration         = timer.ElapsedTimeSpan,
-                   ErrorCode        = error,
-                   Message          = message,
-                   ErrorException   = errorEx,
+                   PhantomFreeAtEom     = calibration?.PhantomFreeAtEom ?? 0,
+                   CapacityActual       = calibration?.CapacityActual ?? 0,
+                   EarlyWarning         = calibration?.EarlyWarning,
+                   EwToEomDistance      = calibration?.EwToEomDistance ?? 0,
+                   BytesTotal           = _drive?.Capacity ?? 0,
+                   BytesProcessed       = calibration?.CapacityActual ?? 0,
+                   WasAborted           = aborted,
+                   HasFailed            = failed,
+                   Success              = !aborted && !failed && calibration is not null,
+                   Outcome              = aborted
+                                            ? ServiceReportLevel.Failed
+                                            : failed 
+                                                ? ServiceReportLevel.Error
+                                                : ServiceReportLevel.Completed,
+                   Duration              = timer.ElapsedTimeSpan,
+                   Message               = message,
+                   ErrorException        = errorEx,
                };
 
             // Tag the mode/recalibration fields uniformly, regardless of which branch built baseResult.

@@ -13,7 +13,7 @@ namespace TapeLibNET.Tests.Services.Remote;
 /// <summary>
 /// Shared infrastructure for remote service-layer round-trip tests.
 /// <para>
-/// Mirrors <see cref="ServiceTestBase"/> but drives <see cref="TapeServiceBase"/> via
+/// Mirrors <see cref="ServiceTestBase"/> but drives <see cref="TestTapeService"/> via
 ///  a remote gRPC backend (the in-process server started by
 ///  <see cref="LocalHostTapeServiceFixture"/>).  The fixture address is parsed into a
 ///  <see cref="RemoteHostSettings"/> instance; all helper methods
@@ -60,12 +60,12 @@ public abstract class RemoteServiceTestBase(LocalHostTapeServiceFixture fixture)
     // ── Single-volume remote factory helpers ──────────────────────────────────
 
     /// <summary>
-    /// Creates a <see cref="TapeServiceBase"/> wired to a new <see cref="TestTapeServiceHost"/>.
+    /// Creates a <see cref="TestTapeService"/> wired to a new <see cref="TestTapeServiceHost"/>.
     /// </summary>
-    protected static (TapeServiceBase service, TestTapeServiceHost host) CreateRemoteService()
+    protected static (TestTapeService service, TestTapeServiceHost host) CreateRemoteService()
     {
         var host    = new TestTapeServiceHost();
-        var service = new TapeServiceBase(TestLoggerFactory.Default, host);
+        var service = new TestTapeService(TestLoggerFactory.Default, host);
         return (service, host);
     }
 
@@ -74,7 +74,7 @@ public abstract class RemoteServiceTestBase(LocalHostTapeServiceFixture fixture)
     ///  <see cref="ServiceTestBase.OpenAndFormatAsync"/> but routed over gRPC).
     /// Formats the tape and leaves the service ready for backup.
     /// </summary>
-    protected async Task<(TapeServiceBase service, TestTapeServiceHost host)> OpenAndFormatRemoteAsync(
+    protected async Task<(TestTapeService service, TestTapeServiceHost host)> OpenAndFormatRemoteAsync(
         TempVirtualMedia media,
         CancellationToken _ = default)
     {
@@ -108,7 +108,7 @@ public abstract class RemoteServiceTestBase(LocalHostTapeServiceFixture fixture)
     ///  <see cref="ServiceTestBase.ReopenAsync"/> but over gRPC).
     /// Loads media and restores the TOC.
     /// </summary>
-    protected async Task<(TapeServiceBase service, TestTapeServiceHost host)> ReopenRemoteAsync(
+    protected async Task<(TestTapeService service, TestTapeServiceHost host)> ReopenRemoteAsync(
         TempVirtualMedia media,
         CancellationToken _ = default)
     {
@@ -135,14 +135,14 @@ public abstract class RemoteServiceTestBase(LocalHostTapeServiceFixture fixture)
     // ── Multi-volume remote factory helpers ───────────────────────────────────
 
     /// <summary>
-    /// Creates a <see cref="TapeServiceBase"/> wired to a <see cref="RemoteMultiVolumeServiceHost"/>
+    /// Creates a <see cref="TestTapeService"/> wired to a <see cref="RemoteMultiVolumeServiceHost"/>
     ///  that services volume-swap callbacks via <c>InsertMedia</c> gRPC RPCs.
     /// </summary>
-    protected static (TapeServiceBase service, RemoteMultiVolumeServiceHost host)
+    protected static (TestTapeService service, RemoteMultiVolumeServiceHost host)
         CreateRemoteMultiVolumeService(IReadOnlyList<TempVirtualMedia> volumes)
     {
         var host    = new RemoteMultiVolumeServiceHost(volumes);
-        var service = new TapeServiceBase(TestLoggerFactory.Default, host);
+        var service = new TestTapeService(TestLoggerFactory.Default, host);
         host.Service = service;
         return (service, host);
     }
@@ -151,7 +151,7 @@ public abstract class RemoteServiceTestBase(LocalHostTapeServiceFixture fixture)
     /// Creates a remote virtual drive for the first volume of a multi-volume sequence
     ///  and formats it. Mirrors <see cref="ServiceTestBase.OpenAndFormatMultiVolumeAsync"/>.
     /// </summary>
-    protected async Task<(TapeServiceBase service, RemoteMultiVolumeServiceHost host)>
+    protected async Task<(TestTapeService service, RemoteMultiVolumeServiceHost host)>
         OpenAndFormatRemoteMultiVolumeAsync(
             IReadOnlyList<TempVirtualMedia> volumes,
             CancellationToken _ = default)
@@ -186,7 +186,7 @@ public abstract class RemoteServiceTestBase(LocalHostTapeServiceFixture fixture)
     /// Opens the last volume of a multi-volume sequence for reading (remote counterpart of
     ///  <see cref="ServiceTestBase.ReopenMultiVolumeAsync"/>).
     /// </summary>
-    protected async Task<(TapeServiceBase service, RemoteMultiVolumeServiceHost host)>
+    protected async Task<(TestTapeService service, RemoteMultiVolumeServiceHost host)>
         ReopenRemoteMultiVolumeAsync(
             IReadOnlyList<TempVirtualMedia> volumes,
             CancellationToken _ = default)

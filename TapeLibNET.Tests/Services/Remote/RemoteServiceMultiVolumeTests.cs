@@ -433,7 +433,7 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
 
             var backupHost = new CatalogDrivenRemoteServiceHost(
                 BaseVolumeName, caps, volumeCapacity, tempDir);
-            var backupSvc  = new TapeServiceBase(TestLoggerFactory.Default, backupHost);
+            var backupSvc  = new TestTapeService(TestLoggerFactory.Default, backupHost);
             backupHost.Service = backupSvc;
 
             // Open vol-01 via the production CreateRemoteVirtualDriveAsync path
@@ -490,7 +490,7 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
             // The catalog-driven host resolves volume swaps by listing the catalog.
             var restoreHost = new CatalogDrivenRemoteServiceHost(
                 BaseVolumeName, caps, volumeCapacity, tempDir);
-            var restoreSvc  = new TapeServiceBase(TestLoggerFactory.Default, restoreHost);
+            var restoreSvc  = new TestTapeService(TestLoggerFactory.Default, restoreHost);
             restoreHost.Service = restoreSvc;
 
             // Open vol-01 from its actual server-side path (read from finalCatalog).

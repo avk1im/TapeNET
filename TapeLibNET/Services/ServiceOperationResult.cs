@@ -12,6 +12,47 @@ namespace TapeLibNET.Services;
 public abstract record ServiceOperationResult
 {
     /// <summary>
+    /// The agent-level diagnosis this result was built from — the FIRST failure of the operation, or
+    ///  <see cref="TapeResult.OK"/> when none occurred.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The join between the two result worlds. The agent speaks <see cref="TapeResult"/> (what went
+    ///  wrong); the service speaks <see cref="ServiceOperationResult"/> (what happened, statistically).
+    ///  Embedding rather than copying keeps <see cref="ErrorCode"/> and <see cref="Message"/>
+    ///  structurally inseparable — a <c>with</c> expression cannot set one and forget the other.
+    /// </para>
+    /// <para>
+    /// <b>Defaults to <see cref="TapeResult.OK"/>, never to <c>default</c>:</b> a default-constructed
+    ///  <see cref="TapeResult"/> has <c>Success == false</c>, which would make every result born failed.
+    /// </para>
+    /// </remarks>
+    public TapeResult Diagnosis { get; init; } = TapeResult.OK;
+
+    /// <summary>
+    /// Win32 error code of the operation's first failure, or 0. Derived from
+    ///  <see cref="Diagnosis"/> — set that, not this.
+    /// </summary>
+    public uint ErrorCode => Diagnosis.ErrorCode;
+
+    private readonly string? _message;
+
+    /// <summary>
+    /// Human-readable summary. Falls back to the <see cref="Diagnosis"/> message when the service has
+    ///  not supplied one of its own, so a failed operation is never silent.
+    /// </summary>
+    /// <remarks>
+    /// Settable so the service can override with something more contextual; unset, it simply surfaces
+    ///  what the agent said. A SUCCESSFUL operation yields <see langword="null"/>, keeping "no message"
+    ///  meaningful.
+    /// </remarks>
+    public string? Message
+    {
+        get => _message ?? (Diagnosis.Success ? null : Diagnosis.ErrorMessage);
+        init => _message = value;
+    }
+
+    /// <summary>
     /// <see langword="true"/> when the operation completed without a catastrophic failure.
     /// Partial failures (skipped / failed files) are still reported via
     ///  <see cref="ServiceReportLevel"/> and the file-count properties on derived types.
@@ -25,16 +66,6 @@ public abstract record ServiceOperationResult
     ///  = user abort, <see cref="ServiceReportLevel.Error"/> = catastrophic failure.
     /// </summary>
     public ServiceReportLevel Outcome { get; init; }
-
-    /// <summary>
-    /// Win32 error code of the operation's first failure, or 0. Complements
-    ///  <see cref="Message"/> for callers that branch on the cause rather than
-    ///  display it.
-    /// </summary>
-    public uint ErrorCode { get; init; }
-
-    /// <summary>Optional human-readable summary message set by the service.</summary>
-    public string? Message { get; init; }
 
     /// <summary>Non-null when a catastrophic exception terminated the operation.</summary>
     public Exception? ErrorException { get; init; }

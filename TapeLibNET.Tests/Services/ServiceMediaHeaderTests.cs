@@ -26,7 +26,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
     // ── Local open helpers ────────────────────────────────────────────────────
 
     /// <summary>Opens file-backed setmarks media WITHOUT formatting or restoring the TOC — just load.</summary>
-    private async Task<(TapeServiceBase svc, TestTapeServiceHost host)> OpenLoadOnlyAsync(
+    private async Task<(TestTapeService svc, TestTapeServiceHost host)> OpenLoadOnlyAsync(
         TempVirtualMedia media, FileMode mode, VirtualTapeEwProfile? ew = null)
     {
         var (svc, host) = CreateService();
@@ -41,7 +41,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
     }
 
     /// <summary>Opens + formats file-backed setmarks media with EW emulation (for calibration tests).</summary>
-    private async Task<(TapeServiceBase svc, TestTapeServiceHost host)> OpenFormatWithEwAsync(
+    private async Task<(TestTapeService svc, TestTapeServiceHost host)> OpenFormatWithEwAsync(
         TempVirtualMedia media, FileMode mode = FileMode.Create)
     {
         var (svc, host) = await OpenLoadOnlyAsync(media, mode, VirtualTapeEwProfile.EmulatedOverreport(media.ContentCapacity));
@@ -147,7 +147,8 @@ public class ServiceMediaHeaderTests : ServiceTestBase
             Assert.Equal(src2.Files.Count, result.FilesSucceeded);
 
             // The overwrite guard fired a prompt (existing sets present) in the OverwriteBackup context …
-            AssertMediaPrompts(host, (TapeMediaVerdict.MediaIdMismatch, MediaPromptContext.OverwriteBackup));
+            //  MediaInconsistent since we're overwriting a media with our own correct MediaId (hence better fit than MediaIdMismatch
+            AssertMediaPrompts(host, (TapeMediaVerdict.MediaInconsistent, MediaPromptContext.OverwriteBackup));
             // … and the rewritten media now carries a FRESH series id (collision-safe vs surviving volumes).
             Assert.NotEqual(firstId, svc2.TOC!.MediaId);
         }
@@ -187,7 +188,9 @@ public class ServiceMediaHeaderTests : ServiceTestBase
 
             var result = await svc2.ExecuteBackupAsync(MakeBackupRequest(svc2, src2.RootPath, "new"));
             Assert.True(result.WasAborted, "overwrite should abort on user Abort");
-            AssertMediaPrompts(host, (TapeMediaVerdict.MediaIdMismatch, MediaPromptContext.OverwriteBackup)); // check that there was just this exact prompt
+            // check that there was just this exact prompt
+            //  MediaInconsistent since we're overwriting a media with our own correct MediaId (hence better fit than MediaIdMismatch
+            AssertMediaPrompts(host, (TapeMediaVerdict.MediaInconsistent, MediaPromptContext.OverwriteBackup));
         }
 
         // Original series + set survive untouched.

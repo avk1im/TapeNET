@@ -237,30 +237,19 @@ public class ServiceBaselineTests : ServiceTestBase
                 SkipAllErrors:         true,
                 EjectWhenDone:         false);
 
-            // Start the backup, then signal abort via the agent flag once the backup loop starts.
-            var backupTask = svc.ExecuteBackupAsync(req);
 
-            // Wait for the agent to initialise (backup loop starts async)
-            var deadline = DateTime.UtcNow.AddSeconds(10);
-            while (svc.Agent is null && DateTime.UtcNow < deadline)
-                await Task.Delay(5);
+            // Abort after the 2nd file commits — an exact point in the loop, not a wall-clock guess.
+            svc.ConfigureBackupHandler = h => h.AfterFileProcessed = (_, stats) =>
+            {
+                if (stats.FilesSucceeded >= 2)
+                    svc.Agent!.IsAbortRequested = true;
+            };
 
-            // Wait until at least one file has been committed, then abort.
-            //  Polling Agent.Statistics (ref readonly TapeFileStatistics) avoids
-            //  fixed delays that are either too short or unnecessarily slow.
-            deadline = DateTime.UtcNow.AddSeconds(15);
-            while ((svc.Agent?.Statistics.FilesSucceeded ?? 0) == 0 && DateTime.UtcNow < deadline)
-                await Task.Delay(5);
-
-            if (svc.Agent is not null)
-                svc.Agent.IsAbortRequested = true;
-
-            var result = await backupTask;
+            // Now start the backup -- the abort we pre-set will fire after the 2nd file commit
+            var result = await svc.ExecuteBackupAsync(req);
 
             Assert.True(result.WasAborted, "Expected WasAborted = true after abort signal");
-            // Some files must have been committed or the test is vacuous
-            Assert.True(result.FilesSucceeded > 0,
-                "No files were committed before abort — increase file count or size");
+            Assert.True(result.FilesSucceeded >= 2, "files must have committed before the abort");
             filesSucceeded = result.FilesSucceeded;
         }
 

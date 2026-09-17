@@ -49,6 +49,18 @@ public class TestNotifiable : ITapeFileNotifiable
     public Func<TapeFileInfo, TapeResult, FileFailedAction>? FailedActionFunc { get; set; }
 
     /// <summary>
+    /// Optional callback invoked from <see cref="PostProcessFile"/> AFTER the event is recorded and the
+    ///  proactive-abort triggers are evaluated. Returning <see langword="false"/> suppresses further
+    ///  processing of the file, exactly as the interface contract allows.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="AbortInPostProcessAfterN"/>, which THROWS. This hook lets a test act
+    ///  without throwing — e.g. to set <see cref="TapeFileAgent.IsAbortRequested"/> directly,
+    ///  exercising the caller's abort channel rather than the exception one.
+    /// </remarks>
+    public Func<TapeFileInfo, TapeFileStatistics, bool>? PostProcessFunc { get; set; }
+
+    /// <summary>
     /// When positive, <see cref="PreProcessFile"/> throws
     /// <see cref="TapeAbortRequestedException"/> after this many files
     /// have been posted as succeeded. Simulates a proactive user abort.
@@ -117,18 +129,24 @@ public class TestNotifiable : ITapeFileNotifiable
         if (AbortInPostProcessAfterN > 0 && stats.FilesSucceeded >= AbortInPostProcessAfterN)
             throw new TapeAbortRequestedException($"Test abort in PostProcess after {stats.FilesSucceeded} succeeded files");
 
-        return true;
+        return PostProcessFunc?.Invoke(fileInfo, stats) ?? true;
     }
 
     public FileFailedAction OnFileFailed(TapeFileInfo fileInfo, TapeResult result, in TapeFileStatistics stats)
     {
         FilesFailed.Add(new FileFailedEvent(fileInfo, result, stats));
 
+        // NOTE: deliberately no special-casing of ERROR_CANCELLED. A thrown TapeAbortRequestedException
+        //  is now caught by the agents' own handlers, which record IsAbortRequested and stop the loop —
+        //  it must NOT arrive here as a file failure. If it does, the agent lost the abort, and the
+        //  convergence tests in region (J) should catch that rather than have this helper paper over it.
+        /*
         // TapeAbortRequestedException (from PreProcess/PostProcess) routes through the
         //  generic catch → OnFileFailed. We must cooperate by returning Abort so the
         //  backup/restore loop actually stops.
         if (result.ErrorCode == (uint)Windows.Win32.Foundation.WIN32_ERROR.ERROR_CANCELLED)
             return FileFailedAction.Abort;
+        */
 
         return FailedActionFunc?.Invoke(fileInfo, result) ?? FailedAction;
     }

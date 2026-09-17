@@ -104,19 +104,30 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
         // no-op by default; overridden by TapeFileBackupAgent
     }
 
-    // Checked periodically if the entire operation should be aborted
-    //  Uses olatile field instead of auto-property — fixes the theoretical data race
-    private volatile bool _isAbortRequested = false;
     /// <summary>
-    /// Volatile abort flag checked periodically by file-processing loops.
-    /// <para>Set by <see cref="NotifyFileFailed"/> when the callback returns <see cref="FileFailedAction.Abort"/>,
-    ///  or directly by the caller (e.g. UI abort button). Checked via <see cref="ThrowIfAbortRequested"/>.</para>
+    /// Abort flag checked periodically by file-processing loops.
     /// </summary>
-    public bool IsAbortRequested
-    {
-        get => _isAbortRequested;
-        set => _isAbortRequested = value;
-    }
+    /// <remarks>
+    /// <para>
+    /// <b>Records that an abort was requested, by whatever channel.</b> The caller may set it directly
+    ///  (UI abort button, <c>Ctrl+C</c> bridge); <see cref="NotifyFileFailed"/> sets it when the callback returns
+    ///  <see cref="FileFailedAction.Abort"/>; and the catch handlers set it when a callback throws
+    ///  <see cref="TapeAbortRequestedException"/> — the only way a void notification CAN request an abort.
+    /// </para>
+    /// <para>
+    /// Uniformity matters beyond tidiness: <see cref="FailedOperationResult"/> reads this flag to report
+    ///  <c>ERROR_CANCELLED</c> rather than a generic failure, and the service reads it to classify the
+    ///  operation as aborted rather than failed. A request that arrives by exception is the same user
+    ///  decision as one that arrives by flag, and must produce the same diagnosis.
+    /// </para>
+    /// <para>
+    /// A plain auto-property suffices despite cross-thread writes: every reader reaches it through a call
+    ///  that already crosses a memory barrier (tape I/O, lock acquisition, or a notification hop), and a
+    ///  momentarily stale read costs at most one extra file before the next check. The abort is
+    ///  cooperative, not real-time.
+    /// </para>
+    /// </remarks>
+    public bool IsAbortRequested { get; set; }
 
 #if DEBUG
     /// <summary>
@@ -862,6 +873,13 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
                 }
 
             }
+        }
+        catch (TapeAbortRequestedException)
+        {
+            m_logger.LogWarning("TOC restore aborted by user request");
+            IsAbortRequested = true; // shopuld be set already, but doesn't hurt to ensure
+            // No need for user-requested abort to LatchFailure()
+            return false;
         }
         catch (Exception ex)
         {

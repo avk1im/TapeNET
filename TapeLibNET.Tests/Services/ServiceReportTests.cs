@@ -36,8 +36,8 @@ public class ServiceReportTests : ServiceTestBase
             => JudgeFileOperation(r, pending);
 
         public static (ServiceReportLevel Level, string Message) Verbalize(
-            FileOperationVerdict v, in FileOperationResult r, string op, TapeResult diag = default)
-            => VerbalizeFileOperation(v, r, op, diag);
+            FileOperationVerdict v, in FileOperationResult r, string op)
+            => VerbalizeFileOperation(v, r, op);
     }
 
     public static TheoryData<int, int, int, bool, bool, FileOperationVerdict> VerdictCases => new()
@@ -102,10 +102,10 @@ public class ServiceReportTests : ServiceTestBase
     public void VerbalizeFileOperation_CarriesTheDiagnosis(FileOperationVerdict verdict)
     {
         const string reason = "Volume mismatch at set #2";
-        var result = new RestoreResult { FilesTotal = 3, FilesFailed = 1 };
+        var result = new RestoreResult { FilesTotal = 3, FilesFailed = 1, Diagnosis = TapeResult.Fail(13u, reason) };
 
         var (_, message) = VerdictProbe.Verbalize(
-            verdict, result, "Restore", TapeResult.Fail(13u, reason));
+            verdict, result, "Restore");
 
         Assert.Contains(reason, message, StringComparison.Ordinal);
     }
@@ -114,13 +114,37 @@ public class ServiceReportTests : ServiceTestBase
     [Fact]
     public void VerbalizeFileOperation_FullSuccess_CarriesNoReason()
     {
-        var result = new RestoreResult { FilesTotal = 3, FilesProcessed = 3, FilesSucceeded = 3 };
+        var result = new RestoreResult { FilesTotal = 3, FilesProcessed = 3, FilesSucceeded = 3, Diagnosis = TapeResult.OK };
 
         var (level, message) = VerdictProbe.Verbalize(
-            FileOperationVerdict.FullSuccess, result, "Restore", TapeResult.OK);
+            FileOperationVerdict.FullSuccess, result, "Restore");
 
         Assert.Equal(ServiceReportLevel.Completed, level);
         Assert.DoesNotContain(" — ", message, StringComparison.Ordinal);
+    }
+
+    // ── TapeResult and ServiceOperationResult agree ────────────────────────
+
+    /// <summary>
+    /// The join: a result's <c>ErrorCode</c> and <c>Message</c> must never disagree with its embedded
+    ///  diagnosis. Guards against a future <c>with</c> expression re-introducing independent fields.
+    /// </summary>
+    [Fact]
+    public void Result_ErrorFieldsDeriveFromDiagnosis()
+    {
+        var diag = TapeResult.Fail(13u, "Bad data");
+        var result = new RestoreResult { FilesTotal = 3, Diagnosis = diag };
+
+        Assert.Equal(13u, result.ErrorCode);
+        Assert.Equal("Bad data", result.Message);
+
+        // An explicit Message overrides for display, but the CODE still comes from the diagnosis.
+        var overridden = result with { Message = "Something friendlier" };
+        Assert.Equal("Something friendlier", overridden.Message);
+        Assert.Equal(13u, overridden.ErrorCode);
+
+        // A clean diagnosis yields a null message — "no message" stays meaningful.
+        Assert.Null(new RestoreResult { FilesTotal = 3 }.Message);
     }
 
     // ── Backup: the agent's diagnosis reaches the user ────────────────────────
@@ -147,28 +171,24 @@ public class ServiceReportTests : ServiceTestBase
                 SkipAllErrors = true,   // skip every failure so the run completes and we reach the headline
             };
 
-            // Arm the simulator on the agent the service creates. The service constructs it inside
-            //  ExecuteBackupCore, so poll for it exactly as the abort test does.
-            var backupTask = svc.ExecuteBackupAsync(req);
-
-            var deadline = DateTime.UtcNow.AddSeconds(10);
-            while (svc.Agent is null && DateTime.UtcNow < deadline)
-                await Task.Delay(5);
-
-            if (svc.Agent is { } a)
+            // Armed at the deterministic moment the agent is created — no need for polling w/ deadline.
+            svc.OnAgentReady = a =>
             {
                 a.SimulateFileFailures.Enabled = true;
                 a.SimulateFileFailures.EveryNth = 3;   // files 3, 6, 9
-            }
+            };
 
-            var result = await backupTask;
+            var result = await svc.ExecuteBackupAsync(req);
 
             Assert.True(result.FilesFailed > 0, "the simulator must have produced failures");
 
             // THE point of the test: a reason, not just a count.
             Assert.False(string.IsNullOrWhiteSpace(result.Message),
-                "BackupResult.Message must carry the agent's diagnosis");
-            Assert.Contains("Simulated", result.Message!, StringComparison.OrdinalIgnoreCase);
+                $"BackupResult.Message must carry the agent's diagnosis. {host.DumpReports()}");
+            Assert.Contains("Simulated", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.NotEqual(0u, result.ErrorCode);
+            Assert.Equal(result.Diagnosis.ErrorMessage, result.Message);   // the join holds
+
 
             // ...and it must reach the user, not merely the result object.
             Assert.True(host.ContainsMessage("Simulated"),
@@ -192,19 +212,14 @@ public class ServiceReportTests : ServiceTestBase
         var (svc, host) = await OpenAndFormatAsync(media);
         using (svc)
         {
-            var backupTask = svc.ExecuteBackupAsync(
-                MakeBackupRequest(svc, src.RootPath, "TOC-Diagnosis"));
-
-            var deadline = DateTime.UtcNow.AddSeconds(10);
-            while (svc.Agent is null && DateTime.UtcNow < deadline)
-                await Task.Delay(5);
-
             // Fail BOTH copies: bit 0 and bit 1. The agent then reports a genuine TOC failure and the
             //  service falls through to its enforce / emergency-export ladder.
-            if (svc.Agent is { } a)
+            // Armed at the deterministic moment the agent is created — no need for polling w/ deadline.
+            svc.OnAgentReady = a =>
                 a.SimulateTOCFailureMask = 3;
 
-            var result = await backupTask;
+            var result = await svc.ExecuteBackupAsync(
+                MakeBackupRequest(svc, src.RootPath, "TOC-Diagnosis"));
 
             // Whatever the final outcome, the TOC problem must be visible in the log.
             Assert.True(host.ContainsMessage("TOC"),
@@ -239,7 +254,15 @@ public class ServiceReportTests : ServiceTestBase
         {
             int setIndex = svc.TOC!.SetIndexToStd(svc.TOC.CapSetIndex(0));
 
-            var restoreTask = svc.ExecuteRestoreAsync(new RestoreRequest(
+            // Fail every file so the set yields nothing at all.
+            // Armed at the deterministic moment the agent is created — no need for polling w/ deadline.
+            svc.OnAgentReady = a =>
+            {
+                a.SimulateFileFailures.Enabled = true;
+                a.SimulateFileFailures.EveryNth = 1;
+            };
+
+            var result = await svc.ExecuteRestoreAsync(new RestoreRequest(
                 Mode:                  RestoreMode.Validate,
                 CheckedFilesBySet:     new Dictionary<int, IReadOnlyList<TapeFileInfo>?> { [setIndex] = null },
                 Incremental:           false,
@@ -248,19 +271,6 @@ public class ServiceReportTests : ServiceTestBase
                 HandleExisting:        TapeHowToHandleExisting.Skip,
                 SkipAllErrors:         true,
                 EjectWhenDone:         false));
-
-            var deadline = DateTime.UtcNow.AddSeconds(10);
-            while (svc.Agent is null && DateTime.UtcNow < deadline)
-                await Task.Delay(5);
-
-            // Fail every file so the set yields nothing at all.
-            if (svc.Agent is { } a)
-            {
-                a.SimulateFileFailures.Enabled = true;
-                a.SimulateFileFailures.EveryNth = 1;
-            }
-
-            var result = await restoreTask;
 
             Assert.Equal(0, result.FilesSucceeded);
 
@@ -327,10 +337,10 @@ public class ServiceReportTests : ServiceTestBase
                 SkipAllErrors:         true,
                 EjectWhenDone:         false));
 
-            backend.ContentReadFaults.Reset();
-
             Assert.True(backend.ContentReadFaults.Occurrences > 0,
                 "the injector must actually have fired");
+
+            backend.ContentReadFaults.Reset();
 
             // A medium-level fault must surface with a reason, exactly like a synthesized one.
             if (result.FilesFailed > 0)

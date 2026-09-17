@@ -266,8 +266,15 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
         return WentOK;
     }
 
-    /// <summary>Records that a media header was just written: presence becomes Present, head is at begin-of-content.</summary>
-    /// <remarks>The single header block + trailing filemark were written at BOM, so we are physically at the content start.</remarks>
+    /// <summary>
+    /// Records that the media header has been written at BOM: presence becomes Present, the cached
+    ///  set-header expectation adopts what was actually stamped, and the head sits at begin-of-content.
+    /// </summary>
+    /// <remarks>
+    /// Virtual so layouts that co-locate the TOC with content can additionally invalidate it — see
+    ///  <seealso cref="TapeNavigatorTOCInSet.OnMediaHeaderWritten"/>. The base does NOT, because with the TOC
+    ///  in its own partition a BOM write touches nothing the TOC occupies.
+    /// </remarks>
     public virtual void OnMediaHeaderWritten(bool setHeadersExpected = false)
     {
         MediaHeaderPresence = TapeHeaderPresence.Present;
@@ -1005,6 +1012,19 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
         base.OnContentWritten();
     }
 
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Additionally invalidates the TOC: with the TOC co-located in the content partition, a write at BOM
+    ///  truncates everything beyond it, so whatever TOC the tape carried is gone. Without this, a caller
+    ///  that stamps a header and then writes no files could conclude the on-tape TOC is still current and
+    ///  skip saving it — leaving a header describing a medium whose TOC no longer exists.
+    /// </remarks>
+    public override void OnMediaHeaderWritten(bool setHeadersExpected = false)
+    {
+        base.OnMediaHeaderWritten(setHeadersExpected);
+        TOCInvalidated = true;
+    }
+    
     #endregion  // Notifications
 
 

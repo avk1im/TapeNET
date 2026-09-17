@@ -422,7 +422,6 @@ public class ServiceCalibrateProgressHandler(
         bool aborted = false,
         bool failed = false,
         TimeSpan duration = default,
-        uint error = (uint)WIN32_ERROR.NO_ERROR,
         string? message = null,
         Exception? errorEx = null) => new()
     {
@@ -440,7 +439,6 @@ public class ServiceCalibrateProgressHandler(
                         : failed  ? ServiceReportLevel.Error
                         :           ServiceReportLevel.Completed,
         Duration        = duration,
-        ErrorCode       = error,
         Message         = message,
         ErrorException  = errorEx,
         Calibration     = calibration,

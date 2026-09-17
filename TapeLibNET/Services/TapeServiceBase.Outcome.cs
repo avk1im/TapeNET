@@ -68,9 +68,8 @@ public partial class TapeServiceBase
     // ── Outcome judgment (policy) ─────────────────────────────────────────────
 
     /// <summary>
-    /// Classifies a finished file operation. Pure and side-effect free — the counterpart to
-    ///  <see cref="JudgeRecalibration"/>, and deliberately separate from the wording so that the
-    ///  classification can be tested, and reused by callers that render their own UI.
+    /// Classifies a finished file operation from its counters and its embedded diagnosis. Pure and
+    ///  side-effect free — the counterpart to <see cref="JudgeRecalibration"/>.
     /// </summary>
     /// <param name="pendingContinuation">
     /// True when the agent stopped only because it needs another volume. Such a stop is NOT a failure,
@@ -83,7 +82,15 @@ public partial class TapeServiceBase
         if (result.HasFailed) return FileOperationVerdict.Failed;
 
         if (result.FilesFailed > 0) return FileOperationVerdict.CompletedWithFailures;
-        if (result.FilesProcessed == 0) return FileOperationVerdict.NothingProcessed;
+
+        // Nothing processed AND a diagnosis to explain it ⇒ the operation did not merely find nothing
+        //  to do; something stopped it. Only reachable now that the diagnosis rides inside the result —
+        //  this is the case a rejected set used to fall into, reported as a bare "no files processed".
+        if (result.FilesProcessed == 0)
+            return result.Diagnosis.Success && !pendingContinuation
+                ? FileOperationVerdict.NothingProcessed
+                : FileOperationVerdict.NothingProcessed;   // same verdict, but see VerbalizeFileOperation
+
         if (result.FilesSkipped > 0) return FileOperationVerdict.CompletedWithSkips;
 
         // A pending continuation with everything so far successful is still a success for THIS volume.
@@ -95,17 +102,14 @@ public partial class TapeServiceBase
     /// Renders a verdict as a headline: the severity to report at, and the user-facing text.
     /// </summary>
     /// <param name="operationName">"Backup", "Restore", "Validate", "Verify" — the caller's verb.</param>
-    /// <param name="diagnosis">
-    /// The agent's first failure, when one was captured. Appended to the headline for the verdicts where
-    ///  it explains something the counters cannot — above all <see cref="FileOperationVerdict.NothingProcessed"/>,
-    ///  where "no files processed" is otherwise a statement with no cause attached.
-    /// </param>
     protected static (ServiceReportLevel Level, string Message) VerbalizeFileOperation(
         FileOperationVerdict verdict,
         in FileOperationResult result,
-        string operationName,
-        TapeResult diagnosis = default)
+        string operationName)
     {
+        // The diagnosis now travels WITH the result — no separate parameter, and no way for a caller to
+        //  pass one that disagrees with what the result carries.
+        var diagnosis = result.Diagnosis;
         string reason = !diagnosis.Success && !string.IsNullOrWhiteSpace(diagnosis.ErrorMessage)
             ? $" — {diagnosis.ErrorMessage}"
             : string.Empty;
@@ -151,11 +155,10 @@ public partial class TapeServiceBase
     protected FileOperationVerdict ReportFileOperationOutcome(
         in FileOperationResult result,
         string operationName,
-        TapeResult diagnosis = default,
         bool pendingContinuation = false)
     {
         var verdict = JudgeFileOperation(result, pendingContinuation);
-        var (level, message) = VerbalizeFileOperation(verdict, result, operationName, diagnosis);
+        var (level, message) = VerbalizeFileOperation(verdict, result, operationName);
         _host.Report(level, message);
         return verdict;
     }

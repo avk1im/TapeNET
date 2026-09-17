@@ -1,5 +1,6 @@
 ﻿using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
+using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Tests;
 
@@ -1262,24 +1263,22 @@ public class ErrorHandlingTests
 
         // Fault the medium itself, not the agent.
         fixture.Backend.ContentWriteFaults.Enabled = true;
-        fixture.Backend.ContentWriteFaults.EveryNth = 4;
+        fixture.Backend.ContentWriteFaults.EveryNth = 1;
 
         using var agent = fixture.CreateBackupAgent();
         TapeResult result = agent.BackupFileListToCurrentSet(
             newSet: true, tree.Files, ignoreFailures: true, notifiable);
 
-        fixture.Backend.ContentWriteFaults.Reset();
-
         Assert.True(fixture.Backend.ContentWriteFaults.Occurrences > 0,
             "the injector must actually have fired");
 
+        fixture.Backend.ContentWriteFaults.Reset();
+
         // Whatever the agent made of them, a medium fault must never yield a silent failure.
-        if (!result.Success)
-        {
-            Assert.NotEqual(0u, result.ErrorCode);
-            Assert.False(string.IsNullOrWhiteSpace(result.ErrorMessage),
-                "a medium-level write fault must carry a diagnosis");
-        }
+        Assert.False(result.Success, "a medium-level write fault must not yield a silent failure");
+        Assert.NotEqual(0u, result.ErrorCode);
+        Assert.False(string.IsNullOrWhiteSpace(result.ErrorMessage),
+            "a medium-level write fault must carry a diagnosis");
     }
 
     /// <summary>
@@ -1307,10 +1306,10 @@ public class ErrorHandlingTests
             using var agent = fixture.CreateRestoreAgent(restoreDir);
             TapeResult result = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, notifiable);
 
-            fixture.Backend.ContentReadFaults.Reset();
-
             Assert.True(fixture.Backend.ContentReadFaults.Occurrences > 0,
                 "the injector must actually have fired");
+
+            fixture.Backend.ContentReadFaults.Reset();
 
             if (!result.Success)
             {
@@ -1349,7 +1348,8 @@ public class ErrorHandlingTests
         var notifiable = new TestNotifiable { FailedAction = FileFailedAction.Skip };
 
         // Silent: full byte count, no error, a couple of bits wrong near the front of a block.
-        fixture.Backend.ContentReadFaults.CorruptOnce(bits: 2, offset: 64);
+        fixture.Backend.ContentReadFaults.CorruptOnce(bits: 2, offset: 16384 / 2);
+        fixture.Backend.ContentReadFaults.EveryNth = 2; // skip the header block read
 
         using var agent = fixture.CreateValidateAgent();
         TapeResult result = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, notifiable);
@@ -1367,6 +1367,363 @@ public class ErrorHandlingTests
     }
 
 #endif // DEBUG
+
+    #endregion
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Abort-channel convergence — append as region (J) to ErrorHandlingTests.cs
+    //
+    //  Region (H) pins that a FAILURE carries its diagnosis. This one pins that an
+    //  ABORT does too — and that every channel a user can request one through
+    //  converges on the SAME diagnosis, whatever route it arrived by.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #region *** (J) Abort channels converge on one diagnosis ***
+
+    //  Three channels can request an abort. They differ only in how the request REACHES the agent:
+    //
+    //    1. Caller sets IsAbortRequested      — UI abort button, Ctrl+C bridge
+    //    2. Callback returns FileFailedAction.Abort  — the one callback WITH a return value
+    //    3. Callback throws TapeAbortRequestedException — the only channel a VOID callback has
+    //
+    //  All three are the same user decision, so all three must produce: failure, IsAbortRequested set,
+    //   and ERROR_CANCELLED with a non-empty message. Channel 3 is the one that silently produced
+    //   ERROR_INVALID_STATE until the catch handlers began recording the flag.
+
+    /// <summary>The three ways a user can request an abort — see the region comment.</summary>
+    public enum AbortChannel
+    {
+        /// <summary>Caller sets <c>IsAbortRequested</c> directly, mid-operation.</summary>
+        Flag,
+        /// <summary><c>OnFileFailed</c> returns <see cref="FileFailedAction.Abort"/>.</summary>
+        FailedAction,
+        /// <summary>A void callback throws <see cref="TapeAbortRequestedException"/>.</summary>
+        Exception,
+    }
+
+    public static TheoryData<DriveProfile, AbortChannel> ProfilesAndAbortChannels
+    {
+        get
+        {
+            var data = new TheoryData<DriveProfile, AbortChannel>();
+            foreach (var profile in new[]
+                     {
+                         DriveProfile.Setmarks, DriveProfile.Partitions,
+                         DriveProfile.SeqFilemarks, DriveProfile.FilemarksOnly,
+                     })
+                foreach (AbortChannel channel in Enum.GetValues<AbortChannel>())
+                    data.Add(profile, channel);
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// Asserts the outcome every abort channel must produce, whatever route the request took.
+    /// </summary>
+    private static void AssertCleanAbort(TapeResult result, TapeFileAgent agent, AbortChannel channel)
+    {
+        Assert.False(result.Success, $"{channel}: an aborted operation must report failure");
+        Assert.True(agent.IsAbortRequested,
+            $"{channel}: the abort must be RECORDED on the agent — the service reads this flag to " +
+            "classify the operation as aborted rather than failed");
+        Assert.Equal((uint)WIN32_ERROR.ERROR_CANCELLED, result.ErrorCode);
+        Assert.False(string.IsNullOrWhiteSpace(result.ErrorMessage),
+            $"{channel}: an abort must never yield an empty diagnosis");
+    }
+
+    /// <summary>Prepares a fresh set on the fixture's TOC — the shape every direct-agent test needs.</summary>
+    private static void PrepareSet(VirtualTapeFixture fixture, string description)
+    {
+        fixture.TOC.AddNewSetTOC(0, incremental: false);
+        fixture.TOC.CurrentSetTOC.Description = description;
+        fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
+        fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
+    }
+
+    // ── Backup ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The convergence property, backup side: whichever channel carries the request, the agent reports
+    ///  <c>ERROR_CANCELLED</c> with a real message and records the flag.
+    /// </summary>
+    /// <remarks>
+    /// <c>AbortChannel.Exception</c> is the regression guard. Before the catch handlers began setting
+    ///  <c>IsAbortRequested</c>, that channel produced <c>ERROR_INVALID_STATE</c> ("Operation did not
+    ///  complete") — a generic failure for what was plainly a user decision, which also made the service
+    ///  classify the run as failed rather than aborted.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ProfilesAndAbortChannels))]
+    public void Backup_EveryAbortChannel_YieldsCancelled(DriveProfile profile, AbortChannel channel)
+    {
+        const int fileCount = 10;
+        const int abortAfter = 3;
+
+        using var tree = new TempFileTree();
+        tree.AddFiles("abortconv", count: fileCount, minSize: 512, maxSize: 4 * 1024);
+
+        using var fixture = new VirtualTapeFixture(profile);
+        PrepareSet(fixture, $"Abort via {channel}");
+
+        using var agent = fixture.CreateBackupAgent();
+
+        var notifiable = new TestNotifiable();
+        switch (channel)
+        {
+            case AbortChannel.Flag:
+                // The caller's channel: set the flag from a callback, mimicking a UI button pressed
+                //  mid-operation. The loop's next ThrowIfAbortRequested picks it up.
+                notifiable.PostProcessFunc = (_, stats) =>
+                {
+                    if (stats.FilesSucceeded >= abortAfter)
+                        agent.IsAbortRequested = true;
+                    return true;
+                };
+                break;
+
+            case AbortChannel.FailedAction:
+                // The only callback with a return value — NotifyFileFailed maps Abort onto the flag.
+                //  Needs a failure to respond to, hence the simulator.
+                notifiable.FailedAction = FileFailedAction.Abort;
+#if DEBUG
+                agent.SimulateFileFailures.Enabled = true;
+                agent.SimulateFileFailures.EveryNth = abortAfter;
+#endif
+                break;
+
+            case AbortChannel.Exception:
+                // The void-callback channel: throwing is the ONLY way PreProcessFile can say "stop".
+                notifiable.AbortAfterNPreProcessed = abortAfter;
+                break;
+        }
+
+        TapeResult result = agent.BackupFileListToCurrentSet(
+            newSet: true, tree.Files, ignoreFailures: true, notifiable);
+
+        AssertCleanAbort(result, agent, channel);
+
+        if (channel == AbortChannel.Exception)
+            Assert.Empty(notifiable.FilesFailed);   // a thrown abort is NOT a file failure
+
+        notifiable.AssertStatsInvariant();
+        var stats = notifiable.BatchEnds[^1].Stats;
+        Assert.True(stats.FilesProcessed < fileCount,
+            $"{channel}: the abort must stop the loop early (processed {stats.FilesProcessed} of {fileCount})");
+    }
+
+    /// <summary>
+    /// The exception channel from POST-process rather than pre-process: a different catch handler, and
+    ///  one that must not run the failure-cleanup path — the file is already on tape and in the TOC.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Backup_AbortByExceptionFromPostProcess_YieldsCancelled(DriveProfile profile)
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("abortpost", count: 8, minSize: 512, maxSize: 4 * 1024);
+
+        var notifiable = new TestNotifiable { AbortInPostProcessAfterN = 2 };
+
+        using var fixture = new VirtualTapeFixture(profile);
+        PrepareSet(fixture, "Abort from post-process");
+
+        using var agent = fixture.CreateBackupAgent();
+        TapeResult result = agent.BackupFileListToCurrentSet(
+            newSet: true, tree.Files, ignoreFailures: true, notifiable);
+
+        AssertCleanAbort(result, agent, AbortChannel.Exception);
+    }
+
+    // ── Restore ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The same convergence on the restore side — the path where the exception channel was handled
+    ///  nowhere at all until recently, so a thrown abort fell into the generic file-failure catch and
+    ///  was reported as a per-file I/O error rather than a user decision.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ProfilesAndAbortChannels))]
+    public void Restore_EveryAbortChannel_YieldsCancelled(DriveProfile profile, AbortChannel channel)
+    {
+        const int fileCount = 10;
+        const int abortAfter = 3;
+
+        using var tree = new TempFileTree();
+        tree.AddFiles("rabortconv", count: fileCount, minSize: 512, maxSize: 4 * 1024);
+
+        string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_AbortConv_{Guid.NewGuid():N}");
+        try
+        {
+            using var fixture = new VirtualTapeFixture(profile);
+            fixture.BackupFiles(tree.Files);
+
+            using var agent = fixture.CreateRestoreAgent(restoreDir);
+
+            var notifiable = new TestNotifiable();
+            switch (channel)
+            {
+                case AbortChannel.Flag:
+                    notifiable.PostProcessFunc = (_, stats) =>
+                    {
+                        if (stats.FilesSucceeded >= abortAfter)
+                            agent.IsAbortRequested = true;
+                        return true;
+                    };
+                    break;
+
+                case AbortChannel.FailedAction:
+                    notifiable.FailedAction = FileFailedAction.Abort;
+#if DEBUG
+                    agent.SimulateFileFailures.Enabled = true;
+                    agent.SimulateFileFailures.EveryNth = abortAfter;
+#endif
+                    break;
+
+                case AbortChannel.Exception:
+                    notifiable.AbortAfterNSucceeded = abortAfter;
+                    break;
+            }
+
+            TapeResult result = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, notifiable);
+
+            AssertCleanAbort(result, agent, channel);
+
+            if (channel == AbortChannel.Exception)
+                Assert.Empty(notifiable.FilesFailed);   // a thrown abort is NOT a file failure
+
+            notifiable.AssertStatsInvariant();
+            var stats = notifiable.BatchEnds[^1].Stats;
+            Assert.True(stats.FilesProcessed < fileCount,
+                $"{channel}: the abort must stop the loop early (processed {stats.FilesProcessed} of {fileCount})");
+        }
+        finally
+        {
+            TryDeleteDirectory(restoreDir);
+        }
+    }
+
+    // ── Structural guarantees the abort must not break ───────────────────
+
+    /// <summary>
+    /// An abort must leave the SetStart/SetEnd pairing intact — the handlers <c>break</c> rather than
+    ///  <c>return</c> precisely so the trailing <c>NotifySetEnd</c> still runs.
+    /// </summary>
+    /// <remarks>
+    /// Not decorative: every stats assertion in this suite reads <c>BatchEnds[^1]</c>, so a missing End
+    ///  would make the abort tests silently assert against a stale or absent snapshot. It is also the
+    ///  same imbalance the backup path carried before the Start/End rebalance.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ProfilesAndAbortChannels))]
+    public void Abort_LeavesSetNotificationsBalanced(DriveProfile profile, AbortChannel channel)
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("abortbal", count: 8, minSize: 512, maxSize: 4 * 1024);
+
+        using var fixture = new VirtualTapeFixture(profile);
+        PrepareSet(fixture, "Abort balance");
+
+        using var agent = fixture.CreateBackupAgent();
+
+        var notifiable = new TestNotifiable();
+        switch (channel)
+        {
+            case AbortChannel.Flag:
+                notifiable.PostProcessFunc = (_, stats) =>
+                {
+                    if (stats.FilesSucceeded >= 2) agent.IsAbortRequested = true;
+                    return true;
+                };
+                break;
+            case AbortChannel.FailedAction:
+                notifiable.FailedAction = FileFailedAction.Abort;
+#if DEBUG
+                agent.SimulateFileFailures.Enabled = true;
+                agent.SimulateFileFailures.EveryNth = 2;
+#endif
+                break;
+            case AbortChannel.Exception:
+                notifiable.AbortAfterNPreProcessed = 2;
+                break;
+        }
+
+        agent.BackupFileListToCurrentSet(newSet: true, tree.Files, ignoreFailures: true, notifiable);
+
+        if (channel == AbortChannel.Exception)
+            Assert.Empty(notifiable.FilesFailed);   // a thrown abort is NOT a file failure
+
+        Assert.Equal(notifiable.BatchStarts.Count, notifiable.BatchEnds.Count);
+        Assert.True(notifiable.BatchEnds.Count > 0, "the abort must not skip the set-end notification");
+    }
+
+    /// <summary>
+    /// An abort is NOT a fault, so it must not be latched — otherwise a genuine failure occurring
+    ///  earlier in the same operation would be masked by the abort that followed it.
+    /// </summary>
+    /// <remarks>
+    /// The inverse of region (H): there the diagnosis must SURVIVE, here the abort must not DISPLACE it.
+    ///  A file fails first (latched), then the user aborts — the result must still name the file failure,
+    ///  because that is the thing the user did not choose.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Abort_AfterAGenuineFailure_ReportsTheFailureNotTheAbort(DriveProfile profile)
+    {
+#if DEBUG
+        using var tree = new TempFileTree();
+        tree.AddFiles("abortlatch", count: 10, minSize: 512, maxSize: 4 * 1024);
+
+        using var fixture = new VirtualTapeFixture(profile);
+        PrepareSet(fixture, "Abort after failure");
+
+        using var agent = fixture.CreateBackupAgent();
+
+        // File #1 fails and is SKIPPED (so the operation continues and latches the diagnosis);
+        //  the user then aborts a few files later.
+        agent.SimulateFileFailures.Enabled = true;
+        agent.SimulateFileFailures.EveryNth = 100;
+        agent.SimulateFileFailures.Counter = 99;
+
+        var notifiable = new TestNotifiable
+        {
+            FailedAction = FileFailedAction.Skip,
+            AbortAfterNSucceeded = 3,
+        };
+
+        TapeResult result = agent.BackupFileListToCurrentSet(
+            newSet: true, tree.Files, ignoreFailures: true, notifiable);
+
+        Assert.False(result.Success);
+        Assert.True(agent.IsAbortRequested, "the abort still happened and must be recorded");
+
+        // The LATCHED failure wins over the abort fallback: the abort was the user's choice, the
+        //  file failure was not — and the latter is what needs explaining.
+        Assert.Contains("Simulated", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.NotEqual((uint)WIN32_ERROR.ERROR_CANCELLED, result.ErrorCode);
+#endif
+    }
+
+    /// <summary>
+    /// A clean run must leave the flag clear, so a later operation on the same agent cannot inherit a
+    ///  phantom abort — <c>FailedOperationResult</c> reads it to choose its fallback code.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void CleanRun_LeavesAbortFlagClear(DriveProfile profile)
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("noabort", count: 5, minSize: 512, maxSize: 4 * 1024);
+
+        using var fixture = new VirtualTapeFixture(profile);
+        PrepareSet(fixture, "No abort");
+
+        using var agent = fixture.CreateBackupAgent();
+        Assert.True(agent.BackupFileListToCurrentSet(
+            newSet: true, tree.Files, ignoreFailures: false, fileNotify: null));
+
+        Assert.False(agent.IsAbortRequested, "a clean run must not leave the abort flag set");
+        Assert.True(agent.LastResult.Success);
+    }
 
     #endregion
 

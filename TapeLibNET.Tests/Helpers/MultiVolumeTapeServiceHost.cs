@@ -1,4 +1,5 @@
 using System.IO;
+using Microsoft.Extensions.Logging;
 
 using TapeLibNET;
 using TapeLibNET.Services;
@@ -36,7 +37,8 @@ namespace TapeLibNET.Tests.Helpers;
 /// </para>
 /// </remarks>
 public sealed class MultiVolumeTapeServiceHost(
-    IReadOnlyList<TempVirtualMedia> volumes) : TestTapeServiceHost
+    IReadOnlyList<TempVirtualMedia> volumes,
+    ILogger? logger = null) : TestTapeServiceHost(logger)
 {
     // ── Service reference (set after construction to break the circular dependency) ──
 
@@ -44,7 +46,7 @@ public sealed class MultiVolumeTapeServiceHost(
     /// The <see cref="TapeServiceBase"/> this host drives. Must be set immediately
     ///  after construction (before any backup/restore operations).
     /// </summary>
-    public TapeServiceBase Service { get; set; } = null!;
+    public TestTapeService Service { get; set; } = null!;
 
     // ── Volume tracking ───────────────────────────────────────────────────────
 

@@ -7,7 +7,7 @@ namespace TapeLibNET.Tests.Services;
 
 /// <summary>
 /// Service-level coverage for the extended calibration surface: the <see cref="CalibrationMode"/>
-/// dispatch (New / Resume / Recalibrate) through <see cref="TapeServiceBase.ExecuteCalibrateAsync"/>,
+/// dispatch (New / Resume / Recalibrate) through <see cref="TestTapeService.ExecuteCalibrateAsync"/>,
 /// result tagging (<see cref="CalibrateResult.Mode"/> / <see cref="CalibrateResult.RecalibrationDelta"/> /
 /// <see cref="CalibrateResult.RecalibrationVerdict"/>), and host-pane logging — driven over small
 /// memory-backed virtual cartridges.
@@ -25,7 +25,7 @@ public class ServiceCalibrationResumeTests : ServiceTestBase
     private const long MB = 1024L * 1024;
     private const long CalibrationCapacity = 64L * MB;
 
-    private async Task<(TapeServiceBase service, TestTapeServiceHost host)> OpenCalibrationServiceAsync(
+    private async Task<(TestTapeService service, TestTapeServiceHost host)> OpenCalibrationServiceAsync(
         long capacity = CalibrationCapacity,
         VirtualTapeDriveIoRate? ioRate = null,
         VirtualTapeEwProfile? ewProfile = null)

@@ -1384,17 +1384,47 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     ///  <see cref="TapeMediaVerdict.Match"/> and <see cref="TapeMediaVerdict.Unidentified"/> are benign
     ///  (never prompted); the three positive mismatches are surfaced.
     /// </summary>
-    /// <param name="expectedSeriesId">The MediaId we expect, or null to skip the series check.</param>
+    /// <param name="expectedSeriesId"\>The <c>MediaId</c> we expect, or <see langword="null"/> or <see cref="Guid.Empty"/>
+    /// to skip the series check.</param>
+    /// <remarks>
+    /// <b><see cref="Guid.Empty"/> means "no expectation", not "expect zero".</b> Treating it as a value to match would
+    /// report <see cref="TapeMediaVerdict.MediaIdMismatch"/> against every legitimately identified
+    /// cartridge, prompting the user about a mismatch that exists only because we had nothing to
+    /// compare. Mirrors the same guard in <see cref="TapeFileRestoreBaseAgent.ClassifySetHeader"/>.
+    /// </remarks>
     /// <param name="expectedVolume">The volume number we expect, or null to skip the volume check.</param>
-    protected TapeMediaVerdict EvaluateLoadedHeader(Guid? expectedSeriesId = null, int? expectedVolume = null)
-        => _loadedHeader switch
+    /// <param name="expectNoSets">
+    /// When <see langword="true"/>, the caller is about to DESTROY existing content, so a medium that still
+    ///  holds backup sets is reported as <see cref="TapeMediaVerdict.MediaInconsistent"/> even when its
+    ///  identity is impeccable. Set count comes from <see cref="_toc"/> — the same object the caller holds.
+    /// </param>
+    protected TapeMediaVerdict EvaluateLoadedHeader(
+        Guid? expectedSeriesId = null, int? expectedVolume = null, bool expectNoSets = false)
+    {
+        var verdict = _loadedHeader switch
         {
             null => TapeMediaVerdict.Unidentified,
             TapeCalibrationHeader => TapeMediaVerdict.WrongKind,
-            TapeMediaHeader m when expectedSeriesId is { } s && m.MediaId != s => TapeMediaVerdict.MediaIdMismatch,
+            TapeMediaHeader m when expectedSeriesId is { } s && s != Guid.Empty && m.MediaId != s => TapeMediaVerdict.MediaIdMismatch,
             TapeMediaHeader m when expectedVolume is { } v && m.Volume != v => TapeMediaVerdict.WrongVolume,
             _ => TapeMediaVerdict.Match,
         };
+
+        // Applied AFTER the identity arms — a wrong-series or wrong-kind cartridge is the more informative
+        //  diagnosis, and content is beside the point there. But applied to Unidentified as well as Match:
+        //  header-less LEGACY media holding sets must still warn before being overwritten, which is exactly
+        //  what the old inline `_ when toc.Count > 0` arm did (it sat below no `null =>` arm, so it caught
+        //  header-less media too).
+        if (expectNoSets
+            && verdict is TapeMediaVerdict.Match or TapeMediaVerdict.Unidentified
+            && (_toc?.Count ?? 0) > 0)
+        {
+            verdict = TapeMediaVerdict.MediaInconsistent;
+        }
+
+        return verdict;
+    }
+
 
     /// <summary>
     /// Culture-neutral label for a verdict, used in LOG lines only. The host builds the localized

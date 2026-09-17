@@ -126,6 +126,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     /// Classifies <paramref name="header"/> against what the TOC expects for
     ///  <see cref="TapeTOC.CurrentSetIndex"/>. Pure — no I/O, no state change — so the ladder is unit
     ///  testable without a tape.
+    ///  <para>
+    ///  The check is skipped if <c>TOC.MediaId</c> is <see cref="Guid.Empty"/> (imported / legacy media).
+    ///  </para>
     /// </summary>
     /// <remarks>
     /// Checked in order of what each field can tell us: identity first (is this even the right
@@ -559,14 +562,21 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 
             return true;
         }
+        catch (TapeAbortRequestedException)
+        {
+            IsAbortRequested = true;
+            fileFailedAction = FileFailedAction.Abort;
+            m_logger.LogTrace("Abort requested while processing file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreNextFileAligned));
+            return false;
+        }   
         catch (Exception ex)
         {
             SetError(ex); // we've already set the right error code & message in the exception
 
-            fileFailedAction = NotifyFileFailed(fileNotify, tfi, ex);
+            try { fileFailedAction = NotifyFileFailed(fileNotify, tfi, ex); }
+            catch (TapeAbortRequestedException) { IsAbortRequested = true; }
 
             m_logger.LogWarning("Exception {Exception} while processing file >{File}<", ex, tfi.FileDescr.FullName);
-
             return false;
         }
     } // RestoreNextFile()
@@ -685,10 +695,21 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 
             return true;
         }
+        catch (TapeAbortRequestedException)
+        {
+            IsAbortRequested = true;
+            fileFailedAction = FileFailedAction.Abort;
+            m_logger.LogTrace("Abort requested while processing (packed) file >{File}< in {Method}",
+                tfi.FileDescr.FullName, nameof(RestoreNextFile));
+            return false;
+        }
         catch (Exception ex)
         {
             SetError(ex);
-            fileFailedAction = NotifyFileFailed(fileNotify, tfi, ex);
+
+            try { fileFailedAction = NotifyFileFailed(fileNotify, tfi, ex); }
+            catch (TapeAbortRequestedException) { IsAbortRequested = true; }
+            
             m_logger.LogWarning("Exception {Exception} while processing (packed) file >{File}<", ex, tfi.FileDescr.FullName);
             return false;
         }
@@ -754,7 +775,8 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 goto RETRY;
             }
 
-            LatchFailure();
+            if (!IsAbortRequested) // no need for caller-requested abort to LatchFailure()
+                LatchFailure();
             overallSuccess = false;
 
             if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
@@ -821,7 +843,8 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 goto RETRY;
             }
 
-            LatchFailure();
+            if (!IsAbortRequested) // no need for caller-requested abort to LatchFailure()
+                LatchFailure();
             overallSuccess = false;
 
             if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
@@ -966,7 +989,8 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 goto RETRY;
             }
 
-            LatchFailure();
+            if (!IsAbortRequested) // no need for caller-requested abort to LatchFailure()
+                LatchFailure();
             overallSuccess = false;
 
             if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
@@ -1048,7 +1072,8 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 goto RETRY;
             }
 
-            LatchFailure();
+            if (!IsAbortRequested) // no need for caller-requested abort to LatchFailure()
+                LatchFailure();
             overallSuccess = false;
 
             if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
@@ -1200,7 +1225,8 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                     nameof(RestoreFilesFromCurrentSetDownInt), rc.filesSelectedIdx, TOC.CurrentSetIndex);
 
                 rc.overallSuccess = false;
-                if (!CanResumeFromAnotherVolume) // media full isn't an unrecoverable error
+                if (!CanResumeFromAnotherVolume && !IsAbortRequested) // media full isn't an unrecoverable error
+                                                                      //  nor is a user-requested abort
                     LatchFailure(); // latch the failure for the final result
                 
                 if (!ignoreFailures || IsAbortRequested)
