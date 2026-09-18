@@ -8,6 +8,17 @@ using TapeLibNET.Services;
 
 namespace TapeLibNET.Tests.Helpers;
 
+internal sealed class TestServiceCalibrateProgressHandler(TestTapeService svc,
+    ITapeServiceHost host, TapeCalibrator calibrator, long capacityReported)
+        : ServiceCalibrateProgressHandler(host, calibrator, capacityReported)
+{
+    protected override void ReportProgress(TapeCalibrationProgress progress)
+    {
+        svc.OnCalibrationProgress?.Invoke(progress);
+        base.ReportProgress(progress);
+    }
+}
+
 /// <summary>
 /// Test service that exposes the live agent at the deterministic moment the operation creates it.
 /// </summary>
@@ -29,8 +40,14 @@ public sealed class TestTapeService(ILoggerFactory lf, ITapeServiceHost host) : 
     /// <summary>Invoked with the live restore agent, before the first file is processed.</summary>
     public Action<TapeFileRestoreBaseAgent>? OnRestoreAgentReady { get; set; }
 
+    /// <summary>Invoked with the live calibrator, before the first file is processed.</summary>
+    public Action<TapeCalibrator>? OnCalibratorReady { get; set; }
+
     /// <summary>Set before starting a backup; applied to the handler the operation creates.</summary>
     public Action<HookedBackupProgressHandler>? ConfigureBackupHandler { get; set; }
+
+    /// <summary>Invoked with the progress of a calibration operation.</summary>
+    public Action<TapeCalibrationProgress>? OnCalibrationProgress { get; set; }
 
     protected override ServiceBackupProgressHandler CreateBackupProgressHandler(
         TapeFileBackupAgent agent, bool skipAllErrors, ITapeFileFilter? filter)
@@ -48,5 +65,13 @@ public sealed class TestTapeService(ILoggerFactory lf, ITapeServiceHost host) : 
         OnAgentReady?.Invoke(agent);
         OnRestoreAgentReady?.Invoke(agent);
         return base.CreateRestoreProgressHandler(agent, totalFiles, mode, skipAllErrors);
+    }
+
+    protected override ServiceCalibrateProgressHandler CreateCalibrateProgressHandler(
+        TapeCalibrator calibrator, CalibrateRequest request, long capacityReported)
+    { 
+        OnCalibratorReady?.Invoke(calibrator);
+        return new TestServiceCalibrateProgressHandler(this,
+            _host, calibrator, capacityReported);
     }
 }

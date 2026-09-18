@@ -87,6 +87,13 @@ public sealed class VirtualMediaFaultInjector
     /// <summary>Fire on every Nth qualifying operation. 1 = every operation.</summary>
     public int EveryNth { get; set; } = 1;
 
+    /// <summary>Skip the next N qualifying operations, then start counting.</summary>
+    /// <remarks>
+    /// Useful to let a few reads/writes through before the fault, e.g. skip the header block,
+    ///  then corrupt the files.
+    /// </remarks>
+    public int SkipN { get; set; } = 0;
+
     /// <summary>
     /// Operations counted so far. Pre-seed it to shift the firing phase — e.g.
     ///  <c>Counter = EveryNth - 1</c> makes the very NEXT operation fault.
@@ -168,6 +175,12 @@ public sealed class VirtualMediaFaultInjector
     {
         if (!Enabled)
             return false;
+
+        if (SkipN > 0)
+        {
+            SkipN--;
+            return false;
+        }
 
         Counter++;
         if (EveryNth <= 0 || Counter % EveryNth != 0)

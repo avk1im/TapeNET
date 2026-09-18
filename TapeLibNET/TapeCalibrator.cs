@@ -1006,6 +1006,7 @@ public sealed class TapeCalibrator : TapeDriveHolder<TapeCalibrator>
             TapeCalibrationCheckpoint? cp = ReadRecord<TapeCalibrationCheckpoint>(recordBuffer);
             if (cp is not null && cp.RunId == runId)
             {
+                m_logger.LogTrace("{Prefix}: Resume — successfully read checkpoint at -{N} FM", LogPrefix, n);
                 filemarksBack = n;
                 return cp;               // valid, same run → done
             }

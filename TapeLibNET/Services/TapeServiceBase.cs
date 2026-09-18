@@ -987,8 +987,6 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         LogInfoSub($"Run block size: {Helpers.BytesToStringLong(cal.RunBlockSize)}");
     }
 
-
-
     /// <summary>
     /// Creates a file filter from a list of raw patterns (e.g. wildcards or FCL
     ///  expressions) when <see cref="ListRequest.Filter"/> is not supplied.

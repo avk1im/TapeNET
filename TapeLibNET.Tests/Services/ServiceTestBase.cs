@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.IO;
 using TapeLibNET;
@@ -109,8 +110,7 @@ public abstract class ServiceTestBase : IDisposable
     ///  <see cref="ITapeServiceHost.Report"/> call and every
     ///  <see cref="ServiceStateChange"/> notification for post-hoc assertions.
     /// </summary>
-    protected (TestTapeService service, TestTapeServiceHost host) CreateService(
-        CancellationToken _ = default)
+    protected (TestTapeService service, TestTapeServiceHost host) CreateService()
     {
         var host = Track(new TestTapeServiceHost()); // ← create AND register
         var service = new TestTapeService(TestLoggerFactory.Default, host);
@@ -122,10 +122,9 @@ public abstract class ServiceTestBase : IDisposable
     ///  in the post-format state (media loaded, TOC available).
     /// </summary>
     protected async Task<(TestTapeService service, TestTapeServiceHost host)> OpenAndFormatAsync(
-        TempVirtualMedia media,
-        CancellationToken ct = default)
+        TempVirtualMedia media)
     {
-        var (service, host) = CreateService(ct);
+        var (service, host) = CreateService();
 
         var caps = media.HasInitiator
             ? VirtualTapeDriveCapabilities.WithPartitions
@@ -150,14 +149,20 @@ public abstract class ServiceTestBase : IDisposable
     }
 
     /// <summary>
-    /// Re-opens the same virtual media files for reading (e.g. post-backup).
-    ///  Loads media and restores the TOC.
+    /// Re-opens the same virtual media files for reading (e.g. post-backup). Loads media and, by
+    ///  default, restores the TOC.
     /// </summary>
+    /// <param name="restoreTOC">
+    /// Whether to load the on-tape TOC after the media is loaded. Leave <see langword="true"/> for
+    ///  backup media — where a readable TOC is part of what the reopen asserts. Pass
+    ///  <see langword="false"/> for a cartridge that carries no TOC by design: a calibration cartridge
+    ///  (whose content partition holds a run trail), or a blank/foreign one under test.
+    /// </param>
     protected async Task<(TestTapeService service, TestTapeServiceHost host)> ReopenAsync(
         TempVirtualMedia media,
-        CancellationToken ct = default)
+        bool restoreTOC = true)
     {
-        var (service, host) = CreateService(ct);
+        var (service, host) = CreateService();
 
         var caps = media.HasInitiator
             ? VirtualTapeDriveCapabilities.WithPartitions
@@ -173,15 +178,13 @@ public abstract class ServiceTestBase : IDisposable
             $"OpenVirtualDriveAsync (reopen) failed: {service.LastError}");
         Assert.True(await service.LoadMediaAsync(),
             $"LoadMediaAsync (reopen) failed: {service.LastError}");
-        Assert.True(await service.RestoreTOCAsync(),
-            $"RestoreTOCAsync failed: {service.LastError}");
+        if (restoreTOC)
+            Assert.True(await service.RestoreTOCAsync(),
+                $"RestoreTOCAsync failed: {service.LastError}");
 
         return (service, host);
     }
 
-    /// <summary>
-    /// Builds a minimal <see cref="BackupRequest"/> for a file-pattern backup.
-    /// </summary>
     protected static BackupRequest MakeBackupRequest(
         TestTapeService service,
         string sourceRoot,
@@ -233,8 +236,7 @@ public abstract class ServiceTestBase : IDisposable
     /// </summary>
     protected async Task<(TestTapeService service, MultiVolumeTapeServiceHost host)>
         OpenAndFormatMultiVolumeAsync(
-            IReadOnlyList<TempVirtualMedia> volumes,
-            CancellationToken _ = default)
+            IReadOnlyList<TempVirtualMedia> volumes)
     {
         var (service, host) = CreateMultiVolumeService(volumes);
 
@@ -272,8 +274,7 @@ public abstract class ServiceTestBase : IDisposable
     /// </summary>
     protected async Task<(TestTapeService service, MultiVolumeTapeServiceHost host)>
         ReopenMultiVolumeAsync(
-            IReadOnlyList<TempVirtualMedia> volumes,
-            CancellationToken _ = default)
+            IReadOnlyList<TempVirtualMedia> volumes)
     {
         var (service, host) = CreateMultiVolumeService(volumes);
 

@@ -145,8 +145,8 @@ public partial class TapeServiceBase
                 // Multi-partition decline — the user's choice, not a fault.
                 return MakeResult(aborted: true,
                     diagnosis: TapeResult.Fail((uint)WIN32_ERROR.ERROR_CANCELLED,
-                        "For calibration, use a single-partition media"),
-                    message: "Calibration aborted", mode: request.Mode);
+                        "Calibration aborted. Use a single-partition media for calibration."),
+                    mode: request.Mode);
         }
 
         // §10.7 — pre-run guard through the unified verdict channel. Format/backup heads the media, so a
@@ -164,9 +164,10 @@ public partial class TapeServiceBase
                     suppress: false, allowRetry: true, allowProceedAlways: false); // calibration run is one-off ⇒ there's no "always"
 
                 if (choice == MediaMismatchChoice.Abort)
-                    return MakeResult(aborted: true, diagnosis: TapeResult.Fail((uint)WIN32_ERROR.ERROR_CANCELLED,
-                        "Calibration cancelled — cartridge holds a backup"),
-                        message: "Calibration aborted", mode: request.Mode);
+                    return MakeResult(aborted: true,
+                        diagnosis: TapeResult.Fail((uint)WIN32_ERROR.ERROR_CANCELLED,
+                            "Calibration cancelled — cartridge holds a backup"),
+                        mode: request.Mode);
 
                 if (choice != MediaMismatchChoice.Retry)
                     break;   // Proceed — erase and calibrate the loaded cartridge
@@ -186,9 +187,10 @@ public partial class TapeServiceBase
                 //  continue"). The RestoreMode arg only colors the dialog wording — a minor cosmetic stretch for
                 //  calibration; swap for a dedicated calibration-insert host verb if that wording ever matters.
                 if (!_host.OnInsertMediaConfirm(volumeNeeded: 1, RestoreMode.Restore))
-                    return MakeResult(aborted: true, diagnosis: TapeResult.Fail((uint)WIN32_ERROR.ERROR_CANCELLED,
-                        "Calibration cancelled — no scratch cartridge inserted"),
-                        message: "Calibration aborted", mode: request.Mode);
+                    return MakeResult(aborted: true,
+                        diagnosis: TapeResult.Fail((uint)WIN32_ERROR.ERROR_CANCELLED,
+                            "Calibration cancelled — no scratch cartridge inserted"),
+                        mode: request.Mode);
 
                 LogInfo("Loading media...");
                 OnStatusUpdate("Loading media...");
@@ -269,7 +271,7 @@ public partial class TapeServiceBase
                         OnStatusUpdate("Recalibration failed");
                         return MakeResult(failed: true,
                             diagnosis: TapeResult.Fail((uint)WIN32_ERROR.ERROR_APP_DATA_NOT_FOUND, LastError),
-                            message: LastError, mode: CalibrationMode.Recalibrate);
+                            mode: CalibrationMode.Recalibrate);
                     }
 
                     LogInfo("Recalibrating: re-measuring the tail against the existing calibration...");
@@ -302,8 +304,7 @@ public partial class TapeServiceBase
                 {
                     OnStatusUpdate("Calibration aborted");
                     LogFail("Calibration aborted");
-                    return MakeResult(aborted: true, diagnosis: diag,
-                        message: "Calibration aborted", mode: request.Mode);
+                    return MakeResult(aborted: true, diagnosis: diag, mode: request.Mode);
                 }
 
                 string logMsg, resultMsg;
