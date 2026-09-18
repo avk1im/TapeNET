@@ -633,7 +633,11 @@ public partial class TapeServiceBase
                     //  Deliberately NOT routed through EvaluateLoadedHeader: this checkpoint INVERTS the usual
                     //  rule — a MATCHING MediaId means WrongVolume here, because a continuation needs a FRESH
                     //  cartridge, and an earlier volume of our own series is exactly what must not be overwritten.
-                    RefreshLoadedHeader();
+                    //  Skip the header test if ProceedOnMediaMismatch was set by the caller.
+                    if (!request.ProceedOnMediaMismatch)
+                        RefreshLoadedHeader();
+                    else
+                        _loadedCalibrationInfo = null; // treat the volume as blank
                     TapeMediaVerdict cvVerdict = _loadedHeader switch
                     {
                         null => TapeMediaVerdict.Unidentified,   // blank fresh volume — ideal

@@ -73,6 +73,14 @@ internal static class RestoreCommand
         {
             Description = "Eject the tape when the operation is complete.",
         };
+        var skipMediaConfirmOption = new Option<bool>("--skip-media-confirm")
+        {
+            Description = "Silently proceed with mismatched media or volume.",
+        };
+        var skipSetCorrectionOption = new Option<bool>("--skip-set-correction")
+        {
+            Description = "Do not attempt to correct set navigation errors.",
+        };
 
         cmd.Arguments.Add(setArg);
         cmd.Arguments.Add(filterArgs);
@@ -83,6 +91,8 @@ internal static class RestoreCommand
         cmd.Options.Add(skipErrorsOption);
         cmd.Options.Add(noMultivolumeOption);
         cmd.Options.Add(ejectWhenDoneOption);
+        cmd.Options.Add(skipMediaConfirmOption);
+        cmd.Options.Add(skipSetCorrectionOption);
 
         cmd.SetAction(async (parseResult, ct) =>
         {
@@ -97,6 +107,8 @@ internal static class RestoreCommand
             var skipErrors  = parseResult.GetValue(skipErrorsOption);
             var noMultivolume = parseResult.GetValue(noMultivolumeOption);
             var ejectWhenDone = parseResult.GetValue(ejectWhenDoneOption);
+            var skipMediaConfirm = parseResult.GetValue(skipMediaConfirmOption);
+            var skipSetCorrection = parseResult.GetValue(skipSetCorrectionOption);
             var filterFcl   = parseResult.GetValue(FilterOptions.Filter);
             var filterFile  = parseResult.GetValue(FilterOptions.FilterFile);
 
@@ -140,6 +152,8 @@ internal static class RestoreCommand
                 Filter:               resolved.Filter)
             {
                 NoMultivolume = noMultivolume,
+                ProceedOnMediaMismatch = skipMediaConfirm,
+                CorrectSetNavigation = !skipSetCorrection,
             };
 
             var result = await service.ExecuteRestoreAsync(options);

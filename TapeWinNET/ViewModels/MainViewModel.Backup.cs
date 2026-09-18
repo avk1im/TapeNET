@@ -183,9 +183,10 @@ public partial class MainViewModel
                     EjectWhenDone: false, // we handle request.EjectWhenDone manually below, for proper window housekeeping
                     MediaName: request.MediaName)
                 {
-                    NoMultivolume    = request.NoMultivolume,
-                    Compression      = request.Compression,
-                    CompressionLevel = request.CompressionLevel,
+                    NoMultivolume         = request.NoMultivolume,
+                    Compression           = request.Compression,
+                    CompressionLevel      = request.CompressionLevel,
+                    ProceedOnMediaMismatch = request.ProceedOnMediaMismatch,
                 });
 
             // Refresh tree after backup to keep TOCView in sync with the (possibly modified) TOC.

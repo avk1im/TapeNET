@@ -85,6 +85,10 @@ internal static class BackupCommand
         {
             Description = "Folder for the emergency TOC export if writing the TOC to tape fails.",
         };
+        var overwriteMediaOption = new Option<bool>("--overwrite-media")
+        {
+            Description = "Overwrite media carrying data without prompt.",
+        };
 
         cmd.Arguments.Add(filesArg);
         cmd.Options.Add(descOption);
@@ -99,6 +103,7 @@ internal static class BackupCommand
         cmd.Options.Add(noMultivolumeOption);
         cmd.Options.Add(ejectWhenDoneOption);
         cmd.Options.Add(emergencyTocOption);
+        cmd.Options.Add(overwriteMediaOption);
 
         cmd.SetAction(async (parseResult, ct) =>
         {
@@ -117,6 +122,7 @@ internal static class BackupCommand
             var noMultivolume = parseResult.GetValue(noMultivolumeOption);
             var ejectWhenDone = parseResult.GetValue(ejectWhenDoneOption);
             var emergency   = parseResult.GetValue(emergencyTocOption);
+            var overwriteMedia = parseResult.GetValue(overwriteMediaOption);
             var filterFcl   = parseResult.GetValue(FilterOptions.Filter);
             var filterFile  = parseResult.GetValue(FilterOptions.FilterFile);
 
@@ -163,6 +169,7 @@ internal static class BackupCommand
                 CompressionLevel:       compressionLevel)
             {
                 NoMultivolume = noMultivolume,
+                ProceedOnMediaMismatch = overwriteMedia,
             };
 
             var result = await service.ExecuteBackupAsync(options);

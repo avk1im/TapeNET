@@ -314,9 +314,17 @@
                           Background="LightGray"/>
 
             <!-- ═══════════════════════════════════════
-                 Right: Options panel (scrollable)
+                 Right: Options panel (scrollable) + warning pane (fixed, outside scroll)
                  ═══════════════════════════════════════ -->
-            <ScrollViewer Grid.Column="2" Margin="4,0,0,0"
+            <Grid Grid.Column="2" Margin="4,0,0,0">
+                <Grid.RowDefinitions>
+                    <!-- Scrollable options -->
+                    <RowDefinition Height="*"/>
+                    <!-- Warning pane: fixed beneath the scrollable area, grows upward -->
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+            <ScrollViewer Grid.Row="0"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
                           Padding="0,0,8,0">
@@ -513,31 +521,17 @@
                                                     Converter={StaticResource InverseBoolToVis}}">
                                 <RadioButton Content="Append after set:"
                                              IsChecked="{Binding AppendToSet}"
+                                             IsEnabled="{Binding HasLastBackupSet}"
                                              Margin="0,0,0,4"/>
                                 <ComboBox ItemsSource="{Binding AppendOptions}"
                                           SelectedItem="{Binding SelectedAppendOption}"
                                           DisplayMemberPath="DisplayText"
-                                          IsEnabled="{Binding AppendToSet}"
+                                          IsEnabled="{Binding CanAppendAfterSet}"
                                           Margin="20,0,0,4"/>
                                 <RadioButton Content="Overwrite entire media"
                                              IsChecked="{Binding OverwriteMedia}"
                                              Margin="0,4,0,0"/>
                             </StackPanel>
-
-                            <!-- Warning panel: always shown. Use DockPanel to properly resize the WarningMessage TextBlock -->
-
-                                <Border Style="{StaticResource WarningPanelStyle}">
-                                    <DockPanel>
-                                        <TextBlock DockPanel.Dock="Left"
-                                           Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
-                                           FontSize="13" Margin="0,0,6,0"
-                                           VerticalAlignment="Center"/>
-
-                                        <TextBlock Text="{Binding WarningMessage}"
-                                           VerticalAlignment="Center" 
-                                           TextWrapping="Wrap"/>
-                                    </DockPanel>
-                                </Border>
 
                                 <!-- Media description: shown whenever entire media is overwritten
                                  (covers both no-TOC and normal overwrite mode) -->
@@ -592,8 +586,34 @@
                             <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding PreviewCheckedSize}" FontWeight="SemiBold" TextWrapping="Wrap"/>
                         </Grid>
                     </GroupBox>
+
+                    <!-- Advanced -->
+                    <GroupBox Header="Advanced" Margin="0,8,0,0">
+                        <StackPanel Margin="8">
+                            <CheckBox Content="Overwrite without prompt"
+                                      IsChecked="{Binding ProceedOnMediaMismatch}"
+                                      Foreground="{StaticResource WarningFg.Error}"
+                                      ToolTip="Overwrite media carrying data without prompt (unattended mode)"/>
+                        </StackPanel>
+                    </GroupBox>
                 </StackPanel>
             </ScrollViewer>
+
+            <!-- Warning pane: fixed beneath the scrollable area, grows upward.
+                 Use DockPanel to properly resize the WarningMessage TextBlock. -->
+            <Border Grid.Row="1" Style="{StaticResource WarningPanelStyle}" Margin="0,8,8,0">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Left"
+                               Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
+                               FontSize="13" Margin="0,0,6,0"
+                               VerticalAlignment="Center"/>
+
+                    <TextBlock Text="{Binding WarningMessage}"
+                               VerticalAlignment="Center"
+                               TextWrapping="Wrap"/>
+                </DockPanel>
+            </Border>
+            </Grid>
         </Grid>
 
         <!-- Button bar -->

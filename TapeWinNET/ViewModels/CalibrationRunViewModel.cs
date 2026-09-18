@@ -28,6 +28,7 @@ public sealed class CalibrationRunViewModel : ViewModelBase
     private string _inspectionSummary = string.Empty;
     private WarningLevel _inspectionLevel = WarningLevel.Info;
     private bool _hasInspectionResult;
+    private bool _proceedOnMediaMismatch;
 
     public CalibrationRunViewModel(
         TapeService tapeService,
@@ -68,10 +69,41 @@ public sealed class CalibrationRunViewModel : ViewModelBase
     public string ProfileKey => string.IsNullOrWhiteSpace(_tapeService.DriveProfileKey) ? "(unknown)" : _tapeService.DriveProfileKey;
     public string CapacityDisplay => Helpers.BytesToStringLong(_tapeService.Capacity);
     public string CapacityBucketDisplay => $"{TapeCalibration.CapacityBucket(_tapeService.Capacity)} bucket";
-    public static WarningLevel WarningLevel => WarningLevel.Warning;
-    public static string WarningMessage =>
-        "Calibration writes the scratch cartridge to end-of-media and destroys any existing content.\r\n" +
-        "Use only expendable media dedicated to calibration.";
+
+    public WarningLevel WarningLevel =>
+        _proceedOnMediaMismatch ? WarningLevel.Error : WarningLevel.Warning;
+
+    public string WarningMessage
+    {
+        get
+        {
+            string message =
+                "Calibration writes the scratch cartridge to end-of-media and destroys any existing content.\r\n" +
+                "Use only expendable media dedicated to calibration.";
+
+            if (_proceedOnMediaMismatch)
+                message += "\r\nAny data on media will be overwritten WITHOUT PROMPT.";
+
+            return message;
+        }
+    }
+
+    /// <summary>
+    /// Advanced: when checked, skips the pre-run guard prompt for a cartridge carrying a backup
+    ///  header and proceeds unattended. Maps to <see cref="CalibrateRequest.ProceedOnMediaMismatch"/>.
+    /// </summary>
+    public bool ProceedOnMediaMismatch
+    {
+        get => _proceedOnMediaMismatch;
+        set
+        {
+            if (SetProperty(ref _proceedOnMediaMismatch, value))
+            {
+                OnPropertyChanged(nameof(WarningMessage));
+                OnPropertyChanged(nameof(WarningLevel));
+            }
+        }
+    }
 
     #endregion
 
@@ -210,6 +242,7 @@ public sealed class CalibrationRunViewModel : ViewModelBase
             {
                 Cancellation = _abortCts.Token,
                 OperationLabel = "Calibration",
+                ProceedOnMediaMismatch = _proceedOnMediaMismatch,
             });
 
         return result;

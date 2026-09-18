@@ -42,7 +42,8 @@ public record BackupFormData(
     bool EjectWhenDone,
     string? MediaName = null,
     TapeCompression Compression = TapeCompression.None,
-    int CompressionLevel = ZstdLevel.Default);
+    int CompressionLevel = ZstdLevel.Default,
+    bool ProceedOnMediaMismatch = false);
 
 /// <summary>
 /// ViewModel for the BackupWindow (Option B: Source-Drill-Down).
@@ -99,6 +100,7 @@ public class BackupViewModel : ViewModelBase
     private int _compressionLevel = ZstdLevel.Default;
     private bool _appendToSet = true;
     private AppendAfterOption? _selectedAppendOption;
+    private bool _proceedOnMediaMismatch;
 
     // ─────────────────────────────────────────────────
     //  Scan / busy state
@@ -434,6 +436,7 @@ public class BackupViewModel : ViewModelBase
             if (SetProperty(ref _appendToSet, value))
             {
                 OnPropertyChanged(nameof(OverwriteMedia));
+                OnPropertyChanged(nameof(CanAppendAfterSet));
                 OnPropertyChanged(nameof(WarningMessage));
                 OnPropertyChanged(nameof(WarningLevel));
                 UsageBar?.Rebuild();
@@ -447,6 +450,24 @@ public class BackupViewModel : ViewModelBase
     {
         get => !_appendToSet;
         set => AppendToSet = !value;
+    }
+
+    /// <summary>True when the "Append after set" combo box should be interactable —
+    ///  requires both the radio button to be selected and at least one existing backup set.</summary>
+    public bool CanAppendAfterSet => _appendToSet && HasLastBackupSet;
+
+    /// <summary>Advanced option: skip identified-media prompts and proceed unattended on a mismatch.</summary>
+    public bool ProceedOnMediaMismatch
+    {
+        get => _proceedOnMediaMismatch;
+        set
+        {
+            if (SetProperty(ref _proceedOnMediaMismatch, value))
+            {
+                OnPropertyChanged(nameof(WarningMessage));
+                OnPropertyChanged(nameof(WarningLevel));
+            }
+        }
     }
 
     /// <summary>
@@ -641,6 +662,13 @@ public class BackupViewModel : ViewModelBase
                 message += "Note: Writing to this media may invalidate a multi-volume backup";
             }
 
+            if (_proceedOnMediaMismatch)
+            {
+                if (message != string.Empty)
+                    message += "\r\n";
+                message += "Any data on media will be overwritten WITHOUT PROMPT.";
+            }
+
             return message;
         }
     }
@@ -650,23 +678,42 @@ public class BackupViewModel : ViewModelBase
     {
         get
         {
-            if (OverwriteMedia)
-                return WarningLevel.Error;
-
-            var toc = _tapeService.TOC;
-
-            if (SelectedAppendOption is { IsOverwrite: false })
+            WarningLevel BaseLevel()
             {
-                if (toc != null && SelectedAppendOption.SetIndex < toc.Count)
+                if (OverwriteMedia)
+                    return WarningLevel.Error;
+
+                var toc = _tapeService.TOC;
+
+                if (SelectedAppendOption is { IsOverwrite: false })
+                {
+                    if (toc != null && SelectedAppendOption.SetIndex < toc.Count)
+                        return WarningLevel.Warning;
+                }
+
+                if (toc?.ContinuedOnNextVolume ?? false)
                     return WarningLevel.Warning;
+
+                return WarningLevel.Info;
             }
 
-            if (toc?.ContinuedOnNextVolume ?? false)
-                return WarningLevel.Warning;
-
-            return WarningLevel.Info;
+            return BumpForMediaMismatch(BaseLevel());
         }
     }
+
+    /// <summary>Bumps a base warning level up by one step from Info to Warning) when
+    ///  <see cref="ProceedOnMediaMismatch"/> is set, since the operation becomes more dangerous.
+    ///  Warning and Error stay -- though this behavior is easy to modify if we decide later.
+    ///  </summary>
+    private WarningLevel BumpForMediaMismatch(WarningLevel level) =>
+        _proceedOnMediaMismatch
+            ? level switch
+              {
+                  WarningLevel.Info => WarningLevel.Warning,
+                  WarningLevel.Warning => WarningLevel.Warning,
+                  _ => level
+              }
+            : level;
 
     // ═════════════════════════════════════════════════
     //  Preview
@@ -1220,7 +1267,8 @@ public class BackupViewModel : ViewModelBase
             EjectWhenDone: _ejectWhenDone,
             MediaName: OverwriteMedia ? _mediaName : null,
             Compression: SelectedCompression,
-            CompressionLevel: _compressionLevel);
+            CompressionLevel: _compressionLevel,
+            ProceedOnMediaMismatch: _proceedOnMediaMismatch);
 
         _onStartBackup(request);
     }

@@ -644,6 +644,8 @@ public partial class MainViewModel
                     EjectWhenDone: false) // we handle request.EjectWhenDone manually below, for proper window housekeeping
                 {
                     NoMultivolume = request.NoMultivolume,
+                    ProceedOnMediaMismatch = request.ProceedOnMediaMismatch,
+                    CorrectSetNavigation = request.CorrectSetNavigation,
                 });
 
             if (!request.EjectWhenDone)
