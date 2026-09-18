@@ -219,7 +219,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
         using (svc2)
         {
             // No scripted answer — but the flag suppresses the prompt entirely.
-            var req = MakeBackupRequest(svc2, src2.RootPath, "s2") with { ForceVolumeOverwrite = true };
+            var req = MakeBackupRequest(svc2, src2.RootPath, "s2") with { ProceedOnMediaMismatch = true };
             var result = await svc2.ExecuteBackupAsync(req);
 
             Assert.True(result.Success, $"forced overwrite failed: {svc2.LastError}");
@@ -341,7 +341,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
             var cal = await svc2.ExecuteCalibrateAsync(new CalibrateRequest(
                 EjectWhenDone: false,
                 Options: new TapeCalibrationOptions { SampleCount = 8, NumCheckpoints = 4 })
-                { SkipMediaHeaderCheck = true });
+                { ProceedOnMediaMismatch = true });
 
             Assert.True(cal.Success, $"calibration with SkipMediaHeaderCheck failed: {svc2.LastError}");
         }

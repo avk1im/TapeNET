@@ -152,10 +152,10 @@ public partial class TapeServiceBase
         // §10.7 — pre-run guard through the unified verdict channel. Format/backup heads the media, so a
         //  cartridge carrying a MEDIA header is the wrong kind for a destructive calibration run.
         //  Uses the cached load-time header; when null / not a media header, no prompt.
-        //  SkipMediaHeaderCheck bypasses the guard entirely (scripted/unattended scratch runs).
+        //  ProceedOnMediaMismatch bypasses the guard entirely (scripted/unattended scratch runs).
         //  This composes with the post-run `ForeignHeader` reporting already present for Resume/Recalibrate: this
         //  guard catches the destructive write up front; `ForeignHeader` still explains a failed Resume/Recalibrate.
-        if (!request.SkipMediaHeaderCheck)
+        if (!request.ProceedOnMediaMismatch)
         {
             while (_loadedHeader is TapeMediaHeader)
             {

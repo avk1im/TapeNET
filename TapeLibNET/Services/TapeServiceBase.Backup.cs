@@ -146,7 +146,7 @@ public partial class TapeServiceBase
             //  3. Overwrite: remove all existing sets, write from scratch (newSet=true).
 
             // Run-scoped suppression latch for identity prompts; ProceedAlways flips it on.
-            bool suppress = request.ForceVolumeOverwrite;
+            bool suppress = request.ProceedOnMediaMismatch;
 
             // The agent is created BEFORE the identity checkpoints so that RefreshLoadedHeader() below uses
             //  the LIVE agent — the one that owns the navigator — keeping its header presence and position
@@ -802,7 +802,7 @@ public partial class TapeServiceBase
             //  3. Overwrite: remove all existing sets, write from scratch (newSet=true).
 
             // Run-scoped suppression latch for identity prompts; ProceedAlways flips it on.
-            bool suppress = request.ForceVolumeOverwrite;
+            bool suppress = request.ProceedOnMediaMismatch;
 
             // §10.5 checkpoint 2 — Append: verify we're adding to the media we expect.
             if (append)

@@ -1,34 +1,38 @@
 # Design — Backup Set Header for TapeLibNET
 
-**Status:** v2 · **specified, ready for implementation**
+**Status:** v3 · **implemented and shipped**
 **Scope:** the set header (per-set identity + index record) and verified set navigation
 **Depends on:** the media header (`docs/Design-TapeHeader.md`, v12) — grammar, framing, `TapeHeaderBlock`, presence model
-**Supersedes:** Design-TapeHeader.md §16 (Outlook — the set header)
+**Supersedes:** `Design-TapeHeader.md` §16 (Outlook — the set header)
+
+> **The code is the authority.** This document explains the shape and the reasoning; every method named
+> here exists, and where the two disagree the code is right. Principal files: `TapeSetHeader.cs`,
+> `TapeTOC.cs`, `TapeAgent.cs`, `TapeBackupAgent.cs`, `TapeRestoreAgent.cs`, `TapeStreamManager.cs`,
+> `TapeNavigator*.cs`.
 
 ---
 
 ## 1. What the feature does
 
-Every backup set written on headed media receives a **set header**: one 16 KiB framed record,
-written as the first block of the set's data, carrying the set's identity (`MediaId`, `Volume`) and
-its two indices (`VolumeSetIndex`, `GlobalSetIndex`).
+Every backup set written on headed media carries a **set header**: one 16 KiB framed record, written as
+the first block of the set's data, holding the set's identity (`MediaId`, `Volume`) and its two indices
+(`VolumeSetIndex`, `GlobalSetIndex`).
 
-Today set positioning is **trusted**: the navigator counts marks and declares itself at set N. With
-set headers it becomes **checked** — and, where the fault is a recoverable miscount,
-**self-corrected**.
+Set positioning was **trusted** — the navigator counted marks and declared itself at set N. It is now
+**checked**, and where the fault is a recoverable miscount, **self-corrected**.
 
 Three user-visible capabilities:
 
-- **Navigation drift is caught and repaired.** A restore that lands on the wrong set detects it from
-  the set's own header, learns where it actually sits, and moves the remaining delta. The restore
-  succeeds where it would previously have failed a CRC check or silently restored the wrong bytes.
-- **A mid-operation cartridge swap is caught.** Media identity is verified at the moment of set
-  access, not only at load — closing the window the service's load-time check cannot cover.
-- **Legacy coexistence stays automatic.** Header-less volumes carry no set headers, are known to
-  carry none before any read, and restore exactly as they do today.
+- **Navigation drift is caught and repaired.** A restore that lands on the wrong set detects it from the
+  set's own header, learns where it actually sits, and moves the remaining delta. The restore succeeds
+  where it would previously have failed a CRC check or silently restored the wrong bytes.
+- **A mid-operation cartridge swap is caught.** Media identity is verified at the moment of set access,
+  not only at load — closing the window the service's load-time check cannot cover.
+- **Legacy coexistence is automatic.** Header-less volumes carry no set headers, are known to carry none
+  before any read, and restore exactly as they did before.
 
-The set header is **additive and position-neutral**: it carries no tapemark, never alters setmark or
-filemark arithmetic, and costs zero extra tape movement on the restore path.
+The set header is **additive and position-neutral**: no tapemark, no change to setmark or filemark
+arithmetic, and no extra tape movement on the restore path.
 
 ---
 
@@ -38,173 +42,106 @@ filemark arithmetic, and costs zero extra tape movement on the restore path.
 |---|---|
 | **Checked, not trusted** | Every content-set read verifies the set it landed on against a framed-CRC record before delivering a single file byte. |
 | **Correct on read, fail on write** | A read-side miscount is recoverable — move the delta and re-verify. A write-side miscount would destroy data, so v1 never writes speculatively and never self-corrects a write. |
-| **Relative correction only** | The header states *where the head is*. Re-navigating from an absolute anchor reproduces the original miscount; only the delta exploits the new information (§9.3). |
-| **A priori facts only** | The header precedes its set's content, so it carries only what is known before the first file — identity and indices, never file counts or totals. |
+| **Relative correction only** | The header states *where the head is*. Re-navigating from an absolute anchor reproduces the original miscount; only the delta exploits the new information (§8.3). |
+| **A-priori facts only** | The header precedes its set's content, so it carries only what is known before the first file — identity and indices, never file counts or totals. |
 | **Presence is declared, never probed** | The media header states whether set headers exist. No per-set "is this a header?" gamble, no backtracking. |
-| **Counting stays sacred** | No mark, no boundary, no navigator arithmetic change. The §5.7 merged-filemark optimization survives untouched. |
+| **Counting stays sacred** | No mark, no boundary, no navigator arithmetic change. The merged-filemark optimization of the media-header design survives untouched. |
 
 ---
 
 ## 3. The record — `TapeSetHeader`
 
-### 3.1 Shape
+`TapeSetHeader.cs` defines the record; `TapeHeaderKind.Set` was already reserved, so wiring it into the
+polymorphic probe cost one arm in `TapeHeader.ConstructFrom`.
 
-```csharp
-public enum TapeHeaderKind : byte { Unknown = 0, Media = 1, Calibration = 2, Set = 3 }   // Set already reserved
+| Member | Role |
+|---|---|
+| `MediaId` | Series identity; reinterprets the base `Id` slot. |
+| `SetBlockSize` | The set's on-tape block size; reinterprets the base `BlockSize` slot (INV-13). **Advisory** (SH-11). |
+| `Volume` | The volume carrying this set. |
+| `VolumeSetIndex` | 0-based index on its volume — the **functional** index, the one navigation is verified against. |
+| `GlobalSetIndex` | 1-based index in the series — **attribution**, advisory (SH-11). |
+| `Description` | Clamped snapshot of the set's description, for diagnostics; `DisplayName` synthesizes one when absent. |
 
-public sealed record TapeSetHeader : TapeHeader
-{
-    public override TapeHeaderKind Kind => TapeHeaderKind.Set;
+### 3.1 What is deliberately absent
 
-    public Guid MediaId       { get => Id;        init => Id = value; }         // base slot
-    public uint SetBlockSize  { get => BlockSize; init => BlockSize = value; }  // base slot (§3.2)
+Compression mode, hash algorithm, and a *binding* block size are not carried. They would duplicate the
+TOC with no decision procedure — a disagreement would either make the header dead weight or demote the
+TOC to a secondary authority — and they cannot be acted on at the moment they are read, because
+`BeginReadContentForCurrentSet` has already committed to the TOC's parameters. Every field is also a
+field to version, and the header hierarchy is closed and co-versioned.
 
-    public required int  Volume         { get; init; }   // volume carrying THIS set
-    public required int  VolumeSetIndex { get; init; }   // 0-based on volume — the functional index
-    public required int  GlobalSetIndex { get; init; }   // 1-based in series — attribution, advisory
-    public string?       Description    { get; init; }   // clamped snapshot, for ToString() only
+`Description` is the single exception, admitted for the same reason `TapeMediaHeader.OriginalName` is:
+a drift message must name *which* set, not merely an integer.
 
-    internal static TapeSetHeader? ConstructBody(TapeDeserializer d, TapeHeaderPreamble p);
-    public override string ToString();   // "Set #3 (vol 2, on-volume 1) of media {Id:N} — 'Weekly'"
-}
-```
+### 3.2 Why identity is carried despite the media header
 
-Wiring into the polymorphic probe costs **one arm**:
-
-```csharp
-TapeHeaderKind.Set => TapeSetHeader.ConstructBody(d, p),
-```
-
-Nothing else in `TapeFramer`, `TapeHeaderBlock`, or the classification path changes. The
-calibration-side cross-classification (Design-TapeHeader.md §8.3) already anticipates a `Set`
-stranger in its `ForeignHeader` branch.
-
-### 3.2 `SetBlockSize` fills the base slot, and is advisory
-
-`TapeHeader` mandates a reinterpretable `BlockSize` slot (INV-13). For a set header the only coherent
-meaning is the set's own on-tape block size, which is known a priori. It therefore fills the slot at
-no cost and with no new field.
-
-It remains **advisory**. The TOC stays authoritative for every set parameter. A disagreement is
-logged, never acted on. Believing the header instead would introduce a second trust hierarchy for
-the same fact, with no mechanism to arbitrate between them.
-
-### 3.3 Omitted fields, and why
-
-Compression mode, hash algorithm and a non-advisory block size are deliberately **not** carried:
-
-- **They duplicate the TOC with no decision procedure.** If the header says 256 KiB and the TOC says
-  64 KiB, either answer is wrong: ignoring the header makes it dead weight, honouring it demotes the
-  TOC to a secondary authority that nothing else in the library recognizes.
-- **They cannot be acted on at the moment they are read.** By the time the set header is parsed,
-  `BeginReadContentForCurrentSet` has already committed to the TOC's parameters — block size and the
-  hardware-compression interlock are applied from `TOC.CurrentSetTOC`.
-- **Every field is a field to version.** The header hierarchy is closed and co-versioned; each
-  addition is a permanent format concession.
-
-`Description` is the single exception, admitted for the same reason `OriginalName` is admitted to the
-media header: diagnostics must name *which* set, not merely an integer.
-
-**`MediaId` and `Volume` are carried despite duplicating the media header's check.** They differ in
-*when* they are read and in *what they enable*:
+`MediaId` and `Volume` duplicate a check the media header already performs, but they differ in *when*
+they are read and in *what they enable*:
 
 | | Media header | Set header |
 |---|---|---|
-| Read at | media load (service, `RefreshLoadedHeader`) | every content-set access (agent) |
+| Read at | media load (`TapeServiceBase.RefreshLoadedHeader`) | every content-set access (agent) |
 | Catches | wrong cartridge before the operation | cartridge swapped *during* the operation |
 | Enables | the load-time verdict + prompt | **disambiguating index drift from wrong-tape** |
 
-The last row carries the real weight. Without `MediaId` in the set header a set-index mismatch is
-uninterpretable — a miscount and a swapped cartridge are indistinguishable, and the correction logic
-of §9 would have no safe entry condition. With it, the failure mode is typed before any action is
-taken.
+The last row carries the weight. Without `MediaId` in the set header a set-index mismatch is
+uninterpretable — a miscount and a swapped cartridge would be indistinguishable, and the correction of §8
+would have no safe entry condition.
 
-### 3.4 Factory — `TapeTOC`
+### 3.3 The TOC is the sole factory
 
-`TapeSetTOC` knows neither its own index nor the media identity. `TapeTOC` owns series identity
-(`EnsureMediaId`) and set indexing (`CurrentSetIndex`, `FirstSetOnVolume`, `CurrentSetIndexOnVolume`),
-so it is the only object able to answer "which set of which medium is this?".
+`TapeTOC.CreateSetHeader(int)` and `CreateSetHeaderForCurrentSet()` build every set header.
+`TapeSetTOC` knows neither its own index nor the media identity; `TapeTOC` owns series identity
+(`EnsureMediaId`) and set indexing, so it is the only object able to answer "which set of which medium is
+this?". This preserves the established rule: **each header kind is built by the subsystem that owns its
+identity** — `TapeTOC` for media and set, `TapeCalibrator` for runs.
 
-```csharp
-// TapeTOC — sole builder of the SET header. Mirrors CreateHeader.
-public TapeSetHeader CreateSetHeader(int setIndex) => new()
-{
-    MediaId        = EnsureMediaId(),
-    CreatedUtc     = DateTime.UtcNow,
-    SetBlockSize   = this[setIndex].BlockSize,
-    Volume         = this[setIndex].Volume,
-    VolumeSetIndex = setIndex - FirstSetOnVolume,
-    GlobalSetIndex = setIndex,
-    Description    = TapeSetHeader.ClampName(this[setIndex].Description),
-};
-
-public TapeSetHeader CreateSetHeaderForCurrentSet() => CreateSetHeader(CurrentSetIndex);
-```
-
-This preserves the established rule: **each header kind is built by the subsystem that owns its
-identity** — `TapeTOC` for media and set, `TapeCalibrator` for runs. The three factories share the
-grammar, never a construction path.
+One subtlety lives in `TapeTOC.FirstSetInternalOfVolume`: `CreateSetHeader` accepts *any* set index, so
+it scans forward for the volume's first set rather than using the mounted-volume-anchored
+`FirstSetInternalOnVolume` property, which would make `VolumeSetIndex` depend on where the TOC happens to
+point — and go negative for a set on an earlier volume.
 
 ---
 
-## 4. Presence — declared by the media header, never probed
+## 4. Presence — declared by the media header
 
-### 4.1 A stray block at a set start costs nothing
+### 4.1 The declaration
 
-Both restore paths position **absolutely**. `RestoreNextFile` calls
-`Manager.BeginPackedFileRead(tfi.Address, totalBytes)`, which seeks the pipelined reader to the
-file's exact `(block, offset)`; the obsolete aligned path calls `Drive.MoveToBlock(tfi.Block)`.
-Neither depends on where the head sits when the set's first file begins.
+`TapeMediaHeader.HasSetHeaders` is one body field, self-describing exactly like `TocPlacement`. The media
+header is read once per volume at every content choke-point (`TapeFileAgent.EnsureMediaHeaderResolved`)
+and by the service at every load and volume swap, so the flag rides along at zero I/O cost — and
+**per-volume re-resolution comes free**, which is what makes a mixed series (legacy volume 1, headed
+volumes 2+) work.
 
-Consuming one block at the start of a set is therefore free, and no "un-read" or backtrack primitive
-is required. The question of recovering a mis-consumed block does not arise.
+The resolved flag is cached on the **navigator** as `SetHeadersExpected`, alongside
+`MediaHeaderPresence`, so both reset together on every media (re)load and INV-9 extends to set headers
+with no new machinery.
 
-### 4.2 Presence is nevertheless declared, not probed
+### 4.2 The pairing rule
 
-Probe-and-recover remains the wrong shape for a different reason: it converts "no header" into an
-*ambiguity* (blank? torn? legacy? foreign?) at a point where the answer is already knowable for free.
+**SH-1: media-header-present ∧ `HasSetHeaders` ⟺ set-headers-present, uniformly per volume.** A volume is
+headed-with-sets, headed-without-sets, or legacy — never mixed within itself.
 
-Instead, **the media header declares it**:
+The flag exists to make the middle state expressible: media written by the release that shipped media
+headers alone. A format field is cheapest *before* headers reach the field and cannot be retrofitted
+cleanly afterwards, so one bool buys permanent freedom to ship the two features independently.
 
-```csharp
-// TapeMediaHeader — one new body field, self-describing, exactly like TocPlacement
-public bool HasSetHeaders { get; init; }
-```
+### 4.3 Why declared rather than probed
 
-The media header is read once per volume at every content choke-point
-(`EnsureMediaHeaderResolved`) and by the service at every load and every volume swap. The flag rides
-along at zero I/O cost, and **per-volume re-resolution comes free** — a mixed series (legacy volume 1,
-headed volume 2+) yields the correct answer per volume through the same mechanism that already makes
-the `_MixHeaded` crown test pass.
-
-The resolved flag is cached on the **navigator**, as `SetHeadersExpected`, alongside
-`MediaHeaderPresence` — so both reset together on every media (re)load and INV-9 extends to set
-headers without new machinery.
-
-### 4.3 The pairing rule, and the shipping window
-
-**SH-1: media-header-present ∧ `HasSetHeaders` ⟺ set-headers-present, uniformly per volume.**
-
-A volume is headed-with-sets, headed-without-sets, or legacy — never mixed within itself.
-
-The flag exists to make the middle state expressible: media written by the v12 release, which heads
-the cartridge but writes no set headers. If set headers ship in the same release as the media header,
-the flag is pure insurance. It should be carried regardless. Design-TapeHeader.md §15.1 establishes
-the governing rule — a format field is cheapest *before* headers reach the field, and cannot be
-retrofitted cleanly afterwards. One bool buys permanent freedom to ship the two features
-independently.
+Both restore paths position **absolutely** — `RestoreNextFile` seeks the pipelined reader to the file's
+exact `(block, offset)` — so consuming a stray block at a set start would cost nothing, and no "un-read"
+primitive is needed. Probing is nevertheless the wrong shape for a different reason: it converts "no
+header" into an *ambiguity* (blank? torn? legacy? foreign?) at a point where the answer is already
+knowable for free.
 
 ### 4.4 The anomaly path
 
-When `SetHeadersExpected` is true and the block at the set start does **not** classify as a set
-header, that is a genuine anomaly rather than a legacy case. The agent then:
-
-1. Logs a warning naming the set and the classification outcome.
-2. Proceeds with the restore — absolute positioning makes this safe (§4.1).
-3. Does **not** fail.
-
-This follows the golden rule inherited from the media header: *a record that cannot be verified never
-blocks*. An unreadable set header removes a safety net; it does not remove the tape's data.
+When `SetHeadersExpected` is true and the block at the set start does not classify as a set header, that
+is a genuine anomaly rather than a legacy case. `HandleSetHeaderVerdict` logs a warning, re-anchors the
+navigator if the failed read reset the content position (SH-6), clears the error, and **proceeds**. This
+follows the golden rule inherited from the media header: *a record that cannot be verified never blocks*.
+An unreadable set header removes a safety net; it does not remove the tape's data.
 
 ---
 
@@ -217,446 +154,374 @@ Single-partition:  ‹MH›<FM> ‹SH›[set0] [SM] ‹SH›[set1] [SM] … ‹S
 Partitioned:       content:  ‹MH›<FM> ‹SH›[set0] [SM] … ‹SH›[setN] [SM]   |   initiator: [toc1][FM][toc2][FM]
 ```
 
-`‹SH›` is one logical block at the head of each set's data region, written with a single
-`WriteDirect`, with **no tapemark of any kind**.
+`‹SH›` is one logical block at the head of each set's data region, written with a single `WriteDirect`,
+with **no tapemark of any kind** (SH-2).
 
-### 5.2 No trailing filemark — and why §15.1 does not recur
+### 5.2 No trailing filemark
 
-The media header requires its trailing mark because begin-of-content is a **write entry point**:
-content starts there repeatedly, and without a mark that write lands mid-data on a strict drive.
-
-The set header faces no such hazard, because **it is never written into, only written before**:
+The media header requires its trailing mark because begin-of-content is a **write entry point**: content
+starts there repeatedly, and without a mark that write lands mid-data on a strict drive. The set header
+faces no such hazard because **it is never written into, only written before**:
 
 - The set-start position is always already legal — immediately after a setmark/filemark, at
-  begin-of-content (itself post-mark since v12), or at EOD.
-- The set header is the **first** thing written there. That write is post-mark or at-EOD, hence legal
-  on every drive family.
-- Tape writes truncate everything beyond the write point, so the position after that block **is
-  EOD**. Every subsequent write in the set is a sequential append, hence legal.
+  begin-of-content (itself post-mark), or at EOD.
+- The set header is the **first** thing written there, so that write is post-mark or at-EOD.
+- Tape writes truncate, so the position after that block **is** EOD, and every subsequent write in the
+  set is a sequential append.
 
-This **retires the caveat carried in Design-TapeHeader.md §16** ("if verified set navigation ever
-writes from a set boundary, the §15.1 reasoning applies again"). By construction it does not.
+This retires the caveat carried in `Design-TapeHeader.md` §16. One assumption is load-bearing and named
+explicitly: the drive treats a write as truncating. That is universal tape semantics and is modelled by
+the virtual backend (`TruncateFromCurrentPosition`), so it is exercised rather than assumed.
 
-One assumption is load-bearing and named explicitly: the drive treats a write as truncating. That is
-universal tape semantics and is already modelled by the virtual backend
-(`TruncateFromCurrentPosition`), so it is exercised rather than assumed.
+### 5.3 The navigator's only addition
 
-### 5.3 The navigator is unchanged
+The set header lives inside the set's data region, past its opening boundary, so mark counting cannot
+observe it (SH-3). `MoveToBeginOfContentFromBom`, the merged-filemark forward count, INV-1, and
+`TapeNavigatorTOCInPartition` all stand unmodified.
 
-The set header lives inside the set's data region, past its opening boundary. Mark counting therefore
-cannot observe it. Consequences, all of them "nothing to do":
-
-- `MoveToBeginOfContentFromBom` — unaffected; the eight sites of Design-TapeHeader.md §5.5 stand.
-- The §5.7 merged-filemark forward count — unaffected; the set header contributes no mark.
-- INV-1 (the header never increments `CurrentContentSet`) — holds for the set header too.
-- `TapeNavigatorTOCInPartition` — no partition-specific logic; the set header sits in the content
-  partition alongside the sets themselves.
-
-**One addition** is required, and only for the correction path: `ReconcileContentSet` (§9.4).
+The single addition is for the correction path: `TapeNavigator.ReconcileContentSetAndMove` (§8.4).
 
 ### 5.4 Two costs, in two currencies
 
-The set header consumes **one block number** and **16 KiB of tape**. These are distinct quantities:
+The set header consumes **one block number** and **16 KiB of tape**, and these are distinct quantities.
+The block cost is 1 regardless of the set's block size; the byte cost is fixed at 16 KiB because
+`TapeHeaderBlock` sets and restores its own block size around the write. On a 256 KiB set the two diverge
+by a factor of 16 — which is why `ComputeTotalFileSizeOnTape` adds `TapeHeaderBlock.Size` directly rather
+than multiplying a block count.
 
-- *Block number* → file `TapeAddress` values sit one block past the set start. Stamped at commit time
-  from `Drive.BlockCounter`, so this is automatic: **no TOC-address surgery** (§7.3).
-- *16 KiB* → capacity accounting and the early-warning reserve (§11).
-
-The block cost is 1 regardless of the set's block size; the byte cost is fixed at 16 KiB. On a
-256 KiB set the two diverge by a factor of 16.
-
----
-
-## 6. Set header I/O — one primitive, two positioning flavours
-
-### 6.1 The media primitives cannot be reused as-is
-
-`WriteMediaHeaderBlock` / `ReadBomHeaderBlock` perform
-`EndReadWrite()` → `MoveToMediaHeader()` → block op → navigator notification. For the set header all
-three are wrong:
-
-- `EndReadWrite()` would tear down the `ReadingContent` state the restore path has just entered.
-- `MoveToMediaHeader()` would rewind to BOM — the opposite of where the head stands.
-- `OnMediaHeaderWritten()` / `ResolveMediaHeaderPresence()` describe *media* presence and would
-  corrupt it.
-
-### 6.2 The split
-
-The distinguishing axis is **positioning**, so the factoring follows it, leaving the kind-specific
-wrappers thin:
-
-```csharp
-// TapeStreamManager — existing pair, renamed for symmetry (Step 0b)
-public bool WriteMediaHeaderBlock(byte[] framedBlock);   // was WriteHeaderBlock — behaviour unchanged
-public int  ReadBomHeaderBlock(byte[] buffer);         // was ReadHeaderBlock  — behaviour unchanged
-
-// NEW — operate at the CURRENT position. No EndReadWrite, no move, no navigator mutation on success.
-public bool WriteSetHeaderBlock(byte[] framedBlock)
-{
-    ResetError();
-    if (!TapeHeaderBlock.WriteFramed(Drive, framedBlock, bool? withFilemark: null))
-    {
-        SyncErrorFrom(Drive);
-        Navigator.ResetContentSet();      // SH-6: a torn write leaves the position unknown
-        return false;
-    }
-    return true;
-}
-
-public int ReadSetHeaderBlock(byte[] buffer)
-{
-    ResetError();
-    int read = TapeHeaderBlock.Read(Drive, buffer, out _);   // already PURE — no mark handling
-    if (read != buffer.Length)
-    {
-        SyncErrorFrom(Drive);
-        Navigator.ResetContentSet();      // SH-6
-        return -1;
-    }
-    return read;
-}
-```
-
-`TapeHeaderBlock.WriteFramed` gains a `withFilemark` parameter (default `null`, preserving the default media
-path). `TapeHeaderBlock.Read` needs **no change**: v12 already made it deliberately pure, leaving the
-head before any trailing mark. The write-after / read-before asymmetry documented in
-Design-TapeHeader.md §6.1 is precisely what the set header requires.
-
-### 6.3 Navigator discipline on the set-header primitives
-
-**On success, nothing. On failure, `ResetContentSet()`.** A torn block operation leaves the physical
-position unknowable; INV-15 already establishes that discipline for the media path. Leaving a stale
-`CurrentContentSet` after a failed read would feed a falsehood into the very correction logic this
-feature exists to power.
-
-### 6.4 Raw block I/O inside `ReadingContent`
-
-The set-header read occurs while the manager sits in `TapeState.ReadingContent`, which normally
-forbids raw drive access. It is safe for one specific reason: **`TapeFilePipelinedReader` is
-constructed lazily inside `BeginPackedFileRead`**, so no prefetch worker exists yet.
-
-**SH-7: the set header is read immediately after `BeginReadContent()` returns and strictly before the
-first `BeginPackedFileRead`.** Violating the ordering races a live worker thread against a raw
-`ReadDirect`.
+The block cost needs no TOC-address surgery: file addresses are stamped at commit time from the packer's
+anchor, which is taken *after* the header is on tape (§6.2).
 
 ---
 
-## 7. Writing the set header
+## 6. Writing the set header
 
-### 7.1 The gate
+### 6.1 The gate
 
-```csharp
-// TapeFileAgent — mirrors WritesMediaHeader
-public bool WritesSetHeaders { get; set; } = true;
+`TapeFileAgent.WritesSetHeaders` mirrors `WritesMediaHeader`; `TapeFileAgent.WriteSetHeader()` builds the
+record via the TOC, frames it through `TapeHeaderBlock.Frame`, and hands it to
+`TapeStreamManager.WriteSetHeaderBlock`.
 
-public TapeResult WriteSetHeader()
-{
-    var header = TOC.CreateSetHeaderForCurrentSet();
-    byte[]? block = TapeHeaderBlock.Frame(header);
-    if (block is null)
-    {
-        SetError(WIN32_ERROR.ERROR_INSUFFICIENT_BUFFER, "Set header too large for its block");
-        return TapeResult.Fail(this);
-    }
-    if (!Manager.WriteSetHeaderBlock(block))
-    {
-        SyncErrorFrom(Manager);
-        return TapeResult.Fail(this);
-    }
-    m_logger.LogTrace("Set header written: {Header}", header);
-    return TapeResult.OK;
-}
-```
+**The condition is presence, not novelty.** `TapeFileBackupAgent.BeginWriteContentForCurrentSet` writes a
+set header whenever content writing begins at a set's first block — covering `newSet: true` (fresh set at
+EOD or at begin-of-content) *and* `newSet: false` (rewrite of the current set from its start). Both
+destroy whatever stood there, so both stamp a fresh header. Multi-volume continuation is covered
+automatically: a continuation set is a new set on the new volume, with `VolumeSetIndex = 0`.
 
-**The condition is presence, not novelty.** A set header is written whenever content writing begins
-at a set's first block — covering `newSet: true` (fresh set at EOD or at begin-of-content) *and*
-`newSet: false` (rewrite of the current set from its start). Both destroy whatever stood there, so
-both stamp a fresh header. Multi-volume continuation is covered automatically: a continuation set is
-a new set on the new volume, with `VolumeSetIndex = 0`.
+The gate tests `Navigator.MediaHeaderPresence == Present`, not merely the flag — SH-1 again: on a legacy
+volume nothing declares the header's existence, so writing one would produce a block no reader can be
+told about.
 
-### 7.2 The ordering seam
+### 6.2 The ordering seam
 
-`BeginWriteContentForCurrentSet` has no seam between "positioned at the set" and "packer created":
-`Manager.BeginWriteContent` performs `MoveToTargetContentSet()` and `EnsurePackerCreated()` back to
-back, and the packer anchors on `Drive.BlockCounter` at creation.
+`Manager.BeginWriteContent` runs `MoveToTargetContentSet()` and `EnsurePackerCreated()` back to back with
+no seam, and the packer anchors on `Drive.CurrentBlock`. Rather than thread a callback through the
+manager, `BeginWriteContentForCurrentSet` **hoists** the positioning: it calls `MoveToTargetContentSet()`
+itself, writes the header, and only then enters the write state.
 
-Rather than thread a callback through the manager, the positioning is **hoisted**:
+The placement within that method is deliberate and documented in the code:
 
-```csharp
-// TapeFileBackupAgent.BeginWriteContentForCurrentSet — after the media-header gate and EndReadWrite
-Navigator.TargetContentSet = newSet ? ((TOC.CurrentSetIndexOnVolume > 0) ? -1 : 0)
-                                    : CurrentSetAsNavigatorContentSet;
-
-// NEW — position explicitly, stamp the header, THEN enter the write state.
-if (WritesSetHeaders && Navigator.MediaHeaderPresence == TapeHeaderPresence.Present)
-{
-    if (!Navigator.MoveToTargetContentSet())
-    {
-        SyncErrorFrom(Navigator);
-        return false;
-    }
-    if (!WriteSetHeader())
-        return false;
-}
-
-// …SetBlockSize / compression interlock / early warning / NotifyNextContentWritePosition…
-
-if (!Manager.BeginWriteContent(remainingCapacity))   // its MoveToTargetContentSet now short-circuits
-    …
-```
+- **after** `SetBlockSize` + the TOC reconciliation, so the header records the block size the drive
+  actually accepted;
+- **after** `SetEarlyWarning` / `NotifyNextContentWritePosition`, so the header's 16 KiB counts against
+  the TOC reserve like any other content byte;
+- **before** `Manager.BeginWriteContent`, so the header is on tape before the packer anchors.
 
 **SH-4: positioning to the target content set is idempotent.** `MoveToTargetContentSet` returns
-immediately when `TargetContentSet == CurrentContentSet`, so the manager's later call is a genuine
-no-op — no second transport move, no re-derivation. This holds for the base implementation *and* for
-the `TapeNavigatorTOCInSet` §5.7 override, whose fast path requires `CurrentContentSet < 0` and
-therefore declines after a successful positioning.
+immediately when `TargetContentSet == CurrentContentSet`, so the manager's later call is a genuine no-op.
+This holds for the base implementation and for the `TapeNavigatorTOCInSet` fast-path override, whose
+precondition (`CurrentContentSet < 0`) declines after a successful positioning.
 
-The invariant is load-bearing. It is stated in the navigator's XML documentation and asserted by test
-(Step 0d).
+### 6.3 Paths that need nothing
 
-### 7.3 Addresses and block size follow correctly
-
-- `Drive.SetBlockSize(CurrentSetTOC.BlockSize)` still runs after the header write. `TapeHeaderBlock`
-  sets and restores 16 KiB around its own `WriteDirect`, so the set's block size is never disturbed.
-- `EnsurePackerCreated` anchors `startBlock = Drive.BlockCounter` **after** the header block, so every
-  committed `TapeAddress` lands past it. Design-TapeHeader.md §16's prediction — *"written before the
-  packer anchors, so file `TapeAddress`es sit past it and no TOC-address surgery is needed"* — holds
-  exactly.
-
-### 7.4 Paths that need nothing
-
-- **Format / `BackupInitialTOC`** — writes the media header and the TOC; no content set. Untouched.
-- **`DeleteSetsFromCurrentSetUp`, trailing branch** — rewrites a setmark at the retention boundary;
-  deleted sets' headers are truncated with their data, retained sets keep theirs.
-- **`DeleteSetsFromCurrentSetUp`, delete-all branch** — lands at begin-of-content past the media
-  header and writes a fresh initial TOC. No set exists, so no set header. Untouched.
-- **Rename, TOC save/restore/import** — end-relative and header-agnostic.
+`BackupInitialTOC` (no content set), both branches of `DeleteSetsFromCurrentSetUp` (deleted sets'
+headers truncate with their data; the delete-all branch writes only a TOC), and rename / TOC
+save-restore-import (end-relative and header-agnostic).
 
 ---
 
-## 8. Reading the set header
+## 7. Reading the set header
+
+`TapeFileRestoreBaseAgent.BeginReadContentForCurrentSet` resolves media presence, ends any read/write,
+sets the target, transitions to `ReadingContent`, and then verifies — before the block size and
+compression interlock are applied, and long before any file byte is delivered.
+
+### 7.1 Exactly one read per positioning
+
+`Manager.BeginReadContent()` **early-returns without moving** when it already sits in `ReadingContent` at
+the requested set. An unconditional read there would consume a *content* block and corrupt the first
+file.
+
+SH-8 is therefore enforced by capturing, **before** `BeginReadContent`, whether the head will actually
+move:
 
 ```csharp
-// TapeFileRestoreBaseAgent.BeginReadContentForCurrentSet
-EnsureMediaHeaderResolved();                      // media presence + SetHeadersExpected (§4.2)
-if (!Manager.EndReadWrite()) { … }
-Navigator.TargetContentSet = CurrentSetAsNavigatorContentSet;
-if (!Manager.BeginReadContent()) { … }            // positions at the set start
-
-if (!VerifySetHeaderForCurrentSet())              // NEW — one ReadDirect + verdict + optional correction
-    return false;
-
-Drive.SetBlockSize(TOC.CurrentSetTOC.BlockSize);
-Drive.SetHardwareCompression(…);
+bool willPositionAtSetStart = Navigator.TargetContentSet != Navigator.CurrentContentSet;
 ```
 
-### 8.1 Exactly one read per positioning
+That one expression decides whether the head will land on the set's first block — the only position where
+a set header sits. It is knowable only at that moment, which is why it is captured there rather than
+derived afterwards.
 
-`Manager.BeginReadContent()` **early-returns without moving** when it already sits in
-`ReadingContent` at the requested set. An unconditional read there would consume a *content* block
-and corrupt the first file.
+### 7.2 Raw block I/O inside `ReadingContent`
 
-```csharp
-private int m_setHeaderVerifiedFor = int.MinValue;   // cleared whenever the navigator is renewed
-```
+The set-header read occurs while the manager sits in `TapeState.ReadingContent`, which normally forbids
+raw drive access. It is safe for one specific reason: **`TapeFilePipelinedReader` is constructed lazily
+inside `BeginPackedFileRead`**, so no prefetch worker exists yet.
 
-**SH-8: the set header is read exactly once per physical positioning at a set.** The guard keys on
-the set index, not on a bare bool.
+**SH-7** is enforced in `ReadSetHeaderBlock` as a hard guard (`m_readPacker is not null` → fail), not a
+`Debug.Assert`: the consequence of violating it is a data race against the prefetch worker, so it must
+fail identically in Debug and Release — and an assert would make the violation untestable.
+
+`ReadSetHeaderBlock` also saves and restores `Drive.ByteCounter` around its read: the set header is
+metadata the caller never asked for, and `BeginReadWrite` has just zeroed that counter for the set's
+*files*.
 
 ---
 
-## 9. The verdict ladder and the navigation correction
+## 8. The verdict ladder and the correction
 
-### 9.1 Classification
+### 8.1 Classification
 
-```csharp
-public enum TapeSetHeaderVerdict
-{
-    Match,          // MediaId, Volume, VolumeSetIndex all agree
-    NotExpected,    // legacy / header-less volume — never reached
-    Unreadable,     // expected but not classifiable — anomaly, warn and proceed (§4.4)
-    WrongMedia,     // MediaId differs — cartridge swapped mid-operation
-    WrongVolume,    // MediaId agrees, Volume differs — right series, wrong cartridge
-    SetIndexDrift,  // identity agrees, VolumeSetIndex differs — recoverable navigation error
-}
-```
+`TapeSetHeaderVerdict` (in `TapeRestoreAgent.cs`) is produced by `ClassifySetHeader`, which is **pure** —
+no I/O, no state change — so the ladder is unit-testable without a tape.
 
 | Verdict | Action | Rationale |
 |---|---|---|
-| `Match` | proceed silently, trace only | the overwhelmingly common case; must stay provably silent |
+| `Match` | proceed, trace only | the overwhelmingly common case; provably silent |
 | `NotExpected` | proceed silently | legacy volumes remain first-class citizens |
 | `Unreadable` | **warn, proceed** | an unverifiable record removes a net, not the data (§4.4) |
-| `WrongMedia` | **fail the set** | every in-memory assumption is void, including the TOC; nothing is correctable |
-| `WrongVolume` | **fail the set** | file addresses are physical-per-volume, so a right-series wrong-volume tape yields garbage at every address |
-| `SetIndexDrift` | **correct once, re-verify** | attempt to correct the fault once, re-verify — bounded by a re-entrancy guard (§9.3) |
+| `WrongMedia` | **fail the set** | every in-memory assumption is void, including the TOC |
+| `WrongVolume` | **fail the set** | file addresses are physical-per-volume; every address would resolve to garbage |
+| `SetIndexDrift` | **correct once, re-verify** | recoverable miscount, bounded by a re-entrancy guard (§8.3) |
 
-`GlobalSetIndex` is **checked but never gating** — a mismatch logs a warning and nothing more. This
-mirrors the TOC-import reasoning in Design-TapeHeader.md §9.5: `Volume` is *functional*, `MediaId` is
-*identity*. Here `VolumeSetIndex` is functional (it drives navigation) while `GlobalSetIndex` is
+Checks run in order of what each field can tell us: identity first (is this even the right cartridge?),
+then position (are we where we think we are?). Reversing the order would make a swapped cartridge look
+like a navigation miscount and invite a correction that cannot help.
+
+**Identity is skipped when the TOC has no `MediaId`.** A TOC that predates identity stamping — imported,
+or legacy — would otherwise fail every restore against `Guid.Empty`. The positional checks still apply,
+and they are the ones that carry the feature. The same guard exists at the service layer in
+`TapeServiceBase.EvaluateLoadedHeader`, where `Guid.Empty` likewise means *no expectation*, never *expect
+zero*.
+
+`GlobalSetIndex` and `SetBlockSize` are **checked but never gating** (SH-11): a mismatch logs a warning
+and nothing more. `VolumeSetIndex` is functional — it drives navigation — while `GlobalSetIndex` is
 attribution, and attribution can legitimately shift after a TOC import or a partial-series rebuild.
-Gating on it would fail correct restores.
 
-### 9.2 Identity mismatch is an agent-level error
+### 8.2 Identity mismatch is an agent-level error
 
 The agent detects; the service explains. On `WrongMedia` or `WrongVolume` the agent sets the error and
-returns failure, and the existing `TapeResult` → service → host chain surfaces it. No prompt is
-raised in v1: a cartridge swapped mid-restore is not a decision to offer the user, and the agent has
-no host access by design.
+fails the set, and the diagnosis reaches the user through the `TapeResult` → service → host chain (§10).
+No prompt is raised: a cartridge swapped mid-restore is not a decision to offer the user, and the agent
+has no host access by design.
 
-`TapeMediaVerdict.MediaInconsistent` — already reserved in the media-header design — is the natural
-service-side mapping once this is surfaced as a typed verdict rather than a message (§15.3).
+### 8.3 The correction — bounded, verified, relative
 
-### 9.3 The correction — bounded, verified, relative
-
-Three constraints make the correction safe:
+`CorrectSetNavigation` implements it. Three constraints make it safe:
 
 **(a) Relative, never absolute.** If navigation proceeded from BOM by *x* marks and landed at set *y*,
-re-navigating from BOM by *x* marks lands at *y* again — the miscount is in the physical mark
-structure, not in the arithmetic. Only the **delta** (*x − y*) exploits the new information. Setting
-`CurrentContentSet = y` and re-issuing `MoveToTargetContentSet()` does exactly that, since the
-navigator's set moves are relative mark-spacing operations. Corollary: the correction must **not**
-re-anchor to BOM or EOD.
+re-navigating from BOM by *x* marks lands at *y* again — the miscount is in the physical mark structure,
+not in the arithmetic. Only the **delta** exploits the new information.
 
-**(b) Bounded — one retry.** Correct, re-read, re-verify. On `Match`, proceed with a warning; on
-anything else, fail. No third attempt: a tape whose mark structure defeats a short relative move is
-inconsistent rather than noisy.
+**(b) Bounded — one retry.** Correct, re-read, re-verify. `m_correctingSetNavigation` makes a second
+disagreement terminal rather than recursive. The re-verify routes back through
+`HandleSetHeaderVerdict`, so every failure mode keeps its own diagnosis and error code, defined exactly
+once.
 
-**(c) Read-side only.** A write-side miscount means the agent is about to overwrite the wrong set.
-There, failing is correct and correcting is reckless. v1 writes the set header and never reads one on
-the backup path, which also leaves the write path's cost profile — the LTO-speed bottleneck —
-untouched.
+**(c) Read-side only.** Nothing on the backup path calls it. A write-side miscount means the agent is
+about to overwrite the wrong set, where failing is correct and correcting is reckless (§12.3).
 
-```csharp
-// TapeFileRestoreBaseAgent — the correction, in full
-case TapeSetHeaderVerdict.SetIndexDrift:
-    // Proceed with the bounded relative correction (Step 6). This replaces raising a hard
-    //  failure error — restoring from the wrong set would silently deliver wrong bytes.
-    m_logger.LogError(
-        "Set navigation drift at set #{Set}: navigator reported on-volume set {Expected}, " +
-        "header says {Actual} (delta {Delta})",
-        TOC.CurrentSetIndex, TOC.CurrentSetIndexOnVolume, header!.VolumeSetIndex,
-        TOC.CurrentSetIndexOnVolume - header.VolumeSetIndex);
-    // SetError(WIN32_ERROR.ERROR_INVALID_DATA,
-    //    $"Set navigation drift at set #{TOC.CurrentSetIndex}: positioned at on-volume set " +
-    //    $"{header.VolumeSetIndex}, expected {TOC.CurrentSetIndexOnVolume}");
-    // return false;
-    return CorrectSetNavigation(header!);
-    ...
+`CorrectsSetNavigation` (default `true`) turns the repair off without disabling the *check*, surfaced as
+`RestoreRequest.CorrectSetNavigation`. Three reasons a user would want it: diagnosing a drive that
+miscounts marks, auditing under a strict-verification policy, and preserving a suspect cartridge's
+landing position for forensics. Correction never hides the fault, but it does move the head — which is
+sometimes exactly what an investigator does not want.
 
-    private bool CorrectSetNavigation(TapeSetHeader header)
-    {
-        int actual = header.VolumeSetIndex;
-        int expected = TOC.CurrentSetIndexOnVolume;
+### 8.4 The navigator addition
 
-        if (m_correctingSetNavigation)
-        {
-            // Second disagreement within one correction — stop (SH-10).
-            SetError(WIN32_ERROR.ERROR_INVALID_DATA,
-                $"Set navigation could not be corrected for set #{TOC.CurrentSetIndex}");
-            return false;
-        }
+`TapeNavigator.ReconcileContentSetAndMove(actualContentSet, targetContentSet)` — `internal`, single
+caller, documented precondition (SH-9: only from a positively classified header with matching identity).
 
-        // Believe the header and move the RELATIVE delta (§9.3a). Re-navigating from an anchor would
-        //  reproduce the very miscount we are correcting.
-        if (!Navigator.ReconcileContentSetAndMove(actual, expected))
-        {
-            SyncErrorFrom(Navigator);
-            return false;
-        }
+It takes **both** positions and moves the delta in one call, rather than exposing a bare
+`ReconcileContentSet` setter followed by a re-target. The reason is mechanical: `MoveToTargetContentSet`
+opens with the SH-4 idempotence check, and on the drift path `TargetContentSet` already holds the
+intended set — so setting `CurrentContentSet` and calling it again would return `true` without moving,
+and the correction would silently do nothing. The delta must be expressed explicitly.
 
-        // Re-verify exactly once. The guard makes any further drift terminal rather than recursive.
-        m_correctingSetNavigation = true;
-        try
-        {
-            var again = ReadSetHeader();
-            var verdict = ClassifySetHeader(again);
-
-            if (verdict != TapeSetHeaderVerdict.Match)
-            {
-                // Route through the ladder so each failure mode keeps its own diagnosis and error code.
-                //  A drift here re-enters CorrectSetNavigation, which the guard turns into a clean stop.
-                return HandleSetHeaderVerdict(verdict, again);
-            }
-
-            // Successfully corrected and re-verified.
-            return true;
-        }
-        finally
-        {
-            m_correctingSetNavigation = false;
-        }
-    }
-
-```
-
-### 9.4 The navigator addition for reconciliation
-
-```csharp
-/// <summary>
-/// Adopts a content-set position established by a POSITIVELY VERIFIED set header and moves the
-///  RELATIVE delta to the intended set (SH-9, SH-10).
-/// </summary>
-internal bool ReconcileContentSetAndMove(int actualContentSet, int targetContentSet)
-```
-
-`internal`, single caller, documented precondition. The head sits one block *into* the set when this
-runs — semantically still "in set *y*", and correct for relative mark spacing, which is
-position-relative rather than block-relative.
-
-> **Why not "set the position, then re-target".** `MoveToTargetContentSet` opens with the SH-4
-> idempotence check, and on the drift path `TargetContentSet` already holds the intended set — so setting
-> `CurrentContentSet` and calling it again returns `true` without moving. The correction must express the
-> delta explicitly!
+The backward direction is asymmetric: spacing back by N marks lands *before* the Nth preceding mark, so
+the implementation splits it into `delta − 1` then forward-one, with a BOM branch for set 0 — the same
+two-step the main navigation path uses, for the same reason.
 
 ---
 
-## 10. A defect the feature surfaces — the stale presence latch
+## 9. Capacity and size accounting (SH-12)
 
-`TapeFileAgent.m_headerResolved` is a per-agent latch that outlives the navigator it describes:
+Each set header consumes 16 KiB of content capacity. Three consumers learn it, each with its own source
+of truth for the flag:
 
-```csharp
-internal void EnsureHeaderResolved()
-{
-    if (m_headerResolved || Navigator.HeaderPresence != TapeHeaderPresence.Unknown)
-    {
-        m_headerResolved = true;
-        return;
-    }
-    ReadHeader();
-}
-```
+| Consumer | Flag source | Why |
+|---|---|---|
+| `TapeSetTOC.ComputeTotalFileSizeOnTape(blockSize, withSetHeader)` | caller | feeds `TapeServiceBase.Used` — the number the user reads |
+| `TapeTOC.ComputeContentSizeOnTapeBeforeCurrentSet(..., withSetHeaders)` | `Navigator.SetHeadersExpected` | anchors `Drive.NotifyNextContentWritePosition` on the OVERWRITE path |
+| `TapeServiceBase.Used` | `LoadedMediaHeader?.HasSetHeaders` | the service's cached media header |
 
-`Manager.RenewNavigator()` (volume swap) installs a fresh navigator with `HeaderPresence = Unknown`,
-while `m_headerResolved` stays `true` on the same agent — so `EnsureHeaderResolved` short-circuits
-and presence is never re-resolved on the new volume. The defect is currently **masked, not absent**:
-the service's `RefreshLoadedHeader()` calls `agent.ReadHeader()` directly per volume, bypassing the
-latch. Any agent-driven multi-volume path has no such rescue.
+Presence is a property of the **volume**, declared once in the media header (SH-1) — not of the set — so
+it arrives as a parameter rather than a stored field. Storing it per set would duplicate the declaration,
+create a second place for it to be wrong, and need serializing, which would reopen the format. All
+parameters default `false`, so every pre-existing caller's arithmetic is unchanged.
 
-The field is **redundant**. Every route that resolves presence also records it on the navigator:
-`ReadHeader()` always calls `ResolveHeaderPresence` (Present *or* Absent, including the `read <= 0`
-and failure branches), and `WriteHeader()` → `WriteHeaderBlock` → `OnHeaderWritten()` sets `Present`.
-`Navigator.HeaderPresence != Unknown` is therefore exactly equivalent, and resets per navigator by
-construction.
-
-**Resolution:** delete `m_headerResolved` and gate solely on the navigator's presence field. This is
-a prerequisite rather than a nicety: `SetHeadersExpected` is cached in the same place and inherits
-the same reset semantics (§4.2), so building on the latch would propagate the defect to the new
-feature. Sequenced as Step 0a.
+The overwrite anchor matters more than `Used`: under-reporting there would tell the drive more room
+remains than actually does, and the early warning would fire too late to reserve the TOC.
 
 ---
 
-## 11. Capacity and size accounting
+## 10. What the feature surfaced — error diagnosis and reporting
 
-Each set header consumes 16 KiB of content capacity. Three consequences:
+Implementing the set header exposed a class of defect that had nothing to do with set headers, and fixing
+it became the larger half of the work. It is recorded here because the set header's own failure modes
+depend on it.
 
-- `TapeSetTOC.ComputeTotalFileSizeOnTape` — add `TapeHeaderBlock.Size` per set, on both the packed and
-  aligned paths. Feeds `TapeServiceBase.Used`.
-- `TapeTOC.ComputeContentSizeOnTapeBeforeCurrentSet` — must include preceding sets' headers, since it
-  anchors `Drive.NotifyNextContentWritePosition` on the overwrite path.
-- The early-warning reserve is unaffected in form: it reserves for the TOC, and the set header is
-  spent before any file is written, so it falls naturally inside the accounted content.
+### 10.1 The swallowed diagnosis
 
-Small virtual multi-volume media feel this first, as they did for the media header.
+A set that fails verification fails *before any file is touched*, so `OnFileFailed` never fires and
+`FilesFailed` stays 0. Under `ignoreFailures` (which the service always passes) the loop continues, the
+next set's successful `BeginReadContentForCurrentSet` calls `ResetError()`, and the diagnosis is gone.
+The service then discarded what remained at the implicit `TapeResult → bool` conversion. Net effect: a
+set rejected for `WrongVolume` reported *"completed — no files processed"* and nothing else.
+
+Three mechanisms now carry a diagnosis from the point of failure to the user:
+
+- **`TapeResultBuilder`** — a first-failure latch. `TapeFileAgent.LatchFailure()` records the error at the
+  moment it happens; `FailedOperationResult` returns the latched failure in preference to the live error
+  state. **First** rather than last, because later failures are usually consequences. An abort
+  deliberately does *not* latch — it is a user decision, not a fault — so `BuildFailure` supplies
+  `ERROR_CANCELLED` as a fallback rather than yielding a silent `(false, 0, "")`.
+- **`ServiceOperationResult.Diagnosis`** — the service result *embeds* a `TapeResult`, and `ErrorCode` /
+  `Message` derive from it. Composition rather than conversion: a `with` expression cannot set one and
+  forget the other.
+- **`JudgeFileOperation` / `VerbalizeFileOperation`** (`TapeServiceBase.Outcome.cs`) — classification
+  separated from wording, modelled on `JudgeRecalibration` / `LogRecalibrationDelta`. The
+  `NothingProcessed` verdict is the one that most needs the diagnosis: without it the user is told only
+  that nothing happened.
+
+`TapeCalibrator` carries the same mechanism (`LastResult`, `FailedRunResult`), and for a sharper reason:
+its verbs return `ITapeCalibration?`, so `null` is the entire signal, and several steps — the BOP exits in
+`FindLastCheckpoint`, the legacy probe in `ReadRunHeader`, `InspectMedia`'s final reset — tolerate a
+failure and clear the error.
+
+### 10.2 Abort-channel convergence
+
+Three channels can request an abort: the caller setting `IsAbortRequested`, a callback returning
+`FileFailedAction.Abort`, and a callback **throwing** `TapeAbortRequestedException` — the only channel a
+`void` notification has. The third did not record the flag, so it produced `ERROR_INVALID_STATE` and made
+the service classify a user decision as a failure.
+
+`IsAbortRequested` is now documented as **recording that an abort was requested, by whatever channel**,
+and the notification wrappers (`NotifyPreProcessFile`, `NotifyPostProcessFile`, `NotifyFileSkipped`,
+`NotifyFileFailed`) set it at the point of observation. That placement matters on the packed path:
+`PackedCommitTracker.DrainPostProcess` converts the exception into a `bool` and loses its identity, so a
+handler downstream could no longer tell an abort from a drain failure.
+
+The three channels converge on three properties — the operation fails, the abort is recorded, the
+diagnosis is non-empty — but **not** on the error code. `FailedAction` aborts *in response to* a genuine
+fault, which the handler latches, and the latched cause rightly outranks the user's reaction to it.
+
+### 10.3 Structural fixes found along the way
+
+- **`SetStart` / `SetEnd` balance.** Backup issued one `Start` per operation and N `Ends` (one per
+  volume). Now one of each per set, with `NotifySetStart(filesAdded:)` contributing the file count only
+  on the first set — a continuation re-attempts files already counted, and already un-counted by the EOM
+  rollback. `TapeBackupContext.isContinuation` carries that fact explicitly, because `fileIndex == 0` is
+  legitimately reachable on a continuation when EOM struck on the very first file.
+- **Statistics scope.** Every figure the service reports is cumulative across volumes; the agent's
+  `_stats` never resets between them. The in-loop report is therefore a *progress notice*, not a
+  per-volume verdict. `BytesBackedupInCurrentSet` is the one genuinely per-set figure, anchored once in
+  `BeginWriteContentForCurrentSet` and deliberately not re-anchored at set end.
+- **Header-cache staleness.** An overwrite backup calls `ResetMediaId()` and the ensuing content write
+  stamps a fresh header, while nothing refreshed the service's `_loadedHeader`. A second overwrite in the
+  same session then compared a format-time cache against a re-minted TOC and prompted about a mismatch
+  that did not exist. Fixed by dropping the cache at `ResetMediaId()` — honest, since we no longer know —
+  and by `RefreshLoadedHeader()` at operation entry when overwriting (the path that rewinds to BOM
+  anyway; a straight append must not pay a rewind per operation).
+- **`MediaHeaderStamped`.** `Manager.ContentWritten` does not cover the header, which is written as a raw
+  block before the content session opens. Without this flag, a failure between the two would let the
+  service roll the TOC back to the old `MediaId` while the tape carried the new one. Operation-scoped,
+  not per-volume: the thing rollback would restore is a *series* identity.
+- **`OnMediaHeaderWritten` invalidates the TOC** on co-located layouts
+  (`TapeNavigatorTOCInSet.OnMediaHeaderWritten`), since a write at BOM truncates everything beyond it.
+
+---
+
+## 11. Validation
+
+### 11.1 Fault injection rather than corrupt fixtures
+
+Three seams, all `#if DEBUG`, all instance-level so parallel tests never interfere:
+
+- **`TapeNavigator.SimulateSetMiscount`** — the navigator lands N sets away from its target while still
+  believing it arrived. Reduces the crown scenario to a one-line arrangement.
+- **`VirtualMediaFaultInjector`** — block-level faults at the *medium*, in four modes. `Fail`, `Partial`,
+  and `Torn` model drive-reported errors; **`Corrupt`** is the realistic one, modelling host-path
+  corruption landing before the drive computes ECC: full byte count, no error, wrong bytes. Nothing below
+  the application can detect it — which is exactly what an application-level CRC exists for, and what
+  `Restore_SilentCorruption_IsCaughtByCrc` finally exercises end to end. Bit placement is seeded, never
+  ambient: an unreproducible failing test is worse than no test.
+- **`TestTapeService` hooks** — `OnAgentReady`, `OnCalibrationProgress`, and a hooked progress handler
+  that intercepts `ITapeFileNotifiable`. These replaced wall-clock polling of `svc.Agent`, which raced
+  the worker thread three ways: a debugger pause burned the deadline, a fast machine finished before the
+  first poll, and a slow one armed the simulator after the loop had passed the files it targeted. Each
+  hook runs **inside** the operation, at a deterministic point.
+
+### 11.2 The matrix
+
+The media-header design's fixture seam gained one axis, migrated compiler-driven (drop the fixture
+default, fix every resulting build error, restore the default last).
+
+| Suite group | Flavours | Why |
+|---|---|---|
+| Navigator | 2 | layouts are written with raw block ops, never through an agent — a set header cannot appear |
+| Backup (aligned + packed) | 2 | the write gate is covered by dedicated tests; a third flavour is pure runtime |
+| Restore (aligned + packed + pipelined) | **3** | `_MediaHeader` is the only flavour that catches a read gated on `MediaHeaderPresence` instead of `SetHeadersExpected` |
+| Multi-volume | 4 modes | `VolumeHeaderMode` folds headers and set-headers into one axis |
+
+`VolumeHeaderMode.Mixed` is deliberately two-way (volume 1 legacy, volumes 2+ headed). A three-way mix
+would depend on how many volumes a test actually spans, so it could not state what it covers. Two-way
+pins the property that matters: per-volume re-resolution of `SetHeadersExpected`.
+
+`Fixture_ProducesTheDeclaredHeaderShape` (single-volume) and
+`Fixture_ProducesTheDeclaredHeaderShapePerVolume` (multi-volume) read the media header back and assert it
+*declares* what the flavour requested. Without them a fixture that quietly dropped a set-header request
+would make an entire flavour pass for the wrong reason.
+
+### 11.3 Coverage
+
+- **Unit** — round-trip; polymorphic vs. narrow unpack across all three kinds; a `TapeSetHeader` block met
+  by the media path resolves `Absent`; `CreateSetHeader` index arithmetic across `FirstSetOnVolume`
+  boundaries and continuation sets.
+- **Agent, four drive profiles** — per-set write→read round-trip; the first file's address sits exactly
+  one block past the set start (which is simultaneously the SH-4 assertion — a redundant second
+  positioning would move the packer's anchor); `WritesSetHeaders = false` produces `_MediaOnly` media
+  that restores silently.
+- **Correction (the crown suite)** — `SimulateSetMiscount ∈ {−2, −1, +1, +2}` × four profiles: drift
+  detected, corrected, re-verified, restore **byte-for-byte**. Every correction test asserts the restored
+  bytes, not merely a `true` return: a correction that "succeeded" while delivering a neighbouring set's
+  data would be worse than the failure it replaced. Plus the boundary cases (correction to set 0 via the
+  BOM path; forward to the newest set), uncorrectable drift, `CorrectsSetNavigation = false`, and
+  identity failures that must *not* attempt a correction.
+- **Ordering** — SH-8: a second `BeginReadContentForCurrentSet` on the same set consumes no block.
+- **Accounting** — the per-set delta is exactly one header block, scales with set count, and is
+  independent of the set's block size; the accounted delta matches the *physical* one-block offset of the
+  first file, so a consistent-but-wrong formula cannot pass.
+- **Diagnosis** (§10) — a failure on an early file survives later successes; an abort yields
+  `ERROR_CANCELLED` with a real message; the three abort channels converge; a clean run leaves no latched
+  failure; `ErrorCode` and `Message` never disagree with the embedded diagnosis.
+- **Service** — happy paths stay provably silent under the exhaustive `AssertMediaPrompts` teardown.
+
+### 11.4 Real hardware
+
+No new conformance probe: §5.2 establishes that every set-header write is post-mark or at-EOD, both
+already isolated by the existing **S11** probe and accepted on AIT-2 and DLT-V4.
 
 ---
 
@@ -666,397 +531,131 @@ Small virtual multi-volume media feel this first, as they did for the media head
 |---|---|
 | **SH-1** | Media-header-present ∧ `HasSetHeaders` ⟺ set-headers-present, uniformly per volume. A volume is never partially headed. |
 | **SH-2** | The set header is one 16 KiB framed block at the head of its set's data, with **no tapemark**. |
-| **SH-3** | The set header contributes no mark and never alters set counting; §5.5 and §5.7 of the media-header design stand unmodified. |
+| **SH-3** | The set header contributes no mark and never alters set counting. |
 | **SH-4** | Positioning to the target content set is idempotent — hoisting `MoveToTargetContentSet` ahead of `BeginWriteContent` costs no second transport move. |
 | **SH-5** | The set header carries only a-priori facts. No file counts, no totals, no post-hoc data. |
 | **SH-6** | Set-header block operations leave the navigator untouched on success and call `ResetContentSet()` on failure. |
-| **SH-7** | The set header is read immediately after `BeginReadContent()` and strictly before the first `BeginPackedFileRead`. |
+| **SH-7** | The set header is read immediately after `BeginReadContent()` and strictly before the first `BeginPackedFileRead` — enforced as a hard guard, not an assert. |
 | **SH-8** | The set header is read exactly once per physical positioning at a set. |
-| **SH-9** | `CurrentContentSet` is adopted from a set header only via `ReconcileContentSet`, only on a positively classified header with matching `MediaId` and `Volume`. |
+| **SH-9** | `CurrentContentSet` is adopted from a set header only via `ReconcileContentSetAndMove`, only on a positively classified header with matching `MediaId` and `Volume`. |
 | **SH-10** | Correction is relative, bounded to one retry, verified by a second read, and never applied on a write path. |
 | **SH-11** | `GlobalSetIndex` and `SetBlockSize` are advisory — logged on mismatch, never gating, never overriding the TOC. |
 | **SH-12** | On-tape size accounting includes one header block per set. |
 
 ---
 
-## 13. Validation
+## 13. Known boundaries
 
-### 13.1 Fault injection rather than corrupt fixtures
+### 13.1 The format window is closed
 
-Constructing a genuinely miscounted tape by hand is expensive and fragile. The navigator lies
-deterministically instead, following the precedent set by `SimulateFileFailures` and
-`SimulateTOCFailureMask` — both instance-level so parallel agents do not interfere:
+`HasSetHeaders` shipped in `TapeMediaHeader`. Media written before it defaults to `false` — survivable,
+and permanent.
 
-```csharp
-#if DEBUG
-/// <summary>
-/// Offset injected into forward/backward set moves so the navigator lands N sets away from its
-/// target while still believing it arrived. Instance-level. Drives the set-header correction tests.
-/// </summary>
-public int SimulateSetMiscount { get; set; } = 0;
-#endif
-```
-
-This reduces the crown scenario to a one-line arrangement and exercises the real correction code
-against a real tape rather than a mock.
-
-### 13.2 The matrix
-
-The §13.1 seam of the media-header design gains one more axis, migrated the same compiler-driven way
-(temporarily drop the fixture default so every un-migrated call site becomes a build error):
-
-```csharp
-public abstract class XxxBase
-{
-    protected abstract bool WithMediaHeader { get; }
-    protected abstract bool WithSetHeaders  { get; }
-    protected VirtualTapeFixture CreateFixture(…)
-        => new(…, withMediaHeader: WithMediaHeader, withSetHeaders: WithSetHeaders);
-}
-public sealed class Xxx_Headerless  : XxxBase { … false, false; }
-public sealed class Xxx_MediaOnly   : XxxBase { … true,  false; }   // the v12-release shape — SH-1's middle state
-public sealed class Xxx_FullyHeaded : XxxBase { … true,  true;  }
-```
-
-The `_MediaOnly` flavour is not filler: it is the **only** validation that `HasSetHeaders = false`
-media restores cleanly, which is the entire justification for the flag (§4.3). The combination
-`false, true` is invalid by SH-1 and is asserted to throw at fixture construction.
-
-### 13.3 Coverage
-
-- **Unit** — all-fields round-trip; polymorphic vs. narrow `Unpack` across all three kinds; a
-  `TapeSetHeader` block read by the media path classifies as `Absent`, not `Present`; `ClampName`
-  budget fit; `CreateSetHeader` index arithmetic across `FirstSetOnVolume` boundaries; `ToString()`
-  naming.
-- **Agent, all four drive profiles** — write→read round-trip per set; the first file's `TapeAddress`
-  sits exactly one block past the set start; multi-set headed backup restores byte-for-byte;
-  `WritesSetHeaders = false` produces a `_MediaOnly` tape that restores silently.
-- **Correction (the crown suite)** — under `SimulateSetMiscount` ∈ {−2, −1, +1, +2}: drift detected,
-  corrected, re-verified, restore completes byte-for-byte, exactly one warning pair logged. Plus:
-  uncorrectable drift fails cleanly; `WrongMedia` and `WrongVolume` fail without attempting
-  correction; `Unreadable` warns and completes.
-- **Ordering regressions** — SH-8: a second `BeginReadContentForCurrentSet` on the same set consumes
-  no block (assert the first file restores intact). SH-4: exactly one positioning per set (count
-  `MoveToNextContentSetmark` invocations).
-- **Multi-volume** — headers × {None, MediaOnly, All, Mixed}; the mixed case proves per-volume
-  re-resolution of `SetHeadersExpected`, and doubles as the regression test for §10.
-- **Service** — happy paths stay provably silent under the existing exhaustive `AssertMediaPrompts`
-  teardown; a `WrongMedia` set header surfaces as an error report without a prompt.
-
-### 13.4 Real hardware
-
-No new conformance probe is required. §5.2 establishes that every set-header write is post-mark or
-at-EOD — both already isolated by the existing **S11** probe and accepted on AIT-2 and DLT-V4. The
-existing physical scenarios exercise the shape end to end once set headers are enabled by default.
-
----
-
-## 14. Implementation plan
-
-Eleven steps. Step 0 is preparatory and behaviour-neutral; Steps 1–3 build the format and the
-primitives; Steps 4–5 deliver detection; Step 6 delivers correction; Steps 7–10 complete accounting,
-coverage and hardware validation.
-
-Each step lists its changes, its exit criteria, and — where relevant — the tests that must be green
-before the next step begins. **The full legacy suite must pass at the end of every step.**
-
----
-
-### Step 0 — Preparation: no new behaviour
-
-The whole of Step 0 is refactoring. Every existing `TapeLibNET.Tests` test must pass unchanged at its end, and no test
-should require modification beyond renames.
-
-**0a — Remove the stale presence latch (§10).**
-
-- Delete `TapeFileAgent.m_headerResolved`.
-- `EnsureHeaderResolved()` gates solely on `Navigator.HeaderPresence != TapeHeaderPresence.Unknown`.
-- Remove the two assignments of the field in `WriteHeader()` and `ReadHeader()`; presence is already
-  recorded on the navigator by `OnHeaderWritten()` / `ResolveHeaderPresence()` respectively.
-- *Exit criteria:* full suite green. Add one regression test —
-  `MultiVolume_PresenceReResolvesAfterRenewNavigator`: resolve presence on a headed volume, call
-  `Manager.RenewNavigator()`, assert `EnsureHeaderResolved()` performs a physical read (observable via
-  `HeaderPresence` transitioning `Unknown → Absent` on a header-less second volume).
-
-**0b — Disambiguating renames.**
-
-Purely mechanical, IDE-driven, compiler-verified. Cheapest before new code references the old names,
-and it prevents `HeaderPresence` from silently meaning two things once `SetHeadersExpected` arrives.
-
-| Old | New | Location |
-|---|---|---|
-| `WriteHeaderBlock` | `WriteMediaHeaderBlock` | `TapeStreamManager` |
-| `ReadHeaderBlock` | `ReadBomHeaderBlock` | `TapeStreamManager` |
-| `WriteHeader` | `WriteMediaHeader` | `TapeFileAgent` |
-| `ReadHeader` | `ReadBomHeader` | `TapeFileAgent` — returns the polymorphic `TapeHeader?`, which may be a calibration header; naming it "media" would be wrong |
-| `ProbeHeaderPresence` | `ProbeMediaHeaderPresence` | `TapeFileAgent` |
-| `EnsureHeaderResolved` | `EnsureMediaHeaderResolved` | `TapeFileAgent` |
-| `HeaderPresence` | `MediaHeaderPresence` | `TapeNavigator` |
-| `ResolveHeaderPresence` | `ResolveMediaHeaderPresence` | `TapeNavigator` |
-| `InvalidateHeaderPresence` | `InvalidateMediaHeaderPresence` | `TapeNavigator` |
-| `OnHeaderWritten` | `OnMediaHeaderWritten` | `TapeNavigator` |
-| `MoveToHeader` | `MoveToMediaHeader` | `TapeNavigator` (+ partition override) |
-| `AtHeader` | `AtBomHeader` | `TapeNavigator` sentinel |
-| `WritesMediaHeader` | *(unchanged — already explicit)* | `TapeFileAgent` |
-
-The **enum** `TapeHeaderPresence` keeps its name: it is kind-agnostic.
-
-- Update the `MoveToBeginOfContentFromBom` maintenance grep rule in Design-TapeHeader.md §5.5 and the
-  INV-10 / INV-19 wording, which name `MoveToHeader` and `AtHeader`.
-- *Exit criteria:* clean build, full suite green, zero diff in test logic.
-
-**0c — `TapeHeaderBlock.WriteFramed(…, bool? withFilemark = null)`.**
-
-Signature-only preparation. The default preserves the media path byte-for-byte; no caller changes.
-
-- *Exit criteria:* full suite green; one unit test asserting `withFilemark: false` emits the block and
-  no mark (verified against `VirtualTapeMedia` read-back, per the §12.3 methodology of reading what
-  physically landed rather than trusting logical state).
-
-**0d — Pin SH-4 (idempotent positioning).**
-
-The hoisted write path (§7.2) depends on `MoveToTargetContentSet` being a no-op when already at the
-target. This holds today but is undocumented and untested.
-
-- Add the guarantee to the `MoveToTargetContentSet` XML documentation on `TapeNavigator`, and to the
-  `TapeNavigatorTOCInSet` override.
-- Add `MoveToTargetContentSet_WhenAlreadyAtTarget_PerformsNoTransportMove` across all four drive
-  profiles, counting `Drive.MoveToNextFilemark` / `MoveToNextSetmark` invocations.
-- *Exit criteria:* new tests green on all profiles.
-
-**0e — Pin SH-7 (read ordering).**
-
-- Document on `TapeStreamManager.BeginPackedFileRead` that the pipelined reader is constructed lazily
-  and that raw block I/O in `ReadingContent` is legal only before the first call.
-- Add `Debug.Assert(m_readPacker is null)` at the top of `ReadSetHeaderBlock` (added in Step 3) — noted
-  here so the requirement is not lost.
-- *Exit criteria:* documentation only; no behaviour change.
-
-**Step 0 exit gate:** full suite green with zero logic diffs. Commit separately from all subsequent
-steps so the rename churn never mixes with feature review.
-
----
-
-### Step 1 — The record and the format change
-
-One commit, one format version bump. Everything that touches the on-tape wire format lands here, so
-the shipping window (§15.1) closes exactly once.
-
-- Add `TapeSetHeader` (§3.1) with `ConstructBody`, `ToString`, `ClampName`.
-- Add the `TapeHeaderKind.Set` arm to `TapeHeader.ConstructFrom`.
-- Add `HasSetHeaders` to `TapeMediaHeader` (body field) and the corresponding parameter to
-  `TapeTOC.CreateHeader`, sourced from the agent's `WritesSetHeaders`.
-- Add `SetHeadersExpected` to `TapeNavigator`, reset alongside `MediaHeaderPresence` in
-  `InvalidateMediaHeaderPresence`; set by `ResolveMediaHeaderPresence` from the parsed media header
-  and by `OnMediaHeaderWritten`.
-- *Tests:* the §13.3 **Unit** group in full, including the negative classification cases.
-- *Exit criteria:* round-trip green; a `TapeSetHeader` block met by the media path resolves `Absent`;
-  legacy `TapeFileInfo` bytes still classify as `null`.
-
----
-
-### Step 2 — The factory
-
-- `TapeTOC.CreateSetHeader(int)` and `CreateSetHeaderForCurrentSet()` (§3.4).
-- *Tests:* index arithmetic across `FirstSetOnVolume` boundaries, including continuation sets where
-  `VolumeSetIndex` resets to 0 while `GlobalSetIndex` continues; `MediaId` shared idempotently with
-  the media header.
-- *Exit criteria:* pure in-memory tests green; no tape I/O involved.
-
----
-
-### Step 3 — Manager primitives
-
-- `WriteSetHeaderBlock` / `ReadSetHeaderBlock` (§6.2), with the SH-6 failure discipline and the SH-7
-  debug assertion from Step 0e.
-- *Tests:* write-at-current-position then read-back through a raw virtual-media inspection; assert the
-  navigator's `CurrentContentSet` is untouched on success and reset on an injected failure.
-- *Exit criteria:* primitives exercised directly, without agent involvement.
-
----
-
-### Step 4 — Backup write path
-
-- `TapeFileAgent.WritesSetHeaders` and `WriteSetHeader()` (§7.1).
-- Hoist positioning in `TapeFileBackupAgent.BeginWriteContentForCurrentSet` (§7.2).
-- *Tests:* per-set write→read round-trip on all four profiles; first file's `TapeAddress` exactly one
-  block past the set start; SH-4 transport-move count unchanged from Step 0d's baseline; multi-set and
-  multi-volume backups produce a header per set with correct indices.
-- *Exit criteria:* headed tapes carry set headers; **restore still ignores them entirely** and all
-  existing restore tests pass untouched. This step is independently revertible.
-  - Headed tapes carry one set header per set, at the set's first block, with correct indices.
-  - The first file's `TapeAddress` sits exactly one block past the set start — which is simultaneously the
-    SH-4 assertion: a redundant second positioning would move the packer's anchor.
-  - `WritesSetHeaders = false` produces the `_MediaOnly` shape and restores silently.
-  - Legacy media (no media header) never receives a set header, whatever the flag says.
-  - **Restore is untouched**: headed tapes restore byte-for-byte through unmodified restore code, and the
-    full existing suite passes without edits.
-
----
-
-### Step 5 — Restore read and verdict, without correction
-
-The first shippable milestone: detection and reporting, no self-correction.
-
-- `VerifySetHeaderForCurrentSet()` with the SH-8 latch (§8.1).
-- `TapeSetHeaderVerdict` and the ladder (§9.1), with `SetIndexDrift` treated as a **failure** for now —
-  logged in full, corrected in Step 6.
-- *Tests:* `Match` proceeds silently; `NotExpected` on legacy and `_MediaOnly` media proceeds silently;
-  `Unreadable` warns and completes; `WrongMedia` / `WrongVolume` fail with the expected error code.
-- *Exit criteria:* full round-trip suite green under `_FullyHeaded`; drift detected and reported
-  under `SimulateSetMiscount` (introduced early here if convenient, or stubbed until Step 6).
-  - `Match` proceeds silently and restores byte-for-byte on all four profiles.
-  - `NotExpected` on legacy and `_MediaOnly` media proceeds with no read at all.
-  - `Unreadable` (corrupted header, and read fault) warns and completes byte-for-byte.
-  - `WrongVolume` fails the set with `ERROR_INVALID_DATA`.
-  - `SetIndexDrift` is detected and fails the set — corrected in Step 6.
-  - SH-8: a second restore of the same set consumes no block (first file still restores intact).
-  - Full existing suite green: `_Headerless` and `_MediaOnly` tapes take no new code path.
-
----
-
-### Step 6 — Correction
-
-- `TapeNavigator.ReconcileContentSet` (§9.4).
-- The `SetIndexDrift` branch (§9.3), replacing Step 5's failure.
-- `#if DEBUG` `SimulateSetMiscount` on the navigator (§13.1), injected into
-  `MoveToNextContentSetmark` and the §5.7 fast path alike.
-- *Tests:* the §13.3 **Correction** crown suite in full.
-- *Exit criteria:* all four miscount offsets corrected and verified; uncorrectable drift fails cleanly;
-  the simulator asserts back to `0` at teardown.
-  - All four offsets ∈ {−2, −1, +1, +2}: drift detected, corrected, re-verified, restore byte-for-byte.
-  - Exactly one warning pair (drift detected → corrected) per correction.
-  - Correction to set 0 works, including the backward-to-BOM path.
-  - Uncorrectable drift (a second disagreement) fails cleanly with `ERROR_INVALID_DATA`.
-  - `WrongMedia` / `WrongVolume` still fail **without** attempting a correction.
-  - `Unreadable` still warns and completes.
-  - The simulator asserts back to `0` after every test.
-  - Full suite green — the correction path is unreachable without an injected miscount.
-
----
-
-### Step 7 — Size accounting
-
-- `TapeSetTOC.ComputeTotalFileSizeOnTape` and
-  `TapeTOC.ComputeContentSizeOnTapeBeforeCurrentSet` (§11).
-- *Tests:* `TapeServiceBase.Used` matches physical consumption on a small virtual cartridge across
-  several sets; the overwrite path's `NotifyNextContentWritePosition` anchor stays correct (regression:
-  no premature early warning on a multi-set overwrite).
-- *Exit criteria:* multi-volume capacity tests green on small virtual media, where the drift is largest.
-  - `Used` grows by exactly `TapeHeaderBlock.Size` per set on headed media, and not at all on legacy media.
-  - The overwrite anchor includes preceding sets' headers — no premature early warning on a multi-set
-    overwrite, and no *late* one either.
-  - Multi-volume capacity tests stay green on small virtual media, where the 16 KiB per set is a
-    measurable fraction.
-  - Full suite green: the default `false` keeps every existing caller's arithmetic unchanged.
-
----
-
-### Step 8 — Test matrix migration
-
-- Add `withSetHeaders` to `VirtualTapeFixture` and `MultiVolumeVirtualTapeFixture`; assert the
-  invalid `(false, true)` combination throws.
-- Split every migrated suite into the three sealed flavours of §13.2, using the compiler-as-`#define`
-  technique: drop the fixture default, fix every resulting build error, restore the default last.
-- Extend `VolumeHeaderMode` with the `MediaOnly` case for multi-volume suites.
-- *Exit criteria:* the full matrix green; the `_MixHeaded` crown test additionally proves per-volume
-  `SetHeadersExpected` re-resolution.
-  - The full matrix green: 2 + 2 + 2 + 3 + 3 + 3 flavours single-volume, 4 multi-volume.
-  - `_MediaHeader` restore flavours prove `HasSetHeaders = false` media restores with no header read.
-  - `_MixHeaded` proves per-volume re-resolution across all three states — also the §10 regression test.
-  - `Fixture_ProducesTheDeclaredHeaderShape` green on every flavour, so no flavour passes vacuously --
-    for both `VirtualTapeFixture` and `MultiVolumeVirtualTapeFixture`.
-
----
-
-### Step 9 — Surfacing
-
-Deliberately minimal. No new host callback, no new prompt (§9.2).
-
-- Ensure the drift and anomaly messages reach the service's `Report` channel at `Warning`, so they
-  appear in the WPF log pane and the CLI (§15.2).
-- Extend the media-kind reporting in `VirtualDriveProber` only if a set header can be the first block
-  encountered — it cannot, since the media header precedes it, so this is expected to be a no-op check.
-- *Exit criteria:* a corrected restore leaves a visible warning pair in both applications' logs.
-
----
-
-### Step 10 — Hardware validation
-
-- Run the existing physical scenarios with set headers enabled on AIT-2 (strict family) and one LTO
-  generation.
-- Confirm no new conformance probe is needed (§13.4) — the writes are post-mark/at-EOD, already
-  covered by **S11**.
-- *Exit criteria:* physical backup→restore round-trip byte-for-byte on both drives; no unexpected
-  drift warnings, which would indicate a real mark-counting fault worth investigating on its own
-  terms.
-
----
-
-### Effort summary
-
-| Step | Area | Size |
-|---|---|---|
-| 0 | Preparation — latch removal, renames, two pinned invariants | S |
-| 1 | Record + format change (one version bump) | S |
-| 2 | Factory | XS |
-| 3 | Manager primitives | S |
-| 4 | Backup write path | M |
-| 5 | Restore read + verdict | M |
-| 6 | Correction + fault injection | M |
-| 7 | Size accounting | S |
-| 8 | Test matrix migration | **L** |
-| 9 | Surfacing | XS |
-| 10 | Hardware validation | S |
-
-The library work is modest and largely mechanical; the matrix migration and the correction suite carry
-the cost. The fault-injection seam of §13.1 is what keeps Step 8 an L rather than an XL.
-
----
-
-## 15. Known risks and watch-items
-
-### 15.1 The format window closes at first release
-
-`HasSetHeaders` must enter `TapeMediaHeader` **before** headed media reaches the field. Afterwards it
-must default to `false` for pre-existing media — survivable, but permanent. Any other pending
-media-header field should be bundled into the same version bump (Step 1).
-
-### 15.2 Correction masks a real fault
+### 13.2 Correction masks a real fault
 
 A successfully corrected drift means the drive or the medium miscounted marks — a hardware or media
-signal, not a nuisance. It must surface at **Warning**, never at Trace, so it reaches the WPF log pane
-and the CLI. A tape that corrects on every set is a tape to retire, and the log is the only place that
-fact will ever appear.
+signal, not a nuisance. It surfaces at **Warning**, never Trace, so it reaches the WPF log pane and the
+CLI. A tape that corrects on every set is a tape to retire, and the log is the only place that fact will
+ever appear.
 
-### 15.3 The write path stays unverified
+### 13.3 The write path stays unverified
 
 v1 verifies on read only. An overwrite that lands on the wrong set still destroys data silently — the
-service's load-time media check remains the sole guard, exactly as today. This is a deliberate v1
-boundary: a pre-write verification read costs a read plus a reposition on the performance-critical
-path. The natural v2 is a `VerifiesBeforeOverwrite` opt-in that reads the existing set header before a
-destructive `newSet: false` or first-set overwrite, and maps a mismatch to the reserved
-`TapeMediaVerdict.MediaInconsistent` through a new `MediaPromptContext`.
-
-### 15.4 `SimulateSetMiscount` must never reach Release
-
-Guarded by `#if DEBUG`, like its two precedents. The matrix teardown asserts it returns to `0`; a
-leaked non-zero value would silently corrupt every subsequent test in the class.
+service's load-time media check remains the sole guard. This is a deliberate boundary: a pre-write
+verification read costs a read plus a reposition on the performance-critical path. See §14.3.
 
 ---
 
-## 16. Outlook — the file header
+## 14. Outlook
 
-Deferred deliberately, and likely to take a **different shape**: not a block-level record but a framed
-region inside the on-tape file stream itself.
+### 14.1 Exposing the opt-outs to the user
 
-The groundwork already exists. In `TapeFileBackupAgent.BackupFile`, the hash, the codec and
-`wstream.Length` are all in hand synchronously before `Manager.EndPackedFile()` — only `StartAddress`
-and `Length` arrive later via `PackedCommitTracker.OnCommitted`, and a reader standing on the file
-needs neither. A framed header plus a **fixed-size** framed trailer around the existing
-`SerializeHeaderTo` payload would therefore cost no new asynchrony, and restore could bound the body
-as `SizeOnTape − headerLen − TrailerSize` without a tail read.
+Three request flags exist and are not yet reachable from either application:
 
-Two constraints carry forward: the file pipeline is the LTO-speed bottleneck, so any per-file record
-must be pure serialization with no extra tape operation; and a fixed trailer size is what keeps the
-restore path arithmetic rather than seek-based.
+| Flag | Request | Suppresses |
+|---|---|---|
+| `ProceedOnMediaMismatch` | `BackupRequest` | the identity prompt before a destructive overwrite |
+| `ProceedOnMediaMismatch` | `RestoreRequest` | the per-volume identity prompt |
+| `ProceedOnMediaMismatch` | `CalibrateRequest` | the pre-run "holds a backup?" confirm |
+| `CorrectSetNavigation` | `RestoreRequest` | *nothing* — it disables the repair, not the check |
+
+**Does disabling a prompt imply disabling the header check? No — and the distinction must be preserved
+in the UI wording.**
+
+Each of the first three suppresses an interactive **prompt** that a non-interactive host cannot answer.
+None of them disables the underlying check's ability to *detect*, and none of them reaches the set-header
+verification at all, which raises no prompt and therefore has nothing to suppress. Concretely:
+
+- `ProceedOnMediaMismatch` suppresses the service's **load-time, per-volume** prompt. The agent's per-set
+  verification still runs on every set, still fails a `WrongMedia` or `WrongVolume` set, and still
+  corrects drift. That is the intended layering: the prompt is the interactive guard, the set header is
+  the unattended one.
+- `ProceedOnMediaMismatch` likewise suppresses only checkpoint prompts. The backup path performs no set-header
+  verification at all (§13.3), so there is nothing further to disable.
+- `CorrectSetNavigation = false` is the only flag that changes *detection behaviour*, and it makes the
+  check **stricter**, not weaker: a drift is reported rather than repaired.
+
+So the UI should present these as **"don't ask me" checkboxes**, not as "skip verification". Suggested
+wording: *"Proceed without confirming media identity (unattended)"* for the two suppressors, and
+*"Report set-navigation drift instead of correcting it"* for the third — the latter belonging in an
+advanced or diagnostics group, since its audience is someone investigating a drive.
+
+One genuine gap: a suppressed prompt currently logs at Warning and proceeds, but the *result* does not
+record that a check was bypassed. Worth adding a `ChecksSuppressed` flag to `ServiceOperationResult` so a
+UI can badge such an operation — an unattended overwrite that silently skipped an identity prompt should
+not look identical to one that had nothing to skip.
+
+### 14.2 Other pending steps
+
+- **Surfacing recovered anomalies (§10).** `OnSetFailed` / `OnSetAnomalyRecovered` on
+  `ITapeFileNotifiable`, accumulated by the progress handler into `RestoreResult`, so a corrected drift
+  appears in the closing summary and a rejected set explains itself. The host `Report` channel and the
+  developer logger are strictly separate surfaces — the former user-facing via `ITapeServiceHost`, the
+  latter via `m_logger` — and the drift warning belongs on both.
+- **Hardware validation with set headers enabled** on AIT-2 and one LTO generation.
+- **`ServiceOperationResult.ChecksSuppressed`**, per §14.1.
+
+### 14.3 The next feature — verified overwrite and delete (§13.3's v2)
+
+Set headers currently protect reads. The natural next step is to protect the two **destructive** paths
+that today rely solely on the TOC's arithmetic:
+
+- **Overwrite** — `BackupRequest.AppendAfterSetIndex` reuses a set slot mid-tape and destroys everything
+  after it. A miscount here writes over the wrong set.
+- **Delete** — `DeleteSetsFromCurrentSetUp`'s trailing branch navigates to the first set to delete, steps
+  back one setmark, and rewrites it. A miscount deletes the wrong sets.
+
+Both become verifiable with the record already on tape: read the existing set header before the
+destructive write and compare it against the set the TOC believes is there. The shape mirrors §8, with
+one rule inverted:
+
+| Read side (shipped) | Write side (v2) |
+|---|---|
+| `CorrectsSetNavigation` on the restore agent | `VerifiesBeforeOverwrite` on the backup agent |
+| `RestoreRequest.CorrectSetNavigation` | `BackupRequest.VerifyBeforeOverwrite` |
+| drift → correct, identity → fail | **any mismatch → fail, never correct** (§9.3c) |
+
+The asymmetry in the last row is the whole point and should stay explicit in both code and UI: reading
+the wrong set wastes time, writing the wrong set destroys data.
+
+Two design questions to settle when it starts. **Cost**: the verification read plus reposition lands on
+the performance-critical write path, which argues for an opt-in default-on flag rather than an
+unconditional check — and for measuring on real LTO before deciding. **Surfacing**: a refused overwrite is
+exactly the case `TapeMediaVerdict.MediaInconsistent` and a new `MediaPromptContext` were reserved for,
+so it can raise a genuine prompt rather than a bare failure — unlike the read side, where the user has no
+useful decision to make.
+
+### 14.4 Further out — the file header
+
+Deferred, and likely to take a different shape: not a block-level record but a framed region inside the
+on-tape file stream.
+
+The groundwork exists. In `TapeFileBackupAgent.BackupFile` the hash, the codec and `wstream.Length` are
+all in hand synchronously before `Manager.EndPackedFile()`; only `StartAddress` and `Length` arrive later
+via `PackedCommitTracker.OnCommitted`, and a reader standing on the file needs neither. A framed header
+plus a **fixed-size** framed trailer around the existing `SerializeHeaderTo` payload would cost no new
+asynchrony, and restore could bound the body arithmetically rather than by seeking.
+
+Two constraints carry forward: the file pipeline is the LTO-speed bottleneck, so any per-file record must
+be pure serialization with no extra tape operation; and a fixed trailer size is what keeps the restore
+path arithmetic rather than seek-based.

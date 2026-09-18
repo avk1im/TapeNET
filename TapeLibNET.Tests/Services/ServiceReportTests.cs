@@ -374,7 +374,7 @@ public class ServiceReportTests : ServiceTestBase
     ///  suppressed so no test ever blocks on a prompt.
     /// </summary>
     /// <remarks>
-    /// <c>SkipMediaHeaderCheck</c> is exactly the flag a scripted run would set; leaving it false would
+    /// <c>ProceedOnMediaMismatch</c> is exactly the flag a scripted run would set; leaving it false would
     ///  make every backup-headed-cartridge test depend on prompt behaviour instead of on the diagnosis.
     /// </remarks>
     private static CalibrateRequest MakeCalibrateRequest(
@@ -384,7 +384,7 @@ public class ServiceReportTests : ServiceTestBase
                Options: new TapeCalibrationOptions(),
                Mode: mode)
         {
-            SkipMediaHeaderCheck = skipMediaHeaderCheck,
+            ProceedOnMediaMismatch = skipMediaHeaderCheck,
         };
 
 #if DEBUG

@@ -889,11 +889,11 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
         catch (Exception ex)
         {
             SetError(ex);
+            LatchFailure();
 
             m_logger.LogWarning("Exception {Exception} while restoring TOC", ex);
             // Stream disposal (using var) already cleared Manager/Drive errors;
             //  capture the exception on the agent so callers see a meaningful message
-            LatchFailure();
             return false;
         }
     }

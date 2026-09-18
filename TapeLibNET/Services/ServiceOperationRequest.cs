@@ -27,6 +27,22 @@ public abstract record ServiceOperationRequest
     ///  so far and a log message is emitted.
     /// </summary>
     public bool NoMultivolume { get; init; } = false;
+
+    // ── Media-identity prompt suppression ────────────────────────────────────
+    //  Operations that can meet a media-identity mismatch expose a `ProceedOnMediaMismatch`
+    //   flag. It is deliberately declared PER REQUEST rather than here: not every operation
+    //   has an identity checkpoint (ListRequest has none), and those that do differ in how
+    //   many they have and in what each one judges — the backup continuation checkpoint
+    //   INVERTS the usual rule, treating a matching MediaId as the error.
+    //
+    //  What the flag always means, wherever it appears:
+    //   • the CHECK still runs, still logs at Warning, still records its verdict;
+    //   • only the QUESTION is skipped, answered with Proceed in advance;
+    //   • detection is NOT weakened — the agent's per-set header verification is
+    //     independent of this flag and keeps failing a wrong-media set on its own.
+    //
+    //  Contrast RestoreRequest.CorrectSetNavigation, which is NOT a prompt suppressor:
+    //   it changes detection BEHAVIOUR (report instead of repair) and makes it stricter.
 }
 
 // ── Backup ───────────────────────────────────────────────────────────────────
@@ -52,7 +68,18 @@ public sealed record BackupRequest(
     TapeCompression Compression = TapeCompression.None,
     int CompressionLevel = ZstdLevel.Default) : ServiceOperationRequest
 {
-    public bool ForceVolumeOverwrite { get; init; } = false;   // skip identified-media prompts; overwrite unattended
+    /// <summary>
+    /// Wether to skip identified-media prompts, e.g. for an unattended operation.
+    ///  When <see langword="true"/>, an identity mismatch is answered with "proceed" instead of being
+    ///  put to the user. The CHECK still runs, still logs at Warning, and still records its verdict —
+    ///  only the question is skipped.
+    /// </summary>
+    /// <remarks>
+    /// For unattended operation, where a non-interactive host cannot answer a prompt. It does NOT
+    ///  weaken detection: the agent's per-set header verification is untouched by this flag and keeps
+    ///  failing a wrong-media or wrong-volume set on its own.
+    /// </remarks>
+    public bool ProceedOnMediaMismatch { get; init; } = false;   // skip identified-media prompts; overwrite unattended
 }
 
 // ── Restore ──────────────────────────────────────────────────────────────────
@@ -71,7 +98,32 @@ public sealed record RestoreRequest(
     bool EjectWhenDone,
     ITapeFileFilter? Filter = null) : ServiceOperationRequest
 {
-    public bool SkipVolumeCheck { get; init; } = false;        // skip the per-volume identity prompt (unattended)
+    /// <summary>
+    /// Wether to skip identified-media prompts, e.g. for an unattended operation.
+    ///  When <see langword="true"/>, an identity mismatch is answered with "proceed" instead of being
+    ///  put to the user. The CHECK still runs, still logs at Warning, and still records its verdict —
+    ///  only the question is skipped.
+    /// </summary>
+    /// <remarks>
+    /// For unattended operation, where a non-interactive host cannot answer a prompt. It does NOT
+    ///  weaken detection: the agent's per-set header verification is untouched by this flag and keeps
+    ///  failing a wrong-media or wrong-volume set on its own.
+    /// <para>
+    /// Do not mix up with <seealso cref="CorrectSetNavigation"/>: that flag changes set detection BEHAVIOUR
+    ///  (repair vs. report), this one suppresses a volume-level prompt.
+    /// </para>
+    /// </remarks>
+    public bool ProceedOnMediaMismatch { get; init; } = false;        // skip the per-volume identity prompt (unattended)
+
+    /// <summary>
+    /// Wether to repair a detected set-navigation mismatch (navigation-time error) instead of just reporting it.
+    ///  <see langword="true"/> to repair (default), <see langword="false"/> to report only (stricter).
+    /// </summary>
+    /// <remarks>
+    /// Do not mix up with <seealso cref="ProceedOnMediaMismatch"/>: that flag suppresses a volume-level prompt,
+    ///  this one changes set detection BEHAVIOUR.
+    /// </remarks>
+    public bool CorrectSetNavigation { get; init; } = true; // define BEHAVIOUR on detection: repair or report only (stricter)
 }
 
 // ── Calibrate ────────────────────────────────────────────────────────────────
@@ -122,11 +174,11 @@ public sealed record CalibrateRequest(
     /// </summary>
     /// <remarks>
     /// Set only for scripted / unattended scratch runs where the cartridge is known to be disposable.
-    ///  The parallel to <seealso cref="RestoreRequest.SkipVolumeCheck"/> and
-    ///  <seealso cref="BackupRequest.ForceVolumeOverwrite"/>: each suppresses an interactive identity prompt
+    ///  The parallel to <seealso cref="RestoreRequest.ProceedOnMediaMismatch"/> and
+    ///  <seealso cref="BackupRequest.ProceedOnMediaMismatch"/>: each suppresses an interactive identity prompt
     ///  that a non-interactive host cannot answer — never the underlying CHECK's ability to detect.
     /// </remarks>
-    public bool SkipMediaHeaderCheck { get; init; } = false;   // skip the pre-run "holds a backup?" confirm
+    public bool ProceedOnMediaMismatch { get; init; } = false;   // skip the pre-run "holds a backup?" confirm
 }
 
 // ── List ─────────────────────────────────────────────────────────────────────

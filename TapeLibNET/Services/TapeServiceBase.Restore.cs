@@ -142,6 +142,7 @@ public partial class TapeServiceBase
                 RestoreMode.Verify   => new TapeFileVerifyAgent  (_drive, _toc),
                 _ => throw new ArgumentOutOfRangeException(nameof(request), $"Unsupported mode {request.Mode}")
             };
+            agent.CorrectsSetNavigation = request.CorrectSetNavigation; // both true by default
             _agent = agent;
             var toc = agent.TOC;
 
@@ -159,7 +160,7 @@ public partial class TapeServiceBase
 
             // §10.6: verify the loaded media matches the TOC we'll restore from. RefreshLoadedHeader uses the
             //  live restore agent, so its navigator also becomes header-aware for the content reads that follow.
-            bool suppress = request.SkipVolumeCheck;
+            bool suppress = request.ProceedOnMediaMismatch;
             RefreshLoadedHeader();
             {
                 var v0 = EvaluateLoadedHeader(expectedSeriesId: toc.MediaId, expectedVolume: toc.Volume);
