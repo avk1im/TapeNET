@@ -352,7 +352,7 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
 
     #endregion // *** Media Header ***
 
-    #region *** Set Header ***
+    #region *** Set Header Read / Write ***
 
     /// <summary>
     /// Whether sets written by this agent carry their own <see cref="TapeSetHeader"/>. Recorded into
@@ -408,9 +408,9 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
         return TapeResult.OK;
     }
 
-    #endregion // *** Set Header ***
+    #endregion // *** Set Header Read / Write ***
 
-    #region *** Set header verification ***
+    #region *** Set Header Verification ***
 
     // Guards the one-retry correction bound (SH-10). Set while a correction is being verified, so the re-verify
     //  cannot itself trigger another correction — a tape whose mark structure defeats a simple relative
@@ -437,6 +437,44 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
     /// </para>
     /// </remarks>
     public bool CorrectsSetNavigation { get; set; } = true;
+
+    /// <summary>
+    /// Whether this agent verifies the set header standing at a destructive write position before
+    ///  destroying it (SH-13). Mirrors <see cref="WritesSetHeaders"/> in shape and lifetime.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Arms ONLY where something already exists at the target: an overwrite (<c>newSet: false</c>) or a
+    ///  delete. A set appended at end-of-data has no predecessor record to read, so the
+    ///  performance-critical path pays nothing for this being <see langword="true"/> by default.
+    /// </para>
+    /// <para>
+    /// Set <see langword="false"/> for the deliberate, informed override — repairing a cartridge whose
+    ///  set headers are themselves damaged, where the verification would block the very operation that
+    ///  would fix it. It disables the CHECK, not merely a prompt.
+    /// </para>
+    /// </remarks>
+    public bool VerifiesSetHeader { get; set; } = true;
+
+    /// <summary>
+    /// Whether a set that cannot be positively verified BLOCKS the operation (write side) or merely
+    ///  warns and proceeds (read side).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The read side's golden rule — a record we cannot verify never blocks — rests on a fact that does
+    ///  not survive the crossing: <b>restore positions absolutely</b>. <c>RestoreNextFile</c> seeks to the
+    ///  file's exact <c>(block, offset)</c>, so an unverified set costs a safety net and nothing more. A
+    ///  destructive write positions <b>relatively</b>, by counting marks, and an unreadable block at the
+    ///  presumed set start is exactly the symptom a miscount produces when it lands somewhere that is not
+    ///  a set start at all. Proceeding there would take the strongest available signal that the head is
+    ///  lost and treat it as permission.
+    /// </para>
+    /// <para>
+    /// Overridden to <see langword="true"/> by <see cref="TapeFileBackupAgent"/>.
+    /// </para>
+    /// </remarks>
+    protected virtual bool BlocksOnUnverifiableSet => false;
 
     /// <summary>
     /// Reads the block at the CURRENT position and returns it as a <see cref="TapeSetHeader"/>, or
@@ -553,12 +591,25 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
                 return true;
 
             case TapeSetHeaderVerdict.Unreadable:
+                if (BlocksOnUnverifiableSet)
+                {
+                    // A destructive write positions by counting marks, so an unclassifiable block at the
+                    //  presumed set start is the miscount's own signature. Refuse.
+                    m_logger.LogError(
+                        "Set header for set #{Set} could not be read or classified; refusing to write over it",
+                        TOC.CurrentSetIndex);
+                    SetError(WIN32_ERROR.ERROR_INVALID_DATA,
+                        $"Set header at set #{TOC.CurrentSetIndex} could not be verified — " +
+                        "refusing a destructive write at an unconfirmed position");
+                    return false;
+                }
+
                 // The golden rule: a record we cannot verify never blocks. The files position absolutely,
                 //  so proceeding is safe — we have merely lost the safety net for this set.
                 m_logger.LogWarning(
                     "Set header for set #{Set} could not be read or classified; proceeding unverified",
                     TOC.CurrentSetIndex);
-
+                // Carry on to reanchor:    
                 // §0b: an I/O-level failure reset the content position (SH-6). Leaving it Unknown would
                 //  corrupt the later EndReadContentSet advance, so re-anchor before proceeding.
                 if (Navigator.CurrentContentSet == TapeNavigator.UnknownSet)
@@ -601,13 +652,15 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
                     TOC.CurrentSetIndex, TOC.CurrentSetIndexOnVolume, header!.VolumeSetIndex,
                     TOC.CurrentSetIndexOnVolume - header.VolumeSetIndex);
 
-                if (CorrectsSetNavigation)
+                // Step 2 scope: the write path has NO recovery yet, so any drift blocks. Step 5 removes
+                //  the second conjunct and gives both paths the unified two-stage recovery (SH-14).
+                if (CorrectsSetNavigation && !BlocksOnUnverifiableSet)
                     return CorrectSetNavigation(header);
                 // else Correction disabled: report rather than repair. Restoring from the wrong set would
                 //  silently deliver wrong bytes, so the set fails.
                 SetError(WIN32_ERROR.ERROR_INVALID_DATA,
                     $"Set navigation drift at set #{TOC.CurrentSetIndex}: positioned at on-volume set " +
-                    $"{header.VolumeSetIndex}, expected {TOC.CurrentSetIndexOnVolume} (correction DISABLED)");
+                    $"{header.VolumeSetIndex}, expected {TOC.CurrentSetIndexOnVolume} (no correction on this path)");
                 return false;
 
             case TapeSetHeaderVerdict.NotExpected:

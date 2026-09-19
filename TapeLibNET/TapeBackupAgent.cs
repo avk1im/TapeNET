@@ -67,6 +67,14 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     /// </para>
     /// </remarks>
     public bool MediaHeaderStamped { get; private set; }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// A backup destroys what it lands on, and lands there by counting marks. Nothing it could learn
+    ///  from an unverifiable block justifies proceeding (SH-13).
+    /// </remarks>
+    protected override bool BlocksOnUnverifiableSet => true;
+
     /// <summary>
     /// Starts (or restarts) a background estimate of the total logical size of <paramref name="files"/>,
     ///  progressively refreshed into <see cref="TapeFileStatistics.BytesTotal"/> — see
@@ -117,16 +125,57 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     }
 
     /// <summary>
-    /// Prepares the <see cref="Drive"/>, <see cref="Navigator"/>, and <see cref="Manager"/> for writing content to the current set.
-    ///  Writes media header on a new or continuation volume IF <see cref="WritesMediaHeader"/> is <see langword="true"/>.</summary>
-    /// <param name="newSet">Indicates whether the current set is a new set.</param>
-    /// <returns>Returns <see langword="true"/> if preparation was successful; otherwise, <see langword="false"/>.</returns>
+    /// Prepares the <see cref="Drive"/>, <see cref="Navigator"/>, and <see cref="Manager"/> for writing
+    ///  content to the current set, and leaves the head at the set's first content block.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>What it does, in order:</b> resolves media-header presence; applies the set's block size,
+    ///  compression interlock and early-warning reserve; positions at the target set; <b>verifies</b> the
+    ///  set header already there when the write is destructive; writes the media header (fresh volume)
+    ///  and the set header; then opens the content write session.
+    /// </para>
+    /// <para>
+    /// <b>Verification (SH-13).</b> On an OVERWRITE (<paramref name="newSet"/> <see langword="false"/>)
+    ///  of a volume declaring set headers, the set header standing at the target is read and classified
+    ///  before anything is destroyed. Only <c>Match</c> authorizes the write; every other verdict —
+    ///  including <c>Unreadable</c>, which on a mark-counted write is the miscount's own signature —
+    ///  fails the method with the tape untouched. A fresh set appended at end-of-data has no predecessor
+    ///  record to read, so that path performs no verification and costs nothing.
+    ///  <see cref="TapeFileAgent.VerifiesSetHeader"/> opts out.
+    /// </para>
+    /// <para>
+    /// <b>The media header is written LAST on the overwrite path.</b> It lives at BOM, and on a
+    ///  TOC-in-set layout a BOM write truncates everything beyond it — so stamping it before the
+    ///  verification would destroy the very record the verification reads, and the check would then
+    ///  inspect the wreckage of the tape it exists to protect. Overwriting the first set of a volume
+    ///  therefore defers the header write until after a positive verdict; every other path writes it up
+    ///  front, where nothing is at risk.
+    /// </para>
+    /// <para>
+    /// <b>The head returns to the set start (SH-15).</b> The verifying read advances one block; the write
+    ///  must begin where the read began, or the set header would be stamped one block late and every file
+    ///  address in the set would be off by one.
+    /// </para>
+    /// <para>
+    /// The positioning is hoisted ahead of <c>Manager.BeginWriteContent</c> so verification and the set
+    ///  header both have a window before the packer anchors on <see cref="TapeDrive.CurrentBlock"/>. That
+    ///  positioning is idempotent (SH-4), so the manager's own call costs no second transport move.
+    /// </para>
+    /// </remarks>
+    /// <param name="newSet">Whether the current set is a new set (append) rather than a rewrite.</param>
+    /// <returns><see langword="true"/> if preparation succeeded; otherwise <see langword="false"/>.</returns>
     private bool BeginWriteContentForCurrentSet(bool newSet)
     {
-        if (TOC.CurrentSetIndex == TOC.FirstSetOnVolume && WritesMediaHeader)
-            MediaHeaderStamped = WriteMediaHeader();          // heads the fresh/continuation volume; sets presence Present, positions at block 1
+        // Heading a volume means writing the media header at BOM. On an overwrite we must NOT do that
+        //  yet -- see the remarks: it would truncate what verification is about to read.
+        bool headsVolume = TOC.CurrentSetIndex == TOC.FirstSetOnVolume && WritesMediaHeader;
+        bool deferMediaHeaderWrite = headsVolume && !newSet;
+
+        if (headsVolume && !deferMediaHeaderWrite)
+            MediaHeaderStamped = WriteMediaHeader();   // sets presence Present, positions at block 1
         else
-            EnsureMediaHeaderResolved();  // existing volume / headerless: probe → Present or Absent
+            EnsureMediaHeaderResolved();               // existing / headerless / deferred: probe → Present or Absent
 
         // If we were reading or writing, end it first - before setting the new set's parameters
         if (!Manager.EndReadWrite())
@@ -137,7 +186,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             return false;
         }
 
-        // Optimization: set the target content set BEFORE transition to Content reading
+        // Optimization: set the target content set BEFORE transition to Content writing
         //  so that Navigator can optimize moving to the target content set once we call BeginWriteContent()
         Navigator.TargetContentSet = newSet
             ? ((TOC.CurrentSetIndexOnVolume > 0) ? -1 : 0)
@@ -184,27 +233,20 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             Drive.NotifyNextContentWritePosition(approxWritten);
         }
 
-        // ── Set header (SH-2, SH-4) ──────────────────────────────────────
-        //  Deliberately placed JUST BEFORE Manager.BeginWriteContent():
-        //   * AFTER SetBlockSize + the TOC reconciliation, so the header records the block size the
-        //     drive ACTUALLY accepted rather than the one we asked for;
-        //   * AFTER SetEarlyWarning / NotifyNextContentWritePosition, so the header's 16 KiB counts
-        //     against the TOC reserve like any other content byte;
-        //   * BEFORE Manager.BeginWriteContent, because that call runs MoveToTargetContentSet() and
-        //     EnsurePackerCreated() back to back with no seam — and the packer anchors on
-        //     Drive.CurrentBlock, so the header must already be on tape for every file address to land
-        //     past it (no TOC-address surgery — §7.3).
-        //  TapeHeaderBlock sets and restores the 16 KiB header block size around its own write, so the
-        //   set's block size survives untouched.
-        // Why we tests MediaHeaderPresence, not just the flag: SH-1: no media header, no set headers.
-        //  On a legacy volume nothing declares the header's existence, so writing one would produce a block no
-        //  reader can be told about.The media - header gate at the top of this method has already run
-        //  (WriteMediaHeader() on a fresh/ continuation volume, EnsureMediaHeaderResolved() otherwise), so
-        //  presence is resolved by the time we get here.
-        if (WritesSetHeaders && Navigator.MediaHeaderPresence == TapeHeaderPresence.Present)
+        // ── Position, verify, head (SH-4, SH-13, SH-15) ──────────────────
+        //  All three need the head at the set's first block, and all three must complete BEFORE
+        //   Manager.BeginWriteContent(): it runs MoveToTargetContentSet() and EnsurePackerCreated() back
+        //   to back with no seam, and the packer anchors on Drive.CurrentBlock -- so both headers must
+        //   already be on tape for every file address to land past them (no TOC-address surgery).
+        //  Why MediaHeaderPresence rather than the flag alone (SH-1): on a legacy volume nothing
+        //   declares a set header's existence, so writing one would produce a block no reader can be
+        //   told about. Presence is resolved by the gate at the top of this method.
+        bool verifies = !newSet && VerifiesSetHeader && Navigator.SetHeadersExpected;
+        bool writesSetHeader = WritesSetHeaders && Navigator.MediaHeaderPresence == TapeHeaderPresence.Present;
+
+        if (verifies || writesSetHeader || deferMediaHeaderWrite)
         {
-            // SH-4: this positioning is idempotent, so BeginWriteContent's own MoveToTargetContentSet
-            //  short-circuits — no second transport move, no re-derivation.
+            // SH-4: idempotent, so BeginWriteContent's own call below is a genuine no-op.
             if (!Navigator.MoveToTargetContentSet())
             {
                 m_logger.LogWarning("Failed to position at the target content set in {Method}",
@@ -212,7 +254,52 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 SyncErrorFrom(Navigator);
                 return false;
             }
+        }
 
+        if (verifies)
+        {
+            if (!VerifySetHeaderForCurrentSet())
+            {
+                // Nothing has been written yet -- the tape is exactly as we found it.
+                m_logger.LogError("Refusing to overwrite set #{Set}: its set header did not verify",
+                    TOC.CurrentSetIndex);
+                LatchFailure();   // the verdict set the error; latch it past any later success
+                return false;
+            }
+
+            // SH-15: undo the verifying read's one-block advance. DERIVED, not captured beforehand:
+            //  the ladder may have repositioned, and a pre-read block would then be stale. A positive
+            //  verdict always ends on a successful set-header read, so the set start is one block back.
+            long setStartBlock = Drive.CurrentBlock - 1;
+            if (!Drive.MoveToBlock(setStartBlock))
+            {
+                m_logger.LogWarning("Failed to return to block {Block} after verifying set #{Set}",
+                    setStartBlock, TOC.CurrentSetIndex);
+                SyncErrorFrom(Drive);
+                LatchFailure();
+                return false;
+            }
+        }
+
+        if (deferMediaHeaderWrite)
+        {
+            // Now safe: verification is done. WriteMediaHeader rewinds to BOM, writes, and leaves the
+            //  head at begin-of-content -- which IS the target set here (CurrentSetIndexOnVolume == 0).
+            MediaHeaderStamped = WriteMediaHeader();
+            if (!MediaHeaderStamped)
+            {
+                m_logger.LogWarning("Failed to write the media header in {Method}",
+                    nameof(BeginWriteContentForCurrentSet));
+                return false;   // WriteMediaHeader already set the error
+            }
+        }
+
+        if (writesSetHeader)
+        {
+            // Placed AFTER SetBlockSize + the TOC reconciliation, so the header records the block size
+            //  the drive ACTUALLY accepted; and AFTER SetEarlyWarning / NotifyNextContentWritePosition,
+            //  so its 16 KiB counts against the TOC reserve like any other content byte. TapeHeaderBlock
+            //  sets and restores its own block size, so the set's survives untouched.
             if (!WriteSetHeader())
             {
                 m_logger.LogWarning("Failed to write the set header in {Method}",
@@ -221,7 +308,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             }
         }
 
-        long remainingCapacity = ComputeRemainingCapacity();   // moved down — see 2a
+        long remainingCapacity = ComputeRemainingCapacity();
 
         if (!Manager.BeginWriteContent(remainingCapacity))
         {
