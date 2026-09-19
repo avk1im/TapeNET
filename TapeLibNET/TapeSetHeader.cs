@@ -3,6 +3,50 @@ using System;
 namespace TapeLibNET;
 
 /// <summary>
+/// Outcome of verifying a set header against the TOC's expectation for the set just positioned at.
+/// </summary>
+/// <remarks>
+/// Ordered by severity of the divergence, not by likelihood: <see cref="Match"/> and
+///  <see cref="NotExpected"/> are the normal outcomes, everything below them describes a tape that
+///  disagrees with what the library believes about it.
+/// </remarks>
+public enum TapeSetHeaderVerdict
+{
+    /// <summary>Media identity, volume and on-volume index all agree. The overwhelmingly common case.</summary>
+    Match,
+
+    /// <summary>Header-less volume — no set header was expected, so none was read (SH-1).</summary>
+    NotExpected,
+
+    /// <summary>
+    /// A set header was expected but the block did not classify as one (torn write, host-path
+    ///  corruption, or a read fault). Warn and proceed: an unverifiable record removes a safety net,
+    ///  not the tape's data.
+    /// </summary>
+    Unreadable,
+
+    /// <summary>
+    /// The media id differs — a cartridge swapped mid-operation. Every in-memory assumption is void,
+    ///  including the TOC; nothing is correctable.
+    /// </summary>
+    WrongMedia,
+
+    /// <summary>
+    /// Right series, wrong cartridge. File addresses are physical-per-volume, so every address in the
+    ///  TOC would resolve to garbage on this volume.
+    /// </summary>
+    WrongVolume,
+
+    /// <summary>
+    /// Identity confirmed, on-volume index differs — a recoverable navigation miscount. Reported as a
+    ///  failure in Step 5; corrected in Step 6 (SH-10).
+    /// </summary>
+    SetIndexDrift,
+}
+
+
+
+/// <summary>
 /// Per-set header written as the first block of a backup set's data region, positively
 ///  identifying which set of which medium the tape head is actually standing on.
 /// </summary>

@@ -139,7 +139,9 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         // Optimization: set the target content set BEFORE transition to Content reading
         //  so that Navigator can optimize moving to the target content set once we call BeginWriteContent()
-        Navigator.TargetContentSet = newSet ? ((TOC.CurrentSetIndexOnVolume > 0) ? -1 : 0) : CurrentSetAsNavigatorContentSet;
+        Navigator.TargetContentSet = newSet
+            ? ((TOC.CurrentSetIndexOnVolume > 0) ? -1 : 0)
+            : CurrentSetAsNavigatorContentSet();
 
         BytesBackedupMarker = BytesBackedup; // important in case of multi-volume backup continuation
 

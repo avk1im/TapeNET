@@ -616,11 +616,11 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     ///  exactly as in <see cref="ReadBomHeaderBlock"/>.
     /// </para>
     /// <para>
-    /// <b>Preconditions.</b> <see cref="TapeState.ReadingContent"/>, positioned at the set start, and
-    ///  strictly BEFORE the first <see cref="BeginPackedFileRead"/> of this set (SH-7) — the pipelined
-    ///  reader owns a prefetch worker thread that would otherwise race this raw <c>ReadDirect</c>. Because
-    ///  that reader is constructed lazily inside <see cref="BeginPackedFileRead"/>, "not yet created" is
-    ///  precisely the legal window, and this method enforces it.
+    /// <b>Preconditions.</b> <see cref="TapeState.ReadingContent"/> (before the first
+    ///  <see cref="BeginPackedFileRead"/> of this set — SH-7) or <see cref="TapeState.MediaPrepared"/>
+    ///  (before a destructive write — SH-13), positioned at the set start, with NO packer of either
+    ///  kind alive (SH-17). Because both packers are constructed lazily and disposed on leaving their
+    ///  content state, "no packer yet" is precisely the legal window, and this method enforces it.
     /// </para>
     /// <para>
     /// <b>The caller gates the call, not this method.</b> A read is issued only when the navigator's
@@ -633,20 +633,34 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     {
         ResetError();
 
-        if (State != TapeState.ReadingContent)
+        // Legal in BOTH content states, for one reason expressed two ways:
+        //  * ReadingContent — the verification read that precedes the first file of a set;
+        //  * MediaPrepared  — the verification read that precedes a DESTRUCTIVE write (overwrite,
+        //    delete), which runs before Manager.BeginWriteContent() has opened a write session.
+        //  What the state test is really asking is "can a packer be running?", and the packer guard
+        //   below answers that directly. The state test now merely excludes the TOC states, where a
+        //   raw content-block read would be meaningless.
+        if (!State.IsOneOf(TapeState.ReadingContent, TapeState.MediaPrepared))
         {
             LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
-            LogErrorAsDebug($"ReadSetHeaderBlock requires {TapeState.ReadingContent} (state={State})");
+            LogErrorAsDebug($"ReadSetHeaderBlock requires {TapeState.ReadingContent} or " +
+                $"{TapeState.MediaPrepared} (state={State})");
             return -1;
         }
 
-        // SH-7. A hard guard rather than a Debug.Assert: the consequence of getting this wrong is a data
-        //  race against the prefetch worker, so it must fail identically in Debug and Release — and an
-        //  assert would make the violation untestable (the test would trip the dialog, not the branch).
-        if (m_readPacker is not null)
+        // SH-7 / SH-17. A hard guard rather than a Debug.Assert: the consequence of getting this wrong
+        //  is a data race against a worker thread, so it must fail identically in Debug and Release —
+        //  and an assert would make the violation untestable (the test would trip the dialog, not the
+        //  branch).
+        //  BOTH packers are excluded, not just the read one: widening the state above admits
+        //  MediaPrepared, and while no packer SHOULD exist there (EnsurePackerCreated runs inside
+        //  BeginWriteContent, and EndWriteContent/EndReadContent dispose before transitioning back),
+        //  the guard must not rest on that being true forever. Mirrors WriteSetHeaderBlock, which
+        //  already tests m_packer for exactly this reason.
+        if (m_readPacker is not null || m_packer is not null)
         {
             LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
-            LogErrorAsDebug("ReadSetHeaderBlock called with the pipelined reader already active (SH-7)");
+            LogErrorAsDebug("ReadSetHeaderBlock called with a packer already active (SH-7 / SH-17)");
             return -1;
         }
 
@@ -1260,6 +1274,12 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         return m_packer.EndFile();
     }
 
+    internal TapeFileWritePacker? WritePacker_FORTESTINGONLY => m_packer;
+
+    #endregion // Packer-backed content writing (Phase 2)
+
+    #region Packer-backed content reading (Phase 2 Step E)
+
     // -----------------------------------------------------------------------
     //  Packer-backed content reading (Phase 2 Step E)
     // -----------------------------------------------------------------------
@@ -1406,7 +1426,9 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         m_readPacker?.EndRead();
     }
 
-    #endregion // Packer-backed content writing
+    internal TapeFilePipelinedReader? ReadPacker_FORTESTINGONLY => m_readPacker;
+
+    #endregion // Packer-backed content reading (Phase 2 Step E)
 
 } // TapeStreamManager
 

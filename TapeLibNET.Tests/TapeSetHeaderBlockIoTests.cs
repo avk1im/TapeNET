@@ -63,6 +63,23 @@ public class TapeSetHeaderBlockIoTests
     }
 
     /// <summary>
+    /// Re-positions at begin-of-content for a READ in <see cref="TapeState.MediaPrepared"/>.
+    /// </summary>
+    /// <remarks>
+    /// The <see cref="TapeNavigator.ResetContentSet"/> first is essential, for exactly the reason
+    ///  <see cref="EnterReadingContentAtOldestSet"/> needs it: <c>MoveToBeginOfContent</c> short-circuits
+    ///  on <c>CurrentContentSet == 0</c>, and a successful <c>WriteSetHeaderBlock</c> legitimately LEAVES
+    ///  it at 0 (SH-6). Without the reset the head stays parked PAST the block just written and the read
+    ///  fetches the next one — at EOD on a tape holding nothing else.
+    /// </remarks>
+    private static void RepositionAtBeginOfContent(TapeFileAgent agent)
+    {
+        agent.Navigator.ResetContentSet();
+        Assert.True(agent.Navigator.MoveToBeginOfContent(), "Failed to re-position at begin-of-content");
+        Assert.Equal(0, agent.Navigator.CurrentContentSet);
+    }
+
+    /// <summary>
     /// Enters <see cref="TapeState.ReadingContent"/> positioned at the oldest set.
     /// </summary>
     /// <remarks>
@@ -285,6 +302,9 @@ public class TapeSetHeaderBlockIoTests
         Assert.Equal(setBefore, agent.Navigator.CurrentContentSet);
     }
 
+    /*
+    // NOW OBSOLETE after SetHeader Verification for Write Step 1
+    //  Replaced by Read_InMediaPreparedState_Succeeds
     /// <summary>The read requires <see cref="TapeState.ReadingContent"/>.</summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -300,6 +320,7 @@ public class TapeSetHeaderBlockIoTests
 
         Assert.Equal(setBefore, agent.Navigator.CurrentContentSet);
     }
+    */
 
     /// <summary>
     /// SH-7: once the pipelined reader exists, a raw <c>ReadDirect</c> would race its prefetch worker
@@ -478,6 +499,241 @@ public class TapeSetHeaderBlockIoTests
         Assert.IsType<TapeSetHeader>(TapeHeaderBlock.Classify(buffer, TapeHeaderBlock.Size));
     }
 
+#endif // DEBUG
+
+    #endregion
+
+    #region *** (F) Step 1 — the MediaPrepared window (SH-17) ***
+
+    //  Step 1 opens ReadSetHeaderBlock to TapeState.MediaPrepared, because the verification read that
+    //   precedes a DESTRUCTIVE write runs there — before Manager.BeginWriteContent() exists to put us
+    //   in WritingContent, and deliberately so (the packer must not yet be anchored).
+    //  These tests pin the two halves of that: the window is genuinely open, and the packer guard that
+    //   now carries the whole safety argument is genuinely closed.
+
+    /// <summary>
+    /// The window Step 1 opens: a set header written in <see cref="TapeState.MediaPrepared"/> reads
+    ///  back in the same state, with no content session in between.
+    /// </summary>
+    /// <remarks>
+    /// This REPLACES the former <c>Read_InMediaPreparedState_Rejected_WithoutResettingNavigator</c>,
+    ///  which asserted the opposite. Its underlying claim — that a REFUSAL leaves the navigator alone —
+    ///  survives below, re-pointed at the refusal condition that still exists (the packer guard).
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Read_InMediaPreparedState_Succeeds(DriveProfile profile)
+    {
+        using var fixture = new VirtualTapeFixture(profile);
+        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+
+        var original = MakeHeader();
+        PositionAtBeginOfContent(agent);
+        Assert.True(agent.Manager.WriteSetHeaderBlock(Framed(original)));
+
+        // No BeginReadContent: stay in MediaPrepared, exactly as the destructive-write path does.
+        Assert.Equal(TapeState.MediaPrepared, (TapeState)agent.Manager.State);
+        RepositionAtBeginOfContent(agent);
+
+        var buffer = new byte[TapeHeaderBlock.Size];
+        Assert.Equal(TapeHeaderBlock.Size, agent.Manager.ReadSetHeaderBlock(buffer));
+
+        var read = Assert.IsType<TapeSetHeader>(TapeHeaderBlock.Classify(buffer, TapeHeaderBlock.Size));
+        Assert.Equal(original.GlobalSetIndex, read.GlobalSetIndex);
+        Assert.Equal(original.VolumeSetIndex, read.VolumeSetIndex);
+        Assert.Equal(original.MediaId, read.MediaId);
+    }
+
+    /// <summary>
+    /// The verification read must be INVISIBLE to the write that follows it. All three quantities the
+    ///  destructive path depends on are checked together, because each fails differently:
+    ///  <list type="bullet">
+    ///  <item>block size — a stale 16 KiB would be captured by <c>EnsurePackerCreated</c> moments later,
+    ///        producing zero committed blocks and no <c>FilesCommitted</c> events;</item>
+    ///  <item>byte counter — feeds the early-warning reserve;</item>
+    ///  <item>current block — SH-15: the write begins where the read began.</item>
+    ///  </list>
+    /// </summary>
+    /// <remarks>
+    /// The set block size is deliberately set to something OTHER than <see cref="TapeHeaderBlock.Size"/>.
+    ///  With the two equal, a missing restore would be indistinguishable from a correct one and the
+    ///  test would pass for the wrong reason.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Read_InMediaPreparedState_DisturbsNothingTheWriteNeeds(DriveProfile profile)
+    {
+        const uint setBlockSize = 64 * 1024;      // ≠ TapeHeaderBlock.Size (16 KiB)
+
+        using var fixture = new VirtualTapeFixture(profile);
+        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+
+        PositionAtBeginOfContent(agent);
+        Assert.True(agent.Manager.WriteSetHeaderBlock(Framed(MakeHeader())));
+
+        RepositionAtBeginOfContent(agent);
+        Assert.True(fixture.Drive.SetBlockSize(setBlockSize));
+        Assert.NotEqual((uint)TapeHeaderBlock.Size, fixture.Drive.BlockSize);
+
+        uint blockSizeBefore = fixture.Drive.BlockSize;
+        long byteCountBefore = fixture.Drive.ByteCounter;
+        long currentBlockBefore = fixture.Drive.CurrentBlock;
+
+        Assert.Equal(TapeHeaderBlock.Size, agent.Manager.ReadSetHeaderBlock(new byte[TapeHeaderBlock.Size]));
+
+        Assert.Equal(blockSizeBefore, fixture.Drive.BlockSize);
+        Assert.Equal(byteCountBefore, fixture.Drive.ByteCounter);
+
+        // The read DOES advance the head by one block — that is expected, and SH-15 makes undoing it
+        //  the CALLER's job. Pin the shape so the caller's MoveToBlock is provably necessary rather
+        //  than defensive, and so a future "helpful" restore inside the manager is caught here.
+        Assert.Equal(currentBlockBefore + 1, fixture.Drive.CurrentBlock);
+        Assert.True(fixture.Drive.MoveToBlock(currentBlockBefore));
+        Assert.Equal(currentBlockBefore, fixture.Drive.CurrentBlock);
+    }
+
+    /// <summary>
+    /// SH-8's write-side echo: two verification reads at the same position return the same header.
+    ///  The read is repeatable because the caller restores the block — proving the restore of SH-15 is
+    ///  sufficient, not merely present.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Read_InMediaPreparedState_IsRepeatableAfterRestoringTheBlock(DriveProfile profile)
+    {
+        using var fixture = new VirtualTapeFixture(profile);
+        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+
+        PositionAtBeginOfContent(agent);
+        Assert.True(agent.Manager.WriteSetHeaderBlock(Framed(MakeHeader(globalSetIndex: 5, volumeSetIndex: 2))));
+
+        RepositionAtBeginOfContent(agent);
+        long at = fixture.Drive.CurrentBlock;
+
+        var first = new byte[TapeHeaderBlock.Size];
+        Assert.Equal(TapeHeaderBlock.Size, agent.Manager.ReadSetHeaderBlock(first));
+        Assert.True(fixture.Drive.MoveToBlock(at));            // SH-15, as the agent will do
+
+        var second = new byte[TapeHeaderBlock.Size];
+        Assert.Equal(TapeHeaderBlock.Size, agent.Manager.ReadSetHeaderBlock(second));
+
+        var a = Assert.IsType<TapeSetHeader>(TapeHeaderBlock.Classify(first, TapeHeaderBlock.Size));
+        var b = Assert.IsType<TapeSetHeader>(TapeHeaderBlock.Classify(second, TapeHeaderBlock.Size));
+        Assert.Equal(a.GlobalSetIndex, b.GlobalSetIndex);
+        Assert.Equal(a.VolumeSetIndex, b.VolumeSetIndex);
+    }
+
+    /// <summary>
+    /// The TOC states remain excluded. Widening to <see cref="TapeState.MediaPrepared"/> must not be
+    ///  read as "any state will do" — a raw content-block read while positioned in the TOC area is
+    ///  meaningless, and a refusal is a precondition violation rather than an I/O fault, so the
+    ///  navigator stays as the caller left it.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Read_InTocState_Rejected_WithoutResettingNavigator(DriveProfile profile)
+    {
+        using var fixture = new VirtualTapeFixture(profile);
+        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+
+        agent.Navigator.AssumeBlankMedia(); // exactly the case here: blank media
+        // If we skip AssumeBlankMedia(), the TOCMark navigator cannot locate a mark that was never written.
+        //  Production reaches this through BackupInitialTOC, which calls AssumeBlankMedia itself.
+        Assert.True(agent.Manager.BeginWriteTOC(), "Failed to enter WritingTOC");
+        int setBefore = agent.Navigator.CurrentContentSet;
+
+        Assert.Equal(-1, agent.Manager.ReadSetHeaderBlock(new byte[TapeHeaderBlock.Size]));
+        Assert.Equal(setBefore, agent.Navigator.CurrentContentSet);
+    }
+
+    /// <summary>
+    /// SH-17's new half. With the state test widened, the packer guard carries the entire race
+    ///  argument — so the WRITE packer must be excluded as explicitly as the read one already is.
+    /// </summary>
+    /// <remarks>
+    /// A refusal here is a precondition violation, not an I/O fault: the navigator must survive it
+    ///  untouched. This is the claim the replaced region-(D) test used to make, re-pointed at the
+    ///  refusal condition that still exists.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Read_WithWritePackerActive_Rejected_WithoutResettingNavigator(DriveProfile profile)
+    {
+        using var fixture = new VirtualTapeFixture(profile);
+        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+
+        PositionAtBeginOfContent(agent);
+        Assert.True(agent.Manager.WriteSetHeaderBlock(Framed(MakeHeader())));
+
+        // Opens WritingContent and constructs the write packer as a side effect — the exact condition
+        //  the destructive-write path is careful to stay in FRONT of.
+        agent.Navigator.TargetContentSet = 0;
+        Assert.True(agent.Manager.BeginWriteContent(-1L), "Failed to enter WritingContent");
+
+        Assert.NotNull(agent.Manager.WritePacker_FORTESTINGONLY); // the packer has been constructed
+
+        int setBefore = agent.Navigator.CurrentContentSet;
+        Assert.Equal(-1, agent.Manager.ReadSetHeaderBlock(new byte[TapeHeaderBlock.Size]));
+        Assert.Equal(setBefore, agent.Navigator.CurrentContentSet);
+
+        Assert.True(agent.Manager.EndWriteContent());
+    }
+
+    /// <summary>
+    /// The window closes again. After a content write session opens and closes, the packer is disposed
+    ///  and <see cref="TapeState.MediaPrepared"/> is restored — so the read is legal once more. Pins the
+    ///  structural claim Step 1 rests on: "no packer in MediaPrepared" holds because both packers are
+    ///  disposed on leaving their content state, not because nothing ever created one.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Read_AfterWriteSessionClosed_IsLegalAgain(DriveProfile profile)
+    {
+        using var fixture = new VirtualTapeFixture(profile);
+        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+
+        PositionAtBeginOfContent(agent);
+        Assert.True(agent.Manager.WriteSetHeaderBlock(Framed(MakeHeader())));
+
+        agent.Navigator.TargetContentSet = 0;
+        Assert.True(agent.Manager.BeginWriteContent(-1L));
+        Assert.True(agent.Manager.EndWriteContent());
+        Assert.Equal(TapeState.MediaPrepared, (TapeState)agent.Manager.State);
+
+        PositionAtBeginOfContent(agent);
+        Assert.Equal(TapeHeaderBlock.Size, agent.Manager.ReadSetHeaderBlock(new byte[TapeHeaderBlock.Size]));
+    }
+
+#if DEBUG
+    /// <summary>
+    /// §8.3's <c>finally</c>, which is the property this whole design leans on and the one that only
+    ///  shows up on the failure path. A faulted read must still restore the drive's block size —
+    ///  otherwise a refused verification would leave the packer to be built at 16 KiB, and the set
+    ///  would be written at the wrong block size after an error that was supposed to change nothing.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Read_FaultedInMediaPrepared_StillRestoresBlockSize(DriveProfile profile)
+    {
+        const uint setBlockSize = 64 * 1024;      // ≠ TapeHeaderBlock.Size
+
+        using var fixture = new VirtualTapeFixture(profile);
+        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+
+        PositionAtBeginOfContent(agent);
+        Assert.True(agent.Manager.WriteSetHeaderBlock(Framed(MakeHeader())));
+
+        RepositionAtBeginOfContent(agent);
+        Assert.True(fixture.Drive.SetBlockSize(setBlockSize));
+        uint before = fixture.Drive.BlockSize;
+
+        fixture.Backend.ContentReadFaults.FailOnce();
+        Assert.Equal(-1, agent.Manager.ReadSetHeaderBlock(new byte[TapeHeaderBlock.Size]));
+        Assert.Equal(1, fixture.Backend.ContentReadFaults.Occurrences);
+
+        Assert.Equal(before, fixture.Drive.BlockSize);                       // the finally did its job
+        Assert.Equal(TapeNavigator.UnknownSet, agent.Navigator.CurrentContentSet);   // SH-6 still applies
+    }
 #endif // DEBUG
 
     #endregion
