@@ -461,7 +461,11 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
     ///  warns and proceeds (read side).
     /// </summary>
     /// <remarks>
+    /// The base returns <see langword="true"/> only while a set delete is in flight.
     /// <para>
+    /// <para>
+    /// Overridden to <see langword="true"/> by <see cref="TapeFileBackupAgent"/>.
+    /// </para>
     /// The read side's golden rule — a record we cannot verify never blocks — rests on a fact that does
     ///  not survive the crossing: <b>restore positions absolutely</b>. <c>RestoreNextFile</c> seeks to the
     ///  file's exact <c>(block, offset)</c>, so an unverified set costs a safety net and nothing more. A
@@ -470,11 +474,13 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
     ///  a set start at all. Proceeding there would take the strongest available signal that the head is
     ///  lost and treat it as permission.
     /// </para>
-    /// <para>
-    /// Overridden to <see langword="true"/> by <see cref="TapeFileBackupAgent"/>.
-    /// </para>
     /// </remarks>
-    protected virtual bool BlocksOnUnverifiableSet => false;
+    protected virtual bool BlocksOnUnverifiableSet => m_verifyingDestructiveWrite;
+
+    // Set for the duration of a destructive delete, so the shared verdict ladder applies WRITE-side
+    //  policy. A private flag since DeleteSetsFromCurrentSetUp lives on the base and is
+    //  inherited by backup and restore agents alike, so it has no natural home in either.
+    private bool m_verifyingDestructiveWrite = false;
 
     /// <summary>
     /// Reads the block at the CURRENT position and returns it as a <see cref="TapeSetHeader"/>, or
@@ -939,25 +945,45 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
     }
 
     /// <summary>
-    /// Deletes all backup sets from <see cref="TapeTOC.CurrentSetIndex"/> through the last
-    /// set on the current volume. Physically overwrites the tape past the last retained set
-    /// to move the end-of-data marker, then updates the TOC on tape.
-    /// <para>
-    /// Preconditions:
-    /// <list type="bullet">
-    ///   <item><see cref="TapeTOC.CurrentSetIndex"/> must be set to the first set to delete.</item>
-    ///   <item>The current set must be on the current volume
-    ///     (<see cref="TapeTOC.IsCurrentSetOnVolume"/>).</item>
-    ///   <item>When the current set is the first set on the volume AND the drive uses an
-    ///     initiator partition, the operation fails — the caller should format the media
-    ///     instead.</item>
-    /// </list>
-    /// </para>
+    /// Deletes all backup sets from <see cref="TapeTOC.CurrentSetIndex"/> through the last set on the
+    /// current volume, physically overwriting the tape past the last retained set to move the
+    /// end-of-data marker, then updating the TOC on tape.
     /// </summary>
-    /// <remarks>Takes a special precaution to NOT overwrite the media header.</remarks>
+    /// <remarks>
+    /// <para>
+    /// <b>Two branches.</b> Deleting the volume's FIRST set erases everything: it positions at
+    ///  begin-of-content and writes a fresh initial TOC there. Deleting TRAILING sets keeps at least one:
+    ///  it positions at the first set to delete, steps back one setmark, and rewrites that setmark,
+    ///  overwriting the zombie marks and advancing EOD.
+    /// </para>
+    /// <para>
+    /// <b>Verification (SH-13).</b> On a volume declaring set headers, the set header standing at the
+    ///  target is read and classified before anything is destroyed. Only <c>Match</c> authorizes the
+    ///  write; every other verdict — including <c>Unreadable</c>, which on a mark-counted write is the
+    ///  miscount's own signature — fails the method with the tape untouched.
+    ///  <see cref="VerifiesSetHeader"/> opts out, which is the deliberate escape for a cartridge whose
+    ///  set headers are themselves damaged.
+    /// </para>
+    /// <para>
+    /// In the delete-ALL branch the verification is purely <b>positional</b>: begin-of-content is a
+    ///  deterministic landing, so there is nothing to miscount — but the header found there must be the
+    ///  volume's first set, confirming the head cleared the media header rather than standing on it.
+    ///  That branch must never write a TOC over <see cref="TapeMediaHeader"/> (INV-4).
+    /// </para>
+    /// <para>
+    /// <b>The head returns to the set start (SH-15)</b> after the verifying read, on both branches: the
+    ///  delete-all branch writes its TOC from there, and the trailing branch counts its setmark step-back
+    ///  from there.
+    /// </para>
+    /// <para>
+    /// Preconditions: <see cref="TapeTOC.CurrentSetIndex"/> names the first set to delete and must be on
+    ///  the current volume (<see cref="TapeTOC.IsCurrentSetOnVolume"/>); the delete-all branch is
+    ///  unsupported with an initiator partition — format the media instead.
+    /// </para>
+    /// </remarks>
     /// <param name="navigateFromBegin">
-    /// If <see langword="true"/>, enforces navigator to count from the beginning of media --
-    ///     useful if TOC is missing or corrupted, hence its filemarks should not be trusted.
+    /// Forces the navigator to count from begin-of-content rather than choosing the nearest anchor —
+    ///  useful when the TOC is missing or corrupted, so its filemark arithmetic should not be trusted.
     /// </param>
     /// <returns>A <see cref="TapeResult"/> indicating success or failure with error details.</returns>
     public TapeResult DeleteSetsFromCurrentSetUp(bool navigateFromBegin = false)
@@ -985,6 +1011,9 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
             return FailedOperationResult;
         }
 
+        // Applies WRITE-side verdict policy for the whole operation: an unverifiable set BLOCKS here,
+        //  where on the read path it would merely warn.
+        m_verifyingDestructiveWrite = true;
         try
         {
             // §17.3: this method navigates content DIRECTLY (not via a backup content choke-point),
@@ -993,20 +1022,28 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
             //  land at block 0 and clobber the media header. Idempotent / no-op once resolved.
             EnsureMediaHeaderResolved();
 
+            bool verifies = VerifiesSetHeader && Navigator.SetHeadersExpected;
+
             if (deletingAll)
             {
                 // --- Delete ALL sets on volume (TOC in set only) ---
                 //  Navigate to the very beginning of content, then write an initial TOC
                 //  which overwrites everything from the first content block.
                 m_logger.LogTrace("Deleting all sets — navigating to beginning of content");
-
                 Manager.EndReadWrite();
+
                 Navigator.MoveToBeginOfContent();   // Present ⇒ skips the header, lands at block 1
                 if (Navigator.WentBad)
                 {
                     SyncErrorFrom(Navigator);
                     return FailedOperationResult;
                 }
+
+                // Positional assertion: the block here must be THIS volume's first set header. A failure
+                //  means the head never cleared the media header -- and the TOC write below would then
+                //  land on it (INV-4).
+                if (verifies && !VerifyBeforeDestructiveWrite())
+                    return FailedOperationResult;
 
                 // Remove sets on this volume from the TOC.
                 //  If there are sets from previous volumes, keep them.
@@ -1021,25 +1058,24 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
                 }
 
                 // Write the TOC as if this were blank media — but do NOT rewrite the media header
-                //  (§10.8 / INV-4). MoveToBeginOfContent already positioned us at block 1 (past the
-                //  header at block 0), so the fresh initial TOC overwrites content only; the header survives.
+                //  (§10.8 / INV-4). We stand at block 1 (past the header at block 0), so the fresh
+                //  initial TOC overwrites content only; the header survives.
                 return BackupInitialTOC(writeHeader: false);
             }
-            else
+            else // deleting not all sets
             {
                 // --- Delete trailing sets (at least one set remains) ---
                 //  Navigate to the first set to be deleted, step back one setmark, then rewrite the
                 //  content setmark there. This overwrites the zombie setmarks and moves the EOD marker.
                 //  Then update the TOC and write it to tape.
                 m_logger.LogTrace("Navigating to set #{Set} for deletion", TOC.CurrentSetIndex);
-
                 Manager.EndReadWrite();
 
                 if (navigateFromBegin)
                 {
                     m_logger.LogTrace("Enforced navigating to beginning of content");
                     Navigator.MoveToBeginOfContent();   // Present ⇒ skips the header
-                    Navigator.TargetContentSet = TOC.CurrentSetIndexOnVolume;
+                    Navigator.TargetContentSet = CurrentSetAsNavigatorContentSet(fromBeginOnly: true);
                 }
                 else
                 {
@@ -1052,6 +1088,12 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
                     SyncErrorFrom(Navigator);
                     return FailedOperationResult;
                 }
+
+                // The set we are about to delete from must be the one the TOC describes -- this count
+                //  typically ran BACKWARD from end-of-content, across the very region a failed backup
+                //  would have damaged.
+                if (verifies && !VerifyBeforeDestructiveWrite())
+                    return FailedOperationResult;
 
                 // Step back one setmark — to just before the setmark separating the last retained set
                 //  from the first set to delete.
@@ -1089,8 +1131,45 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
             SetError(ex);
             return FailedOperationResult;
         }
+        finally
+        {
+            m_verifyingDestructiveWrite = false;
+        }
     } // DeleteSetsFromCurrentSetUp()
 
+    /// <summary>
+    /// Verifies the set header at the current position and returns the head to the set's first block,
+    ///  so the caller may write there. Returns <see langword="false"/> when the write must not proceed.
+    /// </summary>
+    /// <remarks>
+    /// The block is DERIVED after the read rather than captured before it: the verdict ladder may itself
+    ///  reposition, and a pre-read block would then be stale. A positive verdict always ends on a
+    ///  successful set-header read, so the set start is unambiguously one block back (SH-15).
+    /// </remarks>
+    private bool VerifyBeforeDestructiveWrite()
+    {
+        long setStartBlock = Drive.CurrentBlock;
+
+        if (!VerifySetHeaderForCurrentSet())
+        {
+            // Nothing has been written yet -- the tape is exactly as we found it.
+            m_logger.LogError("Refusing to delete from set #{Set}: its set header did not verify",
+                TOC.CurrentSetIndex);
+            LatchFailure();   // the verdict set the error; latch it past any later success
+            return false;
+        }
+
+        //long setStartBlock = Drive.CurrentBlock - 1;
+        if (!Drive.MoveToBlock(setStartBlock))
+        {
+            m_logger.LogWarning("Failed to return to block {Block} after verifying set #{Set}",
+                setStartBlock, TOC.CurrentSetIndex);
+            SyncErrorFrom(Drive);
+            LatchFailure();
+            return false;
+        }
+        return true;
+    }
     #endregion // *** TOC Backup ***
 
     #region *** TOC Restore ***

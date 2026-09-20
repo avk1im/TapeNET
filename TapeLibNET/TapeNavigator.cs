@@ -794,6 +794,11 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     public int SimulateSetMiscount { get; set; } = 0;
 
     /// <summary>
+    /// When >0, the next <see cref="SimulateSetMiscount"/> is skipped this many times before it is applied.
+    /// </summary>
+    public int SimulateSetMiscountSkipN { get; set; } = 0;
+
+    /// <summary>
     /// When <see langword="true"/>, the <see cref="SimulateSetMiscount"/> offset is NOT cleared after the next
     ///  positioning, allowing it to persist for multiple positionings.
     /// </summary>
@@ -802,6 +807,12 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     /// <summary>Consumes the pending miscount offset, if any.</summary>
     private protected int TakeSimulatedMiscount()
     {
+        if (SimulateSetMiscountSkipN > 0)
+        {
+            SimulateSetMiscountSkipN--;
+            return 0;
+        }
+
         int offset = SimulateSetMiscount;
         if (offset != 0)
         {
