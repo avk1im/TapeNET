@@ -351,17 +351,17 @@ public class TapeSetHeaderCorrectionTests
     ///  overwrite the WRONG set, where failing is correct and correcting is reckless.
     /// </summary>
     /// <remarks>
-    /// Deliberately an OVERWRITE (<c>newSet: false</c>), not an append. Appending targets end-of-content,
-    ///  which the FM-delimited layouts reach through raw filemark seeks rather than
-    ///  <c>MoveToNextContentSetmark</c> — so the simulator has nothing to hook there, and such a miscount
-    ///  cannot arise on those layouts at all. An overwrite routes through the counting primitive on every
-    ///  profile, and is precisely the destructive case the v1 boundary leaves unguarded.
+    /// Deliberately an OVERWRITE (<c>newSet: false</c>) from a middle set on. Appending from a middle
+    ///  set uses <c>MoveToNextContentSetmark</c>. An overwrite routes through the counting primitive
+    ///  on every profile, and is precisely the destructive case the v2 catches and corrects.
     /// </remarks>
     [Theory]
     [MemberData(nameof(AllProfiles))]
-    public void BackupPath_DoesNotCorrect(DriveProfile profile)
+    public void BackupPath_MiddleSet_Corrects(DriveProfile profile)
     {
         TempFileTree[] trees = [];
+        var notify = new TestNotifiable();
+
         using var extra = new TempFileTree();
         extra.AddFiles("wp", count: 2, minSize: 512, maxSize: 4 * 1024);
 
@@ -373,11 +373,89 @@ public class TapeSetHeaderCorrectionTests
             using var agent = fixture.CreateBackupAgent();
             agent.Navigator.SimulateSetMiscount = +1;
 
-            // Overwrite the newest set. The miscount is consumed by the positioning, and NOTHING
-            //  verifies or repairs it — the backup agent has no set-header read at all.
-            agent.BackupFileListToCurrentSet(newSet: false, extra.Files, ignoreFailures: true);
+            fixture.TOC.CurrentSetIndex = 2; // overwrite from the set #2 on
+
+            // Overwrite a middle set. The miscount is consumed by the positioning, and
+            //  the agent verifies and repairs it.
+            Assert.True(agent.BackupFileListToCurrentSet(newSet: false, extra.Files, ignoreFailures: true,
+                fileNotify: notify));
 
             Assert.Equal(0, agent.Navigator.SimulateSetMiscount);   // the injection point was reached
+
+            var recovered = Assert.Single(notify.SetAnomaliesRecovered).Anomaly;
+            Assert.Equal(TapeSetHeaderVerdict.SetIndexDrift, recovered.Verdict);
+            // Navigation to a middle set via positive index (from BOM) screwed -> adjustment via delta should've fixed it (stage 1)
+            Assert.Equal(TapeSetAnomalyStage.Delta, recovered.Stage);
+
+            var sets = agent.Statistics.Sets;
+            Assert.Equal(1, sets.AnomaliesDetected);
+            Assert.Equal(1, sets.AnomaliesRecovered);
+            Assert.False(sets.SetWriteBlocked); // we should've cleared the writing upon recovery
+            Assert.Single(agent.SetAnomalies);
+        }
+        finally
+        {
+            DisposeAll(trees);
+        }
+    }
+
+    /// <summary>
+    /// The write path is never corrected (§15.3): a write-side miscount means the agent is about to
+    ///  overwrite the WRONG set, where failing is correct and correcting is reckless.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately an OVERWRITE (<c>newSet: false</c>), not an append. Constructs the destructive case
+    ///  the v2 catches and corrects. Yet we have to differentiate by profiles (FM-counting vs SM-counting)
+    ///  to construct the failure.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void BackupPath_LastSet_Corrects(DriveProfile profile)
+    {
+        TempFileTree[] trees = [];
+        var notify = new TestNotifiable();
+
+        using var extra = new TempFileTree();
+        extra.AddFiles("wp", count: 2, minSize: 512, maxSize: 4 * 1024);
+
+        try
+        {
+            using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);
+            trees = BuildMultiSetTape(fixture, setCount: 3, prefix: "wp");
+
+            using var agent = fixture.CreateBackupAgent();
+
+            if (profile is DriveProfile.FilemarksOnly or DriveProfile.SeqFilemarks)
+            {
+                // the FM-counting profiles can be simulated to miscount to the last set
+                agent.Navigator.SimulateSetMiscount = +1;
+            }
+            else
+            {
+                // Partitions and Setmarks would run into EOD if miscounted to last set: their -1 SM move
+                //  would be 0, then the next +1 SM would run into EOD. Hence they need a different simulation
+                //  ...namely the read-fault injector for the set header read (NOT the media header!)
+                fixture.Backend.ContentReadFaults.CorruptOnce(bits: 2, offset: 48);
+                fixture.Backend.ContentReadFaults.SkipN = 1; // don't corrupt the media header read
+            }
+
+            // Overwrite the latest / last set. The miscount is consumed by the positioning, and
+            //  the agent verifies and repairs it.
+            Assert.True(agent.BackupFileListToCurrentSet(newSet: false, extra.Files, ignoreFailures: true,
+                fileNotify: notify));
+
+            Assert.Equal(0, agent.Navigator.SimulateSetMiscount);   // the injection point was reached
+
+            var recovered = Assert.Single(notify.SetAnomaliesRecovered).Anomaly;
+            Assert.Equal(TapeSetHeaderVerdict.SetIndexDrift, recovered.Verdict);
+            // Navigation to the last set screwed -> renavigation from BOM must've been required to fix it
+            Assert.Equal(TapeSetAnomalyStage.Renavigated, recovered.Stage);
+
+            var sets = agent.Statistics.Sets;
+            Assert.Equal(1, sets.AnomaliesDetected);
+            Assert.Equal(1, sets.AnomaliesRecovered);
+            Assert.False(sets.SetWriteBlocked); // we should've cleared the writing upon recovery
+            Assert.Single(agent.SetAnomalies);
         }
         finally
         {

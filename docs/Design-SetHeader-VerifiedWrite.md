@@ -249,7 +249,7 @@ VerifySetHeaderForCurrentSet()                      // runs at most twice
 ```
 
 Termination is **structural**, not a counter: the second pass targets a non-negative index, so its
-end-anchored precondition is false and it cannot re-attempt. A guard flag (`m_reNavigatedFromBegin`) makes
+end-anchored precondition is false and it cannot re-attempt. A guard flag (`m_renavigatedFromBom`) makes
 that explicit rather than inferred, and keeps the property true even if the anchor arithmetic later changes.
 
 `CurrentSetAsNavigatorContentSet` becomes a **method** with a `bool fromBegin = false` parameter, which suits
@@ -329,6 +329,98 @@ So exactly **one** virtual remains (§7), governing the terminal treatment of `U
   `MoveToTargetContentSet()` when `CurrentContentSet == UnknownSet` before proceeding unverified. That is now
   the *terminal* branch, reached only after the re-navigation of §5.2 has been spent or declined.
 
+## 5.7 The inconvenient half of the same fault
+
+Step 5 wired the recovery to the *polite* failure mode: the navigation completes, the head lands somewhere,
+and the set header politely disagrees. That is the presentation we could construct in tests — and it is the
+minority of what a genuinely damaged tape does.
+
+The other half is blunter. A backward count that crosses a damaged tail does not always land on the wrong
+set; often it runs out of tape and returns `ERROR_NO_DATA_DETECTED` or `ERROR_END_OF_MEDIA`. Nothing is
+read, no header disagrees, no verdict is reached — and the operation fails with a transport error, from a
+cartridge whose healthy front half is sitting there intact and reachable.
+
+The two are the **same fault** reported through different channels:
+
+| | Step 5 (the wrong one) | Step 5A (the failed one) |
+|---|---|---|
+| Symptom | header says another set | `ERROR_NO_DATA_DETECTED` / `ERROR_END_OF_MEDIA` |
+| Detected by | `ClassifySetHeader` | `Navigator.WentBad` + error code |
+| Cause | the tail's mark structure is *wrong* | the tail's mark structure is *short* |
+| Cure | **renavigate from BOM** | **renavigate from BOM** |
+
+Once the cure is identical, withholding it from the second case is arbitrary. Worse, on real damaged media
+the second case is the likelier one: a set whose closing mark never reached tape removes a mark from the
+count, so a backward count of N marks reaches past begin-of-content and hits BOM, or — on the filemark
+layouts, whose `MoveToEndOfContentInternal` assumes a fixed mark distance from EOD — walks off the end.
+
+### 5.7.1 The gate is the ERROR CODE, not `WentBad`
+
+A drive that went offline also fails to move. So does a cartridge that was ejected mid-operation. Neither is
+helped by a rewind, and both would be *made worse* by one — a pointless full-length transport pass before
+the real error surfaces.
+
+> **SH-20: a failed navigation is retried from begin-of-content only when it counted BACKWARD and failed with
+> a POSITIONAL error — one that says "there is no more tape that way". Any other error terminates
+> immediately.**
+
+The positional set, and why each belongs:
+
+| Error | Why it means "the tail is short" |
+|---|---|
+| `ERROR_NO_DATA_DETECTED` | ran past EOD looking for a mark that is not there |
+| `ERROR_END_OF_MEDIA` | the same, physical rather than logical |
+| `ERROR_BEGINNING_OF_MEDIA` | counted back past BOM — the count was too large for the marks present |
+| `ERROR_FILEMARK_DETECTED` / `ERROR_SETMARK_DETECTED` | the mark structure is not what the count assumed |
+
+Everything else — `ERROR_NOT_READY`, `ERROR_MEDIA_CHANGED`, `ERROR_BUS_RESET`, `ERROR_CRC`, any I/O failure —
+terminates. A rewind cannot make a dead drive live.
+
+### 5.7.2 One helper, three call sites
+
+The whole feature is a wrapper around `MoveToTargetContentSet`:
+
+```
+NavigateToTargetContentSet()
+  ├─ move → success                              → done
+  ├─ move → failed, non-positional               → fail (untouched)
+  ├─ move → failed, positional, begin-anchored   → fail (no other direction to try)
+  └─ move → failed, positional, END-anchored     → reset, re-target fromBeginOnly, move again
+                                                    ├─ success → report the recovery, done
+                                                    └─ failed  → fail, with the SECOND error
+```
+
+Because it re-targets to a non-negative index, the retry is **structurally bounded** exactly as stage 2 is:
+its own end-anchored precondition is false, so it cannot recurse.
+
+And because the verification that follows now runs against the *renavigated* position, `m_renavigatedFromBom`
+is already set when the ladder reports — so a set rescued this way is attributed to
+`TapeSetAnomalyStage.Renavigated` and counted in `AnomaliesRecoveredFromBom` with no extra wiring. That is
+the correct attribution: it indicts the tail, which is exactly what happened.
+
+### 5.7.3 The restore path navigates itself
+
+`BeginReadContentForCurrentSet` previously delegated its positioning to `Manager.BeginReadContent`, which
+calls `MoveToLocationFor` → `Navigator.MoveToTargetContentSet` internally. A failure there surfaces as
+"failed to transition to reading content", with the navigator's error buried two layers down.
+
+Rather than plumbing that error outward, the restore path now does what the **backup path already does**:
+navigates explicitly *before* handing control to the manager. The manager's own
+`MoveToTargetContentSet` then finds `TargetContentSet == CurrentContentSet` and returns without touching the
+transport (SH-4), so the change costs nothing and the recovery sits where it can see the error.
+
+This also makes the three paths read alike, which is worth something on its own.
+
+### 5.7.4 What this does NOT do
+
+- **It does not retry a failed READ.** `ReadSetHeaderBlock` failing is `Unreadable`, and Step 5 already
+  handles that verdict.
+- **It does not apply to the delete-ALL branch.** `MoveToBeginOfContent` *is* the forward direction; a
+  failure there means the front of the volume is damaged, which §11 already records as out of reach.
+- **It does not lower the write path's guard.** The renavigated position is still verified, and still
+  blocks on anything but `Match`. The recovery buys a second chance at *reaching* the set, never a
+  concession about writing to it.
+
 ---
 
 ## 6. Surfacing — the set-level notification channel
@@ -345,7 +437,7 @@ point of detection:
 | `ExpectedVolumeSetIndex` / `ActualVolumeSetIndex` | `TOC.CurrentSetIndexOnVolume` vs. `header.VolumeSetIndex` |
 | `ExpectedDescription` / `ActualDescription` | `TOC.CurrentSetTOC.Description` vs. `header.DisplayName` |
 | `ExpectedVolume` / `ActualVolume` | populated on `WrongVolume`, else equal |
-| `Stage` | `Delta` or `ReNavigated` — which recovery stage produced or failed at this event |
+| `Stage` | `Delta` or `Renavigated` — which recovery stage produced or failed at this event |
 | `IsDestructive` | whether a destructive write is gated on this verdict |
 | `CanAttemptRecovery` | whether a stage remains untried for this verdict and anchor |
 | `Diagnosis` | a `TapeResult` carrying code and message |
@@ -451,7 +543,7 @@ forcing reasons:
 What moves, with the visibility it needs: `ReadSetHeader` (private → protected), `ClassifySetHeader`
 (internal), `VerifySetHeaderForCurrentSet` (private → protected, now hosting the re-attempt),
 `HandleSetHeaderVerdict`, `CorrectSetNavigation`, `m_correctingSetNavigation`, the new
-`m_reNavigatedFromBegin`, and `CorrectsSetNavigation` (public, default `true`). `TapeSetHeaderVerdict` moves
+`m_renavigatedFromBom`, and `CorrectsSetNavigation` (public, default `true`). `TapeSetHeaderVerdict` moves
 from `TapeRestoreAgent.cs` to `TapeSetHeader.cs` — a file move at namespace scope, no API change.
 `CurrentSetAsNavigatorContentSet` becomes `CurrentSetAsNavigatorContentSet(bool fromBegin = false)` (§5.2).
 
@@ -633,18 +725,18 @@ and `navigateFromBegin` rewired onto `CurrentSetAsNavigatorContentSet(fromBegin:
 
 ### Step 4 — The notification channel
 
-`TapeSetAnomaly` (with `Stage`), `SetFailedAction`, the two interface members with default implementations,
-the `NotifySetFailed` / `NotifySetAnomalyRecovered` wrappers on `TapeFileAgent`, and the `SetAnomalies`
-accumulator. `TestNotifiable` gains `SetFailedEvent` / `SetAnomalyRecoveredEvent` records, the matching lists,
-a `SetFailedAction SetFailedAction { get; set; }` knob and a `SetFailedActionFunc` override — mirroring
+`TapeSetAnomaly` (with `Stage`), `SetAnomalyAction`, the two interface members with default implementations,
+the `NotifySetAnomaly` / `NotifySetAnomalyRecovered` wrappers on `TapeFileAgent`, and the `SetAnomalies`
+accumulator. `TestNotifiable` gains `SetAnomalyEvent` / `SetAnomalyRecoveredEvent` records, the matching lists,
+a `SetAnomalyAction SetAnomalyAction { get; set; }` knob and a `SetAnomalyActionFunc` override — mirroring
 `FailedAction` / `FailedActionFunc` exactly — plus `Clear()` coverage for the two new lists.
 
 *Tests:* `TapeSetNotificationTests` —
 
-- `BlockedSet_RaisesOnSetFailed_WithBothDescriptions` — the payload names both sets; a prompt that cannot name
+- `BlockedSet_RaisesOnSetAnomaly_WithBothDescriptions` — the payload names both sets; a prompt that cannot name
   them is not a prompt.
-- `OnSetFailed_ReturningAbort_YieldsErrorCancelled` — a user decision is not a fault, and does not latch.
-- `OnSetFailed_Throwing_ConvergesWithTheEnum` — the third abort channel: operation fails, `IsAbortRequested`
+- `OnSetAnomaly_ReturningAbort_YieldsErrorCancelled` — a user decision is not a fault, and does not latch.
+- `OnSetAnomaly_Throwing_ConvergesWithTheEnum` — the third abort channel: operation fails, `IsAbortRequested`
   recorded, diagnosis non-empty. Same family as the existing three-channel convergence check in
   `ErrorHandlingTests`.
 - `NotifiableWithoutOverrides_DefaultsToAbort` — the DIM contract, via a minimal implementer that overrides
@@ -654,7 +746,7 @@ a `SetFailedAction SetFailedAction { get; set; }` knob and a `SetFailedActionFun
 ### Step 5 — The unified two-stage recovery
 
 Host the re-attempt in `VerifySetHeaderForCurrentSet` per §5.2, with `Navigator.ResetContentSet()` (SH-19),
-the `m_reNavigatedFromBegin` guard, `Unreadable` admitted to the re-navigation, and the terminal split of
+the `m_renavigatedFromBom` guard, `Unreadable` admitted to the re-navigation, and the terminal split of
 §5.5. This step changes **read-path behaviour** as well, which is the point.
 
 *Tests:* `TapeSetNavigationRecoveryTests`, four profiles — the crown suite of this feature:
@@ -663,7 +755,7 @@ the `m_reNavigatedFromBegin` guard, `Unreadable` admitted to the re-navigation, 
   sets, begin one more and abort it mid-set via `TestNotifiable.AbortAfterNPreProcessed` so the set header
   reaches tape and the closing setmark does not, then delete the tail. Assert three things: the *right* sets
   survive and restore byte-for-byte, the TOC is written, and `OnSetAnomalyRecovered` fired with
-  `Stage == ReNavigated`. Asserting only the return value would pass for a version that deleted one set too
+  `Stage == Renavigated`. Asserting only the return value would pass for a version that deleted one set too
   many.
 - `RestoreOnDamagedTail_AlsoRecovers` — §2.2's claim, and the reason this is not a write-only feature: the
   same cartridge restores correctly where it previously failed.
@@ -681,9 +773,23 @@ the `m_reNavigatedFromBegin` guard, `Unreadable` admitted to the re-navigation, 
 - `Recovery_Declined_BlocksWithoutMoving` — `OnSetFailed → Abort` leaves the head where it was.
 - `WrongVolume_NeverReNavigates` — §5.4: identity verdicts skip every stage.
 
+### Step 5A: S. §5.7
+
+Tests — additions to `TapeSetNavigationRecoveryTests`
+
+| Test | Proves |
+|---|---|
+| `FailedBackwardNavigation_RecoversFromBom` | the feature: an over-long backward count fails positionally, the retry succeeds, the set restores |
+| `FailedNavigation_ReportsRenavigatedStage` | attribution — `AnomaliesRecoveredFromBom == 1`, `Stage == Renavigated`, and the operation still reports success |
+| `NonPositionalNavigationFailure_DoesNotRetry` | the SH-20 gate: a simulated `ERROR_NOT_READY` terminates with its OWN error, no rewind, no anomaly |
+| `FailedForwardNavigation_DoesNotRetry` | the structural precondition — a begin-anchored failure has no other direction |
+| `FailedNavigation_BothDirectionsFail_ReportsSecondError` | the terminal: the retry's error is what surfaces, since it describes where we ended |
+| `DeleteOnUnreachableTail_RecoversAndDeletes` | the write path gets it too, and the retained sets survive byte-for-byte |
+
+
 ### Step 6 — Service and host surfacing
 
-`ServiceOperationResult.SetAnomaliesRecovered` / `SetsReNavigated` / `SetsBlocked`;
+`ServiceOperationResult.SetAnomaliesRecovered` / `SetsRenavigated` / `SetsBlocked`;
 `ServiceOperationProgressHandler` overrides both new members and routes them through `_host.Report` and
 `ITapeServiceHost`; `JudgeFileOperation` / `VerbalizeFileOperation` gain the blocked-set verdict. That last one
 is the point of the step: a refused destructive write processes no files, so without it the operation reports
@@ -714,6 +820,7 @@ existing **S11** probe.
 | **SH-17** | `ReadSetHeaderBlock` fails hard if a packer of either kind exists, whatever the manager state — completing the read-packer guard SH-7 introduced. |
 | **SH-18** | `OnSetFailed` defaults to `Abort`, is raised at most once per set, and its `Proceed` authorizes every remaining recovery stage. |
 | **SH-19** | The re-navigation resets `CurrentContentSet` before re-targeting. A believed position is never carried across a recovery stage. |
+| **SH-20** | A navigation that FAILS with a positional error (`ERROR_NO_DATA_DETECTED`, `ERROR_END_OF_MEDIA`, `ERROR_BEGINNING_OF_MEDIA`, `ERROR_FILEMARK_DETECTED`, `ERROR_SETMARK_DETECTED`) after counting BACKWARD is retried once, counted forward from begin-of-content. Any other error terminates immediately: a rewind cannot revive a dead drive. The retry is reported as `TapeSetAnomalyStage.Renavigated`. |
 
 ---
 

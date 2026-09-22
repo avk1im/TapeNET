@@ -33,7 +33,26 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         return Manager.ProduceReadContentStream(textFileMode: false, lengthLimit: -1);
     }
 
-    private bool BeginReadContentForCurrentSet()
+    /// <summary>
+    /// Positions at the current set and opens the content read session, verifying the set header before
+    ///  a single file byte is delivered.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Navigates EXPLICITLY, before handing control to the manager (SH-20).</b> The manager's
+    ///  <c>BeginReadContent</c> would position internally, burying any navigation error two layers down —
+    ///  where the recovery cannot see it. Navigating here mirrors what
+    ///  <c>TapeFileBackupAgent.BeginWriteContentForCurrentSet</c> has always done, and costs nothing: the
+    ///  manager's own <c>MoveToTargetContentSet</c> then finds target == current and returns without
+    ///  touching the transport (SH-4).
+    /// </para>
+    /// <para>
+    /// <b>SH-8:</b> the set header is read ONLY when the head actually lands on a set's first block.
+    ///  Reading unconditionally would consume a CONTENT block mid-set and corrupt the next file.
+    /// </para>
+    /// </remarks>
+    /// <param name="fileNotify">Optional callback, for the set-level anomaly channel.</param>
+    private bool BeginReadContentForCurrentSet(ITapeFileNotifiable? fileNotify)
     {
         EnsureMediaHeaderResolved(); // resolve presence AND SetHeadersExpected (§4.2) before
                                      //  any content navigation (blank-media fallbacks skip the header)
@@ -47,19 +66,24 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             return false;
         }
 
-        // Optimization: set the target content set BEFORE transition to Content reading
-        //  so that Navigator can optimize moving to the target content set once we call BeginReadContent()
         Navigator.TargetContentSet = CurrentSetAsNavigatorContentSet();
 
-        // SH-8 — capture BEFORE BeginReadContent, which is the only moment this is knowable.
-        //  BeginReadContent moves the head IFF the target differs from the navigator's current belief:
-        //  it early-returns when they are equal and already reading, and MoveToTargetContentSet is
-        //  itself idempotent (SH-4) on every other path. So this one expression decides whether the
-        //  head will land on the set's FIRST block — the only position where a set header sits.
-        //  Reading unconditionally would consume a CONTENT block mid-set and corrupt the next file.
+        // SH-8 — capture BEFORE positioning, which is the only moment this is knowable. The head lands on
+        //  the set's FIRST block — the only position where a set header sits — exactly when the target
+        //  differs from the navigator's current belief. (Kept even though we now navigate ourselves: a
+        //  recovery may change CurrentContentSet, so the answer must be taken up front.)
         bool willPositionAtSetStart = Navigator.TargetContentSet != Navigator.CurrentContentSet;
 
-        // Transition to Content mode before setting the set parameters
+        // Position OURSELVES rather than leaving it to Manager.BeginReadContent -- see the remarks.
+        //  SH-20: a backward count that fails positionally is retried from begin-of-content.
+        if (!NavigateToTargetContentSet(fileNotify))
+        {
+            m_logger.LogWarning("Failed to position at the target content set in {Method}",
+                nameof(BeginReadContentForCurrentSet));
+            return false;   // NavigateToTargetContentSet already synced the error
+        }
+
+        // Transition to Content mode. Its internal MoveToTargetContentSet is now a no-op (SH-4).
         if (!Manager.BeginReadContent())
         {
             m_logger.LogWarning("Failed to transition to reading content in {Method}",
@@ -69,7 +93,8 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         }
 
         // Verify the set we actually landed on before delivering a single file byte (SH-7, SH-8).
-        if (willPositionAtSetStart && Navigator.SetHeadersExpected && !VerifySetHeaderForCurrentSet())
+        if (willPositionAtSetStart && Navigator.SetHeadersExpected
+                && !VerifySetHeaderForCurrentSet(fileNotify))
             return false;
 
         // set the block size from the set to the manager
@@ -82,7 +107,6 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 
         // Success
         ResetError();
-
         return true;
     }
 
@@ -386,14 +410,15 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     //  Mirrors RestoreFilesFromCurrentSetAligned(List<TapeFileInfo>?, ...) but uses TapeAddress
     //  positioning and the packed read façade. No tape MoveToBlock is needed here -- the
     //  packer seeks to the file's exact (block, offset) on BeginRead.
-    private bool RestoreFilesFromCurrentSet(List<TapeFileInfo>? tfis, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+    private bool RestoreFilesFromCurrentSet(List<TapeFileInfo>? tfis, bool ignoreFailures = true,
+        ITapeFileNotifiable? fileNotify = null)
     {
         if (tfis == null) // null means restore all files
             return RestoreAllFilesFromCurrentSetInt(ignoreFailures, fileNotify);
 
         NotifySetStart(fileNotify, tfis.Count);
 
-        if (!BeginReadContentForCurrentSet())
+        if (!BeginReadContentForCurrentSet(fileNotify))
         {
             NotifySetEnd(fileNotify);
             m_logger.LogWarning("Failed to begin reading content in {Method}",
@@ -415,6 +440,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             if (tfi == null || !tfi.IsValid)
             {
                 m_logger.LogWarning("Invalid file info in {Method}", nameof(RestoreFilesFromCurrentSet));
+                SetError(WIN32_ERROR.ERROR_INVALID_DATA,
+                    $"Invalid file entry in set #{TOC.CurrentSetIndex} — the TOC describes a file that " +
+                    "cannot be located");
                 goto FAILURE;
             }
 
@@ -441,8 +469,12 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 goto RETRY;
             }
 
-            if (!IsAbortRequested) // no need for caller-requested abort to LatchFailure()
-                LatchFailure();
+            // Latch only a REAL fault. This label is also reached with no error at all — an invalid
+            //  TapeFileInfo, or an abort observed before the file was touched — and latching there
+            //  would manufacture a diagnosis out of a user decision. IsAbortRequested is the channel
+            //  that says "aborted"; the latched error says "why", and sometimes there is no why.
+            if (WentBad)
+                LatchFailure();  // latch on the ORIGINAL error if one occured, abort notwithstanding
             overallSuccess = false;
 
             if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
@@ -463,7 +495,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     {
         NotifySetStart(fileNotify, TOC.CurrentSetTOC.Count);
 
-        if (!BeginReadContentForCurrentSet())
+        if (!BeginReadContentForCurrentSet(fileNotify))
         {
             m_logger.LogWarning("Failed to begin reading content in {Method}",
                 nameof(RestoreAllFilesFromCurrentSet));
@@ -484,6 +516,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             if (tfi == null || !tfi.IsValid)
             {
                 m_logger.LogWarning("Invalid file info in {Method}", nameof(RestoreAllFilesFromCurrentSet));
+                SetError(WIN32_ERROR.ERROR_INVALID_DATA,
+                    $"Invalid file entry in set #{TOC.CurrentSetIndex} — the TOC describes a file that " +
+                    "cannot be located");
                 goto FAILURE;
             }
 
@@ -509,8 +544,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 goto RETRY;
             }
 
-            if (!IsAbortRequested) // no need for caller-requested abort to LatchFailure()
-                LatchFailure();
+            // Latch only a REAL fault
+            if (WentBad)
+                LatchFailure();  // latch on the ORIGINAL error if one occured, abort notwithstanding
             overallSuccess = false;
 
             if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
@@ -537,6 +573,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             TOC.CurrentSetIndex);
 
         _stats.Reset();
+        _setAnomalies.Clear();
         ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, fileFilter), ignoreFailures, fileNotify, packed: true)
             ? TapeResult.OK : FailedOperationResult;
@@ -553,6 +590,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             TOC.CurrentSetIndex);
 
         _stats.Reset();
+        _setAnomalies.Clear();
         ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filter: null), ignoreFailures, fileNotify, packed: true)
             ? TapeResult.OK : FailedOperationResult;
@@ -570,7 +608,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 
         NotifySetStart(fileNotify, tfis.Count);
 
-        if (!BeginReadContentForCurrentSet()) // start conent reading mode in tape manager so that tape positioning works correctly
+        if (!BeginReadContentForCurrentSet(fileNotify)) // start conent reading mode in tape manager so that tape positioning works correctly
         {
             NotifySetEnd(fileNotify);
             m_logger.LogWarning("Failed to begin reading content in {Method}", nameof(RestoreFilesFromCurrentSetAligned));
@@ -593,6 +631,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             if (tfi == null || !tfi.IsValid)
             {
                 m_logger.LogWarning("Invalid file info in {Method}", nameof(RestoreFilesFromCurrentSetAligned));
+                SetError(WIN32_ERROR.ERROR_INVALID_DATA,
+                    $"Invalid file entry in set #{TOC.CurrentSetIndex} — the TOC describes a file that " +
+                    "cannot be located");
                 goto FAILURE;
             }
 
@@ -655,8 +696,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 goto RETRY;
             }
 
-            if (!IsAbortRequested) // no need for caller-requested abort to LatchFailure()
-                LatchFailure();
+            // Latch only a REAL fault
+            if (WentBad)
+                LatchFailure();  // latch on the ORIGINAL error if one occured, abort notwithstanding
             overallSuccess = false;
 
             if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
@@ -676,7 +718,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     {
         NotifySetStart(fileNotify, TOC.CurrentSetTOC.Count);
 
-        if (!BeginReadContentForCurrentSet())
+        if (!BeginReadContentForCurrentSet(fileNotify))
         {
             m_logger.LogWarning("Failed to begin reading content in {Method}", nameof(RestoreFilesFromCurrentSetAligned));
             return false;
@@ -698,6 +740,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             if (tfi == null || !tfi.IsValid)
             {
                 m_logger.LogWarning("Invalid file info in {Method}", nameof(RestoreFilesFromCurrentSetAligned));
+                SetError(WIN32_ERROR.ERROR_INVALID_DATA,
+                   $"Invalid file entry in set #{TOC.CurrentSetIndex} — the TOC describes a file that " +
+                   "cannot be located");
                 goto FAILURE;
             }
 
@@ -738,8 +783,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 goto RETRY;
             }
 
-            if (!IsAbortRequested) // no need for caller-requested abort to LatchFailure()
-                LatchFailure();
+            // Latch only a REAL fault
+            if (WentBad)
+                LatchFailure();  // latch on the ORIGINAL error if one occured, abort notwithstanding
             overallSuccess = false;
 
             if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
@@ -769,7 +815,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     }
     private TapeRestoreContext? MultiVolumeContext { get; set; } = null;
     /// <summary>Whether a multi-volume continuation context is pending (earlier volume needed).</summary>
-    public bool CanResumeFromAnotherVolume => MultiVolumeContext != null;
+    public bool CanResumeFromAnotherVolume => MultiVolumeContext is not null;
     /// <summary>Volume number to load next; valid only when <see cref="CanResumeFromAnotherVolume"/> is <see langword="true"/>.</summary>
     public int VolumeToResumeFrom { get; private set; } = -1;
 
@@ -891,10 +937,12 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                     nameof(RestoreFilesFromCurrentSetDownInt), rc.filesSelectedIdx, TOC.CurrentSetIndex);
 
                 rc.overallSuccess = false;
-                if (!CanResumeFromAnotherVolume && !IsAbortRequested) // media full isn't an unrecoverable error
-                                                                      //  nor is a user-requested abort
-                    LatchFailure(); // latch the failure for the final result
-                
+                // Latch only a REAL fault.
+                //  A media-full-please-swap isn't a failure, nor is a user-requested abort.
+                //  Latching is indempotent, hence it won't hurt if the original error has already been latched.
+                if (!CanResumeFromAnotherVolume && WentBad)
+                    LatchFailure(); // latch on the ORIGINAL error if one occured
+
                 if (!ignoreFailures || IsAbortRequested)
                     break;
             }
@@ -925,6 +973,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting restoring pre-selected files from current set #{Set} down", TOC.CurrentSetIndex);
 
         _stats.Reset();
+        _setAnomalies.Clear();
         ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(filesSelected, ignoreFailures, fileNotify, packed: false)
             ? TapeResult.OK : FailedOperationResult;
@@ -939,6 +988,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting restoring (packed) pre-selected files from current set #{Set} down", TOC.CurrentSetIndex);
 
         _stats.Reset();
+        _setAnomalies.Clear();
         ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(filesSelected, ignoreFailures, fileNotify, packed: true)
             ? TapeResult.OK : FailedOperationResult;
@@ -952,6 +1002,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting restoring files from current set #{Set}", TOC.CurrentSetIndex);
 
         _stats.Reset();
+        _setAnomalies.Clear();
         ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, fileFilter), ignoreFailures, fileNotify, packed: false)
             ? TapeResult.OK : FailedOperationResult;
@@ -964,6 +1015,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting incrementally restoring files from current set #{Set}", TOC.CurrentSetIndex);
 
         _stats.Reset();
+        _setAnomalies.Clear();
         ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, fileFilter), ignoreFailures, fileNotify, packed: false)
             ? TapeResult.OK : FailedOperationResult;
@@ -976,6 +1028,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting restoring all files from current set #{Set}", TOC.CurrentSetIndex);
 
         _stats.Reset();
+        _setAnomalies.Clear();
         ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filter: null), ignoreFailures, fileNotify, packed: false)
             ? TapeResult.OK : FailedOperationResult;
@@ -988,6 +1041,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting incrementally restoring all files from current set #{Set}", TOC.CurrentSetIndex);
 
         _stats.Reset();
+        _setAnomalies.Clear();
         ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, filter: null), ignoreFailures, fileNotify, packed: false)
             ? TapeResult.OK : FailedOperationResult;
@@ -999,6 +1053,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting incrementally restoring (packed) files from current set #{Set}", TOC.CurrentSetIndex);
 
         _stats.Reset();
+        _setAnomalies.Clear();
         ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, fileFilter), ignoreFailures, fileNotify, packed: true)
             ? TapeResult.OK : FailedOperationResult;
@@ -1010,6 +1065,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting incrementally restoring (packed) all files from current set #{Set}", TOC.CurrentSetIndex);
 
         _stats.Reset();
+        _setAnomalies.Clear();
         ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, filter: null), ignoreFailures, fileNotify, packed: true)
             ? TapeResult.OK : FailedOperationResult;
@@ -1039,6 +1095,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             return TapeResult.OK;
 
         _stats.Reset();
+        _setAnomalies.Clear();
         ResetLatchedFailure();
 
         m_logger.LogTrace("Restoring files from {Count} set(s): {Sets}",
@@ -1091,6 +1148,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             return TapeResult.OK;
 
         _stats.Reset();
+        _setAnomalies.Clear();
         ResetLatchedFailure();
 
         m_logger.LogTrace("Restoring (packed) files from {Count} set(s): {Sets}",

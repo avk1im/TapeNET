@@ -478,6 +478,16 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
             return true;
         }
 
+#if DEBUG
+        // Simulate failures for testing error handling
+        if (SimulateNavigationFailures.ShouldFailNow())
+        {
+            m_logger.LogWarning("SIMULATED failure for navigation #{Counter}", SimulateNavigationFailures.Counter);
+            SetError(SimulateNavigationFailureError, $"SIMULATED navigation failure: {SimulateNavigationFailureError}");
+            return false;
+        }
+#endif
+
         if (TargetContentSet < 0) // starting from the end of content -> move to the end of content first
         {
             // [set0][SM]..[setN-2][SM][setN-1][SM][setN][SM][toc]
@@ -823,6 +833,10 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
         }
         return offset;
     }
+
+    public FailureSimulator SimulateNavigationFailures { get; } = new();
+
+    internal WIN32_ERROR SimulateNavigationFailureError { get; set; } = WIN32_ERROR.ERROR_NOT_READY;
 #endif
 
     #endregion // ErrorException simulation

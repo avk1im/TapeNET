@@ -15,6 +15,13 @@ public class TestNotifiable : ITapeFileNotifiable
     public record FileFailedEvent(TapeFileInfo FileInfo, TapeResult Result, TapeFileStatistics Stats);
     public record FileSkippedEvent(TapeFileInfo FileInfo, TapeFileStatistics Stats);
 
+    /// <summary>
+    /// One recorded set-level incident. Used for BOTH anomaly lists, overall and recovered  — the list
+    ///  names carry the meaning, so a second wrapper type would be pure ceremony.
+    ///  "Incident" rather than "Event" to avoid reading as a C# <see langword="event"/>.
+    /// </summary>
+    public record SetAnomalyIncident(TapeSetAnomaly Anomaly, TapeFileStatistics Stats);
+
     #endregion
 
     #region *** Recorded Events ***
@@ -25,6 +32,9 @@ public class TestNotifiable : ITapeFileNotifiable
     public List<PostProcessEvent> PostProcessed { get; } = [];
     public List<FileFailedEvent> FilesFailed { get; } = [];
     public List<FileSkippedEvent> FilesSkipped { get; } = [];
+
+    public List<SetAnomalyIncident> SetAnomalies { get; } = [];
+    public List<SetAnomalyIncident> SetAnomaliesRecovered { get; } = [];
 
     #endregion
 
@@ -103,6 +113,22 @@ public class TestNotifiable : ITapeFileNotifiable
     /// </summary>
     public int AbortInPostProcessAfterN { get; set; } = 0;
 
+    /// <summary>
+    /// Action to return from <see cref="OnSetAnomaly"/>. Defaults to <see cref="SetAnomalyAction.Proceed"/>.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately the OPPOSITE of the interface default: a test notifiable exists to exercise the
+    ///  library's own decisions, so it must not veto them before they run. Tests that want the veto set
+    ///  this explicitly — which is the clearer statement of intent anyway.
+    /// </remarks>
+    public SetAnomalyAction SetAnomalyAction { get; set; } = SetAnomalyAction.Proceed;
+
+    /// <summary>Overrides <see cref="SetAnomalyAction"/> when set. Mirrors <see cref="FailedActionFunc"/>.</summary>
+    public Func<TapeSetAnomaly, SetAnomalyAction>? SetAnomalyActionFunc { get; set; }
+
+    /// <summary>When true, <see cref="OnSetAnomaly"/> THROWS instead of returning — the exception channel.</summary>
+    public bool ThrowOnSetAnomaly { get; set; } = false;
+
     #endregion
 
     #region *** ITapeFileNotifiable ***
@@ -169,6 +195,17 @@ public class TestNotifiable : ITapeFileNotifiable
         FilesSkipped.Add(new FileSkippedEvent(fileInfo, stats));
     }
 
+    public SetAnomalyAction OnSetAnomaly(in TapeSetAnomaly anomaly, in TapeFileStatistics stats)
+    {
+        SetAnomalies.Add(new SetAnomalyIncident(anomaly, stats));
+        if (ThrowOnSetAnomaly)
+            throw new TapeAbortRequestedException($"Test abort at set anomaly: {anomaly.Verdict}");
+        return SetAnomalyActionFunc?.Invoke(anomaly) ?? SetAnomalyAction;
+    }
+
+    public void OnSetAnomalyRecovered(in TapeSetAnomaly anomaly, in TapeFileStatistics stats)
+        => SetAnomaliesRecovered.Add(new SetAnomalyIncident(anomaly, stats));
+
     #endregion
 
     #region *** Assertion Helpers ***
@@ -201,15 +238,39 @@ public class TestNotifiable : ITapeFileNotifiable
         Assert.Equal(0, finalStats.FilesSkipped);
     }
 
+    /// <summary>
+    /// Asserts the set-level counterpart of <see cref="AssertAllSucceeded"/>: every set entered was
+    ///  completed cleanly, and nothing was detected, recovered, or blocked.
+    /// </summary>
+    public void AssertNoSetAnomalies(int expectedSets = -1)
+    {
+        Assert.NotEmpty(BatchEnds);
+        var sets = BatchEnds[^1].Stats.Sets;
+
+        Assert.Equal(0, sets.AnomaliesDetected);
+        Assert.Equal(0, sets.AnomaliesRecovered);
+        Assert.False(sets.SetWriteBlocked);
+        Assert.Equal(sets.SetsProcessed, sets.SetsSucceeded);
+        if (expectedSets >= 0)
+            Assert.Equal(expectedSets, sets.SetsProcessed);
+
+        Assert.Empty(SetAnomalies);
+        Assert.Empty(SetAnomaliesRecovered);
+    }
+
     /// <summary>Resets all recorded events for reuse across operations.</summary>
     public void Clear()
     {
         BatchStarts.Clear();
         BatchEnds.Clear();
+
         PreProcessed.Clear();
         PostProcessed.Clear();
         FilesFailed.Clear();
         FilesSkipped.Clear();
+
+        SetAnomalies.Clear();
+        SetAnomaliesRecovered.Clear();
     }
 
     #endregion

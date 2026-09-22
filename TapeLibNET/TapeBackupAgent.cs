@@ -131,9 +131,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     /// <remarks>
     /// <para>
     /// <b>What it does, in order:</b> resolves media-header presence; applies the set's block size,
-    ///  compression interlock and early-warning reserve; positions at the target set; <b>verifies</b> the
-    ///  set header already there when the write is destructive; writes the media header (fresh volume)
-    ///  and the set header; then opens the content write session.
+    ///  compression interlock and early-warning reserve; positions at the target set (recovering a failed
+    ///  backward count, SH-20); <b>verifies</b> the set header already there when the write is
+    ///  destructive; writes the media header (fresh volume) and the set header; then opens the content
+    ///  write session.
     /// </para>
     /// <para>
     /// <b>Verification (SH-13).</b> On an OVERWRITE (<paramref name="newSet"/> <see langword="false"/>)
@@ -145,6 +146,12 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     ///  <see cref="TapeFileAgent.VerifiesSetHeader"/> opts out.
     /// </para>
     /// <para>
+    /// <b>The positioning may recover (SH-20).</b> A backward count that fails outright with a positional
+    ///  error is the same damaged-tail fault the set-header recovery repairs, so it gets the same cure —
+    ///  see <see cref="TapeFileAgent.NavigateToTargetContentSet"/>. The recovery only changes WHERE the
+    ///  head is; the verification below is unchanged and still blocks on anything but <c>Match</c>.
+    /// </para>
+    /// <para>
     /// <b>The media header is written LAST on the overwrite path.</b> It lives at BOM, and on a
     ///  TOC-in-set layout a BOM write truncates everything beyond it — so stamping it before the
     ///  verification would destroy the very record the verification reads, and the check would then
@@ -153,9 +160,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     ///  front, where nothing is at risk.
     /// </para>
     /// <para>
-    /// <b>The head returns to the set start (SH-15).</b> The verifying read advances one block; the write
-    ///  must begin where the read began, or the set header would be stamped one block late and every file
-    ///  address in the set would be off by one.
+    /// <b>The head returns to the set start (SH-15).</b> The verifying read advances one block, at least:
+    ///  the set correction might've even moved to a different (corrected) set altogether; hence the write
+    ///  must walk 1 block back to the set begin, or the set header would be stamped one block late and
+    ///  every file address in the set would be off by one.
     /// </para>
     /// <para>
     /// The positioning is hoisted ahead of <c>Manager.BeginWriteContent</c> so verification and the set
@@ -164,8 +172,9 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     /// </para>
     /// </remarks>
     /// <param name="newSet">Whether the current set is a new set (append) rather than a rewrite.</param>
+    /// <param name="fileNotify">Optional callback, for the set-level anomaly channel.</param>
     /// <returns><see langword="true"/> if preparation succeeded; otherwise <see langword="false"/>.</returns>
-    private bool BeginWriteContentForCurrentSet(bool newSet)
+    private bool BeginWriteContentForCurrentSet(bool newSet, ITapeFileNotifiable? fileNotify)
     {
         // Heading a volume means writing the media header at BOM. On an overwrite we must NOT do that
         //  yet -- see the remarks: it would truncate what verification is about to read.
@@ -233,7 +242,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             Drive.NotifyNextContentWritePosition(approxWritten);
         }
 
-        // ── Position, verify, head (SH-4, SH-13, SH-15) ──────────────────
+        // ── Position, verify, head (SH-4, SH-13, SH-15, SH-20) ───────────
         //  All three need the head at the set's first block, and all three must complete BEFORE
         //   Manager.BeginWriteContent(): it runs MoveToTargetContentSet() and EnsurePackerCreated() back
         //   to back with no seam, and the packer anchors on Drive.CurrentBlock -- so both headers must
@@ -247,18 +256,18 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         if (verifies || writesSetHeader || deferMediaHeaderWrite)
         {
             // SH-4: idempotent, so BeginWriteContent's own call below is a genuine no-op.
-            if (!Navigator.MoveToTargetContentSet())
+            // SH-20: a backward count that fails positionally is retried from begin-of-content.
+            if (!NavigateToTargetContentSet(fileNotify))
             {
                 m_logger.LogWarning("Failed to position at the target content set in {Method}",
                     nameof(BeginWriteContentForCurrentSet));
-                SyncErrorFrom(Navigator);
-                return false;
+                return false;   // NavigateToTargetContentSet already synced the error
             }
         }
 
         if (verifies)
         {
-            if (!VerifySetHeaderForCurrentSet())
+            if (!VerifySetHeaderForCurrentSet(fileNotify))
             {
                 // Nothing has been written yet -- the tape is exactly as we found it.
                 m_logger.LogError("Refusing to overwrite set #{Set}: its set header did not verify",
@@ -268,8 +277,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             }
 
             // SH-15: undo the verifying read's one-block advance. DERIVED, not captured beforehand:
-            //  the ladder may have repositioned, and a pre-read block would then be stale. A positive
-            //  verdict always ends on a successful set-header read, so the set start is one block back.
+            //  the ladder (set correction) may have repositioned -> a pre-read block would then go stale.
+            //  A positive verdict always ends on a successful set-header read -> the set start is 1 block back.
             long setStartBlock = Drive.CurrentBlock - 1;
             if (!Drive.MoveToBlock(setStartBlock))
             {
@@ -319,7 +328,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         }
 
         return true;
-    }
+    } // BeginWriteContentForCurrentSet()
 
     // currently used only by the obsolete <cref="BackupFileAligned"/>
     [Obsolete("Use the non-Aligned (Packed) version")]
@@ -515,7 +524,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     }
     private TapeBackupContext? MultiVolumeContext { get; set; } = null;
     /// <summary>Whether a multi-volume continuation context is available (end-of-media was hit during backup).</summary>
-    public bool CanResumeToNextVolume => MultiVolumeContext != null;
+    public bool CanResumeToNextVolume => MultiVolumeContext is not null;
 
     /// <summary>
     /// Continues the backup onto a new volume after the caller has loaded fresh media.
@@ -587,7 +596,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             return true; // no files found to back up -> treat as success
         }
 
-        if (!BeginWriteContentForCurrentSet(newSet)) // start conent writing mode in tape manager so that tape positioning works correctly
+        if (!BeginWriteContentForCurrentSet(newSet, bc.fileNotify)) // start conent writing mode in tape manager so that tape positioning works correctly
         {
             NotifySetEnd(bc.fileNotify);
             m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSetAligned));
@@ -736,7 +745,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 if (retryAction == FileFailedAction.Abort)
                 {
                     bc.overallSuccess = false;
-                    LatchFailure();
+                    LatchFailure(); // latch on the ORIGINAL error, abort notwithstanding
                     break;
                 }
                 else if (retryAction == FileFailedAction.Retry)
@@ -750,7 +759,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 // else Skip - continue to next file
 
                 bc.overallSuccess = false;
-                LatchFailure();
+                LatchFailure();  // latch on the ORIGINAL error
                 if (!bc.ignoreFailures)
                     break;
             } // catch
@@ -822,6 +831,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         }
 
         _stats.Reset();
+        _setAnomalies.Clear();
         ResetLatchedFailure();
         MediaHeaderStamped = false; // reset for the new series (per-series, cross-volume artifact)
 
@@ -975,7 +985,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         //  the operation — see NotifySetStart.
         NotifySetStart(bc.fileNotify, filesAdded: bc.isContinuation ? 0 : bc.fileList.Count);
 
-        if (!BeginWriteContentForCurrentSet(newSet))
+        if (!BeginWriteContentForCurrentSet(newSet, bc.fileNotify))
         {
             NotifySetEnd(bc.fileNotify);
             m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSet));
@@ -1159,7 +1169,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                     if (retryAction == FileFailedAction.Abort)
                     {
                         bc.overallSuccess = false;
-                        LatchFailure(); // latch the failure for the final result
+                        LatchFailure();  // latch on the ORIGINAL error, abort notwithstanding
                         break;
                     }
                     else if (retryAction == FileFailedAction.Retry)
@@ -1173,7 +1183,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                     // else Skip - continue the loop to the next file
 
                     bc.overallSuccess = false;
-                    LatchFailure();
+                    LatchFailure(); // latch on the ORIGINAL error
                     if (!bc.ignoreFailures)
                         break;
                 }
@@ -1287,6 +1297,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         }
 
         _stats.Reset();
+        _setAnomalies.Clear();
         ResetLatchedFailure();
         MediaHeaderStamped = false; // reset for the new series (per-series, cross-volume artifact)
 

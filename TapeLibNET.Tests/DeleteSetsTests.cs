@@ -61,6 +61,7 @@ public class DeleteSetsTests
         using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
         var result = agent.DeleteSetsFromCurrentSetUp();
         Assert.True(result, $"Delete failed: {result.ErrorMessage}");
+        Assert.False(agent.Statistics.Sets.HasAnomalies, "No set anomalies should've occurred");
 
         // Reload TOC from tape and verify
         fixture.LoadTOC();
@@ -109,6 +110,8 @@ public class DeleteSetsTests
         using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
         var result = agent.DeleteSetsFromCurrentSetUp();
         Assert.True(result, $"Delete failed: {result.ErrorMessage}");
+        Assert.False(agent.Statistics.Sets.HasAnomalies, "No set anomalies should've occurred");
+
 
         // Reload and verify
         fixture.LoadTOC();
@@ -218,6 +221,7 @@ public class DeleteSetsTests
         using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
         var result = agent.DeleteSetsFromCurrentSetUp();
         Assert.True(result, $"Delete failed: {result.ErrorMessage}");
+        Assert.False(agent.Statistics.Sets.HasAnomalies, "No set anomalies should've occurred");
 
         fixture.LoadTOC();
         Assert.Equal(1, fixture.TOC.Count);

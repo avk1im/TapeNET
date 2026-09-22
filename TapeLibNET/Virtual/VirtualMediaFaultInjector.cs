@@ -246,7 +246,7 @@ public sealed class VirtualMediaFaultInjector
     public VirtualMediaFaultInjector TearOnce(int bytes = -1, uint? error = null)
     {
         TornBytes = bytes;
-        return Arm(VirtualFaultMode.Torn, error.HasValue ? (WIN32_ERROR)error.Value : (WIN32_ERROR?)null);
+        return Arm(VirtualFaultMode.Torn, error.HasValue ? (WIN32_ERROR)error.Value : null);
     }
 
     /// <summary>
@@ -262,6 +262,13 @@ public sealed class VirtualMediaFaultInjector
         CorruptOffset = offset;
         CorruptSpan = span;
         return Arm(VirtualFaultMode.Corrupt, error: null);
+    }
+
+    public VirtualMediaFaultInjector CorruptAlways(int bits = 2, int offset = -1, int span = 0)
+    {
+        var result = CorruptOnce(bits, offset, span);
+        AutoDisable = false;
+        return result;
     }
 
     private VirtualMediaFaultInjector Arm(VirtualFaultMode mode, WIN32_ERROR? error)

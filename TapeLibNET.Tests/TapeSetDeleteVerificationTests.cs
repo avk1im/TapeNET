@@ -140,6 +140,7 @@ public class TapeSetDeleteVerificationTests
     public void TrailingDelete_WithDrift_IsRefused_AndTapeIntact(DriveProfile profile)
     {
         TempFileTree[] trees = [];
+        var notify = new TestNotifiable();
 
         try
         {
@@ -150,11 +151,23 @@ public class TapeSetDeleteVerificationTests
             using (var agent = new TapeFileAgent(fixture.Drive, fixture.TOC))
             {
                 agent.Navigator.SimulateSetMiscount = +1;
+                agent.Navigator.SimulateSetMiscountPersistent = true; // keep miscounting to prevent agent's self-correction! (v2)
 
-                var result = agent.DeleteSetsFromCurrentSetUp();
+                var result = agent.DeleteSetsFromCurrentSetUp(fileNotify: notify);
                 Assert.False(result, "a delete at a drifted position must be refused");
                 Assert.Equal((uint)WIN32_ERROR.ERROR_INVALID_DATA, result.ErrorCode);   // the VERDICT, not some other fault
-                Assert.Equal(0, agent.Navigator.SimulateSetMiscount);                   // the injection point WAS reached
+                // Do NOT Assert.Equal(0, agent.Navigator.SimulateSetMiscount) since we keep injecting (Persistent = true).
+                //  No worries, we'll have enough checks to verify! :-)
+
+                var sets = agent.Statistics.Sets;
+                Assert.Equal(1, sets.AnomaliesDetected);
+                Assert.Equal(0, sets.AnomaliesRecovered);
+                Assert.Equal(0, sets.AnomaliesRecoveredFromBom);
+                Assert.True(sets.SetWriteBlocked);
+
+                // The set hit an anomaly, so it is NOT counted among the clean ones.
+                Assert.Equal(3, sets.SetsProcessed); // we attempted to delete 3 sets (3..5)
+                Assert.Equal(0, sets.SetsSucceeded); // we failed
             }
 
             // The decisive assertions: EVERY set survives — including the ones that were to be deleted,
@@ -231,6 +244,7 @@ public class TapeSetDeleteVerificationTests
             {
                 var result = agent.DeleteSetsFromCurrentSetUp();
                 Assert.True(result, $"a clean delete must not be disturbed by verification: {result.ErrorMessage}");
+                Assert.False(agent.Statistics.Sets.HasAnomalies, "No set anomalies should've occurred");
             }
 
             fixture.LoadTOC();
@@ -295,19 +309,17 @@ public class TapeSetDeleteVerificationTests
             trees = BuildMultiSetTape(fixture, setCount: 3, prefix: "tf");
 
             fixture.TOC.CurrentSetIndex = 3;
-            using (var agent = new TapeFileAgent(fixture.Drive, fixture.TOC))
-            {
-                agent.VerifiesSetHeader = false;
+            using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+            agent.VerifiesSetHeader = false;
 
-                agent.ReadBomHeader();
-                fixture.Backend.ContentReadFaults.CorruptOnce(bits: 2, offset: 48);
+            agent.ReadBomHeader();
+            fixture.Backend.ContentReadFaults.CorruptOnce(bits: 2, offset: 48);
 
-                Assert.True(agent.DeleteSetsFromCurrentSetUp(),
-                    "with verification disabled the delete proceeds unchecked");
+            Assert.True(agent.DeleteSetsFromCurrentSetUp(),
+                "with verification disabled the delete proceeds unchecked");
 
-                // Nothing read it, so the injected fault is still armed.
-                Assert.Equal(0, fixture.Backend.ContentReadFaults.Occurrences);
-            }
+            // Nothing read it, so the injected fault is still armed.
+            Assert.Equal(0, fixture.Backend.ContentReadFaults.Occurrences);
         }
         finally
         {

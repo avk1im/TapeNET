@@ -133,6 +133,7 @@ public class TapeSetHeaderWriteVerificationTests
     public void Overwrite_WithDrift_IsRefused_AndTapeIntact(DriveProfile profile)
     {
         TempFileTree[] trees = [];
+        var notify = new TestNotifiable { SetAnomalyAction = SetAnomalyAction.Abort }; // same as null, but just for the test
         using var replacement = new TempFileTree();
         replacement.AddFiles("rep", count: 2, minSize: 512, maxSize: 4 * 1024);
 
@@ -145,7 +146,7 @@ public class TapeSetHeaderWriteVerificationTests
             using (var agent = fixture.CreateBackupAgent())
             {
                 agent.Navigator.SimulateSetMiscount = +1;
-                Assert.False(agent.BackupFileListToCurrentSet(newSet: false, replacement.Files, ignoreFailures: false),
+                Assert.False(agent.BackupFileListToCurrentSet(newSet: false, replacement.Files, ignoreFailures: false, fileNotify: notify),
                     "an overwrite at a drifted position must be refused");
                 Assert.Equal(0, agent.Navigator.SimulateSetMiscount);   // the injection point WAS reached
             }
