@@ -1,5 +1,6 @@
 using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
+using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Tests;
 
@@ -154,6 +155,51 @@ public abstract class TapeNavigatorTestsBase
         }
         WriteTOCRegion(nav);
         return starts;
+    }
+
+    /// <summary>
+    /// Asserts the navigator sits at the oldest set, accepting EITHER label it may legitimately report.
+    /// </summary>
+    /// <remarks>
+    /// Reaching the oldest set by counting BACKWARD is a fencepost: N marks delimit N+1 boundaries, so
+    ///  the oldest set's leading boundary is BOM itself. Whether the count completes depends on whether
+    ///  something physical stands there —
+    ///  <list type="bullet">
+    ///  <item>headed FILEMARK layouts: the media header's trailing filemark IS that boundary, the count
+    ///        completes, and the navigator reports the negative index it was asked for;</item>
+    ///  <item>setmark layouts and headless media: nothing stands there, the count runs into BOM, and
+    ///        <c>OnMovedIntoBom</c> settles at begin-of-content reporting the one index it can PROVE — 0.</item>
+    ///  </list>
+    ///  Both denote the same set and both leave the head on the same block, which is what these tests
+    ///  are actually about. Asserting the label alone would pin an accident of layout.
+    /// </remarks>
+    private static void AssertAtOldestSet(TapeNavigator nav, int expectedNegative)
+    {
+        Assert.True(nav.CurrentContentSet == 0 || nav.CurrentContentSet == expectedNegative,
+            $"expected the oldest set (0 or {expectedNegative}), got {nav.CurrentContentSet}");
+    }
+
+    /// <summary>
+    /// Asserts that the navigator's <c>CurrentContentSet</c> matches the expected index, taking into account
+    ///  whether the expected index is negative (from end) and the number of sets written. If the expected index is
+    ///  negative and equals -setCount-1, it asserts that the navigator is at the oldest set (0 or -setCount-1).
+    /// </summary>
+    /// <param name="nav">The tape navigator to assert against.</param>
+    /// <param name="expectedIndex">The expected index of the current content set.</param>
+    /// <param name="setCount">The total number of sets written.</param>
+    private static void AssertNavCurrentSetIndex(TapeNavigator nav, int expectedIndex, int setCount)
+    {
+        if (expectedIndex >= 0)
+        {
+            Assert.Equal(expectedIndex, nav.CurrentContentSet);
+        }
+        else // expectedIndex < 0
+        {
+            if (expectedIndex == -setCount - 1)
+                AssertAtOldestSet(nav, expectedNegative: expectedIndex);
+            else
+                Assert.Equal(expectedIndex, nav.CurrentContentSet);
+        }
     }
 
     #endregion
@@ -685,7 +731,7 @@ public abstract class TapeNavigatorTestsBase
         // Navigate to set -4 (oldest = set0)
         nav.TargetContentSet = -4;
         Assert.True(nav.MoveToTargetContentSet());
-        Assert.Equal(-4, nav.CurrentContentSet);
+        AssertAtOldestSet(nav, expectedNegative: -4);
         Assert.Equal(starts[0], nav.GetCurrentBlock());
     }
 
@@ -975,7 +1021,7 @@ public abstract class TapeNavigatorTestsBase
         // Navigate to -4 (oldest set) from TOC — still optimized path
         nav.TargetContentSet = -4;
         Assert.True(nav.MoveToTargetContentSet());
-        Assert.Equal(-4, nav.CurrentContentSet);
+        AssertAtOldestSet(nav, expectedNegative: -4);
         Assert.Equal(starts[0], nav.GetCurrentBlock());
     }
 
@@ -1189,7 +1235,7 @@ public abstract class TapeNavigatorTestsBase
         // Navigate to -4 (oldest)
         nav.TargetContentSet = -4;
         Assert.True(nav.MoveToTargetContentSet());
-        Assert.Equal(-4, nav.CurrentContentSet);
+        AssertAtOldestSet(nav, expectedNegative: -4);
         Assert.Equal(starts[0], nav.GetCurrentBlock());
     }
 
@@ -1257,7 +1303,7 @@ public abstract class TapeNavigatorTestsBase
 
             nav.TargetContentSet = negIndex;
             Assert.True(nav.MoveToTargetContentSet(), $"Failed to navigate to set {negIndex}");
-            Assert.Equal(negIndex, nav.CurrentContentSet);
+            AssertNavCurrentSetIndex(nav, expectedIndex: negIndex, setCount: 5);
             Assert.Equal(starts[expectedSetIndex], nav.GetCurrentBlock());
         }
     }
@@ -1340,7 +1386,7 @@ public abstract class TapeNavigatorTestsBase
         // Then restore the oldest set
         nav.TargetContentSet = -4;
         Assert.True(nav.MoveToTargetContentSet());
-        Assert.Equal(-4, nav.CurrentContentSet);
+        AssertAtOldestSet(nav, expectedNegative: -4);
         Assert.Equal(starts[0], nav.GetCurrentBlock());
     }
 
@@ -1454,6 +1500,29 @@ public abstract class TapeNavigatorTestsBase
         Assert.True(nav.MoveToTargetContentSet());
         Assert.Equal(1, nav.CurrentContentSet);
         Assert.Equal(start1, nav.GetCurrentBlock());
+    }
+
+    /// <summary>
+    /// A backward count that runs past BOM reports success — and leaves the head at begin-of-content.
+    /// </summary>
+    /// <remarks>
+    /// The oldest set is always addressed as target 0, so a negative target reaching BOM is never
+    ///  arrival. <c>CurrentContentSet</c> is set to 0 rather than Unknown because begin-of-content was
+    ///  ESTABLISHED, not counted — which is precisely what lets SH-20 recover without a second rewind.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void BackwardOvershoot_Succeeds_AndSettlesAtBeginOfContent(DriveProfile profile)
+    {
+        // 3 sets on tape; ask for the 6th-from-newest — more marks than exist.
+        var (fixture, nav) = CreateNavigator(profile);
+        using var _ = fixture;
+
+        var starts = WriteFullTapeLayout(nav, setCount: 3);
+
+        nav.TargetContentSet = -7;
+        Assert.True(nav.MoveToTargetContentSet());
+        Assert.Equal(0, nav.CurrentContentSet);   // known, not Unknown
     }
 
     #endregion

@@ -39,7 +39,10 @@ public enum TapeHeaderPresence
 ///  the appropriate one for the loaded media.</para>
 /// <para><b>Set indexation:</b> positive values (0, 1, …) count from the oldest set forward;
 ///  negative values (−1 = end-of-content / write position, −2 = newest set, −3 = second newest, …).
-///  Special sentinels: <see cref="UnknownSet"/>, <see cref="InTOCSet"/>.</para>
+///  Special sentinels: <see cref="UnknownSet"/>, <see cref="InTOCSet"/>, <see cref="AtBomHeader"/>.</para>
+/// <para>Reaching the oldest set from the end may report either its negative index or 0, depending
+///  on whether the layout counts the header's filemark at begin-of-content; both denote the same set,
+///  and 0 is an honest claim.</para>
 /// </summary>
 /// <remarks>
 /// Tape organizations and corresponding subclasses:
@@ -121,7 +124,24 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     /// <remarks>Distinct from begin-of-content (0): on a headed tape, BOM ≠ content start.</remarks>
     public static int AtBomHeader => InTOCSet + 1;   // int.MinValue + 2 — far from real negatives
 
+    public bool CurrentContentSetIsSentinel => CurrentContentSet <= AtBomHeader;
+
     internal void ResetContentSet() => CurrentContentSet = UnknownSet;
+
+    /// <summary>
+    /// Adopts <see cref="TargetContentSet"/> as the current position, without moving the tape.
+    /// </summary>
+    /// <remarks>
+    /// Callable ONLY by a layer that can certify the equivalence the navigator cannot — currently
+    ///  <see cref="TapeFileAgent.NavigateToTargetContentSet"/>, confirming via the TOC that a settle at
+    ///  begin-of-content really did reach the volume's first set. The navigator has no set accounting
+    ///  and must never invoke this on its own behalf.
+    /// <para>
+    ///  Compare <seealso cref="ReconcileContentSetAndMove"/>, the other position-without-a-move path,
+    ///  which is likewise gated on external evidence (a positively classified set header).
+    /// </para>
+    /// </remarks>
+    internal void AssumeAtTargetContentSet() => CurrentContentSet = TargetContentSet;
 
     /// <summary>
     /// Whether the media header is present. Set by the agent (via <see cref="ResolveMediaHeaderPresence"/> /
@@ -457,6 +477,49 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     protected abstract bool MoveToEndOfContentCore();
 
     /// <summary>
+    /// Handles the case where counting back to a target content set ran into the BOM.
+    ///  Tries to settle at the begin of the content (the first content set).
+    ///  If successful, sets <see cref="CurrentContentSet"/> to 0, otherwise, to <see cref="UnknownSet"/>.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> if successfully settled at the beginning of conten;
+    ///  otherwise, <see langword="false"/>.
+    /// </returns>
+    /// <remarks>
+    /// Running into BOM is INHERENTLY AMBIGUOUS, and not resolvable at the level of a Navigator class:
+    ///  N setmarks delimit N+1 boundaries, so the oldest set has no preceding mark and
+    ///  BOM *is* its leading boundary — reaching it from the end therefore always
+    ///  "overshoots". An overshoot of five marks lands in precisely the same place and
+    ///  looks identical from inside this class. Telling them apart needs the total set
+    ///  count, which the navigator deliberately never knows.
+    ///  So: settle at begin-of-content and report THAT — a positively established
+    ///  position, not a counted one — rather than asserting we reached the target. The
+    ///  layer that does know decides: the agent's set-header verification classifies a
+    ///  wrong landing as SetIndexDrift and repairs it by delta (SH-9 / SH-10).
+    /// </remarks>
+    protected bool OnMovedIntoBom()
+    {
+        ResetError();
+        if (!MoveToBeginOfContentFromBom(rewindFirst: false))   // already at BOM
+        {
+            ResetContentSet();
+            LogErrorAsDebug("Failed to settle at begin-of-content after counting back into BOM");
+            return false;
+        }
+
+        // NOT TargetContentSet: 0 is what we can prove. Agents never address the oldest set
+        //  negatively (CurrentSetAsNavigatorContentSet returns 0 whenever toBegin == 0), so
+        //  in production reaching here at all is notable — hence Warning.
+        CurrentContentSet = 0;
+        m_logger.LogWarning(
+            "Drive #{Drive}: Counting back to content set {Target} ran into BOM; settled at " +
+            "begin-of-content (set 0). Either the target IS the oldest set, or the volume holds " +
+            "fewer sets than the count demanded — the caller's verification decides",
+            DriveNumber, TargetContentSet);
+        return true;   // early: the tail bookkeeping would overwrite the 0 with the target
+    }
+
+    /// <summary>
     /// Navigates to <see cref="TargetContentSet"/> using bidirectional setmark traversal.
     /// <para>Positive targets seek forward from content start; negative targets seek backward
     ///  from content end. Handles <see cref="WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA"/> gracefully
@@ -468,15 +531,10 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     /// </summary>
     public virtual bool MoveToTargetContentSet()
     {
-        m_logger.LogTrace("Drive #{Drive}: Moving to target content set {Set}", DriveNumber, TargetContentSet);
+        m_logger.LogTrace("Drive #{Drive} | {Method}: Moving to target content set {Set}",
+            DriveNumber, nameof(MoveToTargetContentSet), TargetContentSet);
 
         ResetError();
-
-        if (TargetContentSet == CurrentContentSet)
-        {
-            m_logger.LogTrace("Drive #{Drive}: Already at target content set {Set}", DriveNumber, TargetContentSet);
-            return true;
-        }
 
 #if DEBUG
         // Simulate failures for testing error handling
@@ -488,12 +546,17 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
         }
 #endif
 
+        if (TargetContentSet == CurrentContentSet)
+        {
+            m_logger.LogTrace("Drive #{Drive}: Already at target content set {Set}", DriveNumber, TargetContentSet);
+            return true;
+        }
+
         if (TargetContentSet < 0) // starting from the end of content -> move to the end of content first
         {
             // [set0][SM]..[setN-2][SM][setN-1][SM][setN][SM][toc]
             //             -4          -3          -2        -1
-            if (CurrentContentSet >= 0 || CurrentContentSet == UnknownSet
-                || CurrentContentSet == InTOCSet || CurrentContentSet == AtBomHeader)
+            if (CurrentContentSet >= 0 || CurrentContentSetIsSentinel)
             {
                 MoveToEndOfContent();
                 if (WentBad)
@@ -507,17 +570,16 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
             if (count < 0)
             {
                 if (WentOK)
-                    MoveToNextContentSetmark(count - 1); // moves to just before the target SM; account for 1 SM in front of target set
-                if ((WIN32_ERROR)LastError == WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA)
-                {
-                    ResetError(); // hit the very beginning → oldest set has no preceding SM, we're already at its start
-                    // Skipping the header block, so we land at block 1 (INV-12), not raw BOM.
-                    MoveToBeginOfContentFromBom(rewindFirst: false); // don't need to rewind -- we're at BOM already!
-                }
-                else if (WentOK)
+                    MoveToNextContentSetmark(count - 1); // moves to just before the target SM;
+                                                         // account for 1 SM in front of target set
+
+                if ((WIN32_ERROR)LastError == WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA) // hit BOM
+                    return OnMovedIntoBom(); // settle at begin-of-content (set 0) and report that
+
+                if (WentOK)
                     MoveToNextContentSetmark(); // move to just after the correct setmark -- the beginning of the target set
             }
-            else if (count > 0)
+            else // count > 0
             {
                 if (WentOK)
                     MoveToNextContentSetmark(count); // move to after the last setmark -- the beginning of the set
@@ -543,6 +605,7 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
                 if (WentOK)
                     MoveToNextContentSetmark(count - 1); // moves to just before the target setmark
                 if ((WIN32_ERROR)LastError == WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA && TargetContentSet == 0) // we hit the beginning of the first set
+                                                                                                             //  AND that's what we wanted
                 {
                     ResetError(); // hit the very beginning → oldest set has no preceding SM, we're already at its start
                     // Skipping the header block + FM, so we land at block 1 of the content (INV-12), not raw BOM.
@@ -647,10 +710,10 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     ///  <c>targetContentSet − actualContentSet</c> marks from where we stand.
     /// </para>
     /// <para>
-    /// Deliberately NOT expressible as "set CurrentContentSet, then call MoveToTargetContentSet": that
-    ///  sequence trips the SH-4 idempotence check, because on the drift path <c>TargetContentSet</c>
-    ///  already equals the intended set. The move would be skipped and the correction would silently do
-    ///  nothing.
+    /// Deliberately NOT expressible as "set <see cref="CurrentContentSet"/>, then call
+    ///  <see cref="MoveToTargetContentSet"/>": that sequence trips the SH-4 idempotence check, because
+    ///  on the drift path <see cref="TargetContentSet"/> already equals the intended set. The move
+    ///  would be skipped and the correction would silently do nothing.
     /// </para>
     /// </remarks>
     internal bool ReconcileContentSetAndMove(int actualContentSet, int targetContentSet)
@@ -707,9 +770,9 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
         }
 
         int physical = count;
+
 #if DEBUG
         physical += TakeSimulatedMiscount(); // DEBUG: simulate a miscount offset injected by a test
-#endif
 
         if (physical == 0)
         {
@@ -717,12 +780,14 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
             //  but still record the believed arrival, which is the whole point of the simulation.
             ResetError();
         }
-        else if (UseSmks)
+#endif
+
+        if (UseSmks)
             Drive.MoveToNextSetmark(physical);
         else
             Drive.MoveToNextFilemark(physical);
 
-        if (WentOK)
+        if (WentOK && !CurrentContentSetIsSentinel)
             CurrentContentSet += count;   // DEBUG: the LIE: the navigator believes it moved by `count`
 
         if (WentOK)
@@ -1093,6 +1158,21 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
     /// </remarks>
     public override bool MoveToTargetContentSet()
     {
+        m_logger.LogTrace("Drive #{Drive} | {Method}: Moving to target content set {Set}",
+            DriveNumber, nameof(MoveToTargetContentSet), TargetContentSet);
+
+        ResetError();
+
+#if DEBUG
+        // Simulate failures for testing error handling
+        if (SimulateNavigationFailures.ShouldFailNow())
+        {
+            m_logger.LogWarning("SIMULATED failure for navigation #{Counter}", SimulateNavigationFailures.Counter);
+            SetError(SimulateNavigationFailureError, $"SIMULATED navigation failure: {SimulateNavigationFailureError}");
+            return false;
+        }
+#endif
+
         // CurrentContentSet < 0 covers UnknownSet / InTOCSet / AtBomHeader and the negative (from-end)
         //  indices — exactly the cases where the base would first call MoveToBeginOfContent().
         if (!UseSmks && TargetContentSet >= 0 && CurrentContentSet < 0) // this includes UnknownSet, InTOCSet, and AtBomHeader
@@ -1192,7 +1272,7 @@ public class TapeNavigatorTOCInSetWithSmks : TapeNavigatorTOCInSet
             MoveToNextContentSetmark(1); // Finally go 1 setmark forward to after the setmark -- the beginning of TOC data == of the to-be-written content data
         else
         {
-            // no setmarks found -> assume no content yet on media, just rewind to the begin of media
+            // no setmarks found -> assume no content yet on media, just rewind to the begin of media // FIXME: too optimistic? should examine the error code!
             ResetError();
             MoveToBeginOfContentFromBom();
         }
@@ -1213,7 +1293,20 @@ public class TapeNavigatorTOCInSetWithSmks : TapeNavigatorTOCInSet
     //  positioning has succeeded; the fall-through base override is itself a no-op in that case.
     public override bool MoveToTargetContentSet()
     {
+        m_logger.LogTrace("Drive #{Drive} | {Method}: Moving to target content set {Set}",
+            DriveNumber, nameof(MoveToTargetContentSet), TargetContentSet);
+
         ResetError();
+
+#if DEBUG
+        // Simulate failures for testing error handling
+        if (SimulateNavigationFailures.ShouldFailNow())
+        {
+            m_logger.LogWarning("SIMULATED failure for navigation #{Counter}", SimulateNavigationFailures.Counter);
+            SetError(SimulateNavigationFailureError, $"SIMULATED navigation failure: {SimulateNavigationFailureError}");
+            return false;
+        }
+#endif
 
         if (TargetContentSet < 0 && CurrentContentSet == InTOCSet)
         {
@@ -1225,13 +1318,11 @@ public class TapeNavigatorTOCInSetWithSmks : TapeNavigatorTOCInSet
             
             // Since we're inside TOC, we only need to move back by TargetContentSet setmarks, then forward by 1
             MoveToNextContentSetmark(TargetContentSet); // moves to just before the target SM
-            if ((WIN32_ERROR)LastError == WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA) // hit BOM → oldest set has no preceding SM, we're already at its start
-            {
-                ResetError(); // hit the very beginning → oldest set has no preceding SM, we're already at its start
-                              // Skipping the header block, so we land at block 1 (INV-12), not raw BOM.
-                MoveToBeginOfContentFromBom(rewindFirst: false); // don't need to rewind -- we're at BOM already!
-            }
-            else if (WentOK)
+
+            if ((WIN32_ERROR)LastError == WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA) // hit BOM
+                return OnMovedIntoBom(); // settle at begin-of-content (set 0) and report that
+
+            if (WentOK)
                 MoveToNextContentSetmark(); // move to just after the correct setmark -- the beginning of the target set
 
             if (WentOK)

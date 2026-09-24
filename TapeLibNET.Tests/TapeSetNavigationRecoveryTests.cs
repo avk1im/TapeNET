@@ -723,13 +723,19 @@ public class TapeSetNavigationRecoveryTests
         TempFileTree[] trees = [];
         var notify = new TestNotifiable();   // permissive: authorizes the retry
 
+        const int setCount = 5;
+        // Ensure the target set is closer to the end, so that agent will address it from the end
+        const int setIdx = setCount - 1; // last but one. TOC counts sets #1, 2, ..
+
         try
         {
             using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);
-            trees = BuildMultiSetTape(fixture, setCount: 4, prefix: "fn");
+            trees = BuildMultiSetTape(fixture, setCount: setCount, prefix: "fn");
 
-            fixture.TOC.CurrentSetIndex = 3;
+            //fixture.TOC.CurrentSetIndex = setIdx;
             using var agent = fixture.CreateRestoreAgent(restoreDir);
+
+            agent.TOC.CurrentSetIndex = setIdx; 
 
             // Demand far more marks than the volume holds: the backward count cannot complete.
             agent.Navigator.SimulateSetMiscount = -10;
@@ -738,9 +744,10 @@ public class TapeSetNavigationRecoveryTests
                 "an unreachable-by-backward-count set must still be reached from begin-of-content");
 
             // The decisive assertion: we reached the RIGHT set, not merely a set.
-            AssertRestoredMatches(trees[2], restoreDir);
+            AssertRestoredMatches(trees[setIdx - 1], restoreDir); // here 0-based counting
 
-            Assert.Equal(1, agent.Statistics.Sets.AnomaliesRecoveredFromBom);
+            Assert.Equal(1, agent.Statistics.Sets.AnomaliesRecovered);
+            Assert.Equal(1, agent.Statistics.Sets.AnomaliesRecoveredFromBom); // backwards overshoot
         }
         finally
         {
@@ -909,7 +916,7 @@ public class TapeSetNavigationRecoveryTests
             using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);
             trees = BuildMultiSetTape(fixture, setCount: 4, prefix: "bd");
 
-            fixture.TOC.CurrentSetIndex = 3;
+            //fixture.TOC.CurrentSetIndex = 3;
             using var agent = fixture.CreateValidateAgent();
 
             // Persistent: the forward retry demands too many marks as well.
@@ -923,6 +930,7 @@ public class TapeSetNavigationRecoveryTests
             agent.Navigator.SimulateNavigationFailures.EnableAlways();
             agent.Navigator.SimulateNavigationFailureError = WIN32_ERROR.ERROR_NO_DATA_DETECTED;
 
+            agent.TOC.CurrentSetIndex = 3;
 
             var result = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: false, fileNotify: notify);
 
@@ -972,7 +980,7 @@ public class TapeSetNavigationRecoveryTests
                 var result = agent.DeleteSetsFromCurrentSetUp(fileNotify: notify);
                 Assert.True(result, $"the unreachable tail must be recoverable: {result.ErrorMessage}");
 
-                Assert.Equal(1, agent.Statistics.Sets.AnomaliesRecoveredFromBom);
+                Assert.Equal(1, agent.Statistics.Sets.AnomaliesRecoveredFromBom); // BOM overshoot
                 Assert.False(agent.Statistics.Sets.SetWriteBlocked);
             }
 

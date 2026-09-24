@@ -130,8 +130,7 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
 
         // Optimization: consider Navigator's current position when chosing how to specify the content set for Navigator
         int toCurr; // use to determine if current set is closer to Navigator's current position than to begin or end
-        if (Navigator.CurrentContentSet != TapeNavigator.UnknownSet && Navigator.CurrentContentSet != TapeNavigator.InTOCSet
-            && Navigator.CurrentContentSet != TapeNavigator.AtBomHeader)
+        if (!Navigator.CurrentContentSetIsSentinel)
         {
             // translate Navigator.CurrentContentSet to the index on volume
             int navCurr = (Navigator.CurrentContentSet >= 0) ? Navigator.CurrentContentSet :
@@ -1069,10 +1068,47 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
         //  rewrites TargetContentSet — so afterwards there is no way to tell which way we counted.
         bool endAnchored = Navigator.TargetContentSet < 0;
 
-        if (Navigator.MoveToTargetContentSet())
-            return true;
+        // Whether the navigator settled at begin-of-content instead of completing a backward count.
+        //  The head is then PROVEN to be at set 0 — which makes the forward retry below cheap.
+        bool settledAtBom = false;
 
-        SyncErrorFrom(Navigator);
+        if (Navigator.MoveToTargetContentSet())
+        {
+            // A backward count that reports 0 means OnMovedIntoBom settled it: the navigator ran into
+            //  BOM and reported the only index it can PROVE. It cannot tell "arrived at the oldest set"
+            //  from "the volume holds fewer sets than the count demanded" — that needs the set
+            //  accounting, which THIS layer has.
+            if (!endAnchored || Navigator.CurrentContentSet != 0)
+                return true;    // ordinary success, nothing ambiguous
+
+            if (TOC.CurrentSetIndexOnVolume == 0)
+            {
+                // The TOC confirms the target IS the volume's first set, so BOM is genuinely its
+                //  leading boundary. Restore the end-anchored index rather than adopting the 0, so
+                //  CurrentSetAsNavigatorContentSet() keeps anchoring later sets from the END as chosen.
+                m_logger.LogTrace(
+                    "Navigator settled at begin-of-content for requested target {Target}; the TOC confirms " +
+                    "this IS the volume's first set — restoring the end-anchored index",
+                    Navigator.TargetContentSet);
+                Navigator.AssumeAtTargetContentSet();
+                return true;
+            }
+
+            // The TOC says otherwise: we are at set 0 and the target is on-volume set
+            //  TOC.CurrentSetIndexOnVolume > 0, so the head is DEMONSTRABLY at the wrong set. Same
+            //  damaged-tail fault as a failed backward count (SH-20), merely reported as a successful
+            //  navigation — so it takes the same route: prompt, then count forward from BOM.
+            //  Returning true here would leave the manager to "fix" a head it has no authority over,
+            //  bypassing the anomaly channel entirely.
+            settledAtBom = true;
+            SetError(WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA,
+                $"Set #{TOC.CurrentSetIndex} could not be reached by counting back from end-of-content — " +
+                "the count ran into begin-of-content, so the volume's tail is shorter than the TOC describes");
+        }
+        else
+        {
+            SyncErrorFrom(Navigator);
+        }
 
         // ── SH-20: is this the damaged-tail signature, and is there another direction to try? ──
         if (!endAnchored || !CorrectsSetNavigation || !IsPositionalNavigationError(LastErrorWin32))
@@ -1084,15 +1120,10 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
         }
 
         m_logger.LogWarning(
-            "Set #{Set}: the backward seek did not even complete ({Error}) — considering a renavigation " +
-            "forward from begin-of-content. This indicates the TAIL of the volume is unreliable",
-            TOC.CurrentSetIndex, LastErrorWin32);
+            "Set #{Set}: the backward seek {Outcome} ({Error}) — considering a renavigation forward from " +
+            "begin-of-content. This indicates the TAIL of the volume is unreliable",
+            TOC.CurrentSetIndex, settledAtBom ? "ran into BOM" : "did not even complete", LastErrorWin32);
 
-        // Ask BEFORE moving, exactly as the verdict ladder does. Without this the retry would be the ONE
-        //  recovery in the library that repositions a destructive write's head without anyone's consent —
-        //  and a caller passing no notifiable could not decline even in principle.
-        //  Note the anomaly is raised with the NAVIGATION error already current (SyncErrorFrom above), so
-        //  the payload's Diagnosis names what actually went wrong rather than a synthesized stand-in.
         var action = RaiseSetAnomaly(TapeSetHeaderVerdict.Unreadable, header: null, fileNotify,
             LastErrorWin32, $"Set #{TOC.CurrentSetIndex} " +
             $"could not be reached by seeking back from end-of-content ({LastErrorWin32}) — " +
@@ -1105,11 +1136,14 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
             return false;
         }
 
-        // SH-19 applies here too, for a different reason: a failed navigation ALREADY left
-        //  CurrentContentSet at UnknownSet (every failure path calls ResetContentSet), but saying so
-        //  explicitly keeps the precondition local — and satisfies the TapeNavigatorTOCInSet fast path,
-        //  which requires CurrentContentSet < 0 to merge the rewind with the forward space.
-        Navigator.ResetContentSet();
+        // SH-19: a FAILED navigation already left CurrentContentSet at UnknownSet, but saying so keeps
+        //  the precondition local — and satisfies the TapeNavigatorTOCInSet fast path, which needs
+        //  CurrentContentSet < 0 to merge the rewind with the forward space.
+        //  The settled-at-BOM case is different: the head is PROVEN to be at set 0, so keeping that
+        //  lets the forward count start from where we stand — no rewind, just the remaining hops.
+        if (!settledAtBom)
+            Navigator.ResetContentSet();
+
         Navigator.TargetContentSet = CurrentSetAsNavigatorContentSet(fromBeginOnly: true);
         m_renavigatedFromBom = true;
 
@@ -1119,19 +1153,16 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
         {
             SyncErrorFrom(Navigator);
             m_logger.LogError(
-                "Failed to renavigate from begin-of-content for set #{Set} — the volume is unreachable " +
+                "Failed to renavigate from begin-of-content for set #{Set} — the set is unreachable " +
                 "from either direction",
                 TOC.CurrentSetIndex);
-            return false;   // report the SECOND error: it describes the state we actually ended in
+            return false;
         }
 
-        // Reaching the set is itself the recovery. Report it now rather than leaving it to the
-        //  verification: the verification may well return Match (the position is good), in which case
-        //  nothing else would ever tell the user their cartridge's tail is failing (SH-16).
         NotifySetAnomalyRecovered(fileNotify,
             BuildSetAnomaly(TapeSetHeaderVerdict.Unreadable, header: null,
                 TapeSetAnomalyStage.Renavigated, canAttemptRecovery: false,
-                diagnosis: TapeResult.OK));   // <- the set is reachable NOW; see BuildSetAnomaly
+                diagnosis: TapeResult.OK));
 
         return true;
     }
