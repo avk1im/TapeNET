@@ -1291,7 +1291,7 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
             Manager.EndReadWrite();
             Navigator.ResetContentSet();
 
-            if (Navigator.TOCInvalidated && Navigator is TapeNavigatorTOCInSet)
+            if (Navigator.TOCUnlocated && Navigator is TapeNavigatorTOCInSet)
             {
                 // Do NOT try to navigate if TOC-in-set has been invalidated -- we may end up overwriting content
                 //  -> fail instead to allow the user to save TOC to a file
@@ -2194,8 +2194,13 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
             result = BlocksOnUnverifiableSet ? SetAnomalyAction.Abort : SetAnomalyAction.Proceed;
         }
 
-        if (result == SetAnomalyAction.Abort)
+        // Record an abort ONLY when the notifiable ACTUALLY DECLINED something it could have
+        //  authorized. With no recovery stage left, the ladder was informing rather than asking —
+        //  and reporting that as "aborted per user request" credits the user with a decision they
+        //  were never offered, while hiding the refusal behind the abort verdict.
+        if (result == SetAnomalyAction.Abort && anomaly.CanAttemptRecovery)
             IsAbortRequested = true;
+
         return result;
     }
 

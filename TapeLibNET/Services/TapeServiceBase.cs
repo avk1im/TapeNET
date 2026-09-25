@@ -1,13 +1,10 @@
-﻿using System.IO;
-
-using Grpc.Core;
-
+﻿using Grpc.Core;
 using Microsoft.Extensions.Logging;
-
-using Windows.Win32.System.SystemServices; // Helpers.BytesToStringLong
-
+using System.IO;
 using TapeLibNET.Remote;
 using TapeLibNET.Virtual;
+using Windows.Win32.Foundation;
+using Windows.Win32.System.SystemServices; // Helpers.BytesToStringLong
 
 namespace TapeLibNET.Services;
 
@@ -1829,68 +1826,6 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             return false;
 
         return await RenameBackupSetAsync(setIndex, newName);
-    }
-
-    /// <summary>
-    /// Deletes backup sets starting from
-    ///  set on the volume. Physically overwrites the tape past the last retained set to move the
-    ///  end-of-data marker, then updates the TOC on tape.
-    /// </summary>
-    /// <param name="deleteFromSetIndex">Standard (1-based) index of the first set to delete.</param>
-    public async Task<bool> DeleteBackupSetsAsync(int deleteFromSetIndex)
-    {
-        if (_toc is null || _drive is null)
-        {
-            LastError = "No media loaded";
-            return false;
-        }
-
-        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
-        return await Task.Run(async () =>
-        {
-            await _operationLock.WaitAsync().ConfigureAwait(false);
-            try
-            {
-                var toc = _toc;
-                deleteFromSetIndex = toc.SetIndexToStd(deleteFromSetIndex);
-
-                int lastSet = toc.LastSetOnVolume;
-                int setsToDelete = lastSet - deleteFromSetIndex + 1;
-                LogInfo($"Deleting {setsToDelete} backup set(s) from #{deleteFromSetIndex} | {toc.SetIndexToAlt(deleteFromSetIndex)}...");
-                OnStatusUpdate("Deleting backup sets...");
-
-                // Set the current set to the first one to delete —
-                //  this is the precondition for DeleteSetsFromCurrentSetUp()
-                toc.CurrentSetIndex = deleteFromSetIndex;
-
-                _agent = new TapeFileAgent(_drive, toc);
-                var result = _agent.DeleteSetsFromCurrentSetUp(navigateFromBegin: IsTOCFromFile); // if TOC is from file, assume the TOC on tape might be missing
-                if (!result)
-                {
-                    LastError = result.ErrorMessage;
-                    LogErr($"Failed to delete backup sets: {result.ErrorMessage}");
-                    return false;
-                }
-
-                LogOk($"Deleted {setsToDelete} backup set(s) — TOC saved");
-                OnStatusUpdate($"Deleted {setsToDelete} backup set(s)");
-                _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-                LogErr($"Exception deleting backup sets: {ex.Message}");
-                return false;
-            }
-            finally
-            {
-                _agent?.Dispose();
-                _agent = null;
-                _operationLock.Release();
-                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
-            }
-        });
     }
 
     #endregion // TOC operations

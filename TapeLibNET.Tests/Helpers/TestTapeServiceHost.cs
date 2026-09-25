@@ -248,6 +248,33 @@ public class TestTapeServiceHost(ILogger? logger = null) : ITapeServiceHost
     public FileFailedAction OnFileErrorSelect(string filePath, string errorMessage, string operationName)
         => FileErrorAnswers.Count > 0 ? FileErrorAnswers.Dequeue() : FileFailedAction.Skip;
 
+    /// <summary>One recorded set-anomaly prompt, mirroring <see cref="MediaMismatchPrompt"/>.</summary>
+    public readonly record struct SetAnomalyPrompt(
+        string ExpectedSet, string ActualSet, string ErrorMessage, bool IsDestructive, string OperationName);
+
+    /// <summary>Every set-anomaly prompt raised, in order. A clean run must leave this empty.</summary>
+    public List<SetAnomalyPrompt> SetAnomalyPrompts { get; } = [];
+
+    /// <summary>
+    /// What <see cref="OnSetAnomalySelect"/> answers. Defaults to <see langword="true"/>.
+    /// <para>Tests wanting the veto set this explicitly to <see langword="false"/>.</para>
+    /// </summary>
+    /// <remarks>
+    /// The OPPOSITE of the interface default, for the same reason <see cref="TestNotifiable.SetAnomalyAction"/>
+    ///  defaults to <c>Proceed</c>: a test host exists to exercise the library's decisions, not to veto
+    ///  them before they run.
+    /// </remarks>
+    public bool SetAnomalyAnswer { get; set; } = true;
+
+    /// <inheritdoc/>
+    public bool OnSetAnomalySelect(string expectedSet, string actualSet, string errorMessage,
+        bool isDestructive, string operationName)
+    {
+        SetAnomalyPrompts.Add(new SetAnomalyPrompt(
+            expectedSet, actualSet, errorMessage, isDestructive, operationName));
+        return SetAnomalyAnswer;
+    }
+
     /// <inheritdoc/>
     /// <remarks>
     /// Dequeues from <see cref="ConfirmAnswers"/>; returns <see langword="false"/>
@@ -308,6 +335,8 @@ public class TestTapeServiceHost(ILogger? logger = null) : ITapeServiceHost
         while (MediaMismatchPrompts.TryDequeue(out _))
             { }
         MediaMismatchAnswers.Clear();
+
+        SetAnomalyPrompts.Clear();
     }
 
     // ── Inner types ───────────────────────────────────────────────────────────

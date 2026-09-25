@@ -321,8 +321,8 @@ public abstract class TapeNavigatorTestsBase
         var (fixture, nav) = CreateNavigator(profile);
         using var _ = fixture;
 
-        // TOCInSet navigators start with TOCInvalidated = true (no TOC on tape yet)
-        Assert.True(nav.TOCInvalidated);
+        // TOCInSet navigators start with TOCUnlocated = true (no TOC on tape yet)
+        Assert.True(nav.TOCUnlocated);
     }
 
     [Fact]
@@ -332,7 +332,7 @@ public abstract class TapeNavigatorTestsBase
         var nav = TapeNavigator.ProduceNavigator(fixture.Drive)!;
 
         // Partition navigator uses the base class default (false)
-        Assert.False(nav.TOCInvalidated);
+        Assert.False(nav.TOCUnlocated);
     }
 
     [Theory]
@@ -342,9 +342,9 @@ public abstract class TapeNavigatorTestsBase
         var (fixture, nav) = CreateNavigator(profile);
         using var _ = fixture;
 
-        Assert.True(nav.TOCInvalidated);
+        Assert.True(nav.TOCUnlocated);
         nav.OnTOCWritten();
-        Assert.False(nav.TOCInvalidated);
+        Assert.False(nav.TOCUnlocated);
     }
 
     [Theory]
@@ -356,11 +356,11 @@ public abstract class TapeNavigatorTestsBase
 
         // First mark as valid
         nav.OnTOCWritten();
-        Assert.False(nav.TOCInvalidated);
+        Assert.False(nav.TOCUnlocated);
 
         // Content write invalidates it
         nav.OnContentWritten();
-        Assert.True(nav.TOCInvalidated);
+        Assert.True(nav.TOCUnlocated);
     }
 
     #endregion
@@ -1084,9 +1084,9 @@ public abstract class TapeNavigatorTestsBase
         var nav = TapeNavigator.ProduceNavigator(fixture.Drive)!;
 
         // TOC is in partition, so content writes don't invalidate it
-        Assert.False(nav.TOCInvalidated);
+        Assert.False(nav.TOCUnlocated);
         nav.OnContentWritten();
-        Assert.False(nav.TOCInvalidated);
+        Assert.False(nav.TOCUnlocated);
     }
 
     [Fact]
@@ -1170,17 +1170,17 @@ public abstract class TapeNavigatorTestsBase
 
         // Write initial layout
         var starts = WriteFullTapeLayout(nav, setCount: 1, blocksPerSet: 4);
-        Assert.False(nav.TOCInvalidated); // TOC was just written
+        Assert.False(nav.TOCUnlocated); // TOC was just written
 
         // Now write more content → TOC becomes invalidated
         nav.OnBeginWriteContent();
         WriteContentSet(nav, 4, 0x55);
         nav.OnContentWritten();
-        Assert.True(nav.TOCInvalidated);
+        Assert.True(nav.TOCUnlocated);
 
         // Write the TOC again
         WriteTOCRegion(nav);
-        Assert.False(nav.TOCInvalidated);
+        Assert.False(nav.TOCUnlocated);
     }
 
     #endregion

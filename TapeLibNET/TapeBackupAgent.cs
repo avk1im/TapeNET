@@ -598,8 +598,13 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         if (!BeginWriteContentForCurrentSet(newSet, bc.fileNotify)) // start conent writing mode in tape manager so that tape positioning works correctly
         {
+            LatchFailure();
             NotifySetEnd(bc.fileNotify);
             m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSetAligned));
+
+            // We MUST clear MultiVolumeContext to NOT indicate continuation to next volume!
+            MultiVolumeContext = null;
+
             return false;
         }
 
@@ -987,8 +992,13 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         if (!BeginWriteContentForCurrentSet(newSet, bc.fileNotify))
         {
+            LatchFailure();
             NotifySetEnd(bc.fileNotify);
-            m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSet));
+            m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSetAligned));
+
+            // We MUST clear MultiVolumeContext to NOT indicate multivolume continuation!
+            MultiVolumeContext = null;
+
             return false;
         }
 
@@ -1266,6 +1276,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         // Do NOT BytesBackedupMarker = BytesBackedup here -- we anchor ONLY in BeginWriteContentForCurrentSet()!
         NotifySetEnd(bc.fileNotify);
 
+        // We MUST clear MultiVolumeContext to not indicate multivolume continuation
         MultiVolumeContext = null;
 
         return bc.overallSuccess;

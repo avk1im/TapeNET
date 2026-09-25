@@ -78,6 +78,24 @@ public abstract record ServiceOperationResult
 
     /// <summary>Number of files that were actually touched (read / written) by the agent.</summary>
     public int FilesProcessed { get; init; }
+
+    /// <summary>
+    /// Set-level statistics for the operation: anomalies detected, recovered, and whether a destructive
+    ///  write was refused.
+    /// </summary>
+    /// <remarks>
+    /// Embedded as a <see langword="struct"/> for the same reason <see cref="Diagnosis"/> is embedded
+    ///  rather than flattened: a <see langword="with"/> expression cannot set one counter and forget
+    ///  its siblings.
+    /// <para>
+    /// An all-zero value reads as "clean", so every existing construction site stays correct without
+    /// touching it.
+    /// </para>
+    /// </remarks>
+    public TapeSetStatistics Sets { get; init; }
+
+    /// <summary>True when any set-level anomaly was observed, whether or not it was repaired.</summary>
+    public bool HasSetAnomalies => Sets.HasAnomalies;
 }
 
 // ── Intermediate: file-level statistics ──────────────────────────────────────
@@ -269,7 +287,7 @@ public sealed record InspectCalibrationMediaResult : ServiceOperationResult
     public string Summary { get; init; } = string.Empty;
 }
 
-// ── List ──────
+// ── List ──────────────────────────────────────────────────────
 
 /// <summary>
 /// Summary result of a list / contents-display operation.
@@ -312,3 +330,38 @@ public sealed record ListResult : ServiceOperationResult
         Duration      = duration,
     };
 }
+
+// ── Delete sets ──────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Summary of a delete-backup-sets operation.
+/// </summary>
+/// <remarks>
+/// A delete touches no files, so it derives from <see cref="ServiceOperationResult"/> directly rather
+///  than from <see cref="FileOperationResult"/> — reporting it through the file-counter machinery would
+///  produce the "completed — no files processed" line this feature exists to eliminate.
+/// </remarks>
+public sealed record DeleteSetsResult : ServiceOperationResult
+{
+    /// <summary>Number of sets the operation was asked to delete.</summary>
+    public int SetsRequested { get; init; }
+
+    /// <summary>Number of sets actually removed — zero when the delete was refused.</summary>
+    public int SetsDeleted { get; init; }
+
+    /// <summary>Whether the tape was left untouched (a refusal, or a precondition failure).</summary>
+    public bool TapeUnchanged => SetsDeleted == 0;
+
+    /// <summary>Creates a failed result with no sets deleted.</summary>
+    public static DeleteSetsResult Failed(TapeResult diagnosis, int setsRequested,
+        in TapeSetStatistics sets = default) => new()
+        {
+            Diagnosis = diagnosis,
+            Sets = sets,
+            SetsRequested = setsRequested,
+            SetsDeleted = 0,
+            Success = false,
+            Outcome = ServiceReportLevel.Error,
+        };
+}
+

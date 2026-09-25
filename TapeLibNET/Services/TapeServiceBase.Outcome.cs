@@ -53,6 +53,9 @@ public enum FileOperationVerdict
     /// <summary>Some files failed; the rest completed.</summary>
     CompletedWithFailures,
 
+    /// <summary>A set-level verification refused the operation; no files were touched.</summary>
+    SetVerificationBlocked,
+
     /// <summary>The operation ran to completion but touched no files at all.</summary>
     NothingProcessed,
 
@@ -63,8 +66,40 @@ public enum FileOperationVerdict
     Failed,
 }
 
+/// <summary>
+/// What the service recommends the user DO about the set anomalies an operation met. Policy, computed
+///  from <see cref="TapeSetStatistics"/>; the wording lives in <see cref="TapeServiceBase.AdviseText"/>.
+/// </summary>
+/// <remarks>
+/// Separate from <see cref="FileOperationVerdict"/> on purpose: that says what happened to the FILES,
+///  this says what the MEDIUM appears to need. A backup can complete perfectly and still leave a
+///  cartridge that wants attention.
+/// </remarks>
+public enum SetAnomalyAdvice
+{
+    /// <summary>No anomalies — nothing to say.</summary>
+    None,
+
+    /// <summary>
+    /// A set was reached only after re-navigating from the start of the volume: the volume's TAIL no
+    ///  longer matches the TOC. Deleting the trailing sets rewrites the damaged mark structure.
+    /// </summary>
+    RepairTrailingSets,
+
+    /// <summary>
+    /// Drift was corrected in place, without needing the tail recovery — the mark structure is intact
+    ///  but was miscounted, which points at the drive or the medium rather than the layout.
+    /// </summary>
+    CheckDriveOrMedia,
+
+    /// <summary>A destructive write was refused. The tape is untouched and the cause needs resolving.</summary>
+    WriteRefused,
+}
+
 public partial class TapeServiceBase
 {
+    #region Outcome judgement (policy)
+
     // ── Outcome judgment (policy) ─────────────────────────────────────────────
 
     /// <summary>
@@ -81,15 +116,18 @@ public partial class TapeServiceBase
         if (result.WasAborted) return FileOperationVerdict.Aborted;
         if (result.HasFailed) return FileOperationVerdict.Failed;
 
+        // Checked BEFORE the file counters: a refused destructive write processes no files, so every
+        //  counter-based verdict below would describe it as "nothing happened" — which is true and
+        //  useless. This is the verdict that names the cause.
+        if (result.Sets.SetWriteBlocked && result.FilesProcessed == 0)
+            return FileOperationVerdict.SetVerificationBlocked;
+
         if (result.FilesFailed > 0) return FileOperationVerdict.CompletedWithFailures;
 
         // Nothing processed AND a diagnosis to explain it ⇒ the operation did not merely find nothing
-        //  to do; something stopped it. Only reachable now that the diagnosis rides inside the result —
-        //  this is the case a rejected set used to fall into, reported as a bare "no files processed".
+        //  to do; something stopped it.
         if (result.FilesProcessed == 0)
-            return result.Diagnosis.Success && !pendingContinuation
-                ? FileOperationVerdict.NothingProcessed
-                : FileOperationVerdict.NothingProcessed;   // same verdict, but see VerbalizeFileOperation
+            return FileOperationVerdict.NothingProcessed;
 
         if (result.FilesSkipped > 0) return FileOperationVerdict.CompletedWithSkips;
 
@@ -130,6 +168,12 @@ public partial class TapeServiceBase
                 $"{operationName} of {result.FilesTotal:N0} file(s) completed with " +
                 $"{result.FilesFailed:N0} failed{reason}"),
 
+            // The set-level counterpart of NothingProcessed, and the reason that verdict exists: a
+            //  refused destructive write is not "nothing happened", it is "we stopped you".
+            FileOperationVerdict.SetVerificationBlocked => (
+                ServiceReportLevel.Failed,
+                $"{operationName} refused: the backup set on tape is not the one expected{reason}"),
+
             // The verdict that most needs the diagnosis: without it the user is told only that nothing
             //  happened, with no indication of why — the exact gap a rejected set used to fall into.
             FileOperationVerdict.NothingProcessed => (
@@ -147,6 +191,12 @@ public partial class TapeServiceBase
             _ => (ServiceReportLevel.Info, $"{operationName} finished"),
         };
     }
+
+    #endregion
+
+    #region Reporting
+
+    // ── Reporting ──────────────────────────────────────────
 
     /// <summary>
     /// Judges, verbalizes, and reports a finished file operation in one call — the common ending for
@@ -209,6 +259,86 @@ public partial class TapeServiceBase
         //    => $"{Helpers.BytesToStringLong(b1)} / {Helpers.BytesToStringLong(b2)} / {Helpers.BytesToStringLong(b3)}";
         //LogInfoSub($"Remaining media capacity (reported/estimated/writable): {triple(ReportedContentRemaining, EstimatedContentRemaining, WritableRemaining)}");
     }
+
+    #endregion
+
+    #region Anomaly Advisory
+
+    // ── Anomaly Advisory ──────────────────────────────────────────
+
+    /// <summary>
+    /// Derives the recommendation from an operation's set statistics. Pure; mirrors
+    ///  <see cref="JudgeFileOperation"/>.
+    /// </summary>
+    /// <remarks>
+    /// Ordered by severity of what the cartridge is telling us, not by count. A refusal outranks
+    ///  everything (the user is blocked right now); a BOM recovery outranks a delta one (the tail is
+    ///  damaged, not merely miscounted) even when the delta recoveries are more numerous.
+    /// </remarks>
+    protected static SetAnomalyAdvice AdviseOnSetAnomalies(in TapeSetStatistics sets)
+    {
+        if (sets.SetWriteBlocked) return SetAnomalyAdvice.WriteRefused;
+        if (sets.AnomaliesRecoveredFromBom > 0) return SetAnomalyAdvice.RepairTrailingSets;
+        if (sets.AnomaliesRecovered > 0) return SetAnomalyAdvice.CheckDriveOrMedia;
+        if (sets.AnomaliesDetected > 0) return SetAnomalyAdvice.CheckDriveOrMedia;
+        return SetAnomalyAdvice.None;
+    }
+
+    /// <summary>Renders an advice as a headline plus one actionable sub-line.</summary>
+    protected static (ServiceReportLevel Level, string Headline, string Action) AdviseText(
+        SetAnomalyAdvice advice) => advice switch
+        {
+            SetAnomalyAdvice.RepairTrailingSets => (
+                ServiceReportLevel.Warning,
+                "The end of this volume does not match its table of contents",
+                "Deleting the last backup set(s) would rewrite the damaged area " +
+                "(Backup | Delete Backup Sets)"),
+
+            SetAnomalyAdvice.CheckDriveOrMedia => (
+                ServiceReportLevel.Warning,
+                "Backup set positions on this volume had to be corrected",
+                "The drive or the cartridge miscounted tape marks — consider cleaning the drive, " +
+                "and retiring the cartridge if this recurs"),
+
+            SetAnomalyAdvice.WriteRefused => (
+                ServiceReportLevel.Failed,
+                "The operation was refused to protect existing data — the tape is unchanged",
+                "Verify the correct cartridge is loaded, then retry; if the volume is known to be " +
+                "damaged, delete its trailing backup sets first"),
+
+            _ => (ServiceReportLevel.Info, string.Empty, string.Empty),
+        };
+
+    /// <summary>
+    /// Reports the set-level summary and its recommendation. Silent when nothing was observed — the
+    ///  happy path must stay provably quiet.
+    /// </summary>
+    protected SetAnomalyAdvice ReportSetAnomalyOutcome(in TapeSetStatistics sets)
+    {
+        var advice = AdviseOnSetAnomalies(sets);
+        if (advice == SetAnomalyAdvice.None)
+            return advice;
+
+        var parts = new List<string>(3);
+        if (sets.AnomaliesDetected > 0)
+            parts.Add($"{sets.AnomaliesDetected:N0} set anomaly(ies) detected");
+        if (sets.AnomaliesRecovered > 0)
+            parts.Add($"{sets.AnomaliesRecovered:N0} recovered");
+        if (sets.AnomaliesRecoveredFromBom > 0)
+            parts.Add($"{sets.AnomaliesRecoveredFromBom:N0} needed a full re-navigation");
+
+        var (level, headline, action) = AdviseText(advice);
+
+        _host.Report(level, headline);
+        if (parts.Count > 0)
+            _host.Report(level, string.Join(", ", parts), isSubEntry: true);
+        if (action.Length > 0)
+            _host.Report(ServiceReportLevel.Info, action, isSubEntry: true);
+
+        return advice;
+    }
+
+    #endregion
 
     #region Timing formatting helpers
 

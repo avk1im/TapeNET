@@ -183,6 +183,32 @@ public interface ITapeServiceHost
     FileFailedAction OnFileErrorSelect(string filePath, string errorMessage, string operationName);
 
     /// <summary>
+    /// Invoked when a backup SET cannot be used as the TOC describes it, and a recovery stage remains
+    ///  untried. The host shows the appropriate dialog and returns whether to authorize the attempt.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Distinct from <see cref="OnFileErrorSelect"/> in stakes rather than shape: a set anomaly on a
+    ///  DESTRUCTIVE path means the head may be about to overwrite the wrong data, so the recovery — a
+    ///  repositioning, never a write — needs explicit consent. On a read path it costs only time.
+    ///  <paramref name="isDestructive"/> tells the host which it is, so a UI can warn accordingly.
+    /// </para>
+    /// <para>
+    /// HOST GUIDANCE: a non-interactive host should return <see langword="true"/> for a READ-path
+    ///  anomaly (repositioning a restore is harmless and unattended restores must not stall) and
+    ///  <see langword="false"/> for a destructive one, and LOG the auto-decision. The library imposes no
+    ///  policy; it always asks.
+    /// </para>
+    /// </remarks>
+    /// <param name="expectedSet">What the TOC believes stands at this position, named for display.</param>
+    /// <param name="actualSet">What the tape actually says, or "(unreadable)".</param>
+    /// <param name="errorMessage">The diagnosis that provoked the prompt.</param>
+    /// <param name="isDestructive">Whether a destructive write is gated on the answer.</param>
+    /// <param name="operationName">Human-readable operation name ("Backup", "Restore", "Delete").</param>
+    bool OnSetAnomalySelect(string expectedSet, string actualSet, string errorMessage,
+        bool isDestructive, string operationName);
+
+    /// <summary>
     /// Invoked during a multi-volume backup when the current volume is full and
     ///  the backup can spill onto the next volume. The host shows a confirmation
     ///  dialog with volume and progress statistics; returns <see langword="true"/>

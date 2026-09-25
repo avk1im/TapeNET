@@ -696,6 +696,62 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
         return action;
     }
 
+    /// <inheritdoc/>
+    /// <remarks>
+    /// <para>
+    /// Reuses <see cref="MediaMismatchDialog"/> rather than introducing a dialog of its own: with
+    ///  <c>allowRetry</c> and <c>allowProceedAlways</c> both false it presents exactly the two choices
+    ///  this prompt has, and the user already associates that dialog's shape with "the tape is not what
+    ///  we expected". <c>ProceedAlways</c> is suppressed deliberately — a blanket "always recover" is
+    ///  precisely the standing permission a destructive repositioning must never acquire.
+    /// </para>
+    /// <para>
+    /// Severity splits on <paramref name="isDestructive"/>, which is the only thing that actually
+    ///  differs: on a read path the recovery costs time, on a write path it precedes something
+    ///  irreversible.
+    /// </para>
+    /// </remarks>
+    public bool OnSetAnomalySelect(string expectedSet, string actualSet, string errorMessage,
+        bool isDestructive, string operationName)
+    {
+        bool authorized = false;
+
+        _dispatcher.Invoke(() =>
+        {
+            string detail = isDestructive
+                ? $"{operationName} stopped before modifying the tape, because the backup set found at "
+                    + "this position is not the one the table of contents describes.\n\n"
+                    + "This usually means the end of the volume was damaged — often by a backup that was "
+                    + "interrupted.\n\n"
+                    + "Recovery re-reads the volume from its start to locate the correct set. It only MOVES "
+                    + "the tape; nothing is written unless the correct set is then confirmed."
+                : $"The backup set found at this position is not the one the table of contents describes.\n\n"
+                    + "Recovery re-reads the volume from its start to locate the correct set. Nothing is "
+                    + "written, so this costs only time.";
+
+            var dialog = new MediaMismatchDialog(
+                title: isDestructive ? "Backup set mismatch — data at risk" : "Backup set mismatch",
+                headline: $"Expected \u201c{expectedSet}\u201d, found \u201c{actualSet}\u201d",
+                detail: detail,
+                // Notice headerDescription carries the diagnosis, not a header string
+                headerDescription: string.IsNullOrWhiteSpace(errorMessage)
+                    ? $"Set: {actualSet}"
+                    : errorMessage,
+                severity: isDestructive ? MediaMismatchSeverity.Error : MediaMismatchSeverity.Warning,
+                proceedLabel: isDestructive ? "Attempt recovery" : "Recover and continue",
+                allowRetry: false,
+                allowProceedAlways: false)
+            {
+                Owner = Application.Current.MainWindow,
+            };  
+
+            if (dialog.ShowDialog() == true)
+                authorized = dialog.Result == MediaMismatchChoice.Proceed;
+        });
+
+        return authorized;
+    }
+
     // ── Restore progress ──────────────────────────────────────────────────────
 
 

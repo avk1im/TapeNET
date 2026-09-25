@@ -49,6 +49,13 @@ public sealed class TestTapeService(ILoggerFactory lf, ITapeServiceHost host) : 
     /// <summary>Invoked with the progress of a calibration operation.</summary>
     public Action<TapeCalibrationProgress>? OnCalibrationProgress { get; set; }
 
+    protected override ServiceSetProgressHandler CreateSetProgressHandler(
+        TapeFileAgent agent, string operationName)
+    {
+        OnAgentReady?.Invoke(agent);
+        return base.CreateSetProgressHandler(agent, operationName);
+    }
+
     protected override ServiceBackupProgressHandler CreateBackupProgressHandler(
         TapeFileBackupAgent agent, bool skipAllErrors, ITapeFileFilter? filter)
     {

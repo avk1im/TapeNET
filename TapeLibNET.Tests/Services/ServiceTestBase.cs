@@ -97,7 +97,10 @@ public abstract class ServiceTestBase : IDisposable
     {
         foreach (var host in _trackedHosts)
             if (!_promptChecked.Contains(host))
+            {
                 Assert.Empty(host.MediaMismatchPrompts);   // happy-path hosts: provably silent
+                Assert.Empty(host.SetAnomalyPrompts);
+            }
 
         GC.SuppressFinalize(this);
     }

@@ -80,6 +80,27 @@ public sealed record BackupRequest(
     ///  failing a wrong-media or wrong-volume set on its own.
     /// </remarks>
     public bool ProceedOnMediaMismatch { get; init; } = false;   // skip identified-media prompts; overwrite unattended
+
+    /// <summary>
+    /// Whether a detected set-navigation drift is repaired in place, or reported and refused.
+    /// </summary>
+    /// <remarks>
+    /// Mirrors <see cref="RestoreRequest.CorrectSetNavigation"/>. It does NOT disable the check — it
+    ///  makes it stricter: a drift is reported rather than repaired. Belongs in an advanced /
+    ///  diagnostics group, since its audience is someone investigating a drive.
+    /// </remarks>
+    public bool CorrectSetNavigation { get; init; } = true;
+
+    /// <summary>
+    /// Whether an OVERWRITE verifies the set header standing at its target before destroying it (SH-13).
+    /// </summary>
+    /// <remarks>
+    /// <b>Disabling this disables the CHECK, not a prompt.</b> Its one legitimate use is repairing a
+    ///  cartridge whose set headers are themselves damaged, where the verification would block the very
+    ///  operation that would fix it. This is NOT a performance option: an append pays nothing
+    ///  for it (§3 of the design), so there is no speed to buy.
+    /// </remarks>
+    public bool VerifySetHeader { get; init; } = true;
 }
 
 // ── Restore ──────────────────────────────────────────────────────────────────
@@ -124,6 +145,18 @@ public sealed record RestoreRequest(
     ///  this one changes set detection BEHAVIOUR.
     /// </remarks>
     public bool CorrectSetNavigation { get; init; } = true; // define BEHAVIOUR on detection: repair or report only (stricter)
+
+    /// <summary>
+    /// Whether an restore verifies the set header standing at its target (SH-13).
+    /// </summary>
+    /// <remarks>
+    /// <b>Disabling this disables the CHECK, not a prompt.</b> Its one legitimate use is repairing a
+    ///  cartridge whose set headers are themselves damaged, where the verification would block the 
+    ///  attempt to restore the content. This is NOT a performance option: the check is virtually
+    ///  free, so there is no speed to buy.
+    /// </remarks>
+    public bool VerifySetHeader { get; init; } = true;
+
 }
 
 // ── Calibrate ────────────────────────────────────────────────────────────────

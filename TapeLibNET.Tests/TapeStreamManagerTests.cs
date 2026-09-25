@@ -1613,7 +1613,7 @@ public class TapeStreamManagerTests
 
         // For TOC-in-set navigators, TOC should now be valid
         if (mgr.Navigator is TapeNavigatorTOCInSet)
-            Assert.False(mgr.Navigator.TOCInvalidated);
+            Assert.False(mgr.Navigator.TOCUnlocated);
 
         // Write second set — TOC should become invalidated
         mgr.Navigator.TargetContentSet = -1;
@@ -1626,13 +1626,13 @@ public class TapeStreamManagerTests
         Assert.True(mgr.EndWriteContent());
 
         if (mgr.Navigator is TapeNavigatorTOCInSet)
-            Assert.True(mgr.Navigator.TOCInvalidated);
+            Assert.True(mgr.Navigator.TOCUnlocated);
 
         // Write TOC again to make it valid
         WriteTOCViaManager(mgr);
 
         if (mgr.Navigator is TapeNavigatorTOCInSet)
-            Assert.False(mgr.Navigator.TOCInvalidated);
+            Assert.False(mgr.Navigator.TOCUnlocated);
     }
 
     #endregion

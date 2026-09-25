@@ -98,12 +98,11 @@ public partial class TapeServiceBase
                 BytesProcessed = agent?.BytesBackedup ?? 0,
                 WasAborted = aborted,
                 HasFailed = failed,
-                Success = !failed,
-                Outcome = aborted
-                                    ? ServiceReportLevel.Failed
-                                    : failed
-                                        ? ServiceReportLevel.Error
+                Success = !failed && !(progressHandler?.SetStats.SetWriteBlocked ?? false),
+                Outcome = aborted ? ServiceReportLevel.Failed
+                                    : failed ? ServiceReportLevel.Error
                                         : ServiceReportLevel.Completed,
+                Sets = progressHandler?.SetStats ?? new(),
             };
 
         if (_drive is null || !_drive.IsMediaLoaded)
@@ -155,6 +154,8 @@ public partial class TapeServiceBase
             _agent?.Dispose();
             _agent = agent;
             agent.WritesMediaHeader = true; // the agent heads only at fresh-volume starts (append leaves it alone)
+            agent.CorrectsSetNavigation = request.CorrectSetNavigation;  // default true
+            agent.VerifiesSetHeader = request.VerifySetHeader; // default true
 
             var toc = agent.TOC;
             TapeTOC? backupTOC = null;
@@ -219,8 +220,9 @@ public partial class TapeServiceBase
                 LogInfo("Creating new backup, replacing all existing content");
                 backupTOC = new TapeTOC(toc);
                 toc.RemoveAllSets();
-                toc.Volume = 1;          // volume indexing starts from 1
-                toc.ResetMediaId();      // §10.5: fresh series id — the rewritten header gets a new MediaId
+                toc.Volume = 1;         // volume indexing starts from 1
+                toc.ResetMediaId();     // §10.5: fresh series id — the rewritten header gets a new MediaId
+                _loadedHeader = null;   // new MediaId invalidates any previous header
             }
             // else: Mode 2 — straight append (no TOC modification needed here)
 
@@ -333,13 +335,17 @@ public partial class TapeServiceBase
                 //    continuing to the next volume.
                 if (noFilesBackedUp)
                 {
+                    // Whether the MEDIUM was touched at all. The header is stamped before the content
+                    // session opens, so ContentWritten alone does not answer it.
+                    bool mediaUntouched = !agent.Manager.ContentWritten && !agent.MediaHeaderStamped;
+
                     if (backupTOC != null)
                     {
                         // The header is stamped BEFORE the content session opens, so ContentWritten alone
                         //  doesn't tell us whether the medium was modified. Reverting the TOC after a fresh
                         //  header has landed would restore the OLD MediaId against a tape carrying the NEW
                         //  one — the in-memory state would then describe a cartridge that no longer exists.
-                        if (!agent.Manager.ContentWritten && !agent.MediaHeaderStamped)
+                        if (mediaUntouched)
                         {
                             toc.CopyFrom(backupTOC); // safe revert
                             if (!result && !wasAborted && !agent.CanResumeToNextVolume)
@@ -376,9 +382,17 @@ public partial class TapeServiceBase
                             LogInfo("No files were backed up");
                     }
 
-                    // If TOC on tape is still valid and we're not continuing to
-                    //  the next volume, we can skip re-saving it
-                    if (!agent.CanResumeToNextVolume && !agent.Navigator.TOCInvalidated)
+                    // Skip the save when the tape's TOC is DEMONSTRABLY still correct: nothing was
+                    //  written, and both branches above have just restored the in-memory TOC to what
+                    //  the tape holds. If we're continuing to the next volume, we must save the TOC
+                    //  to update its ContinuedOnNextVolume flag.
+                    // Deliberately NOT gated on Navigator.TOCUnlocated: that flag is true on any
+                    //  FRESH navigator — it means "I have not located the TOC mark yet", not "the TOC
+                    //  on tape is stale". Since the service reads the TOC with one agent and backs up
+                    //  with another, it is true at the start of every backup, which would rewrite a
+                    //  perfectly valid TOC after a refused overwrite (and also make "media unchanged"
+                    //  report a lie!)
+                    if (!agent.CanResumeToNextVolume && mediaUntouched)
                     {
                         skipTOCSave = true;
                         _toc = toc;
@@ -541,6 +555,7 @@ public partial class TapeServiceBase
                 {
                     // The whole operation outcome
                     ReportFileOperationOutcome(resultSoFar, "Backup");
+                    ReportSetAnomalyOutcome(progressHandler.SetStats);
                 }
 
                 // Current statistics we report for each volume.
@@ -637,7 +652,7 @@ public partial class TapeServiceBase
                     if (!request.ProceedOnMediaMismatch)
                         RefreshLoadedHeader();
                     else
-                        _loadedCalibrationInfo = null; // treat the volume as blank
+                        _loadedHeader = null; // treat the volume as blank
                     TapeMediaVerdict cvVerdict = _loadedHeader switch
                     {
                         null => TapeMediaVerdict.Unidentified,   // blank fresh volume — ideal
@@ -1012,7 +1027,7 @@ public partial class TapeServiceBase
 
                     // If TOC on tape is still valid and we're not continuing to
                     //  the next volume, we can skip re-saving it
-                    if (!agent.CanResumeToNextVolume && !agent.Navigator.TOCInvalidated)
+                    if (!agent.CanResumeToNextVolume && !agent.Navigator.TOCUnlocated)
                     {
                         skipTOCSave = true;
                         _toc = toc;

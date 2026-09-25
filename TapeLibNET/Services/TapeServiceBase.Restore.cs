@@ -99,11 +99,10 @@ public partial class TapeServiceBase
                 WasAborted      = aborted,
                 HasFailed       = failed,
                 Success         = !failed,
-                Outcome         = aborted
-                                    ? ServiceReportLevel.Failed
-                                    : failed
-                                        ? ServiceReportLevel.Error
+                Outcome         = aborted ? ServiceReportLevel.Failed
+                                    : failed ? ServiceReportLevel.Error
                                         : ServiceReportLevel.Completed,
+                Sets = progressHandler?.SetStats ?? new(),
             };
 
         if (_drive is null || !_drive.IsMediaLoaded)
@@ -142,7 +141,8 @@ public partial class TapeServiceBase
                 RestoreMode.Verify   => new TapeFileVerifyAgent  (_drive, _toc),
                 _ => throw new ArgumentOutOfRangeException(nameof(request), $"Unsupported mode {request.Mode}")
             };
-            agent.CorrectsSetNavigation = request.CorrectSetNavigation; // both true by default
+            agent.CorrectsSetNavigation = request.CorrectSetNavigation; // default true
+            agent.VerifiesSetHeader = request.VerifySetHeader; // default true
             _agent = agent;
             var toc = agent.TOC;
 
@@ -273,6 +273,7 @@ public partial class TapeServiceBase
                 LogInfo("Multi-volume continuation skipped (no-multivolume mode)");
 
             // ── Multi-volume continuation loop ────────────────────────────────
+            
             while (!wasAborted && !success && agent.CanResumeFromAnotherVolume && !request.NoMultivolume)
             {
                 int volumeNeeded = agent.VolumeToResumeFrom;
@@ -362,12 +363,15 @@ public partial class TapeServiceBase
                 dataElapsedUs += dataTimer.ElapsedMicroseconds;
                 dataIoElapsedUs += _drive.IoTimeCounterUs;
                 wasAborted = agent.IsAbortRequested;
-            } // while multi-volume continuation
+            
+            } // multi-volume continuation while-loop
+            
             // ─────────────────────────────────────────────────────────────────
 
             var result = progressHandler.GenerateResult() with
             {
                 Diagnosis = agentResult,
+                Sets = progressHandler.SetStats,
             };
 
             // Handle abort path first
@@ -388,6 +392,9 @@ public partial class TapeServiceBase
             ReportFileOperationOutcome(result, modeName,
                 pendingContinuation: agent.CanResumeFromAnotherVolume);
             ReportFileOperationStats(result, secsTotal: dataElapsedUs / 1e6, secsIo: dataIoElapsedUs / 1e6);
+            ReportSetAnomalyOutcome(progressHandler.SetStats);
+
+            OnStatusUpdate($"{modeName} complete");
 
             return result;
 

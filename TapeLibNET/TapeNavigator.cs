@@ -100,7 +100,11 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
 
     private long? m_tocCapacityOverride = null;
 
-    public virtual bool TOCInvalidated { get; protected set; } = false;
+    /// <summary>
+    /// Whether the navigator knows for sure that TOC exists on the tape.
+    ///  <see langword="true"/> = TOC is UNlocated, <see langword="false"/> = TOC is located.
+    /// </summary>
+    public virtual bool TOCUnlocated { get; protected set; } = false;
 
     /// <summary>
     /// Content set to navigate to on the next <see cref="MoveToTargetContentSet"/> call.
@@ -1070,7 +1074,7 @@ public class TapeNavigatorTOCInPartition : TapeNavigator
 
 /// <summary>
 /// Base class for single-partition layouts where the TOC follows the content on the same tape.
-/// <para><see cref="TOCInvalidated"/> starts <see langword="true"/> and is cleared after each
+/// <para><see cref="TOCUnlocated"/> starts <see langword="true"/> and is cleared after each
 ///  successful TOC write; any content write re-invalidates it.</para>
 /// </summary>
 public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(drive)
@@ -1084,7 +1088,7 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
 
     #region *** Properties ***
 
-    public override bool TOCInvalidated { get; protected set; } = true;
+    public override bool TOCUnlocated { get; protected set; } = true;
 
     #endregion // Properties
 
@@ -1093,12 +1097,12 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
 
     public override void OnTOCWritten()
     {
-        TOCInvalidated = false;
+        TOCUnlocated = false;
         base.OnTOCWritten();
     }
     public override void OnContentWritten()
     {
-        TOCInvalidated = true;
+        TOCUnlocated = true;
         base.OnContentWritten();
     }
 
@@ -1112,7 +1116,7 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
     public override void OnMediaHeaderWritten(bool setHeadersExpected = false)
     {
         base.OnMediaHeaderWritten(setHeadersExpected);
-        TOCInvalidated = true;
+        TOCUnlocated = true;
     }
     
     #endregion  // Notifications
@@ -1447,7 +1451,7 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
     #region *** Private fields ***
 
     // Tracks whether the physical TOC mark sequence (gap + 3 filemarks) needs to be
-    //  (re)written. Separate from base-class TOCInvalidated which tracks TOC *data*
+    //  (re)written. Separate from base-class TOCUnlocated which tracks TOC *data*
     //  staleness. Set true when content overwrites the mark area, false when a seek
     //  confirms the mark is still present on tape or after WriteTOCMark() succeeds.
     private bool m_tocMarkInvalidated = true;
