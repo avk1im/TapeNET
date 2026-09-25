@@ -29,7 +29,8 @@ public record RestoreFormData(
     bool NoMultivolume,
     bool EjectWhenDone,
     bool ProceedOnMediaMismatch = false,
-    bool CorrectSetNavigation = true);
+    bool CorrectSetNavigation = true,
+    bool VerifySetHeader = true);
 
 /// <summary>
 /// Represents an option in the "Handle existing files" combo box.
@@ -67,6 +68,7 @@ public class RestoreViewModel : ViewModelBase
     private bool _ejectWhenDone;
     private bool _proceedOnMediaMismatch;
     private bool _correctSetNavigation = true;
+    private bool _verifySetHeader = true;
     private string _targetDirectory = string.Empty;
     private HandleExistingOption _selectedHandleExisting = HandleExistingOption.All[0]; // Keep Both
     private string _itemsGroupHeader = string.Empty;
@@ -353,6 +355,17 @@ public class RestoreViewModel : ViewModelBase
         set => SetProperty(ref _correctSetNavigation, !value);
     }
 
+    /// <summary>
+    /// Advanced: when checked, skips verifying the backup set marker before restoring.
+    ///  Maps to the inverse of <see cref="RestoreRequest.VerifySetHeader"/>. No warning-pane impact
+    ///  since a restore writes nothing.
+    /// </summary>
+    public bool SkipSetHeaderVerification
+    {
+        get => !_verifySetHeader;
+        set => SetProperty(ref _verifySetHeader, !value);
+    }
+
     /// <summary>Warning level for the options panel.</summary>
     public WarningLevel WarningLevel => _mode == RestoreMode.Restore ? _selectedHandleExisting.Value switch
     {
@@ -509,7 +522,8 @@ public class RestoreViewModel : ViewModelBase
             NoMultivolume: _noMultivolume,
             EjectWhenDone: _ejectWhenDone,
             ProceedOnMediaMismatch: _proceedOnMediaMismatch,
-            CorrectSetNavigation: _correctSetNavigation);
+            CorrectSetNavigation: _correctSetNavigation,
+            VerifySetHeader: _verifySetHeader);
 
         _onStart(request);
     }

@@ -588,12 +588,21 @@
                     </GroupBox>
 
                     <!-- Advanced -->
-                    <GroupBox Header="Advanced" Margin="0,8,0,0">
+                            <GroupBox Header="Advanced — use with caution!" Margin="0,8,0,0">
                         <StackPanel Margin="8">
-                            <CheckBox Content="Overwrite without prompt"
+                            <CheckBox Content="Do not correct set navigation errors"
+                                      ToolTip="Do not attempt to correct set navigation errors, report and fail immediately"
+                                      IsChecked="{Binding DoNotCorrectSetNavigation}"/>
+                            <CheckBox Content="Overwrite media without prompt"
                                       IsChecked="{Binding ProceedOnMediaMismatch}"
                                       Foreground="{StaticResource WarningFg.Error}"
-                                      ToolTip="Overwrite media carrying data without prompt (unattended mode)"/>
+                                      ToolTip="Overwrite media carrying data without prompt (unattended mode)"
+                                      Margin="0,6,0,0"/>
+                            <CheckBox Content="Skip set verification (repair mode)"
+                                      IsChecked="{Binding SkipSetHeaderVerification}"
+                                      Foreground="{StaticResource WarningFg.Error}"
+                                      Margin="0,6,0,0"
+                                      ToolTip="Verification reads the backup set marker at the write position and refuses if it is not the expected set.&#xa;Disable ONLY to repair media whose set markers are themselves damaged.&#xa;This is NOT a speed option — appending a new set never performs this check."/>
                         </StackPanel>
                     </GroupBox>
                 </StackPanel>

@@ -187,6 +187,8 @@ public partial class MainViewModel
                     Compression           = request.Compression,
                     CompressionLevel      = request.CompressionLevel,
                     ProceedOnMediaMismatch = request.ProceedOnMediaMismatch,
+                    CorrectSetNavigation  = request.CorrectSetNavigation,
+                    VerifySetHeader       = request.VerifySetHeader,
                 });
 
             // Refresh tree after backup to keep TOCView in sync with the (possibly modified) TOC.

@@ -2334,62 +2334,6 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
-    // ─────────────────────────────────────────────────
-    //  Delete Backup Sets
-    // ─────────────────────────────────────────────────
-
-    private void ShowDeleteBackupSetsWindow(object? parameter)
-    {
-        var viewModel = new DeleteBackupSetsViewModel(
-            _tapeService,
-            OnStartDeleteBackupSets,
-            () => Application.Current.Windows.OfType<DeleteBackupSetsWindow>().FirstOrDefault()?.Close());
-
-        var window = new DeleteBackupSetsWindow(viewModel)
-        {
-            Owner = Application.Current.MainWindow
-        };
-        window.ShowDialog();
-    }
-
-    private void OnStartDeleteBackupSets(DeleteBackupSetsViewModel deleteViewModel)
-    {
-        Application.Current.Windows.OfType<DeleteBackupSetsWindow>().FirstOrDefault()?.Close();
-        _ = ExecuteDeleteBackupSetsAsync(deleteViewModel.DeleteFromSetIndex);
-    }
-
-    private async Task ExecuteDeleteBackupSetsAsync(int deleteFromSetIndex)
-    {
-        IsBusy = true;
-        BusyMessage = "Deleting backup sets...";
-
-        try
-        {
-            var success = await _tapeService.DeleteBackupSetsAsync(deleteFromSetIndex);
-
-            if (!success)
-            {
-                SimpleBox.Show($"Failed to delete backup sets.\n\n{_tapeService.LastError}",
-                    "Delete Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
-                return;
-            }
-
-            UpdateTreeFromTOC(_tapeService.DriveNumber);
-            SelectMostRecentSet();
-        }
-        catch (Exception ex)
-        {
-            LogErr($"Delete backup sets failed: {ex.Message}");
-            SimpleBox.Show($"Delete failed.\n\n{ex.Message}", "Delete Error",
-                MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-        finally
-        {
-            IsBusy = false;
-            BusyMessage = string.Empty;
-        }
-    }
-
     private async Task FormatVirtualDriveAsync(FormatMediaViewModel formatViewModel)
     {
         // Remote virtual drives use a different dialog and service call

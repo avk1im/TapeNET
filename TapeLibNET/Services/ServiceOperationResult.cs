@@ -352,6 +352,12 @@ public sealed record DeleteSetsResult : ServiceOperationResult
     /// <summary>Whether the tape was left untouched (a refusal, or a precondition failure).</summary>
     public bool TapeUnchanged => SetsDeleted == 0;
 
+    /// <summary>Whether the user aborted the operation, derived from <see cref="ServiceOperationResult.Outcome"/>.</summary>
+    public bool WasAborted => Outcome == ServiceReportLevel.Failed;
+
+    /// <summary>Whether a catastrophic error terminated the operation, derived from <see cref="ServiceOperationResult.Outcome"/>.</summary>
+    public bool HasFailed => Outcome == ServiceReportLevel.Error;
+
     /// <summary>Creates a failed result with no sets deleted.</summary>
     public static DeleteSetsResult Failed(TapeResult diagnosis, int setsRequested,
         in TapeSetStatistics sets = default) => new()

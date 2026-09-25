@@ -280,10 +280,14 @@
                         <CheckBox Content="Do not prompt on media mismatch"
                                   IsChecked="{Binding ProceedOnMediaMismatch}"
                                   ToolTip="Silently accept non-matching media or volume (unattended mode)"
-                                  Margin="0,0,0,4"/>
+                                  Margin="0,0,0,6"/>
                         <CheckBox Content="Do not correct set navigation errors"
                                   IsChecked="{Binding DoNotCorrectSetNavigation}"
-                                  ToolTip="Do not attempt to correct set navigation errors, report immediately as an error"/>
+                                  ToolTip="Do not attempt to correct set navigation errors, report and fail immediately"
+                                  Margin="0,0,0,6"/>
+                        <CheckBox Content="Skip set verification"
+                                  IsChecked="{Binding SkipSetHeaderVerification}"
+                                  ToolTip="Skip verifying the backup set marker before restoring.&#x0a;The restore proceeds either way; verification only adds a safety check."/>
                     </StackPanel>
                 </GroupBox>
             </StackPanel>

@@ -646,6 +646,7 @@ public partial class MainViewModel
                     NoMultivolume = request.NoMultivolume,
                     ProceedOnMediaMismatch = request.ProceedOnMediaMismatch,
                     CorrectSetNavigation = request.CorrectSetNavigation,
+                    VerifySetHeader = request.VerifySetHeader,
                 });
 
             if (!request.EjectWhenDone)

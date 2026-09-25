@@ -43,7 +43,9 @@ public record BackupFormData(
     string? MediaName = null,
     TapeCompression Compression = TapeCompression.None,
     int CompressionLevel = ZstdLevel.Default,
-    bool ProceedOnMediaMismatch = false);
+    bool ProceedOnMediaMismatch = false,
+    bool CorrectSetNavigation = true,
+    bool VerifySetHeader = true);
 
 /// <summary>
 /// ViewModel for the BackupWindow (Option B: Source-Drill-Down).
@@ -101,6 +103,8 @@ public class BackupViewModel : ViewModelBase
     private bool _appendToSet = true;
     private AppendAfterOption? _selectedAppendOption;
     private bool _proceedOnMediaMismatch;
+    private bool _correctSetNavigation = true;
+    private bool _verifySetHeader = true;
 
     // ─────────────────────────────────────────────────
     //  Scan / busy state
@@ -471,6 +475,33 @@ public class BackupViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Advanced: when checked, a detected set-navigation mismatch is reported only, instead of being
+    ///  repaired. Maps to the inverse of <see cref="BackupRequest.CorrectSetNavigation"/>.
+    /// </summary>
+    public bool DoNotCorrectSetNavigation
+    {
+        get => !_correctSetNavigation;
+        set => SetProperty(ref _correctSetNavigation, !value);
+    }
+
+    /// <summary>
+    /// Advanced: skips the set-header verification an overwrite performs at its target set boundary
+    ///  (repair mode). Maps to the inverse of <see cref="BackupRequest.VerifySetHeader"/>.
+    /// </summary>
+    public bool SkipSetHeaderVerification
+    {
+        get => !_verifySetHeader;
+        set
+        {
+            if (SetProperty(ref _verifySetHeader, !value))
+            {
+                OnPropertyChanged(nameof(WarningMessage));
+                OnPropertyChanged(nameof(WarningLevel));
+            }
+        }
+    }
+
+    /// <summary>
     /// True when the loaded media has no TOC (new or foreign media).
     /// In this state the only valid backup mode is overwrite, and the user is
     ///  shown a <see cref="MediaName"/> field instead of the warning panel.
@@ -669,6 +700,13 @@ public class BackupViewModel : ViewModelBase
                 message += "Any data on media will be overwritten WITHOUT PROMPT.";
             }
 
+            if (!_verifySetHeader)
+            {
+                if (message != string.Empty)
+                    message += "\r\n";
+                message += "Backup set verification disabled — an overwrite may destroy the WRONG backup set.";
+            }
+
             return message;
         }
     }
@@ -697,16 +735,17 @@ public class BackupViewModel : ViewModelBase
                 return WarningLevel.Info;
             }
 
-            return BumpForMediaMismatch(BaseLevel());
+            return BumpForAdvancedRisk(BaseLevel());
         }
     }
 
-    /// <summary>Bumps a base warning level up by one step from Info to Warning) when
-    ///  <see cref="ProceedOnMediaMismatch"/> is set, since the operation becomes more dangerous.
-    ///  Warning and Error stay -- though this behavior is easy to modify if we decide later.
+    /// <summary>Bumps a base warning level up by one step from Info to Warning) when either
+    ///  <see cref="ProceedOnMediaMismatch"/> or <see cref="SkipSetHeaderVerification"/> is set,
+    ///  since the operation becomes more dangerous. Warning and Error stay -- though this behavior
+    ///  is easy to modify if we decide later. The two flags do not double-bump.
     ///  </summary>
-    private WarningLevel BumpForMediaMismatch(WarningLevel level) =>
-        _proceedOnMediaMismatch
+    private WarningLevel BumpForAdvancedRisk(WarningLevel level) =>
+        _proceedOnMediaMismatch || !_verifySetHeader
             ? level switch
               {
                   WarningLevel.Info => WarningLevel.Warning,
@@ -1268,7 +1307,9 @@ public class BackupViewModel : ViewModelBase
             MediaName: OverwriteMedia ? _mediaName : null,
             Compression: SelectedCompression,
             CompressionLevel: _compressionLevel,
-            ProceedOnMediaMismatch: _proceedOnMediaMismatch);
+            ProceedOnMediaMismatch: _proceedOnMediaMismatch,
+            CorrectSetNavigation: _correctSetNavigation,
+            VerifySetHeader: _verifySetHeader);
 
         _onStartBackup(request);
     }
