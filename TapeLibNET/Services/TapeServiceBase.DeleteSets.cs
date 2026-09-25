@@ -65,7 +65,7 @@ public partial class TapeServiceBase
                 //  this is the precondition for DeleteSetsFromCurrentSetUp()
                 toc.CurrentSetIndex = deleteFromSetIndex;
 
-                var agent = new TapeFileAgent(_drive, toc);
+                var agent = new TapeSetAgent(_drive, toc);
                 _agent?.Dispose();
                 _agent = agent;
 

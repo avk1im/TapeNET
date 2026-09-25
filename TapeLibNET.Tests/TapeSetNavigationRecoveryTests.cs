@@ -214,7 +214,7 @@ public class TapeSetNavigationRecoveryTests
             // Now repair: delete from set 4 up, keeping 1..3. The navigation counts BACKWARD across the
             //  damage, so stage 1 sees a drift and stage 2 renavigates from begin-of-content.
             fixture.TOC.CurrentSetIndex = 4;
-            using (var agent = new TapeFileAgent(fixture.Drive, fixture.TOC))
+            using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
             {
                 var result = agent.DeleteSetsFromCurrentSetUp(fileNotify: notify);
                 Assert.True(result, $"the damaged tail must be recoverable: {result.ErrorMessage}");
@@ -403,7 +403,7 @@ public class TapeSetNavigationRecoveryTests
             trees = BuildMultiSetTape(fixture, setCount: 5, prefix: "fw");
 
             fixture.TOC.CurrentSetIndex = 3;
-            using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+            using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
 
             agent.Navigator.SimulateSetMiscount = +1;
             agent.Navigator.SimulateSetMiscountPersistent = true;   // defeat stage 1 as well
@@ -504,7 +504,7 @@ public class TapeSetNavigationRecoveryTests
             //  it. With a one-shot corruption it DOES settle, so the delete succeeds and the sets that
             //  should survive do.
             fixture.TOC.CurrentSetIndex = 4;
-            using (var agent = new TapeFileAgent(fixture.Drive, fixture.TOC))
+            using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
             {
                 agent.ReadBomHeader();
                 fixture.Backend.ContentReadFaults.CorruptOnce(bits: 2, offset: 48);
@@ -546,7 +546,7 @@ public class TapeSetNavigationRecoveryTests
             trees = BuildMultiSetTape(fixture, setCount: 5, prefix: "dc");
 
             fixture.TOC.CurrentSetIndex = 3;
-            using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+            using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
             agent.Navigator.SimulateSetMiscount = +1;
 
             var result = agent.DeleteSetsFromCurrentSetUp(fileNotify: notify);
@@ -879,7 +879,7 @@ public class TapeSetNavigationRecoveryTests
             trees = BuildMultiSetTape(fixture, setCount: 4, prefix: "ff");
 
             fixture.TOC.CurrentSetIndex = 3;
-            using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+            using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
 
             // navigateFromBegin forces the FORWARD count, so endAnchored is false from the outset.
             agent.Navigator.SimulateSetMiscount = +10;   // overshoot past EOD going forward
@@ -973,7 +973,7 @@ public class TapeSetNavigationRecoveryTests
             trees = BuildMultiSetTape(fixture, setCount: 4, prefix: "du");
 
             fixture.TOC.CurrentSetIndex = 3;        // delete 3..4, keep 1..2
-            using (var agent = new TapeFileAgent(fixture.Drive, fixture.TOC))
+            using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
             {
                 agent.Navigator.SimulateSetMiscount = -10;
 
@@ -1021,7 +1021,7 @@ public class TapeSetNavigationRecoveryTests
 
             // WRITE path, no notifiable ⇒ the retry is declined and the delete refuses.
             fixture.TOC.CurrentSetIndex = 3;
-            using (var agent = new TapeFileAgent(fixture.Drive, fixture.TOC))
+            using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
             {
                 agent.Navigator.SimulateSetMiscount = +10;
 

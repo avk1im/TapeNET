@@ -148,7 +148,7 @@ public class TapeSetDeleteVerificationTests
             trees = BuildMultiSetTape(fixture, setCount: 5, prefix: "td"); // 5 sets at least if delete set 3 ff.
 
             fixture.TOC.CurrentSetIndex = 3;        // delete sets 3..5, keep 1..2
-            using (var agent = new TapeFileAgent(fixture.Drive, fixture.TOC))
+            using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
             {
                 agent.Navigator.SimulateSetMiscount = +1;
                 agent.Navigator.SimulateSetMiscountPersistent = true; // keep miscounting to prevent agent's self-correction! (v2)
@@ -201,7 +201,7 @@ public class TapeSetDeleteVerificationTests
             trees = BuildMultiSetTape(fixture, setCount: 3, prefix: "tu");
 
             fixture.TOC.CurrentSetIndex = 3;
-            using (var agent = new TapeFileAgent(fixture.Drive, fixture.TOC))
+            using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
             {
                 // Resolve the BOM header first, so the injector lands on the SET header read.
                 agent.ReadBomHeader();
@@ -240,7 +240,7 @@ public class TapeSetDeleteVerificationTests
             trees = BuildMultiSetTape(fixture, setCount: 3, prefix: "tc");
 
             fixture.TOC.CurrentSetIndex = 2;        // delete 2..3, keep 1
-            using (var agent = new TapeFileAgent(fixture.Drive, fixture.TOC))
+            using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
             {
                 var result = agent.DeleteSetsFromCurrentSetUp();
                 Assert.True(result, $"a clean delete must not be disturbed by verification: {result.ErrorMessage}");
@@ -275,7 +275,7 @@ public class TapeSetDeleteVerificationTests
             trees = BuildMultiSetTape(fixture, setCount: 2, prefix: "tl");
 
             fixture.TOC.CurrentSetIndex = 2;
-            using (var agent = new TapeFileAgent(fixture.Drive, fixture.TOC))
+            using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
             {
                 Assert.False(agent.Navigator.SetHeadersExpected);
                 Assert.True(agent.DeleteSetsFromCurrentSetUp(),
@@ -309,7 +309,7 @@ public class TapeSetDeleteVerificationTests
             trees = BuildMultiSetTape(fixture, setCount: 3, prefix: "tf");
 
             fixture.TOC.CurrentSetIndex = 3;
-            using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+            using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
             agent.VerifiesSetHeader = false;
 
             agent.ReadBomHeader();
@@ -358,7 +358,7 @@ public class TapeSetDeleteVerificationTests
             Assert.NotNull(before);
 
             fixture.TOC.CurrentSetIndex = fixture.TOC.FirstSetOnVolume;
-            using (var agent = new TapeFileAgent(fixture.Drive, fixture.TOC))
+            using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
             {
                 var result = agent.DeleteSetsFromCurrentSetUp();
                 Assert.True(result, $"delete-all must pass its positional assertion: {result.ErrorMessage}");
@@ -400,7 +400,7 @@ public class TapeSetDeleteVerificationTests
             Assert.NotNull(before);
 
             fixture.TOC.CurrentSetIndex = fixture.TOC.FirstSetOnVolume;
-            using (var agent = new TapeFileAgent(fixture.Drive, fixture.TOC))
+            using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
             {
                 agent.ReadBomHeader();
                 fixture.Backend.ContentReadFaults.CorruptOnce(bits: 2, offset: 48);

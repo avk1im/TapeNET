@@ -14,7 +14,6 @@ public class DeleteSetsTests
     #region *** Test Data ***
 
     /// <summary>All three drive profiles for parameterized theories.</summary>
-#pragma warning disable CA1825 // Avoid zero-length array allocations
     public static TheoryData<DriveProfile> AllProfiles =>
     [
         DriveProfile.Setmarks,
@@ -30,7 +29,6 @@ public class DeleteSetsTests
         DriveProfile.SeqFilemarks,
         DriveProfile.FilemarksOnly,
     ];
-#pragma warning restore CA1825 // Avoid zero-length array allocations
 
     #endregion
 
@@ -58,7 +56,7 @@ public class DeleteSetsTests
 
         // Delete the last set (set 2)
         fixture.TOC.CurrentSetIndex = fixture.TOC.LastSetOnVolume; // = 2
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
         var result = agent.DeleteSetsFromCurrentSetUp();
         Assert.True(result, $"Delete failed: {result.ErrorMessage}");
         Assert.False(agent.Statistics.Sets.HasAnomalies, "No set anomalies should've occurred");
@@ -107,7 +105,7 @@ public class DeleteSetsTests
 
         // Delete from set 2 onwards
         fixture.TOC.CurrentSetIndex = 2; // set 2
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
         var result = agent.DeleteSetsFromCurrentSetUp();
         Assert.True(result, $"Delete failed: {result.ErrorMessage}");
         Assert.False(agent.Statistics.Sets.HasAnomalies, "No set anomalies should've occurred");
@@ -139,7 +137,7 @@ public class DeleteSetsTests
 
         // Delete all sets
         fixture.TOC.CurrentSetIndex = fixture.TOC.FirstSetOnVolume;
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
         var result = agent.DeleteSetsFromCurrentSetUp();
         Assert.True(result, $"Delete failed: {result.ErrorMessage}");
 
@@ -162,7 +160,7 @@ public class DeleteSetsTests
 
         // Delete all
         fixture.TOC.CurrentSetIndex = fixture.TOC.FirstSetOnVolume;
-        using (var agent = new TapeFileAgent(fixture.Drive, fixture.TOC))
+        using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
         {
             Assert.True(agent.DeleteSetsFromCurrentSetUp());
         }
@@ -196,7 +194,7 @@ public class DeleteSetsTests
         fixture.LoadTOC();
 
         fixture.TOC.CurrentSetIndex = fixture.TOC.FirstSetOnVolume;
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
         var result = agent.DeleteSetsFromCurrentSetUp();
         Assert.False(result.Success, "Should have failed for partition drive delete-all");
     }
@@ -218,7 +216,7 @@ public class DeleteSetsTests
         fixture.LoadTOC();
 
         fixture.TOC.CurrentSetIndex = fixture.TOC.LastSetOnVolume;
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
         var result = agent.DeleteSetsFromCurrentSetUp();
         Assert.True(result, $"Delete failed: {result.ErrorMessage}");
         Assert.False(agent.Statistics.Sets.HasAnomalies, "No set anomalies should've occurred");
@@ -248,7 +246,7 @@ public class DeleteSetsTests
         fixture.TOC.Volume = 2;
         fixture.TOC.CurrentSetIndex = 1;
 
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
         var result = agent.DeleteSetsFromCurrentSetUp();
         Assert.False(result.Success, "Should have failed — set not on volume");
     }

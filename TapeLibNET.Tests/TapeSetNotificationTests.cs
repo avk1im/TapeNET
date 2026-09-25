@@ -117,7 +117,7 @@ public class TapeSetNotificationTests
             trees = BuildMultiSetTape(fixture, setCount: 5, prefix: "pl");
 
             fixture.TOC.CurrentSetIndex = 3;
-            using (var agent = new TapeFileAgent(fixture.Drive, fixture.TOC))
+            using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
             {
                 agent.Navigator.SimulateSetMiscount = +1;
                 agent.Navigator.SimulateSetMiscountPersistent = true; // to prevent agent autorecovery
@@ -164,7 +164,7 @@ public class TapeSetNotificationTests
             trees = BuildMultiSetTape(fixture, setCount: 3, prefix: "ur");
 
             fixture.TOC.CurrentSetIndex = 3;
-            using (var agent = new TapeFileAgent(fixture.Drive, fixture.TOC))
+            using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
             {
                 agent.ReadBomHeader();   // resolve BOM first, so the injector targets the SET read
                 fixture.Backend.ContentReadFaults.CorruptAlways(bits: 2, offset: 48); // keep corrupting to prevent agent autorecovery
@@ -217,7 +217,7 @@ public class TapeSetNotificationTests
             trees = BuildMultiSetTape(fixture, setCount: 5, prefix: "ab");
 
             fixture.TOC.CurrentSetIndex = 3;
-            using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+            using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
             agent.Navigator.SimulateSetMiscount = +1;
 
             var result = agent.DeleteSetsFromCurrentSetUp(fileNotify: notify);
@@ -253,7 +253,7 @@ public class TapeSetNotificationTests
             TapeResult RunWith(TestNotifiable notify)
             {
                 fixture.TOC.CurrentSetIndex = 3;
-                using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+                using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
                 agent.Navigator.SimulateSetMiscount = +1;
 
                 // The exception must NOT escape: the public API is contractually TapeResult-based.
@@ -292,7 +292,7 @@ public class TapeSetNotificationTests
             trees = BuildMultiSetTape(fixture, setCount: 5, prefix: "dm");
 
             fixture.TOC.CurrentSetIndex = 3;
-            using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+            using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
             agent.Navigator.SimulateSetMiscount = +1;
 
             var result = agent.DeleteSetsFromCurrentSetUp(fileNotify: new BareNotifiable());
@@ -327,7 +327,7 @@ public class TapeSetNotificationTests
             trees = BuildMultiSetTape(fixture, setCount: 5, prefix: "nn");
 
             fixture.TOC.CurrentSetIndex = 3;
-            using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+            using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
             agent.Navigator.SimulateSetMiscount = +1;
 
             var result = agent.DeleteSetsFromCurrentSetUp();   // no notifiable
@@ -384,7 +384,7 @@ public class TapeSetNotificationTests
             // …and a clean delete.
             notify.Clear();
             fixture.TOC.CurrentSetIndex = 3;
-            using (var agent = new TapeFileAgent(fixture.Drive, fixture.TOC))
+            using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
             {
                 Assert.True(agent.DeleteSetsFromCurrentSetUp(fileNotify: notify));
                 Assert.False(agent.Statistics.Sets.HasAnomalies);
@@ -459,7 +459,7 @@ public class TapeSetNotificationTests
             trees = BuildMultiSetTape(fixture, setCount: 5, prefix: "ac");
 
             fixture.TOC.CurrentSetIndex = 3;
-            using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+            using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
             agent.Navigator.SimulateSetMiscount = +1;
             agent.Navigator.SimulateSetMiscountPersistent = true; // to prevent agent autorecovery
 
@@ -634,11 +634,9 @@ public class TapeSetNotificationTests
             trees = BuildMultiSetTape(fixture, setCount: 5, prefix: "cb");
 
             fixture.TOC.CurrentSetIndex = 3;
-            using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+            using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
             agent.Navigator.SimulateSetMiscount = +1;
             agent.Navigator.SimulateSetMiscountPersistent = true; // to prevent agent autorecovery
-
-            Assert.False(agent.DeleteSetsFromCurrentSetUp(fileNotify: notify));
 
             Assert.False(agent.DeleteSetsFromCurrentSetUp(fileNotify: notify));
 

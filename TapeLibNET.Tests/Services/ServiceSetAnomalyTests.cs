@@ -87,7 +87,7 @@ public class ServiceSetAnomalyTests : ServiceTestBase
             t.Dispose();
     }
 
-    private static RestoreRequest MakeValidateRequest(TestTapeService svc, int setIndex) => new(
+    private static RestoreRequest MakeValidateRequest(TestTapeService _ /*svc*/, int setIndex) => new(
         Mode:                  RestoreMode.Validate,
         CheckedFilesBySet:     new Dictionary<int, IReadOnlyList<TapeFileInfo>?> { [setIndex] = null },
         Incremental:           false,
