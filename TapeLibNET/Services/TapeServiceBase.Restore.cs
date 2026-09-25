@@ -371,7 +371,7 @@ public partial class TapeServiceBase
             var result = progressHandler.GenerateResult() with
             {
                 Diagnosis = agentResult,
-                Sets = progressHandler.SetStats,
+                // Sets = progressHandler.SetStats, // done already in GenerateResults()
             };
 
             // Handle abort path first

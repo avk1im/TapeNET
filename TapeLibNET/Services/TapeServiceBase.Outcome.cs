@@ -340,9 +340,9 @@ public partial class TapeServiceBase
 
     #endregion
 
-    #region Timing formatting helpers
+    #region Formatting helpers
 
-    // ── Timing formatting helpers ──────────────────────────────────────────
+    // ── Formatting helpers ──────────────────────────────────────────
 
     /// <summary>Formats an elapsed duration as a human-readable string.</summary>
     public static string FormatElapsed(double totalSeconds)

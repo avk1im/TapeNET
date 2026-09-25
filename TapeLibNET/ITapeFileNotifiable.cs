@@ -128,10 +128,18 @@ public readonly record struct TapeSetAnomaly(
     bool CanAttemptRecovery,
     TapeResult Diagnosis)
 {
-    /// <summary>A one-line summary suitable for a log entry or the head of a prompt.</summary>
+    /// <summary>
+    /// A one-line summary suitable for a log entry or the head of a prompt.
+    /// </summary>
+    /// <remarks>
+    /// Descriptions in <c>&gt;…&lt;</c>, as everywhere else in TapeNET. The ALT index is deliberately
+    ///  absent: deriving it needs the TOC, which this record does not carry (and must not, being a
+    ///  by-value payload). The service-side handler adds it — see
+    ///  <see cref="Services.ServiceOperationProgressHandler.DescribeSet"/>.
+    /// </remarks>
     public override string ToString() =>
         $"Set #{SetIndex} anomaly ({Verdict}, {Stage}): expected on-volume set {ExpectedVolumeSetIndex} " +
-        $"\"{ExpectedDescription}\", found {ActualVolumeSetIndex} \"{ActualDescription}\"";
+        $">{ExpectedDescription}<, found {ActualVolumeSetIndex} >{ActualDescription}<";
 }
 
 /// <summary>

@@ -232,20 +232,35 @@ public abstract class ServiceOperationProgressHandler(
     ///  be on screen when it opens — the user is being asked to decide about something they should be
     ///  able to read (SH-16).
     /// </para>
+    /// <para>
+    /// Sets are named in the standard notation throughout. Note that on an OVERWRITE the expected
+    ///  description is the INCOMING set's name: the service replaces the target slot in the TOC before
+    ///  any navigation happens, so by the time we verify, the TOC already describes what is about to be
+    ///  written rather than what is still on tape.
+    /// </para>
     /// </remarks>
     public virtual SetAnomalyAction OnSetAnomaly(in TapeSetAnomaly anomaly, in TapeFileStatistics stats)
     {
         Sync(stats);
         _setAnomalies.Add(anomaly);
 
+        string expected = DescribeSet(anomaly.SetIndex, anomaly.ExpectedDescription);
+        string actual = DescribeActualSet(in anomaly);
+
         // A set-level fault is louder than a file-level one: it can invalidate an entire set, and on a
         //  destructive path it is the difference between repairing a cartridge and ruining it.
         _host.Report(anomaly.IsDestructive ? ServiceReportLevel.Failed : ServiceReportLevel.Warning,
-            $"Set #{anomaly.SetIndex} anomaly ({DescribeVerdict(anomaly.Verdict)})");
+            $"Set {expected}: anomaly ({DescribeVerdict(anomaly.Verdict)})");
         _host.Report(ServiceReportLevel.Warning,
-            $"Expected: {anomaly.ExpectedDescription}", isSubEntry: true);
+            $"Expected set {expected}", isSubEntry: true);
         _host.Report(ServiceReportLevel.Warning,
-            $"Found: {anomaly.ActualDescription}", isSubEntry: true);
+            $"Found set {actual}", isSubEntry: true);
+
+        if (anomaly.ActualVolume != anomaly.ExpectedVolume)
+            _host.Report(ServiceReportLevel.Warning,
+                $"Volume #{anomaly.ActualVolume} on tape, expected volume #{anomaly.ExpectedVolume}",
+                isSubEntry: true);
+
         if (!anomaly.Diagnosis.Success && !string.IsNullOrWhiteSpace(anomaly.Diagnosis.ErrorMessage))
             _host.Report(ServiceReportLevel.Warning,
                 anomaly.Diagnosis.ErrorMessage, isSubEntry: true);
@@ -271,9 +286,10 @@ public abstract class ServiceOperationProgressHandler(
             return SetAnomalyAction.Proceed;
         }
 
+        // The host gets the SAME rendered strings the log just showed — a prompt that names the sets
+        //  differently from the line above it invites the user to think they are two separate events.
         bool authorized = _host.OnSetAnomalySelect(
-            anomaly.ExpectedDescription, anomaly.ActualDescription,
-            anomaly.Diagnosis.ErrorMessage, anomaly.IsDestructive, _operationName);
+            expected, actual, anomaly.Diagnosis.ErrorMessage, anomaly.IsDestructive, _operationName);
 
         if (!authorized)
         {
@@ -305,13 +321,44 @@ public abstract class ServiceOperationProgressHandler(
             : "by correcting the set position";
 
         _host.Report(ServiceReportLevel.Warning,
-            $"Set #{anomaly.SetIndex} recovered {how}");
+            $"Set {DescribeSet(anomaly.SetIndex, anomaly.ExpectedDescription)} recovered {how}");
 
         if (anomaly.Stage == TapeSetAnomalyStage.Renavigated)
             _host.Report(ServiceReportLevel.Warning,
                 "The end of this volume appears damaged — see the summary for advice", isSubEntry: true);
 
         ReportProgress(stats);
+    }
+
+
+    /// <summary>
+    /// Renders a set in the standard TapeNET notation — <c>#std | alt &gt;description&lt;</c>.
+    /// </summary>
+    /// <remarks>
+    /// Uses <see cref="TapeFileAgent.TOC"/>, which IS the service's <c>_toc</c> (the agent's constructor
+    ///  adopts the instance it is handed, so the two are one object). The alt index is therefore computed
+    ///  against exactly the TOC the anomaly's indices came from.
+    /// </remarks>
+    private string DescribeSet(int stdIndex, string description)
+        => $"#{stdIndex} | {Agent.TOC.SetIndexToAlt(stdIndex)} >{description}<";
+
+    /// <summary>
+    /// Renders the set the TAPE actually holds. Its standard index is derived from the header's
+    ///  on-volume index, which is meaningful only when the volume itself matched — a
+    ///  <see cref="TapeSetHeaderVerdict.WrongVolume"/> or <see cref="TapeSetHeaderVerdict.WrongMedia"/>
+    ///  set belongs to a different series, so naming an index in THIS TOC's terms would be a fiction.
+    /// </summary>
+    private string DescribeActualSet(in TapeSetAnomaly anomaly)
+    {
+        bool sameSeries = anomaly.ActualVolume == anomaly.ExpectedVolume
+            && anomaly.Verdict is TapeSetHeaderVerdict.SetIndexDrift or TapeSetHeaderVerdict.Match
+            && anomaly.ActualVolumeSetIndex >= 0;
+
+        if (!sameSeries)
+            return $">{anomaly.ActualDescription}<";   // no index we can honestly quote
+
+        int actualStd = Agent.TOC.FirstSetOnVolume + anomaly.ActualVolumeSetIndex;
+        return DescribeSet(actualStd, anomaly.ActualDescription);
     }
 
     /// <summary>Culture-neutral label for a verdict, used in LOG lines only — mirrors <c>VerdictToString</c>.</summary>
@@ -432,6 +479,7 @@ public class ServiceRestoreProgressHandler(
                        : FilesSkipped > 0 ? ServiceReportLevel.Warning
                        :                    ServiceReportLevel.Completed,
         ProcessedFiles = ProcessedFiles,
+        Sets           = SetStats,
     };
 
     /// <inheritdoc/>
