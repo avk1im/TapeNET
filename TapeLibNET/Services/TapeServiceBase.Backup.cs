@@ -190,6 +190,11 @@ public partial class TapeServiceBase
                     suppress = true;
             }
 
+            // Set where AppendAfterSetIndex replaces the target slot. That slot names a set that
+            //  EXISTS ON TAPE, which makes the write an overwrite — the one append shape that must
+            //  verify before destroying anything (SH-13).
+            bool reusingReplacedSlot = false;
+
             // Mode 1: Append after specific set — save TOC copy for rollback
             if (append && appendAfterSetIndex >= toc.FirstSetOnVolume && appendAfterSetIndex < toc.LastSetOnVolume)
             {
@@ -198,6 +203,8 @@ public partial class TapeServiceBase
                 appendAfterSetUsed = true;
                 toc.CurrentSetIndex = appendAfterSetIndex + 1;
                 toc.ReplaceCurrentSetTOC(capacityHint, request.Incremental);
+
+                reusingReplacedSlot = true;
             }
             // Mode 3: Overwrite — warn before destroying real content, then save a rollback copy.
             else if (!append)
@@ -234,24 +241,28 @@ public partial class TapeServiceBase
                     ? request.MediaName
                     : DefaultNewMediaName;
 
-            // Determine if a new set was added or an existing empty slot is reused
+            // Determine if a new set was added or an existing empty slot is reused:
+            // newSet means "nothing of this set is on tape yet".
+            //  Deliberately NOT keyed on CurrentSetTOC.Count: a slot emptied by ReplaceCurrentSetTOC
+            //  (AppendAfterSetIndex) is indistinguishable by count from a volume holding no sets at
+            //  all — and treating the latter as an overwrite would cause the first backup to fresh
+            //  media to read blank tape, classify it Unreadable, and refuse (SH-13).
             bool newSet;
-            if (append)
+            if (append && reusingReplacedSlot)
             {
-                if (toc.CurrentSetTOC.Count > 0)
-                {
-                    toc.AddNewSetTOC(capacityHint, request.Incremental); // straight append: add new set
-                    newSet = true;
-                }
-                else
-                {
-                    toc.MarkCurrentSetIncremental(request.Incremental); // reuse replaced slot (mode 1)
-                    newSet = false;
-                }
+                // The slot names a set that EXISTS ON TAPE — a genuine overwrite. We do NOT call
+                //  AddNewSetTOC here: it ends with MakeLastSetCurrent(), which would abandon the
+                //  mid-TOC position AppendAfterSetIndex just selected.
+                toc.MarkCurrentSetIncremental(request.Incremental);
+                newSet = false;
             }
             else
             {
-                newSet = true; // overwrite: entire TOC created anew
+                // Covers BOTH a straight append and a volume with no sets yet: AddNewSetTOC reuses
+                //  a trailing EMPTY set rather than adding a second one, and applies capacity and
+                //  the incremental flag either way!
+                toc.AddNewSetTOC(capacityHint, request.Incremental);
+                newSet = true;
             }
 
             // Configure the new backup set
