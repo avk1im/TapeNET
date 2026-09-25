@@ -356,14 +356,28 @@ public class RestoreViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Whether "do not correct set navigation" is offerable. Correction acts on a verdict that only a
+    /// set-header READ can produce, so with verification skipped there is nothing for it to correct.
+    /// </summary>
+    public bool IsCorrectSetNavigationEnabled => !SkipSetVerification;
+
+    /// <summary>
     /// Advanced: when checked, skips verifying the backup set marker before restoring.
     ///  Maps to the inverse of <see cref="RestoreRequest.VerifySetHeader"/>. No warning-pane impact
     ///  since a restore writes nothing.
     /// </summary>
-    public bool SkipSetHeaderVerification
+    public bool SkipSetVerification
     {
         get => !_verifySetHeader;
-        set => SetProperty(ref _verifySetHeader, !value);
+        set
+        {
+            if (SetProperty(ref _verifySetHeader, !value))
+            {
+                if (value)
+                    DoNotCorrectSetNavigation = true;   // force-check: the flag is inert either way
+                OnPropertyChanged(nameof(IsCorrectSetNavigationEnabled));
+            }
+        }
     }
 
     /// <summary>Warning level for the options panel.</summary>

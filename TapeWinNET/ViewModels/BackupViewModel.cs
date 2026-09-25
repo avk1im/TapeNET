@@ -485,16 +485,25 @@ public class BackupViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Whether "do not correct set navigation" is offerable. Correction acts on a verdict that only a
+    /// set-header READ can produce, so with verification skipped there is nothing for it to correct.
+    /// </summary>
+    public bool IsCorrectSetNavigationEnabled => !SkipSetVerification;
+
+    /// <summary>
     /// Advanced: skips the set-header verification an overwrite performs at its target set boundary
     ///  (repair mode). Maps to the inverse of <see cref="BackupRequest.VerifySetHeader"/>.
     /// </summary>
-    public bool SkipSetHeaderVerification
+    public bool SkipSetVerification
     {
         get => !_verifySetHeader;
         set
         {
             if (SetProperty(ref _verifySetHeader, !value))
             {
+                if (value)
+                    DoNotCorrectSetNavigation = true;   // force-check: the flag is inert either way
+                OnPropertyChanged(nameof(IsCorrectSetNavigationEnabled));
                 OnPropertyChanged(nameof(WarningMessage));
                 OnPropertyChanged(nameof(WarningLevel));
             }
@@ -740,7 +749,7 @@ public class BackupViewModel : ViewModelBase
     }
 
     /// <summary>Bumps a base warning level up by one step from Info to Warning) when either
-    ///  <see cref="ProceedOnMediaMismatch"/> or <see cref="SkipSetHeaderVerification"/> is set,
+    ///  <see cref="ProceedOnMediaMismatch"/> or <see cref="SkipSetVerification"/> is set,
     ///  since the operation becomes more dangerous. Warning and Error stay -- though this behavior
     ///  is easy to modify if we decide later. The two flags do not double-bump.
     ///  </summary>
