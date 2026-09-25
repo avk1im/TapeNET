@@ -157,7 +157,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// The window matters: this must run AFTER the new volume is inserted and BEFORE
     ///  <c>ResumeBackupToNextVolume</c>, which is where the new volume's media header is written — and
     ///  which is what stamps <see cref="TapeMediaHeader.HasSetHeaders"/> from
-    ///  <see cref="TapeFileAgent.WritesSetHeaders"/>.
+    ///  <see cref="TapeAgentBase.WritesSetHeaders"/>.
     /// </para>
     /// </remarks>
     private void ApplyHeaderFlagsForVolume(TapeFileBackupAgent agent, int volumeNumber)
@@ -333,7 +333,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// </summary>
     public void SaveTOC()
     {
-        using var agent = new TapeFileAgent(Drive, TOC);
+        using var agent = new TapeAgentBase(Drive, TOC);
         agent.Navigator.TOCCapacity = TOCCapacityOverride;
         if (!agent.BackupTOC())
             Assert.True(agent.BackupTOC(enforce: true), "Failed to save TOC to tape (even with enforce)");
@@ -344,7 +344,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// </summary>
     public void LoadTOC()
     {
-        using var agent = new TapeFileAgent(Drive, TOC);
+        using var agent = new TapeAgentBase(Drive, TOC);
         agent.Navigator.TOCCapacity = TOCCapacityOverride;
         Assert.True(agent.RestoreTOC(), "Failed to restore TOC from tape");
         TOC = agent.TOC;

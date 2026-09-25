@@ -30,7 +30,7 @@ public partial class TapeService
     /// </summary>
     private sealed class GuiBackupProgressHandler(
         ITapeServiceHost host,
-        TapeFileAgent agent,
+        TapeAgentBase agent,
         IProgressScope progress,
         bool skipAllErrors,
         ITapeFileFilter? filter = null)

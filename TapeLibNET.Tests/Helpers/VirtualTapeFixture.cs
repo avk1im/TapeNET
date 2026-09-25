@@ -197,7 +197,7 @@ public sealed class VirtualTapeFixture : IDisposable
         // Write header if requested (Notice some tests want to start with a blank tape)
         if (withMediaHeader)
         {
-            using var agent = new TapeFileAgent(Drive, TOC) { WritesSetHeaders = withSetHeaders };
+            using var agent = new TapeAgentBase(Drive, TOC) { WritesSetHeaders = withSetHeaders };
             Assert.True(agent.WriteMediaHeader(), "Fixture: WriteMediaHeader failed");
         }
     }
@@ -261,7 +261,7 @@ public sealed class VirtualTapeFixture : IDisposable
     /// </summary>
     public void SaveTOC()
     {
-        using var agent = new TapeFileAgent(Drive, TOC);
+        using var agent = new TapeAgentBase(Drive, TOC);
         Assert.True(agent.BackupTOC(), "Failed to save TOC to tape");
     }
 
@@ -271,7 +271,7 @@ public sealed class VirtualTapeFixture : IDisposable
     /// </summary>
     public void LoadTOC()
     {
-        using var agent = new TapeFileAgent(Drive, TOC);
+        using var agent = new TapeAgentBase(Drive, TOC);
         Assert.True(agent.RestoreTOC(), "Failed to restore TOC from tape");
         // TOC is updated in-place by RestoreTOC via the agent's reference
         TOC = agent.TOC;

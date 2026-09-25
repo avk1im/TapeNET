@@ -16,7 +16,7 @@ namespace TapeLibNET;
 /// Backup agent — writes file lists to tape content sets with per-file CRC hashing,
 ///  incremental detection, and automatic multi-volume continuation on end-of-media.
 /// </summary>
-public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileAgent(drive, legacyTOC)
+public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgentBase(drive, legacyTOC)
 {
     // bytes backed up so far before we start writing a new set
     private long BytesBackedupMarker { get; set; } = 0L;
@@ -143,12 +143,12 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     ///  including <c>Unreadable</c>, which on a mark-counted write is the miscount's own signature —
     ///  fails the method with the tape untouched. A fresh set appended at end-of-data has no predecessor
     ///  record to read, so that path performs no verification and costs nothing.
-    ///  <see cref="TapeFileAgent.VerifiesSetHeader"/> opts out.
+    ///  <see cref="TapeAgentBase.VerifiesSetHeader"/> opts out.
     /// </para>
     /// <para>
     /// <b>The positioning may recover (SH-20).</b> A backward count that fails outright with a positional
     ///  error is the same damaged-tail fault the set-header recovery repairs, so it gets the same cure —
-    ///  see <see cref="TapeFileAgent.NavigateToTargetContentSet"/>. The recovery only changes WHERE the
+    ///  see <see cref="TapeAgentBase.NavigateToTargetContentSet"/>. The recovery only changes WHERE the
     ///  head is; the verification below is unchanged and still blocks on anything but <c>Match</c>.
     /// </para>
     /// <para>

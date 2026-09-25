@@ -293,7 +293,7 @@ public class TapeSetHeaderAccountingTests
         using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: false);
         fixture.BackupFiles(tree.Files, description: "Media only");
 
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
         var header = agent.ReadBomHeader() as TapeMediaHeader;
 
         Assert.NotNull(header);

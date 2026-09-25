@@ -56,7 +56,7 @@ public enum IdentifyMediaOutcome
 // ── TapeServiceBase ───────────────────────────────────────────────────────────
 
 /// <summary>
-/// Shared engine that owns the <see cref="TapeDrive"/>, <see cref="TapeFileAgent"/>,
+/// Shared engine that owns the <see cref="TapeDrive"/>, <see cref="TapeAgentBase"/>,
 ///  and cached <see cref="TapeTOC"/> and exposes drive-lifecycle operations common to
 ///  both TapeConNET and TapeWinNET.
 /// <para>
@@ -92,7 +92,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     protected readonly SemaphoreSlim _operationLock = new(1, 1);
 
     protected TapeDrive? _drive;
-    protected TapeFileAgent? _agent;
+    protected TapeAgentBase? _agent;
     protected TapeTOC? _toc;
 
     /// <summary>
@@ -150,9 +150,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     public string? TOCFilePath { get; protected set; }
 
     /// <summary>
-    /// The running <see cref="TapeFileAgent"/> during an active operation; null otherwise.
+    /// The running <see cref="TapeAgentBase"/> during an active operation; null otherwise.
     /// </summary>
-    public TapeFileAgent? Agent => _agent;
+    public TapeAgentBase? Agent => _agent;
 
     /// <summary>True when the running agent has been asked to abort.</summary>
     public bool IsAbortRequested => _agent?.IsAbortRequested ?? false;
@@ -1021,7 +1021,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// Signals the in-progress TOC load to abort cooperatively.
     /// Intentionally lock-free: <see cref="RestoreTOCAsync"/> holds the lock for its entire
     ///  duration, so acquiring it here would deadlock. The volatile
-    ///  <see cref="TapeFileAgent.IsAbortRequested"/> flag is safe to set from any thread.
+    ///  <see cref="TapeAgentBase.IsAbortRequested"/> flag is safe to set from any thread.
     /// </summary>
     public void AbortTOCLoad()
     {
@@ -1058,7 +1058,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 OnStatusUpdate("Reading TOC...");
 
                 _agent?.Dispose();
-                _agent = new TapeFileAgent(_drive, null);
+                _agent = new TapeAgentBase(_drive, null);
 
                 // Bridge OperationCancellationToken -> agent abort flag (CLI Ctrl+C).
                 var ct = OperationCancellationToken;
@@ -1194,7 +1194,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 LogInfo("Restoring TOC...");
                 OnStatusUpdate("Reading TOC...");
 
-                _agent = new TapeFileAgent(_drive, null);
+                _agent = new TapeAgentBase(_drive, null);
 
                 // Bridge OperationCancellationToken → agent abort flag (CLI Ctrl+C).
                 var ct = OperationCancellationToken;
@@ -1264,7 +1264,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 var description = mediaName ?? DefaultNewMediaName;
                 _agent?.Dispose();
-                _agent = new TapeFileAgent(_drive, new TapeTOC(description));
+                _agent = new TapeAgentBase(_drive, new TapeTOC(description));
 
                 var initResult = _agent.BackupInitialTOC();
                 if (!initResult)
@@ -1351,7 +1351,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             }
             else
             {
-                using var probe = new TapeFileAgent(_drive, _toc ?? new TapeTOC());
+                using var probe = new TapeAgentBase(_drive, _toc ?? new TapeTOC());
                 _loadedHeader = probe.ReadBomHeader();
             }
 
@@ -1516,7 +1516,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 OnStatusUpdate("Creating initial TOC...");
 
                 var description = mediaName ?? DefaultNewMediaName;
-                _agent = new TapeFileAgent(_drive, new TapeTOC(description));
+                _agent = new TapeAgentBase(_drive, new TapeTOC(description));
 
                 var initResult = _agent.BackupInitialTOC();
                 if (!initResult)
@@ -1583,7 +1583,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 OnStatusUpdate("Importing TOC from file...");
 
                 _agent?.Dispose();
-                _agent = new TapeFileAgent(_drive, null);
+                _agent = new TapeAgentBase(_drive, null);
 
                 var loadResult = _agent.LoadTOCFromFile(filePath);
                 if (!loadResult)
@@ -1658,7 +1658,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 OnStatusUpdate("Exporting TOC to file...");
 
                 _agent?.Dispose();
-                _agent = new TapeFileAgent(_drive!, _toc);
+                _agent = new TapeAgentBase(_drive!, _toc);
 
                 var saveResult = _agent.SaveTOCToFile(filePath);
                 if (!saveResult)
@@ -1708,7 +1708,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 LogInfo($"Renaming media to: {newName}");
                 _toc.Description = newName;
 
-                _agent = new TapeFileAgent(_drive, _toc);
+                _agent = new TapeAgentBase(_drive, _toc);
                 var tocResult = _agent.BackupTOC();
                 if (!tocResult)
                 {
@@ -1777,7 +1777,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 LogInfo($"Renaming backup set #{setIndex} to: {newName}");
                 setTOC.Description = newName;
 
-                _agent = new TapeFileAgent(_drive, _toc);
+                _agent = new TapeAgentBase(_drive, _toc);
                 var tocResult = _agent.BackupTOC();
                 if (!tocResult)
                 {

@@ -1270,7 +1270,7 @@ public partial class MainViewModel : ViewModelBase
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
             Title = "Export TOC to File",
-            Filter = $"Tape TOC files (*{TapeFileAgent.TOCFileExtension})|*{TapeFileAgent.TOCFileExtension}|All files (*.*)|*.*",
+            Filter = $"Tape TOC files (*{TapeAgentBase.TOCFileExtension})|*{TapeAgentBase.TOCFileExtension}|All files (*.*)|*.*",
             FileName = suggestedName,
             InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             OverwritePrompt = true,
@@ -1332,7 +1332,7 @@ public partial class MainViewModel : ViewModelBase
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Title = "Import TOC from File",
-            Filter = $"Tape TOC files (*{TapeFileAgent.TOCFileExtension})|*{TapeFileAgent.TOCFileExtension}|All files (*.*)|*.*",
+            Filter = $"Tape TOC files (*{TapeAgentBase.TOCFileExtension})|*{TapeAgentBase.TOCFileExtension}|All files (*.*)|*.*",
             InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
         };
 
@@ -1372,7 +1372,7 @@ public partial class MainViewModel : ViewModelBase
         if (sanitized.Length > 60)
             sanitized = sanitized[..60];
 
-        return $"{sanitized}_vol{toc.Volume}{TapeFileAgent.TOCFileExtension}";
+        return $"{sanitized}_vol{toc.Volume}{TapeAgentBase.TOCFileExtension}";
     }
 
     #endregion

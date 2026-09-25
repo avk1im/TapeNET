@@ -100,7 +100,7 @@ public class TapeResultBuilder(IErrorManageable owner)
     /// </summary>
     /// <remarks>
     /// The clean-clean case is reachable and legitimate: e.g. a caller-requested abort deliberately does not
-    ///  latch (it is not a fault) and <see cref="TapeFileAgent.ThrowIfAbortRequested"/> sets no error.
+    ///  latch (it is not a fault) and <see cref="TapeAgentBase.ThrowIfAbortRequested"/> sets no error.
     ///  Without a fallback the operation would report failure with code 0 and an empty message — the empty
     ///  diagnosis this class exists to prevent.
     ///  The CALLER supplies the code because only it knows why it decided to fail.
@@ -121,7 +121,7 @@ public class TapeResultBuilder(IErrorManageable owner)
     /// <summary>Latches the agent's CURRENT error state. Call at the moment of failure, never later.</summary>
     public void LatchFailure() => LatchFailure(TapeResult.Fail(m_owner));
 
-    /// <summary>Clears the latch. Called wherever e.g. <see cref="TapeFileAgent.ResetStatistics"/>
+    /// <summary>Clears the latch. Called wherever e.g. <see cref="TapeAgentBase.ResetStatistics"/>
     ///  starts a fresh operation.</summary>
     public void Reset() => m_firstFailure = TapeResult.OK;
 }

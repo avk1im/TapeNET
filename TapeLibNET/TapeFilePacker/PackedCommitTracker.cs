@@ -123,7 +123,7 @@ internal sealed class PackedCommitTracker(TapeSetTOC setTOC, ILogger logger)
     /// <remarks>
     /// The boolean means ABORTED, not FAILED — no other exception is caught here, so anything else
     ///  propagates. The exception itself is swallowed deliberately: the agent's loop is <see langword="bool"/>-based
-    ///  and the abort has already been recorded on the agent by <see cref="TapeFileAgent.NotifyPostProcessFile"/>.
+    ///  and the abort has already been recorded on the agent by <see cref="TapeAgentBase.NotifyPostProcessFile"/>.
     /// </remarks>
     public bool DrainPostProcess(Action<TapeFileInfo> notify)
     {

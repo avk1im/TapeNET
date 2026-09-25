@@ -10,7 +10,7 @@ namespace TapeLibNET.Services;
 public partial class TapeServiceBase
 {
     protected virtual ServiceSetProgressHandler CreateSetProgressHandler(
-            TapeFileAgent agent, string operationName)
+            TapeAgentBase agent, string operationName)
         => new(_host, agent, skipAllErrors: false, operationName);
 
     /// <summary>

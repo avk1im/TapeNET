@@ -66,7 +66,7 @@ public static class VirtualDriveProber
         return await Task.Run(() =>
         {
             TapeDrive? drive = null;
-            TapeFileAgent? agent = null;
+            TapeAgentBase? agent = null;
 
             try
             {
@@ -141,7 +141,7 @@ public static class VirtualDriveProber
                 //  cartridge carries a calibration header and NO TOC, so a TOC-only probe would wrongly
                 //  report it as "new" — and the user could overwrite it. One cheap block read.
                 drive.PrepareMedia();
-                agent = new TapeFileAgent(drive);
+                agent = new TapeAgentBase(drive);
                 
                 var header = agent.ReadBomHeader();
 

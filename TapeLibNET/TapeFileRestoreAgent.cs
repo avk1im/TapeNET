@@ -19,7 +19,7 @@ namespace TapeLibNET;
 /// <para>Supports multi-volume restore via <see cref="CanResumeFromAnotherVolume"/> /
 ///  <see cref="ResumeRestoreFromAnotherVolume"/>.</para>
 /// </summary>
-public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileAgent(drive, legacyTOC)
+public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgentBase(drive, legacyTOC)
 {
     #region *** Properties ***
 

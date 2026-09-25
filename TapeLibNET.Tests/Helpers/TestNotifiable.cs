@@ -65,7 +65,7 @@ public class TestNotifiable : ITapeFileNotifiable
     /// </summary>
     /// <remarks>
     /// Distinct from <see cref="AbortInPreProcessAfterN"/>, which THROWS. This hook lets a test act
-    ///  without throwing — e.g. to set <see cref="TapeFileAgent.IsAbortRequested"/> directly,
+    ///  without throwing — e.g. to set <see cref="TapeAgentBase.IsAbortRequested"/> directly,
     ///  exercising the caller's abort channel rather than the exception one.
     /// </remarks>
     public Func<TapeFileInfo, TapeFileStatistics, bool>? PreProcessFunc { get; set; }
@@ -77,7 +77,7 @@ public class TestNotifiable : ITapeFileNotifiable
     /// </summary>
     /// <remarks>
     /// Distinct from <see cref="AbortInPostProcessAfterN"/>, which THROWS. This hook lets a test act
-    ///  without throwing — e.g. to set <see cref="TapeFileAgent.IsAbortRequested"/> directly,
+    ///  without throwing — e.g. to set <see cref="TapeAgentBase.IsAbortRequested"/> directly,
     ///  exercising the caller's abort channel rather than the exception one.
     /// </remarks>
     public Func<TapeFileInfo, TapeFileStatistics, bool>? PostProcessFunc { get; set; }

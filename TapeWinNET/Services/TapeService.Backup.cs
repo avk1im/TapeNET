@@ -34,7 +34,7 @@ public partial class TapeService
     /// </summary>
     private sealed class GuiBackupProgressHandler(
         WpfServiceHost host,
-        TapeFileAgent agent,
+        TapeAgentBase agent,
         bool skipAllErrors,
         ITapeFileFilter? filter = null)
         : ServiceBackupProgressHandler(host, agent, skipAllErrors, filter)

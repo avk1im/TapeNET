@@ -8,7 +8,7 @@ using Windows.Win32.Foundation;
 
 namespace TapeLibNET;
 
-public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileAgent(drive, legacyTOC)
+public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgentBase(drive, legacyTOC)
 {
     /// <inheritdoc/>
     /// <remarks>

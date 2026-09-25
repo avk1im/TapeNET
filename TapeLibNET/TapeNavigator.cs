@@ -137,7 +137,7 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     /// </summary>
     /// <remarks>
     /// Callable ONLY by a layer that can certify the equivalence the navigator cannot — currently
-    ///  <see cref="TapeFileAgent.NavigateToTargetContentSet"/>, confirming via the TOC that a settle at
+    ///  <see cref="TapeAgentBase.NavigateToTargetContentSet"/>, confirming via the TOC that a settle at
     ///  begin-of-content really did reach the volume's first set. The navigator has no set accounting
     ///  and must never invoke this on its own behalf.
     /// <para>
@@ -336,14 +336,14 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     ///  The one primitive that replaces every raw "assume-blank" rewind, so the header is never clobbered (INV-12).
     /// <para>
     /// <b>Notice:</b> <see cref="TapeHeaderPresence.Unknown"/> is treated as "no header", just like <see cref="TapeHeaderPresence.Absent"/>.
-    /// When used with a <see cref="TapeFileAgent"/>, the agent <b>must</b> resolve presence first before reaching here (INV-3).
+    /// When used with a <see cref="TapeAgentBase"/>, the agent <b>must</b> resolve presence first before reaching here (INV-3).
     /// </para>
     /// </summary>
     /// <remarks>
     /// Unknown/Absent ⇒ assume no header so never skip it — the legacy-safe default that lets
     ///  the <see cref="TapeNavigator"/> work standalone (tests / direct use) with no agent to resolve presence.
     ///  Every production path resolves presence at an agent choke-point BEFORE reaching here
-    ///  (<see cref="TapeFileAgent.BeginWriteTOC"/> / <see cref="TapeFileAgent.BeginReadTOC"/>,
+    ///  (<see cref="TapeAgentBase.BeginWriteTOC"/> / <see cref="TapeAgentBase.BeginReadTOC"/>,
     ///  <see cref="TapeFileBackupAgent.BeginWriteContentForCurrentSet"/>, <see cref="TapeFileRestoreBaseAgent.BeginReadContentForCurrentSet"/>),
     ///  so on a real headed tape presence is already Present and the skip still happens.
     /// </remarks>

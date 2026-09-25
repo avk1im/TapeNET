@@ -24,14 +24,14 @@ namespace TapeLibNET.Services;
 /// </remarks>
 public abstract class ServiceOperationProgressHandler(
     ITapeServiceHost host,
-    TapeFileAgent agent,
+    TapeAgentBase agent,
     bool skipAllErrors,
     string operationName) : ITapeFileNotifiable
 {
     private readonly ITapeServiceHost _host = host;
 
     /// <summary>The tape agent driving the current operation.</summary>
-    protected readonly TapeFileAgent Agent = agent;
+    protected readonly TapeAgentBase Agent = agent;
 
     private bool _skipAllErrors = skipAllErrors;
     private readonly string _operationName = operationName;
@@ -335,7 +335,7 @@ public abstract class ServiceOperationProgressHandler(
     /// Renders a set in the standard TapeNET notation — <c>#std | alt &gt;description&lt;</c>.
     /// </summary>
     /// <remarks>
-    /// Uses <see cref="TapeFileAgent.TOC"/>, which IS the service's <c>_toc</c> (the agent's constructor
+    /// Uses <see cref="TapeAgentBase.TOC"/>, which IS the service's <c>_toc</c> (the agent's constructor
     ///  adopts the instance it is handed, so the two are one object). The alt index is therefore computed
     ///  against exactly the TOC the anomaly's indices came from.
     /// </remarks>
@@ -385,7 +385,7 @@ public abstract class ServiceOperationProgressHandler(
 /// </remarks>
 public class ServiceSetProgressHandler(
     ITapeServiceHost host,
-    TapeFileAgent agent,
+    TapeAgentBase agent,
     bool skipAllErrors,
     string operationName)
     : ServiceOperationProgressHandler(host, agent, skipAllErrors, operationName);
@@ -399,7 +399,7 @@ public class ServiceSetProgressHandler(
 /// </summary>
 public class ServiceBackupProgressHandler(
     ITapeServiceHost host,
-    TapeFileAgent agent,
+    TapeAgentBase agent,
     bool skipAllErrors,
     ITapeFileFilter? filter = null)
     : ServiceOperationProgressHandler(host, agent, skipAllErrors, "Backup")
@@ -444,7 +444,7 @@ public class ServiceBackupProgressHandler(
 /// </summary>
 public class ServiceRestoreProgressHandler(
     ITapeServiceHost host,
-    TapeFileAgent agent,
+    TapeAgentBase agent,
     int totalFilesToProcess,
     bool skipAllErrors,
     RestoreMode mode)

@@ -25,7 +25,7 @@ public class TapeAbortRequestedException(string? message = null) :
 ///  repairing.
 /// </para>
 /// <para>
-/// Counters ONLY. The anomaly records live on the agent (<seealso cref="TapeFileAgent.SetAnomalies"/>), because a
+/// Counters ONLY. The anomaly records live on the agent (<seealso cref="TapeAgentBase.SetAnomalies"/>), because a
 ///  struct copied into every callback cannot own a list without every copy aliasing it.
 /// </para>
 /// </remarks>

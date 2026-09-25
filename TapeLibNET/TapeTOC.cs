@@ -774,7 +774,7 @@ public class TapeTOC : ITapeSerializable, IEnumerable<TapeSetTOC>
     /// <param name="headerPartition">The partition in which this header resides. By default <see cref="MediaPartition.Content"/>.</param>
     /// <param name="hasSetHeaders">
     /// Whether this volume's sets carry their own set headers (SH-1). Sourced from the writing
-    ///  agent's <see cref="TapeFileAgent.WritesSetHeaders"/> — the TOC cannot know it, exactly as it
+    ///  agent's <see cref="TapeAgentBase.WritesSetHeaders"/> — the TOC cannot know it, exactly as it
     ///  cannot know its own <paramref name="tapeTocPlacement"/>.
     /// </param>
 

@@ -538,7 +538,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
 
     /// <summary>
     /// Headed backup → delete-all-preserving-header (a case-B mid-data overwrite from block 1) → the header
-    /// must survive and the tape remain restorable. Exercises TapeFileAgent.DeleteSetsFromCurrentSetUp on real
+    /// must survive and the tape remain restorable. Exercises TapeAgentBase.DeleteSetsFromCurrentSetUp on real
     /// hardware with WritesMediaHeader on.
     /// </summary>
     [SkippableFact]

@@ -258,7 +258,7 @@ public class StatisticsTests
 
 #if DEBUG
     /// <summary>
-    /// Enables <see cref="TapeFileAgent.SimulateFileFailures"/> so that every Nth file
+    /// Enables <see cref="TapeAgentBase.SimulateFileFailures"/> so that every Nth file
     /// throws during backup. Asserts that <c>FilesFailed</c> increments and the
     /// invariant holds.
     /// </summary>

@@ -112,7 +112,7 @@ public class TapeSetDeleteVerificationTests
     /// <summary>Reads the media header back with a fresh agent; null means it is gone.</summary>
     private static TapeMediaHeader? ReadMediaHeader(VirtualTapeFixture fixture)
     {
-        using var probe = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var probe = new TapeAgentBase(fixture.Drive, fixture.TOC);
         return probe.ReadBomHeader() as TapeMediaHeader;
     }
 
@@ -186,7 +186,7 @@ public class TapeSetDeleteVerificationTests
     ///  the miscount's signature, not a lost safety net — so it BLOCKS, where the read path proceeds.
     /// </summary>
     /// <remarks>
-    /// This is what <c>m_verifyingDestructiveWrite</c> exists for: <see cref="TapeFileAgent"/> itself
+    /// This is what <c>m_verifyingDestructiveWrite</c> exists for: <see cref="TapeAgentBase"/> itself
     ///  reports <c>BlocksOnUnverifiableSet == false</c>, and only the in-flight delete flips it.
     /// </remarks>
     [Theory]

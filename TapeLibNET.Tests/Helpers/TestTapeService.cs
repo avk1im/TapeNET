@@ -32,7 +32,7 @@ internal sealed class TestServiceCalibrateProgressHandler(TestTapeService svc,
 public sealed class TestTapeService(ILoggerFactory lf, ITapeServiceHost host) : TapeServiceBase(lf, host)
 {
     /// <summary>Invoked with the live agent, before the first file is processed.</summary>
-    public Action<TapeFileAgent>? OnAgentReady { get; set; }
+    public Action<TapeAgentBase>? OnAgentReady { get; set; }
 
     /// <summary>Invoked with the live backup agent, before the first file is processed.</summary>
     public Action<TapeFileBackupAgent>? OnBackupAgentReady { get; set; }
@@ -50,7 +50,7 @@ public sealed class TestTapeService(ILoggerFactory lf, ITapeServiceHost host) : 
     public Action<TapeCalibrationProgress>? OnCalibrationProgress { get; set; }
 
     protected override ServiceSetProgressHandler CreateSetProgressHandler(
-        TapeFileAgent agent, string operationName)
+        TapeAgentBase agent, string operationName)
     {
         OnAgentReady?.Invoke(agent);
         return base.CreateSetProgressHandler(agent, operationName);

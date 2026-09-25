@@ -60,7 +60,7 @@ public class TapeSetHeaderVerifyTests
     /// Resolves the media header up front, so a subsequently armed read-fault injector lands on the SET
     ///  header read rather than on the BOM header read that <c>EnsureMediaHeaderResolved</c> performs.
     /// </summary>
-    private static void PreResolveMediaHeader(TapeFileAgent agent)
+    private static void PreResolveMediaHeader(TapeAgentBase agent)
     {
         agent.ReadBomHeader();
         Assert.Equal(TapeHeaderPresence.Present, agent.Navigator.MediaHeaderPresence);

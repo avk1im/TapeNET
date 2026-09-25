@@ -3,7 +3,7 @@ using TapeLibNET.Tests.Helpers;
 namespace TapeLibNET.Tests;
 
 /// <summary>
-/// Tier-2 tests for on-tape media-header behavior through <see cref="TapeFileAgent"/> across all four
+/// Tier-2 tests for on-tape media-header behavior through <see cref="TapeAgentBase"/> across all four
 ///  drive profiles: header write/read/probe, presence resolution, the clobber regression (header
 ///  survives content + TOC), and a full headed backup → restore round-trip.
 /// </summary>
@@ -35,7 +35,7 @@ public class TapeHeaderAgentTests
     /// </summary>
     private static Guid WriteMediaHeader(VirtualTapeFixture fixture)
     {
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
         Assert.True(agent.WriteMediaHeader(), "WriteMediaHeader failed");
         return fixture.TOC.MediaId;
     }
@@ -85,7 +85,7 @@ public class TapeHeaderAgentTests
         var mediaId = WriteMediaHeader(fixture);
 
         // A FRESH agent (presence Unknown) must read + classify the header.
-        using var reader = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var reader = new TapeAgentBase(fixture.Drive, fixture.TOC);
         var header = reader.ReadBomHeader();
 
         var media = Assert.IsType<TapeMediaHeader>(header);
@@ -101,7 +101,7 @@ public class TapeHeaderAgentTests
 
         // No header written: reaching BOM and finding no data is the DEFINITIVE "no header" = Absent
         //  (a resolved state — NOT Unknown, which would wedge later navigation).
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
         Assert.Equal(TapeHeaderPresence.Absent, agent.ProbeMediaHeaderPresence());
         Assert.Null(agent.ReadBomHeader());
     }
@@ -113,7 +113,7 @@ public class TapeHeaderAgentTests
         using var fixture = new VirtualTapeFixture(profile);
         WriteMediaHeader(fixture);
 
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
         Assert.Equal(TapeHeaderPresence.Present, agent.ProbeMediaHeaderPresence());
     }
 
@@ -171,7 +171,7 @@ public class TapeHeaderAgentTests
         var mediaId = WriteMediaHeader(fixture);
         fixture.BackupFiles(tree.Files, description: "Survivor");
 
-        using var reader = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var reader = new TapeAgentBase(fixture.Drive, fixture.TOC);
         var media = Assert.IsType<TapeMediaHeader>(reader.ReadBomHeader());
         Assert.Equal(mediaId, media.MediaId);
     }
@@ -276,7 +276,7 @@ public class TapeHeaderAgentTests
         using var fixture = new VirtualTapeFixture(profile);
         fixture.BackupFiles(tree.Files, description: "Legacy Set");
 
-        using var reader = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var reader = new TapeAgentBase(fixture.Drive, fixture.TOC);
         Assert.Null(reader.ReadBomHeader());
         Assert.Equal(TapeHeaderPresence.Absent, reader.Navigator.MediaHeaderPresence);
     }
@@ -289,7 +289,7 @@ public class TapeHeaderAgentTests
     /// Regression for the stale <c>m_headerResolved</c> latch (design \u00A710): presence resolution must be
     ///  keyed off <see cref="TapeNavigator.MediaHeaderPresence"/> alone, not a per-agent flag that outlives
     ///  the navigator. After <see cref="TapeStreamManager.RenewNavigator"/> installs a fresh navigator
-    ///  (presence back to <see cref="TapeHeaderPresence.Unknown"/>), <see cref="TapeFileAgent"/> must
+    ///  (presence back to <see cref="TapeHeaderPresence.Unknown"/>), <see cref="TapeAgentBase"/> must
     ///  perform a fresh physical read on the next <c>EnsureMediaHeaderResolved</c>-gated call, rather than
     ///  short-circuiting because presence was already resolved once on the same agent.
     /// </summary>
@@ -299,7 +299,7 @@ public class TapeHeaderAgentTests
     {
         using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true);
 
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         // Resolve presence on the headed volume \u2014 Unknown \u2192 Present.
         Assert.Equal(TapeHeaderPresence.Present, agent.ProbeMediaHeaderPresence());

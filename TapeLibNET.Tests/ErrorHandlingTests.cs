@@ -73,7 +73,7 @@ public class ErrorHandlingTests
         bool ignoreFailures,
         ITapeFileNotifiable? notifiable,
         string description = "Error Test Set",
-        Action<TapeFileAgent>? configureAgent = null)
+        Action<TapeAgentBase>? configureAgent = null)
     {
         fixture.TOC.AddNewSetTOC(0, incremental: false);
         fixture.TOC.CurrentSetTOC.Description = description;
@@ -99,7 +99,7 @@ public class ErrorHandlingTests
         string targetDir,
         bool ignoreFailures,
         ITapeFileNotifiable? notifiable,
-        Action<TapeFileAgent>? configureAgent = null)
+        Action<TapeAgentBase>? configureAgent = null)
     {
         using var agent = fixture.CreateRestoreAgent(targetDir);
         configureAgent?.Invoke(agent);
@@ -863,7 +863,7 @@ public class ErrorHandlingTests
 #if DEBUG
 
     /// <summary>
-    /// When the 1st TOC copy fails but the 2nd succeeds, <see cref="TapeFileAgent.BackupTOC"/>
+    /// When the 1st TOC copy fails but the 2nd succeeds, <see cref="TapeAgentBase.BackupTOC"/>
     /// should return true and the TOC should be restorable.
     /// <para>
     /// Excluded for <see cref="DriveProfile.SeqFilemarks"/>: the sequential tape layout
@@ -886,20 +886,20 @@ public class ErrorHandlingTests
         int expectedSets = fixture.TOC.Count;
 
         // Now re-write TOC with 1st copy failing (bit 0 = 1)
-        using var writeAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var writeAgent = new TapeAgentBase(fixture.Drive, fixture.TOC);
         writeAgent.SimulateTOCFailureMask = 1;
         bool tocWriteOk = writeAgent.BackupTOC();
         Assert.True(tocWriteOk, "BackupTOC should succeed when only 1st copy fails");
 
         // Restore TOC — should recover from the 2nd copy
-        using var readAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var readAgent = new TapeAgentBase(fixture.Drive, fixture.TOC);
         bool tocReadOk = readAgent.RestoreTOC();
         Assert.True(tocReadOk, "RestoreTOC should succeed from 2nd copy");
         Assert.Equal(expectedSets, readAgent.TOC.Count);
     }
 
     /// <summary>
-    /// When both TOC copies fail during backup, <see cref="TapeFileAgent.BackupTOC"/>
+    /// When both TOC copies fail during backup, <see cref="TapeAgentBase.BackupTOC"/>
     /// should return false.
     /// </summary>
     [Theory]
@@ -917,7 +917,7 @@ public class ErrorHandlingTests
         fixture.BackupFiles(tree.Files);
 
         // Now try to re-write TOC with both copies failing (bits 0+1 = 3)
-        using var writeAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var writeAgent = new TapeAgentBase(fixture.Drive, fixture.TOC);
         writeAgent.SimulateTOCFailureMask = 3;
         bool tocWriteOk = writeAgent.BackupTOC(enforce: true);
         Assert.False(tocWriteOk, "BackupTOC should fail when both copies fail");
@@ -951,7 +951,7 @@ public class ErrorHandlingTests
         int expectedSets = fixture.TOC.Count;
 
         // Now restore TOC with 1st copy failing during read (bit 0 = 1)
-        using var readAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var readAgent = new TapeAgentBase(fixture.Drive, fixture.TOC);
         readAgent.SimulateTOCFailureMask = 1;
         bool tocReadOk = readAgent.RestoreTOC();
         Assert.True(tocReadOk, "RestoreTOC should succeed from 2nd copy when 1st fails");
@@ -960,7 +960,7 @@ public class ErrorHandlingTests
 
     /// <summary>
     /// Simulates both TOC copies failing during restore.
-    /// <see cref="TapeFileAgent.RestoreTOC"/> should return false.
+    /// <see cref="TapeAgentBase.RestoreTOC"/> should return false.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -977,7 +977,7 @@ public class ErrorHandlingTests
         fixture.BackupFiles(tree.Files);
 
         // Both copies fail during restore (bits 0+1+2 = 7 covers the 3rd attempt too)
-        using var readAgent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var readAgent = new TapeAgentBase(fixture.Drive, fixture.TOC);
         readAgent.SimulateTOCFailureMask = 7;
         bool tocReadOk = readAgent.RestoreTOC();
         Assert.False(tocReadOk, "RestoreTOC should fail when all copies fail");
@@ -1196,7 +1196,7 @@ public class ErrorHandlingTests
         using var fixture = new VirtualTapeFixture(profile);
         fixture.BackupFiles(tree.Files);
 
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
         agent.SimulateTOCFailureMask = 1;   // 1st copy fails, 2nd succeeds
 
         TapeResult result = agent.BackupTOC();
@@ -1219,7 +1219,7 @@ public class ErrorHandlingTests
         using var fixture = new VirtualTapeFixture(profile);
         fixture.BackupFiles(tree.Files);
 
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
         agent.SimulateTOCFailureMask = 3;
 
         TapeResult result = agent.BackupTOC(enforce: true);
@@ -1428,7 +1428,7 @@ public class ErrorHandlingTests
     ///  reaction to it. What all three DO share is that the operation fails, the abort is recorded, and
     ///  the diagnosis is never empty.
     /// </remarks>
-    private static void AssertCleanAbort(TapeResult result, TapeFileAgent agent, AbortChannel channel)
+    private static void AssertCleanAbort(TapeResult result, TapeAgentBase agent, AbortChannel channel)
     {
         Assert.False(result.Success, $"{channel}: an aborted operation must report failure");
 

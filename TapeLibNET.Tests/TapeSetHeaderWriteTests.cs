@@ -57,7 +57,7 @@ public class TapeSetHeaderWriteTests
     /// </remarks>
     private static TapeSetHeader? ReadSetHeaderOnVolume(VirtualTapeFixture fixture, int setIndexOnVolume)
     {
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         agent.ReadBomHeader();                       // resolves presence; parks the navigator AtBomHeader
         Assert.True(agent.Manager.EndReadWrite());
@@ -76,7 +76,7 @@ public class TapeSetHeaderWriteTests
     /// <summary>Reads the media header back from BOM.</summary>
     private static TapeMediaHeader? ReadMediaHeader(VirtualTapeFixture fixture)
     {
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
         return agent.ReadBomHeader() as TapeMediaHeader;
     }
 
@@ -139,7 +139,7 @@ public class TapeSetHeaderWriteTests
     {
         using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);
 
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
         agent.ReadBomHeader();
 
         Assert.Equal(TapeHeaderPresence.Present, agent.Navigator.MediaHeaderPresence);

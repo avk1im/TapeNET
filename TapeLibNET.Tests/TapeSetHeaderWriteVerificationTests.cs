@@ -199,7 +199,7 @@ public class TapeSetHeaderWriteVerificationTests
             AssertSetStillRestores(fixture, 4, trees[3]);
 
             // …and the media header is still on tape.
-            using var probe = new TapeFileAgent(fixture.Drive, fixture.TOC);
+            using var probe = new TapeAgentBase(fixture.Drive, fixture.TOC);
             var media = probe.ReadBomHeader() as TapeMediaHeader;
             Assert.NotNull(media);
             Assert.True(media!.HasSetHeaders);
@@ -261,7 +261,7 @@ public class TapeSetHeaderWriteVerificationTests
             AssertSetStillRestores(fixture, 3, trees[2]);
 
             // …and the media header is still on tape.
-            using var probe = new TapeFileAgent(fixture.Drive, fixture.TOC);
+            using var probe = new TapeAgentBase(fixture.Drive, fixture.TOC);
             var media = probe.ReadBomHeader() as TapeMediaHeader;
             Assert.NotNull(media);
             Assert.True(media!.HasSetHeaders);

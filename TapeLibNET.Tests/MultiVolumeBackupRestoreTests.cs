@@ -141,7 +141,7 @@ public abstract class MultiVolumeBackupRestoreTestsBase
             //  loaded — is reachable by number.
             fixture.SwapToVolume(volume);
 
-            using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+            using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
             var header = agent.ReadBomHeader() as TapeMediaHeader;
 
             bool expectMedia = ExpectsMediaHeader(volume);

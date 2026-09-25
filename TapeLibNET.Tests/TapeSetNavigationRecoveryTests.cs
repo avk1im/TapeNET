@@ -160,7 +160,7 @@ public class TapeSetNavigationRecoveryTests
     /// </remarks>
     private static void EraseLastSetmark(VirtualTapeFixture fixture)
     {
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
         agent.EnsureMediaHeaderResolved();
 
         // End of content, then back over the setmark that closes the last set.

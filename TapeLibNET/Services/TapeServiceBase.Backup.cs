@@ -23,7 +23,7 @@ public partial class TapeServiceBase
     /// <remarks>
     /// To abort a running backup set <c>Agent.IsAbortRequested = true</c>;
     ///  the Ctrl+C bridge in CLI subclasses and the abort-button handler in WPF
-    ///  already do this via <see cref="TapeFileAgent.IsAbortRequested"/>.
+    ///  already do this via <see cref="TapeAgentBase.IsAbortRequested"/>.
     /// </remarks>
     public Task<BackupResult> ExecuteBackupAsync(BackupRequest request)
     {
@@ -1392,7 +1392,7 @@ public partial class TapeServiceBase
         if (sanitized.Length > 60)
             sanitized = sanitized[..60];
 
-        var fileName  = $"{sanitized}_vol{toc.Volume}_{DateTime.Now:yyyyMMdd_HHmmss}{TapeFileAgent.TOCFileExtension}";
+        var fileName  = $"{sanitized}_vol{toc.Volume}_{DateTime.Now:yyyyMMdd_HHmmss}{TapeAgentBase.TOCFileExtension}";
         var directory = !string.IsNullOrWhiteSpace(folderHint) && Directory.Exists(folderHint)
             ? folderHint
             : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);

@@ -56,7 +56,7 @@ public class TapeSetHeaderBlockIoTests
     ///  <see cref="TapeNavigator.UnknownSet"/>, which is indistinguishable from the value SH-6 resets to —
     ///  so "unchanged on success" would be untestable.
     /// </remarks>
-    private static void PositionAtBeginOfContent(TapeFileAgent agent)
+    private static void PositionAtBeginOfContent(TapeAgentBase agent)
     {
         Assert.True(agent.Navigator.MoveToBeginOfContent(), "Failed to position at begin-of-content");
         Assert.Equal(0, agent.Navigator.CurrentContentSet);
@@ -72,7 +72,7 @@ public class TapeSetHeaderBlockIoTests
     ///  it at 0 (SH-6). Without the reset the head stays parked PAST the block just written and the read
     ///  fetches the next one — at EOD on a tape holding nothing else.
     /// </remarks>
-    private static void RepositionAtBeginOfContent(TapeFileAgent agent)
+    private static void RepositionAtBeginOfContent(TapeAgentBase agent)
     {
         agent.Navigator.ResetContentSet();
         Assert.True(agent.Navigator.MoveToBeginOfContent(), "Failed to re-position at begin-of-content");
@@ -88,7 +88,7 @@ public class TapeSetHeaderBlockIoTests
     ///  write that legitimately LEFT it at 0 (SH-6) the head would stay parked past the written block and
     ///  the read would fetch the following one.
     /// </remarks>
-    private static void EnterReadingContentAtOldestSet(TapeFileAgent agent)
+    private static void EnterReadingContentAtOldestSet(TapeAgentBase agent)
     {
         agent.Navigator.ResetContentSet();
         agent.Navigator.TargetContentSet = 0;
@@ -108,7 +108,7 @@ public class TapeSetHeaderBlockIoTests
     public void WriteThenRead_RoundTripsAtCurrentPosition(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         var original = MakeHeader();
 
@@ -138,7 +138,7 @@ public class TapeSetHeaderBlockIoTests
     public void Read_AcceptsOversizedBuffer(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         PositionAtBeginOfContent(agent);
         Assert.True(agent.Manager.WriteSetHeaderBlock(Framed(MakeHeader())));
@@ -163,7 +163,7 @@ public class TapeSetHeaderBlockIoTests
     public void Write_OnSuccess_LeavesNavigatorUntouched(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         PositionAtBeginOfContent(agent);
         var presenceBefore = agent.Navigator.MediaHeaderPresence;
@@ -180,7 +180,7 @@ public class TapeSetHeaderBlockIoTests
     public void Read_OnSuccess_LeavesNavigatorUntouched(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         PositionAtBeginOfContent(agent);
         Assert.True(agent.Manager.WriteSetHeaderBlock(Framed(MakeHeader())));
@@ -202,7 +202,7 @@ public class TapeSetHeaderBlockIoTests
     public void BlockSize_IsRestoredAroundBothOperations(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         PositionAtBeginOfContent(agent);
         uint before = fixture.Drive.BlockSize;
@@ -231,7 +231,7 @@ public class TapeSetHeaderBlockIoTests
     public void Write_OnFailure_ResetsContentSet(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         PositionAtBeginOfContent(agent);
 
@@ -248,7 +248,7 @@ public class TapeSetHeaderBlockIoTests
     public void Read_OnFailure_ResetsContentSet(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         PositionAtBeginOfContent(agent);
         Assert.True(agent.Manager.WriteSetHeaderBlock(Framed(MakeHeader())));
@@ -269,7 +269,7 @@ public class TapeSetHeaderBlockIoTests
     public void Read_AtEndOfData_FailsAndResetsContentSet(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);   // nothing written at all
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         EnterReadingContentAtOldestSet(agent);
 
@@ -292,7 +292,7 @@ public class TapeSetHeaderBlockIoTests
     public void Write_InReadingContentState_Rejected_WithoutResettingNavigator(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         EnterReadingContentAtOldestSet(agent);
         int setBefore = agent.Navigator.CurrentContentSet;
@@ -311,7 +311,7 @@ public class TapeSetHeaderBlockIoTests
     public void Read_InMediaPreparedState_Rejected_WithoutResettingNavigator(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         PositionAtBeginOfContent(agent);
         int setBefore = agent.Navigator.CurrentContentSet;
@@ -332,7 +332,7 @@ public class TapeSetHeaderBlockIoTests
     public void Read_AfterPipelinedReaderCreated_Rejected(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         PositionAtBeginOfContent(agent);
         Assert.True(agent.Manager.WriteSetHeaderBlock(Framed(MakeHeader())));
@@ -365,7 +365,7 @@ public class TapeSetHeaderBlockIoTests
     public void Write_TornByDrive_FailsAndResetsContentSet(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         PositionAtBeginOfContent(agent);
 
@@ -401,7 +401,7 @@ public class TapeSetHeaderBlockIoTests
     public void Write_TornByDrive_LeavesAnUnclassifiableBlock(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         byte[] framed = Framed(MakeHeader());
         int tearAt = FramedRecordLength(framed) / 2;        // squarely INSIDE the record
@@ -426,7 +426,7 @@ public class TapeSetHeaderBlockIoTests
     public void Write_TornByDrive_ThenRewritten_ReadsBackIntact(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         var header = MakeHeader();
 
@@ -458,7 +458,7 @@ public class TapeSetHeaderBlockIoTests
     public void Read_FaultedByDrive_FailsAndResetsContentSet(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         PositionAtBeginOfContent(agent);
         Assert.True(agent.Manager.WriteSetHeaderBlock(Framed(MakeHeader())));
@@ -483,7 +483,7 @@ public class TapeSetHeaderBlockIoTests
     public void Read_FaultedByDrive_ThenRetried_Succeeds(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         PositionAtBeginOfContent(agent);
         Assert.True(agent.Manager.WriteSetHeaderBlock(Framed(MakeHeader())));
@@ -525,7 +525,7 @@ public class TapeSetHeaderBlockIoTests
     public void Read_InMediaPreparedState_Succeeds(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         var original = MakeHeader();
         PositionAtBeginOfContent(agent);
@@ -566,7 +566,7 @@ public class TapeSetHeaderBlockIoTests
         const uint setBlockSize = 64 * 1024;      // ≠ TapeHeaderBlock.Size (16 KiB)
 
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         PositionAtBeginOfContent(agent);
         Assert.True(agent.Manager.WriteSetHeaderBlock(Framed(MakeHeader())));
@@ -602,7 +602,7 @@ public class TapeSetHeaderBlockIoTests
     public void Read_InMediaPreparedState_IsRepeatableAfterRestoringTheBlock(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         PositionAtBeginOfContent(agent);
         Assert.True(agent.Manager.WriteSetHeaderBlock(Framed(MakeHeader(globalSetIndex: 5, volumeSetIndex: 2))));
@@ -634,7 +634,7 @@ public class TapeSetHeaderBlockIoTests
     public void Read_InTocState_Rejected_WithoutResettingNavigator(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         agent.Navigator.AssumeBlankMedia(); // exactly the case here: blank media
         // If we skip AssumeBlankMedia(), the TOCMark navigator cannot locate a mark that was never written.
@@ -660,7 +660,7 @@ public class TapeSetHeaderBlockIoTests
     public void Read_WithWritePackerActive_Rejected_WithoutResettingNavigator(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         PositionAtBeginOfContent(agent);
         Assert.True(agent.Manager.WriteSetHeaderBlock(Framed(MakeHeader())));
@@ -690,7 +690,7 @@ public class TapeSetHeaderBlockIoTests
     public void Read_AfterWriteSessionClosed_IsLegalAgain(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         PositionAtBeginOfContent(agent);
         Assert.True(agent.Manager.WriteSetHeaderBlock(Framed(MakeHeader())));
@@ -718,7 +718,7 @@ public class TapeSetHeaderBlockIoTests
         const uint setBlockSize = 64 * 1024;      // ≠ TapeHeaderBlock.Size
 
         using var fixture = new VirtualTapeFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         PositionAtBeginOfContent(agent);
         Assert.True(agent.Manager.WriteSetHeaderBlock(Framed(MakeHeader())));

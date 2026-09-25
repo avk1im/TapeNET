@@ -160,7 +160,7 @@ public abstract class TapeRestoreAgentPipelinedTestsBase
     public void Fixture_ProducesTheDeclaredHeaderShape(DriveProfile profile)
     {
         using var fixture = CreateFixture(profile);
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
 
         var header = agent.ReadBomHeader() as TapeMediaHeader;
 

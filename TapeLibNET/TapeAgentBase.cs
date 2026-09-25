@@ -13,7 +13,7 @@ namespace TapeLibNET;
 /// <para>Subclasses: <see cref="TapeFileBackupAgent"/> (backup), <see cref="TapeFileRestoreBaseAgent"/>
 ///  (restore/verify). Owns a <see cref="TapeStreamManager"/> and a <see cref="TapeTOC"/>.</para>
 /// </summary>
-public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
+public class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
 {
     /// <summary>BlockSize used for header and TOC read / write, fixed since it needs to be known upfront.</summary>
     private const uint c_fixedTOCBlockSize = 16 * 1024; // 16 KiB
@@ -160,7 +160,7 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
 
     #region Constructors
 
-    public TapeFileAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : base(drive)
+    public TapeAgentBase(TapeDrive drive, TapeTOC? legacyTOC = null) : base(drive)
     {
         _resultBuilder = new(this);
         TOC = legacyTOC ?? [];
@@ -185,7 +185,7 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
     {
         if (!IsDisposed)
         {
-            m_logger.LogTrace("Disposing TapeFileAgent with disposing parameter = {Parametr}", disposing);
+            m_logger.LogTrace("Disposing TapeAgentBase with disposing parameter = {Parametr}", disposing);
 
             if (disposing)
             {
@@ -199,7 +199,7 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
     }
 
     // do not override
-    ~TapeFileAgent()
+    ~TapeAgentBase()
     {
         Dispose(disposing: false);
     }
@@ -530,7 +530,7 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
     ///  <see langword="null"/> when the read failed or the block does not classify as one.
     /// </summary>
     /// <remarks>
-    /// Mirrors <see cref="TapeFileAgent.ReadBomHeader"/>: the manager delivers raw bytes, the AGENT
+    /// Mirrors <see cref="TapeAgentBase.ReadBomHeader"/>: the manager delivers raw bytes, the AGENT
     ///  classifies (INV-12).
     /// </remarks>
     private TapeSetHeader? ReadSetHeader()
@@ -2036,6 +2036,6 @@ public class TapeFileAgent : TapeDriveHolder<TapeFileAgent>, IDisposable
 
     #endregion // *** Protected helpers ***
 
-} // class TapeFileAgent
+} // class TapeAgentBase
 
 // namespace TapeNET

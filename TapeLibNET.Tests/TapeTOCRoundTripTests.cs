@@ -13,7 +13,7 @@ namespace TapeLibNET.Tests;
 ///   <item><see cref="TapeSetTOC"/> serialization with all metadata fields</item>
 ///   <item><see cref="TapeTOC"/> serialization with multiple sets and UID continuity</item>
 ///   <item>Edge cases: empty sets, 0-byte files, long paths, Unicode, large file counts</item>
-///   <item>On-tape round-trips via <see cref="TapeFileAgent"/> (all drive profiles)</item>
+///   <item>On-tape round-trips via <see cref="TapeAgentBase"/> (all drive profiles)</item>
 ///   <item>TOC copy redundancy — both copies readable after write</item>
 ///   <item>Structural behavior: indexing, deep copy, set reuse, incremental chains</item>
 /// </list>
@@ -251,7 +251,7 @@ public class TapeTOCRoundTripTests
     /// </summary>
     private static void WriteContentAndSaveTOC(VirtualTapeFixture fixture)
     {
-        using var agent = new TapeFileAgent(fixture.Drive, fixture.TOC);
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
         agent.Manager.Navigator.TargetContentSet = -1;
         Assert.True(agent.Manager.BeginWriteContent(100_000));
         Assert.True(agent.Manager.EndWriteContent());

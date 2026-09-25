@@ -96,10 +96,10 @@ public sealed class TapeCalibrator : TapeDriveHolder<TapeCalibrator>
     ///  the error (<see cref="FindLastCheckpoint"/>'s BOP exits, <see cref="InspectMedia"/>'s final
     ///  reset, the legacy-header probe in <see cref="ReadRunHeader"/>). The live error state is therefore
     ///  a poor witness by the time a verb returns null — it reflects the last tolerated step, not the
-    ///  thing that went wrong. Mirrors <c>TapeFileAgent._resultBuilder</c>.
+    ///  thing that went wrong. Mirrors <c>TapeAgentBase._resultBuilder</c>.
     /// <para>
-    /// Mirrors the mechanism in <seealso cref="TapeFileAgent._resultBuilder"/> and
-    ///  <seealso cref="TapeFileAgent.LastResult"/>.
+    /// Mirrors the mechanism in <seealso cref="TapeAgentBase._resultBuilder"/> and
+    ///  <seealso cref="TapeAgentBase.LastResult"/>.
     /// </para>
     /// </remarks>
     private readonly TapeResultBuilder _resultBuilder;   // note: field init needs `this` — see 1b
@@ -123,7 +123,7 @@ public sealed class TapeCalibrator : TapeDriveHolder<TapeCalibrator>
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The calibration counterpart to <c>TapeFileAgent.LastResult</c>, and the reason it matters MORE
+    /// The calibration counterpart to <c>TapeAgentBase.LastResult</c>, and the reason it matters MORE
     ///  here: the run verbs return <c>ITapeCalibration?</c>, so <see langword="null"/> is the only signal
     ///  the caller gets. This property is what turns that null into an explanation.
     /// </para>

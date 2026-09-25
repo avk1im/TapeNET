@@ -201,7 +201,7 @@ public class TapeSetNotificationTests
     /// <remarks>
     /// The same rule the file path follows: <c>NotifyFileFailed</c> → <c>Abort</c> still latches the
     ///  original fault, and <c>ERROR_CANCELLED</c> is reserved for an abort with NO underlying fault
-    ///  (<c>ThrowIfAbortRequested</c> firing on a clean file). <see cref="TapeFileAgent.IsAbortRequested"/>
+    ///  (<c>ThrowIfAbortRequested</c> firing on a clean file). <see cref="TapeAgentBase.IsAbortRequested"/>
     ///  is the channel that says "aborted"; the error code says "why".
     /// </remarks>
     [Theory]

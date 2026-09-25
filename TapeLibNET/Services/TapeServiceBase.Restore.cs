@@ -23,7 +23,7 @@ public partial class TapeServiceBase
     /// <remarks>
     /// To abort a running operation set <c>Agent.IsAbortRequested = true</c>;
     ///  the Ctrl+C bridge in CLI subclasses and the abort-button handler in WPF
-    ///  already do this via <see cref="TapeFileAgent.IsAbortRequested"/>.
+    ///  already do this via <see cref="TapeAgentBase.IsAbortRequested"/>.
     /// </remarks>
     public Task<RestoreResult> ExecuteRestoreAsync(RestoreRequest request)
     {

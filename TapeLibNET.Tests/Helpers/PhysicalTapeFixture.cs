@@ -372,7 +372,7 @@ public sealed class PhysicalTapeFixture : IDisposable
     /// </summary>
     public void SaveTOC()
     {
-        using var agent = new TapeFileAgent(Drive, TOC);
+        using var agent = new TapeAgentBase(Drive, TOC);
         Assert.True(agent.BackupTOC(), "Failed to save TOC to tape");
     }
 
@@ -382,7 +382,7 @@ public sealed class PhysicalTapeFixture : IDisposable
     /// </summary>
     public void LoadTOC()
     {
-        using var agent = new TapeFileAgent(Drive, TOC);
+        using var agent = new TapeAgentBase(Drive, TOC);
         Assert.True(agent.RestoreTOC(), "Failed to restore TOC from tape");
         TOC = agent.TOC;
     }

@@ -932,8 +932,8 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
             var dlg = new Microsoft.Win32.SaveFileDialog
             {
                 Title            = "Emergency TOC Export — Choose Save Location",
-                Filter           = $"Tape TOC files (*{TapeLibNET.TapeFileAgent.TOCFileExtension})" +
-                                   $"|*{TapeLibNET.TapeFileAgent.TOCFileExtension}|All files (*.*)|*.*",
+                Filter           = $"Tape TOC files (*{TapeLibNET.TapeAgentBase.TOCFileExtension})" +
+                                   $"|*{TapeLibNET.TapeAgentBase.TOCFileExtension}|All files (*.*)|*.*",
                 FileName         = System.IO.Path.GetFileName(suggestedPath),
                 InitialDirectory = System.IO.Path.GetDirectoryName(suggestedPath) ?? "",
                 OverwritePrompt  = true,

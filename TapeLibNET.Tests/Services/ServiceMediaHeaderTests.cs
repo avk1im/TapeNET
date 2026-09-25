@@ -14,7 +14,7 @@ namespace TapeLibNET.Tests.Services;
 /// <remarks>
 /// Unlike the agent-level fixtures, the service HEADS every volume it formats / continues, so "headless"
 ///  media here is genuinely legacy — manufactured with a raw <see cref="TapeFileBackupAgent"/> whose
-///  <see cref="TapeFileAgent.WritesMediaHeader"/> is false (<see cref="ManufactureLegacyMedia"/>). The
+///  <see cref="TapeAgentBase.WritesMediaHeader"/> is false (<see cref="ManufactureLegacyMedia"/>). The
 ///  <see cref="TestTapeServiceHost"/> scripts prompt answers via <c>MediaMismatchAnswers</c> and records
 ///  every prompt in <c>MediaMismatchPrompts</c>.
 /// </remarks>
@@ -51,7 +51,7 @@ public class ServiceMediaHeaderTests : ServiceTestBase
 
     /// <summary>
     /// Manufactures genuinely LEGACY (header-less) single-partition media via a raw backup agent whose
-    ///  <see cref="TapeFileAgent.WritesMediaHeader"/> is false — content starts at block 0, no BOM header.
+    ///  <see cref="TapeAgentBase.WritesMediaHeader"/> is false — content starts at block 0, no BOM header.
     /// </summary>
     private static void ManufactureLegacyMedia(TempVirtualMedia media, TempFileTree src, string description = "Legacy Media")
     {

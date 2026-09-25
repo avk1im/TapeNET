@@ -196,7 +196,7 @@ public class ServiceBaselineTests : ServiceTestBase
     ///  succeed for every file that was recorded before the abort.
     /// </summary>
     /// <remarks>
-    /// Abort is signalled via <see cref="TapeFileAgent.IsAbortRequested"/> because
+    /// Abort is signalled via <see cref="TapeAgentBase.IsAbortRequested"/> because
     ///  <see cref="TapeServiceBase.OperationCancellationToken"/> returns
     ///  <see cref="CancellationToken.None"/> on the base class; the CT→agent bridge
     ///  is only wired in the <c>TapeService</c> subclass.
