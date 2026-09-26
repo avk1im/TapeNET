@@ -275,7 +275,7 @@ public partial class TapeServiceBase
     ///  everything (the user is blocked right now); a BOM recovery outranks a delta one (the tail is
     ///  damaged, not merely miscounted) even when the delta recoveries are more numerous.
     /// </remarks>
-    protected static SetAnomalyAdvice AdviseOnSetAnomalies(in TapeSetStatistics sets)
+    public static SetAnomalyAdvice AdviseOnSetAnomalies(in TapeSetStatistics sets)
     {
         if (sets.SetWriteBlocked) return SetAnomalyAdvice.WriteRefused;
         if (sets.AnomaliesRecoveredFromBom > 0) return SetAnomalyAdvice.RepairTrailingSets;
@@ -285,7 +285,7 @@ public partial class TapeServiceBase
     }
 
     /// <summary>Renders an advice as a headline plus one actionable sub-line.</summary>
-    protected static (ServiceReportLevel Level, string Headline, string Action) AdviseText(
+    public static (ServiceReportLevel Level, string Headline, string Action) AdviseText(
         SetAnomalyAdvice advice) => advice switch
         {
             SetAnomalyAdvice.RepairTrailingSets => (

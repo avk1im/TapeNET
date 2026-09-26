@@ -89,6 +89,16 @@ internal static class BackupCommand
         {
             Description = "Overwrite media carrying data without prompt.",
         };
+        var skipSetCorrectionOption = new Option<bool>("--skip-set-correction")
+        {
+            Description = "Do not attempt to correct backup set navigation errors.",
+        };
+        var skipSetVerifyOption = new Option<bool>("--skip-set-verify")
+        {
+            Description = "Skip backup set verification before overwriting (repair mode). " +
+                          "Not a performance option: an append at end-of-data performs no verification at all, " +
+                          "so there is no time to save; use ONLY to repair media whose set markers are damaged.",
+        };
 
         cmd.Arguments.Add(filesArg);
         cmd.Options.Add(descOption);
@@ -104,6 +114,8 @@ internal static class BackupCommand
         cmd.Options.Add(ejectWhenDoneOption);
         cmd.Options.Add(emergencyTocOption);
         cmd.Options.Add(overwriteMediaOption);
+        cmd.Options.Add(skipSetCorrectionOption);
+        cmd.Options.Add(skipSetVerifyOption);
 
         cmd.SetAction(async (parseResult, ct) =>
         {
@@ -123,6 +135,8 @@ internal static class BackupCommand
             var ejectWhenDone = parseResult.GetValue(ejectWhenDoneOption);
             var emergency   = parseResult.GetValue(emergencyTocOption);
             var overwriteMedia = parseResult.GetValue(overwriteMediaOption);
+            var skipSetCorrection = parseResult.GetValue(skipSetCorrectionOption);
+            var skipSetVerify = parseResult.GetValue(skipSetVerifyOption);
             var filterFcl   = parseResult.GetValue(FilterOptions.Filter);
             var filterFile  = parseResult.GetValue(FilterOptions.FilterFile);
 
@@ -170,10 +184,13 @@ internal static class BackupCommand
             {
                 NoMultivolume = noMultivolume,
                 ProceedOnMediaMismatch = overwriteMedia,
+                CorrectSetNavigation = !skipSetCorrection,
+                VerifySetHeader = !skipSetVerify,
             };
 
             var result = await service.ExecuteBackupAsync(options);
-            return (int)VerbHost.ToExitCode(result.WasAborted, result.HasFailed || result.FilesFailed > 0);
+            return (int)VerbHost.ToExitCode(result.WasAborted, result.HasFailed || result.FilesFailed > 0,
+                result.Sets.SetWriteBlocked);
         });
 
         return cmd;
