@@ -1,5 +1,4 @@
 using System;
-using System.Text;
 
 namespace TapeLibNET;
 
@@ -80,6 +79,30 @@ public sealed record TapeMediaHeader : TapeHeader
     public string? OriginalName { get; init; }
 
     /// <summary>
+    /// Whether the sets on this volume carry their own <see cref="TapeSetHeader"/> (SH-1).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Presence is declared, never probed.</b> The media header is already read once per volume at
+    ///  every content choke-point and at every load, so this flag rides along at zero I/O cost — and
+    ///  re-resolves per volume for free, which is what makes a mixed series (legacy volume 1, headed
+    ///  volume 2+) answer correctly on each cartridge. Probing instead would turn "no header here"
+    ///  into an ambiguity (blank? torn? legacy? foreign?) at a point where the answer is knowable.
+    /// </para>
+    /// <para>
+    /// A volume is headed-with-sets, headed-without-sets, or legacy — never mixed within itself. The
+    ///  middle state is what this flag exists to express: media written before set headers shipped.
+    /// </para>
+    /// <para>
+    /// <b>Serialized AFTER <see cref="OriginalName"/></b>, deliberately: a header written before this field existed then
+    ///  deserializes correctly, because the extra read either falls off the end of the frame or
+    ///  lands on the block's zero padding — both yield FALSE, the right legacy answer. Placing it
+    ///  before the string (the tidier "variable-length last" convention) would misparse those bytes.
+    /// </para>
+    /// </remarks>
+    public bool HasSetHeaders { get; init; }
+
+    /// <summary>
     /// A never-empty, human-readable name: the recorded <see cref="OriginalName"/> when present,
     ///  otherwise one synthesized from <see cref="MediaId"/>, <see cref="Volume"/>, and
     ///  <see cref="TapeHeader.CreatedUtc"/>.
@@ -92,23 +115,10 @@ public sealed record TapeMediaHeader : TapeHeader
     /// <summary>
     /// Clamps a candidate name to the header's UTF-8 byte budget so the framed record always fits one
     ///  <see cref="TapeHeader.FixedHeaderBlockSize"/> block. A null or empty name maps to
-    ///  <see langword="null"/> ("no name recorded").
+    ///  <see langword="null"/> ("no name recorded"). Delegates to <see cref="TapeHeader.ClampUtf8"/>
+    ///  with the header's budget.
     /// </summary>
-    public static string? ClampName(string? name)
-    {
-        if (string.IsNullOrEmpty(name))
-            return null;
-
-        if (Encoding.UTF8.GetByteCount(name) <= c_maxOriginalNameBytes)
-            return name;
-
-        // Trim by whole characters until it fits — simple and safe; names this long never occur in practice.
-        var span = name.AsSpan();
-        while (span.Length > 0 && Encoding.UTF8.GetByteCount(span) > c_maxOriginalNameBytes)
-            span = span[..^1];
-
-        return span.ToString();
-    }
+    public static string? ClampName(string? name) => ClampUtf8(name, c_maxOriginalNameBytes);
 
     /// <inheritdoc/>
     public override void SerializeTo(TapeSerializer s)
@@ -119,6 +129,12 @@ public sealed record TapeMediaHeader : TapeHeader
         s.Serialize((byte)Partition);
         s.Serialize((byte)TocPlacement);
         s.Serialize(OriginalName ?? string.Empty);   // empty stands in for "no name"; normalized back to null on read
+
+        // Serialized AFTER OriginalName, deliberately: a header written before this field existed then
+        //  deserializes correctly, because the extra read either falls off the end of the frame or
+        //  lands on the block's zero padding — both yield FALSE, the right legacy answer. Placing it
+        //  before the string (the tidier "variable-length last" convention) would misparse those bytes.
+        s.Serialize(HasSetHeaders ? (byte)1 : (byte)0);
     }
 
     /// <summary>
@@ -131,6 +147,7 @@ public sealed record TapeMediaHeader : TapeHeader
         var partition = (MediaPartition)(d.DeserializeBytes(1)?[0] ?? (byte)MediaPartition.Content);
         var placement = (TapeTocPlacement)(d.DeserializeBytes(1)?[0] ?? (byte)TapeTocPlacement.InSet);
         string name   = d.DeserializeString();
+        bool hasSetHeaders = ReadSetHeadersFlag(d);
 
         return new TapeMediaHeader
         {
@@ -141,10 +158,27 @@ public sealed record TapeMediaHeader : TapeHeader
             Partition    = partition,
             TocPlacement = placement,
             OriginalName = string.IsNullOrEmpty(name) ? null : name,
+            HasSetHeaders = hasSetHeaders,
         };
+    }
+
+    // Reads the trailing set-header flag, tolerating its absence on media written before the field
+    //  existed. Such a header's frame simply ends here, so the read may return null OR throw,
+    //  depending on how the framer bounds the record — both mean "no flag recorded" = false.
+    private static bool ReadSetHeadersFlag(TapeDeserializer d)
+    {
+        try
+        {
+            return (d.DeserializeBytes(1)?[0] ?? 0) != 0;
+        }
+        catch (Exception)
+        {
+            return false;   // pre-set-header media: field absent, not corrupt
+        }
     }
 
     /// <inheritdoc/>
     public override string ToString() =>
-        $"Media header — id {MediaId:N}, volume {Volume} / partition {Partition}, created {CreatedUtc:u}, name \"{DisplayName}\"";
+        $"Media header — id {MediaId:N}, volume {Volume} / partition {Partition}, " +
+        $"created {CreatedUtc:u}, set headers {(HasSetHeaders ? "yes" : "no")}, name \"{DisplayName}\"";
 }

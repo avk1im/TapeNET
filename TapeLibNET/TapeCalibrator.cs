@@ -60,7 +60,7 @@ public readonly record struct TapeCalibrationProgress(
 /// </para>
 /// </reamrks>
 /// </summary>
-public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibrator>(drive)
+public sealed class TapeCalibrator : TapeDriveHolder<TapeCalibrator>
 {
     #region *** Constants ***
 
@@ -83,6 +83,56 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         WIN32_ERROR.ERROR_DEV_NOT_EXIST,         // 0x1B1 — the reset already surprise-removed the device
         WIN32_ERROR.ERROR_DEVICE_NOT_CONNECTED,  // 0x4E7 — ditto (Win10+)
     ];
+
+    #endregion
+
+    #region *** Error latching and result building
+
+    /// <summary>
+    /// Builder for the current run's result, latching on the FIRST failure.
+    /// </summary>
+    /// <remarks>
+    /// A calibration verb spans many steps, several of which deliberately TOLERATE a failure and reset
+    ///  the error (<see cref="FindLastCheckpoint"/>'s BOP exits, <see cref="InspectMedia"/>'s final
+    ///  reset, the legacy-header probe in <see cref="ReadRunHeader"/>). The live error state is therefore
+    ///  a poor witness by the time a verb returns null — it reflects the last tolerated step, not the
+    ///  thing that went wrong. Mirrors <c>TapeAgentBase._resultBuilder</c>.
+    /// <para>
+    /// Mirrors the mechanism in <seealso cref="TapeAgentBase._resultBuilder"/> and
+    ///  <seealso cref="TapeAgentBase.LastResult"/>.
+    /// </para>
+    /// </remarks>
+    private readonly TapeResultBuilder _resultBuilder;   // note: field init needs `this` — see 1b
+
+    /// <summary>Latches the current error state as this run's failure, if none is latched yet.</summary>
+    private void LatchFailure() => _resultBuilder.LatchFailure();
+
+    /// <summary>Clears the latch. Called by every public verb at entry.</summary>
+    private void ResetLatchedFailure() => _resultBuilder.Reset();
+
+    /// <summary>
+    /// The result to return from a failed run: the latched first failure, else the live error, else an
+    ///  explicit fallback. Never a silent <c>(false, 0, "")</c>.
+    /// </summary>
+    private TapeResult FailedRunResult => _resultBuilder.BuildFailure(
+        IsAbortRequested ? (uint)WIN32_ERROR.ERROR_CANCELLED : (uint)WIN32_ERROR.ERROR_INVALID_STATE,
+        IsAbortRequested ? "Calibration aborted by user request" : "Calibration did not complete");
+
+    /// <summary>
+    /// Diagnosis of the current (or most recent) run: its first failure, or <see cref="TapeResult.OK"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The calibration counterpart to <c>TapeAgentBase.LastResult</c>, and the reason it matters MORE
+    ///  here: the run verbs return <c>ITapeCalibration?</c>, so <see langword="null"/> is the only signal
+    ///  the caller gets. This property is what turns that null into an explanation.
+    /// </para>
+    /// <para>
+    /// Complements, never replaces, the returned artifact: a non-null calibration means success, and this
+    ///  property is then <see cref="TapeResult.OK"/>. Reset by the next verb that starts.
+    /// </para>
+    /// </remarks>
+    public TapeResult LastResult => _resultBuilder.Result;
 
     #endregion
 
@@ -127,6 +177,15 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
 
     #endregion
 
+    #region *** Construction ***
+
+    public TapeCalibrator(TapeDrive drive) : base(drive)
+    {
+        _resultBuilder = new(this);
+    }
+
+    #endregion
+
     #region *** Public API ***
 
     /// <summary>
@@ -139,12 +198,14 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
     public ITapeCalibration? Run(IProgress<TapeCalibrationProgress>? progress = null)
     {
         ResetError();
+        ResetLatchedFailure();   // fresh verb ⇒ fresh diagnosis
         IsAbortRequested = false;
         ForeignHeader = null;
 
         if (!Drive.IsMediaLoaded)
         {
             SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
+            LatchFailure();
             LogErrorAsDebug("Calibration: no media loaded");
             return null;
         }
@@ -172,6 +233,8 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
             // Legacy version without the standardized TapeHeaderBlock: the run header is written in the run-block shape
             if (!records.Emit(header, ref state.BytesWritten, writeLeadingFilemark: false))
             {
+                SetError(WIN32_ERROR.ERROR_WRITE_FAULT);
+                LatchFailure();
                 LogErrorAsDebug("Calibration: failed to write run header");
                 return null;
             }
@@ -185,6 +248,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
                 if (!TapeHeaderBlock.Write(Drive, header))
                 {
                     SyncErrorFrom(Drive);
+                    LatchFailure();
                     LogErrorAsDebug("Calibration: failed to write run header");
                     return null;
                 }
@@ -200,6 +264,9 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
 
                 if (!records.Emit(header, ref state.BytesWritten, writeLeadingFilemark: false))
                 {
+                    SyncErrorFrom(Drive); // the error here can only stem from the drive
+                                          //  records might've done m_cal.SyncErrorFrom(Drive) already, but to be sure
+                    LatchFailure();
                     LogErrorAsDebug("Calibration: failed to write run header");
                     return null;
                 }
@@ -233,6 +300,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
     public ITapeCalibration? Resume(IProgress<TapeCalibrationProgress>? progress = null)
     {
         ResetError();
+        ResetLatchedFailure();   // fresh verb ⇒ fresh diagnosis
         IsAbortRequested = false;
         ForeignHeader = null;
 
@@ -269,6 +337,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         ArgumentNullException.ThrowIfNull(existing);
 
         ResetError();
+        ResetLatchedFailure();   // fresh verb ⇒ fresh diagnosis
         IsAbortRequested = false;
         ForeignHeader = null;
 
@@ -328,6 +397,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         if (checkpoint is null)
         {
             SetError(WIN32_ERROR.ERROR_INVALID_DATA);
+            LatchFailure();
             LogErrorAsDebug("Resume: no valid checkpoint found — run failed before the first checkpoint");
             return null;
         }
@@ -351,6 +421,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         if (!Drive.MoveToNextFilemark(-1))
         {
             SyncErrorFrom(Drive);
+            LatchFailure();
             LogErrorAsDebug("Resume: failed to reposition for continuation");
             return null;
         }
@@ -363,6 +434,9 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
             state.RunId, state.CheckpointIndex, state.BytesWritten, state.EwPoint, state.Samples);
         if (!records.Emit(reCheckpoint, ref state.BytesWritten, writeLeadingFilemark: true))
         {
+            SyncErrorFrom(Drive); // the error here can only stem from the drive
+                                  //  records might've done m_cal.SyncErrorFrom(Drive) already, but to be sure
+            LatchFailure();
             LogErrorAsDebug("Resume: failed to rewrite boundary checkpoint");
             return null;
         }
@@ -391,6 +465,8 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
     public TapeCalibrationMediaInfo? InspectMedia()
     {
         ResetError();
+        ResetLatchedFailure();   // fresh verb ⇒ fresh diagnosis
+        IsAbortRequested = false;
         ForeignHeader = null;
 
         TapeCalibrationHeader? header = ReadRunHeader(out _, out byte[] recordBuffer);
@@ -400,7 +476,11 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         // Locate the last CRC-valid checkpoint of this run (read-only; null ⇒ header-only / all torn).
         TapeCalibrationCheckpoint? last = FindLastCheckpoint(header.RunId, recordBuffer, out _);
 
+        // A missing/torn checkpoint is NOT an inspection failure — the header alone is a valid answer.
+        //  Clear BOTH the live error and the latch, so LastResult reports the success this return
+        //  represents rather than a tolerated intermediate.
         ResetError();
+        ResetLatchedFailure();
         return new TapeCalibrationMediaInfo(header, last);
     }
 
@@ -420,6 +500,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         if (!Drive.IsMediaLoaded)
         {
             SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
+            LatchFailure();
             LogErrorAsDebug("Calibration inspect: no media loaded");
             return null;
         }
@@ -433,6 +514,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         if (!Drive.Rewind())
         {
             SyncErrorFrom(Drive);
+            LatchFailure();
             LogErrorAsDebug("Calibration inspect: failed to rewind to header");
             return null;
         }
@@ -471,11 +553,13 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         {
             ForeignHeader = any;
             SetError(WIN32_ERROR.ERROR_INVALID_DATA);
+            LatchFailure();
             LogErrorAsDebug($"Calibration inspect: foreign header — {any}");
             return null;
         }
 
         SetError(WIN32_ERROR.ERROR_INVALID_DATA);
+        LatchFailure();
         LogErrorAsDebug("Calibration inspect: no valid calibration header on this cartridge");
         return null;
     }
@@ -632,6 +716,8 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
                             progress?.Report(new TapeCalibrationProgress(
                                 state.BytesWritten, rrFault, -1, EarlyWarning: true, EndOfMedium: true, "eom-inferred"));
 
+                            ResetError(); // we do not treat surrogate EOM as a failure
+
                             m_logger.LogWarning(
                                 "{Prefix}: Calibration EOM inferred at {Bytes} bytes — drive faulted past EW ({Err}) instead " +
                                 "of a clean overflow; accepting last position as physical EOM",
@@ -640,6 +726,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
                             return FinalizeCalibration(capacityReportedAtBom, state, eomInferred: true);
                         }
 
+                        LatchFailure();
                         LogErrorAsDebug("Calibration: write failed before EOM");
                         return null;
                     }
@@ -676,6 +763,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
                         // A checkpoint write failed — the last checkpoint still stands, so resume remains
                         //  possible. Surface the error and stop.
                         SyncErrorFrom(Drive);
+                        LatchFailure();
                         LogErrorAsWarning("Calibration: failed to write checkpoint — stopping (run stays resumable)");
                         return null;
                     }
@@ -693,9 +781,14 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         catch (Exception ex)
         {
             if (Drive.LastErrorWin32 == WIN32_ERROR.NO_ERROR)
-                SetError(WIN32_ERROR.ERROR_IO_DEVICE);
+                SetError(ex); // likely more descriptive than just WIN32_ERROR.ERROR_IO_DEVICE
             else
                 SyncErrorFrom(Drive);
+
+            // Latch before rethrowing: the service catches this and builds its own diagnosis from the
+            //  exception, but LastResult should still describe the run for anything that inspects the
+            //  calibrator afterwards.
+            LatchFailure();
 
             m_logger.LogError(ex, "{Prefix}: Calibration: exception during run", LogPrefix);
             throw; // we don't catch exceptions here -- the caller is reposible for handling them
@@ -717,6 +810,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         if (capacityActual <= 0)
         {
             SetError(WIN32_ERROR.ERROR_IO_DEVICE);
+            LatchFailure();
             LogErrorAsDebug("Calibration: reached EOM with zero bytes written");
             return null;
         }
@@ -755,6 +849,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         if (!Drive.MoveToPartition(MediaPartition.Content) || !Drive.Rewind())
         {
             SyncErrorFrom(Drive);
+            LatchFailure();
             LogErrorAsDebug("Calibration: failed to rewind content partition");
             return false;
         }
@@ -762,6 +857,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         if (!Drive.SetBlockSize(plan.BlockSize))
         {
             SyncErrorFrom(Drive);
+            LatchFailure();
             LogErrorAsDebug("Calibration: failed to set block size");
             return false;
         }
@@ -773,7 +869,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
                 SetError(WIN32_ERROR.ERROR_INVALID_PARAMETER);
             else
                 SyncErrorFrom(Drive);
-
+            LatchFailure();
             LogErrorAsDebug("Calibration: drive reports zero block size");
             return false;
         }
@@ -829,6 +925,7 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
                 else
                     SyncErrorFrom(Drive);
 
+                LatchFailure();
                 LogErrorAsDebug("Calibration: drive reports zero capacity at BOM");
                 return false;
             }
@@ -836,9 +933,14 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
         catch (Exception ex)
         {
             if (Drive.LastErrorWin32 == WIN32_ERROR.NO_ERROR)
-                SetError(WIN32_ERROR.ERROR_IO_DEVICE);
+                SetError(ex); // might be more descriptive than just WIN32_ERROR.ERROR_IO_DEVICE
             else
                 SyncErrorFrom(Drive);
+
+            // Latch before rethrowing: the service catches this and builds its own diagnosis from the
+            //  exception, but LastResult should still describe the run for anything that inspects the
+            //  calibrator afterwards.
+            LatchFailure();
 
             m_logger.LogError(ex, "{Prefix}: Calibration: exception during BOM capacity setup", LogPrefix);
             throw; // we don't catch exceptions here -- the caller is reposible for handling them
@@ -894,13 +996,17 @@ public sealed class TapeCalibrator(TapeDrive drive) : TapeDriveHolder<TapeCalibr
             // Forward over that filemark lands at the start of the checkpoint block it precedes.
             if (!Drive.MoveToNextFilemark(1))
             {
+                // hitting BOP is ok, but not being able to advance over a detected FM is an error
                 SyncErrorFrom(Drive);
+                LatchFailure();
+                m_logger.LogError("{Prefix}: Resume — failed to read checkpoint at -{N} FM", LogPrefix, n);
                 return null;
             }
 
             TapeCalibrationCheckpoint? cp = ReadRecord<TapeCalibrationCheckpoint>(recordBuffer);
             if (cp is not null && cp.RunId == runId)
             {
+                m_logger.LogTrace("{Prefix}: Resume — successfully read checkpoint at -{N} FM", LogPrefix, n);
                 filemarksBack = n;
                 return cp;               // valid, same run → done
             }

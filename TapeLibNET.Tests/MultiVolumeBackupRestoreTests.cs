@@ -8,7 +8,10 @@ namespace TapeLibNET.Tests;
 public sealed class MultiVolumeBackupRestoreTests_Headerless : MultiVolumeBackupRestoreTestsBase
 { protected override VolumeHeaderMode HeaderMode => VolumeHeaderMode.None; }
 
-public sealed class MultiVolumeBackupRestoreTests_Headed : MultiVolumeBackupRestoreTestsBase
+public sealed class MultiVolumeBackupRestoreTests_MediaHeader : MultiVolumeBackupRestoreTestsBase
+{ protected override VolumeHeaderMode HeaderMode => VolumeHeaderMode.MediaOnly; }
+
+public sealed class MultiVolumeBackupRestoreTests_SetHeaders : MultiVolumeBackupRestoreTestsBase
 { protected override VolumeHeaderMode HeaderMode => VolumeHeaderMode.All; }
 
 public sealed class MultiVolumeBackupRestoreTests_MixHeaded : MultiVolumeBackupRestoreTestsBase
@@ -72,6 +75,96 @@ public abstract class MultiVolumeBackupRestoreTestsBase
 
     /// <summary>Maximum file size (bytes, exclusive for <see cref="TempFileTree.AddFiles"/>).</summary>
     private const int MaxFileSize = 32 * 1024;
+
+    #endregion
+
+
+    #region *** Fixture Validation ***
+
+    /// <summary>
+    /// Expected media-header presence for <paramref name="volume"/> under this flavour's
+    ///  <see cref="HeaderMode"/>.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately spells the enum's contract out HERE rather than calling the fixture's own predicate:
+    ///  a test that asks the fixture what it intended, then checks the tape against that answer, cannot
+    ///  catch a fixture whose intent is itself wrong. This states the contract independently.
+    /// </remarks>
+    private bool ExpectsMediaHeader(int volume) => HeaderMode switch
+    {
+        VolumeHeaderMode.All or VolumeHeaderMode.MediaOnly => true,
+        VolumeHeaderMode.Mixed => volume >= 2,
+        _ => false,
+    };
+
+    /// <summary>Expected set-header presence for <paramref name="volume"/> — always a subset of the above (SH-1).</summary>
+    private bool ExpectsSetHeaders(int volume) => HeaderMode switch
+    {
+        VolumeHeaderMode.All => true,
+        VolumeHeaderMode.Mixed => volume >= 2,
+        _ => false,
+    };
+
+    /// <summary>
+    /// The matrix's own guard, multi-volume edition: EVERY volume of the series must carry exactly the
+    ///  header shape its flavour declares — checked on the tape, volume by volume.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Unlike the single-volume fixture, nothing is written at construction: each volume is headed (or
+    ///  not) by the backup agent at the moment that volume becomes current. So the series must actually
+    ///  be produced before it can be inspected, and the inspection must visit each volume in turn.
+    /// </para>
+    /// <para>
+    /// This is what keeps <c>Mixed</c> honest. That flavour's whole purpose is that volume 1 and volumes
+    ///  2+ differ; if the fixture headed all of them — or none — every Mixed test would still pass, while
+    ///  covering nothing it claims to.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Fixture_ProducesTheDeclaredHeaderShapePerVolume(DriveProfile profile)
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("shape", count: FileCount, minSize: MinFileSize, maxSize: MaxFileSize);
+
+        using var fixture = CreateFixture(profile);
+        fixture.BackupFiles(tree.Files, "Header shape");
+
+        int volumes = fixture.TotalVolumes;
+        Assert.True(volumes >= 2,
+            $"the series must span to exercise per-volume shapes (got {volumes})");
+
+        for (int volume = 1; volume <= volumes; volume++)
+        {
+            // Swapping saves the outgoing volume first, so every volume — including the one currently
+            //  loaded — is reachable by number.
+            fixture.SwapToVolume(volume);
+
+            using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
+            var header = agent.ReadBomHeader() as TapeMediaHeader;
+
+            bool expectMedia = ExpectsMediaHeader(volume);
+            bool expectSets = ExpectsSetHeaders(volume);
+
+            if (!expectMedia)
+            {
+                Assert.True(header is null,
+                    $"volume #{volume} ({HeaderMode}) must carry NO media header");
+                Assert.False(agent.Navigator.SetHeadersExpected,
+                    $"volume #{volume}: no media header ⇒ no set headers (SH-1)");
+                continue;
+            }
+
+            Assert.True(header is not null,
+                $"volume #{volume} ({HeaderMode}) must carry a media header");
+            Assert.Equal(expectSets, header!.HasSetHeaders);
+
+            // The navigator's cached expectation must agree with the tape — this is what every
+            //  set-header read is gated on, so a divergence here would silently disable verification.
+            Assert.Equal(expectSets, agent.Navigator.SetHeadersExpected);
+        }
+    }
 
     #endregion
 

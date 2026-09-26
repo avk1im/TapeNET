@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using System.IO;
 
 using TapeLibNET;
@@ -37,15 +38,16 @@ public sealed class CatalogDrivenRemoteServiceHost(
     string baseVolumeName,
     VirtualTapeDriveCapabilities caps,
     long volumeCapacity,
-    string tempDirectory) : TestTapeServiceHost
+    string tempDirectory,
+    ILogger? logger = null) : TestTapeServiceHost(logger)
 {
     // ── Service reference ─────────────────────────────────────────────────────
 
     /// <summary>
-    /// The <see cref="TapeServiceBase"/> this host drives. Must be set immediately after
+    /// The <see cref="TestTapeService"/> this host drives. Must be set immediately after
     /// construction (before any backup/restore operations begin).
     /// </summary>
-    public TapeServiceBase Service { get; set; } = null!;
+    public TestTapeService Service { get; set; } = null!;
 
     // ── Tracking ──────────────────────────────────────────────────────────────
 

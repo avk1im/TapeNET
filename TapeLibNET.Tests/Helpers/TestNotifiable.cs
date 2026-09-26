@@ -15,6 +15,13 @@ public class TestNotifiable : ITapeFileNotifiable
     public record FileFailedEvent(TapeFileInfo FileInfo, TapeResult Result, TapeFileStatistics Stats);
     public record FileSkippedEvent(TapeFileInfo FileInfo, TapeFileStatistics Stats);
 
+    /// <summary>
+    /// One recorded set-level incident. Used for BOTH anomaly lists, overall and recovered  — the list
+    ///  names carry the meaning, so a second wrapper type would be pure ceremony.
+    ///  "Incident" rather than "Event" to avoid reading as a C# <see langword="event"/>.
+    /// </summary>
+    public record SetAnomalyIncident(TapeSetAnomaly Anomaly, TapeFileStatistics Stats);
+
     #endregion
 
     #region *** Recorded Events ***
@@ -25,6 +32,9 @@ public class TestNotifiable : ITapeFileNotifiable
     public List<PostProcessEvent> PostProcessed { get; } = [];
     public List<FileFailedEvent> FilesFailed { get; } = [];
     public List<FileSkippedEvent> FilesSkipped { get; } = [];
+
+    public List<SetAnomalyIncident> SetAnomalies { get; } = [];
+    public List<SetAnomalyIncident> SetAnomaliesRecovered { get; } = [];
 
     #endregion
 
@@ -47,6 +57,30 @@ public class TestNotifiable : ITapeFileNotifiable
     /// When set, <see cref="FailedAction"/> is ignored.
     /// </summary>
     public Func<TapeFileInfo, TapeResult, FileFailedAction>? FailedActionFunc { get; set; }
+
+    /// <summary>
+    /// Optional callback invoked from <see cref="PreProcessFile"/> AFTER the event is recorded and the
+    ///  proactive-abort triggers are evaluated. Returning <see langword="false"/> suppresses further
+    ///  processing of the file, exactly as the interface contract allows.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="AbortInPreProcessAfterN"/>, which THROWS. This hook lets a test act
+    ///  without throwing — e.g. to set <see cref="TapeAgentBase.IsAbortRequested"/> directly,
+    ///  exercising the caller's abort channel rather than the exception one.
+    /// </remarks>
+    public Func<TapeFileInfo, TapeFileStatistics, bool>? PreProcessFunc { get; set; }
+
+    /// <summary>
+    /// Optional callback invoked from <see cref="PostProcessFile"/> AFTER the event is recorded and the
+    ///  proactive-abort triggers are evaluated. Returning <see langword="false"/> suppresses further
+    ///  processing of the file, exactly as the interface contract allows.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="AbortInPostProcessAfterN"/>, which THROWS. This hook lets a test act
+    ///  without throwing — e.g. to set <see cref="TapeAgentBase.IsAbortRequested"/> directly,
+    ///  exercising the caller's abort channel rather than the exception one.
+    /// </remarks>
+    public Func<TapeFileInfo, TapeFileStatistics, bool>? PostProcessFunc { get; set; }
 
     /// <summary>
     /// When positive, <see cref="PreProcessFile"/> throws
@@ -79,16 +113,32 @@ public class TestNotifiable : ITapeFileNotifiable
     /// </summary>
     public int AbortInPostProcessAfterN { get; set; } = 0;
 
+    /// <summary>
+    /// Action to return from <see cref="OnSetAnomaly"/>. Defaults to <see cref="SetAnomalyAction.Proceed"/>.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately the OPPOSITE of the interface default: a test notifiable exists to exercise the
+    ///  library's own decisions, so it must not veto them before they run. Tests that want the veto set
+    ///  this explicitly — which is the clearer statement of intent anyway.
+    /// </remarks>
+    public SetAnomalyAction SetAnomalyAction { get; set; } = SetAnomalyAction.Proceed;
+
+    /// <summary>Overrides <see cref="SetAnomalyAction"/> when set. Mirrors <see cref="FailedActionFunc"/>.</summary>
+    public Func<TapeSetAnomaly, SetAnomalyAction>? SetAnomalyActionFunc { get; set; }
+
+    /// <summary>When true, <see cref="OnSetAnomaly"/> THROWS instead of returning — the exception channel.</summary>
+    public bool ThrowOnSetAnomaly { get; set; } = false;
+
     #endregion
 
     #region *** ITapeFileNotifiable ***
 
-    public void BatchStart(int setIndex, in TapeFileStatistics stats)
+    public void SetStart(int setIndex, in TapeFileStatistics stats)
     {
         BatchStarts.Add(new BatchStartEvent(setIndex, stats));
     }
 
-    public void BatchEnd(int setIndex, in TapeFileStatistics stats)
+    public void SetEnd(int setIndex, in TapeFileStatistics stats)
     {
         BatchEnds.Add(new BatchEndEvent(setIndex, stats));
     }
@@ -102,7 +152,8 @@ public class TestNotifiable : ITapeFileNotifiable
             throw new TapeAbortRequestedException($"Test abort at PreProcess #{PreProcessed.Count}");
 
         // Skip if in the skip set
-        return !FilesToSkip.Contains(fileInfo.FileDescr.FullName);
+        return !FilesToSkip.Contains(fileInfo.FileDescr.FullName)
+            && (PreProcessFunc?.Invoke(fileInfo, stats) ?? true);
     }
 
     public bool PostProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats)
@@ -117,18 +168,24 @@ public class TestNotifiable : ITapeFileNotifiable
         if (AbortInPostProcessAfterN > 0 && stats.FilesSucceeded >= AbortInPostProcessAfterN)
             throw new TapeAbortRequestedException($"Test abort in PostProcess after {stats.FilesSucceeded} succeeded files");
 
-        return true;
+        return PostProcessFunc?.Invoke(fileInfo, stats) ?? true;
     }
 
     public FileFailedAction OnFileFailed(TapeFileInfo fileInfo, TapeResult result, in TapeFileStatistics stats)
     {
         FilesFailed.Add(new FileFailedEvent(fileInfo, result, stats));
 
+        // NOTE: deliberately no special-casing of ERROR_CANCELLED. A thrown TapeAbortRequestedException
+        //  is now caught by the agents' own handlers, which record IsAbortRequested and stop the loop —
+        //  it must NOT arrive here as a file failure. If it does, the agent lost the abort, and the
+        //  convergence tests in region (J) should catch that rather than have this helper paper over it.
+        /*
         // TapeAbortRequestedException (from PreProcess/PostProcess) routes through the
         //  generic catch → OnFileFailed. We must cooperate by returning Abort so the
         //  backup/restore loop actually stops.
         if (result.ErrorCode == (uint)Windows.Win32.Foundation.WIN32_ERROR.ERROR_CANCELLED)
             return FileFailedAction.Abort;
+        */
 
         return FailedActionFunc?.Invoke(fileInfo, result) ?? FailedAction;
     }
@@ -137,6 +194,17 @@ public class TestNotifiable : ITapeFileNotifiable
     {
         FilesSkipped.Add(new FileSkippedEvent(fileInfo, stats));
     }
+
+    public SetAnomalyAction OnSetAnomaly(in TapeSetAnomaly anomaly, in TapeFileStatistics stats)
+    {
+        SetAnomalies.Add(new SetAnomalyIncident(anomaly, stats));
+        if (ThrowOnSetAnomaly)
+            throw new TapeAbortRequestedException($"Test abort at set anomaly: {anomaly.Verdict}");
+        return SetAnomalyActionFunc?.Invoke(anomaly) ?? SetAnomalyAction;
+    }
+
+    public void OnSetAnomalyRecovered(in TapeSetAnomaly anomaly, in TapeFileStatistics stats)
+        => SetAnomaliesRecovered.Add(new SetAnomalyIncident(anomaly, stats));
 
     #endregion
 
@@ -170,15 +238,39 @@ public class TestNotifiable : ITapeFileNotifiable
         Assert.Equal(0, finalStats.FilesSkipped);
     }
 
+    /// <summary>
+    /// Asserts the set-level counterpart of <see cref="AssertAllSucceeded"/>: every set entered was
+    ///  completed cleanly, and nothing was detected, recovered, or blocked.
+    /// </summary>
+    public void AssertNoSetAnomalies(int expectedSets = -1)
+    {
+        Assert.NotEmpty(BatchEnds);
+        var sets = BatchEnds[^1].Stats.Sets;
+
+        Assert.Equal(0, sets.AnomaliesDetected);
+        Assert.Equal(0, sets.AnomaliesRecovered);
+        Assert.False(sets.SetWriteBlocked);
+        Assert.Equal(sets.SetsProcessed, sets.SetsSucceeded);
+        if (expectedSets >= 0)
+            Assert.Equal(expectedSets, sets.SetsProcessed);
+
+        Assert.Empty(SetAnomalies);
+        Assert.Empty(SetAnomaliesRecovered);
+    }
+
     /// <summary>Resets all recorded events for reuse across operations.</summary>
     public void Clear()
     {
         BatchStarts.Clear();
         BatchEnds.Clear();
+
         PreProcessed.Clear();
         PostProcessed.Clear();
         FilesFailed.Clear();
         FilesSkipped.Clear();
+
+        SetAnomalies.Clear();
+        SetAnomaliesRecovered.Clear();
     }
 
     #endregion

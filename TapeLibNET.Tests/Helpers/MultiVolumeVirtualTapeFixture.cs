@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Security.Cryptography.Xml;
 using TapeLibNET;
 using TapeLibNET.Virtual;
 
@@ -7,14 +8,37 @@ namespace TapeLibNET.Tests.Helpers;
 
 #region *** Media Header ***
 
-/// <summary>How the volumes of a multi-volume series receive media headers.</summary>
+/// <summary>How the volumes of a multi-volume series receive headers.</summary>
+/// <remarks>
+/// One axis, not two: set headers require a media header (SH-1), so the meaningful combinations are
+///  few enough to enumerate. A separate <c>withSetHeaders</c> flag would permit
+///  <c>(None, true)</c> — rejected at construction anyway — and would leave the reader to work out
+///  which pairs are real.
+/// </remarks>
 public enum VolumeHeaderMode
 {
     /// <summary>No volume is headed — a fully legacy series.</summary>
     None,
-    /// <summary>Every volume is headed — a fully modern series.</summary>
+
+    /// <summary>
+    /// Every volume carries a media header, but NO set headers — the shape written by the release that
+    ///  shipped media headers alone. SH-1's middle state, and the only one that proves
+    ///  <c>HasSetHeaders = false</c> is honoured rather than inferred from presence.
+    /// </summary>
+    MediaOnly,
+
+    /// <summary>Every volume carries a media header AND per-set headers — a fully modern series.</summary>
     All,
-    /// <summary>Volume 1 legacy (headerless), volumes 2+ modern (headed) — the mixed series of design §10.4.</summary>
+
+    /// <summary>
+    /// Volume 1 legacy (header-less), volumes 2+ fully headed — the mixed series of design §10.4.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately two-way, not three-way. A three-way mix would depend on how many volumes a given
+    ///  test actually spans — which varies by profile and capacity — so it could not state what it
+    ///  covers. Two-way pins the property that matters: per-volume re-resolution of
+    ///  <see cref="TapeNavigator.SetHeadersExpected"/>, the §10 regression guard.
+    /// </remarks>
     Mixed,
 }
 
@@ -69,8 +93,14 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// <summary>Number of volume snapshots saved (equals swaps performed).</summary>
     public int VolumeCount => _volumeSnapshots.Count;
 
-    /// <summary>Total volumes used (snapshots + current loaded volume).</summary>
-    public int TotalVolumes => _volumeSnapshots.Count + (Backend.ContentMedia != null ? 1 : 0);
+    /// <summary>Highest volume number in use — snapshots plus whatever is loaded right now.</summary>
+    /// <remarks>
+    /// A MAX, not a sum: once a volume has been both snapshotted and re-loaded it appears in both, so
+    ///  adding them would over-count after any <see cref="SwapToVolume"/>.
+    /// </remarks>
+    public int TotalVolumes => Math.Max(
+        _volumeSnapshots.Count == 0 ? 0 : _volumeSnapshots.Keys.Max(),
+        Backend.ContentMedia != null ? _loadedVolume : 0);
 
     /// <summary>Content capacity per volume in bytes.</summary>
     public long ContentCapacity { get; }
@@ -84,20 +114,75 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
     #endregion
 
-    #region *** Media Header ***
+    #region *** Media Header and Set Headers ***
 
     VolumeHeaderMode HeaderMode { get; init; }
 
+    /// <summary>Whether <paramref name="volumeNumber"/> carries a media header.</summary>
     private bool ShouldHeadVolume(int volumeNumber) => HeaderMode switch
     {
-        VolumeHeaderMode.All => true,
-        VolumeHeaderMode.Mixed => volumeNumber >= 2,   // legacy vol 1, modern vol 2+  (design §10.4)
+        VolumeHeaderMode.All or VolumeHeaderMode.MediaOnly => true,
+        VolumeHeaderMode.Mixed => volumeNumber >= 2,   // legacy vol 1, modern vol 2+ (design §10.4)
         _ => false,
     };
+
+    /// <summary>
+    /// Whether <paramref name="volumeNumber"/> carries per-set headers. Implies a media header (SH-1),
+    ///  so this is always a subset of <see cref="ShouldHeadVolume"/>.
+    /// </summary>
+    private bool ShouldWriteSetHeaders(int volumeNumber) => HeaderMode switch
+    {
+        VolumeHeaderMode.All => true,
+        VolumeHeaderMode.Mixed => volumeNumber >= 2,
+        _ => false,   // None and MediaOnly both write no set headers
+    };
+
+    /// <summary>
+    /// Applies the header flags that <paramref name="volumeNumber"/> must carry under this fixture's
+    ///  <see cref="HeaderMode"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Needed because ONE agent spans every volume of a backup — <c>ResumeBackupToNextVolume</c> continues
+    ///  the same instance — so the flags captured at construction describe volume 1 only. In the field
+    ///  that is correct and immutable: a real session heads every volume alike.
+    /// </para>
+    /// <para>
+    /// A <see cref="VolumeHeaderMode.Mixed"/> series is therefore inherently CROSS-SESSION — volume 1
+    ///  written by a release that predates media headers, volumes 2+ by a later one (design §10.4). No
+    ///  single agent can produce it honestly, so the fixture re-stamps the flags at each swap. This
+    ///  fabricates a data shape; it does not model a production flow.
+    /// </para>
+    /// <para>
+    /// The window matters: this must run AFTER the new volume is inserted and BEFORE
+    ///  <c>ResumeBackupToNextVolume</c>, which is where the new volume's media header is written — and
+    ///  which is what stamps <see cref="TapeMediaHeader.HasSetHeaders"/> from
+    ///  <see cref="TapeAgentBase.WritesSetHeaders"/>.
+    /// </para>
+    /// </remarks>
+    private void ApplyHeaderFlagsForVolume(TapeFileBackupAgent agent, int volumeNumber)
+    {
+        agent.WritesMediaHeader = ShouldHeadVolume(volumeNumber);
+        agent.WritesSetHeaders = ShouldWriteSetHeaders(volumeNumber);
+    }
 
     #endregion
 
     #region *** Volume Snapshot Management ***
+
+    /// <summary>
+    /// Volume number of the media PHYSICALLY loaded in the drive right now.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately NOT <see cref="CurrentVolume"/> (= <c>TOC.Volume</c>), which is a LOGICAL property of
+    ///  the backup series. The two coincide only if <see cref="TapeFileRestoreBaseAgent.ResumeRestoreFromAnotherVolume"/>
+    ///  immediately following <see cref="SwapToVolume(int)"/> assigns <c>TOC.Volume</c> right after each
+    ///  swap — a side effect, not a guarantee. A caller that swaps WITHOUT resuming (e.g. inspecting each
+    ///  volume in turn) breaks the coincidence, and the outgoing snapshot would then overwrite another
+    ///  volume's entry.
+    /// </remarks>
+    private int _loadedVolume = 1;
+
 
     /// <summary>
     /// Saved volume snapshots keyed by 1-based volume number.
@@ -110,11 +195,11 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// Must be called while media is loaded (before <see cref="SwapToNewVolume"/>
     /// or <see cref="SwapToVolume"/>).
     /// </summary>
-    public void SaveCurrentVolumeSnapshot()
+    private void SaveCurrentVolumeSnapshot()
     {
         var snapshot = Backend.CaptureMemorySnapshot();
         Assert.NotNull(snapshot);
-        _volumeSnapshots[CurrentVolume] = snapshot;
+        _volumeSnapshots[_loadedVolume] = snapshot; // Note: _loadedVolume, NOT CurrentVolume!
     }
 
     /// <summary>
@@ -139,6 +224,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
         Assert.True(Drive.ReloadMedia(), $"Failed to load new volume #{newVolume}");
         Assert.True(Drive.PrepareMedia(), $"Failed to prepare new volume #{newVolume}");
 
+        _loadedVolume = newVolume; // important!
         return newVolume;
     }
 
@@ -152,7 +238,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
         // Save current state if media is still loaded
         var currentSnapshot = Backend.CaptureMemorySnapshot();
         if (currentSnapshot != null)
-            _volumeSnapshots[CurrentVolume] = currentSnapshot;
+            _volumeSnapshots[_loadedVolume] = currentSnapshot; // Note: _loadedVolume, NOT CurrentVolume!
 
         Assert.True(_volumeSnapshots.ContainsKey(volumeNumber),
             $"No snapshot for volume #{volumeNumber}");
@@ -160,6 +246,8 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
         Backend.InsertMemoryMedia(_volumeSnapshots[volumeNumber]);
         Assert.True(Drive.ReloadMedia(), $"Failed to reload volume #{volumeNumber}");
         Assert.True(Drive.PrepareMedia(), $"Failed to prepare volume #{volumeNumber}");
+
+        _loadedVolume = volumeNumber; // important!
     }
 
     #endregion
@@ -174,7 +262,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// <param name="contentCapacity">Content partition capacity per volume.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     /// <param name="mediaDescription">Description for the initial TOC.</param>
-    /// <param name="headerMode">How the volumes of the series receive media headers.</param>
+    /// <param name="headerMode">How the volumes of the series receive media and set headers.</param>
     public MultiVolumeVirtualTapeFixture(
         DriveProfile profile = DriveProfile.Setmarks,
         long contentCapacity = DefaultContentCapacity,
@@ -219,10 +307,8 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// <summary>Creates a backup agent bound to this fixture's drive and TOC.</summary>
     public TapeFileBackupAgent CreateBackupAgent()
     {
-        var agent = new TapeFileBackupAgent(Drive, TOC)
-            {
-                WritesMediaHeader = ShouldHeadVolume(TOC.Volume)
-            };
+        var agent = new TapeFileBackupAgent(Drive, TOC);
+        ApplyHeaderFlagsForVolume(agent, TOC.Volume);
         agent.Navigator.TOCCapacity = TOCCapacityOverride;
         return agent;
     }
@@ -247,7 +333,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// </summary>
     public void SaveTOC()
     {
-        using var agent = new TapeFileAgent(Drive, TOC);
+        using var agent = new TapeAgentBase(Drive, TOC);
         agent.Navigator.TOCCapacity = TOCCapacityOverride;
         if (!agent.BackupTOC())
             Assert.True(agent.BackupTOC(enforce: true), "Failed to save TOC to tape (even with enforce)");
@@ -258,7 +344,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// </summary>
     public void LoadTOC()
     {
-        using var agent = new TapeFileAgent(Drive, TOC);
+        using var agent = new TapeAgentBase(Drive, TOC);
         agent.Navigator.TOCCapacity = TOCCapacityOverride;
         Assert.True(agent.RestoreTOC(), "Failed to restore TOC from tape");
         TOC = agent.TOC;
@@ -325,8 +411,10 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
                 Assert.True(agent.BackupTOC(enforce: true),
                     "Failed to save TOC before volume swap (even with enforce)");
 
-            // Swap to a fresh volume
-            SwapToNewVolume();
+            // Swap to a fresh volume, then re-stamp the header flags for it — see
+            //  ApplyHeaderFlagsForVolume() for why one agent cannot carry them across volumes.
+            int newVolume = SwapToNewVolume();
+            ApplyHeaderFlagsForVolume(agent, newVolume);
 
             // Resume backup on the new volume
             success = agent.ResumeBackupToNextVolume();

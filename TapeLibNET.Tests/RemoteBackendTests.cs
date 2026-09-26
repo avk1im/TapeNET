@@ -72,7 +72,7 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
     {
         EnsureServiceAvailable();
         using var fixture = new RemoteVirtualTapeFixture(_service.Channel, profile);
-        Assert.Equal(0, fixture.Drive.BlockCounter);
+        Assert.Equal(0, fixture.Drive.CurrentBlock);
     }
 
     [SkippableFact]
@@ -141,10 +141,10 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
         // Write some data to advance position
         var buffer = new byte[drive.BlockSize];
         drive.WriteDirect(buffer, 0, buffer.Length);
-        Assert.True(drive.BlockCounter > 0, "Position should have advanced after write");
+        Assert.True(drive.CurrentBlock > 0, "Position should have advanced after write");
 
         Assert.True(drive.Rewind());
-        Assert.Equal(0, drive.BlockCounter);
+        Assert.Equal(0, drive.CurrentBlock);
     }
 
     [SkippableTheory]
@@ -161,10 +161,10 @@ public abstract class RemoteBackendTestsBase(ITapeServiceFixture service)
             drive.WriteDirect(buffer, 0, buffer.Length);
 
         Assert.True(drive.MoveToBlock(5));
-        Assert.Equal(5, drive.BlockCounter);
+        Assert.Equal(5, drive.CurrentBlock);
 
         Assert.True(drive.MoveToBlock(0));
-        Assert.Equal(0, drive.BlockCounter);
+        Assert.Equal(0, drive.CurrentBlock);
     }
 
     #endregion

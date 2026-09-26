@@ -538,7 +538,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
 
     /// <summary>
     /// Headed backup → delete-all-preserving-header (a case-B mid-data overwrite from block 1) → the header
-    /// must survive and the tape remain restorable. Exercises TapeFileAgent.DeleteSetsFromCurrentSetUp on real
+    /// must survive and the tape remain restorable. Exercises TapeAgentBase.DeleteSetsFromCurrentSetUp on real
     /// hardware with WritesMediaHeader on.
     /// </summary>
     [SkippableFact]
@@ -551,7 +551,7 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
 
         // Delete all sets on volume, preserving the header (writeHeader:false path) — overwrites from block 1.
         fixture.TOC.CurrentSetIndex = fixture.TOC.FirstSetOnVolume;
-        using (var agent = new TapeFileBackupAgent(fixture.Drive, fixture.TOC))
+        using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
             Assert.True((bool)agent.DeleteSetsFromCurrentSetUp(), "delete-all preserving header");
 
         // Re-backup and round-trip — proves the header survived the mid-data overwrite.

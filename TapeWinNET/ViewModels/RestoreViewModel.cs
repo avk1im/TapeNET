@@ -27,7 +27,10 @@ public record RestoreFormData(
     bool UncheckProcessedFiles,
     bool SkipAllErrors,
     bool NoMultivolume,
-    bool EjectWhenDone);
+    bool EjectWhenDone,
+    bool ProceedOnMediaMismatch = false,
+    bool CorrectSetNavigation = true,
+    bool VerifySetHeader = true);
 
 /// <summary>
 /// Represents an option in the "Handle existing files" combo box.
@@ -63,6 +66,9 @@ public class RestoreViewModel : ViewModelBase
     private bool _uncheckProcessedFiles = true;
     private bool _skipAllErrors;
     private bool _ejectWhenDone;
+    private bool _proceedOnMediaMismatch;
+    private bool _correctSetNavigation = true;
+    private bool _verifySetHeader = true;
     private string _targetDirectory = string.Empty;
     private HandleExistingOption _selectedHandleExisting = HandleExistingOption.All[0]; // Keep Both
     private string _itemsGroupHeader = string.Empty;
@@ -329,6 +335,51 @@ public class RestoreViewModel : ViewModelBase
         set => SetProperty(ref _ejectWhenDone, value);
     }
 
+    /// <summary>
+    /// Advanced: when checked, identified-media mismatch prompts are skipped and the operation
+    ///  proceeds unattended. Maps to <see cref="RestoreRequest.ProceedOnMediaMismatch"/>.
+    /// </summary>
+    public bool ProceedOnMediaMismatch
+    {
+        get => _proceedOnMediaMismatch;
+        set => SetProperty(ref _proceedOnMediaMismatch, value);
+    }
+
+    /// <summary>
+    /// Advanced: when checked, a detected set-navigation mismatch is reported only, instead of being
+    ///  repaired. Maps to the inverse of <see cref="RestoreRequest.CorrectSetNavigation"/>.
+    /// </summary>
+    public bool DoNotCorrectSetNavigation
+    {
+        get => !_correctSetNavigation;
+        set => SetProperty(ref _correctSetNavigation, !value);
+    }
+
+    /// <summary>
+    /// Whether "do not correct set navigation" is offerable. Correction acts on a verdict that only a
+    /// set-header READ can produce, so with verification skipped there is nothing for it to correct.
+    /// </summary>
+    public bool IsCorrectSetNavigationEnabled => !SkipSetVerification;
+
+    /// <summary>
+    /// Advanced: when checked, skips verifying the backup set marker before restoring.
+    ///  Maps to the inverse of <see cref="RestoreRequest.VerifySetHeader"/>. No warning-pane impact
+    ///  since a restore writes nothing.
+    /// </summary>
+    public bool SkipSetVerification
+    {
+        get => !_verifySetHeader;
+        set
+        {
+            if (SetProperty(ref _verifySetHeader, !value))
+            {
+                if (value)
+                    DoNotCorrectSetNavigation = true;   // force-check: the flag is inert either way
+                OnPropertyChanged(nameof(IsCorrectSetNavigationEnabled));
+            }
+        }
+    }
+
     /// <summary>Warning level for the options panel.</summary>
     public WarningLevel WarningLevel => _mode == RestoreMode.Restore ? _selectedHandleExisting.Value switch
     {
@@ -483,7 +534,10 @@ public class RestoreViewModel : ViewModelBase
             UncheckProcessedFiles: _uncheckProcessedFiles,
             SkipAllErrors: _skipAllErrors,
             NoMultivolume: _noMultivolume,
-            EjectWhenDone: _ejectWhenDone);
+            EjectWhenDone: _ejectWhenDone,
+            ProceedOnMediaMismatch: _proceedOnMediaMismatch,
+            CorrectSetNavigation: _correctSetNavigation,
+            VerifySetHeader: _verifySetHeader);
 
         _onStart(request);
     }

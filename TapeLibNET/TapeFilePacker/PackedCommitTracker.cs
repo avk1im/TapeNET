@@ -115,11 +115,16 @@ internal sealed class PackedCommitTracker(TapeSetTOC setTOC, ILogger logger)
     }
 
     /// <summary>
-    /// Drains the awaiting-post-process queue, invoking <paramref name="notify"/> for
-    /// each file. If <paramref name="notify"/> throws <see cref="TapeAbortRequestedException"/>
-    /// the drain stops and this method returns <see langword="false"/>; the dequeued file
-    /// is considered processed (its TOC entry is already appended).
+    /// Drains the awaiting-post-process queue, invoking <paramref name="notify"/> for each file.
+    /// Returns <see langword="false"/> if and only if <paramref name="notify"/> threw
+    ///  <see cref="TapeAbortRequestedException"/>; the dequeued file is considered processed (its TOC
+    ///  entry is already appended).
     /// </summary>
+    /// <remarks>
+    /// The boolean means ABORTED, not FAILED — no other exception is caught here, so anything else
+    ///  propagates. The exception itself is swallowed deliberately: the agent's loop is <see langword="bool"/>-based
+    ///  and the abort has already been recorded on the agent by <see cref="TapeAgentBase.NotifyPostProcessFile"/>.
+    /// </remarks>
     public bool DrainPostProcess(Action<TapeFileInfo> notify)
     {
         while (_awaitingPostProcess.Count > 0)

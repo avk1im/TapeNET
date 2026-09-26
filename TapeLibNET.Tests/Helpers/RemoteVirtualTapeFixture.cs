@@ -134,14 +134,14 @@ public sealed class RemoteVirtualTapeFixture : IDisposable
     /// <summary>Writes the TOC to tape and asserts success.</summary>
     public void SaveTOC()
     {
-        using var agent = new TapeFileAgent(Drive, TOC);
+        using var agent = new TapeAgentBase(Drive, TOC);
         Assert.True(agent.BackupTOC(), "Failed to save TOC to tape");
     }
 
     /// <summary>Reads the TOC from tape and replaces the fixture's TOC.</summary>
     public void LoadTOC()
     {
-        using var agent = new TapeFileAgent(Drive, TOC);
+        using var agent = new TapeAgentBase(Drive, TOC);
         Assert.True(agent.RestoreTOC(), "Failed to restore TOC from tape");
         TOC = agent.TOC;
     }

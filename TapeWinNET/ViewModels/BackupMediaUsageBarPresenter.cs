@@ -16,7 +16,7 @@ namespace TapeWinNET.ViewModels;
 /// Adds a <see cref="UsageSegmentKind.PendingBackupSet"/> segment representing
 ///  the backup the user is composing, dropping any existing set segments after
 ///  the chosen "Append after set" target. Color encodes whether the new set
-///  fits the available room: green (Completed) when it fits, red (Error) when
+///  fits the available room: green (Completed) when it fits, red (ErrorException) when
 ///  it overflows the volume, amber (Warning) when the user has selected
 ///  Incremental — in which case the size estimate is an upper bound only.
 /// </para>

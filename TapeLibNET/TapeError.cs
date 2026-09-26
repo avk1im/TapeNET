@@ -300,12 +300,17 @@ public abstract class ErrorManageableBase(ILogger logger) : IErrorManageable
     internal void SetError(uint error, string? message = null) =>
         SetError((WIN32_ERROR)error, message);
 
-    internal void SetError(Exception ex, string? message = null)
-    {
-        WIN32_ERROR error = ex is IOException ioex ? (WIN32_ERROR)ioex.HResult :
+    internal static WIN32_ERROR ExceptionToErrorWin32(Exception ex) =>
+        ex is IOException ioex ? (WIN32_ERROR)ioex.HResult :
             ex is Win32Exception w32ex ? (WIN32_ERROR)w32ex.NativeErrorCode :
                 WIN32_ERROR.ERROR_UNHANDLED_EXCEPTION;
 
+    public static uint ExceptionToErrorCode(Exception ex) =>
+        (uint)ExceptionToErrorWin32(ex);
+
+    internal void SetError(Exception ex, string? message = null)
+    {
+        WIN32_ERROR error = ExceptionToErrorWin32(ex);
         SetError(error, message ?? ex.Message);
     }
 

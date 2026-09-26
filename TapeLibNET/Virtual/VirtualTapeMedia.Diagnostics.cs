@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+
 namespace TapeLibNET.Virtual;
 
 /// <summary>
@@ -384,4 +386,325 @@ public partial class VirtualTapeMedia
     }
 
     #endregion
+
+
+    #region *** Fault Injection (DEBUG) ***
+
+#if DEBUG
+
+    /// <summary>
+    /// Optional block-level fault injectors, owned by <see cref="VirtualTapeDriveBackend"/> and shared by
+    ///  reference so settings survive media reload. Null when nothing is injected.
+    /// </summary>
+    internal VirtualMediaFaultInjector? WriteFaults { get; set; }
+    internal VirtualMediaFaultInjector? ReadFaults { get; set; }
+
+    //  ══ Injected write faults: what actually lands on the medium ══════════════════
+    //
+    //  Example in all three: WriteBlocks(buf, 0, 2*BS) at EOD, one earlier block A on tape.
+    //
+    //  Legend   ▓ bytes committed AND described by a virtual block
+    //           ▒ block committed, payload truncated (real data, then padding)
+    //           ▨ block committed, structurally perfect, a few bits wrong
+    //           · untouched      ^ logical head (m_currentBlock) after the call
+    //
+    //  ── 1 · CORRECT WRITE ─────────────────────────── returns 2*BS, WentOK ────────
+    //
+    //      stream   │▓▓▓ A ▓▓▓│▓▓▓ b0 ▓▓▓│▓▓▓ b1 ▓▓▓│· · · ·
+    //      VB list  │ VB0 data│◄──── VB1 data ─────►│
+    //      blocks   0         1          2          3
+    //      head                                     ^  (EOD)
+    //
+    //      reader at block 1 → b0, b1.
+    //
+    //  ── 2 · PARTIAL ── PartialOnce(blocks: 1) ─── returns 1*BS, ERROR_WRITE_FAULT ─
+    //      The prefix goes through the NORMAL path: written, described, committed.
+    //      Only the remainder is lost.
+    //
+    //      stream   │▓▓▓ A ▓▓▓│▓▓▓ b0 ▓▓▓│· · · · · ·
+    //      VB list  │ VB0 data│ VB1 data │
+    //      blocks   0         1          2
+    //      head                          ^  (EOD) — advanced by what SURVIVED
+    //
+    //      reader at block 1 → b0, then EOD. b1 never existed.
+    //
+    //  ── 3 · TORN ── TearOnce() ────────── returns 0, ERROR_WRITE_FAULT ────────────
+    //      ▒ = block committed, content corrupt (half real data, half padding)
+    //
+    //      stream   │▓▓▓ A ▓▓▓│▒▒▒ b0' ▒▒│· · · · · ·
+    //      VB list  │ VB0 data│ VB1 data │
+    //      blocks   0         1          2
+    //      head                          ^  EOD — ADVANCED, though the write "failed"
+    //
+    //      reader at block 1 → a full block of bytes that fails CRC. Not EOD. Not silence.
+    //
+    //      The library believes nothing was written and the head is at block 1.
+    //      The medium says otherwise. That gap is why SH-6 must reset CurrentContentSet —
+    //      and it is the ONLY thing Torn models that Fail does not.
+    //
+    //  ── 4 · CORRUPT ── CorruptOnce(bits: 2) ──── returns 2*BS, WentOK — NO ERROR ──
+    //      ▨ = block committed, structurally perfect, two bits wrong near the front
+    //
+    //      stream   │▓▓▓ A ▓▓▓│▨▓▓ b0 ▓▓▓│▓▓▓ b1 ▓▓▓│· · · ·
+    //      VB list  │ VB0 data│◄──── VB1 data ─────►│
+    //      blocks   0         1          2          3
+    //      head                                     ^  EOD — exactly as a clean write
+    //
+    //      Every observable says the write succeeded. A reader gets a full, correctly
+    //      sized block. Only the CRC one layer up knows anything is wrong.
+    //
+    //  ── The contrast that matters ─────────────────────────────────────────────────
+    //      Every mode leaves the medium in a state the library's own invariants accept.
+    //      What separates them is the GAP between what the caller is told and what is
+    //      true:
+    //
+    //        Fail     nothing written, error      → caller knows, medium unchanged
+    //        Partial  prefix written, error       → caller knows, medium advanced by prefix
+    //        Torn     block written, error        → caller MISINFORMED about position
+    //        Corrupt  block written, NO error     → caller MISINFORMED about integrity
+    //
+    //      The bottom two are the ones worth testing against: they are the only states
+    //      in which correct-looking library code proceeds on a false premise. Torn is
+    //      why SH-6 must reset CurrentContentSet; Corrupt is why the framing CRC exists.
+    //
+    //  ── Why the invariants still hold in case 3 ───────────────────────────────────
+    //      m_bytesWritten and CalculateStreamLength() are BOTH derived from the VB list
+    //      (= 1*BS here), so AssertByteTotalConsistent passes. The stream position is
+    //      restored to the pre-write offset, matching CurrentPositionBytes() at block 1,
+    //      so AssertPositionConsistent passes. The physical stream is longer than either
+    //      figure — that excess IS the orphan, and no invariant inspects it.
+    //      The next write at this position truncates it away, exactly as on real tape.
+
+    /// <summary>
+    /// Applies an injected write fault. Returns the byte count to report to the caller.
+    /// </summary>
+    /// <remarks>
+    /// <b>Every mode routes its surviving bytes through the normal <see cref="WriteBlocks"/> path</b>
+    ///  (disarmed, so it cannot re-trigger), so all bookkeeping rules apply and both DEBUG invariants hold
+    ///  with no position trickery. The modes differ only in WHAT is written and WHAT is reported:
+    ///  <list type="bullet">
+    ///   <item><see cref="VirtualFaultMode.Fail"/> — nothing written, error reported.</item>
+    ///   <item><see cref="VirtualFaultMode.Partial"/> — a verbatim prefix written, error reported; the
+    ///    returned count tells the caller exactly how far the medium got.</item>
+    ///   <item><see cref="VirtualFaultMode.Torn"/> — one full block committed with a truncated payload,
+    ///    error reported and zero returned. The caller therefore believes nothing was written while the
+    ///    medium advanced: that DIVERGENCE is the hazard being modelled.</item>
+    ///   <item><see cref="VirtualFaultMode.Corrupt"/> — everything written, a few bits wrong, and NO error
+    ///    reported at all.</item>
+    ///  </list>
+    /// </remarks>
+    private int ApplyInjectedWriteFault(VirtualMediaFaultInjector wf, byte[] buffer, int offset, int count)
+    {
+        switch (wf.Mode)
+        {
+            case VirtualFaultMode.Torn:
+                {
+                    // A real torn write commits a block that EXISTS and reads back, but whose content is
+                    //  incomplete, so it fails framing/CRC. The medium advanced; the caller was told the write
+                    //  failed. THAT divergence is the hazard — not debris beyond EOD, which is unreachable
+                    //  and which the next write truncates anyway.
+                    int blockBytes = (int)m_blockSize;
+                    int goodBytes = wf.TornBytes >= 0 ? Math.Min(wf.TornBytes, blockBytes) : blockBytes / 2;
+
+                    // One structurally whole, semantically corrupt block: real data, then padding.
+                    byte[] torn = new byte[blockBytes];
+                    Array.Copy(buffer, offset, torn, 0, Math.Min(goodBytes, Math.Min(blockBytes, count)));
+
+                    // Route it through the NORMAL path (disarmed, so it cannot re-trigger) — every bookkeeping
+                    //  rule then applies and both DEBUG invariants hold with no position trickery.
+                    bool armed = wf.Enabled;
+                    wf.Enabled = false;
+                    try { WriteBlocks(torn, 0, blockBytes); }
+                    finally { wf.Enabled = armed; }
+
+                    SetError(wf.Error, $"INJECTED torn write: block committed, only {goodBytes} of {blockBytes} B valid");
+                    LogErrorAsDebug("Injected torn write");
+                    return 0;   // the CALLER's write failed — but the medium moved
+                }
+
+            case VirtualFaultMode.Partial:
+                {
+                    long partialBytes = (long)Math.Max(0, wf.PartialBlocks) * m_blockSize;
+                    int partialCount = (int)Math.Min(partialBytes, count);
+                    if (partialCount <= 0)
+                        goto case VirtualFaultMode.Fail;
+
+                    // Route the surviving prefix through the NORMAL path so every bookkeeping rule still
+                    //  applies; disarm first so the recursive call cannot re-trigger.
+                    bool armed = wf.Enabled;
+                    wf.Enabled = false;
+                    int written;
+                    try { written = WriteBlocks(buffer, offset, partialCount); }
+                    finally { wf.Enabled = armed; }
+
+                    SetError(wf.Error, $"INJECTED partial write: {written} of {count} B written, then faulted");
+                    LogErrorAsDebug("Injected partial write");
+                    return written;
+                }
+
+            case VirtualFaultMode.Corrupt:
+                {
+                    // The ONLY mode that reports no error at all. Models host-path corruption (RAM/HBA/driver)
+                    //  landing before the drive computes ECC: the drive faithfully stores the wrong bytes with
+                    //  valid ECC and reads them back forever. Nothing below the application can catch it —
+                    //  which is precisely what TapeFramer's CRC is for, and what this mode finally exercises.
+                    byte[] copy = new byte[count];
+                    Array.Copy(buffer, offset, copy, 0, count);
+                    var flipped = wf.ApplyCorruption(copy, (int)m_blockSize);
+
+                    bool armed = wf.Enabled;
+                    wf.Enabled = false;
+                    int written;
+                    try { written = WriteBlocks(copy, 0, count); }   // normal path — all bookkeeping applies
+                    finally { wf.Enabled = armed; }
+
+                    // Deliberately NO SetError: the drive is happy, the library is happy, the bytes are wrong.
+                    m_logger.LogTrace("{Prefix}: INJECTED corruption — {Bits} bit(s) flipped at offset(s) {Offsets}",
+                        LogPrefix, wf.CorruptBits, string.Join(", ", flipped));
+                    return written;
+                }
+
+            case VirtualFaultMode.Fail:
+            default:
+                SetError(wf.Error, "INJECTED write fault");
+                LogErrorAsDebug("Injected write fault");
+                return 0;
+        }
+    }
+
+    //  ══ Injected read faults: what the caller gets back ═══════════════════════════
+    //
+    //  Example in all three: ReadBlocks(buf, 0, 2*BS, out mark) positioned at block 1,
+    //  with blocks b0, b1 on tape following an earlier block A.
+    //
+    //  Legend   ▓ bytes delivered to the caller's buffer      · buffer left untouched
+    //           ▨ bytes read, a few bits wrong
+    //           ^ logical head (m_currentBlock) after the call
+    //           The medium is READ-ONLY here — the stream and VB list never change.
+    //
+    //      on tape  │▓▓▓ A ▓▓▓│▓▓▓ b0 ▓▓▓│▓▓▓ b1 ▓▓▓│      (identical in all 3 cases)
+    //      blocks   0         1          2          3
+    //      head               ^  at entry
+    //
+    //  ── 1 · CORRECT READ ──────────────────────── returns 2*BS, WentOK ────────────
+    //
+    //      buffer   │▓▓▓ b0 ▓▓▓│▓▓▓ b1 ▓▓▓│
+    //      head                            ^  block 3
+    //      mark     None
+    //
+    //  ── 2 · PARTIAL ── PartialOnce(blocks: 1) ─── returns 1*BS, ERROR_READ_FAULT ──
+    //      The prefix goes through the NORMAL path: real blocks, real head advance.
+    //      Then the fault is reported on top.
+    //
+    //      buffer   │▓▓▓ b0 ▓▓▓│· · · · · ·│
+    //      head                 ^  block 2 — advanced by what WAS delivered
+    //      mark     None (a fault is not a tapemark)
+    //
+    //      A retry resumes at block 2 and gets b1 — the medium is undamaged.
+    //
+    //  ── 3 · FAIL ── FailOnce()  [also where Torn lands] ─── returns 0, ERROR_… ────
+    //      Nothing transferred, nothing moved. The read simply did not happen.
+    //
+    //      buffer   │· · · · · ·│· · · · · ·│
+    //      head               ^  block 1 — unchanged
+    //      mark     None
+    //
+    //  ── 4 · CORRUPT ── CorruptOnce(bits: 2) ──── returns 2*BS, WentOK — NO ERROR ──
+    //      The medium is untouched; only the delivered bytes are wrong. A re-read after
+    //      re-positioning returns clean data — read-side corruption is TRANSIENT, exactly
+    //      like a read fault, and unlike its write-side twin.
+    //
+    //      on tape  │▓▓▓ A  ▓▓▓│▓▓▓ b0 ▓▓▓│▓▓▓ b1 ▓▓▓│   ← unchanged, still correct
+    //      buffer   │▨▓▓ b0 ▓▓▓│▓▓▓ b1 ▓▓▓│           ← two bits wrong near the front
+    //      head                            ^  block 3 — a normal, successful read
+    //      mark     None
+    //
+    //  ── How the four modes differ, in one line each ───────────────────────────────
+    //      Fail     nothing written, error      → caller knows, medium unchanged
+    //      Partial  prefix written, error       → caller knows, medium advanced by prefix
+    //      Torn     block written, error        → caller MISINFORMED about position
+    //      Corrupt  block written, NO error     → caller MISINFORMED about integrity
+    //
+    //  ── Why there is no read-side Torn ────────────────────────────────────────────
+    //      Torn means "bytes on the medium that no virtual block describes" — a state
+    //      only a WRITE can create. A read mutates neither the stream nor the VB list,
+    //      so the concept has no referent; ApplyInjectedReadFault maps it to Fail.
+    //
+    //  ── Asymmetry worth remembering ───────────────────────────────────────────────
+    //      Every read fault is TRANSIENT: the tape still holds b0 and b1, so a caller
+    //      that re-positions and retries succeeds. Contrast the write side, where a
+    //      torn write leaves permanent debris. That is why the restore path may retry
+    //      a set-header read (Step 5 'Unreadable' → warn and proceed), while the write
+    //      path never self-corrects (SH-10).
+    //
+    //  ── Injection point ───────────────────────────────────────────────────────────
+    //      AFTER the end-of-data check, so an injected fault is always a MEDIUM fault
+    //      and never a disguised EOD. markEncountered was set to None at the top of
+    //      ReadBlocks, before any injection point, so both paths leave it correct.
+
+    /// <summary>
+    /// Applies an injected read fault. <see cref="VirtualFaultMode.Torn"/> has no meaning on the read side
+    ///  — nothing is committed, so there is nothing to leave half-written — and is treated as
+    ///  <see cref="VirtualFaultMode.Fail"/>.
+    /// </summary>
+    private int ApplyInjectedReadFault(VirtualMediaFaultInjector rf, byte[] buffer, int offset, int count)
+    {
+        switch (rf.Mode)
+        {
+            case VirtualFaultMode.Partial:
+                {
+                    long partialBytes = (long)Math.Max(0, rf.PartialBlocks) * m_blockSize;
+                    int partialCount = (int)Math.Min(partialBytes, count);
+                    if (partialCount <= 0)
+                        goto default;
+
+                    bool armed = rf.Enabled;
+                    rf.Enabled = false;
+                    int read;
+                    try { read = ReadBlocks(buffer, offset, partialCount, out _); }
+                    finally { rf.Enabled = armed; }
+
+                    SetError(rf.Error, $"INJECTED short read: {read} of {count} B read, then faulted");
+                    LogErrorAsDebug("Injected short read");
+                    return read;
+                }
+
+            case VirtualFaultMode.Corrupt:
+                {
+                    // Models corruption on the RETURN path (HBA, driver, cable, RAM) — the tape itself is
+                    //  undamaged, so a caller that re-reads gets clean data. Contrast write-side Corrupt,
+                    //  which is permanent. Together they let a test distinguish "the medium is bad" from
+                    //  "the path is bad" — a distinction no error code ever surfaces.
+                    bool armed = rf.Enabled;
+                    rf.Enabled = false;
+                    int read;
+                    try { read = ReadBlocks(buffer, offset, count, out _); }
+                    finally { rf.Enabled = armed; }
+
+                    if (read > 0)
+                    {
+                        // Corrupt only what was actually delivered, in place, at the caller's offset.
+                        var delivered = new byte[read];
+                        Array.Copy(buffer, offset, delivered, 0, read);
+                        rf.ApplyCorruption(delivered, (int)m_blockSize);
+                        Array.Copy(delivered, 0, buffer, offset, read);
+                    }
+
+                    // Deliberately NO SetError: the drive is happy, the library is happy, the bytes are wrong.
+                    m_logger.LogTrace("{Prefix}: INJECTED read corruption — {Bits} bit(s) flipped in {Read} B",
+                        LogPrefix, rf.CorruptBits, read);
+                    return read;
+                }
+
+            default:
+                SetError(rf.Error, "INJECTED read fault");
+                LogErrorAsDebug("Injected read fault");
+                return 0;
+        }
+    }
+
+#endif
+
+    #endregion
+
 }

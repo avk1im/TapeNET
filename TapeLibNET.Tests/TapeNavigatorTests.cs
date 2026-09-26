@@ -1,5 +1,6 @@
 using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
+using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Tests;
 
@@ -7,11 +8,16 @@ namespace TapeLibNET.Tests;
 public sealed class TapeNavigatorTests_Headerless : TapeNavigatorTestsBase
 {
     protected override bool WithMediaHeader => false;
+    protected override bool WithSetHeaders => false;
 }
 
 public sealed class TapeNavigatorTests_Headed : TapeNavigatorTestsBase
 {
     protected override bool WithMediaHeader => true;
+    // Notice: for Navigator tests, we keep WithSetHeaders => false in both profiles! Its layouts are written
+    //  with raw WriteDataBlocks() + WriteContentSetmark(), never through a backup agent, so no set header can
+    //  ever appear.A third flavour — or even a `true` here — would change nothing observable.
+    protected override bool WithSetHeaders => false; // <- sic! S. comment above
 }
 
 /// <summary>
@@ -34,8 +40,10 @@ public abstract class TapeNavigatorTestsBase
 
     /// <summary>Subclasses fix whether the produced fixture writes a media header.</summary>
     protected abstract bool WithMediaHeader { get; }
+    /// <summary>Subclasses fix whether the produced fixture writes a set header for each backup set.</summary>
+    protected abstract bool WithSetHeaders { get; }
 
-    /// <summary>All three drive profiles for parameterized theories.</summary>
+    /// <summary>All four drive profiles for parameterized theories.</summary>
     public static TheoryData<DriveProfile> AllProfiles =>
     [
         DriveProfile.Setmarks,
@@ -79,12 +87,12 @@ public abstract class TapeNavigatorTestsBase
     /// </summary>
     private (VirtualTapeFixture fixture, TapeNavigator nav) CreateNavigator(DriveProfile profile)
     {
-        var fixture = new VirtualTapeFixture(profile, withMediaHeader: WithMediaHeader);
+        var fixture = new VirtualTapeFixture(profile, withMediaHeader: WithMediaHeader, withSetHeaders: WithSetHeaders);
         var nav = TapeNavigator.ProduceNavigator(fixture.Drive);
         Assert.NotNull(nav);
         
-        nav.ResolveHeaderPresence(fixture.WithMediaHeader ? TapeHeaderPresence.Present : TapeHeaderPresence.Absent);
-        nav.ResetContentSet(); // must reset since ResolveHeaderPresence(Present) would set CurrentContentSet to 0
+        nav.ResolveMediaHeaderPresence(fixture.WithMediaHeader ? TapeHeaderPresence.Present : TapeHeaderPresence.Absent);
+        nav.ResetContentSet(); // must reset since ResolveMediaHeaderPresence(Present) would set CurrentContentSet to 0
 
         return (fixture, nav!);
     }
@@ -147,6 +155,51 @@ public abstract class TapeNavigatorTestsBase
         }
         WriteTOCRegion(nav);
         return starts;
+    }
+
+    /// <summary>
+    /// Asserts the navigator sits at the oldest set, accepting EITHER label it may legitimately report.
+    /// </summary>
+    /// <remarks>
+    /// Reaching the oldest set by counting BACKWARD is a fencepost: N marks delimit N+1 boundaries, so
+    ///  the oldest set's leading boundary is BOM itself. Whether the count completes depends on whether
+    ///  something physical stands there —
+    ///  <list type="bullet">
+    ///  <item>headed FILEMARK layouts: the media header's trailing filemark IS that boundary, the count
+    ///        completes, and the navigator reports the negative index it was asked for;</item>
+    ///  <item>setmark layouts and headless media: nothing stands there, the count runs into BOM, and
+    ///        <c>OnMovedIntoBom</c> settles at begin-of-content reporting the one index it can PROVE — 0.</item>
+    ///  </list>
+    ///  Both denote the same set and both leave the head on the same block, which is what these tests
+    ///  are actually about. Asserting the label alone would pin an accident of layout.
+    /// </remarks>
+    private static void AssertAtOldestSet(TapeNavigator nav, int expectedNegative)
+    {
+        Assert.True(nav.CurrentContentSet == 0 || nav.CurrentContentSet == expectedNegative,
+            $"expected the oldest set (0 or {expectedNegative}), got {nav.CurrentContentSet}");
+    }
+
+    /// <summary>
+    /// Asserts that the navigator's <c>CurrentContentSet</c> matches the expected index, taking into account
+    ///  whether the expected index is negative (from end) and the number of sets written. If the expected index is
+    ///  negative and equals -setCount-1, it asserts that the navigator is at the oldest set (0 or -setCount-1).
+    /// </summary>
+    /// <param name="nav">The tape navigator to assert against.</param>
+    /// <param name="expectedIndex">The expected index of the current content set.</param>
+    /// <param name="setCount">The total number of sets written.</param>
+    private static void AssertNavCurrentSetIndex(TapeNavigator nav, int expectedIndex, int setCount)
+    {
+        if (expectedIndex >= 0)
+        {
+            Assert.Equal(expectedIndex, nav.CurrentContentSet);
+        }
+        else // expectedIndex < 0
+        {
+            if (expectedIndex == -setCount - 1)
+                AssertAtOldestSet(nav, expectedNegative: expectedIndex);
+            else
+                Assert.Equal(expectedIndex, nav.CurrentContentSet);
+        }
     }
 
     #endregion
@@ -268,8 +321,8 @@ public abstract class TapeNavigatorTestsBase
         var (fixture, nav) = CreateNavigator(profile);
         using var _ = fixture;
 
-        // TOCInSet navigators start with TOCInvalidated = true (no TOC on tape yet)
-        Assert.True(nav.TOCInvalidated);
+        // TOCInSet navigators start with TOCUnlocated = true (no TOC on tape yet)
+        Assert.True(nav.TOCUnlocated);
     }
 
     [Fact]
@@ -279,7 +332,7 @@ public abstract class TapeNavigatorTestsBase
         var nav = TapeNavigator.ProduceNavigator(fixture.Drive)!;
 
         // Partition navigator uses the base class default (false)
-        Assert.False(nav.TOCInvalidated);
+        Assert.False(nav.TOCUnlocated);
     }
 
     [Theory]
@@ -289,9 +342,9 @@ public abstract class TapeNavigatorTestsBase
         var (fixture, nav) = CreateNavigator(profile);
         using var _ = fixture;
 
-        Assert.True(nav.TOCInvalidated);
+        Assert.True(nav.TOCUnlocated);
         nav.OnTOCWritten();
-        Assert.False(nav.TOCInvalidated);
+        Assert.False(nav.TOCUnlocated);
     }
 
     [Theory]
@@ -303,11 +356,11 @@ public abstract class TapeNavigatorTestsBase
 
         // First mark as valid
         nav.OnTOCWritten();
-        Assert.False(nav.TOCInvalidated);
+        Assert.False(nav.TOCUnlocated);
 
         // Content write invalidates it
         nav.OnContentWritten();
-        Assert.True(nav.TOCInvalidated);
+        Assert.True(nav.TOCUnlocated);
     }
 
     #endregion
@@ -612,6 +665,38 @@ public abstract class TapeNavigatorTestsBase
         Assert.Equal(pos, nav.GetCurrentBlock());
     }
 
+    /// <summary>
+    /// Pins SH-4 (design §14 Step 0d): once <see cref="TapeNavigator.CurrentContentSet"/> already equals
+    ///  <see cref="TapeNavigator.TargetContentSet"/>, a further <c>MoveToTargetContentSet()</c> call must
+    ///  perform NO physical transport move — not merely leave the position unchanged. Verified via the
+    ///  virtual media odometer (tape-equivalent distance traveled), which is zero only when no space/seek
+    ///  primitive executed. Covers both the base implementation and the two optimized fast-path overrides
+    ///  (§5.7 filemark-merge, TOC-in-set).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void MoveToTargetContentSet_WhenAlreadyAtTarget_PerformsNoTransportMove(DriveProfile profile)
+    {
+        var (fixture, nav) = CreateNavigator(profile);
+        using var _ = fixture;
+
+        WriteFullTapeLayout(nav, setCount: 3, blocksPerSet: 4);
+
+        nav.TargetContentSet = 1;
+        Assert.True(nav.MoveToTargetContentSet());
+        Assert.Equal(1, nav.CurrentContentSet);
+
+        var media = fixture.Backend.ContentMedia;
+        Assert.NotNull(media);
+        media!.OdometerEnabled = true;
+        media.ResetOdometer();
+
+        // Already at target — must be a genuine no-op: zero tape-equivalent distance traveled.
+        Assert.True(nav.MoveToTargetContentSet());
+        Assert.Equal(1, nav.CurrentContentSet);
+        Assert.Equal(0, media.OdometerBytes);
+    }
+
     #endregion
 
 
@@ -646,7 +731,7 @@ public abstract class TapeNavigatorTestsBase
         // Navigate to set -4 (oldest = set0)
         nav.TargetContentSet = -4;
         Assert.True(nav.MoveToTargetContentSet());
-        Assert.Equal(-4, nav.CurrentContentSet);
+        AssertAtOldestSet(nav, expectedNegative: -4);
         Assert.Equal(starts[0], nav.GetCurrentBlock());
     }
 
@@ -936,7 +1021,7 @@ public abstract class TapeNavigatorTestsBase
         // Navigate to -4 (oldest set) from TOC — still optimized path
         nav.TargetContentSet = -4;
         Assert.True(nav.MoveToTargetContentSet());
-        Assert.Equal(-4, nav.CurrentContentSet);
+        AssertAtOldestSet(nav, expectedNegative: -4);
         Assert.Equal(starts[0], nav.GetCurrentBlock());
     }
 
@@ -999,9 +1084,9 @@ public abstract class TapeNavigatorTestsBase
         var nav = TapeNavigator.ProduceNavigator(fixture.Drive)!;
 
         // TOC is in partition, so content writes don't invalidate it
-        Assert.False(nav.TOCInvalidated);
+        Assert.False(nav.TOCUnlocated);
         nav.OnContentWritten();
-        Assert.False(nav.TOCInvalidated);
+        Assert.False(nav.TOCUnlocated);
     }
 
     [Fact]
@@ -1085,17 +1170,17 @@ public abstract class TapeNavigatorTestsBase
 
         // Write initial layout
         var starts = WriteFullTapeLayout(nav, setCount: 1, blocksPerSet: 4);
-        Assert.False(nav.TOCInvalidated); // TOC was just written
+        Assert.False(nav.TOCUnlocated); // TOC was just written
 
         // Now write more content → TOC becomes invalidated
         nav.OnBeginWriteContent();
         WriteContentSet(nav, 4, 0x55);
         nav.OnContentWritten();
-        Assert.True(nav.TOCInvalidated);
+        Assert.True(nav.TOCUnlocated);
 
         // Write the TOC again
         WriteTOCRegion(nav);
-        Assert.False(nav.TOCInvalidated);
+        Assert.False(nav.TOCUnlocated);
     }
 
     #endregion
@@ -1150,7 +1235,7 @@ public abstract class TapeNavigatorTestsBase
         // Navigate to -4 (oldest)
         nav.TargetContentSet = -4;
         Assert.True(nav.MoveToTargetContentSet());
-        Assert.Equal(-4, nav.CurrentContentSet);
+        AssertAtOldestSet(nav, expectedNegative: -4);
         Assert.Equal(starts[0], nav.GetCurrentBlock());
     }
 
@@ -1218,7 +1303,7 @@ public abstract class TapeNavigatorTestsBase
 
             nav.TargetContentSet = negIndex;
             Assert.True(nav.MoveToTargetContentSet(), $"Failed to navigate to set {negIndex}");
-            Assert.Equal(negIndex, nav.CurrentContentSet);
+            AssertNavCurrentSetIndex(nav, expectedIndex: negIndex, setCount: 5);
             Assert.Equal(starts[expectedSetIndex], nav.GetCurrentBlock());
         }
     }
@@ -1301,7 +1386,7 @@ public abstract class TapeNavigatorTestsBase
         // Then restore the oldest set
         nav.TargetContentSet = -4;
         Assert.True(nav.MoveToTargetContentSet());
-        Assert.Equal(-4, nav.CurrentContentSet);
+        AssertAtOldestSet(nav, expectedNegative: -4);
         Assert.Equal(starts[0], nav.GetCurrentBlock());
     }
 
@@ -1415,6 +1500,29 @@ public abstract class TapeNavigatorTestsBase
         Assert.True(nav.MoveToTargetContentSet());
         Assert.Equal(1, nav.CurrentContentSet);
         Assert.Equal(start1, nav.GetCurrentBlock());
+    }
+
+    /// <summary>
+    /// A backward count that runs past BOM reports success — and leaves the head at begin-of-content.
+    /// </summary>
+    /// <remarks>
+    /// The oldest set is always addressed as target 0, so a negative target reaching BOM is never
+    ///  arrival. <c>CurrentContentSet</c> is set to 0 rather than Unknown because begin-of-content was
+    ///  ESTABLISHED, not counted — which is precisely what lets SH-20 recover without a second rewind.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void BackwardOvershoot_Succeeds_AndSettlesAtBeginOfContent(DriveProfile profile)
+    {
+        // 3 sets on tape; ask for the 6th-from-newest — more marks than exist.
+        var (fixture, nav) = CreateNavigator(profile);
+        using var _ = fixture;
+
+        var starts = WriteFullTapeLayout(nav, setCount: 3);
+
+        nav.TargetContentSet = -7;
+        Assert.True(nav.MoveToTargetContentSet());
+        Assert.Equal(0, nav.CurrentContentSet);   // known, not Unknown
     }
 
     #endregion
@@ -1533,7 +1641,7 @@ public abstract class TapeNavigatorTestsBase
     private static byte SetFill(int setIndex) => (byte)(0x10 * (setIndex + 1));
 
     /// <summary>
-    /// Parks the navigator at <see cref="TapeNavigator.AtHeader"/> — the state the agent leaves behind
+    /// Parks the navigator at <see cref="TapeNavigator.AtBomHeader"/> — the state the agent leaves behind
     ///  after reading the media header, and the one the merged count must handle without a rewind.
     /// </summary>
     /// <remarks>
@@ -1543,12 +1651,12 @@ public abstract class TapeNavigatorTestsBase
     /// </remarks>
     private static void ParkAtHeader(TapeNavigator nav)
     {
-        Assert.True(nav.NavigateToHeader(forWrite: true), "failed to park at the header");
-        Assert.Equal(TapeNavigator.AtHeader, nav.CurrentContentSet);
+        Assert.True(nav.MoveToBomHeader(forWrite: true), "failed to park at the header");
+        Assert.Equal(TapeNavigator.AtBomHeader, nav.CurrentContentSet);
     }
 
     /// <summary>
-    /// THE off-by-one guard: from <c>AtHeader</c>, forward navigation must land on the requested set —
+    /// THE off-by-one guard: from <c>AtBomHeader</c>, forward navigation must land on the requested set —
     ///  verified by the set's own data, for every set on the tape.
     /// </summary>
     [Theory]
@@ -1565,7 +1673,7 @@ public abstract class TapeNavigatorTestsBase
             ParkAtHeader(nav);                       // re-park before each, so every hop is a fresh merge
 
             nav.TargetContentSet = i;
-            Assert.True(nav.MoveToTargetContentSet(), $"failed to navigate to set {i} from AtHeader");
+            Assert.True(nav.MoveToTargetContentSet(), $"failed to navigate to set {i} from AtBomHeader");
 
             Assert.Equal(i, nav.CurrentContentSet);
             Assert.Equal(starts[i], nav.GetCurrentBlock());
@@ -1588,7 +1696,7 @@ public abstract class TapeNavigatorTestsBase
         var starts = WriteFullTapeLayout(nav, setCount: 2, blocksPerSet: 4);
         Assert.Equal(fixture.FirstContentBlock, starts[0]);   // sanity: set 0 begins at begin-of-content
 
-        // Route A — the merged fast path from AtHeader.
+        // Route A — the merged fast path from AtBomHeader.
         ParkAtHeader(nav);
         nav.TargetContentSet = 0;
         Assert.True(nav.MoveToTargetContentSet());
@@ -1607,7 +1715,7 @@ public abstract class TapeNavigatorTestsBase
 
     /// <summary>
     /// The same merge applies from <c>UnknownSet</c> — the only difference being that a rewind precedes
-    ///  the single space. Pins that the header adjustment is not accidentally tied to the AtHeader entry.
+    ///  the single space. Pins that the header adjustment is not accidentally tied to the AtBomHeader entry.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -1709,7 +1817,7 @@ public abstract class TapeNavigatorTestsBase
     }
 
     /// <summary>
-    /// Repeated AtHeader → set hops must not accumulate state drift: navigating to the same set twice,
+    /// Repeated AtBomHeader → set hops must not accumulate state drift: navigating to the same set twice,
     ///  with a re-park in between, must land identically both times.
     /// </summary>
     [Theory]

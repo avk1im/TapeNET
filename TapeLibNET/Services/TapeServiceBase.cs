@@ -1,13 +1,10 @@
-﻿using System.IO;
-
-using Grpc.Core;
-
+﻿using Grpc.Core;
 using Microsoft.Extensions.Logging;
-
-using Windows.Win32.System.SystemServices; // Helpers.BytesToStringLong
-
+using System.IO;
 using TapeLibNET.Remote;
 using TapeLibNET.Virtual;
+using Windows.Win32.Foundation;
+using Windows.Win32.System.SystemServices; // Helpers.BytesToStringLong
 
 namespace TapeLibNET.Services;
 
@@ -59,7 +56,7 @@ public enum IdentifyMediaOutcome
 // ── TapeServiceBase ───────────────────────────────────────────────────────────
 
 /// <summary>
-/// Shared engine that owns the <see cref="TapeDrive"/>, <see cref="TapeFileAgent"/>,
+/// Shared engine that owns the <see cref="TapeDrive"/>, <see cref="TapeAgentBase"/>,
 ///  and cached <see cref="TapeTOC"/> and exposes drive-lifecycle operations common to
 ///  both TapeConNET and TapeWinNET.
 /// <para>
@@ -95,7 +92,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     protected readonly SemaphoreSlim _operationLock = new(1, 1);
 
     protected TapeDrive? _drive;
-    protected TapeFileAgent? _agent;
+    protected TapeAgentBase? _agent;
     protected TapeTOC? _toc;
 
     /// <summary>
@@ -111,6 +108,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     private bool _disposed;
 
     #endregion
+
     #region Construction / destruction
 
     #endregion
@@ -152,12 +150,18 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     public string? TOCFilePath { get; protected set; }
 
     /// <summary>
-    /// The running <see cref="TapeFileAgent"/> during an active operation; null otherwise.
+    /// The running <see cref="TapeAgentBase"/> during an active operation; null otherwise.
     /// </summary>
-    public TapeFileAgent? Agent => _agent;
+    public TapeAgentBase? Agent => _agent;
 
     /// <summary>True when the running agent has been asked to abort.</summary>
     public bool IsAbortRequested => _agent?.IsAbortRequested ?? false;
+
+    /// <summary>
+    /// Default name for newly created media, based on the current date/time.
+    /// Used across all apps and dialogs that need to pre-populate a media name.
+    /// </summary>
+    public static string DefaultNewMediaName => $"Media created {DateTime.Now:yyyy-MM-dd HH:mm}";
 
     #endregion
 
@@ -205,12 +209,16 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         get
         {
             if (_toc is null) return 0;
-            var used = _toc.ComputeTotalFileSizeOnTape(DefaultBlockSize);
+            // The loaded media header declares whether the sets carry set headers (SH-1); when no header
+            //  is loaded the medium is legacy and carries none.
+            bool withSetHeaders = LoadedMediaHeader?.HasSetHeaders ?? false;
+            var used = _toc.ComputeTotalFileSizeOnTape(DefaultBlockSize, withSetHeaders);
             if (!HasInitiatorPartition)
                 used += DefaultTOCCapacity;
             return used;
         }
     }
+
 
     /// <summary>
     /// Quantity (3) — the RAW remaining capacity as reported by the drive/backend, for diagnostics and
@@ -976,8 +984,6 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         LogInfoSub($"Run block size: {Helpers.BytesToStringLong(cal.RunBlockSize)}");
     }
 
-
-
     /// <summary>
     /// Creates a file filter from a list of raw patterns (e.g. wildcards or FCL
     ///  expressions) when <see cref="ListRequest.Filter"/> is not supplied.
@@ -1015,7 +1021,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// Signals the in-progress TOC load to abort cooperatively.
     /// Intentionally lock-free: <see cref="RestoreTOCAsync"/> holds the lock for its entire
     ///  duration, so acquiring it here would deadlock. The volatile
-    ///  <see cref="TapeFileAgent.IsAbortRequested"/> flag is safe to set from any thread.
+    ///  <see cref="TapeAgentBase.IsAbortRequested"/> flag is safe to set from any thread.
     /// </summary>
     public void AbortTOCLoad()
     {
@@ -1052,7 +1058,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 OnStatusUpdate("Reading TOC...");
 
                 _agent?.Dispose();
-                _agent = new TapeFileAgent(_drive, null);
+                _agent = new TapeAgentBase(_drive, null);
 
                 // Bridge OperationCancellationToken -> agent abort flag (CLI Ctrl+C).
                 var ct = OperationCancellationToken;
@@ -1188,7 +1194,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 LogInfo("Restoring TOC...");
                 OnStatusUpdate("Reading TOC...");
 
-                _agent = new TapeFileAgent(_drive, null);
+                _agent = new TapeAgentBase(_drive, null);
 
                 // Bridge OperationCancellationToken → agent abort flag (CLI Ctrl+C).
                 var ct = OperationCancellationToken;
@@ -1258,7 +1264,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 var description = mediaName ?? DefaultNewMediaName;
                 _agent?.Dispose();
-                _agent = new TapeFileAgent(_drive, new TapeTOC(description));
+                _agent = new TapeAgentBase(_drive, new TapeTOC(description));
 
                 var initResult = _agent.BackupInitialTOC();
                 if (!initResult)
@@ -1341,12 +1347,12 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
             if (_agent is not null)
             {
-                _loadedHeader = _agent.ReadHeader();
+                _loadedHeader = _agent.ReadBomHeader();
             }
             else
             {
-                using var probe = new TapeFileAgent(_drive, _toc ?? new TapeTOC());
-                _loadedHeader = probe.ReadHeader();
+                using var probe = new TapeAgentBase(_drive, _toc ?? new TapeTOC());
+                _loadedHeader = probe.ReadBomHeader();
             }
 
             if (_loadedHeader is not null)
@@ -1373,17 +1379,47 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     ///  <see cref="TapeMediaVerdict.Match"/> and <see cref="TapeMediaVerdict.Unidentified"/> are benign
     ///  (never prompted); the three positive mismatches are surfaced.
     /// </summary>
-    /// <param name="expectedSeriesId">The MediaId we expect, or null to skip the series check.</param>
+    /// <param name="expectedSeriesId"\>The <c>MediaId</c> we expect, or <see langword="null"/> or <see cref="Guid.Empty"/>
+    /// to skip the series check.</param>
+    /// <remarks>
+    /// <b><see cref="Guid.Empty"/> means "no expectation", not "expect zero".</b> Treating it as a value to match would
+    /// report <see cref="TapeMediaVerdict.MediaIdMismatch"/> against every legitimately identified
+    /// cartridge, prompting the user about a mismatch that exists only because we had nothing to
+    /// compare. Mirrors the same guard in <see cref="TapeFileRestoreBaseAgent.ClassifySetHeader"/>.
+    /// </remarks>
     /// <param name="expectedVolume">The volume number we expect, or null to skip the volume check.</param>
-    protected TapeMediaVerdict EvaluateLoadedHeader(Guid? expectedSeriesId = null, int? expectedVolume = null)
-        => _loadedHeader switch
+    /// <param name="expectNoSets">
+    /// When <see langword="true"/>, the caller is about to DESTROY existing content, so a medium that still
+    ///  holds backup sets is reported as <see cref="TapeMediaVerdict.MediaInconsistent"/> even when its
+    ///  identity is impeccable. Set count comes from <see cref="_toc"/> — the same object the caller holds.
+    /// </param>
+    protected TapeMediaVerdict EvaluateLoadedHeader(
+        Guid? expectedSeriesId = null, int? expectedVolume = null, bool expectNoSets = false)
+    {
+        var verdict = _loadedHeader switch
         {
             null => TapeMediaVerdict.Unidentified,
             TapeCalibrationHeader => TapeMediaVerdict.WrongKind,
-            TapeMediaHeader m when expectedSeriesId is { } s && m.MediaId != s => TapeMediaVerdict.MediaIdMismatch,
+            TapeMediaHeader m when expectedSeriesId is { } s && s != Guid.Empty && m.MediaId != s => TapeMediaVerdict.MediaIdMismatch,
             TapeMediaHeader m when expectedVolume is { } v && m.Volume != v => TapeMediaVerdict.WrongVolume,
             _ => TapeMediaVerdict.Match,
         };
+
+        // Applied AFTER the identity arms — a wrong-series or wrong-kind cartridge is the more informative
+        //  diagnosis, and content is beside the point there. But applied to Unidentified as well as Match:
+        //  header-less LEGACY media holding sets must still warn before being overwritten, which is exactly
+        //  what the old inline `_ when toc.Count > 0` arm did (it sat below no `null =>` arm, so it caught
+        //  header-less media too).
+        if (expectNoSets
+            && verdict is TapeMediaVerdict.Match or TapeMediaVerdict.Unidentified
+            && (_toc?.Count ?? 0) > 0)
+        {
+            verdict = TapeMediaVerdict.MediaInconsistent;
+        }
+
+        return verdict;
+    }
+
 
     /// <summary>
     /// Culture-neutral label for a verdict, used in LOG lines only. The host builds the localized
@@ -1480,7 +1516,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 OnStatusUpdate("Creating initial TOC...");
 
                 var description = mediaName ?? DefaultNewMediaName;
-                _agent = new TapeFileAgent(_drive, new TapeTOC(description));
+                _agent = new TapeAgentBase(_drive, new TapeTOC(description));
 
                 var initResult = _agent.BackupInitialTOC();
                 if (!initResult)
@@ -1547,7 +1583,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 OnStatusUpdate("Importing TOC from file...");
 
                 _agent?.Dispose();
-                _agent = new TapeFileAgent(_drive, null);
+                _agent = new TapeAgentBase(_drive, null);
 
                 var loadResult = _agent.LoadTOCFromFile(filePath);
                 if (!loadResult)
@@ -1622,7 +1658,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 OnStatusUpdate("Exporting TOC to file...");
 
                 _agent?.Dispose();
-                _agent = new TapeFileAgent(_drive!, _toc);
+                _agent = new TapeAgentBase(_drive!, _toc);
 
                 var saveResult = _agent.SaveTOCToFile(filePath);
                 if (!saveResult)
@@ -1672,7 +1708,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 LogInfo($"Renaming media to: {newName}");
                 _toc.Description = newName;
 
-                _agent = new TapeFileAgent(_drive, _toc);
+                _agent = new TapeAgentBase(_drive, _toc);
                 var tocResult = _agent.BackupTOC();
                 if (!tocResult)
                 {
@@ -1741,7 +1777,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 LogInfo($"Renaming backup set #{setIndex} to: {newName}");
                 setTOC.Description = newName;
 
-                _agent = new TapeFileAgent(_drive, _toc);
+                _agent = new TapeAgentBase(_drive, _toc);
                 var tocResult = _agent.BackupTOC();
                 if (!tocResult)
                 {
@@ -1792,100 +1828,15 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         return await RenameBackupSetAsync(setIndex, newName);
     }
 
-    /// <summary>
-    /// Deletes backup sets starting from
-    ///  set on the volume. Physically overwrites the tape past the last retained set to move the
-    ///  end-of-data marker, then updates the TOC on tape.
-    /// </summary>
-    /// <param name="deleteFromSetIndex">Standard (1-based) index of the first set to delete.</param>
-    public async Task<bool> DeleteBackupSetsAsync(int deleteFromSetIndex)
-    {
-        if (_toc is null || _drive is null)
-        {
-            LastError = "No media loaded";
-            return false;
-        }
-
-        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
-        return await Task.Run(async () =>
-        {
-            await _operationLock.WaitAsync().ConfigureAwait(false);
-            try
-            {
-                var toc = _toc;
-                deleteFromSetIndex = toc.SetIndexToStd(deleteFromSetIndex);
-
-                int lastSet = toc.LastSetOnVolume;
-                int setsToDelete = lastSet - deleteFromSetIndex + 1;
-                LogInfo($"Deleting {setsToDelete} backup set(s) from #{deleteFromSetIndex} | {toc.SetIndexToAlt(deleteFromSetIndex)}...");
-                OnStatusUpdate("Deleting backup sets...");
-
-                // Set the current set to the first one to delete —
-                //  this is the precondition for DeleteSetsFromCurrentSetUp()
-                toc.CurrentSetIndex = deleteFromSetIndex;
-
-                _agent = new TapeFileAgent(_drive, toc);
-                var result = _agent.DeleteSetsFromCurrentSetUp(navigateFromBegin: IsTOCFromFile); // if TOC is from file, assume the TOC on tape might be missing
-                if (!result)
-                {
-                    LastError = result.ErrorMessage;
-                    LogErr($"Failed to delete backup sets: {result.ErrorMessage}");
-                    return false;
-                }
-
-                LogOk($"Deleted {setsToDelete} backup set(s) — TOC saved");
-                OnStatusUpdate($"Deleted {setsToDelete} backup set(s)");
-                _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-                LogErr($"Exception deleting backup sets: {ex.Message}");
-                return false;
-            }
-            finally
-            {
-                _agent?.Dispose();
-                _agent = null;
-                _operationLock.Release();
-                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
-            }
-        });
-    }
-
     #endregion // TOC operations
 
-    #region Timing / formatting helpers
-    // ── Timing / formatting helpers ──────────────────────────────────────────
+    #region Test and Debug mechanisms
+    // ── Test and Debug mechanisms ───────────────────────────────────────────
 
-    /// <summary>
-    /// Default name for newly created media, based on the current date/time.
-    /// Used across all apps and dialogs that need to pre-populate a media name.
-    /// </summary>
-    public static string DefaultNewMediaName => $"Media created {DateTime.Now:yyyy-MM-dd HH:mm}";
+    internal VirtualTapeDriveBackend? VirtualBackend => _drive?.Backend as VirtualTapeDriveBackend;
 
-    /// <summary>Formats an elapsed duration as a human-readable string.</summary>
-    public static string FormatElapsed(double totalSeconds)
-    {
-        if (totalSeconds < 1.0) return "< 1s";
-        var ts = TimeSpan.FromSeconds(totalSeconds);
-        if (ts.TotalMinutes < 1) return $"{ts.Seconds}s";
-        if (ts.TotalHours < 1) return $"{ts.Minutes}m {ts.Seconds:D2}s";
-        return $"{(int)ts.TotalHours}h {ts.Minutes:D2}m {ts.Seconds:D2}s";
-    }
-
-    /// <summary>
-    /// Formats a data rate as <c>"X.XX MB/s"</c>; returns an empty string
-    ///  when the duration is too short or no bytes were processed.
-    /// </summary>
-    public static string FormatDataIoRate(long bytes, double totalSeconds)
-    {
-        if (totalSeconds < 0.001 || bytes <= 0) return string.Empty;
-        long bytesPerSecond = (long)(bytes / totalSeconds);
-        return $"{Helpers.BytesToString(bytesPerSecond)}/s";
-    }
     #endregion
+
 }
 
 

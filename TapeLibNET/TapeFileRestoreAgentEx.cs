@@ -173,7 +173,7 @@ namespace TapeLibNET
                     SetError(ex, $"Couldn't create directory >{directoryName}< for file >{orgName}<");
 
                     m_logger.LogWarning(ex, "Couldn't create directory >{Directory}< for file >{File}<", directoryName, orgName);
-                    
+                    LatchFailure();
                     return false;
                 }
             }

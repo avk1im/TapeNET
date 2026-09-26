@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 
 using TapeLibNET;
 using TapeLibNET.Services;
@@ -20,8 +21,17 @@ namespace TapeLibNET.Tests.Helpers;
 ///  layer — a recording stub that lets round-trip tests assert on log output
 ///  without any UI dependency.
 /// </remarks>
-public class TestTapeServiceHost : ITapeServiceHost
+/// <param name="logger">
+/// Optional sink so recorded reports are also VISIBLE during a test run, not merely recorded.
+/// A failing assertion on <see cref="ContainsMessage"/> is nearly undiagnosable without it —
+/// the expected text is somewhere in a queue nobody prints.
+/// </param>
+public class TestTapeServiceHost(ILogger? logger = null) : ITapeServiceHost
 {
+    // ── Debug logging ─────────────────────────────────────────────────────────
+
+    private readonly ILogger _logger = logger ?? TestLoggerFactory.Default.CreateLogger<TestTapeServiceHost>();
+
     // ── Recorded data ─────────────────────────────────────────────────────────
 
     /// <summary>
@@ -101,7 +111,33 @@ public class TestTapeServiceHost : ITapeServiceHost
 
     /// <inheritdoc/>
     public void Report(ServiceReportLevel level, string message, bool isSubEntry = false)
-        => Reports.Enqueue(new ReportEntry(level, message, isSubEntry, DateTime.Now));
+    {
+        Reports.Enqueue(new ReportEntry(level, message, isSubEntry, DateTime.Now));
+
+        // Mirror to the test logger at a severity matching the report level, so the run transcript
+        //  shows what the user would have seen.
+        var logLevel = level switch
+        {
+            ServiceReportLevel.Error => LogLevel.Error,
+            ServiceReportLevel.Failed => LogLevel.Error,
+            ServiceReportLevel.Warning => LogLevel.Warning,
+            _ => LogLevel.Information,
+        };
+        _logger.Log(logLevel, "[{Level}]{Indent} {Message}", level, isSubEntry ? "  ·" : "", message);
+    }
+
+    /// <summary>
+    /// All recorded reports as one newline-separated transcript, for embedding in an assertion message.
+    /// </summary>
+    /// <remarks>
+    /// Use as <c>Assert.True(host.ContainsMessage("…"), host.DumpReports())</c>: the failure then SHOWS
+    ///  what was reported instead of merely stating that the expected fragment was absent.
+    /// </remarks>
+    public string DumpReports()
+        => Reports.IsEmpty
+            ? "(no reports recorded)"
+            : string.Join(Environment.NewLine,
+                Reports.Select(r => $"  [{r.Level}]{(r.IsSubEntry ? "  ·" : "")} {r.Message}"));
 
     // ── ITapeServiceHost — Prompts ────────────────────────────────────────────
 
@@ -212,6 +248,33 @@ public class TestTapeServiceHost : ITapeServiceHost
     public FileFailedAction OnFileErrorSelect(string filePath, string errorMessage, string operationName)
         => FileErrorAnswers.Count > 0 ? FileErrorAnswers.Dequeue() : FileFailedAction.Skip;
 
+    /// <summary>One recorded set-anomaly prompt, mirroring <see cref="MediaMismatchPrompt"/>.</summary>
+    public readonly record struct SetAnomalyPrompt(
+        string ExpectedSet, string ActualSet, string ErrorMessage, bool IsDestructive, string OperationName);
+
+    /// <summary>Every set-anomaly prompt raised, in order. A clean run must leave this empty.</summary>
+    public List<SetAnomalyPrompt> SetAnomalyPrompts { get; } = [];
+
+    /// <summary>
+    /// What <see cref="OnSetAnomalySelect"/> answers. Defaults to <see langword="true"/>.
+    /// <para>Tests wanting the veto set this explicitly to <see langword="false"/>.</para>
+    /// </summary>
+    /// <remarks>
+    /// The OPPOSITE of the interface default, for the same reason <see cref="TestNotifiable.SetAnomalyAction"/>
+    ///  defaults to <c>Proceed</c>: a test host exists to exercise the library's decisions, not to veto
+    ///  them before they run.
+    /// </remarks>
+    public bool SetAnomalyAnswer { get; set; } = true;
+
+    /// <inheritdoc/>
+    public bool OnSetAnomalySelect(string expectedSet, string actualSet, string errorMessage,
+        bool isDestructive, string operationName)
+    {
+        SetAnomalyPrompts.Add(new SetAnomalyPrompt(
+            expectedSet, actualSet, errorMessage, isDestructive, operationName));
+        return SetAnomalyAnswer;
+    }
+
     /// <inheritdoc/>
     /// <remarks>
     /// Dequeues from <see cref="ConfirmAnswers"/>; returns <see langword="false"/>
@@ -272,6 +335,8 @@ public class TestTapeServiceHost : ITapeServiceHost
         while (MediaMismatchPrompts.TryDequeue(out _))
             { }
         MediaMismatchAnswers.Clear();
+
+        SetAnomalyPrompts.Clear();
     }
 
     // ── Inner types ───────────────────────────────────────────────────────────

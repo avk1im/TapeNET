@@ -104,7 +104,7 @@ public class VirtualDriveBasicTests
         using var fixture = new VirtualTapeFixture(profile, withMediaHeader: false);
 
         // Position should be at the beginning after load
-        long block = fixture.Drive.BlockCounter;
+        long block = fixture.Drive.CurrentBlock;
         Assert.Equal(0, block);
     }
 
@@ -210,11 +210,11 @@ public class VirtualDriveBasicTests
         var buffer = new byte[drive.BlockSize];
         drive.WriteDirect(buffer, 0, buffer.Length);
 
-        Assert.True(drive.BlockCounter > 0, "Position should have advanced after write");
+        Assert.True(drive.CurrentBlock > 0, "Position should have advanced after write");
 
         // Rewind
         Assert.True(drive.Rewind());
-        Assert.Equal(0, drive.BlockCounter);
+        Assert.Equal(0, drive.CurrentBlock);
     }
 
     [Theory]
@@ -231,11 +231,11 @@ public class VirtualDriveBasicTests
 
         // Seek to a specific block
         Assert.True(drive.MoveToBlock(5));
-        Assert.Equal(5, drive.BlockCounter);
+        Assert.Equal(5, drive.CurrentBlock);
 
         // Seek back to beginning
         Assert.True(drive.MoveToBlock(0));
-        Assert.Equal(0, drive.BlockCounter);
+        Assert.Equal(0, drive.CurrentBlock);
     }
 
     #endregion
@@ -539,7 +539,7 @@ public class VirtualDriveBasicTests
 
         // After format, position should be at 0 and media usable
         Assert.True(drive.IsMediaLoaded);
-        Assert.Equal(0, drive.BlockCounter);
+        Assert.Equal(0, drive.CurrentBlock);
     }
 
     #endregion

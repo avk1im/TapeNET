@@ -30,7 +30,7 @@ public partial class TapeService
     /// </summary>
     private sealed class GuiRestoreProgressHandler(
         ITapeServiceHost host,
-        TapeFileAgent agent,
+        TapeAgentBase agent,
         IProgressScope progress,
         int totalFilesToProcess,
         bool skipAllErrors,

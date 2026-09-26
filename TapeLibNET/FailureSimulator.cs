@@ -36,9 +36,37 @@ public class FailureSimulator
     public int EveryNth { get; set; } = 2;
 
     /// <summary>
+    /// If <see langword="true"/>, the simulator disables itself after the first simulated failure.
+    /// </summary>
+    public bool Once { get; set; } = false;
+
+    /// <summary>
+    /// Enables the simulator for a single simulated failure on the next call to <see cref="ShouldFailNow"/>.
+    /// </summary>
+    public void EnableOnce()
+    {
+        Enabled = true;
+        EveryNth = 1;
+        Once = true;
+    }
+
+    public void EnableAlways(int everyNth = 1)
+    {
+        Enabled = true;
+        EveryNth = everyNth;
+        Once = false;
+    }
+
+    /// <summary>
     /// Increments <see cref="Counter"/> and returns true when a simulated failure
     /// should occur (<see cref="Enabled"/> and counter is a multiple of <see cref="EveryNth"/>).
     /// </summary>
-    public bool ShouldFailNow() => Enabled && ++Counter % EveryNth == 0;
+    public bool ShouldFailNow()
+    { 
+        bool now = Enabled && ++Counter % EveryNth == 0;
+        if (now && Once)
+            Enabled = false;
+        return now;
+    }
 }
 #endif

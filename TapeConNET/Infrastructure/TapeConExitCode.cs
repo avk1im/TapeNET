@@ -16,4 +16,10 @@ public enum TapeConExitCode
     OperationFailed = 3,
     /// <summary>The user cancelled the operation (e.g. via Ctrl+C).</summary>
     Cancelled = 4,
+    /// <summary>
+    /// A destructive write was refused by set-header verification (SH-13) — the tape is
+    ///  unchanged. Distinct from <see cref="OperationFailed"/> so a repair script can tell
+    ///  "refused" from "failed part-way".
+    /// </summary>
+    WriteRefused = 5,
 }

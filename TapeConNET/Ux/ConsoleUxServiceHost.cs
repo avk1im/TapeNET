@@ -187,6 +187,54 @@ public sealed class ConsoleUxServiceHost(IConsoleUx ux) : ITapeServiceHost
     }
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// <para>
+    /// A two-choice prompt rather than a four-choice one: unlike a file error, there is nothing to skip
+    ///  and nothing to retry — the library either gets permission to reposition and re-verify, or it stops.
+    /// </para>
+    /// <para>
+    /// The unattended default SPLITS BY STAKES, mirroring the <c>CalibrateScratch</c> carve-out above.
+    ///  A read-path recovery costs only tape motion, so an unattended restore proceeds as it always did;
+    ///  a destructive one is declined, because no batch script should silently authorize repositioning a
+    ///  head that is about to overwrite. Both decisions are logged.
+    /// </para>
+    /// </remarks>
+    public bool OnSetAnomalySelect(string expectedSet, string actualSet, string errorMessage,
+        bool isDestructive, string operationName)
+    {
+        string headline = isDestructive
+            ? $"{operationName} stopped: the backup set on tape is not the one expected."
+            : $"{operationName}: the backup set on tape is not the one expected.";
+
+        string detail = $"  Expected: {expectedSet}\n  Found:    {actualSet}";
+        if (!string.IsNullOrWhiteSpace(errorMessage))
+            detail += $"\n  {errorMessage}";
+
+        if (ux.NonInteractive || ux.QuietMode)
+        {
+            bool auto = !isDestructive;
+            ux.Log(WarningLevel.Warning,
+                $"Set anomaly auto-{(auto ? "recover" : "abort")} (non-interactive): {expectedSet} / {actualSet}");
+            return auto;
+        }
+
+        // Tell the user the recovery repositions, and that a verification still gates the write.
+        //  Without this, "attempt recovery" on a delete reads as "try deleting anyway."
+        string recoverLabel = isDestructive
+            ? "Attempt recovery, then re-verify before writing"
+            : "Attempt recovery";
+
+        // Default to Abort — the safe outcome, and the last entry, exactly as the media prompt does.
+        int idx = Select(
+            isDestructive ? "Backup set mismatch — data at risk" : "Backup set mismatch",
+            $"{headline}\n{detail}\nChoose action",
+            [recoverLabel, $"Abort {operationName.ToLowerInvariant()}"],
+            defaultIndex: 1);
+
+        return idx == 0;
+    }
+
+    /// <inheritdoc/>
     public bool OnVolumeFullConfirm(int currentVolume, int nextVolume,
         int filesProcessed, int totalFiles, long bytesBackedup, long bytesTotal)
         => ux.Confirm(

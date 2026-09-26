@@ -67,6 +67,7 @@ public static class RootCommandFactory
         root.Subcommands.Add(ListCommand.Create(ux));
         root.Subcommands.Add(RenameCommand.CreateRenameMedia(ux));
         root.Subcommands.Add(RenameCommand.CreateRenameSet(ux));
+        root.Subcommands.Add(DeleteSetsCommand.Create(ux));
 
         return root;
     }

@@ -34,7 +34,7 @@ public partial class TapeService
     /// </summary>
     private sealed class GuiRestoreProgressHandler(
         WpfServiceHost host,
-        TapeFileAgent agent,
+        TapeAgentBase agent,
         int totalFilesToProcess,
         bool skipAllErrors,
         RestoreMode mode)

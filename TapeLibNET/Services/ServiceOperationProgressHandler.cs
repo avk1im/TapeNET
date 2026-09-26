@@ -24,14 +24,14 @@ namespace TapeLibNET.Services;
 /// </remarks>
 public abstract class ServiceOperationProgressHandler(
     ITapeServiceHost host,
-    TapeFileAgent agent,
+    TapeAgentBase agent,
     bool skipAllErrors,
     string operationName) : ITapeFileNotifiable
 {
     private readonly ITapeServiceHost _host = host;
 
     /// <summary>The tape agent driving the current operation.</summary>
-    protected readonly TapeFileAgent Agent = agent;
+    protected readonly TapeAgentBase Agent = agent;
 
     private bool _skipAllErrors = skipAllErrors;
     private readonly string _operationName = operationName;
@@ -47,9 +47,9 @@ public abstract class ServiceOperationProgressHandler(
     public long BytesTotal { get; private set; }
     /// <summary>Files finished (succeeded + failed + skipped).</summary>
     public int FilesProcessed { get; private set; }
-    /// <summary>Files completed without error.</summary>
+    /// <summary>Files completed without errorEx.</summary>
     public int FilesSucceeded { get; private set; }
-    /// <summary>Files that hit an error and were not retried.</summary>
+    /// <summary>Files that hit an errorEx and were not retried.</summary>
     public int FilesFailed { get; private set; }
     /// <summary>Files skipped (by pre-processor, incremental, or user choice).</summary>
     public int FilesSkipped { get; private set; }
@@ -58,7 +58,7 @@ public abstract class ServiceOperationProgressHandler(
 
     // ── Shared private state ──────────────────────────────────────────────────
 
-    private TapeFileStatistics _batchStartSnapshot;
+    private TapeFileStatistics _setStartSnapshot;
     private bool _abortLogged;
 
     // ── Internal helpers ──────────────────────────────────────────────────────
@@ -73,6 +73,7 @@ public abstract class ServiceOperationProgressHandler(
         FilesFailed    = stats.FilesFailed;
         FilesSkipped   = stats.FilesSkipped;
         BytesProcessed = stats.FileBytesProcessed;
+        SetStats       = stats.Sets; // ← ensure the set-level counters ride along
     }
 
     /// <summary>Reports current progress to the host. Override to add custom progress display.</summary>
@@ -96,9 +97,9 @@ public abstract class ServiceOperationProgressHandler(
     // ── ITapeFileNotifiable ───────────────────────────────────────────────────
 
     /// <inheritdoc/>
-    public virtual void BatchStart(int setIndex, in TapeFileStatistics stats)
+    public virtual void SetStart(int setIndex, in TapeFileStatistics stats)
     {
-        _batchStartSnapshot = stats;
+        _setStartSnapshot = stats;
         Sync(stats);
         var toc = Agent.TOC;
         _host.Report(ServiceReportLevel.Info,
@@ -110,11 +111,11 @@ public abstract class ServiceOperationProgressHandler(
     }
 
     /// <inheritdoc/>
-    public virtual void BatchEnd(int setIndex, in TapeFileStatistics stats)
+    public virtual void SetEnd(int setIndex, in TapeFileStatistics stats)
     {
         Sync(stats);
         var toc = Agent.TOC;
-        var batch = stats.Delta(in _batchStartSnapshot);
+        var batch = stats.Delta(in _setStartSnapshot);
 
         var level = batch.FilesFailed > 0 ? ServiceReportLevel.Failed
                   : batch.FilesSkipped > 0 ? ServiceReportLevel.Warning
@@ -168,7 +169,7 @@ public abstract class ServiceOperationProgressHandler(
         if (_skipAllErrors)
             return FileFailedAction.Skip;
 
-        // Route to the host's structured file-error prompt.
+        // Route to the host's structured file-errorEx prompt.
         //  The host shows the appropriate dialog (WPF FileErrorDialog, CLI menu, etc.)
         //  and returns the chosen action, including the SkipAll sentinel.
         var action = _host.OnFileErrorSelect(
@@ -199,7 +200,195 @@ public abstract class ServiceOperationProgressHandler(
         _host.Report(ServiceReportLevel.None,
             $"Skipped: {Path.GetFileName(fileInfo.FileDescr.FullName)}", isSubEntry: true);
     }
+
+    // ── Set-level statistics (written by Sync, read by the service afterwards) ──
+
+    /// <summary>
+    /// Set-level statistics for the operation, mirroring the file counters above.
+    /// </summary>
+    /// <remarks>
+    /// A struct copy refreshed by <see cref="Sync"/>, so it is current whenever the service reads it —
+    ///  including after an abort, where the agent's own <c>_stats</c> may already have moved on.
+    /// </remarks>
+    public TapeSetStatistics SetStats { get; private set; }
+
+    /// <summary>
+    /// Set anomalies observed during the operation, in order — the forensic trail behind
+    ///  <see cref="SetStats"/>'s counters.
+    /// </summary>
+    public IReadOnlyList<TapeSetAnomaly> SetAnomalies => _setAnomalies;
+    private readonly List<TapeSetAnomaly> _setAnomalies = [];
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// <para>
+    /// <b>This override is not optional.</b> Without it the handler inherits the interface's default
+    ///  implementation, which returns <see cref="SetAnomalyAction.Abort"/> by design (SH-18) — correct
+    ///  for a notifiable that knows nothing about set recovery, catastrophic for the one the service
+    ///  uses, since it would abort every operation that meets a repairable drift.
+    /// </para>
+    /// <para>
+    /// Reports FIRST, asks SECOND. The host's dialog is modal in most apps, so the log line must already
+    ///  be on screen when it opens — the user is being asked to decide about something they should be
+    ///  able to read (SH-16).
+    /// </para>
+    /// <para>
+    /// Sets are named in the standard notation throughout. Note that on an OVERWRITE the expected
+    ///  description is the INCOMING set's name: the service replaces the target slot in the TOC before
+    ///  any navigation happens, so by the time we verify, the TOC already describes what is about to be
+    ///  written rather than what is still on tape.
+    /// </para>
+    /// </remarks>
+    public virtual SetAnomalyAction OnSetAnomaly(in TapeSetAnomaly anomaly, in TapeFileStatistics stats)
+    {
+        Sync(stats);
+        _setAnomalies.Add(anomaly);
+
+        string expected = DescribeSet(anomaly.SetIndex, anomaly.ExpectedDescription);
+        string actual = DescribeActualSet(in anomaly);
+
+        // A set-level fault is louder than a file-level one: it can invalidate an entire set, and on a
+        //  destructive path it is the difference between repairing a cartridge and ruining it.
+        _host.Report(anomaly.IsDestructive ? ServiceReportLevel.Failed : ServiceReportLevel.Warning,
+            $"Set {expected}: anomaly ({DescribeVerdict(anomaly.Verdict)})");
+        _host.Report(ServiceReportLevel.Warning,
+            $"Expected set {expected}", isSubEntry: true);
+        _host.Report(ServiceReportLevel.Warning,
+            $"Found set {actual}", isSubEntry: true);
+
+        if (anomaly.ActualVolume != anomaly.ExpectedVolume)
+            _host.Report(ServiceReportLevel.Warning,
+                $"Volume #{anomaly.ActualVolume} on tape, expected volume #{anomaly.ExpectedVolume}",
+                isSubEntry: true);
+
+        if (!anomaly.Diagnosis.Success && !string.IsNullOrWhiteSpace(anomaly.Diagnosis.ErrorMessage))
+            _host.Report(ServiceReportLevel.Warning,
+                anomaly.Diagnosis.ErrorMessage, isSubEntry: true);
+
+        ReportProgress(stats);
+
+        // Nothing left to try: the ladder is telling us, not asking us. Answering "proceed" would
+        //  authorize a stage that does not exist, and would read in the log as a decision the user made.
+        if (!anomaly.CanAttemptRecovery)
+        {
+            _host.Report(ServiceReportLevel.Warning,
+                "No recovery remains for this set", isSubEntry: true);
+            return SetAnomalyAction.Abort;
+        }
+
+        // Same suppression latch the file path uses: an unattended run must not stall on a prompt.
+        //  Deliberately shared with SkipAllErrors rather than given its own flag — a caller that asked
+        //  not to be prompted about files did not mean "except about sets".
+        if (_skipAllErrors)
+        {
+            _host.Report(ServiceReportLevel.Warning,
+                "Attempting recovery (error prompts suppressed)", isSubEntry: true);
+            return SetAnomalyAction.Proceed;
+        }
+
+        // The host gets the SAME rendered strings the log just showed — a prompt that names the sets
+        //  differently from the line above it invites the user to think they are two separate events.
+        bool authorized = _host.OnSetAnomalySelect(
+            expected, actual, anomaly.Diagnosis.ErrorMessage, anomaly.IsDestructive, _operationName);
+
+        if (!authorized)
+        {
+            // A declined recovery is a user decision, not a fault — say so plainly, and let the agent
+            //  supply the diagnosis. Do NOT throw here: OnSetAnomaly's contract is the enum, and the
+            //  agent converts it into IsAbortRequested on its own.
+            _host.Report(ServiceReportLevel.Warning,
+                $"{_operationName}: set recovery declined", isSubEntry: true);
+            return SetAnomalyAction.Abort;
+        }
+
+        _host.Report(ServiceReportLevel.Info, "Attempting recovery...", isSubEntry: true);
+        return SetAnomalyAction.Proceed;
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Reported at Warning, never Info (SH-16). A corrected drift means the drive or the medium
+    ///  miscounted marks; a recovery that needed the BOM renavigation means the cartridge's TAIL is
+    ///  unreliable. Both are facts the person holding the cartridge should see, and this is the only
+    ///  surface where they will.
+    /// </remarks>
+    public virtual void OnSetAnomalyRecovered(in TapeSetAnomaly anomaly, in TapeFileStatistics stats)
+    {
+        Sync(stats);
+
+        string how = anomaly.Stage == TapeSetAnomalyStage.Renavigated
+            ? "by re-navigating from the start of the volume"
+            : "by correcting the set position";
+
+        _host.Report(ServiceReportLevel.Warning,
+            $"Set {DescribeSet(anomaly.SetIndex, anomaly.ExpectedDescription)} recovered {how}");
+
+        if (anomaly.Stage == TapeSetAnomalyStage.Renavigated)
+            _host.Report(ServiceReportLevel.Warning,
+                "The end of this volume appears damaged — see the summary for advice", isSubEntry: true);
+
+        ReportProgress(stats);
+    }
+
+
+    /// <summary>
+    /// Renders a set in the standard TapeNET notation — <c>#std | alt &gt;description&lt;</c>.
+    /// </summary>
+    /// <remarks>
+    /// Uses <see cref="TapeAgentBase.TOC"/>, which IS the service's <c>_toc</c> (the agent's constructor
+    ///  adopts the instance it is handed, so the two are one object). The alt index is therefore computed
+    ///  against exactly the TOC the anomaly's indices came from.
+    /// </remarks>
+    private string DescribeSet(int stdIndex, string description)
+        => $"#{stdIndex} | {Agent.TOC.SetIndexToAlt(stdIndex)} >{description}<";
+
+    /// <summary>
+    /// Renders the set the TAPE actually holds. Its standard index is derived from the header's
+    ///  on-volume index, which is meaningful only when the volume itself matched — a
+    ///  <see cref="TapeSetHeaderVerdict.WrongVolume"/> or <see cref="TapeSetHeaderVerdict.WrongMedia"/>
+    ///  set belongs to a different series, so naming an index in THIS TOC's terms would be a fiction.
+    /// </summary>
+    private string DescribeActualSet(in TapeSetAnomaly anomaly)
+    {
+        bool sameSeries = anomaly.ActualVolume == anomaly.ExpectedVolume
+            && anomaly.Verdict is TapeSetHeaderVerdict.SetIndexDrift or TapeSetHeaderVerdict.Match
+            && anomaly.ActualVolumeSetIndex >= 0;
+
+        if (!sameSeries)
+            return $">{anomaly.ActualDescription}<";   // no index we can honestly quote
+
+        int actualStd = Agent.TOC.FirstSetOnVolume + anomaly.ActualVolumeSetIndex;
+        return DescribeSet(actualStd, anomaly.ActualDescription);
+    }
+
+    /// <summary>Culture-neutral label for a verdict, used in LOG lines only — mirrors <c>VerdictToString</c>.</summary>
+    private static string DescribeVerdict(TapeSetHeaderVerdict verdict) => verdict switch
+    {
+        TapeSetHeaderVerdict.SetIndexDrift => "wrong set reached",
+        TapeSetHeaderVerdict.Unreadable => "set marker unreadable",
+        TapeSetHeaderVerdict.WrongMedia => "different cartridge",
+        TapeSetHeaderVerdict.WrongVolume => "different volume",
+        _ => verdict.ToString(),
+    };
 }
+
+// ── Set-level operations (delete) ────────────────────────────────────────────
+
+/// <summary>
+/// <see cref="ServiceOperationProgressHandler"/> specialisation for operations that act on SETS rather
+///  than files. Inherits the whole set-anomaly channel and contributes no file behaviour of its own.
+/// </summary>
+/// <remarks>
+/// A delete never enters a file loop, so <c>SetStart</c> / <c>PreProcessFile</c> and their siblings are
+///  never called — which is precisely why the verb needs its own result type (§3) rather than being
+///  reported through the file counters.
+/// </remarks>
+public class ServiceSetProgressHandler(
+    ITapeServiceHost host,
+    TapeAgentBase agent,
+    bool skipAllErrors,
+    string operationName)
+    : ServiceOperationProgressHandler(host, agent, skipAllErrors, operationName);
 
 // ── Backup ───────────────────────────────────────────────────────────────────
 
@@ -210,7 +399,7 @@ public abstract class ServiceOperationProgressHandler(
 /// </summary>
 public class ServiceBackupProgressHandler(
     ITapeServiceHost host,
-    TapeFileAgent agent,
+    TapeAgentBase agent,
     bool skipAllErrors,
     ITapeFileFilter? filter = null)
     : ServiceOperationProgressHandler(host, agent, skipAllErrors, "Backup")
@@ -255,7 +444,7 @@ public class ServiceBackupProgressHandler(
 /// </summary>
 public class ServiceRestoreProgressHandler(
     ITapeServiceHost host,
-    TapeFileAgent agent,
+    TapeAgentBase agent,
     int totalFilesToProcess,
     bool skipAllErrors,
     RestoreMode mode)
@@ -290,6 +479,7 @@ public class ServiceRestoreProgressHandler(
                        : FilesSkipped > 0 ? ServiceReportLevel.Warning
                        :                    ServiceReportLevel.Completed,
         ProcessedFiles = ProcessedFiles,
+        Sets           = SetStats,
     };
 
     /// <inheritdoc/>
@@ -423,7 +613,7 @@ public class ServiceCalibrateProgressHandler(
         bool failed = false,
         TimeSpan duration = default,
         string? message = null,
-        Exception? error = null) => new()
+        Exception? errorEx = null) => new()
     {
         FilesTotal      = FilesTotal,
         BytesTotal      = BytesTotal,
@@ -440,7 +630,7 @@ public class ServiceCalibrateProgressHandler(
                         :           ServiceReportLevel.Completed,
         Duration        = duration,
         Message         = message,
-        Error           = error,
+        ErrorException  = errorEx,
         Calibration     = calibration,
         ProfileKey      = calibration?.ProfileKey ?? string.Empty,
         ReportedCapacityAtBom = calibration?.ReportedCapacityAtBom ?? BytesTotal,

@@ -187,8 +187,13 @@ internal static class VerbHost
     /// Maps a <see cref="BackupResult"/> / <see cref="RestoreResult"/>
     /// outcome to a <see cref="TapeConExitCode"/>. Used by backup/restore/validate/verify.
     /// </summary>
-    public static TapeConExitCode ToExitCode(bool wasAborted, bool failed)
+    /// <param name="setWriteBlocked">
+    /// True when a destructive write was refused by set-header verification (SH-13) — the tape
+    ///  is unchanged. Checked first: a refusal is not the same as a partial failure.
+    /// </param>
+    public static TapeConExitCode ToExitCode(bool wasAborted, bool failed, bool setWriteBlocked = false)
     {
+        if (setWriteBlocked) return TapeConExitCode.WriteRefused;
         if (wasAborted) return TapeConExitCode.Cancelled;
         if (failed)     return TapeConExitCode.OperationFailed;
         return TapeConExitCode.Ok;

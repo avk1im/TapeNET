@@ -1,4 +1,5 @@
 using System;
+using System.Text;
 
 namespace TapeLibNET;
 
@@ -17,7 +18,7 @@ public enum TapeHeaderKind : byte
     /// <summary>Calibration run header at BOM of a scratch cartridge. See <see cref="TapeCalibrationHeader"/>.</summary>
     Calibration = 2,
 
-    /// <summary>Per-set header at the front of a backup set's data region (Phase B).</summary>
+    /// <summary>Per-set header at the front of a backup set's data region. See <see cref="TapeSetHeader"/>.</summary>
     Set = 3,
 }
 
@@ -123,8 +124,7 @@ public abstract record TapeHeader : ITapeSerializable
     ///  polymorphic <c>&lt;TapeHeader&gt;</c> all route here and the caller's <c>as T</c> narrows the result.
     /// </summary>
     /// <remarks>
-    /// Returns <see langword="null"/> when the signature does not match, or for a kind not yet wired
-    ///  in. <c>Set</c> is wired in Phase B; until then a set block reads back as <see langword="null"/>.
+    /// Returns <see langword="null"/> when the signature does not match, or for a kind not yet wired in.
     /// </remarks>
     public static ITapeSerializable? ConstructFrom(TapeDeserializer d)
     {
@@ -133,14 +133,33 @@ public abstract record TapeHeader : ITapeSerializable
 
         return p.Kind switch
         {
-            TapeHeaderKind.Media       => TapeMediaHeader.ConstructBody(d, p),
-            TapeHeaderKind.Calibration => TapeCalibrationHeader.ConstructBody(d, p),
+            TapeHeaderKind.Media        => TapeMediaHeader.ConstructBody(d, p),
+            TapeHeaderKind.Calibration  => TapeCalibrationHeader.ConstructBody(d, p),
+            TapeHeaderKind.Set          => TapeSetHeader.ConstructBody(d, p),
 
-            // TapeHeaderKind.Set is wired in Phase B.
             _ => null,
         };
     }
 
     /// <summary>A short, human-readable description used in user prompts and logs.</summary>
     public abstract override string ToString();
+
+    /// <summary>
+    /// Trims <paramref name="name"/> to at most <paramref name="maxBytes"/> UTF-8 bytes so the framed
+    ///  record always fits its block. A null or empty name maps to <see langword="null"/>
+    ///  ("nothing recorded"). Shared by every kind that snapshots a name; each supplies its own budget.
+    /// </summary>
+    protected static string? ClampUtf8(string? name, int maxBytes)
+    {
+        if (string.IsNullOrEmpty(name))
+            return null;
+        if (Encoding.UTF8.GetByteCount(name) <= maxBytes)
+            return name;
+
+        // Trim by whole characters until it fits — simple and safe; names this long never occur in practice.
+        var span = name.AsSpan();
+        while (span.Length > 0 && Encoding.UTF8.GetByteCount(span) > maxBytes)
+            span = span[..^1];
+        return span.ToString();
+    }
 }

@@ -1270,7 +1270,7 @@ public partial class MainViewModel : ViewModelBase
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
             Title = "Export TOC to File",
-            Filter = $"Tape TOC files (*{TapeFileAgent.TOCFileExtension})|*{TapeFileAgent.TOCFileExtension}|All files (*.*)|*.*",
+            Filter = $"Tape TOC files (*{TapeAgentBase.TOCFileExtension})|*{TapeAgentBase.TOCFileExtension}|All files (*.*)|*.*",
             FileName = suggestedName,
             InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             OverwritePrompt = true,
@@ -1332,7 +1332,7 @@ public partial class MainViewModel : ViewModelBase
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Title = "Import TOC from File",
-            Filter = $"Tape TOC files (*{TapeFileAgent.TOCFileExtension})|*{TapeFileAgent.TOCFileExtension}|All files (*.*)|*.*",
+            Filter = $"Tape TOC files (*{TapeAgentBase.TOCFileExtension})|*{TapeAgentBase.TOCFileExtension}|All files (*.*)|*.*",
             InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
         };
 
@@ -1372,7 +1372,7 @@ public partial class MainViewModel : ViewModelBase
         if (sanitized.Length > 60)
             sanitized = sanitized[..60];
 
-        return $"{sanitized}_vol{toc.Volume}{TapeFileAgent.TOCFileExtension}";
+        return $"{sanitized}_vol{toc.Volume}{TapeAgentBase.TOCFileExtension}";
     }
 
     #endregion
@@ -2325,62 +2325,6 @@ public partial class MainViewModel : ViewModelBase
         {
             LogErr($"Format failed: {ex.Message}");
             SimpleBox.Show($"Format failed.\n\n{ex.Message}", "Format Error",
-                MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-        finally
-        {
-            IsBusy = false;
-            BusyMessage = string.Empty;
-        }
-    }
-
-    // ─────────────────────────────────────────────────
-    //  Delete Backup Sets
-    // ─────────────────────────────────────────────────
-
-    private void ShowDeleteBackupSetsWindow(object? parameter)
-    {
-        var viewModel = new DeleteBackupSetsViewModel(
-            _tapeService,
-            OnStartDeleteBackupSets,
-            () => Application.Current.Windows.OfType<DeleteBackupSetsWindow>().FirstOrDefault()?.Close());
-
-        var window = new DeleteBackupSetsWindow(viewModel)
-        {
-            Owner = Application.Current.MainWindow
-        };
-        window.ShowDialog();
-    }
-
-    private void OnStartDeleteBackupSets(DeleteBackupSetsViewModel deleteViewModel)
-    {
-        Application.Current.Windows.OfType<DeleteBackupSetsWindow>().FirstOrDefault()?.Close();
-        _ = ExecuteDeleteBackupSetsAsync(deleteViewModel.DeleteFromSetIndex);
-    }
-
-    private async Task ExecuteDeleteBackupSetsAsync(int deleteFromSetIndex)
-    {
-        IsBusy = true;
-        BusyMessage = "Deleting backup sets...";
-
-        try
-        {
-            var success = await _tapeService.DeleteBackupSetsAsync(deleteFromSetIndex);
-
-            if (!success)
-            {
-                SimpleBox.Show($"Failed to delete backup sets.\n\n{_tapeService.LastError}",
-                    "Delete Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
-                return;
-            }
-
-            UpdateTreeFromTOC(_tapeService.DriveNumber);
-            SelectMostRecentSet();
-        }
-        catch (Exception ex)
-        {
-            LogErr($"Delete backup sets failed: {ex.Message}");
-            SimpleBox.Show($"Delete failed.\n\n{ex.Message}", "Delete Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally

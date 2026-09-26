@@ -5,7 +5,7 @@ using Xunit.Abstractions;
 namespace TapeLibNET.Tests.Physical;
 
 /// <summary>
-/// Layer 4 — Error resilience tests on physical hardware.
+/// Layer 4 — ErrorException resilience tests on physical hardware.
 /// <para>
 /// Unlike virtual error tests (which simulate file-level failures in the agent),
 /// these tests inject failures at the Win32 backend level via

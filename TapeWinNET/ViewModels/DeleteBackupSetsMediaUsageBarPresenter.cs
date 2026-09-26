@@ -15,7 +15,7 @@ namespace TapeWinNET.ViewModels;
 /// <para>
 /// Collapses the sets selected for deletion into a single
 ///  <see cref="UsageSegmentKind.PendingBackupSet"/> segment drawn with the
-///  "Error" (pale-red) warning color so the user sees exactly which portion
+///  "ErrorException" (pale-red) warning color so the user sees exactly which portion
 ///  of the tape will be erased.
 /// </para>
 /// <para>
@@ -82,7 +82,7 @@ public class DeleteBackupSetsMediaUsageBarPresenter(TapeService tapeService, Del
         string tooltip = $"Set(s) to delete: {rangeLabel}\n"
                        + $"{sizeStr}, {fileCount:N0} file(s)";
 
-        // 4. Error color: the same diluted pale-red used by warning panels.
+        // 4. ErrorException color: the same diluted pale-red used by warning panels.
         Color color = GetWarningBgColor("Error");
 
         segments.Add(new UsageSegment(

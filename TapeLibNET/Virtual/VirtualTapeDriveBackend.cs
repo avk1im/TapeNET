@@ -581,6 +581,11 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
         // Apply the configured early-warning emulation profile to the (re)loaded content media.
         ApplyEwProfileToMedia();
 
+#if DEBUG
+        // Re-wire the block-level fault injectors, since the medium object is new.
+        ApplyFaultInjectorsToMedia();
+#endif
+
         // Sync odometer state from throttle settings
         SyncOdometerEnabled(m_contentMedia);
         SyncOdometerEnabled(m_initiatorMedia);

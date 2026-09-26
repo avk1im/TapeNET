@@ -273,6 +273,24 @@
                         <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding PreviewMultivolume}" TextWrapping="Wrap"/>
                     </Grid>
                 </GroupBox>
+
+                <!-- Advanced -->
+                <GroupBox Header="Advanced" Margin="0,8,0,0">
+                    <StackPanel Margin="8">
+                        <CheckBox Content="Do not correct set navigation errors"
+                                  IsChecked="{Binding DoNotCorrectSetNavigation}"
+                                  ToolTip="Do not attempt to correct set navigation errors, report and fail immediately"
+                                  IsEnabled="{Binding IsCorrectSetNavigationEnabled}"
+                                  Margin="0,0,0,6"/>
+                        <CheckBox Content="Skip set verification"
+                                  IsChecked="{Binding SkipSetVerification}"
+                                  ToolTip="Skip verifying the backup set marker before restoring.&#x0a;The restore proceeds either way; verification only adds a safety check."
+                                  Margin="0,0,0,6"/>
+                        <CheckBox Content="Do not prompt on media mismatch"
+                                  IsChecked="{Binding ProceedOnMediaMismatch}"
+                                  ToolTip="Silently accept non-matching media or volume (unattended mode)"/>
+                    </StackPanel>
+                </GroupBox>
             </StackPanel>
             </ScrollViewer>
         </Grid>

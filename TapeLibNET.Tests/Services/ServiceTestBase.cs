@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.IO;
 using TapeLibNET;
@@ -12,7 +13,7 @@ namespace TapeLibNET.Tests.Services;
 /// Shared infrastructure for service-layer round-trip tests.
 /// <para>
 /// Provides constants, factory helpers, and content-seeding utilities used
-///  by every derived test class.  Tests drive <see cref="TapeServiceBase"/>
+///  by every derived test class. Tests drive <see cref="TestTapeService"/>
 ///  directly (not via the CLI) against a file-backed virtual drive, using
 ///  <see cref="TestTapeServiceHost"/> to record every
 ///  <see cref="ITapeServiceHost.Report"/> call and every
@@ -96,7 +97,10 @@ public abstract class ServiceTestBase : IDisposable
     {
         foreach (var host in _trackedHosts)
             if (!_promptChecked.Contains(host))
+            {
                 Assert.Empty(host.MediaMismatchPrompts);   // happy-path hosts: provably silent
+                Assert.Empty(host.SetAnomalyPrompts);
+            }
 
         GC.SuppressFinalize(this);
     }
@@ -104,16 +108,15 @@ public abstract class ServiceTestBase : IDisposable
     // ── Single-volume factory helpers ─────────────────────────────────────────
 
     /// <summary>
-    /// Creates a <see cref="TapeServiceBase"/> (concrete: <see cref="TapeService"/>)
+    /// Creates a <see cref="TestTapeService"/> (concrete: <see cref="TapeService"/>)
     ///  wired to a fresh <see cref="TestTapeServiceHost"/> that records every
     ///  <see cref="ITapeServiceHost.Report"/> call and every
     ///  <see cref="ServiceStateChange"/> notification for post-hoc assertions.
     /// </summary>
-    protected (TapeServiceBase service, TestTapeServiceHost host) CreateService(
-        CancellationToken _ = default)
+    protected (TestTapeService service, TestTapeServiceHost host) CreateService()
     {
         var host = Track(new TestTapeServiceHost()); // ← create AND register
-        var service = new TapeServiceBase(TestLoggerFactory.Default, host);
+        var service = new TestTapeService(TestLoggerFactory.Default, host);
         return (service, host);
     }
 
@@ -121,11 +124,10 @@ public abstract class ServiceTestBase : IDisposable
     /// Opens a file-backed virtual drive, formats it, and leaves the service
     ///  in the post-format state (media loaded, TOC available).
     /// </summary>
-    protected async Task<(TapeServiceBase service, TestTapeServiceHost host)> OpenAndFormatAsync(
-        TempVirtualMedia media,
-        CancellationToken ct = default)
+    protected async Task<(TestTapeService service, TestTapeServiceHost host)> OpenAndFormatAsync(
+        TempVirtualMedia media)
     {
-        var (service, host) = CreateService(ct);
+        var (service, host) = CreateService();
 
         var caps = media.HasInitiator
             ? VirtualTapeDriveCapabilities.WithPartitions
@@ -150,14 +152,20 @@ public abstract class ServiceTestBase : IDisposable
     }
 
     /// <summary>
-    /// Re-opens the same virtual media files for reading (e.g. post-backup).
-    ///  Loads media and restores the TOC.
+    /// Re-opens the same virtual media files for reading (e.g. post-backup). Loads media and, by
+    ///  default, restores the TOC.
     /// </summary>
-    protected async Task<(TapeServiceBase service, TestTapeServiceHost host)> ReopenAsync(
+    /// <param name="restoreTOC">
+    /// Whether to load the on-tape TOC after the media is loaded. Leave <see langword="true"/> for
+    ///  backup media — where a readable TOC is part of what the reopen asserts. Pass
+    ///  <see langword="false"/> for a cartridge that carries no TOC by design: a calibration cartridge
+    ///  (whose content partition holds a run trail), or a blank/foreign one under test.
+    /// </param>
+    protected async Task<(TestTapeService service, TestTapeServiceHost host)> ReopenAsync(
         TempVirtualMedia media,
-        CancellationToken ct = default)
+        bool restoreTOC = true)
     {
-        var (service, host) = CreateService(ct);
+        var (service, host) = CreateService();
 
         var caps = media.HasInitiator
             ? VirtualTapeDriveCapabilities.WithPartitions
@@ -173,17 +181,15 @@ public abstract class ServiceTestBase : IDisposable
             $"OpenVirtualDriveAsync (reopen) failed: {service.LastError}");
         Assert.True(await service.LoadMediaAsync(),
             $"LoadMediaAsync (reopen) failed: {service.LastError}");
-        Assert.True(await service.RestoreTOCAsync(),
-            $"RestoreTOCAsync failed: {service.LastError}");
+        if (restoreTOC)
+            Assert.True(await service.RestoreTOCAsync(),
+                $"RestoreTOCAsync failed: {service.LastError}");
 
         return (service, host);
     }
 
-    /// <summary>
-    /// Builds a minimal <see cref="BackupRequest"/> for a file-pattern backup.
-    /// </summary>
     protected static BackupRequest MakeBackupRequest(
-        TapeServiceBase service,
+        TestTapeService service,
         string sourceRoot,
         string description,
         bool subdirs = true,
@@ -208,21 +214,21 @@ public abstract class ServiceTestBase : IDisposable
     // ── Multi-volume factory helpers ──────────────────────────────────────────
 
     /// <summary>
-    /// Creates a <see cref="TapeServiceBase"/> wired to a <see cref="MultiVolumeTapeServiceHost"/>
+    /// Creates a <see cref="TestTapeService"/> wired to a <see cref="MultiVolumeTapeServiceHost"/>
     ///  that automatically swaps between the supplied <paramref name="volumes"/> during backup
     ///  and restore operations.
     /// </summary>
     /// <remarks>
     /// The service and host are constructed separately to break the circular dependency
-    ///  (<c>TapeServiceBase</c> requires a host at construction; the host requires the service
+    ///  (<see cref="TestTapeService"/> requires a host at construction; the host requires the service
     ///  for its swap callbacks). The <see cref="MultiVolumeTapeServiceHost.Service"/> property
     ///  is set immediately after the service is created.
     /// </remarks>
-    protected (TapeServiceBase service, MultiVolumeTapeServiceHost host)
+    protected (TestTapeService service, MultiVolumeTapeServiceHost host)
         CreateMultiVolumeService(IReadOnlyList<TempVirtualMedia> volumes)
     {
         var host = Track(new MultiVolumeTapeServiceHost(volumes)); // ← create AND register (base-typed list)
-        var service = new TapeServiceBase(TestLoggerFactory.Default, host);
+        var service = new TestTapeService(TestLoggerFactory.Default, host);
         host.Service = service; // back-link; set after construction to break the circular dependency
         return (service, host);
     }
@@ -231,10 +237,9 @@ public abstract class ServiceTestBase : IDisposable
     /// Opens and formats the first volume of a multi-volume sequence,
     ///  leaving the service ready to begin backup.
     /// </summary>
-    protected async Task<(TapeServiceBase service, MultiVolumeTapeServiceHost host)>
+    protected async Task<(TestTapeService service, MultiVolumeTapeServiceHost host)>
         OpenAndFormatMultiVolumeAsync(
-            IReadOnlyList<TempVirtualMedia> volumes,
-            CancellationToken _ = default)
+            IReadOnlyList<TempVirtualMedia> volumes)
     {
         var (service, host) = CreateMultiVolumeService(volumes);
 
@@ -270,10 +275,9 @@ public abstract class ServiceTestBase : IDisposable
     ///  <see cref="MultiVolumeTapeServiceHost.OnInsertMediaConfirm"/> as needed.
     /// </para>
     /// </summary>
-    protected async Task<(TapeServiceBase service, MultiVolumeTapeServiceHost host)>
+    protected async Task<(TestTapeService service, MultiVolumeTapeServiceHost host)>
         ReopenMultiVolumeAsync(
-            IReadOnlyList<TempVirtualMedia> volumes,
-            CancellationToken _ = default)
+            IReadOnlyList<TempVirtualMedia> volumes)
     {
         var (service, host) = CreateMultiVolumeService(volumes);
 

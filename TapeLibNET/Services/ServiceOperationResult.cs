@@ -12,6 +12,47 @@ namespace TapeLibNET.Services;
 public abstract record ServiceOperationResult
 {
     /// <summary>
+    /// The agent-level diagnosis this result was built from — the FIRST failure of the operation, or
+    ///  <see cref="TapeResult.OK"/> when none occurred.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The join between the two result worlds. The agent speaks <see cref="TapeResult"/> (what went
+    ///  wrong); the service speaks <see cref="ServiceOperationResult"/> (what happened, statistically).
+    ///  Embedding rather than copying keeps <see cref="ErrorCode"/> and <see cref="Message"/>
+    ///  structurally inseparable — a <c>with</c> expression cannot set one and forget the other.
+    /// </para>
+    /// <para>
+    /// <b>Defaults to <see cref="TapeResult.OK"/>, never to <c>default</c>:</b> a default-constructed
+    ///  <see cref="TapeResult"/> has <c>Success == false</c>, which would make every result born failed.
+    /// </para>
+    /// </remarks>
+    public TapeResult Diagnosis { get; init; } = TapeResult.OK;
+
+    /// <summary>
+    /// Win32 error code of the operation's first failure, or 0. Derived from
+    ///  <see cref="Diagnosis"/> — set that, not this.
+    /// </summary>
+    public uint ErrorCode => Diagnosis.ErrorCode;
+
+    private readonly string? _message;
+
+    /// <summary>
+    /// Human-readable summary. Falls back to the <see cref="Diagnosis"/> message when the service has
+    ///  not supplied one of its own, so a failed operation is never silent.
+    /// </summary>
+    /// <remarks>
+    /// Settable so the service can override with something more contextual; unset, it simply surfaces
+    ///  what the agent said. A SUCCESSFUL operation yields <see langword="null"/>, keeping "no message"
+    ///  meaningful.
+    /// </remarks>
+    public string? Message
+    {
+        get => _message ?? (Diagnosis.Success ? null : Diagnosis.ErrorMessage);
+        init => _message = value;
+    }
+
+    /// <summary>
     /// <see langword="true"/> when the operation completed without a catastrophic failure.
     /// Partial failures (skipped / failed files) are still reported via
     ///  <see cref="ServiceReportLevel"/> and the file-count properties on derived types.
@@ -26,11 +67,8 @@ public abstract record ServiceOperationResult
     /// </summary>
     public ServiceReportLevel Outcome { get; init; }
 
-    /// <summary>Optional human-readable summary message set by the service.</summary>
-    public string? Message { get; init; }
-
     /// <summary>Non-null when a catastrophic exception terminated the operation.</summary>
-    public Exception? Error { get; init; }
+    public Exception? ErrorException { get; init; }
 
     /// <summary>Wall-clock duration of the operation, excluding user-interaction time.</summary>
     public TimeSpan Duration { get; init; }
@@ -40,6 +78,24 @@ public abstract record ServiceOperationResult
 
     /// <summary>Number of files that were actually touched (read / written) by the agent.</summary>
     public int FilesProcessed { get; init; }
+
+    /// <summary>
+    /// Set-level statistics for the operation: anomalies detected, recovered, and whether a destructive
+    ///  write was refused.
+    /// </summary>
+    /// <remarks>
+    /// Embedded as a <see langword="struct"/> for the same reason <see cref="Diagnosis"/> is embedded
+    ///  rather than flattened: a <see langword="with"/> expression cannot set one counter and forget
+    ///  its siblings.
+    /// <para>
+    /// An all-zero value reads as "clean", so every existing construction site stays correct without
+    /// touching it.
+    /// </para>
+    /// </remarks>
+    public TapeSetStatistics Sets { get; init; }
+
+    /// <summary>True when any set-level anomaly was observed, whether or not it was repaired.</summary>
+    public bool HasSetAnomalies => Sets.HasAnomalies;
 }
 
 // ── Intermediate: file-level statistics ──────────────────────────────────────
@@ -231,7 +287,7 @@ public sealed record InspectCalibrationMediaResult : ServiceOperationResult
     public string Summary { get; init; } = string.Empty;
 }
 
-// ── List ──────
+// ── List ──────────────────────────────────────────────────────
 
 /// <summary>
 /// Summary result of a list / contents-display operation.
@@ -257,7 +313,7 @@ public sealed record ListResult : ServiceOperationResult
         Success = false,
         Outcome = ServiceReportLevel.Error,
         Message = message,
-        Error   = error,
+        ErrorException   = error,
     };
 
     /// <summary>Creates a successful <see cref="ListResult"/> with the given counts.</summary>
@@ -274,3 +330,44 @@ public sealed record ListResult : ServiceOperationResult
         Duration      = duration,
     };
 }
+
+// ── Delete sets ──────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Summary of a delete-backup-sets operation.
+/// </summary>
+/// <remarks>
+/// A delete touches no files, so it derives from <see cref="ServiceOperationResult"/> directly rather
+///  than from <see cref="FileOperationResult"/> — reporting it through the file-counter machinery would
+///  produce the "completed — no files processed" line this feature exists to eliminate.
+/// </remarks>
+public sealed record DeleteSetsResult : ServiceOperationResult
+{
+    /// <summary>Number of sets the operation was asked to delete.</summary>
+    public int SetsRequested { get; init; }
+
+    /// <summary>Number of sets actually removed — zero when the delete was refused.</summary>
+    public int SetsDeleted { get; init; }
+
+    /// <summary>Whether the tape was left untouched (a refusal, or a precondition failure).</summary>
+    public bool TapeUnchanged => SetsDeleted == 0;
+
+    /// <summary>Whether the user aborted the operation, derived from <see cref="ServiceOperationResult.Outcome"/>.</summary>
+    public bool WasAborted => Outcome == ServiceReportLevel.Failed;
+
+    /// <summary>Whether a catastrophic error terminated the operation, derived from <see cref="ServiceOperationResult.Outcome"/>.</summary>
+    public bool HasFailed => Outcome == ServiceReportLevel.Error;
+
+    /// <summary>Creates a failed result with no sets deleted.</summary>
+    public static DeleteSetsResult Failed(TapeResult diagnosis, int setsRequested,
+        in TapeSetStatistics sets = default) => new()
+        {
+            Diagnosis = diagnosis,
+            Sets = sets,
+            SetsRequested = setsRequested,
+            SetsDeleted = 0,
+            Success = false,
+            Outcome = ServiceReportLevel.Error,
+        };
+}
+

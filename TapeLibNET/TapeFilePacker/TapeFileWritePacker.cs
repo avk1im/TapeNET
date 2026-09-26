@@ -102,7 +102,7 @@ internal sealed class TapeFileWritePacker : IDisposable
     /// <param name="initialAbsBlock">
     ///  Absolute drive block where the packer's first byte will land. Defaults to 0 for
     ///  unit tests / first-set scenarios. Production callers (e.g. <see cref="TapeStreamManager"/>)
-    ///  pass <c>Drive.BlockCounter</c> at packer-construction time so that the
+    ///  pass <c>Drive.CurrentBlock</c> at packer-construction time so that the
     ///  <see cref="TapeAddress"/> values reported via <see cref="FilesCommitted"/> are
     ///  absolute on-tape coordinates -- matching the legacy backup's TOC convention and
     ///  enabling correct packed restore across multi-set tapes.
