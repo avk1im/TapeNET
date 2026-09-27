@@ -1278,6 +1278,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
     #endregion // Packer-backed content writing (Phase 2)
 
+
     #region Packer-backed content reading (Phase 2 Step E)
 
     // -----------------------------------------------------------------------
