@@ -204,7 +204,60 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     ///  the TOC. Only affects the <see cref="TapeNavigatorTOCInSetWithFmksAndTOCMark"/>
     ///  vs. <see cref="TapeNavigatorTOCInSetWithFmks"/> choice.
     /// </param>
+    /// <remarks>
+    /// <para>
+    /// <b>The CHOICE is delegated to <see cref="TapeMediaLayout.Predict"/>; this method only builds.</b>
+    ///  Scan Media needs the same decision without a TOC and before the tape moves, so it became a pure
+    ///  value. Reimplementing the factory on top of it is what guarantees the scanner and the navigator
+    ///  can never disagree about a cartridge's layout.
+    /// </para>
+    /// <para>
+    /// Still requires loaded media — <see cref="TapeMediaLayout.Predict"/> does not, but a navigator does:
+    ///  the partitioning it keys on is a MEDIA property, and building one for a drive with no cartridge
+    ///  would bake in a guess.
+    /// </para>
+    /// </remarks>
     public static TapeNavigator? ProduceNavigator(TapeDrive drive, bool useTOCMark = true)
+    {
+        if (!drive.IsMediaLoaded)
+            return null;
+
+        TapeMediaLayout layout = TapeMediaLayout.Predict(drive, useTOCMark);
+
+        // Switch on the layout's identity, NOT on the drive capabilities again: re-deriving here is
+        //  exactly the duplication this refactor removes.
+        return layout.NavigatorKind switch
+        {
+            nameof(TapeNavigatorTOCInPartition) => new TapeNavigatorTOCInPartition(drive)
+            {
+                // use real setmarks by default if the drive supports them
+                UseSmks = layout.UseSmks,
+                // MediaHeaderPresence = TapeHeaderPresence.NotNeeded, // now partitioned media ALSO has header
+            },
+
+            nameof(TapeNavigatorTOCInSetWithSmks) => new TapeNavigatorTOCInSetWithSmks(drive)
+            {
+                UseSmks = true // real setmarks available — use them by default
+            },
+
+            nameof(TapeNavigatorTOCInSetWithFmksAndTOCMark)
+                => new TapeNavigatorTOCInSetWithFmksAndTOCMark(drive),
+
+            _ => new TapeNavigatorTOCInSetWithFmks(drive),
+        };
+    }
+
+    /// <summary>
+    /// Creates the appropriate <see cref="TapeNavigator"/> subclass for the loaded media.
+    /// </summary>
+    /// <param name="drive">The tape drive with loaded media.</param>
+    /// <param name="useTOCMark">
+    /// When <see langword="true"/> (default) and the drive uses sequential filemarks (no setmarks,
+    ///  no initiator partition), a dedicated TOC marker sequence is written to help locate
+    ///  the TOC. Only affects the <see cref="TapeNavigatorTOCInSetWithFmksAndTOCMark"/>
+    ///  vs. <see cref="TapeNavigatorTOCInSetWithFmks"/> choice.
+    /// </param>
+    public static TapeNavigator? ProduceNavigator_OLD(TapeDrive drive, bool useTOCMark = true)
     {
         if (!drive.IsMediaLoaded)
             return null;

@@ -1,6 +1,6 @@
 # Design — Scan Media (TOC-less media survey)
 
-**Status:** v2 · specified to the implementable state
+**Status:** v2.1 · specified to the implementable state. Ready to GO implement!
 **Scope:** read a cartridge from BOM forward and produce a **fragment map** — everything on the medium that
 can be identified — with **no table of contents in hand and none assumed**. Scanner and service layers;
 the WPF surface is a thin read-only viewer (§12).
@@ -497,6 +497,23 @@ failed operation that reported `TOCUnlocated`.
 
 ## 9. Implementation plan
 
+### File structure
+
+```
+TapeLibNET/
+	Scan/
+		TapeScanner.cs		// TapeDriveHolder<TapeScanner> — the walk
+		TapeScanner.Identify.cs // §4 identification, incl. the small-block fallback
+		TapeScanner.Harvest.cs 	// §4.3 TOC harvest
+		TapeMediaFragment.cs 	// FragmentKind, TapeMediaFragment
+		MediaScanMap.cs 	// MediaScanMap, ScannedMediaKind
+		ScanMediaOptions.cs 	// options + TapeScanProgress
+	Services/
+		TapeServiceBase.Scan.cs // partial of TapeServiceBase — stays with its siblings
+		ServiceScanProgressHandler.cs
+```
+
+
 ### Phase 0 — records and the two extractions *(≈ half a day)*
 1. `TapeMediaFragment.cs` — `FragmentKind`, `ScannedMediaKind`, `TapeMediaFragment`, `MediaScanMap`,
    `ScanMediaOptions`, `TapeScanProgress`.
@@ -506,7 +523,7 @@ failed operation that reported `TOCUnlocated`.
 4. `TapeTOCReader.TryReadFrom` helper (§4.3).
 
 **Tests:**
-- **`ClassifySetHeader_BehaviourUnchangedAfterExtraction`** and **`NavigatorSelection_UnchangedAfterExtraction`**
+- **`NavigatorSelection_UnchangedAfterExtraction`**
   — the existing set-header and navigator suites must pass **untouched**. This phase's entire claim is that
   two refactors changed nothing, and the old suites are the only witnesses that matter;
 - `TryIdentifyHeaderBlock` (pure) over: a valid media header, a valid set header, **a valid calibration

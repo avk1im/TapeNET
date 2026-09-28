@@ -16,8 +16,46 @@ namespace TapeLibNET;
 ///  the framing, the size guard, and the block-size discipline are defined once. Sharing the block size
 ///  is what lets each subsystem classify the other's media: a 16 KiB read always spans a whole header
 ///  block, whatever wrote it.
+/// <para>
+/// <b>The <c>.Identity</c> partial</b> implements the TOC-less identification of a block already read
+///  from tape (SM-2). Split out from the main I/O partial so a caller that holds bytes can still classify
+///  them — without TOC, navigator, or agent.
+/// </para>
+/// <para>
+/// <b>Why four layers, and what each one buys.</b> Every layer answers a question the others cannot;
+///  each is reused independently elsewhere on tape.
+/// </para>
+/// <code>
+///  Layer                  Job                                          Why it cannot go
+///  ─────────────────────  ───────────────────────────────────────────  ──────────────────────────────────
+///  TapeHeaderBlock        fixed 16 KiB block; sets and restores the    tape reads are block-granular, so
+///                          drive block size; zero padding              a header must be readable BEFORE
+///                                                                      its length is known
+///
+///  TapeFramer             [len][payload][crc]                          the length separates payload from
+///                                                                      padding; the CRC makes a torn
+///                                                                      write DETECTABLE, not plausible
+///
+///  TapeSerializer         signature + format version                   the on-tape format contract,
+///                                                                      shared with the TOC and every
+///                                                                      other record
+///
+///  TapeHeader preamble    kind byte, id, timestamps                    lets ONE read classify a cartridge
+///                                                                      as media, set, or calibration
+/// </code>
+/// <para>
+/// The composition is load-bearing: the TOC reuses the serializer WITHOUT the framer, and the calibration
+///  trail reuses the framer with different payloads.
+/// </para>
+/// <para>
+/// <b>One known wart.</b> The signature sits at offset <c>sizeof(int)</c>, behind the framer's length
+///  prefix — so the outermost layer is the only one that does not identify itself, and "is this block
+///  ours?" cannot be answered without first reading an untrusted int32 as a length. Preserved deliberately:
+///  every cartridge ever written carries this layout. <see cref="CarriesRecordSignature"/> centralizes the
+///  knowledge so no caller has to assume it. A future frame version should put the magic word first.
+/// </para>
 /// </remarks>
-public static class TapeHeaderBlock
+public static partial class TapeHeaderBlock
 {
     /// <summary>The standard header block size — one block, terminated by one filemark.</summary>
     public const int Size = (int)TapeHeader.FixedHeaderBlockSize;   // 16 KiB

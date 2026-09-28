@@ -19,6 +19,9 @@ namespace TapeLibNET;
 /// </summary>
 public readonly record struct TapeResult(bool Success, uint ErrorCode = 0, string ErrorMessage = "")
 {
+    /// <summary><see cref="ErrorCode"/> as a <see cref="WIN32_ERROR"/> value.</summary>
+    internal WIN32_ERROR ErrorWin32 => (WIN32_ERROR)ErrorCode;
+
     /// <summary>Successful result with no error.</summary>
     public static TapeResult OK => new(true);
 
