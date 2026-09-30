@@ -104,7 +104,7 @@ public sealed record MediaScanMap
 
     /// <summary>TOC copies found, whether or not they were harvested.</summary>
     [JsonIgnore]
-    public int TocCopyCount => Fragments.Count(f => f.Kind == FragmentKind.TableOfContents);
+    public int TocCopyCount => Fragments.Count(f => f.Kind == FragmentKind.TOC);
 
     /// <summary>Fragments that could not be identified at all.</summary>
     [JsonIgnore]

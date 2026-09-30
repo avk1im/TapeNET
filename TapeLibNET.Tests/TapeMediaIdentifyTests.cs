@@ -332,18 +332,202 @@ public class TapeMediaIdentifyTests
         Assert.False(TapeHeaderBlock.CarriesRecordSignature(new byte[length], length));
     }
 
+    #endregion
+
+    #region *** (C2) IdentifyBlock — positive identification ***
+
+    /// <summary>Serializes a TOC the way BackupTOCCore does, into the front of one standard block.</summary>
+    private static byte[] TocBlock(TapeTOC toc)
+    {
+        using var ms = new MemoryStream();
+        new TapeSerializer(ms).Serialize(toc);
+
+        var block = new byte[TapeHeaderBlock.Size];
+        byte[] bytes = ms.ToArray();
+        Array.Copy(bytes, block, Math.Min(bytes.Length, block.Length));
+        return block;
+    }
+
+    /// <summary>A TOC carrying a media id and one set — the shape of every current on-tape copy.</summary>
+    /// <remarks>
+    /// Built through the public surface only. <c>CreateHeader</c> mints the media id as a side effect,
+    ///  exactly as the first durable write does. One set suffices: what is tested is the NESTED set
+    ///  signature, which an empty set carries as well as a full one.
+    /// </remarks>
+    private static TapeTOC MakeToc()
+    {
+        var toc = new TapeTOC("Scan Subject");
+        toc.CreateHeader(TapeHeader.FixedHeaderBlockSize, TapeTocPlacement.InSet);
+
+        toc.AddNewSetTOC();
+        toc.CurrentSetTOC.Description = "Set 1";
+
+        return toc;
+    }
+
+    // ── Headers ──────────────────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void IdentifyBlock_IntactHeaders_AreHeaders()
+    {
+        foreach (TapeHeader original in new TapeHeader[]
+                 { MakeMediaHeader(), MakeSetHeader(), MakeCalibrationHeader() })
+        {
+            byte[] block = Block(original);
+
+            IdentifiedBlock id = TapeHeaderBlock.IdentifyBlock(block, block.Length);
+
+            Assert.Equal(HeaderBlockIdentity.Header, id.Kind);
+            Assert.Equal(TapeFramer.FrameStatus.Ok, id.FrameStatus);
+            Assert.IsType(original.GetType(), id.Header);
+        }
+    }
+
     /// <summary>
-    /// The conjunction that §4.3 rests on, stated as one assertion: a CRC-damaged header still LOOKS like
-    ///  one of ours, and that is exactly the shape a surviving-but-unparseable TOC copy presents.
+    /// The first regression: a header damaged BEHIND its signature is our record, damaged — never a TOC.
     /// </summary>
     [Fact]
-    public void SignaturePresentButUnidentifiable_IsTheTocCopyShape()
+    public void IdentifyBlock_CrcDamagedHeader_IsDamagedRecord_NeverTocCopy()
     {
         byte[] block = Block(MakeSetHeader());
-        block[8] ^= 0xFF;                       // damage the payload, leave the signature intact
+        block[48] ^= 0x03;          // the spot the scanner test corrupts: inside the payload
 
-        Assert.True(TapeHeaderBlock.CarriesRecordSignature(block, block.Length));
-        Assert.False(TapeHeaderBlock.TryIdentifyHeaderBlock(block, block.Length, out _));
+        IdentifiedBlock id = TapeHeaderBlock.IdentifyBlock(block, block.Length);
+
+        Assert.Equal(HeaderBlockIdentity.DamagedRecord, id.Kind);
+        Assert.Equal(TapeFramer.FrameStatus.CrcMismatch, id.FrameStatus);
+        Assert.Null(id.Header);
+    }
+
+    /// <summary>A damaged LENGTH PREFIX leaves the framed signature intact: still ours, still damaged.</summary>
+    [Fact]
+    public void IdentifyBlock_DamagedLengthPrefix_IsDamagedRecord()
+    {
+        byte[] block = Block(MakeSetHeader());
+        BitConverter.GetBytes(-1).CopyTo(block, 0);
+
+        IdentifiedBlock id = TapeHeaderBlock.IdentifyBlock(block, block.Length);
+
+        Assert.Equal(HeaderBlockIdentity.DamagedRecord, id.Kind);
+        Assert.Equal(TapeFramer.FrameStatus.NotFramed, id.FrameStatus);
+    }
+
+    /// <summary>A damaged header SIGNATURE leaves nothing to recognize: foreign. The honest limit.</summary>
+    [Fact]
+    public void IdentifyBlock_DamagedHeaderSignature_IsForeign()
+    {
+        byte[] block = Block(MakeSetHeader());
+        block[4] ^= 0xFF;           // first signature byte, just past the length prefix
+
+        Assert.Equal(HeaderBlockIdentity.Foreign, TapeHeaderBlock.IdentifyBlock(block, block.Length).Kind);
+    }
+
+    // ── TOC copies ───────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The second regression: a real TOC copy — written as v0x0102, which the strict signature check
+    ///  rejected — is recognized, with its version and the series it describes.
+    /// </summary>
+    [Fact]
+    public void IdentifyBlock_TocCopy_IsRecognized_WithVersionAndMediaId()
+    {
+        TapeTOC toc = MakeToc();
+
+        IdentifiedBlock id = TapeHeaderBlock.IdentifyBlock(TocBlock(toc), TapeHeaderBlock.Size);
+
+        Assert.Equal(HeaderBlockIdentity.TocCopy, id.Kind);
+        Assert.Equal(TapeTOC.TocVersion, id.TocVersion);
+        Assert.NotEqual(Guid.Empty, id.TocMediaId);
+        Assert.Equal(toc.MediaId, id.TocMediaId);
+    }
+
+    /// <summary>An empty TOC — no set record to anchor on — is recognized by its tail instead.</summary>
+    [Fact]
+    public void IdentifyBlock_EmptyToc_IsRecognized()
+    {
+        var toc = new TapeTOC("Freshly formatted");
+
+        Assert.Equal(HeaderBlockIdentity.TocCopy,
+            TapeHeaderBlock.IdentifyBlock(TocBlock(toc), TapeHeaderBlock.Size).Kind);
+    }
+
+    /// <summary>
+    /// A legacy file record at block address zero opens with the same bytes a v0x0101 TOC does — and its
+    ///  zero words pass for "no sets, empty description". The tail check is what rejects it.
+    /// </summary>
+    [Fact]
+    public void IdentifyBlock_LegacyFileRecordAtAddressZero_IsNotATocCopy()
+    {
+        var tfi = new TapeFileInfo(42UL, TapeAddress.Zero,
+            new TapeFileDescriptor(@"C:\data\file.dat") { Length = 100 });
+
+        using var ms = new MemoryStream();
+        tfi.SerializeTo(new TapeSerializer(ms));
+
+        var block = new byte[TapeHeaderBlock.Size];
+        ms.ToArray().CopyTo(block, 0);
+
+        Assert.Equal(HeaderBlockIdentity.Foreign, TapeHeaderBlock.IdentifyBlock(block, block.Length).Kind);
+    }
+
+    /// <summary>The same record at a NON-zero address fails earlier — on the nested set signature.</summary>
+    [Fact]
+    public void IdentifyBlock_LegacyFileRecordAtNonZeroAddress_IsNotATocCopy()
+    {
+        var tfi = new TapeFileInfo(42UL, new TapeAddress(1234, 0),
+            new TapeFileDescriptor(@"C:\data\file.dat") { Length = 100 });
+
+        using var ms = new MemoryStream();
+        tfi.SerializeTo(new TapeSerializer(ms));
+
+        var block = new byte[TapeHeaderBlock.Size];
+        ms.ToArray().CopyTo(block, 0);
+
+        Assert.Equal(HeaderBlockIdentity.Foreign, TapeHeaderBlock.IdentifyBlock(block, block.Length).Kind);
+    }
+
+    /// <summary>A damaged TOC signature leaves nothing to recognize: foreign, never a header.</summary>
+    [Fact]
+    public void IdentifyBlock_DamagedTocSignature_IsForeign()
+    {
+        byte[] block = TocBlock(MakeToc());
+        block[0] ^= 0xFF;
+
+        Assert.Equal(HeaderBlockIdentity.Foreign, TapeHeaderBlock.IdentifyBlock(block, block.Length).Kind);
+    }
+
+    // ── Totality and contracts ───────────────────────────────────────────────────────────────────────
+
+    /// <summary>Every input from the totality theory is foreign — and never throws.</summary>
+    [Theory]
+    [MemberData(nameof(UnidentifiableBlocks))]
+    public void IdentifyBlock_UnidentifiableInput_IsForeign(string because, byte[] block, int length)
+    {
+        IdentifiedBlock id = TapeHeaderBlock.IdentifyBlock(block, length);
+
+        Assert.True(id.Kind == HeaderBlockIdentity.Foreign, because);
+        Assert.Null(id.Header);
+    }
+
+    /// <summary><c>Unpack</c> keeps its contract: null for every outcome except Ok.</summary>
+    [Fact]
+    public void Unpack_StillReturnsNullForADamagedFrame()
+    {
+        byte[] block = Block(MakeSetHeader());
+        block[48] ^= 0x03;
+
+        Assert.Null(TapeFramer.Unpack<TapeHeader>(block, block.Length));
+    }
+
+    /// <summary><c>TryUnpack</c> and <c>Unpack</c> agree on an intact frame.</summary>
+    [Fact]
+    public void TryUnpack_IntactFrame_IsOk_AndMatchesUnpack()
+    {
+        byte[] block = Block(MakeSetHeader());
+
+        Assert.Equal(TapeFramer.FrameStatus.Ok, TapeFramer.TryUnpack(block, block.Length, out TapeHeader? header));
+        Assert.IsType<TapeSetHeader>(header);
+        Assert.NotNull(TapeFramer.Unpack<TapeHeader>(block, block.Length));
     }
 
     #endregion
@@ -392,10 +576,10 @@ public class TapeMediaIdentifyTests
     [InlineData(FragmentKind.MediaHeader, true)]
     [InlineData(FragmentKind.SetHeader, true)]
     [InlineData(FragmentKind.CalibrationHeader, true)]
-    [InlineData(FragmentKind.TableOfContents, false)]
+    [InlineData(FragmentKind.TOC, false)]
     [InlineData(FragmentKind.MarkRun, false)]
+    [InlineData(FragmentKind.TocMark, false)]
     [InlineData(FragmentKind.Unknown, false)]
-    [InlineData(FragmentKind.TrailingRegion, false)]
     public void Fragment_IsHeader_CoversExactlyTheThreeHeaderKinds(FragmentKind kind, bool expected)
     {
         var fragment = new TapeMediaFragment { Ordinal = 0, StartBlock = 0, Kind = kind };
@@ -411,10 +595,10 @@ public class TapeMediaIdentifyTests
     [InlineData(FragmentKind.MediaHeader)]
     [InlineData(FragmentKind.SetHeader)]
     [InlineData(FragmentKind.CalibrationHeader)]
-    [InlineData(FragmentKind.TableOfContents)]
+    [InlineData(FragmentKind.TOC)]
     [InlineData(FragmentKind.MarkRun)]
+    [InlineData(FragmentKind.TocMark)]
     [InlineData(FragmentKind.Unknown)]
-    [InlineData(FragmentKind.TrailingRegion)]
     public void Fragment_DisplayName_IsNeverBlank_EvenWithNoDescription(FragmentKind kind)
     {
         var fragment = new TapeMediaFragment
@@ -479,8 +663,8 @@ public class TapeMediaIdentifyTests
             SetFragment(1, 1, 0),
             SetFragment(2, 100, 1),
             SetFragment(3, 200, 2),
-            new TapeMediaFragment { Ordinal = 4, StartBlock = 300, Kind = FragmentKind.TableOfContents },
-            new TapeMediaFragment { Ordinal = 5, StartBlock = 400, Kind = FragmentKind.TableOfContents });
+            new TapeMediaFragment { Ordinal = 4, StartBlock = 300, Kind = FragmentKind.TOC },
+            new TapeMediaFragment { Ordinal = 5, StartBlock = 400, Kind = FragmentKind.TOC });
 
         Assert.Equal(3, map.SetCount);
         Assert.Equal(2, map.TocCopyCount);
@@ -511,7 +695,7 @@ public class TapeMediaIdentifyTests
     /// <summary>
     /// A TOC copy following the last set must not mask an unclosed set: the property looks at the last
     ///  SET HEADER, not the last fragment. Without that distinction every damaged filemark-layout cartridge
-    ///  carrying a stale TOC copy would read as healthy.
+    ///  carrying a stale TOC copy would read as healthy. A TOC copy after an unclosed set is a realistic case.
     /// </summary>
     [Fact]
     public void Map_LastSetUnclosed_IgnoresTrailingNonSetFragments()
@@ -520,7 +704,7 @@ public class TapeMediaIdentifyTests
             MediaFragment(),
             SetFragment(1, 1, 0),
             SetFragment(2, 100, 1, closed: false),
-            new TapeMediaFragment { Ordinal = 3, StartBlock = 200, Kind = FragmentKind.TrailingRegion });
+            new TapeMediaFragment { Ordinal = 3, StartBlock = 200, Kind = FragmentKind.TOC });
 
         Assert.True(map.LastSetUnclosed);
     }
@@ -636,7 +820,7 @@ public class TapeMediaIdentifyTests
             {
                 Ordinal = 3,
                 StartBlock = 4_196,
-                Kind = FragmentKind.TableOfContents,
+                Kind = FragmentKind.TOC,
                 TocVersion = 0x0102,
             },
             new TapeMediaFragment
@@ -711,7 +895,7 @@ public class TapeMediaIdentifyTests
         {
             Ordinal = 0,
             StartBlock = 4_196,
-            Kind = FragmentKind.TableOfContents,
+            Kind = FragmentKind.TOC,
             TocVersion = 0x0102,
             HarvestedToc = new TapeTOC("Harvested"),
         });

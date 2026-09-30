@@ -108,9 +108,6 @@ public static class ScanMapAssert
 
         foreach (TapeMediaFragment f in map.Fragments)
         {
-            if (f.StartBlock < 0)
-                continue;       // TrailingRegion carries -1 by design
-
             Assert.True(f.StartBlock >= previous,
                 $"Fragment #{f.Ordinal} starts at block {f.StartBlock}, behind {previous} — the walk went " +
                 $"backwards.\n{Describe(map)}");

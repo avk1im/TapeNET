@@ -159,11 +159,37 @@ public static partial class TapeHeaderBlock
     /// <param name="header">The concrete header kind, or null for blank / foreign / torn.</param>
     /// <returns>Bytes read, or ≤ 0 on failure (the drive carries the error).</returns>
     public static int Read(TapeDrive drive, byte[] buffer, out TapeHeader? header)
+        => Read(drive, buffer, out header, out _, out _);
+
+    /// <summary>
+    /// As <see cref="Read(TapeDrive, byte[], out TapeHeader?)"/>, additionally reporting WHY a read
+    ///  delivered nothing: a tapemark stood there, or the data ended.
+    /// </summary>
+    /// <param name="tapemark">A filemark or setmark stood at the position; the read crossed it.</param>
+    /// <param name="eod">End-of-data: nothing was ever written at this position.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Flags, not the error.</b> <see cref="TapeDrive.ReadDirect(byte[], int, int, out bool, out bool)"/>
+    ///  RESETS its error on both boundaries and reports them only through its <c>out</c> flags. A caller
+    ///  holding just the byte count and the error sees <c>read == 0, NO_ERROR</c> for a mark, for EOD, and
+    ///  for nothing at all — and deducing EOD from that silence would couple every caller to one drive
+    ///  behaviour.
+    /// </para>
+    /// <para>
+    /// <b>Narrower than the drive's <c>eof</c>.</b> <see cref="TapeDrive.ReadDirect(byte[], int, int, out bool, out bool)"/>
+    ///  sets <c>eof</c> on ANY boundary, marks included. <paramref name="eod"/> is the end-of-data-only
+    ///  reading — the one a caller needs to tell "the tape ends here" from "a mark stands here".
+    /// </para>
+    /// </remarks>
+    public static int Read(TapeDrive drive, byte[] buffer, out TapeHeader? header,
+                           out bool tapemark, out bool eod)
     {
         ArgumentNullException.ThrowIfNull(drive);
         ArgumentNullException.ThrowIfNull(buffer);
 
         header = null;
+        tapemark = false;
+        eod = false;
 
         if (buffer.Length < Size)
         {
@@ -177,7 +203,11 @@ public static partial class TapeHeaderBlock
             if (!drive.SetBlockSize(Size))
                 return -1;
 
-            int read = drive.ReadDirect(buffer, 0, Size, out _, out _);
+            int read = drive.ReadDirect(buffer, 0, Size, out tapemark, out bool boundary);
+
+            // The drive's `eof` covers marks too; only a boundary WITHOUT a mark is end-of-data.
+            eod = boundary && !tapemark;
+
             if (read <= 0)
                 return read;
 
@@ -189,6 +219,7 @@ public static partial class TapeHeaderBlock
             RestoreBlockSize(drive, previous);
         }
     }
+
 
     /// <summary>
     /// True when the drive can carry a standard header block. Drives whose maximum block is smaller

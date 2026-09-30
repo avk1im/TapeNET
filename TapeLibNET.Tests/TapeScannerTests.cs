@@ -161,8 +161,48 @@ public class TapeScannerTests
         ScanMapAssert.SetCount(map, 0);
 
         Assert.NotNull(ScanMapAssert.MediaHeader(map));
+        Assert.Single(map.Fragments);
         Assert.True(map.Fragments[0].Kind == FragmentKind.MediaHeader, ScanMapAssert.Describe(map));
+        Assert.True(map.Fragments[0].ClosedBySeparator);
         Assert.True(ScannedMediaKind.Backup == map.Kind, ScanMapAssert.Describe(map));
+    }
+
+    /// <summary>
+    /// Two filemarks with no data between them become ONE <see cref="FragmentKind.MarkRun"/>, detected by
+    ///  the identification reads themselves — and the data block after the run is still identified.
+    /// </summary>
+    /// <remarks>
+    /// One extra mark only: that is a double-filemark end-of-data convention, which must NOT fold into a
+    ///  TOC mark even on the sequential-filemark layout (the fold needs at least two).
+    /// </remarks>
+    [Theory]
+    [InlineData(DriveProfile.FilemarksOnly)]
+    [InlineData(DriveProfile.SeqFilemarks)]
+    public void AdjacentFilemarks_BecomeOneMarkRun_AndTheNextBlockIsIdentified(DriveProfile profile)
+    {
+        using var fixture = new VirtualTapeFixture(profile);
+
+        Assert.True(fixture.Drive.MoveToPartition(MediaPartition.Content));
+        Assert.True(fixture.Drive.Rewind());
+
+        int blk = (int)fixture.Drive.BlockSize;
+        var junk = new byte[blk];
+        new Random(7).NextBytes(junk);
+
+        Assert.Equal(blk, fixture.Drive.WriteDirect(junk, 0, blk));
+        Assert.True(fixture.Drive.WriteFilemark(1));    // closes the first block
+        Assert.True(fixture.Drive.WriteFilemark(1));    // adjacent — the run
+        Assert.Equal(blk, fixture.Drive.WriteDirect(junk, 0, blk));
+        Assert.True(fixture.Drive.WriteFilemark(1));
+
+        MediaScanMap map = Scan(fixture);
+
+        ScanMapAssert.WellFormed(map);
+        ScanMapAssert.Complete(map);
+        ScanMapAssert.KindSequence(map, FragmentKind.Unknown, FragmentKind.MarkRun, FragmentKind.Unknown);
+
+        Assert.True(ScanMapAssert.OfKind(map, FragmentKind.MarkRun)[0].MarkCount == 1,
+            ScanMapAssert.Describe(map));
     }
 
     /// <summary>
@@ -193,11 +233,17 @@ public class TapeScannerTests
 
             Assert.True(ScannedMediaKind.Backup == map.Kind, ScanMapAssert.Describe(map));
             Assert.NotNull(ScanMapAssert.MediaHeader(map));
+            ScanMapAssert.NothingUnknown(map);
 
             // The TOC lives in partition 0 on the partitioned layout, so the content walk rightly finds
             //  none there — every other layout trails its copies behind the content.
             if (!map.Layout.TocInPartition)
                 ScanMapAssert.FoundTocCopies(map);
+
+            // The TOC-mark layout names its marker rather than leaving an unidentified gap behind.
+            if (map.Layout.HasTocMark)
+                Assert.True(ScanMapAssert.OfKind(map, FragmentKind.TocMark).Count == 1,
+                    ScanMapAssert.Describe(map));
         }
         finally
         {
@@ -383,8 +429,8 @@ public class TapeScannerTests
 
         try
         {
-            // Skip the media header read at block 0, then corrupt the NEXT header block the scan reads —
-            //  the first set's. Offset 48 lands inside the framed record, past the length prefix.
+            // Skip the BOM read at block 0, then corrupt the NEXT block the scan reads — the first set's
+            //  header. Offset 48 lands inside the framed record, past the length prefix.
             fixture.Backend.ContentReadFaults.SkipN = 1;
             fixture.Backend.ContentReadFaults.CorruptOnce(bits: 2, offset: 48);
 
@@ -401,6 +447,18 @@ public class TapeScannerTests
             TapeMediaFragment unknown = ScanMapAssert.OfKind(map, FragmentKind.Unknown)[0];
             Assert.False(string.IsNullOrEmpty(unknown.Fingerprint),
                 $"an unidentified fragment must carry a fingerprint\n{ScanMapAssert.Describe(map)}");
+
+            // Not just "unidentified": our header, damaged. (Before the fix this block was a phantom TOC.)
+            Assert.True(unknown.Diagnosis.ErrorWin32 == WIN32_ERROR.ERROR_CRC,
+                $"expected a CRC diagnosis\n{ScanMapAssert.Describe(map)}");
+
+            // And the real copies are recognized as what they are — carrying this cartridge's identity.
+            if (!map.Layout.TocInPartition)
+            {
+                ScanMapAssert.FoundTocCopies(map, atLeast: 2);
+                Assert.All(ScanMapAssert.OfKind(map, FragmentKind.TOC),
+                    t => Assert.Equal(map.MediaId, t.Id));
+            }
         }
         finally
         {

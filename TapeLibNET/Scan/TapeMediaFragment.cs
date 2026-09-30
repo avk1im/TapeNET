@@ -23,13 +23,20 @@ public enum FragmentKind
     CalibrationHeader,
 
     /// <summary>A table-of-contents copy. Signature-identified; deserialized only on request.</summary>
-    TableOfContents,
+    TOC,
 
-    /// <summary>Consecutive marks with nothing between them — a TOC mark, or an erased region.</summary>
+    /// <summary>
+    /// Marks directly adjacent to the mark that closed the previous fragment, with no data between them —
+    ///  an erased region, or a double-filemark end of data.
+    /// </summary>
     MarkRun,
 
-    /// <summary>The unread remainder past the last fragment, plus why the walk stopped.</summary>
-    TrailingRegion,
+    /// <summary>
+    /// The TOC mark of the sequential-filemark layout: a gap block followed by a run of filemarks, just
+    ///  before the first TOC copy. Identified by its shape (see <c>TapeScanner.FoldMarkRun</c>).
+    /// </summary>
+    TocMark,
+
 }
 
 /// <summary>
@@ -106,7 +113,7 @@ public sealed record TapeMediaFragment
     /// <summary>Block size recorded in the header.</summary>
     public uint? BlockSize { get; init; }
 
-    // ── TableOfContents ──────────────────────────────────────────────────────────────────────────────
+    // ── TOC ──────────────────────────────────────────────────────────────────────────────
 
     /// <summary>TOC format version, when the copy was deserialized far enough to read it.</summary>
     public ushort? TocVersion { get; init; }
@@ -125,8 +132,16 @@ public sealed record TapeMediaFragment
 
     // ── MarkRun / Unknown / TrailingRegion ───────────────────────────────────────────────────────────
 
-    /// <summary>Consecutive marks counted, for <see cref="FragmentKind.MarkRun"/>.</summary>
+    /// <summary>
+    /// Marks directly adjacent to this fragment's closing mark, i.e. BEYOND it — for
+    ///  <see cref="FragmentKind.MarkRun"/> and <see cref="FragmentKind.TocMark"/>.
+    /// </summary>
+    /// <remarks>
+    /// Informational: drives are not relied on to report exactly one mark per read, and nothing in the scan
+    ///  depends on the exact figure. Hence no dependency on drive's reporting seq. tapemarks exactly.
+    /// </remarks>
     public int MarkCount { get; init; }
+
 
     /// <summary>
     /// First bytes of an unidentified block, hex-encoded — so a support report can tell "random data"
@@ -163,14 +178,20 @@ public sealed record TapeMediaFragment
         FragmentKind.MediaHeader       => Description ?? $"Media {Id:N} · vol {Volume}",
         FragmentKind.SetHeader         => Description ?? $"Set #{VolumeSetIndex}",
         FragmentKind.CalibrationHeader => $"Calibration run {Id:N}",
-        FragmentKind.TableOfContents   => "Table of contents",
+        FragmentKind.TOC   => "Table of contents",
         FragmentKind.MarkRun           => $"{MarkCount} consecutive mark(s)",
-        FragmentKind.TrailingRegion    => "End of data",
-        _                              => "Unidentified",
+        FragmentKind.TocMark => $"TOC mark (gap + {MarkCount + 1} filemarks)",
+        _ => "Unidentified",
     };
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// Carries the diagnosis and a short fingerprint when present: a scan-test failure prints the whole map,
+    ///  and "Unknown — Unidentified" alone cannot tell a failed read from bytes we do not recognize.
+    /// </remarks>
     public override string ToString()
         => $"#{Ordinal} @ block {StartBlock}: {Kind} — {DisplayName}" +
-           (ClosedBySeparator ? "" : " (not closed by a separator)");
+           (ClosedBySeparator ? "" : " (not closed by a separator)") +
+           (Diagnosis.Success ? "" : $" [{Diagnosis}]") +
+           (Fingerprint is { Length: > 0 } fp ? $" <{fp[..Math.Min(16, fp.Length)]}…>" : "");
 }

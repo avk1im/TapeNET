@@ -71,7 +71,7 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
 
     /// <summary>
     /// Set by the caller — or by a progress sink that threw (SM-10) — to request a graceful abort. Polled
-    ///  between fragments, so the walk always stops at a clean fragment boundary.
+    ///  between reads, so the walk always stops at a clean boundary.
     /// </summary>
     public bool IsAbortRequested { get; set; }
 
@@ -91,7 +91,9 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
     /// <summary>
     /// Walks the loaded cartridge from BOM to EOD and returns what it found. READ-ONLY throughout.
     /// </summary>
-    /// <param name="progress">Optional sink, fired once per identified fragment.</param>
+    /// <param name="progress">
+    /// Optional sink, fired once per fragment — when that fragment is FINAL, i.e. one read behind the head.
+    /// </param>
     /// <returns>
     /// The map, or <see langword="null"/> when no scan was possible at all (no media, cannot position) —
     ///  see <see cref="LastResult"/>. A map whose walk ended early is still RETURNED, flagged
@@ -143,8 +145,8 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
     #region *** The walk ***
 
     /// <summary>
-    /// The SM §3 walk: identify block 0, cross the media header's own mark, then hop separators identifying
-    ///  each landing place, until EOD or a terminating condition.
+    /// The SM §3 walk: identify block 0, then alternate between crossing whatever closes the current
+    ///  fragment and reading what follows, until EOD or a terminating condition.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -157,8 +159,24 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
     ///  and say the map is truncated.
     /// </para>
     /// <para>
-    /// <b>The first advance is NOT a separator hop.</b> A media header is closed by its own filemark, which
-    ///  belongs to the header rather than to the content — see <see cref="CrossMediaHeaderMark"/>.
+    /// <b>No mark fishing.</b> Adjacent marks are detected by the identification read itself: a read that
+    ///  returns nothing but a tapemark has already crossed it. So each position is read exactly once, the
+    ///  head never steps back, and a drive that cannot write consecutive marks pays nothing for the
+    ///  possibility. Such marks are gathered into a pending run and committed once the next data block or
+    ///  the end shows where the run stops (<see cref="FoldMarkRun"/>).
+    /// </para>
+    /// <para>
+    /// <b>Two ways to end, both honest, neither adding a fragment.</b> End-of-data after a mark is the
+    ///  normal end of a sound cartridge. A closing-mark hop that runs into end-of-data instead means the
+    ///  last fragment was NEVER closed — on a set header, a backup that died mid-set. Either way the fact
+    ///  lives on the fragment (<see cref="TapeMediaFragment.ClosedBySeparator"/>) and on the map
+    ///  (<see cref="MediaScanMap.TerminatorWin32"/>).
+    /// </para>
+    /// <para>
+    /// <b>A fragment is reported once it is FINAL</b> — when the next one is committed, and the last one
+    ///  when the walk ends. Its closing state, its span, and a <see cref="FragmentKind.TocMark"/> retype are
+    ///  all decided by reads that come AFTER it; reporting earlier would hand the sink a value that later
+    ///  changes silently.
     /// </para>
     /// </remarks>
     private MediaScanMap ScanCore(TapeMediaLayout layout, IProgress<TapeScanProgress>? progress)
@@ -167,7 +185,7 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
 
         List<TapeMediaFragment> fragments = [];
         bool truncated = false;
-        uint terminator;
+        uint terminator = (uint)WIN32_ERROR.ERROR_NO_DATA_DETECTED;
         ScannedMediaKind kind;
 
         // ── Block 0 ──────────────────────────────────────────────────────────────────────────────────
@@ -187,7 +205,6 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
 
         fragments.Add(first);
         kind = KindFromFirstFragment(first);
-        Report(progress, first);
 
         // A calibration cartridge is a COMPLETE, correct conclusion — identified, not walked (SM-7). Past
         //  the header a calibration trail is filemark-delimited checkpoints separated by gigabytes of
@@ -195,6 +212,7 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
         if (first.Kind == FragmentKind.CalibrationHeader)
         {
             m_logger.LogInformation("{Prefix}: Scan: calibration cartridge — {Fragment}", LogPrefix, first);
+            Report(progress, first);
 
             TapeCalibrationMediaInfo? calInfo = options.InspectCalibrationTrail
                 ? InspectCalibrationTrail(progress)
@@ -206,12 +224,11 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
                 calibrationInfo: calInfo);
         }
 
-        // A media header owns the filemark that follows it, whatever the layout's separator is. The very
-        //  first advance must therefore cross THAT mark, not a separator — otherwise a setmark layout
-        //  skips the header's filemark, the whole first set, and the first set's closing setmark at once.
-        bool crossHeaderMark = first.Kind == FragmentKind.MediaHeader;
-
         // ── Walk ─────────────────────────────────────────────────────────────────────────────────────
+        bool crossClosingMark = true;   // the last fragment is data: its closing mark lies ahead
+        int runMarks = 0;               // adjacent marks read since the last data fragment
+        long runStart = -1L;            // block of the first of them
+
         while (true)
         {
             if (IsAbortRequested)
@@ -226,7 +243,9 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
                 break;
             }
 
-            if (fragments.Count >= options.MaxFragments)
+            // The run counter is guarded too: a pathological medium can yield marks indefinitely without
+            //  ever adding a fragment.
+            if (fragments.Count >= options.MaxFragments || runMarks >= options.MaxFragments)
             {
                 m_logger.LogWarning("{Prefix}: Scan stopped at the {Max}-fragment guard — the map is truncated",
                     LogPrefix, options.MaxFragments);
@@ -236,55 +255,76 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
                 break;
             }
 
-            // Advance to whatever follows this fragment. Failure here is the NORMAL end of the walk.
-            bool advanced = crossHeaderMark
-                ? CrossMediaHeaderMark(out int marksCrossed)
-                : MoveToNextSeparator(layout, out marksCrossed);
-
-            crossHeaderMark = false;    // one-shot: only the media header carries its own mark
-
-            if (!advanced)
+            // ── Cross whatever closes the last data fragment ──
+            if (crossClosingMark)
             {
-                terminator = (uint)LastErrorWin32;
-
-                // A positional error means "the tape ends here" — a FINDING. Anything else means the
-                //  drive went away, and a map built on a dead drive's silence is fiction (SM-5): the
-                //  comparison phase would read that silence as ABSENCE.
-                if (!IsPositionalEnd(LastErrorWin32))
+                if (!CrossClosingMark(fragments[^1], layout))
                 {
-                    LatchFailure();
-                    m_logger.LogError("{Prefix}: Scan: transport fault after {N} fragment(s) ({Err}) — map truncated",
-                        LogPrefix, fragments.Count, LastErrorWin32);
-                    truncated = true;
-                }
-                else
-                {
-                    m_logger.LogTrace("{Prefix}: Scan: walk ended at {Err} after {N} fragment(s)",
-                        LogPrefix, LastErrorWin32, fragments.Count);
-                    ResetError();   // reaching the end of the tape is not this operation's error
+                    terminator = (uint)LastErrorWin32;
+
+                    // A positional error means "the tape ends here" — a FINDING. Anything else means the
+                    //  drive went away, and a map built on a dead drive's silence is fiction (SM-5): the
+                    //  comparison phase would read that silence as ABSENCE.
+                    if (!IsPositionalEnd(LastErrorWin32))
+                    {
+                        LatchFailure();
+                        m_logger.LogError("{Prefix}: Scan: transport fault after {N} fragment(s) ({Err}) — map truncated",
+                            LogPrefix, fragments.Count, LastErrorWin32);
+                        truncated = true;
+                    }
+                    else
+                    {
+                        m_logger.LogTrace("{Prefix}: Scan: {Fragment} is not closed — the tape ends inside it",
+                            LogPrefix, fragments[^1]);
+                        ResetError();   // reaching the end of the tape is not this operation's error
+                    }
+
+                    // Recorded ON the fragment itself. On a set header this is precisely the "backup died
+                    //  mid-set" signature; no pseudo-fragment is needed to say so.
+                    CloseLastFragment(fragments, closedBySeparator: false, nextStart: -1L);
+                    break;
                 }
 
-                // The fragment we just left was never closed by a separator — on a set header, that is
-                //  precisely the "backup died mid-set" signature.
-                CloseLastFragment(fragments, closedBySeparator: false, nextStart: -1L);
-                fragments.Add(TrailingRegionFragment(fragments.Count, terminator));
+                CloseLastFragment(fragments, closedBySeparator: true, nextStart: Drive.CurrentBlock);
+                crossClosingMark = false;
+            }
+
+            // ── Read what follows ──
+            long at = Drive.CurrentBlock;
+            ReadOutcome outcome = ReadFragmentAt(fragments.Count, at, out TapeMediaFragment? next);
+
+            if (outcome == ReadOutcome.Tapemark)
+            {
+                // The read has already crossed the mark — nothing to hop. Just note it and read on.
+                if (runMarks++ == 0)
+                    runStart = at;
+                continue;
+            }
+
+            if (outcome == ReadOutcome.EndOfData)
+            {
+                // End-of-data after a mark: the NORMAL end of a sound cartridge. The last fragment is
+                //  already recorded as closed; there is nothing further to describe.
+                m_logger.LogTrace("{Prefix}: Scan: end of data after {N} fragment(s)", LogPrefix, fragments.Count);
+                ResetError();
                 break;
             }
 
-            CloseLastFragment(fragments, closedBySeparator: true, nextStart: Drive.CurrentBlock);
+            // A data fragment: the run before it (if any) now has a known end.
+            FoldMarkRun(fragments, layout, ref runMarks, runStart, endBlock: at, progress);
+            Commit(fragments, next!, progress);
 
-            // Consecutive marks are a FRAGMENT, not an anomaly: the TOC mark's triple filemark, a
-            //  double-filemark end convention, or the erased remains of a set (§3.1).
-            TapeMediaFragment next = marksCrossed > 1
-                ? MarkRunFragment(fragments.Count, Drive.CurrentBlock, marksCrossed)
-                : IdentifyFragmentAt(fragments.Count, Drive.CurrentBlock);
-
-            fragments.Add(next);
-            Report(progress, next);
-
-            if (next.Kind is FragmentKind.SetHeader or FragmentKind.MediaHeader)
+            if (next!.Kind is FragmentKind.SetHeader or FragmentKind.MediaHeader)
                 kind = ScannedMediaKind.Backup;
+
+            crossClosingMark = true;
         }
+
+        // Whatever ended the walk, a run still pending ends here.
+        FoldMarkRun(fragments, layout, ref runMarks, runStart, endBlock: Drive.CurrentBlock, progress);
+
+        // The last fragment is final only now.
+        Report(progress, fragments[^1]);
 
         if (kind == ScannedMediaKind.Blank && fragments.Count > 0)
             kind = ScannedMediaKind.Foreign;    // readable, but nothing on it is ours
@@ -293,88 +333,59 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
     }
 
     /// <summary>
-    /// Crosses the filemark that terminates the media header, landing at begin-of-content.
+    /// Crosses the mark that closes <paramref name="current"/>.
     /// </summary>
-    /// <param name="marksCrossed">Always 1 — the header's mark is its own terminator, never a run.</param>
-    /// <remarks>
-    /// <para>
-    /// <b>A filemark on EVERY layout.</b> <see cref="TapeHeaderBlock.WriteFramed"/> terminates the header
-    ///  with a filemark unconditionally (<see cref="TapeHeaderBlock.WritesTrailingMark"/>), because a tape
-    ///  drive accepts a write only at BOP, at EOD, or immediately after a mark — so the first content
-    ///  write must be post-mark. The layout's SEPARATOR choice does not enter into it.
-    /// </para>
-    /// <para>
-    /// Reported as <c><paramref name="marksCrossed"/> = 1</c> so the landing place is IDENTIFIED rather
-    ///  than recorded as a <see cref="FragmentKind.MarkRun"/> — the header's filemark is part of the header,
-    ///  not a region.
-    /// </para>
-    /// </remarks>
-    private bool CrossMediaHeaderMark(out int marksCrossed)
+    /// <returns>
+    /// False when no closing mark was found. The scanner's error then carries the DRIVE's reason, so the
+    ///  caller can tell a positional end from a transport fault.
+    /// </returns>
+    private bool CrossClosingMark(TapeMediaFragment current, TapeMediaLayout layout)
     {
-        marksCrossed = 0;
+        bool hopped = ClosingMarkIsSetmark(current, layout)
+            ? Drive.MoveToNextSetmark(1)
+            : Drive.MoveToNextFilemark(1);
 
-        if (!Drive.MoveToNextFilemark(1))
+        if (!hopped)
         {
-            // A header with nothing behind it: the cartridge was formatted and then abandoned, or the
-            //  write died immediately after. The caller records the header as unclosed and stops.
-            m_logger.LogTrace("{Prefix}: Scan: nothing follows the media header ({Err})",
-                LogPrefix, LastErrorWin32);
+            // The DRIVE carries the reason; the scanner's own error channel sees nothing unless synced.
+            //  Without this the caller read NO_ERROR, took it for a transport fault, and truncated a
+            //  perfectly complete map.
+            SyncErrorFrom(Drive);
             return false;
-        }
-
-        marksCrossed = 1;
-        ResetError();
-        return true;
-    }
-
-
-    /// <summary>
-    /// Hops to whatever follows the current fragment, counting consecutive marks (§3.1).
-    /// </summary>
-    /// <param name="marksCrossed">How many marks were crossed in one run; 1 in the ordinary case.</param>
-    /// <remarks>
-    /// The SEPARATOR TYPE comes from the predicted layout, never from probing: on the setmark layouts a
-    ///  set is closed by a setmark while the TOC is filemark-delimited, and hopping the wrong kind would
-    ///  either miss every set or march into the TOC counting its filemarks as set boundaries.
-    /// </remarks>
-    private bool MoveToNextSeparator(TapeMediaLayout layout, out int marksCrossed)
-    {
-        marksCrossed = 0;
-
-        if (!HopOneSeparator(layout))
-            return false;
-
-        marksCrossed = 1;
-
-        // Count a run of adjacent marks. Each extra hop that SUCCEEDS without data in between means
-        //  another mark; the first failure ends the run — and is not itself an error, since we already
-        //  have a valid landing place.
-        while (marksCrossed < Options.MaxFragments)
-        {
-            long before = Drive.CurrentBlock;
-
-            if (!IsAtAnotherMark())
-                break;
-
-            if (!HopOneSeparator(layout))
-            {
-                ResetError();   // the run simply ended; the position from `before` still stands
-                break;
-            }
-
-            if (Drive.CurrentBlock == before)
-                break;          // defensive: no progress ⇒ stop rather than spin
-
-            marksCrossed++;
         }
 
         ResetError();
         return true;
     }
 
-    /// <summary>One separator hop, of the type the layout dictates.</summary>
-    private bool HopOneSeparator(TapeMediaLayout layout)
-        => layout.UseSmks ? Drive.MoveToNextSetmark(1) : Drive.MoveToNextFilemark(1);
+    /// <summary>Which mark closes a fragment of this kind — a setmark, or a filemark.</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The kind decides, not only the layout.</b> Two records carry their own filemark whatever the
+    ///  layout's set separator is:
+    ///  <list type="bullet">
+    ///   <item>the media header — <see cref="TapeHeaderBlock.WritesTrailingMark"/>, so the first content
+    ///    write is post-mark on every drive;</item>
+    ///   <item>a TOC copy — the TOC region is filemark-delimited on every in-set layout, setmark ones
+    ///    included (<c>[SM][toc1][FM][toc2][FM]</c>).</item>
+    ///  </list>
+    ///  Hopping a SETMARK from either on a setmark layout overshoots: past the header's filemark, the whole
+    ///  first set and its closing setmark; or past both TOC copies to end-of-data, leaving the first
+    ///  reported as unclosed and the second never seen.
+    /// </para>
+    /// <para>
+    /// Everything else — set headers, and the unidentified content of legacy media — closes with the
+    ///  layout's separator. Mark runs and TOC marks never reach here: they consist of marks the reads have
+    ///  already crossed.
+    /// </para>
+    /// </remarks>
+    private static bool ClosingMarkIsSetmark(TapeMediaFragment fragment, TapeMediaLayout layout)
+        => fragment.Kind switch
+        {
+            FragmentKind.MediaHeader => false,
+            FragmentKind.TOC => false,
+            _ => layout.UseSmks,
+        };
 
     /// <summary>
     /// Whether <paramref name="error"/> says "there is no more tape that way" — the tape ENDED, rather
@@ -399,8 +410,91 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
     #region *** Fragment assembly ***
 
     /// <summary>
-    /// Fills in what only the NEXT fragment's position can tell us about the previous one: whether a
-    ///  separator closed it, and how many blocks it spanned.
+    /// Commits a pending run of adjacent marks, now that its end is known — as a
+    ///  <see cref="FragmentKind.TocMark"/> folded into the gap before it, or as a
+    ///  <see cref="FragmentKind.MarkRun"/> of its own. No-op when no run is pending.
+    /// </summary>
+    /// <param name="endBlock">Where the run stops: the next data block, or where the walk ended.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>The TOC-mark fold.</b> On a <see cref="TapeMediaLayout.HasTocMark"/> layout the navigator writes
+    ///  <c>[gap][FM][FM][FM]</c> before the first TOC copy. The walk sees the gap as an
+    ///  <see cref="FragmentKind.Unknown"/> block closed by the first filemark, then reads the other two as a
+    ///  run. The fold names that shape for what it is, instead of leaving an "unidentified" block behind on
+    ///  every healthy cartridge of that layout.
+    /// </para>
+    /// <para>
+    /// <b>Guarded three ways, each for a reason.</b> The layout must write TOC marks at all. The run must
+    ///  hold at least two marks, so a legacy double-filemark end of data (one extra mark) is not mistaken
+    ///  for one. And the block before it must have been READ cleanly — a damaged header or an unreadable
+    ///  block is also <see cref="FragmentKind.Unknown"/>, but it is no gap, and a fold would hide the
+    ///  damage.
+    /// </para>
+    /// <para>
+    /// <see cref="TapeMediaFragment.MarkCount"/> is informational only: nothing depends on a drive reporting
+    ///  exactly one mark per read, and "two or more" is all the fold asks.
+    /// </para>
+    /// </remarks>
+    private void FoldMarkRun(List<TapeMediaFragment> fragments, TapeMediaLayout layout,
+                             ref int runMarks, long runStart, long endBlock,
+                             IProgress<TapeScanProgress>? progress)
+    {
+        if (runMarks == 0)
+            return;
+
+        TapeMediaFragment last = fragments[^1];
+
+        if (layout.HasTocMark
+            && runMarks >= 2
+            && last is { Kind: FragmentKind.Unknown, ClosedBySeparator: true, Diagnosis.Success: true })
+        {
+            m_logger.LogTrace("{Prefix}: Scan: TOC mark at block {Block} (gap + {N} adjacent mark(s))",
+                LogPrefix, last.StartBlock, runMarks);
+
+            // Still unreported (fragments are reported when final), so the retype is invisible to the sink.
+            fragments[^1] = last with
+            {
+                Kind = FragmentKind.TocMark,
+                MarkCount = runMarks,
+                BlockSpan = endBlock - last.StartBlock,
+                Fingerprint = null,     // positively identified — the gap's bytes are no longer evidence
+            };
+        }
+        else
+        {
+            Commit(fragments, new TapeMediaFragment
+            {
+                Ordinal = fragments.Count,
+                StartBlock = runStart,
+                Kind = FragmentKind.MarkRun,
+                MarkCount = runMarks,
+                ClosedBySeparator = true,   // a run consists of marks; it cannot be left open
+                BlockSpan = endBlock - runStart,
+            }, progress);
+        }
+
+        runMarks = 0;
+    }
+
+    /// <summary>
+    /// Appends <paramref name="fragment"/>, reporting its predecessor — which is final from this moment on.
+    /// </summary>
+    /// <remarks>
+    /// Assigns the ordinal itself. The identification read ran BEFORE any pending mark run was committed,
+    ///  so the ordinal it chose may already be taken; the list position is the only authority.
+    /// </remarks>
+    private void Commit(List<TapeMediaFragment> fragments, TapeMediaFragment fragment,
+                        IProgress<TapeScanProgress>? progress)
+    {
+        if (fragments.Count > 0)
+            Report(progress, fragments[^1]);
+
+        fragments.Add(fragment with { Ordinal = fragments.Count });
+    }
+
+    /// <summary>
+    /// Fills in what only the NEXT position can tell us about the last fragment: whether a separator
+    ///  closed it, and how many blocks it spanned.
     /// </summary>
     /// <remarks>
     /// <see cref="TapeMediaFragment.BlockSpan"/> is an upper bound INCLUDING marks (SM-11) — nothing here
@@ -420,27 +514,6 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
             BlockSpan = nextStart > last.StartBlock ? nextStart - last.StartBlock : -1L,
         };
     }
-
-    private static TapeMediaFragment MarkRunFragment(int ordinal, long startBlock, int markCount)
-        => new()
-        {
-            Ordinal = ordinal,
-            StartBlock = startBlock,
-            Kind = FragmentKind.MarkRun,
-            MarkCount = markCount,
-        };
-
-    private static TapeMediaFragment TrailingRegionFragment(int ordinal, uint terminator)
-        => new()
-        {
-            Ordinal = ordinal,
-            StartBlock = -1L,
-            Kind = FragmentKind.TrailingRegion,
-            Diagnosis = terminator == (uint)WIN32_ERROR.NO_ERROR
-                     || terminator == (uint)WIN32_ERROR.ERROR_NO_DATA_DETECTED
-                ? TapeResult.OK
-                : TapeResult.Fail(terminator, $"Walk ended: {(WIN32_ERROR)terminator}"),
-        };
 
     private MediaScanMap BuildMap(
         TapeMediaLayout layout, ScannedMediaKind kind, List<TapeMediaFragment> fragments,
@@ -487,8 +560,8 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
     /// </para>
     /// <para>
     /// The exception is caught HERE and converted, never tossed to the caller: the walk then stops at the
-    ///  next clean fragment boundary rather than unwinding mid-read. A progress sink can abort a scan; it
-    ///  can never fail one.
+    ///  next clean boundary rather than unwinding mid-read. A progress sink can abort a scan; it can never
+    ///  fail one.
     /// </para>
     /// </remarks>
     private void Report(IProgress<TapeScanProgress>? progress, TapeMediaFragment fragment)
@@ -504,7 +577,7 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
         {
             m_logger.LogInformation("{Prefix}: Abort requested while reporting a fragment: {Exception}",
                 LogPrefix, ex);
-            IsAbortRequested = true;    // honoured at the next poll, at a fragment boundary
+            IsAbortRequested = true;    // honoured at the next poll, at a clean boundary
         }
         catch (Exception ex)
         {

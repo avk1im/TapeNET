@@ -1170,6 +1170,89 @@ public class TapeTOC : ITapeSerializable, IEnumerable<TapeSetTOC>
 
     #endregion // ITapeSerializable
 
+    #region *** Partial Deserialization ***
+
+    /// <summary>Upper bound on sets a plausible TOC declares — a guard against reading garbage as a count.</summary>
+    private const int MaxPlausibleSetCount = 100_000;
+
+    /// <summary>
+    /// Whether <paramref name="block"/> — the FIRST block of a stream — opens a <see cref="TapeTOC"/>.
+    ///  Structural and cheap: reads only the fields that fit in one block, never the set list.
+    /// </summary>
+    /// <param name="version">The TOC format version, when recognized.</param>
+    /// <param name="mediaId">The series identity; <see cref="Guid.Empty"/> for a pre-MediaId TOC.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Positive, not by elimination.</b> The signature alone cannot identify a TOC: every serialized
+    ///  record starts with it, and a legacy aligned file (<see cref="TapeFileInfo.SerializeHeaderTo"/>)
+    ///  starts a block with exactly the bytes a v0x0101 TOC does. What only a TOC has is what FOLLOWS the
+    ///  signature: a non-zero UID seed, a set count, and then either the first set's OWN signature or —
+    ///  for an empty TOC — a plausible description, timestamps and volume.
+    /// </para>
+    /// <para>
+    /// Reads in exactly the order <see cref="ConstructFrom"/> does. The nested set signature is checked
+    ///  STRICTLY, because <see cref="TapeSetTOC.ConstructFrom"/> checks it strictly.
+    /// </para>
+    /// <para>
+    /// A version newer than <see cref="TocVersion"/> is NOT recognized: its layout past the signature is
+    ///  unknown to this build, so a structural check would be guessing. The block then maps as foreign
+    ///  data, with a fingerprint.
+    /// </para>
+    /// </remarks>
+    public static bool TryPeek(byte[] block, int length, out ushort version, out Guid mediaId)
+    {
+        version = 0;
+        mediaId = Guid.Empty;
+
+        if (block is null || length <= 0)
+            return false;
+
+        try
+        {
+            using var ms = new MemoryStream(block, 0, Math.Min(length, block.Length), writable: false);
+            var d = new TapeDeserializer(ms);
+
+            if (!d.ValidateSignature(out version))
+                return false;
+
+            if (version < TocVersionInitial || version > TocVersion)
+                return false;
+
+            if (d.DeserializeUInt64() == 0UL)                       // nextUID: 0 is never valid
+                return false;
+
+            if (version >= TocVersionWithMediaId)
+                mediaId = d.DeserializeGuid();
+
+            int setCount = d.DeserializeInt32();                    // the List<TapeSetTOC> count
+
+            if (setCount < 0 || setCount > MaxPlausibleSetCount)
+                return false;
+
+            // The first set record begins right here — with its own, strictly versioned signature.
+            if (setCount > 0)
+                return d.ValidateSignature();
+
+            // Empty TOC: no set record to anchor on, but the whole tail fits in this block. Check that it
+            //  reads as a TOC tail — it is what rejects a legacy file record at block address zero, whose
+            //  zero words would otherwise pass for "no sets, empty description".
+            _ = d.DeserializeString();                              // Description
+            DateTime created = d.DeserializeDateTime();
+            DateTime saved = d.DeserializeDateTime();
+            int volume = d.DeserializeInt32();
+
+            return IsPlausibleTimestamp(created) && IsPlausibleTimestamp(saved) && volume >= 1;
+        }
+        catch (Exception)
+        {
+            // A block that ends mid-field, or holds an impossible DateTime, is simply not a TOC.
+            return false;
+        }
+
+        static bool IsPlausibleTimestamp(DateTime t) => t.Year is >= 1990 and <= 2200;
+    }
+
+    #endregion
 
     #region IEnumerable<TapeSetTOC> 
 

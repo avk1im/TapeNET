@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using System.Diagnostics.CodeAnalysis;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Scan;
@@ -67,69 +68,103 @@ public sealed partial class TapeScanner
 
     #region *** Fragments beyond block 0 — raw reads ***
 
+    /// <summary>What one identification read found at the head.</summary>
+    private enum ReadOutcome
+    {
+        /// <summary>A block, readable or not — the fragment describes it.</summary>
+        Fragment,
+
+        /// <summary>A mark, which the read has already crossed. No fragment; the walk reads on.</summary>
+        Tapemark,
+
+        /// <summary>End-of-data. No fragment; the walk is over.</summary>
+        EndOfData,
+    }
+
     /// <summary>
-    /// Reads one block at the current position and identifies it, trying the interpretations of §4 in
-    ///  order. Never throws; an unidentifiable block is a FINDING, not a failure (SM-4).
+    /// Reads one block at the current position and says what stood there: a block (identified into
+    ///  <paramref name="fragment"/>), a tapemark, or end-of-data. Never throws; an unidentifiable block is a
+    ///  FINDING, not a failure (SM-4).
     /// </summary>
+    /// <param name="ordinal">Provisional — <c>Commit</c> assigns the final one.</param>
     /// <remarks>
     /// <para>
-    /// The three header kinds cost ONE parse between them:
-    ///  <see cref="TapeHeaderBlock.TryIdentifyHeaderBlock"/> dispatches on the kind byte and hands back
-    ///  the concrete subtype. The scanner need not know the kinds apart before parsing — only after.
+    /// <b>The mark detector the walk relies on.</b> A read that meets a mark returns nothing but the mark,
+    ///  and leaves the head PAST it. So the ordinary identification read doubles as the adjacent-mark
+    ///  probe, at no extra cost: no second read, no step back, and the head never moves backwards.
     /// </para>
     /// <para>
-    /// <b>The head advances by exactly one block on a successful read</b>, which is what the separator hop
-    ///  then continues from. On a failed read the position is whatever the drive left; the next hop is
-    ///  relative to a mark, not a block, so it recovers on its own.
+    /// <b>One classification, positive in every branch.</b> <see cref="TapeHeaderBlock.IdentifyBlock"/>
+    ///  recognizes a TOC copy by its structure and a header by its frame. No branch is reached merely
+    ///  because another failed — which is how a CRC-damaged set header once became a phantom TOC.
+    /// </para>
+    /// <para>
+    /// A read that returns data AND reports a mark is treated as data. It does not occur in block mode,
+    ///  where a mark is always reported on a read of its own.
     /// </para>
     /// </remarks>
-    private TapeMediaFragment IdentifyFragmentAt(int ordinal, long startBlock)
+    private ReadOutcome ReadFragmentAt(int ordinal, long startBlock, out TapeMediaFragment? fragment)
     {
-        byte[] buffer = ReadIdentificationBlock(out int read);
+        fragment = null;
+
+        byte[] buffer = ReadIdentificationBlock(out int read, out bool tapemark, out bool eod);
+
+        if (eod)
+        {
+            ResetError();
+            return ReadOutcome.EndOfData;
+        }
+
+        if (read <= 0 && tapemark)
+        {
+            ResetError();   // the drive leaves NO_ERROR on a mark; say nothing either
+            return ReadOutcome.Tapemark;
+        }
 
         if (read <= 0)
         {
-            // Reaching here means the hop succeeded but the block after it is unreadable — a torn region,
-            //  or a mark immediately followed by end-of-data. Record it and let the walk continue: the
-            //  fragments BEYOND a bad block are exactly the ones most worth finding.
-            m_logger.LogTrace("{Prefix}: Scan: unreadable block at {Block} ({Err})",
-                LogPrefix, startBlock, LastErrorWin32);
+            // A genuine read fault. Record it and let the walk continue: the fragments BEYOND a bad block
+            //  are exactly the ones most worth finding.
+            string what = $"Unreadable block at {startBlock}";
 
-            var diagnosis = TapeResult.Fail((uint)LastErrorWin32, $"Unreadable block at {startBlock}");
+            m_logger.LogTrace("{Prefix}: Scan: {What} ({Err})", LogPrefix, what, LastErrorWin32);
+
+            fragment = UnknownFragment(ordinal, startBlock, fingerprint: null)
+                with
+            { Diagnosis = TapeResult.Fail((uint)LastErrorWin32, what) };
+
             ResetError();   // tolerated — the scan carries on
-
-            return UnknownFragment(ordinal, startBlock, fingerprint: null) with { Diagnosis = diagnosis };
+            return ReadOutcome.Fragment;
         }
 
-        if (TapeHeaderBlock.TryIdentifyHeaderBlock(buffer, read, out TapeHeader? header) && header is not null)
-            return HeaderFragment(ordinal, startBlock, header);
+        IdentifiedBlock id = TapeHeaderBlock.IdentifyBlock(buffer, read);
 
-        // Not a header. A block carrying our record signature but failing to parse as one is the
-        //  signature-only evidence for a TOC copy (§4.3) — enough to tell the user "a table of contents
-        //  survives at block N" without deserializing anything.
-        if (TapeHeaderBlock.CarriesRecordSignature(buffer, read))
+        fragment = id.Kind switch
         {
-            m_logger.LogTrace("{Prefix}: Scan: table-of-contents copy at block {Block}", LogPrefix, startBlock);
+            HeaderBlockIdentity.Header when id.Header is not null
+                => HeaderFragment(ordinal, startBlock, id.Header),
 
-            var toc = new TapeMediaFragment
-            {
-                Ordinal = ordinal,
-                StartBlock = startBlock,
-                Kind = FragmentKind.TableOfContents,
-            };
+            // Our header, damaged. The CRC says so; the fingerprint keeps the evidence.
+            HeaderBlockIdentity.DamagedRecord
+                => DamagedRecordFragment(ordinal, startBlock, buffer, read, id.FrameStatus),
 
-            return Options.HarvestTocCopies ? HarvestTocCopy(toc) : toc;
-        }
+            HeaderBlockIdentity.TocCopy
+                => TocCopyFragment(ordinal, startBlock, id),
 
-        // Genuinely unidentified. The fingerprint is what lets a support report tell "random data" from
-        //  "a structure we do not parse yet".
-        return UnknownFragment(ordinal, startBlock, TapeMediaFragment.MakeFingerprint(buffer, read));
+            // Genuinely unidentified. The fingerprint lets a support report tell "random data" from "a
+            //  structure we do not parse yet".
+            _ => UnknownFragment(ordinal, startBlock, TapeMediaFragment.MakeFingerprint(buffer, read)),
+        };
+
+        return ReadOutcome.Fragment;
     }
 
     /// <summary>
     /// Reads one block for identification, falling back to a raw read on drives that cannot carry a
-    ///  standard header block.
+    ///  standard header block. Returns the bytes; classification is the caller's job.
     /// </summary>
+    /// <param name="tapemark">A mark stood at the position; the read crossed it.</param>
+    /// <param name="eod">End-of-data: nothing was ever written here.</param>
     /// <remarks>
     /// <para>
     /// <b>§4.2, and not optional.</b> <see cref="TapeHeaderBlock.IsSupportedBy"/> is false when the
@@ -137,21 +172,29 @@ public sealed partial class TapeScanner
     ///  fallback every fragment on such a cartridge would map as <see cref="FragmentKind.Unknown"/>.
     /// </para>
     /// <para>
-    /// The same two-step probe <see cref="TapeCalibrator"/> already performs when reading its run header,
-    ///  which is why a calibration cartridge written on a small-block drive still identifies here.
+    /// The 16 KiB read also covers a TOC copy: the TOC is written at the same fixed block size as the
+    ///  headers (<c>TapeAgentBase.c_fixedTOCBlockSize</c>), so its first block arrives whole.
+    /// </para>
+    /// <para>
+    /// The header <see cref="TapeHeaderBlock.Read(TapeDrive, byte[], out TapeHeader?, out bool, out bool)"/>
+    ///  parses along the way is discarded: a null there means "not a header" and "a damaged header"
+    ///  alike, which is exactly the ambiguity <see cref="TapeHeaderBlock.IdentifyBlock"/> resolves.
+    /// </para>
+    /// <para>
+    /// Both boundaries come from the drive's <c>out</c> flags. The drive RESETS its error on either, so the
+    ///  error is synced only when neither flag explains an empty read — that is, on a real fault.
     /// </para>
     /// </remarks>
-    private byte[] ReadIdentificationBlock(out int read)
+    private byte[] ReadIdentificationBlock(out int read, out bool tapemark, out bool eod)
     {
         if (TapeHeaderBlock.IsSupportedBy(Drive))
         {
             var buffer = new byte[TapeHeaderBlock.Size];
-            read = TapeHeaderBlock.Read(Drive, buffer, out _);   // sets AND restores the block size itself
+            read = TapeHeaderBlock.Read(Drive, buffer, out _, out tapemark, out eod);   // sets AND restores the block size
 
-            if (read > 0)
-                return buffer;
+            if (read <= 0 && !tapemark && !eod)
+                SyncErrorFrom(Drive);
 
-            SyncErrorFrom(Drive);
             return buffer;
         }
 
@@ -159,9 +202,10 @@ public sealed partial class TapeScanner
         uint blockSize = Drive.BlockSize > 0 ? Drive.BlockSize : Drive.DefaultBlockSize;
         var raw = new byte[blockSize];
 
-        read = Drive.ReadDirect(raw, 0, raw.Length, out _, out _);
+        read = Drive.ReadDirect(raw, 0, raw.Length, out tapemark, out bool boundary);
+        eod = boundary && !tapemark;    // the drive's `eof` covers marks too
 
-        if (read <= 0)
+        if (read <= 0 && !boundary)
             SyncErrorFrom(Drive);
 
         return raw;
@@ -224,6 +268,58 @@ public sealed partial class TapeScanner
         };
     }
 
+    /// <summary>
+    /// A header of ours that failed verification. Stays <see cref="FragmentKind.Unknown"/>, since its
+    ///  fields cannot be trusted; the diagnosis says what went wrong, the fingerprint keeps the evidence.
+    /// </summary>
+    /// <remarks>
+    /// Not a kind of its own, deliberately: the map records observations (SM-3), and the observation is
+    ///  "unidentifiable content". WHY is the diagnosis, where every other fragment records its failure too.
+    /// </remarks>
+    private TapeMediaFragment DamagedRecordFragment(int ordinal, long startBlock, byte[] buffer, int read,
+                                                    TapeFramer.FrameStatus status)
+    {
+        (WIN32_ERROR code, string why) = status switch
+        {
+            TapeFramer.FrameStatus.CrcMismatch => (WIN32_ERROR.ERROR_CRC, "CRC mismatch"),
+            TapeFramer.FrameStatus.Unparseable => (WIN32_ERROR.ERROR_INVALID_DATA, "payload does not parse (unknown kind or newer version)"),
+            _ => (WIN32_ERROR.ERROR_INVALID_DATA, "torn frame"),
+        };
+
+        string message = $"Damaged record at block {startBlock}: {why}";
+
+        m_logger.LogTrace("{Prefix}: Scan: {Message}", LogPrefix, message);
+
+        return UnknownFragment(ordinal, startBlock, TapeMediaFragment.MakeFingerprint(buffer, read))
+            with { Diagnosis = TapeResult.Fail((uint)code, message) };
+    }
+
+    /// <summary>
+    /// A table-of-contents copy, identified structurally. Carries its format version and — from v0x0102
+    ///  on — the series identity it describes.
+    /// </summary>
+    /// <remarks>
+    /// The identity comes free with the peek, and it is worth having: a TOC copy whose media id differs
+    ///  from the media header's is a leftover from another series, and the comparison phase must not offer
+    ///  it as a candidate for this cartridge.
+    /// </remarks>
+    private TapeMediaFragment TocCopyFragment(int ordinal, long startBlock, IdentifiedBlock id)
+    {
+        m_logger.LogTrace("{Prefix}: Scan: table-of-contents copy v0x{Version:X4} at block {Block}",
+            LogPrefix, id.TocVersion, startBlock);
+
+        var toc = new TapeMediaFragment
+        {
+            Ordinal = ordinal,
+            StartBlock = startBlock,
+            Kind = FragmentKind.TOC,
+            TocVersion = id.TocVersion,
+            Id = id.TocMediaId == Guid.Empty ? null : id.TocMediaId,
+        };
+
+        return Options.HarvestTocCopies ? HarvestTocCopy(toc) : toc;
+    }
+
     private static TapeMediaFragment UnknownFragment(int ordinal, long startBlock, string? fingerprint)
         => new()
         {
@@ -249,7 +345,7 @@ public sealed partial class TapeScanner
     /// </remarks>
     private TapeMediaFragment HarvestTocCopy(TapeMediaFragment fragment)
     {
-        m_logger.LogTrace("{Prefix}: Scan: TOC harvest not yet implemented — recording signature only at block {Block}",
+        m_logger.LogTrace("{Prefix}: Scan: TOC harvest not yet implemented — recording the copy only at block {Block}",
             LogPrefix, fragment.StartBlock);
 
         return fragment;
@@ -290,34 +386,6 @@ public sealed partial class TapeScanner
                 LogPrefix);
             return null;
         }
-    }
-
-    /// <summary>
-    /// Whether the head currently sits on another mark — used to detect a RUN of consecutive marks.
-    /// </summary>
-    /// <remarks>
-    /// A zero-length read is the cheapest available probe: the medium reports the mark it is standing on
-    ///  without transferring anything. Any failure means "not a mark", which is the safe answer — a
-    ///  mis-detected run merely splits one <see cref="FragmentKind.MarkRun"/> into two, while a
-    ///  mis-detected DATA block would be read as a header it is not.
-    /// </remarks>
-    private bool IsAtAnotherMark()
-    {
-        long before = Drive.CurrentBlock;
-        var probe = new byte[TapeHeaderBlock.IsSupportedBy(Drive) ? TapeHeaderBlock.Size : Drive.BlockSize];
-
-        int read = Drive.ReadDirect(probe, 0, probe.Length, out bool tapemark, out _);
-
-        bool atMark = read <= 0 && tapemark;
-
-        ResetError();   // a probe never contributes an error
-
-        // The probe may have advanced the head past the mark; put it back so the caller's hop counts the
-        //  same mark we just observed.
-        if (Drive.CurrentBlock != before)
-            Drive.MoveToBlock(before);
-
-        return atMark;
     }
 
     #endregion
