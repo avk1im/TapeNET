@@ -303,6 +303,18 @@ calibration cartridge") instead of failing blankly. Each kind is built by the su
 identity — TapeTOC for the media header, TapeCalibrator for the run header — sharing the grammar, not a
 construction path.
 
+#### Scan Media — TOC-less media survey
+
+`TapeScanner` (`TapeLibNET/Scan`) walks a cartridge from BOM to EOD with **no TOC assumed** and returns a
+`MediaScanMap` of fragments (media header, set headers, TOC copies, calibration header, unknown data),
+serializable as `.tapescan` JSON. The layout is predicted from drive capabilities (`TapeMediaLayout.Predict`);
+blocks are identified positively, marks are detected by the ordinary read, and the scan writes nothing.
+By default it harvests TOC copies. `TapeServiceBase.ScanMediaAsync` / `RecoverTocAsync` wrap it: recovery
+from the map needs no tape I/O, recovery from tape is guarded against a cartridge swap, and adoption goes
+through the import path as `TOCSource.Recovered` (read-only, like a TOC from a file). Surfaces: WPF
+**Media ▸ Scan Media…** (setup dialog, progress overlay, result window) and CLI `tapecon scan-media` /
+`recover-toc`. Design: `docs/Design-ScanMedia.md`.
+
 **Service verdicts and prompts.** The service reads one header per media load and judges it per operation,
 producing a typed `TapeMediaVerdict` (Match, Unidentified, WrongKind, MediaIdMismatch, WrongVolume,
 MediaInconsistent) presented through a single context-typed host callback with Retry / Proceed /

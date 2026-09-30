@@ -68,6 +68,9 @@ public static class RootCommandFactory
         root.Subcommands.Add(RenameCommand.CreateRenameMedia(ux));
         root.Subcommands.Add(RenameCommand.CreateRenameSet(ux));
         root.Subcommands.Add(DeleteSetsCommand.Create(ux));
+        //  Scan Media (read-only survey) and TOC recovery from a saved scan map:
+        root.Subcommands.Add(ScanMediaCommand.Create(ux));
+        root.Subcommands.Add(ScanMediaCommand.CreateRecoverToc(ux));
 
         return root;
     }

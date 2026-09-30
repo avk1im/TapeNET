@@ -1,6 +1,6 @@
 # Design — Scan Media (TOC-less media survey)
 
-**Status:** v3.0 · Phases 0–4 implemented and green. This revision brings §8–§10 in line with the code and
+**Status:** v3.1 · Phases 0–6 implemented and green. This revision brings §8–§10 in line with the code and
 specifies the WPF surface (Phase 5, written as a hand-off task) and the CLI (Phase 6).
 **Scope:** read a cartridge from BOM forward and produce a **fragment map** — everything on the medium that
 can be identified — with **no table of contents in hand and none assumed**. Then, as an option or as a
@@ -584,7 +584,7 @@ aborted, truncated map; export round-trips; recovery from the map performs no ta
 **cartridge swap refused**; adoption through the import path; save round-trips through import; non-TOC
 fragment rejected.
 
-### Phase 5 — TapeWinNET · *hand-off task*
+### Phase 5 — TapeWinNET · *hand-off task* ✅
 
 > **The next task.** Add a *Scan Media* feature to TapeWinNET. The library and service layers are
 > done and tested (`TapeServiceBase.ScanMediaAsync`, `RecoverTocAsync` — §9). This phase is **UI only**:
@@ -663,7 +663,7 @@ fragment rejected.
 - A calibration cartridge shows only the banner and the Inspect Media button.
 - Nothing is written to tape in any path; the overlay locks tree/list browsing while scanning.
 
-### Phase 6 — TapeConNET
+### Phase 6 — TapeConNET ✅
 
 `tapecon scan-media [--no-recover-toc] [--export <dir>] [--json]` — prints the headline, details and one line
 per fragment (`ServiceScanProgressHandler.DescribeFragment`); `--json` prints the map to stdout.
