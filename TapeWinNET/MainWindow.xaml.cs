@@ -860,8 +860,8 @@ namespace TapeWinNET
             _helpActionRouter.Register("open-remote-virtual-drive", _viewModel.OpenRemoteVirtualDriveCommand, opensTopicId: "dialog.open-remote-virtual-drive");
             _helpActionRouter.Register("connect-to-remote-host", _viewModel.ConnectToRemoteHostCommand, opensTopicId: "dialog.connect-to-remote-host");
             _helpActionRouter.Register("format-media", _viewModel.FormatMediaCommand,         opensTopicId: "dialog.format-media");
-            _helpActionRouter.Register("delete-sets",  _viewModel.DeleteBackupSetsCommand,    opensTopicId: "dialog.delete-backup-sets");
-            return _helpActionRouter;
+            _helpActionRouter.Register("scan-media", _viewModel.ScanMediaCommand,          opensTopicId: "dialog.scan-media");
+            _helpActionRouter.Register("delete-sets",  _viewModel.DeleteBackupSetsCommand,    opensTopicId: "dialog.delete-backup-sets");            return _helpActionRouter;
         }
 
         #endregion

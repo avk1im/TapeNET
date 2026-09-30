@@ -34,3 +34,9 @@ You enable this when [formatting](help://topic/dialog.format-media) or creating
 [virtual media](help://topic/dialog.open-virtual-drive), via the **initiator
 the TOC lives alongside the
 data in a single-partition layout delimited by [setmarks or filemarks](help://glossary/setmark-filemark).
+
+## Damaged or Missing TOC
+
+If the TOC can't be read, [Scan Media](help://topic/dialog.scan-media) maps the
+tape and can recover a TOC from an on-tape copy. A recovered TOC is shown in
+the tree as **[recovered TOC]** and, like a TOC loaded from a file, is read-only.

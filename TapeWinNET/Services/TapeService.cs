@@ -68,7 +68,7 @@ public partial class TapeService : TapeServiceBase
     protected override void OnStatusUpdate(string status) => Status(status);
 
     /// <summary>Adds the 'Adding New Backup Sets disabled' sub-warning after a file-TOC import.</summary>
-    protected override void OnImportTOCFromFileExtra() => LogWarnSub("Adding New Backup Sets disabled");
+    protected override void OnImportTOCExtra() => LogWarnSub("Adding New Backup Sets disabled");
 
     // ── Status helper ─────────────────────────────────────────────────────────
 

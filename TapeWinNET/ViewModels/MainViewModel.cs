@@ -141,6 +141,7 @@ public partial class MainViewModel : ViewModelBase
 
         // Initialize calibration commands (from MainViewModel.Calibration.cs)
         InitializeCalibrationCommands();
+        InitializeScanCommands();
 
         // Initialize restore commands (from MainViewModel.Restore.cs)
         InitializeRestoreCommands();
@@ -329,12 +330,12 @@ public partial class MainViewModel : ViewModelBase
     /// <summary>
     /// True when busy with non-backup/restore/calibration/TOC-load operations (shows full-window overlay).
     /// </summary>
-    public bool IsGeneralBusy => IsBusy && !IsBackupInProgress && !IsRestoreInProgress && !IsCalibrateInProgress && !IsTOCLoadInProgress;
+    public bool IsGeneralBusy => IsBusy && !IsBackupInProgress && !IsRestoreInProgress && !IsCalibrateInProgress && !IsScanInProgress && !IsTOCLoadInProgress;
 
     /// <summary>
     /// True when any tape operation (backup, calibration, or restore/validate/verify) is in progress.
     /// </summary>
-    public bool IsOperationInProgress => IsBackupInProgress || IsCalibrateInProgress || IsRestoreInProgress;
+    public bool IsOperationInProgress => IsBackupInProgress || IsCalibrateInProgress || IsScanInProgress || IsRestoreInProgress;
 
     /// <summary>
     /// False whenever any operation/busy overlay is shown, so the TreeView and the media/property
@@ -363,31 +364,37 @@ public partial class MainViewModel : ViewModelBase
     /// <summary>Progress percent of whichever operation is currently active.</summary>
     public double OperationProgressPercent => IsBackupInProgress ? BackupProgressPercent
         : IsCalibrateInProgress ? CalibrationProgressPercent
+        : IsScanInProgress ? ScanProgressPercent
         : RestoreProgressPercent;
 
     /// <summary>Progress text of whichever operation is currently active.</summary>
     public string OperationProgressText => IsBackupInProgress ? BackupProgressText
         : IsCalibrateInProgress ? CalibrationProgressText
+        : IsScanInProgress ? ScanProgressText
         : RestoreProgressText;
 
     /// <summary>Current file name / phase text of whichever operation is currently active.</summary>
     public string CurrentOperationFile => IsBackupInProgress ? CurrentBackupFile
         : IsCalibrateInProgress ? CurrentCalibrationPhase
+        : IsScanInProgress ? CurrentScanPhase
         : CurrentRestoreFile;
 
     /// <summary>Abort command of whichever operation is currently active.</summary>
     public ICommand AbortOperationCommand => IsBackupInProgress ? AbortBackupCommand
         : IsCalibrateInProgress ? AbortCalibrationCommand
+        : IsScanInProgress ? AbortScanCommand
         : AbortRestoreCommand;
 
     /// <summary>Abort button IsEnabled state of whichever operation is currently active.</summary>
     public bool IsAbortOperationEnabled => IsBackupInProgress ? IsAbortBackupEnabled
         : IsCalibrateInProgress ? IsAbortCalibrationEnabled
+        : IsScanInProgress ? IsAbortScanEnabled
         : IsAbortRestoreEnabled;
 
     /// <summary>Abort button label — distinguishes the operations for clarity.</summary>
     public string AbortOperationButtonText => IsBackupInProgress ? "Abort Backup"
         : IsCalibrateInProgress ? "Abort Calibration"
+        : IsScanInProgress ? "Abort Scan"
         : "Abort";
 
     /// <summary>
@@ -1510,7 +1517,8 @@ public partial class MainViewModel : ViewModelBase
             ? Path.GetFileName(_tapeService.TOCFilePath ?? "file")
             : null;
         var tapeItem = TapeTreeItemViewModel.CreateTapeItem(toc, driveItem, tocFileName,
-            isInMemory: _tapeService.IsInMemoryDrive);
+            isInMemory: _tapeService.IsInMemoryDrive,
+            tocRecovered: _tapeService.TOCIsFrom is TOCSource.Recovered);
         driveItem.Children.Add(tapeItem);
 
         // Add backup sets (from latest to oldest for consistency with alt index display)

@@ -43,6 +43,7 @@ this pane.
 - [New Backup](help://topic/dialog.backup) — create and write a backup set.
 - [Restore / Validate / Verify](help://topic/dialog.restore) — recover or check files.
 - [Format Media](help://topic/dialog.format-media) — prepare or erase a tape.
+- [Scan Media](help://topic/dialog.scan-media) — map an unreadable tape and recover its TOC.
 - [Open Virtual Drive](help://topic/dialog.open-virtual-drive) — mount a file- or RAM-backed tape.
 - [Open Remote Virtual Drive](help://topic/dialog.open-remote-virtual-drive) — mount a server-hosted volume.
 - [Connect to Remote Host](help://topic/dialog.connect-remote-host) — connect to a remote service.

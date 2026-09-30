@@ -125,7 +125,7 @@ public class TapeTreeItemViewModel : ViewModelBase
     /// When true on a Media item, indicates the TOC was loaded from a file.
     /// Drives warning display: red text, warning prefix in display name.
     /// </summary>
-    public bool IsTOCFromFile
+    public bool IsTOCImported
     {
         get => _isTOCFromFile;
         set => SetProperty(ref _isTOCFromFile, value);
@@ -200,7 +200,7 @@ public class TapeTreeItemViewModel : ViewModelBase
     }
 
     public static TapeTreeItemViewModel CreateTapeItem(TapeTOC toc, TapeTreeItemViewModel parent,
-        string? tocFileName = null, bool isInMemory = false)
+        string? tocFileName = null, bool isInMemory = false, bool tocRecovered = false)
     {
         bool fromFile = tocFileName != null;
         string baseName = string.IsNullOrEmpty(toc.Description)
@@ -211,6 +211,8 @@ public class TapeTreeItemViewModel : ViewModelBase
         string displayName = baseName;
         if (fromFile)
             displayName = $"{baseName}  ⚠ TOC: {tocFileName}";
+        else if (tocRecovered)
+            displayName = $"{baseName}  ⚠ [recovered TOC]";
         else if (isInMemory)
             displayName = $"{baseName}  ℹ In-memory";
 
@@ -222,7 +224,7 @@ public class TapeTreeItemViewModel : ViewModelBase
             Tag = toc.Volume,
             Parent = parent,
             IsExpanded = true,
-            IsTOCFromFile = fromFile,
+            IsTOCImported = fromFile || tocRecovered, // a recovered TOC gets the same warning foreground
             IsInMemory = isInMemory
         };
         return item;

@@ -106,6 +106,29 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
     }
 
     /// <summary>
+    /// Updates the Scan Media progress indicators on the bound <see cref="MainViewModel"/>.
+    /// Safe to call from any thread — marshals to the UI dispatcher internally.
+    /// </summary>
+    /// <param name="estimatedBlocks">Estimated media capacity in blocks; 0 when unknown (bar stays at 0).</param>
+    public void UpdateScanProgress(int fragmentsFound, int setsFound, int tocCopiesFound,
+        long currentBlock, long estimatedBlocks, string phase)
+    {
+        _dispatcher.Invoke(() =>
+        {
+            _viewModel.CurrentScanPhase = phase;
+
+            // No total exists for a scan: the head position against the capacity estimate stands in.
+            //  Capped below 100% — only completion may show a full bar.
+            _viewModel.ScanProgressPercent = estimatedBlocks > 0
+                ? Math.Clamp(currentBlock * 100.0 / estimatedBlocks, 0.0, 99.0)
+                : 0.0;
+
+            _viewModel.ScanProgressText =
+                $"Block {currentBlock:N0} · {setsFound:N0} set(s) · {tocCopiesFound:N0} TOC copy(ies) found";
+        });
+    }
+
+    /// <summary>
     /// Shared implementation for <see cref="UpdateBackupProgress"/> and
     ///  <see cref="UpdateRestoreProgress"/> — both operations report the same shape
     ///  of progress data, differing only in which view-model properties they update.

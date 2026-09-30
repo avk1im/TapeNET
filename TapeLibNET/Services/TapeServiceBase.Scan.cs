@@ -427,6 +427,11 @@ public partial class TapeServiceBase
 
         LogOk($"Recovered table of contents adopted: {toc.Count} backup set(s)");
         LogTOCInfo();
+
+        LogWarn("Using recovered TOC - on-tape TOC may be missing or corrupt");
+        OnImportTOCExtra();
+        OnStatusUpdate($"TOC recovered: {_toc.Count} backup set(s)");
+
         _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
         return true;
     }

@@ -81,6 +81,13 @@
                 </Style.Triggers>
             </Style>
 
+            <!-- Standard dark-grey instruction/hint text shown under or beside controls -->
+            <Style x:Key="HintTextStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="10"/>
+                <Setter Property="Foreground" Value="DarkGray"/>
+                <Setter Property="TextWrapping" Value="Wrap"/>
+            </Style>
+
             <!-- Shared warning panel style for dialog windows.
                  Bind the DataContext so that WarningLevel (enum) drives visibility + colors,
                  and use WarningLevelToIconConverter for the icon.

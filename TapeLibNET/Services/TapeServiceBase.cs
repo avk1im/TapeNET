@@ -1031,7 +1031,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// Extra log entries emitted after a successful file-TOC import.
     /// Default is a no-op; WPF subclass adds a sub-entry warning about disabled features.
     /// </summary>
-    protected virtual void OnImportTOCFromFileExtra() { }
+    protected virtual void OnImportTOCExtra() { }
 
     /// <summary>
     /// Signals the in-progress TOC load to abort cooperatively.
@@ -1636,7 +1636,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 LogOk($"TOC imported from file with {_toc.Count} backup set(s)");
                 LogTOCInfo();
                 LogWarn("TOC imported from a file - on-tape TOC may be missing or corrupt");
-                OnImportTOCFromFileExtra();
+                OnImportTOCExtra();
                 OnStatusUpdate($"TOC from file: {_toc.Count} backup set(s)");
                 _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
                 return true;

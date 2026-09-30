@@ -513,7 +513,8 @@ public partial class MainViewModel
             ? System.IO.Path.GetFileName(_tapeService.TOCFilePath ?? "file")
             : null;
         var tapeItem = TapeTreeItemViewModel.CreateTapeItem(
-            toc, driveItem, tocFileName, isInMemory: _tapeService.IsInMemoryDrive);
+            toc, driveItem, tocFileName, isInMemory: _tapeService.IsInMemoryDrive,
+                        tocRecovered: _tapeService.TOCIsFrom is TOCSource.Recovered);
         driveItem.Children.Add(tapeItem);
 
         // Backup sets (newest-first)
