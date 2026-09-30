@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Scan;
@@ -229,7 +230,7 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
         int runMarks = 0;               // adjacent marks read since the last data fragment
         long runStart = -1L;            // block of the first of them
 
-        while (true)
+        do // while (true)
         {
             if (IsAbortRequested)
             {
@@ -310,15 +311,33 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
                 break;
             }
 
+            // `next` is non-null here. ReadFragmentAt sets its fragment EXACTLY when it returns
+            //  ReadOutcome.Fragment, and above we've checked for the enum's other values.
+            Debug.Assert(outcome == ReadOutcome.Fragment && next is not null,
+                $"ReadFragmentAt returned {outcome} with {(next is null ? "no" : "a")} fragment");
+            TapeMediaFragment fragment = next!;
+
             // A data fragment: the run before it (if any) now has a known end.
             FoldMarkRun(fragments, layout, ref runMarks, runStart, endBlock: at, progress);
-            Commit(fragments, next!, progress);
+            Commit(fragments, fragment, progress);
 
-            if (next!.Kind is FragmentKind.SetHeader or FragmentKind.MediaHeader)
+            // TOC recovery is a step of the WALK, not of identification: it moves the head over many
+            //  blocks, and returns it. A head that cannot be returned ends the walk truncated (SM-5).
+            if (fragment.Kind == FragmentKind.TOC && options.HarvestTocCopies
+                && !HarvestLastTocCopy(fragments, progress))
+            {
+                LatchFailure();
+                truncated = true;
+                terminator = (uint)LastErrorWin32;
+                break;
+            }
+
+            if (fragment.Kind is FragmentKind.SetHeader or FragmentKind.MediaHeader)
                 kind = ScannedMediaKind.Backup;
 
             crossClosingMark = true;
-        }
+
+        } while (true);
 
         // Whatever ended the walk, a run still pending ends here.
         FoldMarkRun(fragments, layout, ref runMarks, runStart, endBlock: Drive.CurrentBlock, progress);

@@ -639,6 +639,90 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
         return result ? TapeResult.OK : FailedOperationResult;
     }
 
+    /// <summary>Begins a TOC read at a caller-located copy. Mirrors <see cref="BeginReadTOC"/>.</summary>
+    private bool BeginReadTOCAt(long block)
+    {
+        // Do NOT EnsureMediaHeaderResolved() here — positioning is absolute; header presence plays no part.
+        if (!Manager.BeginReadTOCAt(block))
+        {
+            m_logger.LogWarning("Failed to begin reading the TOC copy at block {Block}", block);
+            SyncErrorFrom(Manager);
+            LatchFailure();
+            return false;
+        }
+
+        Drive.SetBlockSize(c_fixedTOCBlockSize);
+        return true;
+    }
+
+    /// <summary>
+    /// Reads the <see cref="TOC"/> from the single copy starting at <paramref name="block"/>, bypassing the
+    ///  navigator's own search for the TOC. On success, replaces the current <see cref="TOC"/> content.
+    /// </summary>
+    /// <param name="block">
+    /// The copy's first block — typically a <see cref="Scan.FragmentKind.TOC"/> fragment's
+    ///  <c>StartBlock</c>. To read "where the head is", pass <c>Drive.CurrentBlock</c> explicitly.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <b>The same contract as <see cref="RestoreTOC"/></b>: returns a <see cref="TapeResult"/>, fills
+    ///  <see cref="TOC"/> via <c>CopyFrom</c> on success, resets the latched error on entry.
+    /// </para>
+    /// <para>
+    /// <b>One copy, no fallback.</b> <see cref="RestoreTOC"/> retries by stepping to the next filemark,
+    ///  which assumes it started at the FIRST copy. Here the caller names the copy — it may be the second —
+    ///  so a retry would read whatever follows it. To try another copy, call again with its block.
+    /// </para>
+    /// <para>
+    /// <b>Leaves no believed position.</b> The block came from evidence the navigator cannot verify — a copy
+    ///  found mid-tape may be a stale leftover, even another series'. So the read session is ended and the
+    ///  navigator reset, whatever the outcome: the next operation re-locates from scratch.
+    /// </para>
+    /// <para>
+    /// The drive's block size is left at the TOC block size, as <see cref="RestoreTOC"/> leaves it. The
+    ///  scanner's own guard restores it on its path.
+    /// </para>
+    /// <para>
+    /// <b>Why the block is not optional.</b> A default of "where the head is" would make the unanchored
+    ///  read the easy one on the product's most sensitive path. Passing <c>Drive.CurrentBlock</c> costs a
+    ///  caller one token and says what it means; <see cref="TapeDrive.MoveToBlock"/> makes it free.
+    /// </para>
+    /// </remarks>
+    public TapeResult RestoreTOCAt(long block)
+    {
+        ResetLatchedFailure();
+#if DEBUG
+        _tocCopyCounter = 0;
+#endif
+
+        m_logger.LogTrace("Restoring TOC from the copy at block {Block}", block);
+
+        try
+        {
+            if (!BeginReadTOCAt(block))
+                return FailedOperationResult;
+
+            bool result = RestoreTOCCore();
+
+            if (result)
+                m_logger.LogTrace("TOC restored from the copy at block {Block}", block);
+            else
+                m_logger.LogWarning("TOC restore from the copy at block {Block} failed", block);
+
+            if (IsAbortRequested && WentOK)
+                SetError(WIN32_ERROR.ERROR_CANCELLED, "TOC loading aborted by user");
+
+            return result ? TapeResult.OK : FailedOperationResult;
+        }
+        finally
+        {
+            // Runs AFTER the return value is computed, so the diagnosis above is already captured.
+            //  End the session and believe nothing about the position — see the remarks.
+            Manager.EndReadWrite();
+            Navigator.ResetContentSet();
+        }
+    }
+
     #endregion // *** TOC Restore ***
 
     #region *** TOC File I/O ***

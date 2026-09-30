@@ -87,6 +87,10 @@ public sealed partial class TapeScanner
     ///  FINDING, not a failure (SM-4).
     /// </summary>
     /// <param name="ordinal">Provisional — <c>Commit</c> assigns the final one.</param>
+    /// <param name="fragment">
+    /// Non-<see langword="null"/> iff the result is <see cref="ReadOutcome.Fragment"/>; 
+    ///  <see langword="null"/> for <see cref="ReadOutcome.Tapemark"/> and <see cref="ReadOutcome.EndOfData"/>.
+    /// </param>
     /// <remarks>
     /// <para>
     /// <b>The mark detector the walk relies on.</b> A read that meets a mark returns nothing but the mark,
@@ -317,7 +321,7 @@ public sealed partial class TapeScanner
             Id = id.TocMediaId == Guid.Empty ? null : id.TocMediaId,
         };
 
-        return Options.HarvestTocCopies ? HarvestTocCopy(toc) : toc;
+        return toc; // TOC recovery is a walk step — see TapeScanner.Harvest.cs
     }
 
     private static TapeMediaFragment UnknownFragment(int ordinal, long startBlock, string? fingerprint)
@@ -332,24 +336,6 @@ public sealed partial class TapeScanner
     #endregion
 
     #region *** Optional enrichment ***
-
-    /// <summary>
-    /// Placeholder for the Phase-3 TOC harvest. Returns <paramref name="fragment"/> unchanged for now, so
-    ///  <see cref="ScanMediaOptions.HarvestTocCopies"/> is honoured as "detect only" until the harvest
-    ///  lands.
-    /// </summary>
-    /// <remarks>
-    /// Deliberately a seam rather than an implementation: the harvest reads a multi-block stream at the
-    ///  TOC's OWN block size mid-walk, which needs a dedicated reader and its own failure handling
-    ///  (downgrade to signature-only, never fail the scan — SM-8).
-    /// </remarks>
-    private TapeMediaFragment HarvestTocCopy(TapeMediaFragment fragment)
-    {
-        m_logger.LogTrace("{Prefix}: Scan: TOC harvest not yet implemented — recording the copy only at block {Block}",
-            LogPrefix, fragment.StartBlock);
-
-        return fragment;
-    }
 
     /// <summary>
     /// Enriches a calibration cartridge's entry with the checkpoint-derived run state, by CALLING the

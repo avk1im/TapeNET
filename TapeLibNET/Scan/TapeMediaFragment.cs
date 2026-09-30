@@ -152,6 +152,10 @@ public sealed record TapeMediaFragment
     /// <summary>
     /// Why this fragment could not be identified, or why the walk stopped here.
     ///  <see cref="TapeResult.OK"/> for anything cleanly identified.
+    /// <para>
+    /// For <see cref="Kind"/> of <see cref="FragmentKind.TOC"/>, a TOC copy that was identified but
+    ///  couldn't be recovered reports its reason here.
+    /// </para>
     /// </summary>
     /// <remarks>
     /// Initialized to <see cref="TapeResult.OK"/> explicitly: <c>default(TapeResult)</c> means FAILURE,

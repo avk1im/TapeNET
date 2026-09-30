@@ -466,6 +466,76 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     /// </remarks>
     protected abstract bool MoveToBeginOfTOCCore();
 
+    /// <summary>
+    /// Positions the tape at the first block of a TOC copy the CALLER has already located — bypassing the
+    ///  layout's own search for the TOC.
+    /// </summary>
+    /// <param name="block">The copy's first block, in the partition the TOC lives in.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Why not <see cref="MoveToBeginOfTOC"/>.</b> Its layout searches ("EOD, back 3 filemarks", "past
+    ///  the TOC mark") are exactly what fails on a tail-damaged cartridge — the case Scan Media exists
+    ///  for. The scanner has located the copy from evidence; letting the navigator search again would
+    ///  discard that evidence.
+    /// </para>
+    /// <para>
+    /// <b>Read-only by construction.</b> Only <see cref="TapeStreamManager.BeginReadTOCAt"/> calls this.
+    ///  <c>MoveToLocationFor</c>, which the WRITE path shares with the read path, never does — so a block
+    ///  located by a scan can never become the place a TOC is written.
+    /// </para>
+    /// <para>
+    /// Same template shape as <see cref="MoveToBeginOfTOC"/>: this wrapper owns the bookkeeping on both
+    ///  outcomes, <see cref="MoveToTOCCopyAtCore"/> does the move. No "already there" check here:
+    ///  <see cref="TapeDrive.MoveToBlock"/> already returns at once when the head stands on
+    ///  <paramref name="block"/>, and asks the DEVICE rather than the navigator's belief.
+    /// </para>
+    /// <para>
+    /// Sets <see cref="CurrentContentSet"/> to <see cref="InTOCSet"/> for the duration of the read, as the
+    ///  ordinary TOC path does. The caller is expected to reset it afterwards: the position rests on
+    ///  evidence this navigator cannot verify — see <see cref="TapeAgentBase.RestoreTOCAt"/>.
+    /// </para>
+    /// </remarks>
+    public bool MoveToTOCCopyAt(long block)
+    {
+        ResetError();
+
+        if (block < 0)
+        {
+            LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_PARAMETER;
+            ResetContentSet();
+            LogErrorAsDebug($"MoveToTOCCopyAt: invalid block {block}");
+            return false;
+        }
+
+        bool moved = MoveToTOCCopyAtCore(block);
+
+        if (moved && WentOK)
+        {
+            CurrentContentSet = InTOCSet;   // inside a TOC copy we are in NO content set at all
+            m_logger.LogTrace("Drive #{Drive}: Moved to the TOC copy at block {Block}", DriveNumber, block);
+            return true;
+        }
+
+        ResetContentSet();                  // we do not know where we ended up
+        LogErrorAsDebug($"Failed to move to the TOC copy at block {block}");
+        return false;
+    }
+
+    /// <summary>
+    /// Performs the layout-specific move to <paramref name="block"/>. Called only by
+    ///  <see cref="MoveToTOCCopyAt"/>, which owns the bookkeeping.
+    /// </summary>
+    /// <remarks>
+    /// The base serves every TOC-in-set layout: the TOC shares the content partition, so an absolute block
+    ///  is all it takes. <see cref="TapeNavigatorTOCInPartition"/> overrides to address the initiator
+    ///  partition instead.
+    /// </remarks>
+    protected virtual bool MoveToTOCCopyAtCore(long block)
+    {
+        Drive.MoveToBlock(block);
+        return WentOK;
+    }
+
     #endregion // TOC positioning
 
 
@@ -1011,6 +1081,17 @@ public class TapeNavigatorTOCInPartition : TapeNavigator
         m_logger.LogTrace("Drive #{Drive}: Current partition after moving to Initiator is >{Partition}<",
             DriveNumber, Drive.GetCurrentPartition());
 
+        return WentOK;
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// The TOC lives in the initiator partition, so the block is addressed THERE — one combined locate, as
+    ///  <see cref="MoveToBeginOfTOCCore"/> does for block 0.
+    /// </remarks>
+    protected override bool MoveToTOCCopyAtCore(long block)
+    {
+        Drive.MoveToPartition(MediaPartition.Initiator, block);
         return WentOK;
     }
 
