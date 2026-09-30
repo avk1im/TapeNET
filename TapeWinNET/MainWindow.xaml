@@ -284,6 +284,7 @@
             <MenuItem Header="_Media">
                 <MenuItem Header="Re_name..." Command="{Binding RenameMediaCommand}"/>
                 <MenuItem Header="_Reread Media" Command="{Binding RereadMediaCommand}"/>
+                <MenuItem Header="_Scan Media..." Command="{Binding ScanMediaCommand}"/>
                 <Separator/>
                 <MenuItem Header="E_xport TOC to File..." Command="{Binding ExportTOCCommand}"/>
                 <MenuItem Header="_Import TOC from File..." Command="{Binding ImportTOCCommand}"/>

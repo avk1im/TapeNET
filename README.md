@@ -37,9 +37,11 @@ TapeNET features include:
 TapeNET currently includes:
 
 * **TapeConNET** (`tapecon`) -- a full-featured command-line backup utility for
-  Windows 10 and 11
+  Windows 10 and 11, including Scan Media (`scan-media`, `recover-toc`) to survey
+  a tape and recover a lost table of contents
 * **TapeWinNET** (`TapeWin`) -- a GUI tape backup manager for Windows: tree-based
-  navigation, a structured log pane, FCL filtering, and an integrated help
+  navigation, a structured log pane, FCL filtering, Scan Media for tapes with a
+  missing or damaged TOC, and an integrated help
   system
 * **TapeServiceNET** (`tapesvc`) -- a Windows Service / console host that exposes
   a tape drive over the network via gRPC, enabling remote backups

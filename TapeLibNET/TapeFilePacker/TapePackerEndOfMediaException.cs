@@ -7,7 +7,7 @@ namespace TapeLibNET.TapeFilePacker;
 /// should still call <see cref="TapeFileWritePacker.DiscardOpenFile"/> for it.
 /// </summary>
 internal sealed class TapePackerEndOfMediaException(IReadOnlyList<CommitToken> rolledBackTokens)
-    : IOException($"Tape end-of-media; {rolledBackTokens.Count} pending file(s) rolled back.")
+    : IOException($"Media end-of-media; {rolledBackTokens.Count} pending file(s) rolled back.")
 {
     public IReadOnlyList<CommitToken> RolledBackTokens { get; } = rolledBackTokens;
 }

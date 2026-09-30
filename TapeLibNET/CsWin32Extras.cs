@@ -368,7 +368,7 @@ namespace Windows.Win32
             {
                 StringBuilder sb = new();
 
-                sb.Append("Tape capacity: " + Helpers.BytesToString(Capacity));
+                sb.Append("Media capacity: " + Helpers.BytesToString(Capacity));
                 sb.Append("\nRemaining to end of tape: " + Helpers.BytesToString(Remaining));
                 sb.Append("\nBlock size: " + Helpers.BytesToString(BlockSize));
                 sb.Append("\nPartition count: " + PartitionCount);

@@ -447,7 +447,7 @@ internal sealed class TapeFileWritePacker : IDisposable
             //  unwritten suffix is gone; pending tokens beyond the committed boundary
             //  are unrecoverable. Roll them back and surface the exception.
             RollbackUncommittedPending();
-            throw new IOException("Tape write failed.", result.Exception);
+            throw new IOException("Media write failed.", result.Exception);
         }
 
         if (result.EomEncountered)

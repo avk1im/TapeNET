@@ -123,7 +123,7 @@ public class PhysicalConformanceTests(PhysicalDriveFixtureWrapper fixtureWrapper
         Assert.True(mediaParams.Capacity > 0, "Capacity should be > 0");
         Assert.True(mediaParams.BlockSize > 0, "Media BlockSize should be > 0");
         Assert.False(mediaParams.WriteProtected,
-            "Tape should not be write-protected for conformance tests");
+            "Media should not be write-protected for conformance tests");
         _output.WriteLine($"Capacity: {mediaParams.Capacity:N0} bytes, Block: {mediaParams.BlockSize}");
         _output.WriteLine($"HasInitiatorPartition: {mediaParams.HasInitiatorPartition}");
         _output.WriteLine($"UsesPartition (fixture mode): {fixture.UsesPartition}");

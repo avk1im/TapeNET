@@ -95,6 +95,20 @@ Every verb returns one of:
 | 5    | `MediaError`    | Media unloaded, format error, or unrecoverable I/O. |
 | 6    | `FatalError`    | Unhandled exception. |
 
+## Scan Media and TOC recovery
+
+`tapecon scan-media` reads the loaded media from start to end **without
+relying on its TOC** and reports everything it can identify: the media header,
+backup sets, table-of-contents copies and unrecognized data. It is read-only.
+By default it also recovers every TOC copy it finds; `--no-recover-toc` turns
+that off, `--export DIR` saves the scan map as a `.tapescan` file, and `--json`
+prints the map to stdout.
+
+`tapecon recover-toc --map FILE --fragment N` recovers the TOC from one TOC-copy
+fragment of a saved map. Add `--save FILE` to write it to a file and/or
+`--adopt` to use it for the session (like `toc import`). If the loaded cartridge
+is not the one that was scanned, recovery is refused with exit code 5.
+
 ## Cancellation
 
 `Ctrl+C` is intercepted. The first press requests **cooperative cancellation**

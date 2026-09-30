@@ -13,7 +13,7 @@ namespace TapeLibNET;
 /// LTO SCSI pass-through (SPTI) support for <see cref="TapeDriveWin32Backend"/>.
 /// <para>
 /// This partial class provides the SCSI IOCTL infrastructure and the LTO-specific
-/// alternatives to Win32 Tape API operations such as <c>SetTapePosition</c>. 
+/// alternatives to Win32 Media API operations such as <c>SetTapePosition</c>. 
 /// </para>
 /// <para>
 /// Entry points called from the main partial class:
@@ -1102,7 +1102,7 @@ public partial class TapeDriveWin32Backend
 
     // =============================================================================
     //  The drive's OWN remaining/maximum capacity, read straight from the device via
-    //  LOG SENSE(10) + Tape Capacity log page (0x31), bypassing the tape class driver's
+    //  LOG SENSE(10) + Media Capacity log page (0x31), bypassing the tape class driver's
     //  (tape.sys) GetTapeParameters().Remaining. Real runs showed the driver figure both
     //  UNDER-reporting capacity at BOM and — on LTO-3 — COLLAPSING to 0 the instant EW
     //  fires. This native figure lets us cross-check (and potentially replace) it.
@@ -1117,7 +1117,7 @@ public partial class TapeDriveWin32Backend
     private const byte c_scsiOpLogSense10 = 0x4D;
     private const byte c_logPageTapeCapacity = 0x31;
 
-    // Tape Capacity page parameter codes (SSC): main partition remaining / maximum.
+    // Media Capacity page parameter codes (SSC): main partition remaining / maximum.
     private const ushort c_tapeCapParamMainRemaining = 0x0001;
     private const ushort c_tapeCapParamMainMaximum = 0x0003;
 
@@ -1130,13 +1130,13 @@ public partial class TapeDriveWin32Backend
     // Generous allocation for the page header + the four capacity parameters.
     private const int c_logSenseAllocLen = 128;
 
-    // Raw-unit → byte multiplier for this drive's Tape Capacity page (0 = not yet established).
+    // Raw-unit → byte multiplier for this drive's Media Capacity page (0 = not yet established).
     //  Established once per session from the STABLE maximum. Reset in LtoClose().
     private long m_ltoCapacityUnit = 0L;
 
     /// <summary>
     /// Reads the drive's own remaining- and maximum-capacity figures for the MAIN (content) partition
-    /// via SCSI <c>LOG SENSE(10)</c> on the Tape Capacity log page (0x31), in the drive's RAW page units
+    /// via SCSI <c>LOG SENSE(10)</c> on the Media Capacity log page (0x31), in the drive's RAW page units
     /// (scaling to bytes is the caller's job — see <see cref="GetLtoCapacity"/>). This is the firmware
     /// figure, NOT tape.sys's derived <c>Remaining</c> — useful to cross-check (and, if it proves more
     /// honest, to substitute for) the driver figure near EW/EOM.
@@ -1170,7 +1170,7 @@ public partial class TapeDriveWin32Backend
         Span<byte> data = stackalloc byte[c_logSenseAllocLen];
         if (!SendScsiCommand(cdb, data, dataIn: true))
         {
-            LogErrorAsTrace("Tape Capacity: LOG SENSE(10) page 0x31 failed (likely unsupported)");
+            LogErrorAsTrace("Media Capacity: LOG SENSE(10) page 0x31 failed (likely unsupported)");
             return false;
         }
 
@@ -1204,7 +1204,7 @@ public partial class TapeDriveWin32Backend
         }
 
         // if (m_traceOnce.ThisLine().TryEnter())
-        m_logger.LogTrace("{Prefix}: Tape Capacity (LOG SENSE 0x31) — remaining {Rem} units, maximum {Max} units",
+        m_logger.LogTrace("{Prefix}: Media Capacity (LOG SENSE 0x31) — remaining {Rem} units, maximum {Max} units",
             LogPrefix, remainingUnits, maxCapacityUnits);
 
         ResetError();
@@ -1212,7 +1212,7 @@ public partial class TapeDriveWin32Backend
     }
 
     /// <summary>
-    /// Determines the raw-unit → byte multiplier for this drive's Tape Capacity page.
+    /// Determines the raw-unit → byte multiplier for this drive's Media Capacity page.
     /// <para>
     /// LTO-1+ is standardized in MiB (SSC). Pre-LTO drives (LtoGeneration &lt; 1) are unit-inconsistent
     /// — the Sony AIT reports in ~KiB — so we exploit a physical fact: a pre-LTO cartridge holds well
@@ -1268,7 +1268,7 @@ public partial class TapeDriveWin32Backend
         {
             // Failed WITH media present → treat the page as unsupported and latch off.
             m_ltoCapacitySupported = false;
-            m_logger.LogTrace("{Prefix}: Tape Capacity page 0x31 unsupported — method latched off", LogPrefix);
+            m_logger.LogTrace("{Prefix}: Media Capacity page 0x31 unsupported — method latched off", LogPrefix);
             return false;
         }
 
@@ -1279,7 +1279,7 @@ public partial class TapeDriveWin32Backend
         if (m_ltoCapacityUnit == 0L && maxRaw > 0L)
         {
             m_ltoCapacityUnit = DetermineCapacityUnit(maxRaw);
-            m_logger.LogTrace("{Prefix}: Tape Capacity unit = {Unit} bytes/unit (LTO generation {Gen})",
+            m_logger.LogTrace("{Prefix}: Media Capacity unit = {Unit} bytes/unit (LTO generation {Gen})",
                 LogPrefix, m_ltoCapacityUnit, LtoGeneration);
         }
 

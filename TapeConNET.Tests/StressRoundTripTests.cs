@@ -45,7 +45,7 @@ public class StressRoundTripTests
 
     /// <summary>
     /// Walks <paramref name="restoreRoot"/> and locates the directory whose
-    /// last segment matches the leaf of <paramref name="srcRoot"/>. Tape
+    /// last segment matches the leaf of <paramref name="srcRoot"/>. Media
     /// restores prepend the volume identifier to the path.
     /// </summary>
     private static string FindRestoredRoot(string restoreRoot, string srcRoot)

@@ -10,7 +10,7 @@ using Windows.Win32.System.SystemServices;
 namespace TapeLibNET;
 
 /// <summary>
-/// Win32 implementation of <see cref="TapeDriveBackend"/> using the Windows Tape Backup API.
+/// Win32 implementation of <see cref="TapeDriveBackend"/> using the Windows Media Backup API.
 /// The only class in TapeLibNET that issues P/Invoke calls to the tape driver.
 /// <para>
 /// Handles hardware quirks discovered at runtime (e.g. DLT-V4 rejecting <c>bImmediate</c>,

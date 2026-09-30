@@ -23,6 +23,12 @@ and files.  See [Partitions and the TOC](help://topic/concepts.partitions-and-to
 **Initiator partition** — a small dedicated partition that stores the TOC
 separately from the data.
 
+**Scan Media** — a read-only pass over a tape that maps its contents and can
+recover a damaged or missing TOC.  See [Scan Media](help://topic/dialog.scan-media).
+
+**Recovered TOC** — a TOC rebuilt by Scan Media; it is read-only, like a TOC
+loaded from a file.
+
 **Incremental backup** — a backup that includes only files changed since the
 previous backup.  See [Incremental backup](help://topic/concepts.incremental-backup).
 

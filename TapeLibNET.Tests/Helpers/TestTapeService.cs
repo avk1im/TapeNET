@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using TapeLibNET.Scan;
 using TapeLibNET.Services;
 
 namespace TapeLibNET.Tests.Helpers;
@@ -18,6 +19,19 @@ internal sealed class TestServiceCalibrateProgressHandler(TestTapeService svc,
         base.ReportProgress(progress);
     }
 }
+
+internal sealed class TestServiceScanProgressHandler(TestTapeService svc,
+    ITapeServiceHost host, TapeScanner scanner)
+        : ServiceScanProgressHandler(host, scanner)
+{
+    protected override void ReportProgress(TapeScanProgress progress)
+    {
+        svc.OnScanProgress?.Invoke(progress);
+        base.ReportProgress(progress);
+    }
+}
+
+
 
 /// <summary>
 /// Test service that exposes the live agent at the deterministic moment the operation creates it.
@@ -43,11 +57,26 @@ public sealed class TestTapeService(ILoggerFactory lf, ITapeServiceHost host) : 
     /// <summary>Invoked with the live calibrator, before the first file is processed.</summary>
     public Action<TapeCalibrator>? OnCalibratorReady { get; set; }
 
+    /// <summary>Invoked with the progress of a calibration operation.</summary>
+    public Action<TapeCalibrationProgress>? OnCalibrationProgress { get; set; }
+
+    /// <summary>Invoked with the live scanner, before the walk starts.</summary>
+    public Action<TapeScanner>? OnScannerReady { get; set; }
+
+    /// <summary>Invoked with every scan progress sample, on the scan's own thread.</summary>
+    public Action<TapeScanProgress>? OnScanProgress { get; set; }
+
+
     /// <summary>Set before starting a backup; applied to the handler the operation creates.</summary>
     public Action<HookedBackupProgressHandler>? ConfigureBackupHandler { get; set; }
 
-    /// <summary>Invoked with the progress of a calibration operation.</summary>
-    public Action<TapeCalibrationProgress>? OnCalibrationProgress { get; set; }
+    protected override ServiceScanProgressHandler CreateScanProgressHandler(
+        TapeScanner scanner, ScanMediaRequest request)
+    {
+        OnScannerReady?.Invoke(scanner);
+        return new TestServiceScanProgressHandler(this, _host, scanner);
+    }
+
 
     protected override ServiceSetProgressHandler CreateSetProgressHandler(
         TapeAgentBase agent, string operationName)

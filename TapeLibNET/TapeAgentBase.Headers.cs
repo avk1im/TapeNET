@@ -45,19 +45,34 @@ public partial class TapeAgentBase
         return TapeResult.OK;
     }
 
-
     /// <summary>
     /// Reads and classifies the BOM header, returning the polymorphic <see cref="TapeHeader"/> (media,
     ///  calibration, or null for legacy/blank/foreign) and caching presence on the navigator. One block read.
     /// </summary>
     /// <remarks>The service inspects the returned kind for its verdict; the navigator only learns
-    ///  Present (a media header) vs Absent (anything else). Evaluation stays the service's job (D16).</remarks>
-    public TapeHeader? ReadBomHeader()
+    ///  <see cref="TapeHeaderPresence.Present"/> (a media header) vs <see cref="TapeHeaderPresence.Absent"/>
+    ///  (anything else). Evaluation stays the service's job (D16).</remarks>
+    public TapeHeader? ReadBomHeader() => ReadBomHeader(out _);
+
+    /// <summary>
+    /// As <see cref="ReadBomHeader()"/>, additionally reporting how many bytes the block read returned.
+    /// </summary>
+    /// <param name="bytesRead">
+    /// Bytes delivered by <see cref="TapeStreamManager.ReadBomHeaderBlock"/>: ≤ 0 when the read itself
+    ///  failed (blank medium, EOD at block 0, I/O fault), positive when a block WAS read — whether or not
+    ///  it classified as anything.
+    /// </param>
+    /// <remarks>
+    /// The distinction the null return cannot express: "nothing is there" and "something is there that we
+    ///  do not recognize" are the same answer to <c>header is null</c>, but opposite findings for a media
+    ///  survey. Added for Scan Media (SM-6); no existing caller changes.
+    /// </remarks>
+    public TapeHeader? ReadBomHeader(out int bytesRead)
     {
         var buffer = new byte[TapeHeaderBlock.Size];
-        int read = Manager.ReadBomHeaderBlock(buffer);
+        bytesRead = Manager.ReadBomHeaderBlock(buffer);
 
-        if (read <= 0)
+        if (bytesRead <= 0)
         {
             // Reaching BOM and finding NO data is the blank / legacy / at-EOD case — a DEFINITIVE
             //  "no media header", i.e. Absent. It is NOT an unresolved state: nothing retries
@@ -68,7 +83,7 @@ public partial class TapeAgentBase
             return null;
         }
 
-        TapeHeader? header = TapeHeaderBlock.Classify(buffer, read);
+        TapeHeader? header = TapeHeaderBlock.Classify(buffer, bytesRead);
 
         // A readable block that is NOT our media header (calibration / set / foreign / torn) is
         //  likewise "no media header here" for navigation = Absent; the service still learns the

@@ -72,7 +72,7 @@ public partial class MainViewModel : ViewModelBase
 
     private readonly TapeService _tapeService;
     private readonly MruFileList _virtualDriveMru;
-    private string _windowTitle = "TapeWin - Tape Backup Manager";
+    private string _windowTitle = "TapeWin - Media Backup Manager";
     private string _statusMessage = "Ready";
     private string? _remainingAndEw;
     private string _busyMessage = string.Empty;
@@ -119,8 +119,8 @@ public partial class MainViewModel : ViewModelBase
         RereadMediaCommand = new AsyncRelayCommand(RereadMediaAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         EjectCommand = new AsyncRelayCommand(EjectAsync, () => !IsBusy && _tapeService.IsMediaLoaded);
         FormatMediaCommand = new RelayCommand(ShowFormatMediaWindow, _ => !IsBusy && _tapeService.IsMediaLoaded);
-        DeleteBackupSetsCommand = new RelayCommand(ShowDeleteBackupSetsWindow, _ => !IsBusy && _tapeService.IsMediaLoaded && /*!_tapeService.IsTOCFromFile &&*/ (_tapeService.TOC?.Count ?? 0) > 0);
-            // We can handle the case of missing TOC in TapeServiceBase.DeleteBackupSetsAsync() --> no need to check for IsTOCFromFile
+        DeleteBackupSetsCommand = new RelayCommand(ShowDeleteBackupSetsWindow, _ => !IsBusy && _tapeService.IsMediaLoaded && /*!_tapeService.TOCIsFrom &&*/ (_tapeService.TOC?.Count ?? 0) > 0);
+            // We can handle the case of missing TOC in TapeServiceBase.DeleteBackupSetsAsync() --> no need to check for TOCIsFrom
         ExportTOCCommand = new AsyncRelayCommand(ExportTOCAsync, () => !IsBusy && _tapeService.TOC != null);
         ImportTOCCommand = new AsyncRelayCommand(ImportTOCAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         NavigateToBackupSetCommand = new RelayCommand(NavigateToSelectedBackupSet, _ => SelectedBackupSet != null);
@@ -141,6 +141,7 @@ public partial class MainViewModel : ViewModelBase
 
         // Initialize calibration commands (from MainViewModel.Calibration.cs)
         InitializeCalibrationCommands();
+        InitializeScanCommands();
 
         // Initialize restore commands (from MainViewModel.Restore.cs)
         InitializeRestoreCommands();
@@ -329,12 +330,12 @@ public partial class MainViewModel : ViewModelBase
     /// <summary>
     /// True when busy with non-backup/restore/calibration/TOC-load operations (shows full-window overlay).
     /// </summary>
-    public bool IsGeneralBusy => IsBusy && !IsBackupInProgress && !IsRestoreInProgress && !IsCalibrateInProgress && !IsTOCLoadInProgress;
+    public bool IsGeneralBusy => IsBusy && !IsBackupInProgress && !IsRestoreInProgress && !IsCalibrateInProgress && !IsScanInProgress && !IsTOCLoadInProgress;
 
     /// <summary>
     /// True when any tape operation (backup, calibration, or restore/validate/verify) is in progress.
     /// </summary>
-    public bool IsOperationInProgress => IsBackupInProgress || IsCalibrateInProgress || IsRestoreInProgress;
+    public bool IsOperationInProgress => IsBackupInProgress || IsCalibrateInProgress || IsScanInProgress || IsRestoreInProgress;
 
     /// <summary>
     /// False whenever any operation/busy overlay is shown, so the TreeView and the media/property
@@ -363,31 +364,37 @@ public partial class MainViewModel : ViewModelBase
     /// <summary>Progress percent of whichever operation is currently active.</summary>
     public double OperationProgressPercent => IsBackupInProgress ? BackupProgressPercent
         : IsCalibrateInProgress ? CalibrationProgressPercent
+        : IsScanInProgress ? ScanProgressPercent
         : RestoreProgressPercent;
 
     /// <summary>Progress text of whichever operation is currently active.</summary>
     public string OperationProgressText => IsBackupInProgress ? BackupProgressText
         : IsCalibrateInProgress ? CalibrationProgressText
+        : IsScanInProgress ? ScanProgressText
         : RestoreProgressText;
 
     /// <summary>Current file name / phase text of whichever operation is currently active.</summary>
     public string CurrentOperationFile => IsBackupInProgress ? CurrentBackupFile
         : IsCalibrateInProgress ? CurrentCalibrationPhase
+        : IsScanInProgress ? CurrentScanPhase
         : CurrentRestoreFile;
 
     /// <summary>Abort command of whichever operation is currently active.</summary>
     public ICommand AbortOperationCommand => IsBackupInProgress ? AbortBackupCommand
         : IsCalibrateInProgress ? AbortCalibrationCommand
+        : IsScanInProgress ? AbortScanCommand
         : AbortRestoreCommand;
 
     /// <summary>Abort button IsEnabled state of whichever operation is currently active.</summary>
     public bool IsAbortOperationEnabled => IsBackupInProgress ? IsAbortBackupEnabled
         : IsCalibrateInProgress ? IsAbortCalibrationEnabled
+        : IsScanInProgress ? IsAbortScanEnabled
         : IsAbortRestoreEnabled;
 
     /// <summary>Abort button label — distinguishes the operations for clarity.</summary>
     public string AbortOperationButtonText => IsBackupInProgress ? "Abort Backup"
         : IsCalibrateInProgress ? "Abort Calibration"
+        : IsScanInProgress ? "Abort Scan"
         : "Abort";
 
     /// <summary>
@@ -1270,7 +1277,7 @@ public partial class MainViewModel : ViewModelBase
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
             Title = "Export TOC to File",
-            Filter = $"Tape TOC files (*{TapeAgentBase.TOCFileExtension})|*{TapeAgentBase.TOCFileExtension}|All files (*.*)|*.*",
+            Filter = $"Media TOC files (*{TapeAgentBase.TOCFileExtension})|*{TapeAgentBase.TOCFileExtension}|All files (*.*)|*.*",
             FileName = suggestedName,
             InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             OverwritePrompt = true,
@@ -1332,7 +1339,7 @@ public partial class MainViewModel : ViewModelBase
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Title = "Import TOC from File",
-            Filter = $"Tape TOC files (*{TapeAgentBase.TOCFileExtension})|*{TapeAgentBase.TOCFileExtension}|All files (*.*)|*.*",
+            Filter = $"Media TOC files (*{TapeAgentBase.TOCFileExtension})|*{TapeAgentBase.TOCFileExtension}|All files (*.*)|*.*",
             InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
         };
 
@@ -1506,11 +1513,12 @@ public partial class MainViewModel : ViewModelBase
         TreeItems.Add(driveItem);
 
         // Create tape/volume node
-        var tocFileName = _tapeService.IsTOCFromFile
-            ? System.IO.Path.GetFileName(_tapeService.TOCFilePath ?? "file")
+        var tocFileName = _tapeService.TOCIsFrom is TOCSource.File
+            ? Path.GetFileName(_tapeService.TOCFilePath ?? "file")
             : null;
         var tapeItem = TapeTreeItemViewModel.CreateTapeItem(toc, driveItem, tocFileName,
-            isInMemory: _tapeService.IsInMemoryDrive);
+            isInMemory: _tapeService.IsInMemoryDrive,
+            tocRecovered: _tapeService.TOCIsFrom is TOCSource.Recovered);
         driveItem.Children.Add(tapeItem);
 
         // Add backup sets (from latest to oldest for consistency with alt index display)
@@ -1526,12 +1534,15 @@ public partial class MainViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasMultipleSets));
 
         // Status message: TOC-from-file warning takes precedence over in-memory calInfo
-        if (_tapeService.IsTOCFromFile)
+        if (_tapeService.TOCIsFrom is TOCSource.File)
             StatusMessage = $"\u26a0 TOC: {System.IO.Path.GetFileName(_tapeService.TOCFilePath)} | Loaded {totalSets} backup set(s)";
         else if (_tapeService.IsInMemoryDrive)
             StatusMessage = $"\u2139 In-memory \u2013 cannot be saved | Loaded {totalSets} backup set(s)";
         else
             StatusMessage = $"Loaded {totalSets} backup set(s)";
+
+        if (_tapeService.TOCIsFrom is TOCSource.Recovered)
+            StatusMessage += " (using recovered TOC)";
     }
 
     private void SelectMostRecentSet()
@@ -1737,10 +1748,13 @@ public partial class MainViewModel : ViewModelBase
         PropertyList.Add(new PropertyItem("Used", Helpers.BytesToStringLong(_tapeService.Used)));
         AddCapacityProperties();
         PropertyList.Add(new PropertyItem("TOC Placement", 
-            _tapeService.IsTOCFromFile
+            _tapeService.TOCIsFrom is TOCSource.File
                 ? $"File: {_tapeService.TOCFilePath}"
-                : _tapeService.HasInitiatorPartition ? "Partition" : "Set",
-            highlightLevel: _tapeService.IsTOCFromFile? WarningLevel.Warning : WarningLevel.None));
+                : (_tapeService.HasInitiatorPartition ? "Partition" : "Set")
+                    + ((_tapeService.TOCIsFrom is TOCSource.Recovered) ? "(recovered TOC)" : string.Empty),
+            highlightLevel: _tapeService.TOCIsFrom is TOCSource.File or TOCSource.Recovered
+                ? WarningLevel.Warning
+                : WarningLevel.None));
         PropertyList.Add(new PropertyItem("Volume", $"#{toc.Volume}"));
         PropertyList.Add(new PropertyItem("Continued on Next Volume", 
             toc.ContinuedOnNextVolume ? "Yes" : "No"));
@@ -1756,9 +1770,12 @@ public partial class MainViewModel : ViewModelBase
         OnPropertyChanged(nameof(AreAllBackupSetsChecked));
 
         var mediaName = toc.Description ?? "Volume #" + toc.Volume;
-        StatusMessage = _tapeService.IsTOCFromFile
-            ? $"\u26a0 TOC: {System.IO.Path.GetFileName(_tapeService.TOCFilePath)} | Media: {mediaName} - {toc.Count} backup set(s)"
+        StatusMessage = _tapeService.TOCIsFrom is TOCSource.File
+            ? $"\u26a0 TOC: {Path.GetFileName(_tapeService.TOCFilePath)} | Media: {mediaName} - {toc.Count} backup set(s)"
             : $"Media: {mediaName} - {toc.Count} backup set(s)";
+
+        if (_tapeService.TOCIsFrom is TOCSource.Recovered)
+            StatusMessage += " (using recovered TOC)";
 
         // Build the media usage bar from the current-volume sets
         UsageBar.Rebuild();
@@ -1792,7 +1809,7 @@ public partial class MainViewModel : ViewModelBase
             PropertyList.Add(new PropertyItem("Files", setTOC.Count.ToString("N0")));
             PropertyList.Add(new PropertyItem("Total File Size",
                 Helpers.BytesToStringLong(setTOC.Sum(tfi => tfi.FileDescr.Length))));
-            PropertyList.Add(new PropertyItem("Total File Size on Tape",
+            PropertyList.Add(new PropertyItem("Total File Size on Media",
                 Helpers.BytesToStringLong(setTOC.ComputeTotalFileSizeOnTape(_tapeService.DefaultBlockSize))));
             PropertyList.Add(new PropertyItem("Created On", setTOC.CreationTime.ToString("G")));
             PropertyList.Add(new PropertyItem("Last Saved", setTOC.LastSaveTime.ToString("G")));

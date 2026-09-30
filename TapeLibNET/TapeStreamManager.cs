@@ -203,7 +203,14 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
     }
 
-    private bool BeginReadWrite(TapeState nextState)
+    /// <summary>
+    /// Transitions to <paramref name="nextState"/>, positioning the tape first.
+    /// </summary>
+    /// <param name="positioner">
+    /// Overrides the default positioning (<see cref="MoveToLocationFor"/>). Null for every existing caller; set
+    ///  only by <see cref="BeginReadTOCAt"/>, whose location comes from the caller rather than the layout.
+    /// </param>
+    private bool BeginReadWrite(TapeState nextState, Func<bool>? positioner = null)
     {
         ResetError();
 
@@ -212,32 +219,29 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
             return true; // nothing to do
 
         TapeState prevState = State;
-
         m_logger.LogTrace("Drive #{Drive}: Transitioning from {CurrState} to {NextState}", DriveNumber, prevState, nextState);
 
         // Important: end read/write ONLY if we haven't been in nextState!
         if (!EndReadWriteBeforeTransitionTo(nextState))
             return false;
-        // Now we should be in TapeState.MediaPrepared
 
+        // Now we should be in TapeState.MediaPrepared
         if (!State.CanTransitionTo(nextState))
         {
             LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
             return false;
         }
 
-        if (!MoveToLocationFor(nextState))
+        // If the caller supplied a location, REPLACE the layout's own (do NOT supplement it!)
+        if (!(positioner?.Invoke() ?? MoveToLocationFor(nextState)))
             return false;
 
         State.TransitionTo(nextState);
-
         Drive.ByteCounter = 0;
 
         m_logger.LogTrace("Drive #{Drive}: Transitioned to {NextState}", DriveNumber, State);
-
         return true;
     }
-
 
     // Beginning and ending of TOC and Content operations can be managed explicitly
     //  as well as implicitly by requesting corresponding TapeStream objects.
@@ -261,10 +265,50 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
         return WentOK;
     }
+
     /// <summary>Transitions to <see cref="TapeState.ReadingTOC"/>, positioning tape at the TOC area.</summary>
     public bool BeginReadTOC() => State == TapeState.ReadingTOC ||
         BeginReadWrite(TapeState.ReadingTOC);
-    
+
+    /// <summary>
+    /// Transitions to <see cref="TapeState.ReadingTOC"/> with the head at a TOC copy whose first block the
+    ///  CALLER has located — bypassing the navigator's own search for the TOC.
+    /// </summary>
+    /// <param name="block">The copy's first block.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Always ends the current session first</b>, even when already reading the TOC:
+    ///  <see cref="BeginReadWrite"/> returns at once when the state is unchanged, and would then read
+    ///  wherever the head happens to be — a different copy, or content.
+    /// </para>
+    /// <para>
+    /// Read-only by construction: there is no write counterpart, and <c>MoveToLocationFor</c> — which the
+    ///  write path shares — never reaches <see cref="TapeNavigator.MoveToTOCCopyAt"/>.
+    /// </para>
+    /// <para>
+    /// A subsequent <see cref="ProduceReadTOCStream"/> finds the state already <c>ReadingTOC</c> and opens
+    ///  the stream where the head stands — no change needed there.
+    /// </para>
+    /// </remarks>
+    public bool BeginReadTOCAt(long block)
+    {
+        ResetError();
+
+        if (!EndReadWrite())
+        {
+            Navigator.ResetContentSet();          // teardown failed — position uncertain
+            return false;
+        }
+
+        bool ok = BeginReadWrite(TapeState.ReadingTOC, positioner: () => Navigator.MoveToTOCCopyAt(block));
+
+        // The positioning error lives on the navigator; make sure the caller sees it here.
+        if (!ok && WentOK)
+            SyncErrorFrom(Navigator);
+
+        return ok;
+    }
+
     /// <summary>
     /// Transitions to <see cref="TapeState.WritingContent"/>, positioning tape at the target content set.
     /// </summary>
@@ -865,7 +909,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
 
     #region *** Read and write stream provisioning ***
-    //  Tape streams provide the high-level interface to reading and writing data to the tape.
+    //  Media streams provide the high-level interface to reading and writing data to the tape.
 
     internal void OnDisposeStream(TapeStream? stream)
     {
@@ -1277,6 +1321,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     internal TapeFileWritePacker? WritePacker_FORTESTINGONLY => m_packer;
 
     #endregion // Packer-backed content writing (Phase 2)
+
 
     #region Packer-backed content reading (Phase 2 Step E)
 

@@ -21,7 +21,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     // bytes backed up so far before we start writing a new set
     private long BytesBackedupMarker { get; set; } = 0L;
     /// <summary>
-    /// Tape bytes written since the current set began — the one genuinely PER-SET figure the agent
+    /// Media bytes written since the current set began — the one genuinely PER-SET figure the agent
     ///  exposes, and the counterpart to the cumulative <see cref="BytesBackedup"/>.
     /// </summary>
     /// <remarks>
@@ -700,7 +700,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                         m_logger.LogWarning("Failed to rewind tape to block {Block} after EOM on file >{File}<",
                             tfi.Block, fileName);
                     else
-                        m_logger.LogTrace("Tape rewound to block {Block} after EOM on file >{File}<",
+                        m_logger.LogTrace("Media rewound to block {Block} after EOM on file >{File}<",
                             tfi.Block, fileName);
 
                     // Set up continuation on the next volume for multi-volume backup
@@ -743,7 +743,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                     m_logger.LogWarning("Failed to rewind tape to block {Block} after failed file >{File}<",
                         tfi.Block, fileName);
                 else
-                    m_logger.LogTrace("Tape rewound to block {Block} after failed file >{File}<",
+                    m_logger.LogTrace("Media rewound to block {Block} after failed file >{File}<",
                         tfi.Block, fileName);
 
                 var retryAction = NotifyFileFailed(bc.fileNotify, tfi, ex);

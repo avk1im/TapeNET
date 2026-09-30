@@ -192,7 +192,12 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     public bool IsDriveOpen => m_backend.IsOpen && m_driveParams != null;
 
     /// <summary>Drive is open and media (tape cartridge) is loaded.</summary>
-    public bool IsMediaLoaded => IsDriveOpen && EnsureMediaParams() is not null;
+    /// <remarks>
+    /// Checks <c><see cref="Capacity"/> &gt; 0</c> since <see cref="m_backend"/> may produce
+    ///  non-<see langword="null"/> <see cref="m_mediaParams"/> even when no media is loaded.
+    ///  No need to check <see cref="EnsureMediaParams"/> since <see cref="Capacity"/> does.
+    /// </remarks>
+    public bool IsMediaLoaded => IsDriveOpen /*&& EnsureMediaParams() is not null*/ && Capacity > 0L;
 
     /// <summary>Drive hardware supports a separate initiator (TOC) partition.</summary>
     public bool SupportsInitiatorPartition => m_driveParams?.SupportsInitiatorPartition ?? false;
@@ -1427,7 +1432,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         return WentOK ? partition : MediaPartition.Current;
     }
 
-    #endregion // *** Tape Moving & Positioning ***
+    #endregion // *** Media Moving & Positioning ***
 
     #region *** Private Helpers ***
 

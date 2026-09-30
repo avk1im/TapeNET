@@ -1000,13 +1000,13 @@ public class TapeTOCRoundTripTests
         using var fixture = new VirtualTapeFixture(profile);
 
         // Build a complex TOC with 4 sets and 5 files each
-        var toc = BuildComplexTOC(4, 5, description: "Complex On-Tape");
+        var toc = BuildComplexTOC(4, 5, description: "Complex On-Media");
         fixture.TOC.CopyFrom(toc);
 
         var reloaded = SaveAndReloadTOCAllProfiles(fixture, profile);
 
         Assert.Equal(4, reloaded.Count);
-        Assert.Equal("Complex On-Tape", reloaded.Description);
+        Assert.Equal("Complex On-Media", reloaded.Description);
 
         for (int s = 1; s <= 4; s++)
         {
@@ -1021,7 +1021,7 @@ public class TapeTOCRoundTripTests
     {
         using var fixture = new VirtualTapeFixture(profile);
 
-        var toc = BuildComplexTOC(2, 3, withHashes: true, description: "Hash On-Tape");
+        var toc = BuildComplexTOC(2, 3, withHashes: true, description: "Hash On-Media");
         fixture.TOC.CopyFrom(toc);
 
         var reloaded = SaveAndReloadTOCAllProfiles(fixture, profile);
@@ -1042,7 +1042,7 @@ public class TapeTOCRoundTripTests
     {
         using var fixture = new VirtualTapeFixture(profile);
 
-        var toc = BuildComplexTOC(4, 2, withIncrementals: true, description: "Incremental On-Tape");
+        var toc = BuildComplexTOC(4, 2, withIncrementals: true, description: "Incremental On-Media");
         fixture.TOC.CopyFrom(toc);
 
         var reloaded = SaveAndReloadTOCAllProfiles(fixture, profile);
@@ -1082,7 +1082,7 @@ public class TapeTOCRoundTripTests
     {
         using var fixture = new VirtualTapeFixture(profile);
 
-        var toc = new TapeTOC("Large Set On-Tape");
+        var toc = new TapeTOC("Large Set On-Media");
         toc.AddNewSetTOC(200);
         toc.CurrentSetTOC.Description = "200 Files";
 
@@ -1107,7 +1107,7 @@ public class TapeTOCRoundTripTests
     {
         using var fixture = new VirtualTapeFixture(profile);
 
-        var toc = new TapeTOC("Unicode On-Tape");
+        var toc = new TapeTOC("Unicode On-Media");
         toc.AddNewSetTOC(4);
 
         string[] paths =

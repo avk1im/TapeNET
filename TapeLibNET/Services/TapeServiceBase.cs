@@ -53,6 +53,21 @@ public enum IdentifyMediaOutcome
     Failed,
 }
 
+/// <summary>
+/// Where the service's TOC (<see cref="TapeServiceBase._toc"/>) originates from.
+/// </summary>
+public enum TOCSource
+{
+    /// <summary>TOC restored from the tape media.</summary>
+    Media,
+
+    /// <summary>TOC imported from a file.</summary>
+    File,
+
+    /// <summary>TOC recovered during media scan / repair.</summary>
+    Recovered,
+}
+
 // ── TapeServiceBase ───────────────────────────────────────────────────────────
 
 /// <summary>
@@ -144,9 +159,10 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     public TapeTOC? TOC => _toc;
 
     /// <summary>True when the current TOC was loaded from a file rather than from tape.</summary>
-    public bool IsTOCFromFile { get; protected set; }
+    public TOCSource TOCIsFrom { get; protected set; } = TOCSource.Media;
 
-    /// <summary>Full path of the TOC file when <see cref="IsTOCFromFile"/> is true; null otherwise.</summary>
+    /// <summary>Full path of the TOC file when <see cref="TOCIsFrom"/> is <see cref="TOCSource.File">;
+    ///  <see langword="null"/> otherwise.</summary>
     public string? TOCFilePath { get; protected set; }
 
     /// <summary>
@@ -552,7 +568,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         _toc = null;
         _loadedHeader = null;   // identity is tied to the loaded media/TOC
         _loadedCalibrationInfo = null; // always clear along with the header
-        IsTOCFromFile = false;
+        TOCIsFrom = TOCSource.Media;
         TOCFilePath = null;
     }
 
@@ -838,7 +854,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             _agent?.Dispose();
             _agent = null;
             _toc = null;
-            IsTOCFromFile = false;
+            TOCIsFrom = TOCSource.Media;
             TOCFilePath = null;
             return true;
         }
@@ -1015,7 +1031,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// Extra log entries emitted after a successful file-TOC import.
     /// Default is a no-op; WPF subclass adds a sub-entry warning about disabled features.
     /// </summary>
-    protected virtual void OnImportTOCFromFileExtra() { }
+    protected virtual void OnImportTOCExtra() { }
 
     /// <summary>
     /// Signals the in-progress TOC load to abort cooperatively.
@@ -1076,7 +1092,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 }
 
                 _toc = _agent.TOC;
-                IsTOCFromFile = false;
+                TOCIsFrom = TOCSource.Media;
                 TOCFilePath = null;
                 LogOk($"TOC restored with {_toc.Count} backup set(s)");
                 LogTOCInfo();
@@ -1213,7 +1229,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 }
 
                 _toc = _agent.TOC;
-                IsTOCFromFile = false;
+                TOCIsFrom = TOCSource.Media;
                 TOCFilePath = null;
 
                 LogOk($"TOC restored with {_toc.Count} backup set(s)");
@@ -1275,7 +1291,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 }
 
                 _toc = _agent.TOC;
-                IsTOCFromFile = false;
+                TOCIsFrom = TOCSource.Media;
                 TOCFilePath = null;
                 LogOk($"Initial TOC created: {description}");
                 OnStatusUpdate("Initial TOC created");
@@ -1496,7 +1512,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _agent?.Dispose();
                 _agent = null;
                 _toc = null;
-                IsTOCFromFile = false;
+                TOCIsFrom = TOCSource.Media;
                 TOCFilePath = null;
 
                 LogInfo("Formatting media...");
@@ -1615,12 +1631,12 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                         _toc.Volume = imh.Volume;
                 }
 
-                IsTOCFromFile = true;
+                TOCIsFrom = TOCSource.File;
                 TOCFilePath = filePath;
                 LogOk($"TOC imported from file with {_toc.Count} backup set(s)");
                 LogTOCInfo();
                 LogWarn("TOC imported from a file - on-tape TOC may be missing or corrupt");
-                OnImportTOCFromFileExtra();
+                OnImportTOCExtra();
                 OnStatusUpdate($"TOC from file: {_toc.Count} backup set(s)");
                 _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
                 return true;

@@ -5,7 +5,7 @@ using Xunit.Abstractions;
 namespace TapeLibNET.Tests.Physical;
 
 // =============================================================================
-// xUnit Collection Definitions for Physical Tape Tests
+// xUnit Collection Definitions for Physical Media Tests
 // =============================================================================
 //
 // Physical tape tests must run sequentially because they share a real tape drive.

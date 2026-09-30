@@ -118,7 +118,7 @@ public static class TapeIcons
     private static readonly Dictionary<(int number, bool large), ImageSource> _numberedRemoteDriveIcons = [];
     private static readonly Dictionary<bool, ImageSource> _remoteDriveIcons = [];
 
-    /// <summary>Tape drive with a drive number badge (subscript, bottom-right).</summary>
+    /// <summary>Media drive with a drive number badge (subscript, bottom-right).</summary>
     public static ImageSource? GetNumberedTapeDriveIcon(int number, bool large = false)
     {
         if (_numberedDriveIcons.TryGetValue((number, large), out var cached))
@@ -151,7 +151,7 @@ public static class TapeIcons
         return overlay;
     }
 
-    /// <summary>Tape drive with a globe badge (superscript, top-right).</summary>
+    /// <summary>Media drive with a globe badge (superscript, top-right).</summary>
     public static ImageSource? GetRemoteTapeDriveIcon(bool large = false)
     {
         if (_remoteDriveIcons.TryGetValue(large, out var cached))
@@ -168,7 +168,7 @@ public static class TapeIcons
         return composed;
     }
 
-    /// <summary>Tape drive with globe (superscript) + drive number (subscript).</summary>
+    /// <summary>Media drive with globe (superscript) + drive number (subscript).</summary>
     public static ImageSource? GetNumberedRemoteTapeDriveIcon(int number, bool large = false)
     {
         if (_numberedRemoteDriveIcons.TryGetValue((number, large), out var cached))

@@ -145,33 +145,11 @@ public class TapeSetNavigationRecoveryTests
 
         if (fixture.Drive.SupportsSetmarks)
         {
-            EraseLastSetmark(fixture);
+            fixture.EraseLastSetmark();
             return;
         }
     }
 
-    /// <summary>
-    /// Overwrites the setmark that closes the LAST set, so a backward setmark count runs one set too far.
-    /// </summary>
-    /// <remarks>
-    /// Writing a block AT the setmark's position destroys it (a tape write truncates everything beyond),
-    ///  which is exactly what a partial write during a power loss does. The TOC is deliberately left
-    ///  describing the pre-damage tape, mirroring an operation that never reached its TOC write.
-    /// </remarks>
-    private static void EraseLastSetmark(VirtualTapeFixture fixture)
-    {
-        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
-        agent.EnsureMediaHeaderResolved();
-
-        // End of content, then back over the setmark that closes the last set.
-        Assert.True(agent.Navigator.MoveToEndOfContent(), "failed to reach end-of-content");
-        Assert.True(agent.Navigator.MoveToNextContentSetmark(-1), "failed to step back over the last setmark");
-
-        // Write here: the setmark is gone, and with it the anchor a backward count depends on.
-        Assert.True(fixture.Drive.WriteGapFile(), "failed to overwrite the trailing setmark");
-
-        agent.Navigator.ResetContentSet();   // nobody knows where anything is now — which is the point
-    }
 #endif
     
     #endregion

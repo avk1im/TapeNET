@@ -1,0 +1,135 @@
+<Window x:Class="TapeWinNET.ScanResultWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
+        xmlns:controls="clr-namespace:TapeWinNET.Controls"
+        xmlns:help="clr-namespace:TapeWinNET.Help"
+        xmlns:converters="clr-namespace:TapeWinNET.Converters"
+        d:DataContext="{d:DesignInstance Type=vm:ScanResultViewModel}"
+        mc:Ignorable="d"
+        Title="Scan Media Result"
+        Height="560" Width="820"
+        ResizeMode="CanResizeWithGrip"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        PreviewKeyDown="Window_PreviewKeyDown">
+
+    <Window.Resources>
+        <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVis"/>
+    </Window.Resources>
+
+    <!-- Outer grid: column 0 = dialog content, column 1 = splitter, column 2 = help pane -->
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition x:Name="HelpPaneColumn" Width="0" MinWidth="0"/>
+        </Grid.ColumnDefinitions>
+
+        <Grid x:Name="HelpOverlayRoot" Grid.Column="0" Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Banner, coloured by the scan outcome via the shared WarningPanelStyle (App.xaml brushes) -->
+            <Border Grid.Row="0" Style="{StaticResource WarningPanelStyle}" Margin="0"
+                    help:HelpControlNameAttachedProperty.ControlName="Result banner">
+                <TextBlock Text="{Binding Banner}" TextWrapping="Wrap" FontWeight="SemiBold"/>
+            </Border>
+
+            <ItemsControl Grid.Row="1" ItemsSource="{Binding Details}" Margin="0,8,0,0">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextWrapping="Wrap"/>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Fragment list: read-only, tape order. Hidden for calibration cartridges. -->
+            <ListView Grid.Row="2" Margin="0,12,0,0"
+                      ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow}"
+                      SelectionMode="Single"
+                      Visibility="{Binding ShowList, Converter={StaticResource BoolToVis}}"
+                      help:HelpControlNameAttachedProperty.ControlName="Fragment list">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsWarning}" Value="True">
+                                <Setter Property="Background" Value="{StaticResource WarningBg.Warning}"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsError}" Value="True">
+                                <Setter Property="Background" Value="{StaticResource WarningBg.Error}"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ListView.ItemContainerStyle>
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="#" Width="45" DisplayMemberBinding="{Binding Ordinal}"/>
+                        <GridViewColumn Header="Block" Width="90" DisplayMemberBinding="{Binding Block}"/>
+                        <GridViewColumn Header="Kind" Width="130" DisplayMemberBinding="{Binding KindText}"/>
+                        <GridViewColumn Header="Identity" Width="130" DisplayMemberBinding="{Binding Identity}"/>
+                        <GridViewColumn Header="Detail" Width="360" DisplayMemberBinding="{Binding Detail}"/>
+                    </GridView>
+                </ListView.View>
+            </ListView>
+
+            <!-- TOC row actions, enabled when a TOC row is selected -->
+            <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0"
+                        Visibility="{Binding ShowList, Converter={StaticResource BoolToVis}}"
+                        help:HelpControlNameAttachedProperty.ControlName="TOC actions">
+                <Button Content="{Binding UseTocText}" Command="{Binding UseTocCommand}"
+                        MinWidth="110" Padding="10,1" Margin="0,0,8,0"
+                        ToolTip="Select a table-of-contents row first"/>
+                <Button Content="Save as..." Command="{Binding SaveTocCommand}"
+                        MinWidth="90" Padding="10,1"/>
+            </StackPanel>
+
+            <!-- Advice as static instruction text + status -->
+            <StackPanel Grid.Row="4" Margin="0,8,0,0">
+                <ItemsControl ItemsSource="{Binding Advice}"
+                              help:HelpControlNameAttachedProperty.ControlName="Advice">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}" Style="{StaticResource HintTextStyle}"
+                                       Margin="0,0,0,4"/>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                <TextBlock Text="{Binding MapPathText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+            </StackPanel>
+
+            <!-- Footer -->
+            <Grid Grid.Row="5" Margin="0,4,0,0">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                    <Button x:Name="HelpButton" Content="_Help ▶" Click="HelpButton_Click"
+                            MinWidth="60" Padding="10,1"
+                            ToolTip="Open help for this dialog (F1)"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Save map..." Command="{Binding SaveMapCommand}"
+                            Width="100" Margin="0,0,8,0"/>
+                    <Button Content="Close" Width="80" IsCancel="True" IsDefault="True"/>
+                </StackPanel>
+            </Grid>
+        </Grid>
+
+        <!-- Help splitter — visible only when the help pane is open -->
+        <GridSplitter x:Name="HelpPaneSplitter" Grid.Column="1" Width="4"
+                      HorizontalAlignment="Center" VerticalAlignment="Stretch"
+                      Background="LightGray" Visibility="Collapsed"/>
+
+        <!-- Help pane — width driven by HelpPaneColumn; starts at 0 (hidden) -->
+        <controls:HelpPane x:Name="HelpPaneControl" Grid.Column="2"
+                           DataContext="{x:Null}" Visibility="Collapsed"/>
+    </Grid>
+</Window>

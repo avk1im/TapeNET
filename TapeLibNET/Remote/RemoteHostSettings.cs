@@ -44,7 +44,7 @@ public record RemoteHostSettings(
     /// </summary>
     public GrpcChannelOptions BuildChannelOptions()
     {
-        // Tape I/O can transfer large blocks — allow up to 16 MB messages (+ 8 KB slack).
+        // Media I/O can transfer large blocks — allow up to 16 MB messages (+ 8 KB slack).
         const int maxMessageSize = 16 * 1024 * 1024 + 8 * 1024;
 
         var options = new GrpcChannelOptions

@@ -681,7 +681,7 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
         var dialog = new OpenFileDialog
         {
             Title = "Select Content Partition File",
-            Filter = "Virtual Tape Files (*.vt)|*.vt|All Files (*.*)|*.*",
+            Filter = "Virtual Media Files (*.vt)|*.vt|All Files (*.*)|*.*",
             CheckFileExists = false
         };
 

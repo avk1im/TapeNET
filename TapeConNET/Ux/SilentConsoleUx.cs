@@ -50,7 +50,7 @@ public sealed class SilentConsoleUx : IConsoleUx
     {
         var ownVer = System.Reflection.Assembly.GetExecutingAssembly()
             .GetName().Version?.ToString() ?? "<unknown>";
-        _out.WriteLine($"tapecon Tape Backup Utility v. {ownVer}");
+        _out.WriteLine($"tapecon Media Backup Utility v. {ownVer}");
     }
 
     public bool Confirm(string question, bool defaultAnswer = false) => defaultAnswer;

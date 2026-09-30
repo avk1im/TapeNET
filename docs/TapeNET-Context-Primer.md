@@ -149,6 +149,10 @@ A console REPL that exercises the full pipeline: provider discovery → smoke te
 
 ## TapeLibNET — Library Architecture
 
+**NOTICE:** `TapeFileAgent` was renamed `TapeAgentBase` and split into three partials;
+the new `TapeSetAgent` owns the set-level verbs, so restore agents no longer inherit one
+that destroys data.
+
 ### Core class hierarchy
 
 ```
@@ -299,6 +303,18 @@ calibration cartridge") instead of failing blankly. Each kind is built by the su
 identity — TapeTOC for the media header, TapeCalibrator for the run header — sharing the grammar, not a
 construction path.
 
+#### Scan Media — TOC-less media survey
+
+`TapeScanner` (`TapeLibNET/Scan`) walks a cartridge from BOM to EOD with **no TOC assumed** and returns a
+`MediaScanMap` of fragments (media header, set headers, TOC copies, calibration header, unknown data),
+serializable as `.tapescan` JSON. The layout is predicted from drive capabilities (`TapeMediaLayout.Predict`);
+blocks are identified positively, marks are detected by the ordinary read, and the scan writes nothing.
+By default it harvests TOC copies. `TapeServiceBase.ScanMediaAsync` / `RecoverTocAsync` wrap it: recovery
+from the map needs no tape I/O, recovery from tape is guarded against a cartridge swap, and adoption goes
+through the import path as `TOCSource.Recovered` (read-only, like a TOC from a file). Surfaces: WPF
+**Media ▸ Scan Media…** (setup dialog, progress overlay, result window) and CLI `tapecon scan-media` /
+`recover-toc`. Design: `docs/Design-ScanMedia.md`.
+
 **Service verdicts and prompts.** The service reads one header per media load and judges it per operation,
 producing a typed `TapeMediaVerdict` (Match, Unidentified, WrongKind, MediaIdMismatch, WrongVolume,
 MediaInconsistent) presented through a single context-typed host callback with Retry / Proceed /
@@ -328,6 +344,57 @@ permissive on LTO by construction, and modeled by the virtual backend's strict-w
 stays visible in the test suite. Should a strict drive ever appear, the fix is one filemark after the
 header plus a self-describing flag in the header so legacy headed media still navigates — cheapest applied
 before headers ship in the field.
+
+##### Backup set headers — verified set navigation and verified destructive writes
+
+Complete design specifications: `docs/Design-SetHeader.md` and
+`docs/Design-SetHeader-VerifiedWrite.md`.
+
+Set positioning was *trusted*: the navigator counted marks and declared itself at set N,
+and nothing checked that claim. Every backup set on headed media now carries a **set
+header** — one 16 KiB framed, CRC-guarded block at the head of its data, holding the
+set's identity (`MediaId`, `Volume`) and its two indices — so positioning is **checked**
+before a single file byte is delivered, and where the fault is a recoverable miscount,
+**self-corrected**. Presence is declared per volume by the media header
+(`HasSetHeaders`), never probed, so legacy cartridges stay first-class citizens and a
+mixed series (legacy volume 1, headed volumes 2+) restores correctly. The header is
+additive and position-neutral: no tapemark, no change to setmark or filemark arithmetic,
+and no extra tape movement on the restore path.
+
+**Verified destructive navigation** extends the same record to the two paths that
+*destroy* data. Overwriting a set and deleting a tail both read the set header standing
+at the target and refuse unless it is the set the TOC describes (SH-13) — while the
+performance-critical path pays nothing, since a set appended at end-of-data has no
+predecessor record to read. When a cartridge's tail no longer matches its TOC — the
+aftermath of a backup that died mid-set — a **two-stage recovery** runs on every agent
+alike: believe the header over the arithmetic and move the delta; if that does not settle
+and the count ran backward, re-navigate forward from begin-of-content and verify again.
+A navigation that *fails outright* with a positional error is the same fault through a
+different channel, and gets the same cure. Restores benefit as much as deletes.
+
+**What it brings:** a restore that lands on the wrong set detects it and repairs itself
+instead of failing a CRC check or silently delivering another set's bytes; a cartridge
+swapped mid-operation is caught at set access rather than only at load; an overwrite or
+delete that would have destroyed the wrong set is refused with the tape untouched; and a
+cartridge whose tail is damaged can be brought back to a sound state — by deleting its
+trailing sets, which is precisely the verb the recovery makes reachable.
+
+**Surfacing:** set-level anomalies reach the user through
+`ITapeFileNotifiable.OnSetAnomaly` / `OnSetAnomalyRecovered` and
+`ITapeServiceHost.OnSetAnomalySelect`, accumulated into `TapeSetStatistics` (nested in
+`TapeFileStatistics`, so every existing callback receives it) and rendered as a closing
+summary with an actionable recommendation — repair the trailing sets, or check the drive
+and the cartridge. A corrected drift is reported at Warning, never Trace: it means the
+drive or the medium miscounted marks, and the summary is the only place that fact reaches
+whoever is holding the cartridge. `DeleteBackupSetsExAsync` returns a
+`DeleteSetsResult` that distinguishes *"refused, tape unchanged"* from *"failed
+part-way"*.
+
+**Applications:** both apps expose `VerifySetHeader` and `CorrectSetNavigation` in their
+Advanced groups — worded as behaviour, not suppression, since disabling verification
+disables a data-protection check rather than a prompt. WPF prompts through a
+`MediaMismatchDialog` naming both sets; the CLI splits unattended by stakes (a read-path
+recovery proceeds, a destructive one declines, both logged).
 
 ### Win32 BackupRead / BackupWrite file I/O (`TapeBackupStream`)
 
@@ -826,7 +893,16 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
   calibration / unidentified cartridges, verifies identity before every destructive operation, and lets
   backup and calibration recognize each other's media. Shared `TapeHeaderBlock` primitive; mixed
   legacy/headed multi-volume series restore correctly. WPF calibration-cartridge pane + Inspect Media,
-  calibration-aware virtual-drive probe, CLI list/info integration. Full design: docs/Design-TapeHeader.md.
+  calibration-aware virtual-drive probe, CLI list/info integration. Full design: `docs/Design-TapeHeader.md`.
+- ✅ Backup set headers — verified set navigation and verified destructive writes: a 16 KiB
+  framed record at the head of every set carrying identity + indices, checked on every set
+  access and self-corrected on recoverable drift; extended to the overwrite and delete paths
+  (no `Match`, no write), with a two-stage recovery — relative delta, then re-navigation from
+  begin-of-content — shared by every agent, so a cartridge with a damaged tail is repairable
+  instead of merely diagnosable. Set-level anomaly channel with host prompts, per-operation
+  statistics and an actionable closing recommendation. `DeleteBackupSetsExAsync` distinguishes
+  a refusal from a partial failure. ~1,000 new tests (3,500 total). Full designs:
+  `docs/Design-SetHeader.md`, `docs/Design-SetHeader-VerifiedWrite.md`.
 
 ## What's Next (Planned)
 

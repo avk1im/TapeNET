@@ -15,7 +15,7 @@ namespace TapeServiceNET;
 /// each own a separate drive concurrently. Every RPC (except Open*) must
 /// supply the <c>x-tape-session-id</c> header obtained from the Open* response.
 /// </para>
-/// Client                                    Tape Server
+/// Client                                    Media Server
 /// ─────────────────────────────             ─────────────────────────────
 /// TapeDrive TapeDriveGrpcService
 ///   └─ RemoteTapeDriveBackend    ──gRPC──►    └─ TapeDriveBackend

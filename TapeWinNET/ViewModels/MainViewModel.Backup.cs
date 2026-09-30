@@ -102,7 +102,8 @@ public partial class MainViewModel
     /// </summary>
     private void InitializeBackupCommands()
     {
-        NewBackupCommand = new RelayCommand(ShowBackupWindow, _ => !IsBusy && _tapeService.IsMediaLoaded && !_tapeService.IsTOCFromFile);
+        NewBackupCommand = new RelayCommand(ShowBackupWindow, _ => !IsBusy && _tapeService.IsMediaLoaded
+            && _tapeService.TOCIsFrom is TOCSource.Media);
         AbortBackupCommand = new RelayCommand(AbortBackup, _ => IsBackupInProgress);
     }
 

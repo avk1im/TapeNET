@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 
 using TapeLibNET;
+using TapeLibNET.Services;
 using TapeLibNET.Remote;
 using TapeWinNET.Models;
 using TapeWinNET.Utils;
@@ -507,12 +508,13 @@ public partial class MainViewModel
             driveNumber, _tapeService.DeviceName, settings.DisplayLabel);
         TreeItems.Add(driveItem);
 
-        // Tape / media node
-        var tocFileName = _tapeService.IsTOCFromFile
+        // Media / media node
+        var tocFileName = _tapeService.TOCIsFrom is TOCSource.File
             ? System.IO.Path.GetFileName(_tapeService.TOCFilePath ?? "file")
             : null;
         var tapeItem = TapeTreeItemViewModel.CreateTapeItem(
-            toc, driveItem, tocFileName, isInMemory: _tapeService.IsInMemoryDrive);
+            toc, driveItem, tocFileName, isInMemory: _tapeService.IsInMemoryDrive,
+                        tocRecovered: _tapeService.TOCIsFrom is TOCSource.Recovered);
         driveItem.Children.Add(tapeItem);
 
         // Backup sets (newest-first)
