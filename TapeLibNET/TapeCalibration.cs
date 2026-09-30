@@ -139,7 +139,7 @@ public sealed class TapeCalibration : ITapeCalibration
     public CalibrationPoint? EarlyWarning { get; }
 
     /// <summary>
-    /// EXPERIMENTAL parallel series: the drive's OWN remaining figure (SCSI LOG SENSE, Tape Capacity
+    /// EXPERIMENTAL parallel series: the drive's OWN remaining figure (SCSI LOG SENSE, Media Capacity
     /// page 0x31) transformed to the same <c>reported → actual</c> shape as <see cref="Curve"/>. Null on
     /// older blobs and on non-LTO runs. Kept ALONGSIDE (never replacing) <see cref="Curve"/> so the
     /// runtime is unaffected while we compare the two offline — in particular to see whether the native

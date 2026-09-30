@@ -206,7 +206,7 @@ public abstract class MultiVolumeBackupRestoreTestsBase
             $"ContentCapacity={contentCap}, TOCCapacity={tocCap}, HasInitiatorPartition={hasInit}, " +
             $"BlockSize={blockSize}, FilesSucceeded={stats.FilesSucceeded}, " +
             $"TapeCapacity={tapeCapacity}, TapeRemaining={tapeRemaining}\n" +
-            $"Tape Layout:\n{tapeLayout}");
+            $"Media Layout:\n{tapeLayout}");
     }
 
     #endregion

@@ -43,7 +43,7 @@ namespace TapeLibNET
         /// Creates a double-buffered write wrapper around <paramref name="inner"/>.
         /// </summary>
         /// <param name="inner">The underlying tape write stream. Not disposed by this wrapper.</param>
-        /// <param name="blockSize">Tape block size in bytes.</param>
+        /// <param name="blockSize">Media block size in bytes.</param>
         /// <param name="bufferMultiplier">Number of blocks per buffer. Must be ≥ 2 so that the inner stream's
         /// direct-write optimization is always triggered. Recommended 4–16.</param>
         public BufferedTapeWriteStream(Stream inner, uint blockSize, int bufferMultiplier = 8)
@@ -240,7 +240,7 @@ namespace TapeLibNET
         /// Creates a double-buffered read wrapper around <paramref name="inner"/>.
         /// </summary>
         /// <param name="inner">The underlying tape read stream. Not disposed by this wrapper.</param>
-        /// <param name="blockSize">Tape block size in bytes.</param>
+        /// <param name="blockSize">Media block size in bytes.</param>
         /// <param name="bufferMultiplier">Number of blocks per buffer. Must be ≥ 2.
         /// For filemark mode (inner buffer = BlockSize × 4), use ≥ 4 to ensure the inner stream's
         /// direct-read optimization is triggered. Default 8 covers all modes.</param>

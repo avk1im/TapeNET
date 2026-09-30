@@ -11,7 +11,7 @@ public partial class VirtualTapeMedia
     #region *** Odometer Constants ***
 
     /// <summary>
-    /// Tape-equivalent length of a single tape mark (filemark or setmark) in bytes.
+    /// Media-equivalent length of a single tape mark (filemark or setmark) in bytes.
     /// Real marks are physically ~1-2 inches of tape; we approximate as 1 block size.
     /// Computed as the current default block size at query time via property.
     /// </summary>

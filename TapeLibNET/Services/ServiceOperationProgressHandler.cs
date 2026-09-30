@@ -1,10 +1,9 @@
 using System.IO;
 using System.Linq;
-
+using TapeLibNET;
+using TapeLibNET.Scan;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices; // Helpers.BytesToString
-
-using TapeLibNET;
 
 namespace TapeLibNET.Services;
 
@@ -648,5 +647,120 @@ public class ServiceCalibrateProgressHandler(
         "eom-inferred"  => "Inferred end-of-media; finalizing calibration",
         "eom"           => "Finalizing calibration",
         _               => string.IsNullOrWhiteSpace(phase) ? "Calibrating" : phase,
+    };
+}
+
+// ── Scan Media ───────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Progress adapter for a Scan Media survey: counts fragments and logs each one as it becomes final.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Fragments arrive one read BEHIND the head (they are reported when final), so a set's "never completed"
+///  and a TOC copy's recovery outcome are already known when it is logged here.
+/// </para>
+/// <para>
+/// Never throws: the scanner swallows sink exceptions anyway (SM-10), and an abort is requested through
+///  the service's token registration, not from here.
+/// </para>
+/// </remarks>
+public class ServiceScanProgressHandler(ITapeServiceHost host, TapeScanner scanner)
+    : IProgress<TapeScanProgress>
+{
+    private readonly ITapeServiceHost _host = host;
+    private bool _abortLogged;
+
+    /// <summary>The live scanner driving the operation.</summary>
+    protected readonly TapeScanner Scanner = scanner;
+
+    public int FragmentsFound { get; private set; }
+    public int SetsFound { get; private set; }
+    public int TocCopiesFound { get; private set; }
+    public int TocsRecovered { get; private set; }
+    public long CurrentBlock { get; private set; }
+
+    /// <summary>Current phase, humanised for UI display.</summary>
+    public string CurrentPhase { get; private set; } = "Scanning";
+
+    /// <summary>Finalises any host-specific progress display. No-op in the base.</summary>
+    public virtual void CompleteProgress() { }
+
+    /// <summary>Releases any host-specific progress resources. No-op in the base.</summary>
+    public virtual void DisposeProgress() { }
+
+    /// <summary>Hook for app-specific progress UI updates.</summary>
+    protected virtual void ReportProgress(TapeScanProgress progress) { }
+
+    /// <inheritdoc/>
+    public void Report(TapeScanProgress progress)
+    {
+        CurrentBlock = progress.CurrentBlock;
+        CurrentPhase = FormatPhase(progress.Phase);
+
+        if (Scanner.IsAbortRequested && !_abortLogged)
+        {
+            _abortLogged = true;
+            _host.Report(ServiceReportLevel.Warning, "Scan abort requested");
+        }
+
+        if (progress.Fragment is { } f)
+        {
+            FragmentsFound++;
+
+            if (f.Kind == FragmentKind.SetHeader) SetsFound++;
+            if (f.Kind == FragmentKind.TOC) TocCopiesFound++;
+            if (f.HarvestedToc is not null) TocsRecovered++;
+
+            if (DescribeFragment(f) is { } line)
+                _host.Report(line.Level, line.Text, isSubEntry: true);
+        }
+
+        ReportProgress(progress);
+    }
+
+    /// <summary>
+    /// One log line per fragment worth a user's attention; null for mark runs and the TOC mark, which say
+    ///  nothing about the content.
+    /// </summary>
+    public static (ServiceReportLevel Level, string Text)? DescribeFragment(TapeMediaFragment f) => f.Kind switch
+    {
+        FragmentKind.MediaHeader =>
+            (ServiceReportLevel.Info, $"Media header >{f.Description}< · volume {f.Volume}"),
+
+        FragmentKind.SetHeader when !f.ClosedBySeparator =>
+            (ServiceReportLevel.Warning, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< at block {f.StartBlock} — never completed"),
+
+        FragmentKind.SetHeader =>
+            (ServiceReportLevel.Info, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< at block {f.StartBlock}"),
+
+        FragmentKind.CalibrationHeader =>
+            (ServiceReportLevel.Info, $"Calibration run header, profile >{f.Description}<"),
+
+        FragmentKind.TOC when f.HarvestedToc is { } toc =>
+            (ServiceReportLevel.Info, $"Table of contents copy at block {f.StartBlock} — recovered, {toc.Count} set(s)"),
+
+        FragmentKind.TOC when !f.Diagnosis.Success =>
+            (ServiceReportLevel.Warning, $"Table of contents copy at block {f.StartBlock} — could not be recovered"),
+
+        FragmentKind.TOC =>
+            (ServiceReportLevel.Info, $"Table of contents copy at block {f.StartBlock}"),
+
+        FragmentKind.Unknown when !f.Diagnosis.Success =>
+            (ServiceReportLevel.Warning, $"Block {f.StartBlock}: {f.Diagnosis.ErrorMessage}"),
+
+        FragmentKind.Unknown =>
+            (ServiceReportLevel.None, $"Unidentified data at block {f.StartBlock}"),
+
+        _ => null,
+    };
+
+    private static string FormatPhase(string phase) => phase switch
+    {
+        TapeScanProgress.PhaseScanning => "Scanning the cartridge",
+        TapeScanProgress.PhaseHarvestingToc => "Recovering a table of contents",
+        TapeScanProgress.PhaseInspectingCalibration => "Inspecting the calibration run",
+        TapeScanProgress.PhaseCompleting => "Completing the scan",
+        _ => string.IsNullOrWhiteSpace(phase) ? "Scanning" : phase,
     };
 }

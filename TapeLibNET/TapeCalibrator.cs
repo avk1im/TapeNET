@@ -22,7 +22,7 @@ public readonly record struct TapeCalibrationProgress(
 {
     /// <summary>
     /// EXPERIMENTAL cross-check: the drive's OWN remaining-capacity figure read directly over SCSI
-    /// (LOG SENSE, Tape Capacity page 0x31), bypassing the Windows tape class driver. -1 when not
+    /// (LOG SENSE, Media Capacity page 0x31), bypassing the Windows tape class driver. -1 when not
     /// available (non-LTO drive, or the probe failed). Declared as a non-positional init property so
     /// existing positional <c>new TapeCalibrationProgress(...)</c> calls keep compiling unchanged.
     /// </summary>

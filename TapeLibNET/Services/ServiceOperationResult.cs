@@ -1,4 +1,5 @@
-using TapeLibNET; // TapeFileInfo
+using TapeLibNET; // TapeFileInfo, TapeTOC, TapeCalibrationHeader, TapeSetHeader, TapeMediaHeader, ITapeCalibration, etc.
+using TapeLibNET.Scan; // MediaScanMap, ScannedMediaKind
 
 namespace TapeLibNET.Services;
 
@@ -371,3 +372,92 @@ public sealed record DeleteSetsResult : ServiceOperationResult
         };
 }
 
+// ── Scan Media ───────────────────────────────────────────────────────────────
+
+/// <summary>A follow-up action a scan suggests. Drives the UI's buttons after a scan.</summary>
+public enum ScanAdvice
+{
+    /// <summary>A calibration cartridge: use Calibrate | Inspect Media.</summary>
+    InspectCalibrationCartridge,
+
+    /// <summary>A TOC copy was recovered during the scan: offer to adopt or save it.</summary>
+    AdoptRecoveredToc,
+
+    /// <summary>TOC copies found, none recovered: offer to recover one.</summary>
+    RecoverTocFromCopy,
+
+    /// <summary>The last set was never completed — Repair Media, once it lands.</summary>
+    ReviewUnclosedSet,
+}
+
+/// <summary>Summary of a Scan Media survey.</summary>
+/// <remarks>
+/// Derives from <see cref="ServiceOperationResult"/> directly: a scan touches no files, and routing it
+///  through file counters would produce "completed — no files processed".
+/// <para>
+/// <b>How a scan is classified.</b> A map is returned in EVERY row — truncated where the walk ended early
+///  (SM-5) — so the caller always has whatever the scan managed to read.
+/// </para>
+/// <code>
+///  Case                     | Success | Outcome                          | Diagnosis
+///  -------------------------+---------+----------------------------------+--------------------------
+///  Clean scan               |  true   | Completed / Warning / Info,      | OK
+///                           |         |  from the headline               |
+///  Stopped at MaxFragments  |  true   | Warning ("Scan incomplete")      | OK
+///  User abort               |  false  | Failed                           | ERROR_CANCELLED
+///  Transport fault          |  false  | Error                            | the scanner's LastResult
+/// </code>
+/// <para>
+/// <see cref="WasAborted"/> derives from <see cref="ServiceOperationResult.Outcome"/>, as in
+///  <see cref="DeleteSetsResult"/>. A fragment-limit stop counts as success on purpose: the scan did
+///  what it was asked, and the map says it is incomplete via <see cref="MediaScanMap.Truncated"/>.
+/// </para>
+/// </remarks>
+public sealed record ScanMediaResult : ServiceOperationResult
+{
+    /// <summary>The map — also on an aborted or faulted scan, then truncated (SM-5).</summary>
+    public MediaScanMap? Map { get; init; }
+
+    public ScannedMediaKind MediaKind { get; init; }
+    public int SetsFound { get; init; }
+    public int TocCopiesFound { get; init; }
+    public int TocsRecovered { get; init; }
+    public int UnknownFragments { get; init; }
+    public bool LastSetUnclosed { get; init; }
+
+    /// <summary>Follow-up actions, most useful first.</summary>
+    public IReadOnlyList<ScanAdvice> Advice { get; init; } = [];
+
+    /// <summary>Where the map was saved, or null.</summary>
+    public string? MapExportPath { get; init; }
+
+    /// <summary>The headline, as reported to the host.</summary>
+    public string Summary { get; init; } = string.Empty;
+
+    /// <summary>Whether the user aborted the scan.</summary>
+    public bool WasAborted => Outcome == ServiceReportLevel.Failed;
+}
+
+/// <summary>Summary of a TOC recovery from a scan map.</summary>
+public sealed record RecoverTocResult : ServiceOperationResult
+{
+    /// <summary>The recovered TOC, or null on failure.</summary>
+    public TapeTOC? Toc { get; init; }
+
+    /// <summary>Taken from the map (recovered during the scan) — no tape I/O.</summary>
+    public bool FromMap { get; init; }
+
+    /// <summary>Made the current TOC.</summary>
+    public bool Adopted { get; init; }
+
+    /// <summary>Where it was saved, or null.</summary>
+    public string? SavedPath { get; init; }
+
+    /// <summary>Creates a failed result.</summary>
+    public static RecoverTocResult Failed(TapeResult diagnosis) => new()
+    {
+        Diagnosis = diagnosis,
+        Success = false,
+        Outcome = ServiceReportLevel.Error,
+    };
+}

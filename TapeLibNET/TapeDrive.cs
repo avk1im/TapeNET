@@ -1432,7 +1432,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         return WentOK ? partition : MediaPartition.Current;
     }
 
-    #endregion // *** Tape Moving & Positioning ***
+    #endregion // *** Media Moving & Positioning ***
 
     #region *** Private Helpers ***
 

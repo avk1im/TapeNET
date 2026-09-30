@@ -45,7 +45,7 @@ public enum TapeHeaderPresence
 ///  and 0 is an honest claim.</para>
 /// </summary>
 /// <remarks>
-/// Tape organizations and corresponding subclasses:
+/// Media organizations and corresponding subclasses:
 /// <list type="bullet">
 /// <item><see cref="TapeNavigatorTOCInPartition"/> — WithPartitions</item>
 /// <item><see cref="TapeNavigatorTOCInSetWithSmks"/> — WithSetmarks</item>

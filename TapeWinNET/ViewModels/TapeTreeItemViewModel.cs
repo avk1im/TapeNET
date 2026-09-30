@@ -122,7 +122,7 @@ public class TapeTreeItemViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// When true on a Tape item, indicates the TOC was loaded from a file.
+    /// When true on a Media item, indicates the TOC was loaded from a file.
     /// Drives warning display: red text, warning prefix in display name.
     /// </summary>
     public bool IsTOCFromFile
@@ -132,7 +132,7 @@ public class TapeTreeItemViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// When true on a Tape item, indicates the media is backed by memory streams.
+    /// When true on a Media item, indicates the media is backed by memory streams.
     /// Drives info display: blue text, info suffix in display name.
     /// </summary>
     public bool IsInMemory
@@ -162,7 +162,7 @@ public class TapeTreeItemViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Numeric identifier for this item: drive number (Drive), volume number (Tape),
+    /// Numeric identifier for this item: drive number (Drive), volume number (Media),
     ///  or 1-based set index (BackupSet).
     /// </summary>
     public int Tag

@@ -56,7 +56,7 @@ public enum FragmentKind
 /// </remarks>
 public sealed record TapeMediaFragment
 {
-    /// <summary>0-based position in the walk. Tape order, always contiguous.</summary>
+    /// <summary>0-based position in the walk. Media order, always contiguous.</summary>
     public required int Ordinal { get; init; }
 
     /// <summary>Logical block where this fragment begins, as reported by the drive.</summary>

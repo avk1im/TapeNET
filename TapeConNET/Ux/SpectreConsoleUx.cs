@@ -54,7 +54,7 @@ public sealed class SpectreConsoleUx : IConsoleUx
         var libVer = typeof(TapeDrive).Assembly.GetName().Version?.ToString() ?? "<unknown>";
 
         _ansi.MarkupLine(
-            $"[bold cyan]tapecon[/] [grey]Tape Backup Utility v.[/] [white]{ownVer}[/] " +
+            $"[bold cyan]tapecon[/] [grey]Media Backup Utility v.[/] [white]{ownVer}[/] " +
             $"[grey]·[/] [grey]TapeLibNET v.[/] [white]{libVer}[/]");
     }
 

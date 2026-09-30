@@ -1,7 +1,7 @@
 # Design — Scan Media (TOC-less media survey)
 
-**Status:** v2.2 · Phases 0–2 implemented and green; this revision brings the document in line with the code
-and specifies TOC recovery (§8) ahead of Phase 3.
+**Status:** v3.0 · Phases 0–4 implemented and green. This revision brings §8–§10 in line with the code and
+specifies the WPF surface (Phase 5, written as a hand-off task) and the CLI (Phase 6).
 **Scope:** read a cartridge from BOM forward and produce a **fragment map** — everything on the medium that
 can be identified — with **no table of contents in hand and none assumed**. Then, as an option or as a
 separate operation, **recover a table of contents** from a copy the map located.
@@ -21,8 +21,8 @@ tape agree?"* That inverts the dependency on the one cartridge that matters. Dro
 genuine defects:
 
 - **No end-of-content bound.** v4 established one with a `MoveToEndOfContent()` seek — which fails on exactly
-  the damaged cartridge the feature exists for. The bound was load-bearing on healthy media and absent on
-  damaged media. Walking to EOD needs no bound: the trailing structures are *identified*, not *avoided*.
+  the damaged cartridge the feature exists for. Walking to EOD needs no bound: the trailing structures are
+  *identified*, not *avoided*.
 - **The TOC area is a harvest, not a hazard.** v4 treated `[toc1][FM][toc2]` as a trap to stop short of. It is
   the most valuable thing on a damaged cartridge: a TOC copy the user no longer has — including `toc2` when
   `toc1` is the casualty.
@@ -56,15 +56,12 @@ public static TapeMediaLayout Predict(TapeDrive drive, bool useTOCMark = true); 
 public bool SeparatorAmbiguousWithToc { get; }    // true on the filemark layouts
 ```
 
-`TapeNavigator.ProduceNavigator` is implemented **on top of** `Predict`, switching on `NavigatorKind`, so the
-scanner and the navigator can never disagree about a cartridge's layout.
-
-`UseSmks` stays a bool, deliberately: it is the navigator's own vocabulary, and there will be no third kind of
-set delimiter.
+`TapeNavigator.ProduceNavigator` is implemented **on top of** `Predict`, so the scanner and the navigator can
+never disagree about a cartridge's layout. `UseSmks` stays a bool: it is the navigator's own vocabulary, and
+there will be no third kind of set delimiter.
 
 **`SeparatorAmbiguousWithToc`** is the fact that makes identification, not mark-hopping, the scanner's core:
-on the filemark layouts the set separator and the TOC delimiter are the same mark, so only classifying the
-block after each mark can tell content from TOC.
+on the filemark layouts the set separator and the TOC delimiter are the same mark.
 
 ---
 
@@ -77,7 +74,7 @@ layout = TapeMediaLayout.Predict(Drive)
 
 // ── Block 0 — through a throwaway agent ─────────────────────────────────
 first = IdentifyBomFragment(out bytesRead)        // probe.ReadBomHeader(out bytesRead)
-if bytesRead ≤ 0            → Blank map (SM-6)
+if bytesRead ≤ 0              → Blank map (SM-6)
 if first is CalibrationHeader → one-fragment map, stop (SM-7, §4.5)
 
 // ── Alternate: cross the closing mark, read what follows ────────────────
@@ -91,6 +88,7 @@ loop:
         Tapemark   → count into the pending run; read on (the read crossed it)
         EndOfData  → clean end
         Fragment   → FoldMarkRun(pending); Commit(fragment)
+                     if TOC && HarvestTocCopies → HarvestLastTocCopy (§8.3)
 FoldMarkRun(pending); Report(last)
 ```
 
@@ -98,16 +96,12 @@ FoldMarkRun(pending); Report(last)
 
 "Rewind, select the content partition, read block 0, classify" is a ceremony `TapeStreamManager` and
 `TapeAgentBase.ReadBomHeader` already own. The scanner borrows it through a throwaway
-`new TapeAgentBase(Drive, new TapeTOC())` — the same pattern `TapeServiceBase.RefreshLoadedHeader` uses —
-rather than defining the most-read block in the product a second time.
+`new TapeAgentBase(Drive, new TapeTOC())` — the pattern `TapeServiceBase.RefreshLoadedHeader` uses.
 
-`ReadBomHeader(out int bytesRead)` was added for this: `bytesRead ≤ 0` means *nothing is there* (blank),
-positive means *something is there, recognized or not* (legacy or foreign). The parameterless overload
-delegates; no existing caller changed. Without it, SM-6 — blank and broken are different results — could not
-be kept.
+`ReadBomHeader(out int bytesRead)` exists for this: `bytesRead ≤ 0` means *nothing is there* (blank),
+positive means *something is there, recognized or not*. Without it, SM-6 could not be kept.
 
-From the second fragment on, the scanner reads raw: those blocks sit at positions the agent has no verb for,
-and no navigator state is wanted.
+From the second fragment on, the scanner reads raw: those blocks sit at positions the agent has no verb for.
 
 ### 3.2 The closing mark depends on the fragment's kind
 
@@ -117,49 +111,37 @@ and no navigator state is wanted.
 | TOC copy | **filemark**, on every in-set layout, setmark ones included |
 | set header, unidentified content | the layout's separator (`UseSmks`) |
 
-Hopping a setmark from a media header on a setmark layout sails past the header's filemark, the whole first
-set, and its closing setmark — losing set 1 silently. Hopping a setmark from `toc1` runs to EOD and never sees
-`toc2`. `ClosingMarkIsSetmark` encodes this table.
+Hopping a setmark from a media header on a setmark layout loses set 1 silently; hopping a setmark from `toc1`
+runs to EOD and never sees `toc2`. `ClosingMarkIsSetmark` encodes this table.
 
-A failed hop **syncs the drive's error** before judging it. The drive carries the reason; the scanner's own
-error channel sees nothing unless synced, and reading `NO_ERROR` as a transport fault once truncated every
-complete map.
+A failed hop **syncs the drive's error** before judging it — reading `NO_ERROR` as a transport fault once
+truncated every complete map.
 
 ### 3.3 Marks are detected by the ordinary read
 
 A read that meets a mark returns nothing but the mark and leaves the head **past** it. So the identification
-read doubles as the mark detector: each position is read exactly once, the head never steps back, and a drive
-that cannot write consecutive marks pays nothing for the possibility.
+read doubles as the mark detector: each position is read once, the head never steps back.
 
-`ReadFragmentAt` returns one of three outcomes:
-
-| Outcome | Meaning | Walk |
+| `ReadOutcome` | Meaning | Walk |
 |---|---|---|
 | `Fragment` | a block, readable or not | commit it |
 | `Tapemark` | a mark, already crossed | add to the pending run, read on |
 | `EndOfData` | nothing was ever written here | end cleanly |
 
-Both boundaries come from `TapeDrive.ReadDirect`'s `out` flags, surfaced by a
-`TapeHeaderBlock.Read(…, out bool tapemark, out bool eod)` overload. The drive **resets** its error on both,
-so the flags are the only reliable witness; `eod` is defined as the drive's `eof && !tapemark`.
+Both boundaries come from `TapeDrive.ReadDirect`'s `out` flags, surfaced by
+`TapeHeaderBlock.Read(…, out bool tapemark, out bool eod)`. The drive **resets** its error on both, so the
+flags are the only reliable witness; `eod` is the drive's `eof && !tapemark`.
 
 ### 3.4 Mark runs, and the TOC mark
 
-Marks read between two data fragments form a pending run, committed by `FoldMarkRun` once the next data block
-(or the end) shows where it stops:
+Marks read between two data fragments form a pending run, committed by `FoldMarkRun`:
 
 - **`TocMark`** — on a `HasTocMark` layout, when the run holds **≥ 2** marks and the fragment before it is an
-  `Unknown` that was **read cleanly** and closed. That is the `[gap][FM][FM][FM]` sequence: the gap block, its
-  closing filemark, and two more. The gap is retyped rather than left "unidentified" on every healthy
-  cartridge of that layout.
+  `Unknown` that was **read cleanly** and closed: the `[gap][FM][FM][FM]` sequence.
 - **`MarkRun`** — every other run, as a fragment of its own at the run's first block.
 
-Each guard has a reason. The layout must write TOC marks at all. Two marks, not one, keeps a legacy
-double-filemark end of data from reading as a TOC mark. And a damaged header or an unreadable block is also
-`Unknown`, but no gap — folding it would hide the damage.
-
-`MarkCount` is informational. Nothing depends on a drive reporting exactly one mark per read; "two or more" is
-all the fold asks.
+Two marks, not one, keeps a legacy double-filemark end of data from reading as a TOC mark. A damaged header is
+also `Unknown`, but no gap — folding it would hide the damage. `MarkCount` is informational.
 
 ### 3.5 Termination
 
@@ -168,27 +150,24 @@ all the fold asks.
 | EOD after a mark | complete, `ERROR_NO_DATA_DETECTED` | last fragment closed |
 | closing-mark hop fails positionally | complete, that error | last fragment **not closed** |
 | closing-mark hop fails otherwise | **Truncated** | last fragment not closed |
+| harvest cannot return the head | **Truncated** | — |
 | abort | **Truncated**, `ERROR_CANCELLED` | — |
 | `MaxFragments` (fragments or run length) | **Truncated**, `ERROR_INVALID_DATA` | — |
 | calibration header at block 0 | complete, `NO_ERROR` | one fragment |
 
-No pseudo-fragment ever closes a map. *Why the walk ended* is map-level (`TerminatorWin32`, `Truncated`);
-*was this fragment finished* is fragment-level (`ClosedBySeparator`). An unclosed set header is precisely the
-"backup died mid-set" signature.
-
-**No retry, no resync-by-seeking.** Skipping a bad region by seeking blind is guessing at block numbers on
-damaged tape. Stop, record where, and say the map is truncated.
+No pseudo-fragment ever closes a map. *Why the walk ended* is map-level; *was this fragment finished* is
+fragment-level (`ClosedBySeparator`). **No retry, no resync-by-seeking.**
 
 ### 3.6 Fragments are reported when final
 
-A fragment's closing state, its span and a `TocMark` retype are all decided by reads that come *after* it. So
+A fragment's closing state, span, `TocMark` retype and harvested TOC are all decided after it is read. So
 `Commit` reports a fragment's predecessor, and the last fragment is reported when the walk ends. A sink never
 receives a value that later changes.
 
 ### 3.7 Cost
 
-One 16 KiB read per fragment and per mark, plus one mark hop per data fragment. Abortable between reads; an
-abort yields a truncated map still usable up to the cut.
+One 16 KiB read per fragment and per mark, plus one mark hop per data fragment; with recovery, one
+multi-block TOC read and one locate per copy. Abortable between reads.
 
 ---
 
@@ -209,9 +188,8 @@ public static IdentifiedBlock TapeHeaderBlock.IdentifyBlock(byte[] block, int le
 ```
 
 **Placement first, content second.** A framed header carries our signature at offset 4, behind the framer's
-length prefix; a TOC stream carries it at byte 0. Each outcome rests on evidence in the block itself — none is
-reached because another test failed. Inferring "TOC" from *"our signature, but no header parses"* once turned
-every CRC-damaged set header into a phantom TOC copy.
+length prefix; a TOC stream carries it at byte 0. Inferring "TOC" from *"our signature, but no header
+parses"* once turned every CRC-damaged set header into a phantom TOC copy.
 
 | Order | Test | Outcome |
 |---|---|---|
@@ -219,11 +197,8 @@ every CRC-damaged set header into a phantom TOC copy.
 | 2 | our signature at offset 4, then `TapeFramer.TryUnpack` | `Header`, or `DamagedRecord` with the reason |
 | — | neither | `Foreign` |
 
-**TOC first.** Offset 0 of a plausible frame holds a length of at most 16 KiB, whose high bytes are zero — it
-can never read as the signature plus a version. Offset 4 of a TOC stream holds the low bytes of its UID seed,
-which can. So a TOC match cannot swallow an intact frame, while the reverse order could.
-
-A record whose **signature** is damaged cannot be told from foreign data, and is reported as `Foreign`.
+**TOC first:** offset 0 of a plausible frame holds a length ≤ 16 KiB whose high bytes are zero — it can never
+read as the signature. Offset 4 of a TOC stream holds the low bytes of its UID seed, which can.
 
 ### 4.2 The framer tells damage from absence
 
@@ -232,19 +207,14 @@ public enum FrameStatus { Ok, NotFramed, CrcMismatch, Unparseable }
 public static FrameStatus TapeFramer.TryUnpack<T>(byte[] block, int length, out T? record);
 ```
 
-`Unpack` delegates and keeps its contract — null unless `Ok` — so the calibration resume walk is untouched.
-`Unparseable` means a good CRC around a payload this build cannot read: an unknown kind, or a newer version.
-
-A `DamagedRecord` maps to an `Unknown` fragment with a fingerprint and a diagnosis: `ERROR_CRC` for a CRC
-mismatch, `ERROR_INVALID_DATA` for a torn frame or an unparseable payload. It stays `Unknown` because its
-fields cannot be trusted; *why* is the diagnosis.
+`Unpack` delegates and keeps its contract — null unless `Ok`. A `DamagedRecord` maps to an `Unknown` fragment
+with a fingerprint and a diagnosis: `ERROR_CRC`, or `ERROR_INVALID_DATA` for a torn frame or unparseable
+payload.
 
 ### 4.3 The signature probe tolerates the version
 
-`ValidateSignature()` demands exactly `TapeSerializer.Version` (0x0101). The TOC is written as 0x0102, and a
-future header format would be newer still. The probe therefore accepts any **0x01xx** version: our record,
-possibly unreadable to this build. The two signature bytes alone match random data once in 65 536 blocks; the
-version range brings that to once in 16 million.
+`ValidateSignature()` demands exactly 0x0101; the TOC is written as 0x0102. The probe accepts any **0x01xx**
+version — random data then matches once in 16 million blocks.
 
 ### 4.4 TOC copies are recognized structurally
 
@@ -252,51 +222,28 @@ version range brings that to once in 16 million.
 public static bool TapeTOC.TryPeek(byte[] block, int length, out ushort version, out Guid mediaId);
 ```
 
-The signature alone cannot identify a TOC: a legacy aligned file record (`TapeFileInfo.SerializeHeaderTo`)
-opens a block with the very bytes a v0x0101 TOC does. `TryPeek` reads in exactly `ConstructFrom`'s order and
-checks what only a TOC has:
-
-1. the signature, with a version between `TocVersionInitial` and `TocVersion`;
-2. a non-zero `nextUID`;
-3. the `MediaId`, from `TocVersionWithMediaId` on;
-4. a plausible set count;
-5. then either the **first set's own signature** — checked strictly, as `TapeSetTOC.ConstructFrom` does — or,
-   for an empty TOC, a plausible description, timestamps and volume.
-
-It sits in `TapeTOC.cs` directly below `ConstructFrom`, so a change to the TOC layout is visibly a change to
-the peek too. A version newer than this build knows is **not** recognized: its layout past the signature is
-unknown, and a structural check would be guessing.
-
-The TOC is written at the fixed 16 KiB block size (`TapeAgentBase.c_fixedTOCBlockSize`), so one standard
-header-block read delivers its first block whole.
+The signature alone cannot identify a TOC: a legacy aligned file record opens a block with the very bytes a
+v0x0101 TOC does. `TryPeek` reads in `ConstructFrom`'s order: signature and known version, non-zero
+`nextUID`, `MediaId` (≥ v0x0102), plausible set count, then the **first set's own signature** (strict) — or,
+for an empty TOC, a plausible tail. It sits directly below `ConstructFrom`. A newer version is **not**
+recognized.
 
 ### 4.5 Calibration cartridges — identified, not walked
 
-A `TapeCalibrationHeader` at block 0 makes the map complete, `Kind = CalibrationCartridge`, one fragment,
-`Truncated = false`. Past the header lies filemark-delimited checkpoints separated by gigabytes of random
-padding; walking it would yield hundreds of `Unknown` fragments and tell nobody anything.
+A `TapeCalibrationHeader` at block 0 makes the map complete, `Kind = CalibrationCartridge`, one fragment.
+With `InspectCalibrationTrail` the scanner calls `TapeCalibrator.InspectMedia()` and attaches
+`CalibrationInfo` — **off by default**; the service never asks for it (§9.1).
 
-With `InspectCalibrationTrail`, the scanner calls `new TapeCalibrator(Drive).InspectMedia()` and attaches the
-result as `MediaScanMap.CalibrationInfo` — the same answer the calibration UI shows, by construction.
-**Off by default:** the feature serves backup tapes, and the service points a calibration cartridge at
-Calibrate | Inspect Media instead (§9).
-
-**Not recognized: legacy-shape calibration headers** written in the run block (pre-`TapeHeaderBlock`, or on a
-drive whose maximum block is under 16 KiB). Such a cartridge maps as foreign data. The calibrator's own
-two-step probe remains the supported path; scarcity in the field does not warrant a second rewind on every
-medium.
+**Not recognized: legacy-shape calibration headers** written in the run block. They map as foreign; the
+calibrator's own probe remains the supported path.
 
 ### 4.6 Small-block drives
 
-`TapeHeaderBlock.IsSupportedBy` is false when the drive's maximum block is under 16 KiB. `ReadIdentificationBlock`
-then reads one native block with `ReadDirect` and classifies that. Without it, every fragment on such a drive
-would map as `Unknown`.
+When the drive's maximum block is under 16 KiB, `ReadIdentificationBlock` reads one native block instead.
 
 ### 4.7 What identification cannot do
 
-A fragment's contents are opaque. The scan proves an object begins at a block and that a mark closes it. It
-never reads files, never checks file CRCs, and never measures a set's payload. `BlockSpan` is an upper bound
-including marks.
+A fragment's contents are opaque. `BlockSpan` is an upper bound including marks, never a payload size.
 
 ---
 
@@ -305,7 +252,6 @@ including marks.
 ```csharp
 public enum FragmentKind                       // an OBSERVATION, never a verdict (SM-3)
 { Unknown = 0, MediaHeader, SetHeader, CalibrationHeader, TOC, MarkRun, TocMark }
-                                               // appended in this order; JSON stores the numeric value
 
 public enum ScannedMediaKind { Blank = 0, Backup, CalibrationCartridge, Foreign }
 
@@ -314,26 +260,23 @@ public sealed record TapeMediaFragment
     public required int          Ordinal    { get; init; }   // 0-based, contiguous; assigned by Commit
     public required long         StartBlock { get; init; }
     public required FragmentKind Kind       { get; init; }
-    public long BlockSpan          { get; init; } = -1L;     // upper bound INCLUDING marks (SM-11)
+    public long BlockSpan          { get; init; } = -1L;
     public bool ClosedBySeparator  { get; init; }
 
-    // Identity — headers; for a TOC copy, the media id it describes
     public Guid?     Id             { get; init; }            // MediaId / calibration RunId / TOC MediaId
     public int?      Volume         { get; init; }
     public int?      VolumeSetIndex { get; init; }
     public int?      GlobalSetIndex { get; init; }
-    public string?   Description    { get; init; }            // label / set description / ProfileKey
+    public string?   Description    { get; init; }
     public DateTime? CreatedUtc     { get; init; }
     public uint?     BlockSize      { get; init; }
 
-    // TOC
     public ushort?  TocVersion   { get; init; }
-    [JsonIgnore] public TapeTOC? HarvestedToc { get; init; }  // only when recovery ran and succeeded (§8)
+    [JsonIgnore] public TapeTOC? HarvestedToc { get; init; }  // recovery ran and succeeded (§8)
 
-    // MarkRun / TocMark / Unknown
-    public int        MarkCount   { get; init; }              // informational
+    public int        MarkCount   { get; init; }
     public string?    Fingerprint { get; init; }              // first 32 bytes, hex
-    public TapeResult Diagnosis   { get; init; } = TapeResult.OK;   // default(TapeResult) means FAILURE
+    public TapeResult Diagnosis   { get; init; } = TapeResult.OK;   // also: why a TOC copy did not recover
 }
 
 public sealed record MediaScanMap
@@ -350,36 +293,25 @@ public sealed record MediaScanMap
     //  MixedIdentityFragments, SetIndexGaps
     public const string MapFileExtension = ".tapescan";
     public string ToJson();
-    public static MediaScanMap? FromJson(string json);        // null on anything that is not a map
+    public static MediaScanMap? FromJson(string json);
 }
 ```
 
-**Deliberately absent: any notion of "expected", "complete" or "lost".** Those are comparison verdicts. The
-map states what exists, which is what lets one scan be compared against several TOCs.
-
-`LastSetUnclosed` looks at the last **set header**, not the last fragment, so a trailing TOC copy cannot mask
-an unclosed set. `MixedIdentityFragments` is empty without a media header — there is nothing to disagree with.
-`SetIndexGaps` reports forward jumps only; a repeat or a step backwards is stranger than a missing set and
-belongs to comparison.
-
-**`TapeMediaFragment.ToString`** carries the diagnosis and a short fingerprint, so a failing scan test prints
-a map that says *why* a fragment is unknown.
+**No "expected", "complete" or "lost"** — those are comparison verdicts. `LastSetUnclosed` looks at the last
+**set header**, not the last fragment. `MixedIdentityFragments` is empty without a media header.
+`SetIndexGaps` reports forward jumps only. `ToString` carries the diagnosis and a short fingerprint.
 
 ---
 
 ## 6. What the map tells the user — with no TOC at all
 
-- **How many backup sets the cartridge holds** — counted from the tape.
-- **Every set named and dated**, from its own header.
-- **The last set never completed** — `LastSetUnclosed`, the dominant real-world fault.
-- **A damaged set header**, with the CRC diagnosis — distinct from foreign data.
-- **Mixed identity** — another series overwrote part of this cartridge.
-- **Index gaps** — a set missing from the middle.
-- **Where TOC copies survive**, their version, and which series they describe — and, with recovery, the TOC
-  itself (§8).
-- **A calibration cartridge**, identified as such.
-- **On healthy media, a complete and correct inventory** — a legitimate Media Properties deep-dive. A feature
-  users exercise on good media is one they trust on bad media.
+- How many backup sets the cartridge holds, each named and dated from its own header.
+- **The last set never completed** — the dominant real-world fault.
+- A damaged set header, with its CRC diagnosis — distinct from foreign data.
+- Mixed identity; index gaps.
+- Where TOC copies survive, their version and series — and, with recovery, the TOC itself.
+- A calibration cartridge, identified as such.
+- On healthy media, a complete inventory — a feature users exercise on good media is one they trust on bad.
 
 ---
 
@@ -402,28 +334,20 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
 public sealed record ScanMediaOptions
 {
     public const int DefaultMaxFragments = 1_000;
-    public bool HarvestTocCopies        { get; init; } = false;   // §8
+    public bool HarvestTocCopies        { get; init; } = false;   // §8.3
     public bool InspectCalibrationTrail { get; init; } = false;   // §4.5
     public int  MaxFragments            { get; init; } = DefaultMaxFragments;
     public static ScanMediaOptions Default { get; } = new();
 }
 ```
 
-**Not a `TapeAgentBase`.** `TapeNavigator` is TOC-bound by construction — believed positions,
-`CurrentContentSet`, `FirstSetOnVolume` — and the scanner needs raw mark hops and absolute block numbers.
-Inheriting it would mean spending the whole walk keeping it quiet, and the constructor demands a TOC the
-feature by definition does not have. The handover to comparison is a `MediaScanMap` — a pure value — so
-inheritance buys the later phases nothing.
+**Not a `TapeAgentBase`:** `TapeNavigator` is TOC-bound by construction, and the scanner needs raw mark hops
+and absolute blocks. **Where an agent earns its keep, it is borrowed:** block 0 (§3.1) and TOC recovery (§8).
+**A `record`, not a `record struct`, for the options:** a struct's `new()` zeroes every field and silently
+skips the primary constructor's defaults.
 
-**Where an agent still earns its keep, it is borrowed, not inherited:** block 0 (§3.1) and TOC recovery (§8).
-Both are ceremonies the agent already owns.
-
-**A `record`, not a `record struct`, for the options.** On a struct, `new()` binds to the implicit
-parameterless constructor and zeroes every field, silently skipping the primary constructor's defaults.
-
-`Scan` returns null only when no map is possible at all (no media); a truncated map is still returned. It
-never throws at its caller — an unexpected exception is latched into `LastResult`. A `BlockSizeGuard`
-restores the drive's block size on the way out (SM-9).
+`Scan` returns null only when no map is possible at all; a truncated map is still returned. It never throws.
+A `BlockSizeGuard` restores the drive's block size (SM-9).
 
 ### 7.2 Progress: `IProgress<TapeScanProgress>`
 
@@ -433,93 +357,85 @@ public readonly record struct TapeScanProgress(
 // Phases: "scanning", "harvesting-toc", "inspecting-calibration", "completing"
 ```
 
-Not `ITapeFileNotifiable`: the scan uses none of its members, and its `void` callbacks can stop an operation
-only by throwing. The scanner owns a cooperative abort flag instead. `IProgress<T>` mirrors
-`TapeCalibrationProgress`.
-
-**The deliberate divergence from the calibrator.** The calibrator's `TapeAbortRequestedException` handling is
-purely defensive. The scanner's is real — a WPF sink marshalling to the UI thread may throw — so `Report`
-converts it to `IsAbortRequested` and stops at the next clean boundary; any other exception is logged and
-swallowed (SM-10).
+Not `ITapeFileNotifiable`: its `void` callbacks can stop an operation only by throwing. `Report` converts a
+sink's `TapeAbortRequestedException` into `IsAbortRequested`; any other exception is logged and swallowed
+(SM-10).
 
 ---
 
 ## 8. TOC recovery
 
-A TOC copy the scan located is only an address until someone reads it. Recovering it is the feature's biggest
-payoff on a damaged backup tape — and the one place where the scanner needs machinery it deliberately does not
-own.
-
 ### 8.1 One verb, two callers
 
-Two ways to recover were weighed:
+Teaching the scanner to read TOCs would duplicate the TOC stream ceremonies. Instead **the verb lives on the
+agent and the scanner borrows it**, as it borrows `ReadBomHeader`. The walk's recovery option and the
+service's separate "recover this copy" operation run the same code.
 
-- **(1) point an agent at the copy** — a dedicated verb that reads a TOC at a given block, bypassing the
-  navigator's own search for it;
-- **(2) teach the scanner to read TOCs.**
-
-(2) would duplicate the TOC stream ceremonies — `TapeTOCStream` creation, the fixed TOC block size, the
-multi-block read — and they would drift. (1) keeps them in one place. But the scanner has one genuine
-advantage: during the walk, **the head is already standing on the copy**.
-
-The resolution takes both: **the verb lives on the agent; the scanner borrows it**, exactly as it borrows
-`ReadBomHeader` for block 0. The walk's "try to recover the TOC" option and the service's separate
-"recover this copy" operation then run the same code.
-
-### 8.2 The agent verb — NEW
+### 8.2 The agent verb — `RestoreTOCAt`
 
 ```csharp
-// TapeAgentBase — a utility verb; callers construct the agent over a throwaway TOC
+// TapeAgentBase — same contract as RestoreTOC(): fills TOC via CopyFrom on success
 public TapeResult RestoreTOCAt(long block);
 ```
 
-- `Manager.EndReadWrite()`; content partition; `Drive.MoveToBlock(block)`.
-- Read the TOC stream at the fixed TOC block size, with the same stream machinery the ordinary TOC restore
-  uses — **minus the navigator's locate step**. The caller has already located it, from evidence; letting the
-  navigator search a tail-damaged cartridge on its own is the very thing this avoids.
-- `Navigator.ResetContentSet()` afterwards: raw positioning, no believed position.
-- Returns the TOC, or null with `LastResult` set. Never throws.
+- **Block is mandatory.** "Read where the head is" is spelled `RestoreTOCAt(Drive.CurrentBlock)` — the
+  unanchored read must never be the easy default on this path. `Drive.MoveToBlock` makes it free.
+- **One copy, no fallback.** `RestoreTOC`'s retry to the next filemark assumes it began at the *first* copy;
+  here the caller may name the second. To try another copy, call again.
+- **Leaves no believed position:** `Manager.EndReadWrite()` and `Navigator.ResetContentSet()` whatever the
+  outcome — the block came from evidence the navigator cannot verify.
 
-**To confirm against `TapeStreamManager` in Phase 3:** whether the existing TOC read can begin at the current
-position. If its entry point locates on its own, split *locate* from *read* — the same split that made
-`ReadBomHeader(out bytesRead)` possible — and have both the old path and `RestoreTOCAt` call the read half.
+The existing `RestoreTOC → BeginReadTOC → MoveToLocationFor → MoveToBeginOfTOC` chain is **untouched**. That
+wrapper also serves `BackupTOC`, so a caller-supplied block stored on the navigator could leak into a TOC
+*write*. The new path is parallel and read-only by construction:
 
-**Out of scope: partitioned media.** Its TOC sits at a fixed place in partition 0, which content-partition
-tail damage cannot reach; the ordinary TOC restore already goes straight there. The scan walks the content
-partition only and finds no TOC fragments on that layout.
+| Layer | Addition |
+|---|---|
+| Navigator | `MoveToTOCCopyAt(long block)` + `protected virtual MoveToTOCCopyAtCore` — `Drive.MoveToBlock` for in-set layouts; the initiator partition for `TOCInPartition`. Same template shape as `MoveToBeginOfTOC`. |
+| Manager | `BeginReadTOCAt(long block)` — **always** ends the current session first (`BeginReadWrite` returns early on an unchanged state), then `BeginReadWrite(ReadingTOC, positioner: …)`. The optional `positioner` replaces `MoveToLocationFor` for this call only. |
+| Agent | `RestoreTOCAt` = `BeginReadTOCAt` → the unchanged `RestoreTOCCore` → end session → reset navigator. |
+
+`TOCUnlocated` and the TOC-mark layout's invalidation flag stay untouched: reading a copy does not locate the
+TOC for writing.
 
 ### 8.3 During the scan — `HarvestTocCopies`
 
-When the walk identifies a `TOC` fragment and the option is set:
+When the walk commits a `TOC` fragment and the option is set, `HarvestLastTocCopy`:
 
-1. `ReportPhase("harvesting-toc")`.
-2. `probe.ReadTOCAt(fragment.StartBlock)` through a throwaway agent.
-3. Success ⇒ attach as `HarvestedToc`. Failure ⇒ keep the fragment as detected, log, carry on (SM-8).
-4. **`Drive.MoveToBlock(fragment.StartBlock)`** — restore the walk's position contract. The stream read may
-   have run into or past the copy's closing filemark; from the copy's first block, the regular
-   `CrossClosingMark` finds that mark again. One short locate buys a walk that does not depend on where the
-   TOC reader happened to stop (SM-12).
+1. records `resumeAt = Drive.CurrentBlock`; `ReportPhase("harvesting-toc")`;
+2. `probe.RestoreTOCAt(fragment.StartBlock)` through a throwaway agent over a fresh `TapeTOC`;
+3. success ⇒ `HarvestedToc`; failure ⇒ the fragment stays a TOC copy, with the reason in `Diagnosis` (SM-8);
+4. `Drive.MoveToBlock(resumeAt)` — the walk never depends on where the TOC reader stopped (SM-12). If that
+   locate fails, the map is truncated.
 
-Every copy found is attempted, not just the first: on the filemark layouts two are written, and the second
-routinely survives when the first is the casualty. Two copies that both parse but differ are themselves a
-finding, reported by the comparison phase.
+Recovery is a **walk step**, not part of identification: it moves the head over many blocks. Since fragments
+are reported when final, attaching the TOC is invisible to the sink. **Every copy is attempted** — on the
+filemark layouts the second routinely survives the first. **Off by default at the scanner**; the service
+turns it on.
 
-The option stays **off by default at the scanner**: a scanner call that did not ask for it should not read
-multi-block streams. The service turns it on (§9).
+**Out of scope: partitioned media.** The content walk finds no TOC fragments there; the ordinary restore
+already goes straight to partition 0.
 
-### 8.4 After the scan — a separate operation
+### 8.4 After the scan — guarded twice
 
-The user may skip recovery during the scan and ask for it later, against one fragment of the map. The service
-operation (§9.2) is a thin wrapper over the same verb, with one addition: **verify before reading.** Between
-scan and recovery the user may have swapped cartridges, so the service first re-reads the block at
-`StartBlock` and requires `TryPeek` to find a TOC copy of the same media id there. Otherwise it refuses —
-reading a TOC off the wrong cartridge and adopting it is the worst outcome this feature could produce.
+The user may recover later, against one fragment. Between scan and recovery the cartridge may have been
+swapped, so:
+
+1. **Before reading:** the loaded cartridge's media id must equal the scanned one (one BOM read).
+2. **After reading:** the recovered TOC's media id must equal the one the scan peeked at that block.
+
+The second check verifies the CRC-validated result rather than peeking first — stronger, and a read is
+harmless: nothing is adopted until both pass. Either failure is `ERROR_MEDIA_CHANGED`.
 
 ### 8.5 Adoption goes through the import path
 
-A recovered TOC is treated exactly like one imported from a `.tapetoc` file: the same identity checks, the
-same `TocChanged` notification, the same user decision. Recovery never replaces the loaded TOC on its own
-(SM-13) — the user adopts it, or saves it as a file, or both.
+A recovered TOC is adopted exactly like an imported one: same identity verdict and one-off prompt
+(`MediaPromptContext.ImportToc`, no ProceedAlways), the mounted volume's number adopted but never its
+MediaId, `TocChanged` fired. Never implicit (SM-13).
+
+The service records it as **`TOCSource.Recovered`** (`TapeServiceBase.TOCIsFrom`): the navigator did not
+locate this TOC, and a mid-tape copy may be older than the cartridge. Consumers that treat an imported TOC
+with caution treat a recovered one the same way; the UI flags it as `"(using recovered TOC)"`.
 
 ---
 
@@ -530,79 +446,86 @@ same `TocChanged` notification, the same user decision. Recovery never replaces 
 ### 9.1 Scan
 
 ```csharp
-public sealed record ScanMediaRequest : ServiceOperationRequest          // NEW
+public sealed record ScanMediaRequest : ServiceOperationRequest
 {
     public bool    RecoverTocCopies { get; init; } = true;   // → scanner HarvestTocCopies
-    public string? MapExportFolder  { get; init; }           // null ⇒ do not export
+    public string? MapExportFolder  { get; init; }           // null ⇒ no export
 }
 
-public enum ScanAdvice                                       // NEW — drives the UI's follow-up buttons
+public enum ScanAdvice
 {
-    InspectCalibrationCartridge,    // a calibration cartridge: use Calibrate | Inspect Media
-    AdoptRecoveredToc,              // a TOC copy was recovered during the scan
-    RecoverTocFromCopy,             // TOC copies found but not (successfully) recovered
+    InspectCalibrationCartridge,    // use Calibrate | Inspect Media
+    AdoptRecoveredToc,              // a copy was recovered — adopt or save it
+    RecoverTocFromCopy,             // copies found, none recovered
     ReviewUnclosedSet,              // the last set never completed — Repair Media, once it lands
 }
 
-public sealed record ScanMediaResult : ServiceOperationResult           // NEW
+public sealed record ScanMediaResult : ServiceOperationResult
 {
-    public MediaScanMap? Map { get; init; }
+    public MediaScanMap? Map { get; init; }                  // also truncated, on abort / fault
     public ScannedMediaKind MediaKind { get; init; }
-    public int  SetsFound        { get; init; }
-    public int  TocCopiesFound   { get; init; }
-    public int  TocsRecovered    { get; init; }
-    public int  UnknownFragments { get; init; }
-    public bool LastSetUnclosed  { get; init; }
+    public int  SetsFound, TocCopiesFound, TocsRecovered, UnknownFragments;   // init-only
+    public bool LastSetUnclosed { get; init; }
     public IReadOnlyList<ScanAdvice> Advice { get; init; } = [];
     public string? MapExportPath { get; init; }
-    public string Summary { get; init; } = string.Empty;
+    public string Summary { get; init; } = string.Empty;     // the reported headline
+    public bool WasAborted => Outcome == ServiceReportLevel.Failed;
 }
 
 public Task<ScanMediaResult> ScanMediaAsync(ScanMediaRequest request);
 ```
 
-- **Calibration inspection is never requested.** The service recognizes the cartridge and advises
-  `InspectCalibrationCartridge`, pointing the user at the calibration UI — which owns that answer and can act
-  on it (Resume, Recalibrate). The scan feature serves backup tapes: a calibration run can be reproduced at the
-  cost of time; the data on a backup tape cannot be restored any other way.
-- **TOC recovery is on by default here.** The tape is already positioned, the cost is a few blocks per copy,
-  and the payoff is the index a damaged cartridge's user most needs.
-- A near-twin of `ExecuteCalibrateAsync`: `Task.Run` → `_operationLock` → construct the scanner →
-  `CreateScanProgressHandler` (`protected virtual`) → a linked-token registration setting
-  `IsAbortRequested` → result from `scanner.LastResult`. Derived from `ServiceOperationResult` directly.
-- **No media-identity prompt.** There is no expectation to violate.
-- **`_toc` is never touched** by a scan; `_loadedHeader` is refreshed, since a scan may be the first thing to
-  establish what the cartridge is.
-- The drive position is unspecified afterwards; agents are per-operation, so nothing inherits a stale belief.
+**How a scan is classified** — a map is returned in every row:
 
-`VerbalizeScan(map)` and `AdviseOnScan(map)` sit beside `JudgeFileOperation` as **pure statics**.
+| Case | `Success` | `Outcome` | `Diagnosis` |
+|---|---|---|---|
+| clean scan | true | Completed / Warning / Info, from the headline | OK |
+| stopped at `MaxFragments` | true | Warning ("Scan incomplete") | OK |
+| user abort | false | Failed | `ERROR_CANCELLED` |
+| transport fault | false | Error | the scanner's `LastResult` |
+
+- **Calibration inspection is never requested.** The service advises `InspectCalibrationCartridge` instead;
+  the calibration UI owns that answer and can act on it.
+- **TOC recovery is on by default here** — the tape is already positioned.
+- Shape of `ExecuteCalibrateAsync`: `Task.Run` → `_operationLock` → `PrepareMedia` → `RefreshLoadedHeader` →
+  scanner → `CreateScanProgressHandler` (`protected virtual`) → linked-token registration setting
+  `IsAbortRequested` → result.
+- **No identity prompt; `_toc` is never touched.** `_loadedHeader` is refreshed.
+- Map export is best-effort: a failed export is logged, the scan still succeeds.
+
+**Pure statics** beside `JudgeFileOperation`: `VerbalizeScan(map) → (Level, Headline, Details)`,
+`AdviseOnScan(map)`, `ScanAdviceText(advice)`. `AdoptRecoveredToc` and `RecoverTocFromCopy` exclude each
+other.
+
+**`ServiceScanProgressHandler : IProgress<TapeScanProgress>`** counts fragments, sets and recovered TOCs,
+humanises the phase (`CurrentPhase`), and logs one sub-line per noteworthy fragment
+(`static DescribeFragment`). Mark runs and the TOC mark are not logged. `ReportProgress` is the app hook;
+`CompleteProgress` / `DisposeProgress` mirror the calibration handler.
 
 ### 9.2 Recover a TOC from the map
 
 ```csharp
-public sealed record RecoverTocRequest(MediaScanMap Map, int FragmentOrdinal)
-    : ServiceOperationRequest                                            // NEW
+public sealed record RecoverTocRequest(MediaScanMap Map, int FragmentOrdinal) : ServiceOperationRequest
 {
-    public bool    Adopt          { get; init; } = false;   // load it as the current TOC (§8.5)
-    public string? SaveToFilePath { get; init; }            // also save as .tapetoc
+    public bool    Adopt                  { get; init; } = false;
+    public string? SaveToFilePath         { get; init; }       // needs media loaded
+    public bool    ProceedOnMediaMismatch { get; init; } = false;   // adoption prompt only, never the guards
 }
 
-public sealed record RecoverTocResult : ServiceOperationResult           // NEW
+public sealed record RecoverTocResult : ServiceOperationResult
 {
-    public TapeTOC? Toc     { get; init; }
-    public bool     FromMap { get; init; }                  // already recovered during the scan — no tape I/O
-    public bool     Adopted { get; init; }
+    public TapeTOC? Toc       { get; init; }
+    public bool     FromMap   { get; init; }                  // recovered during the scan — no tape I/O
+    public bool     Adopted   { get; init; }
     public string?  SavedPath { get; init; }
 }
 
 public Task<RecoverTocResult> RecoverTocAsync(RecoverTocRequest request);
 ```
 
-- If the fragment already carries a `HarvestedToc`, use it — **no tape I/O**. This is how the app's "use this
-  TOC" button after a scan works.
-- Otherwise: refresh the loaded header; require the map's media id; verify the block (§8.4); read through a
-  probe agent's `ReadTOCAt`.
-- Adoption and saving reuse the import and export paths.
+- A fragment carrying a `HarvestedToc` is used as is — a **private copy**, no tape I/O.
+- Otherwise the two guards of §8.4 around a probe agent's `RestoreTOCAt`.
+- Save and adoption failures downgrade the outcome to Warning; the recovery itself stands.
 
 ---
 
@@ -615,86 +538,137 @@ TapeLibNET/
   Scan/
     TapeScanner.cs               // the walk, termination, mark runs, progress, block-size guard
     TapeScanner.Identify.cs      // block 0 via probe agent; ReadFragmentAt; fragment factories
-    TapeScanner.Harvest.cs       // NEW (Phase 3) — the harvest step of §8.3
-    TapeMediaFragment.cs         // FragmentKind, TapeMediaFragment
-    MediaScanMap.cs              // MediaScanMap, ScannedMediaKind
-    ScanMediaOptions.cs          // ScanMediaOptions, TapeScanProgress
-  TapeMediaLayout.cs             // beside TapeNavigator — the navigator factory is built on it
+    TapeScanner.Harvest.cs       // HarvestLastTocCopy (§8.3)
+    TapeMediaFragment.cs  MediaScanMap.cs  ScanMediaOptions.cs
+  TapeMediaLayout.cs             // beside TapeNavigator
   TapeHeaderBlock.Identify.cs    // IdentifyBlock, TryIdentifyHeaderBlock, CarriesRecordSignature
   TapeFramer.cs                  // FrameStatus, TryUnpack
-  TapeTOC.cs                     // + TryPeek, beside ConstructFrom
-  TapeAgentBase.Headers.cs       // + ReadBomHeader(out bytesRead); + ReadTOCAt (Phase 3)
+  TapeTOC.cs                     // + TryPeek
+  TapeNavigator.cs               // + MoveToTOCCopyAt
+  TapeStreamManager.cs           // + BeginReadTOCAt; BeginReadWrite(positioner)
+  TapeAgentBase*.cs              // + ReadBomHeader(out bytesRead), RestoreTOCAt
   Services/
-    TapeServiceBase.Scan.cs      // Phase 4
-    ServiceScanProgressHandler.cs
+    TapeServiceBase.Scan.cs      // ScanMediaAsync, RecoverTocAsync, VerbalizeScan, AdviseOnScan
+    ServiceOperationRequest.cs / ServiceOperationResult.cs / ServiceOperationProgressHandler.cs
 ```
 
-Primitives the scanner *consumes* — header identification, layout prediction, the TOC peek, the agent verbs —
-stay beside the code that owns them. Filing them under `Scan/` would have core code reaching into a survey
-feature's folder for its own building blocks.
+Primitives the scanner *consumes* stay beside the code that owns them.
 
 ### Phase 0 — records and extractions ✅
-
-`TapeMediaLayout.Predict` with `ProduceNavigator` rebuilt on it; `TryIdentifyHeaderBlock`; the records.
-**Tests:** `TapeMediaLayoutTests` (agreement with the factory on all four profiles, prediction without media),
-`TapeMediaIdentifyTests` (totality, signature probe, map views, JSON round-trip).
+`TapeMediaLayout.Predict`; `TryIdentifyHeaderBlock`; the records.
+**Tests:** `TapeMediaLayoutTests`, `TapeMediaIdentifyTests`.
 
 ### Phase 1 — `TapeScanner` ✅
-
-The walk as in §3, identification as in §4, including four corrections made during implementation:
-
-- the media header's filemark crossed explicitly — then generalized to "the kind decides the closing mark";
-- `TapeHeaderBlock.Read` surfacing `tapemark` / `eod`, and failed hops syncing the drive's error;
-- positive identification (`IdentifyBlock`, `TryUnpack`, `TryPeek`), ending phantom TOC copies;
-- mark detection by the ordinary read, with `TocMark` folding — no mark fishing.
-
-**Tests:** `TapeScannerTests` over all four profiles — healthy media, single set, header only, damaged tail,
-corrupt set header, read fault, content without a TOC, blank, legacy, foreign, adjacent marks, transport
-fault, abort, throwing sinks, `MaxFragments`, progress order, never-writes, block-size restore. Helper:
-`ScanMapAssert` (describes the whole map on every failure; byte-level `MediaSnapshot`).
+The walk (§3) and identification (§4), with four corrections found in implementation: the closing mark by
+kind; `tapemark`/`eod` flags and synced hop errors; positive identification; mark detection by the ordinary
+read with `TocMark` folding.
+**Tests:** `TapeScannerTests` over all four profiles. Helper: `ScanMapAssert` (describes the whole map on
+every failure; byte-level `MediaSnapshot`).
 
 ### Phase 2 — calibration cartridges ✅
+**Tests:** `TapeScannerCalibrationTests` — field-by-field agreement with a direct `InspectMedia()`.
 
-**Tests:** `TapeScannerCalibrationTests` — the scan agrees field by field with a direct `InspectMedia()` over
-early, mid-body and complete trails; identified without inspection; non-destructive (resume still succeeds);
-block size restored.
+### Phase 3 — TOC recovery ✅
+`MoveToTOCCopyAt`, `BeginReadTOCAt`, `RestoreTOCAt`, `TapeScanner.Harvest.cs`.
+**Tests:** `TapeScannerHarvestTests` — each copy matches what was written; bad block fails cleanly; no
+believed position afterwards; **ordinary `RestoreTOC` still works after `RestoreTOCAt`**; partitioned
+initiator read; harvest leaves the map identical (SM-12); first copy damaged, second recovered; **a TOC the
+navigator cannot find is still recovered**; never writes; recovered TOC matches the fragment's identity.
 
-### Phase 3 — TOC recovery
+### Phase 4 — service ✅
+`ScanMediaAsync`, `RecoverTocAsync`, the pure statics, `ServiceScanProgressHandler`, map export,
+`TOCSource.Recovered`.
+**Tests:** `ServiceScanMediaTests` — pure verbalize/advise over hand-built maps; recovery on by default;
+advice without recovery; live TOC untouched; calibration advised, not inspected; cancellation yields an
+aborted, truncated map; export round-trips; recovery from the map performs no tape I/O; recovery from tape;
+**cartridge swap refused**; adoption through the import path; save round-trips through import; non-TOC
+fragment rejected.
 
-1. Confirm the TOC read path in `TapeStreamManager`; split locate from read if needed.
-2. `TapeAgentBase.ReadTOCAt(long block)` (§8.2).
-3. `TapeScanner.Harvest.cs`: the §8.3 step, with the position restore.
+### Phase 5 — TapeWinNET · *hand-off task*
 
-**Tests:**
-- `ReadTOCAt_AtAKnownCopy_MatchesTheTocThatWasWritten` — deep compare, all in-set profiles;
-- **`FirstTocCopyDamaged_SecondIsStillRecovered`** — corrupt `toc1`; `toc2` comes back intact;
-- `Harvest_OnHealthyMedia_RecoversEveryCopy_AndTheMapIsUnchanged` — the same fragments, blocks and kinds as a
-  scan without harvesting. **This pins SM-12**: a harvest that disturbed the walk would shift or lose fragments;
-- `HarvestFailure_KeepsTheFragment_AndDoesNotFailTheScan`;
-- `Harvest_NeverWrites` — `MediaSnapshot` before and after;
-- `Harvest_OnTailDamagedMedia_RecoversTheToc` — the scenario the feature exists for: `EraseLastSetmark`,
-  then recover a TOC the navigator could not have located on its own.
+> **The next task.** Add a *Scan Media* feature to TapeWinNET. The library and service layers are
+> done and tested (`TapeServiceBase.ScanMediaAsync`, `RecoverTocAsync` — §9). This phase is **UI only**:
+> no changes to `TapeLibNET`. Follow the existing *Calibrate* feature as the template throughout — it has the
+> same shape (a setup dialog, a long-running cancellable operation in the shared overlay, a result window).
 
-### Phase 4 — service
+**P5.1 — Progress plumbing** *(template: `TapeService.Calibration.cs`, `WpfServiceHost.UpdateCalibrateProgress`)*
+- New partial `TapeService.Scan.cs`: override `CreateScanProgressHandler` to return a private
+  `GuiScanProgressHandler : ServiceScanProgressHandler` whose `ReportProgress` calls a new
+  `WpfServiceHost.UpdateScanProgress(fragmentsFound, setsFound, tocCopiesFound, currentBlock, phase)`.
+- `UpdateScanProgress` marshals to the dispatcher and sets scan progress properties on `MainViewModel`.
+  There is no known total, so drive the progress bar by `currentBlock` against the
+  estimated media capacity in blocks (if that proves too complex, then as indeterminate); text like
+  *"Block 1 234 · 5 sets · 2 TOC copies found"*.
 
-`ScanMediaAsync`, `RecoverTocAsync`, `VerbalizeScan`, `AdviseOnScan`, `ServiceScanProgressHandler`, map export.
+**P5.2 — `MainViewModel.Scan.cs`** *(template: `MainViewModel.Calibrate.cs`)*
+- Fields/properties: `IsScanInProgress`, `ScanProgressPercent`, `ScanProgressText`, `CurrentScanPhase`,
+  `IsAbortScanEnabled`; a `CancellationTokenSource` for the running scan.
+- Wire `IsScanInProgress` into the **unified operation overlay** exactly as `IsCalibrateInProgress` is:
+  `IsGeneralBusy`, `IsOperationInProgress`, `IsMediaBrowsingEnabled`, and each `Operation*` selector
+  (`OperationProgressPercent`, `OperationProgressText`, `CurrentOperationFile`, `AbortOperationCommand`,
+  `IsAbortOperationEnabled`, `AbortOperationButtonText` = "Abort Scan").
+- Commands: `ScanMediaCommand` (enabled when `!IsBusy && IsMediaLoaded`), `AbortScanCommand` (cancels the
+  token; no confirmation needed — a scan writes nothing). Register in an `InitializeScanCommands()` called
+  from the constructor.
+- `ExecuteScanAsync(ScanMediaRequest)`: set busy/in-progress state, await `ScanMediaAsync`, reset state in
+  `finally`, then show the result window (P5.4). **Never reload the tree after a scan** — a scan changes
+  nothing on tape and never touches the TOC.
 
-**Tests — `ServiceScanMediaTests`:**
-- **`VerbalizeScan` and `AdviseOnScan`, pure, from hand-built maps** — healthy, unclosed tail, mixed identity,
-  index gap, blank, calibration, truncated, copies found but not recovered;
-- `CalibrationCartridge_AdvisesInspect_AndDoesNotInspect`;
-- `Scan_RaisesNoPrompt`; `Cancellation_ViaRequestToken_AbortsTheScan`; `Scan_DoesNotMutateLiveToc`;
-- `RecoverToc_FromMap_UsesTheHarvest_WithoutTapeIo`;
-- **`RecoverToc_AfterCartridgeSwap_Refuses`** — the verify-before-read guard of §8.4;
-- `RecoverToc_Adopt_GoesThroughTheImportPath` — `TocChanged` fired, identity checks applied;
-- `MapExport_WritesReloadableJson`.
+**P5.3 — Scan setup dialog** *(template: `CalibrateWindow` + `CalibrationRunViewModel`, much simpler)*
+- `ScanMediaWindow` + `ScanMediaViewModel`: one checkbox **"Try to recover the table of contents"**
+  (ticked; → `RecoverTocCopies`), an optional **"Save scan map to…"** folder picker (→ `MapExportFolder`),
+  an info line *"Reads the whole media; nothing is written"*, and [Scan] / [Cancel].
+- Menu: **Media | Scan Media…** next to the existing media commands; optional toolbar button.
 
-### Phase 5 — TapeConNET
+**P5.4 — Result window** *(template: `CalibrationWindow` + `CalibrationResultViewModel`)*
+- `ScanResultWindow` + `ScanResultViewModel(TapeService, ScanMediaResult)`.
+- **Header banner** from `result.Summary`, coloured by `result.Outcome` via the shared `WarningPanelStyle`.
+  Beneath it, the detail lines (`TapeServiceBase.VerbalizeScan(map).Details`).
+- **Fragment list** (`ListView`/`DataGrid`), one row per `map.Fragments`, in tape order. Columns:
+  `#` · `Block` · `Kind` · `Identity` · `Detail`. Suggested rendering:
 
-`tapecon scan-media [--no-recover-toc] [--export <dir>] [--json]` and
-`tapecon recover-toc --map <file> --fragment <n> [--adopt] [--save <file>]`.
+  | Kind | Kind text | Identity | Detail |
+  |---|---|---|---|
+  | MediaHeader | Media header | `Id` short · vol `Volume` | `Description` |
+  | SetHeader | Backup set | `#VolumeSetIndex+1` | `Description`, `CreatedUtc`; **"never completed"** in warning colour when `!ClosedBySeparator` |
+  | TOC | Table of contents | `v{TocVersion:X4}` | "recovered — N sets" / "not recovered: {Diagnosis}" / "found" |
+  | TocMark | TOC mark | — | "gap + filemarks" |
+  | MarkRun | Mark run | — | "N consecutive marks" |
+  | Unknown | *Damaged* when `!Diagnosis.Success`, else *Unidentified* | — | diagnosis, or the fingerprint |
+  | CalibrationHeader | Calibration run | profile key | — |
 
-### Phase 6 — WPF viewer (§14)
+  Highlight rows with warning/error levels; keep it read-only.
+- **Per-row actions** on a TOC row (context menu or row buttons):
+  - **[Use this TOC]** → `RecoverTocAsync(new(map, ordinal) { Adopt = true })`; on success close the window
+    and refresh the tree with the adopted TOC (as after an import: `UpdateTreeFromTOC` +
+    `SelectMostRecentSet`). The existing `TOCSource.Recovered` status/placement wording applies.
+  - **[Save as…]** → a `SaveFileDialog` (`TapeAgentBase.TOCFileExtension`), then `RecoverTocAsync(... {
+    SaveToFilePath = path })`.
+  - For a row without `HarvestedToc`, the first action reads **[Try to recover]** and does the same call —
+    the service reads from tape and runs its swap guards. Show `result.Message` on failure.
+- **Advice buttons** from `result.Advice` (use `TapeServiceBase.ScanAdviceText` as tooltip/label):
+  - `InspectCalibrationCartridge` → close and invoke the existing `InspectCalibrationMediaCommand`
+    (the calibration tree/pane is already shown when such a cartridge is loaded).
+  - `AdoptRecoveredToc` / `RecoverTocFromCopy` → act on the **last** TOC row (the newest copy).
+  - `ReviewUnclosedSet` → informational only for now (Repair Media is a later feature).
+- **Footer:** [Save map…] (writes `map.ToJson()` to a `.tapescan` file, if not already exported — show
+  `MapExportPath` when it was) and [Close].
+- For `MediaKind == CalibrationCartridge` show the banner and the advice button instead of the list.
+- For `WasAborted` / truncated maps keep the list and make the banner say the map is incomplete.
+
+**P5.5 — Acceptance**
+- A scan of a healthy virtual cartridge lists media header, every set, and the TOC copies (recovered).
+- Abort mid-scan: overlay closes, result window shows a truncated map marked as aborted.
+- [Use this TOC] replaces the tree; the media pane shows "(recovered TOC)" and the status bar says so.
+- A calibration cartridge shows only the banner and the Inspect Media button.
+- Nothing is written to tape in any path; the overlay locks tree/list browsing while scanning.
+
+### Phase 6 — TapeConNET
+
+`tapecon scan-media [--no-recover-toc] [--export <dir>] [--json]` — prints the headline, details and one line
+per fragment (`ServiceScanProgressHandler.DescribeFragment`); `--json` prints the map to stdout.
+`tapecon recover-toc --map <file> --fragment <n> [--adopt] [--save <file>]` — loads a `.tapescan` via
+`MediaScanMap.FromJson`; exit code distinguishes success, refused (swap guard), and failure.
 
 ---
 
@@ -705,34 +679,29 @@ block size restored.
 | **SM-1** | The scan writes nothing and moves no mark. |
 | **SM-2** | The scan reads no TOC and assumes none. Every fragment derives from the medium alone. |
 | **SM-3** | The map contains observations, never verdicts. |
-| **SM-4** | An unidentifiable fragment never terminates the walk; only end-of-data, a failed closing-mark hop, a transport fault, a calibration header, an abort, or `MaxFragments` does. |
+| **SM-4** | An unidentifiable fragment never terminates the walk. |
 | **SM-5** | A transport fault, an abort, or `MaxFragments` sets `Truncated`. A partial map is never presented as complete. |
 | **SM-6** | Blank media yields an empty, untruncated map. Blank and broken are never the same result. |
-| **SM-7** | A calibration cartridge is a complete result: identified, not walked, `Truncated` false. |
-| **SM-8** | TOC recovery is best-effort: a failed read keeps the fragment as detected and never fails the scan. |
+| **SM-7** | A calibration cartridge is a complete result: identified, not walked. |
+| **SM-8** | TOC recovery is best-effort: a failed read keeps the fragment, with the reason, and never fails the scan. |
 | **SM-9** | The scanner restores the drive's block size and leaves no believed content position anywhere. |
 | **SM-10** | A progress sink can abort a scan but never fail it. |
 | **SM-11** | `BlockSpan` is an upper bound including marks, never a payload size. |
-| **SM-12** | Each position is read once, by the identification read; the only repositioning in a walk is the harvest's return to the copy it read. |
-| **SM-13** | A recovered TOC is never adopted implicitly, and is never read from a block not re-verified as a TOC copy of the same media. |
+| **SM-12** | Each position is read once by the identification read; the only repositioning is the harvest's return to where the walk left the head. |
+| **SM-13** | A recovered TOC is never adopted implicitly, and a TOC read after the scan is checked against the scanned cartridge before and after the read. |
 
 ---
 
 ## 12. What Repair Media inherits
 
-A strict subset; blocks nothing in `Design-RepairMedia.md` v4.
-
-- **v4's `ScanContentSets` is deleted**, replaced by `TapeScanner.Scan` plus a comparison step.
-  `TapeSetScanEntry` becomes derived: `Compare(MediaScanMap, TapeTOC) → IReadOnlyList<TapeSetScanEntry>`, a
-  pure function. Every v4 state survives in meaning: `Complete`, `Unverified`, `Undescribed`, `Partial`,
-  `Damaged`, `Foreign`, `Absent`. A `DamagedRecord` fragment inside the TOC's range with a closed separator is
-  v4's `Unverified`.
-- **The comparison is pure**, so v4's whole state model becomes testable with no tape at all.
+- **v4's `ScanContentSets` is deleted**, replaced by `TapeScanner.Scan` plus a pure
+  `Compare(MediaScanMap, TapeTOC) → IReadOnlyList<TapeSetScanEntry>`. Every v4 state survives in meaning.
+- **The comparison is pure**, so v4's state model becomes testable with no tape at all.
 - **v4's end-of-content bound is dropped**, and with it RM-3.
-- **v4's TOC source list grows a third entry** — *recovered from this cartridge* — via `RecoverTocAsync`.
-- **v4's `OnSetScanned` is dropped**; `ITapeFileNotifiable` is untouched by this feature.
+- **The TOC source list grows a third entry** — *recovered from this cartridge* (`TOCSource.Recovered`).
+- **v4's `OnSetScanned` is dropped**; `ITapeFileNotifiable` is untouched.
 - **Still required:** `SetWriteWitness`, `SealPartialSet`, `IsUndescribed` + TOC v0x0103, `BuildPlan`.
-- **The apply phase stays in `TapeSetAgent`.** Scan leaving the hierarchy is not a precedent for repair.
+- **The apply phase stays in `TapeSetAgent`.**
 
 **The user scans, chooses a TOC, sees the verdict table — and only then is anything destructive offered.**
 
@@ -741,33 +710,20 @@ A strict subset; blocks nothing in `Design-RepairMedia.md` v4.
 ## 13. Known limits
 
 - **Legacy-shape calibration cartridges** map as foreign (§4.5).
-- **Partitioned media**: TOC recovery uses the ordinary restore (§8.2).
-- **A TOC newer than this build** is not recognized as a TOC copy (§4.4); it maps as `Unknown` with a
-  fingerprint.
+- **Partitioned media**: TOC recovery uses the ordinary restore (§8.3).
+- **A TOC newer than this build** is not recognized as a TOC copy (§4.4).
 - **A record damaged in its signature** cannot be told from foreign data (§4.1).
-- **Real hardware:** two behaviours are relied on and confirmed only on the virtual backend — a read that meets
-  a mark leaves the head past it (setmarks need `ReportSetmarks`), and EOD is reported through `eof` without
-  `tapemark`. Worth confirming on the DLT family, where consecutive filemarks matter.
+- **Saving a recovered TOC needs media loaded** — `SaveTOCToFile` is an agent instance method. A static
+  overload would lift this if it matters.
+- **Real hardware:** two behaviours are confirmed only on the virtual backend — a read that meets a mark leaves
+  the head past it (setmarks need `ReportSetmarks`), and EOD is reported through `eof` without `tapemark`.
+  Worth confirming on the DLT family.
 
 ---
 
 ## 14. WPF — the viewer
 
-- **Media | Scan Media…** — one button, a **"Try to recover the table of contents"** checkbox (ticked by
-  default), progress by fragment, cancellable.
-- **The map** as a flat list in tape order, one row per fragment:
-
-  | # | Block | Kind | Identity | Detail |
-  |---|---|---|---|---|
-  | 0 | 0 | Media header | `{a4f…}` vol 1 | "Archive 2026" |
-  | 1 | 2 | *Damaged header* | — | CRC mismatch |
-  | 2 | 5 | Backup set | #2 | "Monthly — April", 2026-04-30 |
-  | 3 | 14 | TOC mark | — | gap + 3 filemarks |
-  | 4 | 18 | Table of contents | v0x0102 | recovered — **[Use this TOC]** **[Save as…]** |
-  | 5 | 20 | Table of contents | v0x0102 | not recovered — **[Try to recover]** |
-
-- **A plain-language header line** from `VerbalizeScan`, and one button per `ScanAdvice`. For a calibration
-  cartridge: *"This is a calibration cartridge"* and **[Open in Calibrate | Inspect Media]**, instead of a
-  fragment list.
-- **Actions:** [Save map…], and — once Repair Media lands — **[Compare with a table of contents…]**, the seam
-  between the two features.
+Specified as Phase 5 (§10). In short: **Media | Scan Media…** → a one-checkbox setup dialog → the shared
+operation overlay → a result window listing every fragment in tape order, with **[Use this TOC]**,
+**[Save as…]** and **[Try to recover]** on TOC rows, one button per `ScanAdvice`, and [Save map…]. The seam
+to Repair Media is a later **[Compare with a table of contents…]** button on the same window.

@@ -6,7 +6,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Install with: sc.exe create TapeService binPath="<path>\tapesvc.exe"
 builder.Host.UseWindowsService(options =>
 {
-    options.ServiceName = "TapeNET Tape Service";
+    options.ServiceName = "TapeNET Media Service";
 });
 
 // Session lifecycle settings (IdleTimeout, ReaperInterval) — override in appsettings.json.

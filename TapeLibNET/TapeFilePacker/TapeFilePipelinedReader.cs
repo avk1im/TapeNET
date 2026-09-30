@@ -219,7 +219,7 @@ internal sealed class TapeFilePipelinedReader : ITapeFileReader, ITapeReadStream
             if (error is not null)
             {
                 ReleaseHeadSlot(slotIdx);
-                throw new IOException($"Tape read failed at block {block}.", error);
+                throw new IOException($"Media read failed at block {block}.", error);
             }
 
             if (offsetInBlock >= valid)
@@ -463,7 +463,7 @@ internal sealed class TapeFilePipelinedReader : ITapeFileReader, ITapeReadStream
                         if (!ok)
                         {
                             PublishErrorSlot_NoLock(seekBlock,
-                                new IOException($"Tape seek to block {seekBlock} failed."));
+                                new IOException($"Media seek to block {seekBlock} failed."));
                             _prefetchHalted = true;
                         }
                         Monitor.PulseAll(_lock);

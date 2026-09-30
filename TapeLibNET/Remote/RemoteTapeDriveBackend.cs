@@ -9,7 +9,7 @@ using TapeLibNET.Virtual;
 namespace TapeLibNET.Remote;
 
 /// <summary>
-/// Tape drive backend that forwards all operations to a remote
+/// Media drive backend that forwards all operations to a remote
 /// <see cref="TapeDriveGrpcService"/> via gRPC. Transparently substitutes
 /// for <see cref="TapeDriveWin32Backend"/> or <see cref="Virtual.VirtualTapeDriveBackend"/>
 /// in the <see cref="TapeDrive"/> constructor.
@@ -17,7 +17,7 @@ namespace TapeLibNET.Remote;
 /// All backend properties are served from a cached <see cref="BackendState"/>
 /// snapshot that is refreshed with every RPC response (piggybacked).
 /// </para>
-/// Client                                    Tape Server
+/// Client                                    Media Server
 /// ─────────────────────────────             ─────────────────────────────
 /// TapeDrive TapeDriveGrpcService
 ///  └─ RemoteTapeDriveBackend    ──gRPC──►    └─ TapeDriveBackend
@@ -380,7 +380,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     /// Used by multi-volume host callbacks to mount the next volume without destroying the session.
     /// </summary>
     /// <param name="contentFilePath">Server-side path to the new tape file.</param>
-    /// <param name="contentCapacity">Tape capacity in bytes (0 → keep existing file size).</param>
+    /// <param name="contentCapacity">Media capacity in bytes (0 → keep existing file size).</param>
     /// <param name="initiatorFilePath">Optional initiator partition file path; null if not needed.</param>
     /// <param name="caps">Drive capabilities to use; null → server default.</param>
     /// <param name="mediaMode">
@@ -437,7 +437,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
     /// <summary>
     /// Asynchronously opens a Win32 tape drive on the remote system.
     /// </summary>
-    /// <param name="driveNumber">Tape drive index (0-based).</param>
+    /// <param name="driveNumber">Media drive index (0-based).</param>
     /// <param name="ct">Cancellation token.</param>
     public async Task<bool> OpenAsync(uint driveNumber, CancellationToken ct = default)
     {

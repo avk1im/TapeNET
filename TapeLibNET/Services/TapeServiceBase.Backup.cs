@@ -509,7 +509,7 @@ public partial class TapeServiceBase
                                     {
                                         LogOk($"Emergency TOC exported to: {chosenPath}");
                                         LogInfoSub("This file can be used to recover access to the media content");
-                                        IsTOCFromFile = true;
+                                        TOCIsFrom = TOCSource.File;
                                         TOCFilePath = chosenPath;
                                         emergencySaved = true;
                                     }
@@ -1145,7 +1145,7 @@ public partial class TapeServiceBase
                                     {
                                         LogOk($"Emergency TOC exported to: {chosenPath}");
                                         LogInfoSub("This file can be used to recover access to the media content");
-                                        IsTOCFromFile = true;
+                                        TOCIsFrom = TOCSource.File;
                                         TOCFilePath = chosenPath;
                                         emergencySaved = true;
                                     }

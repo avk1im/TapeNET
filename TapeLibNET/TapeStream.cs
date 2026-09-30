@@ -460,7 +460,7 @@ namespace TapeLibNET
                     int written = WriteDirect(buffer, offset, count);
                     if (WentBad)
                     {
-                        m_logger.LogDebug("Tape stream WriteDirect error 0x{Error:X8} in {Method}", LastError, nameof(Write));
+                        m_logger.LogDebug("Media stream WriteDirect error 0x{Error:X8} in {Method}", LastError, nameof(Write));
                         throw new TapeIOException(m_mgr, this, "write failed");
                     }
 
@@ -506,7 +506,7 @@ namespace TapeLibNET
 
             if (WentBad)
             {
-                m_logger.LogError("Tape stream flush error 0x{Error:X8} in {Method}", LastError, nameof(Flush));
+                m_logger.LogError("Media stream flush error 0x{Error:X8} in {Method}", LastError, nameof(Flush));
                 throw new TapeIOException(m_mgr, this, "flush failed");
             }
 

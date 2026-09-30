@@ -1,4 +1,5 @@
 using TapeLibNET; // TapeHashAlgorithm, TapeHowToHandleExisting, ITapeFileFilter, TapeFileInfo
+using TapeLibNET.Scan; // MediaScanMap
 
 namespace TapeLibNET.Services;
 
@@ -234,7 +235,7 @@ public enum ListDepth
     /// <summary>Drive properties only (no tape required).</summary>
     Drive      = 0x01,
 
-    /// <summary>Tape media properties (requires media loaded).</summary>
+    /// <summary>Media media properties (requires media loaded).</summary>
     Media      = 0x02,
 
     /// <summary>
@@ -276,4 +277,40 @@ public sealed record ListRequest(
     bool ShowFullPath = true,
     ITapeFileFilter? Filter = null,
     ListDepth Depth = ListDepth.Full) : ServiceOperationRequest;
+
+// ── Scan Media ───────────────────────────────────────────────────────────────
+
+/// <summary>Options for a Scan Media survey of the loaded cartridge.</summary>
+/// <remarks>
+/// No <c>ProceedOnMediaMismatch</c>: a scan has no identity expectation, hence no prompt to suppress.
+/// </remarks>
+public sealed record ScanMediaRequest : ServiceOperationRequest
+{
+    /// <summary>
+    /// Recover every TOC copy the scan finds (§8.3). ON by default here — the tape is already positioned,
+    ///  the cost is a few blocks per copy, and a recovered index is what a damaged cartridge's user needs.
+    /// </summary>
+    public bool RecoverTocCopies { get; init; } = true;
+
+    /// <summary>Folder to save the map to as <c>.tapescan</c> JSON; null ⇒ no export.</summary>
+    public string? MapExportFolder { get; init; }
+}
+
+/// <summary>Recovers the table of contents from one TOC-copy fragment of a scan map.</summary>
+/// <param name="Map">The map the fragment belongs to — supplies the scanned cartridge's identity.</param>
+/// <param name="FragmentOrdinal">The TOC fragment's <see cref="TapeMediaFragment.Ordinal"/>.</param>
+public sealed record RecoverTocRequest(MediaScanMap Map, int FragmentOrdinal) : ServiceOperationRequest
+{
+    /// <summary>Make the recovered TOC the current one — through the import path's identity check.</summary>
+    public bool Adopt { get; init; } = false;
+
+    /// <summary>Also save it as a <c>.tapetoc</c> file. Needs the drive open and media loaded.</summary>
+    public string? SaveToFilePath { get; init; }
+
+    /// <summary>
+    /// Skip the adoption prompt on an identity mismatch (unattended use). The CHECK still runs and logs;
+    ///  only the question is skipped. Does NOT bypass the cartridge-swap guards, which refuse outright.
+    /// </summary>
+    public bool ProceedOnMediaMismatch { get; init; } = false;
+}
 

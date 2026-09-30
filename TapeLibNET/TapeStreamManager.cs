@@ -909,7 +909,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
 
     #region *** Read and write stream provisioning ***
-    //  Tape streams provide the high-level interface to reading and writing data to the tape.
+    //  Media streams provide the high-level interface to reading and writing data to the tape.
 
     internal void OnDisposeStream(TapeStream? stream)
     {

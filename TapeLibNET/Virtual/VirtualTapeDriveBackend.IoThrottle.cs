@@ -224,7 +224,7 @@ public partial class VirtualTapeDriveBackend
     /// Applies movement throttling delay based on the tape distance traveled.
     /// Uses the same cumulative time-debt approach as IO throttling.
     /// </summary>
-    /// <param name="distanceBytes">Tape-equivalent distance in bytes (from odometer).</param>
+    /// <param name="distanceBytes">Media-equivalent distance in bytes (from odometer).</param>
     /// <param name="rateBytesPerSecond">Applicable rate (locate or search).</param>
     private void ThrottleMovement(long distanceBytes, long rateBytesPerSecond)
     {

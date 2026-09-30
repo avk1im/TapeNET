@@ -62,7 +62,7 @@ public static partial class TapeHeaderBlock
 
     /// <summary>
     /// A filemark terminates the header record on tape, so the first content write is always a
-    ///  POST-MARK write. Tape drives classically accept a write only at BOP, at EOD, or immediately
+    ///  POST-MARK write. Media drives classically accept a write only at BOP, at EOD, or immediately
     ///  after a mark; without this the begin-of-content write is mid-data and drive-dependent.
     /// </summary>
     public const bool WritesTrailingMark = true;

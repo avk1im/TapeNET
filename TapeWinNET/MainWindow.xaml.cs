@@ -518,7 +518,7 @@ namespace TapeWinNET
         /// </summary>
         private void InitializeToolbarIcons()
         {
-            // Tape-drive stock icon — base for local and remote drive buttons
+            // Media-drive stock icon — base for local and remote drive buttons
             var driveIcon = TapeIcons.GetTapeDriveIcon(large: false);
             driveIcon?.Freeze();
             Resources["ToolbarDriveIcon"] = driveIcon;

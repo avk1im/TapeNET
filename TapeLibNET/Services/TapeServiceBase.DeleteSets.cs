@@ -80,7 +80,8 @@ public partial class TapeServiceBase
                 // navigateFromBegin when the TOC came from a file: its mark arithmetic describes a tape
                 //  we have not verified, so the forced forward count is the safer anchor from the outset.
                 var result = agent.DeleteSetsFromCurrentSetUp(
-                    navigateFromBegin: IsTOCFromFile, fileNotify: progressHandler);
+                    navigateFromBegin: TOCIsFrom is TOCSource.File or TOCSource.Recovered,
+                    fileNotify: progressHandler);
 
                 var sets = agent.Statistics.Sets;
 

@@ -136,7 +136,7 @@ public struct TapeFileDescriptor
 public class TapeFileInfo(TypeUID UID, TapeAddress address, TapeFileDescriptor fileDescr) : ITapeSerializable
 {
     public TypeUID UID { get; } = UID;
-    /// <summary>Tape address (block + offset) where this file's data begins.</summary>
+    /// <summary>Media address (block + offset) where this file's data begins.</summary>
     public TapeAddress Address { get; } = address;
     /// <summary>Block number where this file's data begins. Convenience accessor for <see cref="Address"/>.Block.</summary>
     [Obsolete("Use Address")]
