@@ -11,7 +11,7 @@ namespace TapeLibNET;
 
 /// <summary>
 /// Abstract restore agent — reads files from tape content sets, validates headers and CRC,
-///  and delegates actual file processing to <see cref="RestoreFileCoreAligned"/>.
+///  and delegates actual file processing to <see cref="RestoreFileCore"/>.
 /// <para>Concrete subclasses: <see cref="TapeFileRestoreAgent"/> (restore to disk),
 ///  <see cref="TapeFileValidateAgent"/> (read + CRC only),
 ///  <see cref="TapeFileVerifyAgent"/> (compare tape vs. disk).
@@ -27,11 +27,6 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     protected bool LastFileSkipped { get; private set; } = false;
 
     #endregion
-
-    private TapeReadStream? OpenReadContentStream()
-    {
-        return Manager.ProduceReadContentStream(textFileMode: false, lengthLimit: -1);
-    }
 
     /// <summary>
     /// Positions at the current set and opens the content read session, verifying the set header before
@@ -112,19 +107,6 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 
     /// <summary>
     /// Performs the actual file processing (write to disk, validate, or verify).
-    ///  Override in subclasses; base implementation only checks stream validity.
-    /// </summary>
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    protected virtual bool RestoreFileCoreAligned(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
-    {
-        if (rstream.IsDisposed)
-            throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_HANDLE, "May not dispose tape read stream while restoring");
-
-        return true;
-    }
-
-    /// <summary>
-    /// Packed-path pendant of <see cref="RestoreFileCoreAligned(FileInfo, TapeReadStream, NonCryptographicHashAlgorithm?)"/>.
     ///  Operates on a generic <see cref="Stream"/> (the packer-backed
     ///  <c>TapeReadStreamFacade</c>) so block boundaries and intra-block file offsets
     ///  remain hidden from the agent. Default base implementation is a no-op success.
@@ -149,132 +131,8 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         LastFileSkipped = true;
     }
 
-    // Returns true if success, false if failure.
-    //  Sets fileFailedAction to true only if the caller should abort entire operation, otherwise doesn't modify fileFailedAction
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    private bool RestoreNextFileAligned(TapeFileInfo tfi, ref FileFailedAction fileFailedAction, ITapeFileNotifiable? fileNotify = null)
-    {
-        try
-        {
-            // first check if abort requested
-            if (IsAbortRequested)
-            {
-                fileFailedAction = FileFailedAction.Abort;
-                m_logger.LogTrace("Abort requested before restoring file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreNextFileAligned));
-                return false;
-            }
-
-            // Important: we must get the content read stream first, since this will reset the CurrentBlock
-            //  when changing to content read mode -- CurrentBlock can be used laster to move to tfi.Block
-            using var rstream = OpenReadContentStream();
-            if (rstream == null)
-            {
-                m_logger.LogWarning("Failed to open content read stream in {Method}", nameof(RestoreNextFileAligned));
-                return false;
-            }
-
-            // check for abort requested again, since openning file stream might've taken time
-            if (IsAbortRequested)
-            {
-                fileFailedAction = FileFailedAction.Abort;
-                m_logger.LogTrace("Abort requested after opening file stream before restoring file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreNextFileAligned));
-                return false;
-            }
-
-            // check the UID and the length as the most important attributes
-            var deserializer = new TapeDeserializer(rstream);
-            if (!tfi.DeserializeAndCheckHeaderFrom(deserializer))
-            {
-                throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
-                    $"Header mismatch for file >{tfi.FileDescr.FullName}<");
-            }
-
-            rstream.LengthLimit = rstream.Length + tfi.FileDescr.Length; // this will activate LengthLimitMode
-
-#if DEBUG
-            // Simulate file restore failure for testing error handling
-            if (SimulateFileFailures.ShouldFailNow())
-            {
-                throw new TapeIOException((uint)WIN32_ERROR.ERROR_UNHANDLED_EXCEPTION,
-                    $"Simulated restore failure for file >{tfi.FileDescr.FullName}< (#{SimulateFileFailures.Counter})");
-            }
-#endif
-
-            var hasher = CreateHasher(TOC.CurrentSetTOC.HashAlgorithm);
-
-            // Now invoke the pre- call back for skipping the file altogether
-            var fileDescr = tfi.FileDescr; // copy for internal pre-processing (target dir, handle existing)
-            // call the internal pre-processor first to ensure it always runs
-            if (!PreProcessFileInternal(ref fileDescr) || !NotifyPreProcessFile(fileNotify, tfi))
-            {
-                FileSkippedInternal(tfi.FileDescr);
-                NotifyFileSkipped(fileNotify, tfi);
-
-                m_logger.LogTrace("Skipping file >{File}< per pre-processor request", tfi.FileDescr.FullName);
-
-                return true; // skip the file -- do not treat as failure, since this is per pre-processor request
-            }
-            FileInfo fileInfo = fileDescr.CreateFileInfo(); // Notice we shouldn't set fileInfo fields here since the file doesn't exist yet!
-
-            // Now ready to do the actual restoring
-            if (!RestoreFileCoreAligned(fileInfo, rstream, hasher))
-            {
-                throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
-                    $"Processing failed for file >{tfi.FileDescr.FullName}<");
-            }
-
-            // check CRC
-            if (hasher != null)
-            {
-                if (tfi.Hash == null)
-                    throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
-                        $"Hash missing in file info for file >{tfi.FileDescr.FullName}<");
-
-                if (tfi.Hash.SequenceEqual(hasher.GetCurrentHash()))
-                {
-                    // CRC check passed
-                }
-                else
-                {
-                    throw new TapeIOException((uint)WIN32_ERROR.ERROR_CRC,
-                        $"CRC check failed for file >{tfi.FileDescr.FullName}<. Hasher: {TOC.CurrentSetTOC.HashAlgorithm}");
-                }
-            }
-
-            BytesRestored += rstream.Length;
-
-            // Now invoke the post- call back
-            if (NotifyPostProcessFile(fileNotify, tfi))
-                // now apply the attributes to the file -- an exception e.g. File Not Found can be thrown here
-                return PostProcessFileInternal(fileDescr, fileInfo);
-
-            return true;
-        }
-        catch (TapeAbortRequestedException)
-        {
-            IsAbortRequested = true;
-            fileFailedAction = FileFailedAction.Abort;
-            m_logger.LogTrace("Abort requested while processing file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreNextFileAligned));
-            return false;
-        }   
-        catch (Exception ex)
-        {
-            SetError(ex); // we've already set the right error code & message in the exception
-
-            // NotifyFileFailed wrapper will catch TapeAbortRequestedException and set IsAbortRequested
-            //  if the caller requested abort, so we don't need to worry here
-            fileFailedAction = NotifyFileFailed(fileNotify, tfi, ex);
-
-            m_logger.LogWarning("Exception {Exception} while processing file >{File}<", ex, tfi.FileDescr.FullName);
-            return false;
-        }
-    } // RestoreNextFile()
-
-
     // =====================================================================
-    //  Packed (Phase 2 Step E) restore pendants
-    //
-    //  Mirror RestoreNextFile / RestoreFilesFromCurrentSetAligned but route content
+    //  Packed restore: route content
     //  reads through TapeFilePipelinedReader so files that share tape blocks (or
     //  start at non-zero intra-block offsets) restore transparently. Unlike
     //  the packed BACKUP path, packed restore needs no commit decoupling --
@@ -407,7 +265,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 
 
     // Restore the files specified by 'tfis' from the current set via the packer.
-    //  Mirrors RestoreFilesFromCurrentSetAligned(List<TapeFileInfo>?, ...) but uses TapeAddress
+    //  Mirrors RestoreFilesFromCurrentSet(List<TapeFileInfo>?, ...) but uses TapeAddress
     //  positioning and the packed read façade. No tape MoveToBlock is needed here -- the
     //  packer seeks to the file's exact (block, offset) on BeginRead.
     private bool RestoreFilesFromCurrentSet(List<TapeFileInfo>? tfis, bool ignoreFailures = true,
@@ -563,7 +421,6 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 
 
     /// <summary>
-    /// Packed pendant of <see cref="RestoreFilesFromCurrentSetAligned(ITapeFileFilter?, bool, ITapeFileNotifiable?)"/>.
     ///  Routes content reads through the shared-block read packer; supports multi-volume continuation.
     /// </summary>
     public TapeResult RestoreFilesFromCurrentSet(ITapeFileFilter? fileFilter,
@@ -575,12 +432,11 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         _stats.Reset();
         _setAnomalies.Clear();
         ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, fileFilter), ignoreFailures, fileNotify, packed: true)
+        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, fileFilter), ignoreFailures, fileNotify)
             ? TapeResult.OK : FailedOperationResult;
     }
 
     /// <summary>
-    /// Packed pendant of <see cref="RestoreAllFilesFromCurrentSetAligned(bool, ITapeFileNotifiable?)"/>.
     ///  Supports multi-volume continuation.
     /// </summary>
     public TapeResult RestoreAllFilesFromCurrentSet(
@@ -592,221 +448,17 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         _stats.Reset();
         _setAnomalies.Clear();
         ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filter: null), ignoreFailures, fileNotify, packed: true)
+        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filter: null), ignoreFailures, fileNotify)
             ? TapeResult.OK : FailedOperationResult;
     }
 
 
-    // Restore the files specified by 'tfis' from the current set
-    //  For optimal performance (to ensure moving always forward) tfis should follow the same order as in the SetTOC
-    //  If tfis were selected by iterating thru SetTOC, this recommendation is met automatically
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    private bool RestoreFilesFromCurrentSetAligned(List<TapeFileInfo>? tfis, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
-    {
-        if (tfis == null) // null means restore all files
-            return RestoreFilesFromCurrentSetAligned(ignoreFailures, fileNotify);
-
-        NotifySetStart(fileNotify, tfis.Count);
-
-        if (!BeginReadContentForCurrentSet(fileNotify)) // start conent reading mode in tape manager so that tape positioning works correctly
-        {
-            NotifySetEnd(fileNotify);
-            m_logger.LogWarning("Failed to begin reading content in {Method}", nameof(RestoreFilesFromCurrentSetAligned));
-            return false;
-        }
-        m_logger.LogTrace("Starting restoring {Count} select files from current set #{Set}", tfis.Count, TOC.CurrentSetIndex);
-
-        bool overallSuccess = true;
-        FileFailedAction fileFailedAction;
-        LastFileSkipped = false;
-
-        int lastIndex = -1; // used only for tape move optimization
-        bool lastFileFailed = false;
-
-        foreach (var tfi in tfis)
-        {
-        RETRY:
-            fileFailedAction = FileFailedAction.Skip; // reset to skip to avoid infinite loop
-
-            if (tfi == null || !tfi.IsValid)
-            {
-                m_logger.LogWarning("Invalid file info in {Method}", nameof(RestoreFilesFromCurrentSetAligned));
-                SetError(WIN32_ERROR.ERROR_INVALID_DATA,
-                    $"Invalid file entry in set #{TOC.CurrentSetIndex} — the TOC describes a file that " +
-                    "cannot be located");
-                goto FAILURE;
-            }
-
-            m_logger.LogTrace("Restoring file #{Number} >{File}< at block {Block}", _stats.FilesProcessed + 1, tfi.FileDescr.FullName, tfi.Block);
-
-            // Optimization: determine if we're at the next tfi so that we can skip moving the tape
-            int index = (lastIndex >= 0)? TOC.CurrentSetTOC.IndexOf(tfi, lastIndex) : TOC.CurrentSetTOC.IndexOf(tfi);
-
-            // Do move if the previous file has been skipped, failed, or is not the next one
-            bool doMove = LastFileSkipped || lastFileFailed || index < 0 || lastIndex < 0 || index != lastIndex + 1;
-
-            if (!doMove) // validate we're at the right block
-            {
-                long currentBlock = Drive.CurrentBlock;
-                if (currentBlock != tfi.Block)
-                {
-                    m_logger.LogWarning("Unexpected block {Block} (expected {ExpectedBlock}) for file >{File}< in {Method}",
-                        currentBlock, tfi.Block, tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSetAligned));
-                    doMove = true;
-                }
-            }
-
-            if (doMove)
-            {
-                if (Drive.MoveToBlock(tfi.Block))
-                {
-                    m_logger.LogTrace("Moved to block {Block} for file >{File}<", tfi.Block, tfi.FileDescr.FullName);
-                }
-                else
-                {
-                    m_logger.LogWarning("Failed to move to block {Block} for file >{File}< in {Method}",
-                        tfi.Block, tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSetAligned));
-                    goto FAILURE;
-                }
-            }
-
-            if (!RestoreNextFileAligned(tfi, ref fileFailedAction, fileNotify))
-            {
-                m_logger.LogWarning("Failed to restore file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSetAligned));
-                goto FAILURE;
-            }
-
-            // success
-            if (index >= 0)
-                lastIndex = index;
-
-            lastFileFailed = false;
-            m_logger.LogTrace("File >{File}< restored ok", tfi.FileDescr.FullName);
-            continue;
-
-        FAILURE:
-            lastFileFailed = true; // must indicate this so that the tape moves back if we retry
-
-            if (fileFailedAction == FileFailedAction.Retry && tfi != null && tfi.IsValid)
-            {
-                ResetError(); // give the retry a clean slate
-
-                m_logger.LogTrace("Retrying file >{File}< as per file failed action", tfi.FileDescr.FullName);
-                StatsUndoFailure(); // don't double-count
-                goto RETRY;
-            }
-
-            // Latch only a REAL fault
-            if (WentBad)
-                LatchFailure();  // latch on the ORIGINAL error if one occured, abort notwithstanding
-            overallSuccess = false;
-
-            if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
-                continue;
-            else
-                break;
-        }
-
-        NotifySetEnd(fileNotify);
-
-        return overallSuccess;
-    }
-
-    // Restore ALL files from the current set
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    private bool RestoreFilesFromCurrentSetAligned(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
-    {
-        NotifySetStart(fileNotify, TOC.CurrentSetTOC.Count);
-
-        if (!BeginReadContentForCurrentSet(fileNotify))
-        {
-            m_logger.LogWarning("Failed to begin reading content in {Method}", nameof(RestoreFilesFromCurrentSetAligned));
-            return false;
-        }
-        m_logger.LogTrace("Starting restoring all files from current set #{Set}", TOC.CurrentSetIndex);
-
-        bool overallSuccess = true;
-        FileFailedAction fileFailedAction;
-        bool lastFileFailed = false;
-        LastFileSkipped = false;
-        int fileIndex = -1;
-
-        foreach (var tfi in TOC.CurrentSetTOC)
-        {
-            fileIndex++;
-        RETRY:
-            fileFailedAction = FileFailedAction.Skip; // reset to skip to avoid infinite loop
-
-            if (tfi == null || !tfi.IsValid)
-            {
-                m_logger.LogWarning("Invalid file info in {Method}", nameof(RestoreFilesFromCurrentSetAligned));
-                SetError(WIN32_ERROR.ERROR_INVALID_DATA,
-                   $"Invalid file entry in set #{TOC.CurrentSetIndex} — the TOC describes a file that " +
-                   "cannot be located");
-                goto FAILURE;
-            }
-
-            m_logger.LogTrace("Restoring file #{Number} >{File}<", _stats.FilesProcessed + 1, tfi.FileDescr.FullName);
-
-            // move tape if last file was skipped or failed
-            if (LastFileSkipped || lastFileFailed)
-            {
-                if (!Drive.MoveToBlock(tfi.Block))
-                {
-                    m_logger.LogWarning("Failed to move to block {Block} for file >{File}< in {Method}",
-                        tfi.Block, tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSetAligned));
-                    goto FAILURE;
-                }
-            }
-
-            if (!RestoreNextFileAligned(tfi, ref fileFailedAction, fileNotify))
-            {
-                m_logger.LogWarning("Failed to restore file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(RestoreFilesFromCurrentSetAligned));
-                goto FAILURE;
-            }
-
-            // success
-            lastFileFailed = false;
-            m_logger.LogTrace("File >{File}< restored ok", tfi.FileDescr.FullName);
-            continue;
-
-        FAILURE:
-            lastFileFailed = true; // must indicate this so that the tape moves back if we retry
-
-            if (fileFailedAction == FileFailedAction.Retry && tfi != null && tfi.IsValid)
-            {
-                ResetError(); // give the retry a clean slate
-
-                m_logger.LogTrace("Retrying file >{File}< as per file failed action", tfi.FileDescr.FullName);
-                // Block-based positioning handles retry: the next iteration will MoveToBlock(tfi.Block)
-                StatsUndoFailure(); // don't double-count
-                goto RETRY;
-            }
-
-            // Latch only a REAL fault
-            if (WentBad)
-                LatchFailure();  // latch on the ORIGINAL error if one occured, abort notwithstanding
-            overallSuccess = false;
-
-            if (ignoreFailures && fileFailedAction == FileFailedAction.Skip)
-                continue;
-            else
-                break;
-        }
-
-        NotifySetEnd(fileNotify);
-
-        return overallSuccess;
-    }
-
-
     // The context with which we can resume restore on the previous volume
-    private struct TapeRestoreContext(List<TapeFileInfo>[] filesSelected, int currSetIdx, bool ignoreFailures, ITapeFileNotifiable? fileNotify, bool packed)
+    private struct TapeRestoreContext(List<TapeFileInfo>[] filesSelected, int currSetIdx, bool ignoreFailures, ITapeFileNotifiable? fileNotify)
     {
         internal List<TapeFileInfo>[] filesSelected = filesSelected;
         internal readonly bool ignoreFailures = ignoreFailures;
         internal readonly ITapeFileNotifiable? fileNotify = fileNotify;
-        internal readonly bool packed = packed;
 
         internal int initialCurrSetIdx = currSetIdx;
         internal int filesSelectedIdx = filesSelected.Length - 1; // we'll be counting down
@@ -873,18 +525,18 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         TOC.Volume = VolumeToResumeFrom;
         // Ok to proceed with the new volume. Notice: Keep our current TOC, since we're restoring the whole file series using it
 
-        return RestoreFilesFromCurrentSetDownInt(null, MultiVolumeContext.Value.ignoreFailures, MultiVolumeContext.Value.fileNotify, MultiVolumeContext.Value.packed)
+        return RestoreFilesFromCurrentSetDownInt(null, MultiVolumeContext.Value.ignoreFailures, MultiVolumeContext.Value.fileNotify)
             ? TapeResult.OK : FailedOperationResult;
     } // ResumeRestoreOnAnotherVolume()
 
-    private bool RestoreFilesFromCurrentSetDownInt(List<TapeFileInfo>?[]? filesSelected, bool ignoreFailures, ITapeFileNotifiable? fileNotify, bool packed)
+    private bool RestoreFilesFromCurrentSetDownInt(List<TapeFileInfo>?[]? filesSelected, bool ignoreFailures, ITapeFileNotifiable? fileNotify)
     {
-        m_logger.LogTrace("Starting restoring files from current set #{Set} down (packed={Packed})", TOC.CurrentSetIndex, packed);
+        m_logger.LogTrace("Starting restoring files from current set #{Set} down", TOC.CurrentSetIndex);
 
         Debug.Assert(CanResumeFromAnotherVolume || filesSelected != null); // either resuming or restoring from a specified list
 
         TapeRestoreContext rc = CanResumeFromAnotherVolume ? MultiVolumeContext!.Value :
-            new(filesSelected!, TOC.CurrentSetIndex, ignoreFailures, fileNotify, packed);
+            new(filesSelected!, TOC.CurrentSetIndex, ignoreFailures, fileNotify);
 
         // Total file size is fully known upfront from the TOC (unlike backup, where source
         //  files must be scanned in the background) — compute it synchronously, once, on a
@@ -922,15 +574,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 return false;
             }
 
-#pragma warning disable CS0618 // Type or member is obsolete -- FIXME transition period
-            bool result = rc.packed
-                ? ((rc.filesSelected[rc.filesSelectedIdx] != null) ?
-                    RestoreFilesFromCurrentSet(rc.filesSelected[rc.filesSelectedIdx], ignoreFailures, fileNotify) :
-                    RestoreAllFilesFromCurrentSetInt(ignoreFailures, fileNotify))
-                : ((rc.filesSelected[rc.filesSelectedIdx] != null) ?
-                    RestoreFilesFromCurrentSetAligned(rc.filesSelected[rc.filesSelectedIdx], ignoreFailures, fileNotify) :
-                    RestoreFilesFromCurrentSetAligned(ignoreFailures, fileNotify)); // null means restore all files
-#pragma warning restore CS0618 // Type or member is obsolete
+            bool result = rc.filesSelected[rc.filesSelectedIdx] != null
+                ? RestoreFilesFromCurrentSet(rc.filesSelected[rc.filesSelectedIdx], ignoreFailures, fileNotify)
+                : RestoreAllFilesFromCurrentSetInt(ignoreFailures, fileNotify); // null means restore all files
             if (!result)
             {
                 m_logger.LogWarning("{Method}: Inner restore returned false: filesSelectedIdx={Idx}, set #{Set}",
@@ -967,22 +613,6 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     /// <para>The array is indexed newest-first; a <see langword="null"/> entry means all files
     ///  from the corresponding set. Supports multi-volume continuation.</para>
     /// </summary>
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    public TapeResult RestoreFilesFromCurrentSetDownAligned(List<TapeFileInfo>?[] filesSelected, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
-    {
-        m_logger.LogTrace("Starting restoring pre-selected files from current set #{Set} down", TOC.CurrentSetIndex);
-
-        _stats.Reset();
-        _setAnomalies.Clear();
-        ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(filesSelected, ignoreFailures, fileNotify, packed: false)
-            ? TapeResult.OK : FailedOperationResult;
-    } // RestoreFilesFromCurrentSetDownAligned(List<string>)
-
-    /// <summary>
-    /// Packed pendant of <see cref="RestoreFilesFromCurrentSetDownAligned(List{TapeFileInfo}?[], bool, ITapeFileNotifiable?)"/>.
-    ///  Routes per-set content reads through the shared-block read packer.
-    /// </summary>
     public TapeResult RestoreFilesFromCurrentSetDown(List<TapeFileInfo>?[] filesSelected, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
     {
         m_logger.LogTrace("Starting restoring (packed) pre-selected files from current set #{Set} down", TOC.CurrentSetIndex);
@@ -990,64 +620,12 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         _stats.Reset();
         _setAnomalies.Clear();
         ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(filesSelected, ignoreFailures, fileNotify, packed: true)
+        return RestoreFilesFromCurrentSetDownInt(filesSelected, ignoreFailures, fileNotify)
             ? TapeResult.OK : FailedOperationResult;
     }
 
 
-    /// <summary>Restores filtered files from the current set, resolving multi-volume continuation chains.</summary>
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    public TapeResult RestoreFilesFromCurrentSetAligned(ITapeFileFilter? fileFilter, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
-    {
-        m_logger.LogTrace("Starting restoring files from current set #{Set}", TOC.CurrentSetIndex);
-
-        _stats.Reset();
-        _setAnomalies.Clear();
-        ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, fileFilter), ignoreFailures, fileNotify, packed: false)
-            ? TapeResult.OK : FailedOperationResult;
-    } // RestoreFilesFromCurrentSetAligned(ITapeFileFilter?)
-
     /// <summary>Restores filtered files from the current set and its incremental chain.</summary>
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    public TapeResult RestoreFilesFromCurrentSetIncAligned(ITapeFileFilter? fileFilter, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
-    {
-        m_logger.LogTrace("Starting incrementally restoring files from current set #{Set}", TOC.CurrentSetIndex);
-
-        _stats.Reset();
-        _setAnomalies.Clear();
-        ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, fileFilter), ignoreFailures, fileNotify, packed: false)
-            ? TapeResult.OK : FailedOperationResult;
-    } // RestoreFilesFromCurrentSetIncAligned(ITapeFileFilter?)
-
-    /// <summary>Restores all files from the current set (no filter).</summary>
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    public TapeResult RestoreAllFilesFromCurrentSetAligned(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
-    {
-        m_logger.LogTrace("Starting restoring all files from current set #{Set}", TOC.CurrentSetIndex);
-
-        _stats.Reset();
-        _setAnomalies.Clear();
-        ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filter: null), ignoreFailures, fileNotify, packed: false)
-            ? TapeResult.OK : FailedOperationResult;
-    } // RestoreAllFilesFromCurrentSetAligned()
-
-    /// <summary>Restores all files from the current set and its incremental chain (no filter).</summary>
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    public TapeResult RestoreAllFilesFromCurrentSetIncAligned(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
-    {
-        m_logger.LogTrace("Starting incrementally restoring all files from current set #{Set}", TOC.CurrentSetIndex);
-
-        _stats.Reset();
-        _setAnomalies.Clear();
-        ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, filter: null), ignoreFailures, fileNotify, packed: false)
-            ? TapeResult.OK : FailedOperationResult;
-    } // RestoreAllFilesFromCurrentSetIncAligned()
-
-    /// <summary>Packed pendant of <see cref="RestoreFilesFromCurrentSetIncAligned"/>.</summary>
     public TapeResult RestoreFilesFromCurrentSetInc(ITapeFileFilter? fileFilter, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
     {
         m_logger.LogTrace("Starting incrementally restoring (packed) files from current set #{Set}", TOC.CurrentSetIndex);
@@ -1055,11 +633,11 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         _stats.Reset();
         _setAnomalies.Clear();
         ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, fileFilter), ignoreFailures, fileNotify, packed: true)
+        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, fileFilter), ignoreFailures, fileNotify)
             ? TapeResult.OK : FailedOperationResult;
     }
 
-    /// <summary>Packed pendant of <see cref="RestoreAllFilesFromCurrentSetIncAligned"/>.</summary>
+    /// <summary>Restores filtered files from the current set and its incremental chain.</summary>
     public TapeResult RestoreAllFilesFromCurrentSetInc(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
     {
         m_logger.LogTrace("Starting incrementally restoring (packed) all files from current set #{Set}", TOC.CurrentSetIndex);
@@ -1067,7 +645,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         _stats.Reset();
         _setAnomalies.Clear();
         ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, filter: null), ignoreFailures, fileNotify, packed: true)
+        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, filter: null), ignoreFailures, fileNotify)
             ? TapeResult.OK : FailedOperationResult;
     }
 
@@ -1083,60 +661,6 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     /// <param name="fileFilter">Optional file filter (null = all files).</param>
     /// <param name="ignoreFailures">If true, continue past individual file failures.</param>
     /// <param name="fileNotify">Optional progress/error notification callback.</param>
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    public TapeResult RestoreFilesFromSetsAligned(
-        List<int> setIndexes,
-        bool incremental,
-        ITapeFileFilter? fileFilter = null,
-        bool ignoreFailures = true,
-        ITapeFileNotifiable? fileNotify = null)
-    {
-        if (setIndexes.Count == 0)
-            return TapeResult.OK;
-
-        _stats.Reset();
-        _setAnomalies.Clear();
-        ResetLatchedFailure();
-
-        m_logger.LogTrace("Restoring files from {Count} set(s): {Sets}",
-            setIndexes.Count, string.Join(", ", setIndexes.Select(i => $"#{i}")));
-
-        // Build the dictionary expected by TapeTOC.SelectFilesFromSets.
-        //  null value = all files matching the filter for that set.
-        //  When a filter is present, pre-select matching files per set.
-        var checkedFilesBySet = new Dictionary<int, IReadOnlyList<TapeFileInfo>?>(setIndexes.Count);
-        foreach (int idx in setIndexes)
-        {
-            int stdIdx = TOC.SetIndexToStd(idx);
-            if (checkedFilesBySet.ContainsKey(stdIdx))
-                continue; // deduplicate
-
-            if (fileFilter is null)
-            {
-                checkedFilesBySet[stdIdx] = null; // all files
-            }
-            else
-            {
-                // Pre-filter the set's files through the ITapeFileFilter
-                var setTOC = TOC[stdIdx];
-                var matching = setTOC.SelectFiles(fileFilter);
-                checkedFilesBySet[stdIdx] = matching; // null = all match, list = subset
-            }
-        }
-
-        var combined = TOC.SelectFilesFromSets(incremental, checkedFilesBySet);
-
-        // SelectFilesFromSets preserves CurrentSetIndex. Set it to the newest
-        //  selected set for RestoreFilesFromCurrentSetDownAligned, which iterates downward.
-        int newestIdx = checkedFilesBySet.Keys.Select(TOC.SetIndexToStd).Max();
-        TOC.CurrentSetIndex = newestIdx;
-        return RestoreFilesFromCurrentSetDownAligned(combined, ignoreFailures, fileNotify);
-    }
-
-    /// <summary>
-    /// Packed pendant of <see cref="RestoreFilesFromSetsAligned"/>.
-    ///  Routes content reads through the shared-block read packer; supports multi-volume continuation.
-    /// </summary>
     public TapeResult RestoreFilesFromSets(
         List<int> setIndexes,
         bool incremental,
@@ -1189,28 +713,6 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 /// </summary>
 public class TapeFileRestoreAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileRestoreBaseAgent(drive, legacyTOC)
 {
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    protected override bool RestoreFileCoreAligned(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
-    {
-        // Double-buffer tape reads to overlap with file writes
-        using var buffered = new BufferedTapeReadStream(rstream, Drive.BlockSize);
-
-        if (hasher == null)
-        {
-            using var dstFileStream = fileInfo.Create(); // fileInfo.Open(FileMode.OpenOrCreate, FileAccess.Write);
-            buffered.CopyTo(dstFileStream);
-        }
-        else
-        {
-            var dstFileStream = fileInfo.Create(); // fileInfo.Open(FileMode.OpenOrCreate, FileAccess.Write);
-            // Notice we can attach hasher to either rstream or dstFileStream -- we go for dstFileStream since it may get disposed
-            using var hashingStream = new HashingStream(dstFileStream, hasher, ownInner: true); // will dispose dstFileStream
-            buffered.CopyTo(hashingStream);
-        }
-
-        return base.RestoreFileCoreAligned(fileInfo, rstream, hasher);
-    }
-
     protected override bool RestoreFileCore(FileInfo fileInfo, Stream rstream, NonCryptographicHashAlgorithm? hasher)
     {
         // Packer-backed reads come from a small ring cache; no extra buffering needed.
@@ -1246,25 +748,6 @@ public class TapeFileRestoreAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : 
 /// </summary>
 public class TapeFileValidateAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileRestoreBaseAgent(drive, legacyTOC)
 {
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    protected override bool RestoreFileCoreAligned(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
-    {
-        if (hasher == null)
-        {
-            using var dstFileStream = Stream.Null;
-            rstream.CopyTo(dstFileStream);
-        }
-        else
-        {
-            var dstFileStream = Stream.Null;
-            // Notice we can attach hasher to either rstream or dstFileStream -- we go for dstFileStream since it may get disposed
-            using var hashingStream = new HashingStream(dstFileStream, hasher, ownInner: true); // will dispose dstFileStream
-            rstream.CopyTo(hashingStream);
-        }
-
-        return base.RestoreFileCoreAligned(fileInfo, rstream, hasher);
-    }
-
     protected override bool RestoreFileCore(FileInfo fileInfo, Stream rstream, NonCryptographicHashAlgorithm? hasher)
     {
         if (hasher == null)
@@ -1290,33 +773,6 @@ public class TapeFileValidateAgent(TapeDrive drive, TapeTOC? legacyTOC = null) :
 /// </summary>
 public class TapeFileVerifyAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileRestoreBaseAgent(drive, legacyTOC)
 {
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    protected override bool RestoreFileCoreAligned(FileInfo fileInfo, TapeReadStream rstream, NonCryptographicHashAlgorithm? hasher)
-    {
-        // Double-buffer tape reads to overlap with file reads and comparison
-        using var buffered = new BufferedTapeReadStream(rstream, Drive.BlockSize);
-        bool match;
-
-        if (hasher == null)
-        {
-            using var dstFileStream = fileInfo.OpenRead();
-            match = buffered.CompareTo(dstFileStream);
-        }
-        else
-        {
-            using var dstFileStream = fileInfo.OpenRead();
-            // Since we're checking the tape stream, attach the hasher to the buffered tape read
-            using var hashingStream = new HashingStream(buffered, hasher, ownInner: false); // do NOT dispose buffered!
-            match = dstFileStream.CompareTo(hashingStream);
-        }
-
-        if (!match)
-            throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
-                $"Data mismatch vs. source file >{fileInfo.FullName}<");
-
-        return base.RestoreFileCoreAligned(fileInfo, rstream, hasher);
-    }
-
     protected override bool RestoreFileCore(FileInfo fileInfo, Stream rstream, NonCryptographicHashAlgorithm? hasher)
     {
         bool match;

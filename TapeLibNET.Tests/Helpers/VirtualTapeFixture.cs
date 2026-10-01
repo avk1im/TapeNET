@@ -311,7 +311,6 @@ public sealed class VirtualTapeFixture : IDisposable
         TapeHashAlgorithm hashAlgorithm = TapeHashAlgorithm.Crc64,
         uint blockSize = 0,
         ITapeFileNotifiable? notifiable = null,
-        bool useAligned = false,
         TapeCompression compression = TapeCompression.None,
         int compressionLevel = ZstdLevel.Default)
     {
@@ -325,19 +324,11 @@ public sealed class VirtualTapeFixture : IDisposable
 
         using var agent = CreateBackupAgent();
 
-#pragma warning disable CS0618 // Type or member is obsolete -- We test the legacy aligned case as well, also as a comparison to the packed variety
-        bool success = useAligned
-            ? agent.BackupFileListToCurrentSetAligned(
-                newSet: true,
-                fileList,
-                ignoreFailures: true,
-                fileNotify: notifiable)
-            : agent.BackupFileListToCurrentSet(
-                newSet: true,
-                fileList,
-                ignoreFailures: true,
-                fileNotify: notifiable);
-#pragma warning restore CS0618 // Type or member is obsolete
+bool success = agent.BackupFileListToCurrentSet(
+    newSet: true,
+    fileList,
+    ignoreFailures: true,
+    fileNotify: notifiable);
 
         Assert.True(success, "Backup failed");
 

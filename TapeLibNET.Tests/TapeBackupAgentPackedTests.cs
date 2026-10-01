@@ -495,45 +495,4 @@ public abstract class TapeBackupAgentPackedTestsBase
     }
 
     #endregion
-
-
-    #region *** Coexistence with Legacy Path ***
-
-    [Theory]
-    [MemberData(nameof(AllProfiles))]
-    public void Packed_ThenLegacy_BothSetsLandInTOC(DriveProfile profile)
-    {
-        using var tree1 = new TempFileTree(seed: 11);
-        tree1.AddFiles("packed", count: 5, minSize: 100, maxSize: 2 * 1024);
-
-        using var tree2 = new TempFileTree(seed: 22);
-        tree2.AddFiles("legacy", count: 4, minSize: 200, maxSize: 4 * 1024);
-
-        using var fixture = CreateFixture(profile);
-        using var agent = fixture.CreateBackupAgent();
-
-        // Set 1 via packed
-        Assert.True((bool)BackupPacked(agent, fixture.TOC, tree1.Files, description: "Packed"));
-        Assert.True(agent.BackupTOC());
-
-        // Set 2 via legacy
-        fixture.TOC.AddNewSetTOC(0);
-        fixture.TOC.CurrentSetTOC.Description = "Legacy";
-        fixture.TOC.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
-        fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
-        // FIXME transition: this test deliberately exercises the legacy aligned path
-        //  alongside the packed path to verify both can coexist within the same TOC.
-        //  Once the aligned API is removed, this test should be removed as well.
-#pragma warning disable CS0618 // Aligned API is intentionally used for coexistence coverage
-        Assert.True((bool)agent.BackupFileListToCurrentSetAligned(
-            newSet: true, tree2.Files, ignoreFailures: true, fileNotify: null));
-#pragma warning restore CS0618
-        Assert.True(agent.BackupTOC());
-
-        Assert.Equal(2, fixture.TOC.Count);
-        Assert.Equal(tree1.Files.Count, fixture.TOC[1].Count);
-        Assert.Equal(tree2.Files.Count, fixture.TOC[2].Count);
-    }
-
-    #endregion
 }

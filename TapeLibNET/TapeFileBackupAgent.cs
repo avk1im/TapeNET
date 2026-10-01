@@ -330,96 +330,6 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         return true;
     } // BeginWriteContentForCurrentSet()
 
-    // currently used only by the obsolete <cref="BackupFileAligned"/>
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    private TapeWriteStream? OpenWriteContentStream(long length)
-    {
-        // Estimate actual tape footprint via the shared block-alignment formula.
-        //  Use TOC.CurrentSetTOC.ComputeTotalFileSizeOnTape() as the single source of truth
-        //  for bytes already consumed in this set (accounts for per-file block padding).
-        long estimatedTapeSize = (length >= 0)
-            ? TapeSetTOC.EstimateFileSizeOnTape(length, Drive.BlockSize)
-            : length;
-
-        // The aligned path is obsolete, and the value feeds only a coarse pre-check that the packed path no longer enforces,
-        //  therefore we live with the default arguments for TOC.CurrentSetTOC.ComputeTotalFileSizeOnTape()
-        var stream = Manager.ProduceWriteContentStream(estimatedTapeSize, TOC.CurrentSetTOC.ComputeTotalFileSizeOnTape());
-        if (stream == null)
-            SyncErrorFrom(Manager);
-        return stream;
-    }
-
-    // Writes the file data to tape and sets the hash on tfi.
-    //  Does not modify the TOC — the caller appends tfi on success.
-    //  Throws if any failure — for the caller to catch.
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    private void BackupFileAligned(TapeFileInfo tfi)
-    {
-        m_logger.LogTrace("Backing up file >{File}< in {Method}", tfi.FileDescr.FullName, nameof(BackupFileAligned));
-
-        using var wstream = OpenWriteContentStream(tfi.FileDescr.Length) ??
-            throw new TapeIOException(this, this, $"failed to open content write stream for >{tfi.FileDescr.FullName}<");
-
-        try
-        {
-            var hasher = CreateHasher(TOC.CurrentSetTOC.HashAlgorithm);
-
-            TapeSerializer ts = new(wstream);
-            tfi.SerializeHeaderTo(ts);
-            // needn't include header serialization in CRC hashing, since it's validated via DeserializeAndCheckHeaderFrom()
-
-#if DEBUG
-            // Simulate failures for testing error handling
-            if (SimulateFileFailures.ShouldFailNow())
-            {
-                m_logger.LogWarning("SIMULATED failure for file #{Counter} >{File}<",
-                    SimulateFileFailures.Counter, tfi.FileDescr.FullName);
-                throw new TapeIOException((uint)WIN32_ERROR.ERROR_UNHANDLED_EXCEPTION,
-                    $"Simulated backup failure for testing (file #{SimulateFileFailures.Counter})");
-            }
-#endif
-
-            // Double-buffer file data to overlap file reads with tape writes.
-            // Use TapeBackupSourceStream to capture all NTFS streams (DACL, ADS, EA, etc.)
-            //  via BackupRead as an opaque blob, consistent with the packed backup path.
-            var fileInfo = tfi.FileDescr.CreateFileInfo();
-            using (var buffered = new BufferedTapeWriteStream(wstream, Drive.BlockSize))
-            {
-                if (hasher == null)
-                {
-                    using var srcFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
-                    srcFileStream.CopyTo(buffered);
-                }
-                else
-                {
-                    // Note we apply hasher to the file stream since we need to keep tape stream around
-                    var srcFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
-                    using var hashingStream = new HashingStream(srcFileStream, hasher, ownInner: true);
-                    hashingStream.CopyTo(buffered);
-                }
-            } // buffered flushed here, before wstream.Length is read below
-
-            // now the hasher has the hash ready
-            if (hasher != null)
-                tfi.Hash = hasher.GetCurrentHash();
-
-            // wstream was opened fresh for this file, so its Length covers header + blob = full on-tape footprint
-            tfi.SizeOnTape = wstream.Length;
-            BytesBackedup += wstream.Length;
-
-            m_logger.LogTrace("File >{File}< backed up ok", tfi.FileDescr.FullName);
-        }
-        catch
-        {
-            // Mark the write as failed so that TapeStreamManager skips writing the trailing filemark
-            //  — allows the tape to be repositioned to the start of this file for retry or next file
-            wstream.WriteFailed = true;
-            throw;
-        }
-
-    } // BackupFileAligned()
-
-
     /// <summary>Returns <see langword="true"/> if <paramref name="pattern"/> contains <c>*</c> or <c>?</c> wildcards.</summary>
     public static bool HasWildcards(string pattern)
     {
@@ -494,13 +404,12 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     }
 
     // The context with which we can resume backup on the next volume
-    private struct TapeBackupContext(List<string> fileList, bool ignoreFailures, ITapeFileNotifiable? fileNotify, bool incremental, bool packed)
+    private struct TapeBackupContext(List<string> fileList, bool ignoreFailures, ITapeFileNotifiable? fileNotify, bool incremental)
     {
         internal readonly List<string> fileList = fileList;
         internal readonly bool ignoreFailures = ignoreFailures;
         internal readonly ITapeFileNotifiable? fileNotify = fileNotify;
         internal readonly bool incremental = incremental; // preserve original incremental flag across volume swaps
-        internal readonly bool packed = packed;           // dispatches Resume to the packed or legacy path
 
         internal int fileIndex = 0;
         internal bool overallSuccess = true;
@@ -575,290 +484,13 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         TOC.AddContinuationSetTOC(setParams,
             contFromPrevVolume: MultiVolumeContext.Value.prevVolumeHasFiles);
 
-#pragma warning disable CS0618 // Type or member is obsolete -- FIXME: transition period
-        bool ok = MultiVolumeContext.Value.packed
-            ? BackupFilesToCurrentSet(newSet: true)
-            : BackupFilesToCurrentSetAligned(newSet: true);
-#pragma warning restore CS0618 // Type or member is obsolete
-        return ok ? TapeResult.OK : FailedOperationResult;
+        return BackupFilesToCurrentSet(newSet: true) ? TapeResult.OK : FailedOperationResult;
     }
-
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    private bool BackupFilesToCurrentSetAligned(bool newSet = true)
-    {
-        Debug.Assert(MultiVolumeContext != null);
-
-        TapeBackupContext bc = MultiVolumeContext.Value;
-
-        if (bc.fileList.Count == 0)
-        {
-            m_logger.LogWarning("No files found to backup in {Method}", nameof(BackupFilesToCurrentSetAligned));
-            return true; // no files found to back up -> treat as success
-        }
-
-        if (!BeginWriteContentForCurrentSet(newSet, bc.fileNotify)) // start conent writing mode in tape manager so that tape positioning works correctly
-        {
-            LatchFailure();
-            NotifySetEnd(bc.fileNotify);
-            m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSetAligned));
-
-            // We MUST clear MultiVolumeContext to NOT indicate continuation to next volume!
-            MultiVolumeContext = null;
-
-            return false;
-        }
-
-        m_logger.LogTrace("Continuing (multi-volume) backup from file #{Number} >{File}<",
-            bc.fileIndex + 1, bc.fileList[bc.fileIndex]);
-
-        // The main loop thru the file list
-        for (; bc.fileIndex < bc.fileList.Count; bc.fileIndex++) // use for int instead if foreach to know the index for multi-volume backup
-        {
-            var fileName = bc.fileList[bc.fileIndex];
-
-            FileInfo fileInfo = new (fileName);
-            // Create the real TapeFileInfo upfront — BackupFile() only handles tape I/O,
-            //  TOC.Append() happens here on success.
-            // Note: tfi.Block captures Drive.CurrentBlock at construction time — used to
-            //  rewind the tape on failure so the next file starts at the correct position.
-            TapeFileInfo tfi = new(TOC.GenerateUID(), Drive.CurrentBlock, fileInfo);
-
-            // Track whether the file made it onto the tape AND into the TOC. Only then are
-            //  we allowed to call NotifyPostProcessFile — and we MUST do so AFTER the
-            //  per-file catch block so that a TapeAbortRequestedException raised by the
-            //  notification cannot trigger the failure-cleanup path below (which rewinds
-            //  the tape and would silently corrupt the just-written file: header and/or
-            //  body would get clobbered by the next tape write, while the TOC entry would
-            //  still claim the file is present).
-            bool fileBackedUp = false;
-
-            try
-            {
-                // first check for abort request
-                ThrowIfAbortRequested(nameof(BackupFileListToCurrentSetAligned));
-
-                if (!NotifyPreProcessFile(bc.fileNotify, tfi))
-                {
-                    NotifyFileSkipped(bc.fileNotify, tfi);
-                    m_logger.LogTrace("File #{Number} >{File}< skipped per pre-processor request", _stats.FilesProcessed, fileName);
-                    continue; // not a failure, yet post-processing not called
-                }
-
-                if (!fileInfo.Exists)
-                    throw new FileNotFoundException($"File not found", fileName);
-
-                m_logger.LogTrace("Backing up file #{Number} >{File}< of length {Length}",
-                    _stats.FilesProcessed + 1, fileName, Helpers.BytesToString(fileInfo.Length));
-
-                if (TOC.CurrentSetTOC.Incremental && TOC.IsFileUptodateInc(fileInfo))
-                {
-                    NotifyFileSkipped(bc.fileNotify, tfi);
-                    m_logger.LogTrace("File #{Number} >{File}< found up-to-date in an incremental set -> skipping", _stats.FilesProcessed, fileName);
-                    continue; // not a failure, yet post-processing not called
-                }
-
-                BackupFileAligned(tfi);
-
-                // success — append to TOC; post-process notification is deferred until
-                //  AFTER the catch block so that an abort raised during notification
-                //  cannot run the per-file rewind/cleanup logic.
-                TOC.CurrentSetTOC.Append(tfi);
-                fileBackedUp = true;
-            }
-            catch (TapeAbortRequestedException)
-            {
-                // Abort raised before BackupFile completed (i.e. from ThrowIfAbortRequested
-                //  at the top of the try, or rethrown by NotifyPreProcessFile). Nothing was
-                //  written for this file, no TOC entry was appended, so no tape rewind and
-                //  no NotifyFileFailed call (which would skew stats and itself rethrow).
-                //  We do NOT propagate the exception out of this method — the public API
-                //  is contractually bool/TapeResult based.
-                m_logger.LogTrace("{Method}: Abort requested before file #{Number} >{File}< was written",
-                    nameof(BackupFilesToCurrentSetAligned), _stats.FilesProcessed + 1, fileName);
-                // A callback threw to request the abort — the only channel a void notification has.
-                //  Record it so FailedOperationResult reports ERROR_CANCELLED and the service classifies
-                //  the operation as aborted, exactly as when the flag was set directly.
-                IsAbortRequested = true; // the callback wrapper might've already set it - but we want to be sure
-                bc.overallSuccess = false;
-                // no need for caller-requested abort to LatchFailure()
-                break;
-            }
-            catch (Exception ex)
-            {
-                SetError(ex);
-
-                m_logger.LogWarning("{Method}: File #{Number} >{File}< backup failed. Exception: {Ex}",
-                    nameof(BackupFilesToCurrentSetAligned), _stats.FilesProcessed + 1, fileName, ex);
-
-                if (IsEOM || ex is TapeIOException { IsEOM: true })
-                {
-                    // Rewind the tape over the partially-written file so that its remnants
-                    //  do not consume space the volume's TOC may still need to fit on this
-                    //  volume (e.g. when there is no Initiator partition). No TOC entry was
-                    //  appended for this file, so the rewind is safe.
-                    if (!Drive.MoveToBlock(tfi.Block))
-                        m_logger.LogWarning("Failed to rewind tape to block {Block} after EOM on file >{File}<",
-                            tfi.Block, fileName);
-                    else
-                        m_logger.LogTrace("Media rewound to block {Block} after EOM on file >{File}<",
-                            tfi.Block, fileName);
-
-                    // Set up continuation on the next volume for multi-volume backup
-                    m_logger.LogTrace("Setting up multi-volume backup from file #{Number} >{File}<",
-                        _stats.FilesProcessed + 1, bc.fileList[bc.fileIndex]);
-                    BytesBackedupMarker = BytesBackedup;
-
-                    // Record whether the current set has files — needed by ResumeBackupToNextVolume
-                    //  to decide contFromPrevVolume (an empty set removed by RemoveLastEmptySet
-                    //  means the next volume should NOT be marked as continued from this one)
-                    bc.prevVolumeHasFiles = TOC.CurrentSetTOC.Count > 0;
-
-                    // Snapshot the current set's metadata so the next volume can create a
-                    //  fresh continuation set without depending on the previous-volume set
-                    //  instance (which may be removed if it ended up empty).
-                    bc.continuationSetParams = TOC.CurrentSetTOC.ToParams();
-
-                    // Make sure to set MultiVolumeContext before calling NotifyFileFailed()
-                    //  so that CanResumeToNextVolume indicates true already
-                    MultiVolumeContext = bc;
-
-                    // Report the file as failed (stats updated by NotifyFileFailed),
-                    //  then undo the failure since the file will be re-tried on next volume
-                    if (NotifyFileFailed(bc.fileNotify, tfi, ex) == FileFailedAction.Abort)
-                        break;
-                    StatsUndoFailure(); // the file will be re-tried on next volume
-
-                    NotifySetEnd(bc.fileNotify);
-
-                    TOC.ContinuedOnNextVolume = true;
-                    Debug.Assert(CanResumeToNextVolume); // we're ready to continue with multi-volume backup
-                    return false;
-                }
-
-                // Rewind tape to the block where this file started, so the next file
-                //  (retried or skipped) starts at the correct position without a dead block gap.
-                //  Safe because no TOC entry was appended for this file (BackupFile threw
-                //  before TOC.Append, so fileBackedUp stayed false).
-                if (!Drive.MoveToBlock(tfi.Block))
-                    m_logger.LogWarning("Failed to rewind tape to block {Block} after failed file >{File}<",
-                        tfi.Block, fileName);
-                else
-                    m_logger.LogTrace("Media rewound to block {Block} after failed file >{File}<",
-                        tfi.Block, fileName);
-
-                var retryAction = NotifyFileFailed(bc.fileNotify, tfi, ex);
-                if (retryAction == FileFailedAction.Abort)
-                {
-                    bc.overallSuccess = false;
-                    LatchFailure(); // latch on the ORIGINAL error, abort notwithstanding
-                    break;
-                }
-                else if (retryAction == FileFailedAction.Retry)
-                {
-                    ResetError(); // give the retry a clean slate
-
-                    bc.fileIndex--; // decrement to retry same file
-                    StatsUndoFailure(); // don't double-count
-                    continue;
-                }
-                // else Skip - continue to next file
-
-                bc.overallSuccess = false;
-                LatchFailure();  // latch on the ORIGINAL error
-                if (!bc.ignoreFailures)
-                    break;
-            } // catch
-
-            // Post-process notification is deferred to here so it runs OUTSIDE the per-file
-            //  catch block. If the notification throws TapeAbortRequestedException, we just
-            //  break the loop — we do NOT rewind the tape or call NotifyFileFailed, since
-            //  the file is already fully written and committed to the TOC.
-            if (fileBackedUp)
-            {
-                try
-                {
-                    NotifyPostProcessFile(bc.fileNotify, tfi);
-                }
-                catch (TapeAbortRequestedException)
-                {
-                    m_logger.LogTrace("{Method}: Abort requested while post-processing file #{Number} >{File}<",
-                        nameof(BackupFilesToCurrentSetAligned), _stats.FilesProcessed, fileName);
-                    // A callback threw to request the abort — the only channel a void notification has.
-                    //  Record it so FailedOperationResult reports ERROR_CANCELLED and the service classifies
-                    //  the operation as aborted, exactly as when the flag was set directly.
-                    IsAbortRequested = true; // the callback wrapper might've already set it - but we want to be sure
-                    bc.overallSuccess = false;
-                    // no need for caller-requested abort to LatchFailure()
-                    break;
-                }
-
-                m_logger.LogTrace("File #{Number} >{File}< backed up ok", _stats.FilesProcessed, fileName);
-            }
-
-        } // foreach bc.fileIndex
-
-        BytesBackedupMarker = BytesBackedup;
-        NotifySetEnd(bc.fileNotify);
-
-        MultiVolumeContext = null; // clear multi-volume context -- if we got here we're done with [multi-volume] backup
-
-        return bc.overallSuccess;
-    }
-
-    /// <summary>
-    /// Expands file/directory patterns via <see cref="BuildFileNameList"/> and backs them up to the current set.
-    /// </summary>
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    public TapeResult BackupFilesToCurrentSetAligned(bool newSet, List<string> fileAndDirectoryPatterns, bool recurseSubdirs, bool ignoreFailures = true,
-        ITapeFileNotifiable? fileNotify = null)
-    {
-        var fileList = BuildFileNameList(fileAndDirectoryPatterns, recurseSubdirs);
-
-        return BackupFileListToCurrentSetAligned(newSet, fileList, ignoreFailures, fileNotify);
-    } // BackupFilesToCurrentSetAligned()
-
-    /// <summary>
-    /// Backs up a pre-built file list to the current set. Resets statistics and starts
-    ///  batch notifications. Supports multi-volume continuation via <see cref="ResumeBackupToNextVolume"/>.
-    /// </summary>
-    /// <param name="newSet">Whether to create a new content set or append to the existing one.</param>
-    /// <param name="fileList">Fully resolved file paths to back up.</param>
-    /// <param name="ignoreFailures">When <see langword="true"/>, continues after per-file errors.</param>
-    /// <param name="fileNotify">Optional callback for progress, skip/retry/abort decisions.</param>
-    [Obsolete("Use the non-Aligned (Packed) version")]
-    public TapeResult BackupFileListToCurrentSetAligned(bool newSet, List<string> fileList, bool ignoreFailures = true,
-        ITapeFileNotifiable? fileNotify = null)
-    {
-        if (fileList.Count == 0)
-        {
-            m_logger.LogWarning("No files found to backup in {Method}", nameof(BackupFilesToCurrentSetAligned));
-            return TapeResult.OK; // no files found to back up -> treat as success
-        }
-
-        _stats.Reset();
-        _setAnomalies.Clear();
-        ResetLatchedFailure();
-        MediaHeaderStamped = false; // reset for the new series (per-series, cross-volume artifact)
-
-        // Do NOT call NotifySetStart(fileNotify, fileList.Count) here -- we do so once per set,
-        //  ONLY in our private BackupFilesToCurrentSet()
-
-        m_logger.LogTrace("Starting backing up {Count} files to current set #{Set}", fileList.Count, TOC.CurrentSetIndex);
-        if (TOC.CurrentSetTOC.Incremental)
-            m_logger.LogTrace("Performing incremental backup to incremental set #{Set}", TOC.CurrentSetIndex);
-
-        MultiVolumeContext = new(fileList, ignoreFailures, fileNotify, TOC.CurrentSetTOC.Incremental, packed: false);
-
-        return BackupFilesToCurrentSetAligned(newSet)
-            ? TapeResult.OK : FailedOperationResult;
-    } // BackupFilesToCurrentSetAligned()
-
 
     // =====================================================================
-    //  Packed (Phase 2) backup pendants
+    //  Packed backup
     //
-    //  Mirror BackupFileAligned / BackupFilesToCurrentSetAligned / BackupFileListToCurrentSetAligned
-    //  but route content writes through the TapeFileWritePacker so multiple
+    //  Route
     //  small files can share tape blocks. The packer surfaces final
     //  TapeAddress values asynchronously via Manager.FilesCommitted, so:
     //    * TapeFileInfo for each file is constructed with its REAL address
@@ -994,7 +626,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         {
             LatchFailure();
             NotifySetEnd(bc.fileNotify);
-            m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSetAligned));
+            m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSet));
 
             // We MUST clear MultiVolumeContext to NOT indicate multivolume continuation!
             MultiVolumeContext = null;
@@ -1283,7 +915,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     } // BackupFilesToCurrentSet()
 
     /// <summary>
-    /// Packed pendant of <see cref="BackupFilesToCurrentSetAligned(bool, List{string}, bool, bool, ITapeFileNotifiable)"/>.
+    /// Expands file/directory patterns and backs them up to the current set.
     ///  Routes content writes through the shared-block packer.
     /// </summary>
     public TapeResult BackupFilesToCurrentSet(bool newSet, List<string> fileAndDirectoryPatterns, bool recurseSubdirs,
@@ -1295,7 +927,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     }
 
     /// <summary>
-    /// Packed pendant of <see cref="BackupFileListToCurrentSetAligned(bool, List{string}, bool, ITapeFileNotifiable)"/>.
+    /// Backs up a pre-built file list to the current set.
     ///  Routes content writes through the shared-block packer; supports multi-volume continuation.
     /// </summary>
     public TapeResult BackupFileListToCurrentSet(bool newSet, List<string> fileList, bool ignoreFailures = true,
@@ -1323,7 +955,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         if (TOC.CurrentSetTOC.Incremental)
             m_logger.LogTrace("Performing incremental (packed) backup to incremental set #{Set}", TOC.CurrentSetIndex);
 
-        MultiVolumeContext = new(fileList, ignoreFailures, fileNotify, TOC.CurrentSetTOC.Incremental, packed: true);
+        MultiVolumeContext = new(fileList, ignoreFailures, fileNotify, TOC.CurrentSetTOC.Incremental);
 
         var result = BackupFilesToCurrentSet(newSet)
             ? TapeResult.OK : FailedOperationResult;

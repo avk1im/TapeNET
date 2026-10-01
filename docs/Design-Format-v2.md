@@ -748,12 +748,17 @@ assertions, `TocVersion` expectations in scan tests.
 
 Branch `format-v2`. Each step ends with `dotnet build` and the named tests green; commit per step. Follow
 `.github/copilot-instructions.md`: C# 12, file-scoped namespaces, primary constructors, `m_` fields in
-TapeLibNET, constants for magic numbers, nullable discipline (explain every `!`). Preserve existing comments
-(unless they need updating). Do not change behaviour outside a step's scope.
+TapeLibNET, constants for magic numbers, nullable discipline (explain every `!`).
+
+Doc comments for public APIs and important protected / private methods. Preserve existing comments
+(unless they need updating). Comment on counterintiuitive code passages. Ensure code readability
+(naming, spacing between code passages, line length, `var` vs. explicit type).
+
+Do not change behaviour outside a step's scope.
 
 ### Phase 0 — Groundwork and freeze
 
-1. **Fix `FlushAndDisposePacker`** (§8.3) [DONE]. Add a test that the buffer pool is disposed after `EndWriteContent`.
+1. **Fix `FlushAndDisposePacker`** (§8.3) [DONE].
 2. **Remove the aligned agent APIs** (§8.4), the `packed` context flags and `useAligned` from the fixture;
    delete aligned-only tests. Full suite green.
 3. **`LegacyFormatWriter`** in `TapeLibNET.Tests/Helpers/` — today's `TapeSerializer` write half, `TapeFramer.Pack`,
