@@ -458,7 +458,17 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
                 ownsStream: false,
                 m_contentMetadataStream,
                 ownsMetadataStream: false,
-                LoggerFactory);
+                LoggerFactory,
+                out var contentProbe,
+                out var contentReason);
+
+            // Never create or truncate over metadata we cannot read
+            if (contentProbe == VirtualMediaStateProbe.Unreadable)
+            {
+                SetError(WIN32_ERROR.ERROR_FILE_CORRUPT, $"Content media: {contentReason}");
+                m_logger.LogWarning("{Prefix}: LoadMedia failed - content media: {Reason}", LogPrefix, contentReason);
+                return false;
+            }
         }
 
         if (m_contentMedia != null)
@@ -525,7 +535,18 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
                     ownsStream: false,
                     m_initiatorMetadataStream,
                     ownsMetadataStream: false,
-                    LoggerFactory);
+                    LoggerFactory,
+                    out var initiatorProbe,
+                    out var initiatorReason);
+
+                if (initiatorProbe == VirtualMediaStateProbe.Unreadable)
+                {
+                    m_contentMedia?.Dispose();
+                    m_contentMedia = null;
+                    SetError(WIN32_ERROR.ERROR_FILE_CORRUPT, $"Initiator media: {initiatorReason}");
+                    m_logger.LogWarning("{Prefix}: LoadMedia failed - initiator media: {Reason}", LogPrefix, initiatorReason);
+                    return false;
+                }
             }
 
             if (m_initiatorMedia != null)

@@ -16,6 +16,9 @@ public enum TapeMarkType : byte
     EndOfData = 3  // Used as return value only, never stored in virtual blocks
 }
 
+/// <summary>Outcome of probing a virtual media metadata stream.</summary>
+public enum VirtualMediaStateProbe { Absent, Loaded, Unreadable }
+
 // Semantics:
 //  "logical block" -- a data block visible to the caller. "Block" names mean logical block
 //  "virtual block" -- our internal implementation, never exposed to caller.
@@ -296,16 +299,38 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         Stream? metadataStream,
         bool ownsMetadataStream = true,
         ILoggerFactory? loggerFactory = null)
+        => TryCreateFromState(stream, ownsStream, metadataStream, ownsMetadataStream, loggerFactory, out _, out _);
+
+    /// <summary>
+    /// Probing variant: distinguishes absent metadata from unreadable metadata, so callers never
+    ///  mistake a corrupt or newer-format state for "no state" and wipe the medium.
+    /// </summary>
+    public static VirtualTapeMedia? TryCreateFromState(
+        Stream stream,
+        bool ownsStream,
+        Stream? metadataStream,
+        bool ownsMetadataStream,
+        ILoggerFactory? loggerFactory,
+        out VirtualMediaStateProbe probe,
+        out string? reason)
     {
+        reason = null;
         if (metadataStream == null || metadataStream.Length == 0)
+        {
+            probe = VirtualMediaStateProbe.Absent;
             return null;
+        }
 
         try
         {
-            return new VirtualTapeMedia(stream, ownsStream, metadataStream, ownsMetadataStream, loggerFactory);
+            var media = new VirtualTapeMedia(stream, ownsStream, metadataStream, ownsMetadataStream, loggerFactory);
+            probe = VirtualMediaStateProbe.Loaded;
+            return media;
         }
-        catch
+        catch (Exception ex)
         {
+            probe = VirtualMediaStateProbe.Unreadable;
+            reason = $"virtual media metadata unreadable: {ex.Message}";
             return null;
         }
     }
