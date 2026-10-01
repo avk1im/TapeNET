@@ -519,29 +519,13 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
             }
             else
             {
-                using var hashingStream = new HashingStream(rstream, hasher, ownInner: false);
-                var deserializer = new LegacyDeserializer(hashingStream);
-                var toc = deserializer.Deserialize<TapeTOC>();
+                // Legacy loader detects the layout and verifies the CRC-64 (throws IOException on mismatch)
+                var toc = LegacyTocReader.Load(rstream);
                 if (toc != null)
                 {
-                    // Careful! First get the hash, only then read the hash bytes from the stream!
-                    byte[] hashBytesCheck1 = hasher.GetCurrentHash();
-                    byte[]? hashBytesCheck2 = deserializer.DeserializeBytes(hasher.HashLengthInBytes);
-                    if (hashBytesCheck2?.SequenceEqual(hashBytesCheck1) ?? false)
-                    {
-                        // CRC check passed
-                        TOC.CopyFrom(toc);
-                        BytesRestored += rstream.Length;
-/*#if DEBUG
-                        // TEST FIXME: deserialize a 55 MB dummy array
-                        m_logger.LogTrace("***** Deserializing dummy TOC array");
-                        byte[]? dummy = deserializer.DeserializeBytes(55 * 1024 * 1024);
-#endif*/
-                        return true;
-                    }
-                    else
-                        throw new IOException($"CRC check failed for TOC. Hasher: {c_hashForTOC}",
-                            (int)WIN32_ERROR.ERROR_CRC);
+                    TOC.CopyFrom(toc);
+                    BytesRestored += rstream.Length;
+                    return true;
                 }
                 else
                 {
@@ -802,22 +786,21 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
             }
             else
             {
-                using var hashingStream = new HashingStream(fs, hasher, ownInner: false);
-                var deserializer = new LegacyDeserializer(hashingStream);
-                var toc = deserializer.Deserialize<TapeTOC>();
+                TapeTOC? toc;
+                try
+                {
+                    toc = LegacyTocReader.Load(fs); // detects layout, verifies CRC-64
+                }
+                catch (IOException ex) when (ex.HResult == (int)WIN32_ERROR.ERROR_CRC)
+                {
+                    m_logger.LogWarning("CRC check failed for TOC file {Path}", filePath);
+                    SetError(WIN32_ERROR.ERROR_CRC, $"CRC check failed for TOC file. Hasher: {c_hashForTOC}");
+                    return FailedOperationResult;
+                }
                 if (toc == null)
                 {
                     m_logger.LogWarning("Failed to deserialize TOC from file {Path}", filePath);
                     SetError(WIN32_ERROR.ERROR_INVALID_DATA, "Failed to deserialize TOC from file");
-                    return FailedOperationResult;
-                }
-
-                byte[] hashBytesCheck1 = hasher.GetCurrentHash();
-                byte[]? hashBytesCheck2 = deserializer.DeserializeBytes(hasher.HashLengthInBytes);
-                if (!(hashBytesCheck2?.SequenceEqual(hashBytesCheck1) ?? false))
-                {
-                    m_logger.LogWarning("CRC check failed for TOC file {Path}", filePath);
-                    SetError(WIN32_ERROR.ERROR_CRC, $"CRC check failed for TOC file. Hasher: {c_hashForTOC}");
                     return FailedOperationResult;
                 }
 

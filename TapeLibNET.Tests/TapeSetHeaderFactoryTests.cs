@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using TapeLibNET;
 using Xunit;
@@ -28,7 +28,7 @@ public class TapeSetHeaderFactoryTests
     /// </remarks>
     private static void AddDummyFile(TapeTOC toc, string name) =>
         toc.CurrentSetTOC.Append(
-            new TapeFileInfo(toc.GenerateUID(), TapeAddress.Zero, new TapeFileDescriptor(name)));
+            new TapeFileInfo(toc.CurrentSetTOC.GenerateFileId(), TapeAddress.Zero, new TapeFileDescriptor(name)));
 
     /// <summary>
     /// Builds a TOC laid out across volumes: <c>setsPerVolume[0]</c> sets on volume 1,

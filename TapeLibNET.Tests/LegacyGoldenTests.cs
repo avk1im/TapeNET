@@ -70,7 +70,7 @@ public class LegacyGoldenTests
         Assert.Equal(expected.Volume, toc.Volume);
         Assert.Equal(expected.ContinuedOnNextVolume, toc.ContinuedOnNextVolume);
         Assert.Equal(expected.CreationTime.Ticks, toc.CreationTime.Ticks);
-        Assert.Equal(expected.NextUid, toc.GenerateUID());
+        Assert.True(toc.LoadedFromLegacy);
         Assert.Equal(expected.Sets.Count, toc.Count);
 
         for (int i = 0; i < expected.Sets.Count; i++)
@@ -89,7 +89,7 @@ public class LegacyGoldenTests
             {
                 var ef = es.Files[j];
                 var tfi = set[j];
-                Assert.Equal(ef.Uid, (ulong)tfi.UID);
+                Assert.Equal(ef.Uid, (ulong)tfi.FileId);
                 Assert.Equal(ef.Block, tfi.Address.Block);
                 Assert.Equal(ef.Offset, tfi.Address.Offset);
                 Assert.Equal(ef.FullName, tfi.FileDescr.FullName);
@@ -113,7 +113,7 @@ public class LegacyGoldenTests
         Assert.Equal(expected.Description, toc.Description);
         Assert.Equal(expected.Sets.Count, toc.Count);
         Assert.Equal(expected.Sets[0].Files.Count, toc[0].Count);
-        Assert.Equal(expected.NextUid, toc.GenerateUID());
+        Assert.True(toc.LoadedFromLegacy);
     }
 
     [Fact]

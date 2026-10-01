@@ -169,7 +169,7 @@ public class TapeTOCRoundTripTests
                     : null;
 
                 toc.CurrentSetTOC.Append(MakeFileInfo(
-                    toc.GenerateUID(), new TapeAddress(block, offset), path, fileLength, hash));
+                    toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(block, offset), path, fileLength, hash));
             }
         }
 
@@ -194,7 +194,7 @@ public class TapeTOCRoundTripTests
     /// </summary>
     private static void AssertFileInfoEqual(TapeFileInfo expected, TapeFileInfo actual)
     {
-        Assert.Equal(expected.UID, actual.UID);
+        Assert.Equal(expected.FileId, actual.FileId);
         Assert.Equal(expected.Address, actual.Address);
         AssertDescriptorEqual(expected.FileDescr, actual.FileDescr);
 
@@ -434,10 +434,10 @@ public class TapeTOCRoundTripTests
         set.BlockSize = 16384;
 
         // Add files with various properties
-        set.Append(MakeFileInfo(toc.GenerateUID(), TapeAddress.Zero, @"C:\Data\file1.txt", 100));
-        set.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(10L, 100U), @"C:\Data\file2.doc", 5000,
+        set.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), TapeAddress.Zero, @"C:\Data\file1.txt", 100));
+        set.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(10L, 100U), @"C:\Data\file2.doc", 5000,
             hash: [0xAA, 0xBB, 0xCC, 0xDD]));
-        set.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(20L, 200U), @"C:\Data\sub\file3.bin", 1_000_000));
+        set.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(20L, 200U), @"C:\Data\sub\file3.bin", 1_000_000));
 
         var result = SerializeAndDeserialize(toc);
 
@@ -453,18 +453,18 @@ public class TapeTOCRoundTripTests
         // First set — non-incremental (required: first set can't be incremental)
         toc.AddNewSetTOC(1);
         toc.CurrentSetTOC.Description = "Full 1";
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), TapeAddress.Zero, @"C:\A.txt", 100));
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), TapeAddress.Zero, @"C:\A.txt", 100));
 
         // Second set — non-incremental (AddNewSetTOC guards incremental with Count > 1,
         //  so we need at least 2 existing sets before adding an incremental one)
         toc.AddNewSetTOC(1);
         toc.CurrentSetTOC.Description = "Full 2";
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(100L, 10U), @"C:\B.txt", 200));
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(100L, 10U), @"C:\B.txt", 200));
 
         // Third set — incremental (Count == 2, guard passes)
         toc.AddNewSetTOC(1, incremental: true);
         toc.CurrentSetTOC.Description = "Incremental";
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(200L, 20U), @"C:\C.txt", 300));
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(200L, 20U), @"C:\C.txt", 300));
 
         var result = SerializeAndDeserialize(toc);
 
@@ -481,11 +481,11 @@ public class TapeTOCRoundTripTests
 
         // First set
         toc.AddNewSetTOC(1);
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), TapeAddress.Zero, @"C:\A.txt", 100));
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), TapeAddress.Zero, @"C:\A.txt", 100));
 
         // Second set — continued from previous volume
         toc.AddContinuationSetTOC(toc.CurrentSetTOC.ToParams(), contFromPrevVolume: true);
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(100L, 10U), @"C:\B.txt", 200));
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(100L, 10U), @"C:\B.txt", 200));
         var result = SerializeAndDeserialize(toc);
 
         Assert.Equal(2, result.Count);
@@ -503,7 +503,7 @@ public class TapeTOCRoundTripTests
             toc.AddNewSetTOC(1);
             toc.CurrentSetTOC.Description = algo.ToString();
             toc.CurrentSetTOC.HashAlgorithm = algo;
-            toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), TapeAddress.Zero,
+            toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), TapeAddress.Zero,
                 $@"C:\Hash\{algo}.dat", 100));
         }
 
@@ -617,8 +617,8 @@ public class TapeTOCRoundTripTests
         Assert.Equal(2, toc.Volume);
         Assert.True(toc.ContinuedOnNextVolume);
 
-        // UID continuity intact — proves stream position landed correctly.
-        Assert.Equal(5UL, toc.GenerateUID());
+        // The legacy TOC-wide UID seed is superseded by per-set NextFileId; the loaded TOC is flagged legacy.
+        Assert.True(toc.LoadedFromLegacy);
     }
 
     [Theory]
@@ -686,20 +686,20 @@ public class TapeTOCRoundTripTests
         toc.AddNewSetTOC(3);
         toc.CurrentSetTOC.Description = "Small";
         for (int i = 0; i < 3; i++)
-            toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(i * 10L, (uint)i), 
+            toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(i * 10L, (uint)i), 
                 $@"C:\Set1\file{i}.txt", 100 + i));
 
         // Set 2: 1 file
         toc.AddNewSetTOC(1);
         toc.CurrentSetTOC.Description = "Tiny";
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(1000L, 100U),
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(1000L, 100U),
             @"C:\Set2\only.txt", 999));
 
         // Set 3: 10 files
         toc.AddNewSetTOC(10);
         toc.CurrentSetTOC.Description = "Bigger";
         for (int i = 0; i < 10; i++)
-            toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(2000L + i * 5, (uint)i * 2),
+            toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(2000L + i * 5, (uint)i * 2),
                 $@"C:\Set3\data{i:D3}.bin", 500 + i * 100));
 
         var result = SerializeAndDeserialize(toc);
@@ -733,9 +733,9 @@ public class TapeTOCRoundTripTests
         toc.AddNewSetTOC(3);
 
         // Generate some UIDs
-        var uid1 = toc.GenerateUID();
-        var uid2 = toc.GenerateUID();
-        var uid3 = toc.GenerateUID();
+        var uid1 = toc.CurrentSetTOC.GenerateFileId();
+        var uid2 = toc.CurrentSetTOC.GenerateFileId();
+        var uid3 = toc.CurrentSetTOC.GenerateFileId();
         Assert.Equal(uid1 + 1, uid2);
         Assert.Equal(uid2 + 1, uid3);
 
@@ -746,7 +746,7 @@ public class TapeTOCRoundTripTests
         var result = SerializeAndDeserialize(toc);
 
         // After round-trip, the next UID should continue from where we left off
-        var nextUid = result.GenerateUID();
+        var nextUid = result.CurrentSetTOC.GenerateFileId();
         Assert.Equal(uid3 + 1, nextUid);
     }
 
@@ -798,7 +798,7 @@ public class TapeTOCRoundTripTests
         toc.CurrentSetTOC.Description = "Empty Files";
 
         for (int i = 0; i < 5; i++)
-            toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(i * 10L, (uint)i), 
+            toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(i * 10L, (uint)i), 
                 $@"C:\Empty\file{i}.tmp", length: 0));
 
         var result = SerializeAndDeserialize(toc);
@@ -818,11 +818,11 @@ public class TapeTOCRoundTripTests
         string longDir = @"C:\" + string.Join(@"\", Enumerable.Repeat("SubDirectory", 20));
         string longFile = longDir + @"\VeryLongFileName_" + new string('X', 200) + ".dat";
 
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), TapeAddress.Zero, longFile, 1000));
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), TapeAddress.Zero, longFile, 1000));
 
         string deepPath = @"C:\" + string.Join(@"\", Enumerable.Range(1, 50).Select(i => $"d{i}"));
         deepPath += @"\file.txt";
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(10L, 1U), deepPath, 500));
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(10L, 1U), deepPath, 500));
         var result = SerializeAndDeserialize(toc);
 
         Assert.Equal(2, result[1].Count);
@@ -845,7 +845,7 @@ public class TapeTOCRoundTripTests
         ];
 
         for (int i = 0; i < paths.Length; i++)
-            toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(i * 10L, (uint)i), paths[i], 1024));
+            toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(i * 10L, (uint)i), paths[i], 1024));
 
         var result = SerializeAndDeserialize(toc);
 
@@ -868,7 +868,7 @@ public class TapeTOCRoundTripTests
         ];
 
         for (int i = 0; i < paths.Length; i++)
-            toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(i * 10L, (uint)i), paths[i], 512));
+            toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(i * 10L, (uint)i), paths[i], 512));
 
         var result = SerializeAndDeserialize(toc);
 
@@ -886,7 +886,7 @@ public class TapeTOCRoundTripTests
         toc.CurrentSetTOC.Description = "500 Files";
 
         for (int i = 0; i < fileCount; i++)
-            toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(i * 5L, (uint)i),
+            toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(i * 5L, (uint)i),
                 $@"C:\Backup\file_{i:D4}.dat", 1024 + i));
 
         var result = SerializeAndDeserialize(toc);
@@ -922,7 +922,7 @@ public class TapeTOCRoundTripTests
         for (int i = 0; i < hash.Length; i++)
             hash[i] = (byte)(0x10 + i);
 
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), TapeAddress.Zero, @"C:\hash.dat", 4096, hash));
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), TapeAddress.Zero, @"C:\hash.dat", 4096, hash));
 
         var result = SerializeAndDeserialize(toc);
 
@@ -941,7 +941,7 @@ public class TapeTOCRoundTripTests
 
         var result = SerializeAndDeserialize(toc);
 
-        Assert.Equal(ulong.MaxValue - 1, result[1][0].UID);
+        Assert.Equal(ulong.MaxValue - 1, result[1][0].FileId);
         Assert.Equal(long.MaxValue, result[1][0].Address.Block);
         Assert.Equal(uint.MaxValue, result[1][0].Address.Offset);
         Assert.Equal(long.MaxValue, result[1][0].FileDescr.Length);
@@ -969,7 +969,7 @@ public class TapeTOCRoundTripTests
         toc.AddNewSetTOC(1);
 
         var descr = new TapeFileDescriptor(string.Empty) { Length = 0 };
-        toc.CurrentSetTOC.Append(new TapeFileInfo(toc.GenerateUID(), TapeAddress.Zero, descr));
+        toc.CurrentSetTOC.Append(new TapeFileInfo(toc.CurrentSetTOC.GenerateFileId(), TapeAddress.Zero, descr));
 
         var result = SerializeAndDeserialize(toc);
 
@@ -1063,9 +1063,9 @@ public class TapeTOCRoundTripTests
 
         var toc = fixture.TOC;
         toc.AddNewSetTOC(3);
-        var uid1 = toc.GenerateUID();
-        var uid2 = toc.GenerateUID();
-        var uid3 = toc.GenerateUID();
+        var uid1 = toc.CurrentSetTOC.GenerateFileId();
+        var uid2 = toc.CurrentSetTOC.GenerateFileId();
+        var uid3 = toc.CurrentSetTOC.GenerateFileId();
         toc.CurrentSetTOC.Append(MakeFileInfo(uid1, TapeAddress.Zero, @"C:\A.txt"));
         toc.CurrentSetTOC.Append(MakeFileInfo(uid2, new TapeAddress(10L, 1U), @"C:\B.txt"));
         toc.CurrentSetTOC.Append(MakeFileInfo(uid3, new TapeAddress(20L, 2U), @"C:\C.txt"));
@@ -1073,7 +1073,7 @@ public class TapeTOCRoundTripTests
         var reloaded = SaveAndReloadTOCAllProfiles(fixture, profile);
 
         // UID generation should continue from where it left off
-        var nextUid = reloaded.GenerateUID();
+        var nextUid = reloaded.CurrentSetTOC.GenerateFileId();
         Assert.Equal(uid3 + 1, nextUid);
     }
 
@@ -1088,7 +1088,7 @@ public class TapeTOCRoundTripTests
         toc.CurrentSetTOC.Description = "200 Files";
 
         for (int i = 0; i < 200; i++)
-            toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(i * 5L, (uint)i),
+            toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(i * 5L, (uint)i),
                 $@"C:\Backup\file_{i:D4}.dat", 1024 + i));
 
         fixture.TOC.CopyFrom(toc);
@@ -1120,7 +1120,7 @@ public class TapeTOCRoundTripTests
         ];
 
         for (int i = 0; i < paths.Length; i++)
-            toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(i * 10L, (uint)i), paths[i], 1024));
+            toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(i * 10L, (uint)i), paths[i], 1024));
 
         fixture.TOC.CopyFrom(toc);
         var reloaded = SaveAndReloadTOCAllProfiles(fixture, profile);
@@ -1198,8 +1198,7 @@ public class TapeTOCRoundTripTests
 
         // Modify the original after copying
         original.AddNewSetTOC(1);
-        original.CurrentSetTOC.Append(MakeFileInfo(original.GenerateUID(), new TapeAddress(999L, 777U), @"C:\New.txt"));
-
+        original.CurrentSetTOC.Append(MakeFileInfo(original.CurrentSetTOC.GenerateFileId(), new TapeAddress(999L, 777U), @"C:\New.txt"));
         // Copy should be unaffected
         Assert.Equal(2, copy.Count);
         Assert.NotEqual(original.Count, copy.Count);
@@ -1223,7 +1222,7 @@ public class TapeTOCRoundTripTests
     {
         var toc = new TapeTOC("No Reuse");
         toc.AddNewSetTOC();
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), TapeAddress.Zero, @"C:\A.txt"));
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), TapeAddress.Zero, @"C:\A.txt"));
         Assert.Equal(1, toc.Count);
 
         // Adding now should create a new set (the last set has files)
@@ -1251,7 +1250,7 @@ public class TapeTOCRoundTripTests
     {
         var toc = new TapeTOC("Has Files");
         toc.AddNewSetTOC();
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), TapeAddress.Zero, @"C:\file.txt"));
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), TapeAddress.Zero, @"C:\file.txt"));
         Assert.False(toc.IsEmpty);
     }
 
@@ -1330,7 +1329,7 @@ public class TapeTOCRoundTripTests
     {
         var toc = new TapeTOC("Remove");
         toc.AddNewSetTOC();
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), TapeAddress.Zero, @"C:\A.txt"));
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), TapeAddress.Zero, @"C:\A.txt"));
         toc.AddNewSetTOC();
         Assert.Equal(2, toc.Count);
 
@@ -1361,7 +1360,7 @@ public class TapeTOCRoundTripTests
         var toc = new TapeTOC("UID Zero");
 
         // First UID should be 1 (0 is reserved as invalid)
-        var uid = toc.GenerateUID();
+        var uid = toc.CurrentSetTOC.GenerateFileId();
         Assert.NotEqual(0UL, uid);
         Assert.Equal(1UL, uid);
     }
@@ -1373,7 +1372,7 @@ public class TapeTOCRoundTripTests
 
         var uids = new ulong[100];
         for (int i = 0; i < uids.Length; i++)
-            uids[i] = toc.GenerateUID();
+            uids[i] = toc.CurrentSetTOC.GenerateFileId();
 
         // All UIDs should be unique and sequential
         for (int i = 1; i < uids.Length; i++)
@@ -1413,9 +1412,9 @@ public class TapeTOCRoundTripTests
         toc.CurrentSetTOC.BlockSize = 1024;
 
         // File 1: 100 bytes → header + 100 = ~112 bytes → 1 block = 1024
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), TapeAddress.Zero, @"C:\A.txt", 100));
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), TapeAddress.Zero, @"C:\A.txt", 100));
         // File 2: 2000 bytes → header + 2000 = ~2012 bytes → 2 blocks = 2048
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(10L, 1U), @"C:\B.txt", 2000));
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(10L, 1U), @"C:\B.txt", 2000));
 
         long totalSize = toc.CurrentSetTOC.ComputeTotalFileSizeOnTape();
         Assert.True(totalSize > 0);
@@ -1495,7 +1494,7 @@ public class TapeTOCRoundTripTests
         toc.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
         toc.CurrentSetTOC.BlockSize = 16384;
         for (int i = 0; i < 3; i++)
-            toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(i * 10L, (uint)i),
+            toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(i * 10L, (uint)i),
                 $@"C:\Data\file{i}.txt", 1000 + i * 100));
 
         // Session 2: Another full backup (establishes Count > 1 for incremental guard)
@@ -1503,9 +1502,9 @@ public class TapeTOCRoundTripTests
         toc.CurrentSetTOC.Description = "Full Backup 2";
         toc.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.XxHash64;
         toc.CurrentSetTOC.BlockSize = 32768;
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(100L, 10U),
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(100L, 10U),
             @"C:\Data\extra1.txt", 800));
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(110L, 11U),
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(110L, 11U),
             @"C:\Data\extra2.txt", 900));
 
         // Session 3: Incremental backup (Count == 2, guard passes)
@@ -1513,9 +1512,9 @@ public class TapeTOCRoundTripTests
         toc.CurrentSetTOC.Description = "Incremental 1";
         toc.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.XxHash3;
         toc.CurrentSetTOC.BlockSize = 32768;
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(500L, 50U),
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(500L, 50U),
             @"C:\Data\file0.txt", 1100)); // updated file
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(510L, 51U),
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(510L, 51U),
             @"C:\Data\newfile.txt", 2000)); // new file
 
         // Session 4: Another full backup
@@ -1524,7 +1523,7 @@ public class TapeTOCRoundTripTests
         toc.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
         toc.CurrentSetTOC.BlockSize = 16384;
         for (int i = 0; i < 5; i++)
-            toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(1000 + i * 20L, 100U + (uint)i * 5U),
+            toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(1000 + i * 20L, 100U + (uint)i * 5U),
                 $@"C:\Data\v2_file{i}.dat", 5000 + i * 500));
 
         // Save and reload — SeqFilemarks needs combined content+TOC write in one session
@@ -1589,7 +1588,7 @@ public class TapeTOCRoundTripTests
             ContinuedOnNextVolume = true
         };
         toc.AddNewSetTOC();
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), TapeAddress.Zero, @"C:\file.txt"));
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), TapeAddress.Zero, @"C:\file.txt"));
 
         var result = SerializeAndDeserialize(toc);
 
@@ -1607,12 +1606,12 @@ public class TapeTOCRoundTripTests
 
         // Set on volume 1
         toc.AddNewSetTOC();
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), TapeAddress.Zero, @"C:\A.txt"));
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), TapeAddress.Zero, @"C:\A.txt"));
 
         // Simulated volume 2 set
         toc.Volume = 2;
         toc.AddContinuationSetTOC(toc.CurrentSetTOC.ToParams(), contFromPrevVolume: true);
-        toc.CurrentSetTOC.Append(MakeFileInfo(toc.GenerateUID(), new TapeAddress(100L, 10U), @"C:\B.txt"));
+        toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(100L, 10U), @"C:\B.txt"));
 
         var result = SerializeAndDeserialize(toc);
 

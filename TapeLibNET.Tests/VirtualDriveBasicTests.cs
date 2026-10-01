@@ -1,4 +1,4 @@
-using TapeLibNET.Tests.Helpers;
+﻿using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
@@ -486,7 +486,7 @@ public class VirtualDriveBasicTests
         toc.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.Crc64;
         toc.CurrentSetTOC.BlockSize = 16384;
         toc.CurrentSetTOC.Append(new TapeFileInfo(
-            toc.GenerateUID(), address: TapeAddress.Zero,
+            toc.CurrentSetTOC.GenerateFileId(), address: TapeAddress.Zero,
             new TapeFileDescriptor("C:\\dummy1.txt") { Length = 100 }));
 
         // Now adding set 2 will actually create a new set (set 1 is non-empty)
@@ -495,7 +495,7 @@ public class VirtualDriveBasicTests
         toc.CurrentSetTOC.HashAlgorithm = TapeHashAlgorithm.XxHash3;
         toc.CurrentSetTOC.BlockSize = 32768;
         toc.CurrentSetTOC.Append(new TapeFileInfo(
-            toc.GenerateUID(), address: TapeAddress.Zero,
+            toc.CurrentSetTOC.GenerateFileId(), address: TapeAddress.Zero,
             new TapeFileDescriptor("C:\\dummy2.txt") { Length = 200 }));
 
         // Save and reload

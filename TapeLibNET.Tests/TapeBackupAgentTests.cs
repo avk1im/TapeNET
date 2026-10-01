@@ -339,9 +339,9 @@ public abstract class TapeBackupAgentTestsBase
         var uids = new HashSet<ulong>();
         foreach (var tfi in fixture.TOC[1])
         {
-            Assert.True(uids.Add(tfi.UID),
-                $"Duplicate UID {tfi.UID} for file {tfi.FileDescr.FullName}");
-            Assert.NotEqual(0UL, tfi.UID);
+            Assert.True(uids.Add(tfi.FileId),
+                $"Duplicate UID {tfi.FileId} for file {tfi.FileDescr.FullName}");
+            Assert.NotEqual(0UL, tfi.FileId);
         }
     }
 

@@ -745,7 +745,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 FileInfo fileInfo = new(fileName);
                 // Address field is unused on the packed path -- the real address comes
                 //  from FilesCommitted. Use Zero as a placeholder.
-                TapeFileInfo template = new(TOC.GenerateUID(), TapeAddress.Zero, fileInfo);
+                TapeFileInfo template = new(TOC.CurrentSetTOC.GenerateFileId(), TapeAddress.Zero, fileInfo);
 
                 try
                 {
