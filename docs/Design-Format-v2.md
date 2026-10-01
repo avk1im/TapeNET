@@ -1,6 +1,6 @@
 # Design: On-Tape Format 2.1 — Clean Cut with Read-Only Legacy Support
 
-**Status:** Proposed — v2 for implementation. **Branch:** `format-v2` — lands before `encryption`.
+**Status:** Proposed — v3 for implementation. **Branch:** `format-v2` — lands before `encryption`.
 **Last updated:** 2026-10-01
 
 ---
@@ -161,6 +161,16 @@ CRC-64 (8 bytes, over every byte above)
 A *sequence* of records, not one enclosing record: no writer needs the TOC's total length up front, and
 file entries stream straight to tape. The CRC-64, the dual-copy strategy and the fixed 16 KiB TOC block
 stay as today. The TOC's first block begins with `TNTH` at byte 0, which is what identifies it (§5.7).
+
+**`TNTE` — TOC end**
+
+| Tag | Field | Type | Default | Notes |
+|---|---|---|---|---|
+| 1 | `SetCount` | varuint | — required | repeats `TNTH` tag 8; a mismatch refuses the copy |
+| 2 | `TotalFileCount` | varuint | — required | sum of every set's `FileCount` |
+
+`TNTE` positively marks the end of the set sequence: a reader stops on `TNTE`, never on "looks like no
+more sets", and a truncated copy (no `TNTE`) is refused before the CRC is even compared.
 
 ### 5.2 `TNTH` — TOC header
 
@@ -383,8 +393,9 @@ checkpointing** once the frame outgrows the run block — the run then can no lo
 samples cost 16 bytes each; delta-coded samples on a regular cadence cost a few bytes each, so a run of
 a given block size can checkpoint several times more samples before hitting that limit.
 
-To confirm against `TapeCalibrationCheckpoint.cs` (not uploaded): the field list above is taken from
-its constructor `(RunId, Index, BytesWritten, EarlyWarning?, Samples)`.
+Confirmed against `TapeCalibrationCheckpoint.cs`: the record is `(Guid RunId, int Index, long
+BytesWritten, (long, long)? EarlyWarning, IReadOnlyList<(long, long)> Samples)`; the legacy body is
+`signature, guid, int32, int64, bool [, int64, int64], int32 count, count × (int64, int64)`.
 
 **Scan Media:** a `TNCP` block is identified positively. The scanner reports it as a calibration
 fragment instead of `Unknown` — a small gain for mapping a calibration cartridge.
@@ -497,8 +508,11 @@ Each maps to the same in-memory types the 2.1 reader produces.
 
 **Legacy timestamps.** Calibration headers were written with `DateTime.UtcNow` ticks → read as UTC.
 TOC, set and file times were written as local ticks → read as `Local`, then `ToUniversalTime()`. Media
-and set headers take their `CreatedUtc` from the TOC's times, so they follow the TOC's interpretation —
-to confirm against `TapeTOC.CreateHeader` / `CreateSetHeader`.
+and set headers take their `CreatedUtc` from the TOC's times (`CreatedUtc = CreationTime` /
+`setTOC.CreationTime`, both `DateTime.Now`) — confirmed: despite the name, legacy media / set header
+`CreatedUtc` holds **local** ticks. The legacy header reader therefore converts it exactly like the
+legacy TOC reader does, so identity checks comparing a legacy header against a (legacy or upgraded)
+TOC keep matching (§15, R1).
 
 ### 7.2 Two legacy TOC layouts, one version number
 
@@ -734,8 +748,194 @@ Then `encryption` rebases onto `format-v2`.
 
 ## 14. Remaining Checks During Implementation
 
-1. **`TapeCalibrationCheckpoint.cs`** — confirm the `TNCP` field list (§5.9) against the class body.
-2. **`TapeTOC.CreateHeader` / `CreateSetHeader`** — confirm which times feed legacy media / set header
-   `CreatedUtc` (§7.1).
+1. ~~`TapeCalibrationCheckpoint.cs`~~ — confirmed (§5.9).
+2. ~~`TapeTOC.CreateHeader` / `CreateSetHeader`~~ — confirmed: local ticks (§7.1).
 3. **Aligned write path** — this design keeps it working with 2.1 file headers. Deleting it is a
    separate decision; the cut is a natural moment.
+
+---
+
+## 15. Review Amendments (normative — they refine §4–§9)
+
+**R1 — Legacy time conversion is one function.** `LegacyTime.FromLocalTicks(long)` =
+`new DateTime(ticks, Local).ToUniversalTime()`, used by the legacy TOC, set, file-entry, media-header and
+set-header readers alike. Legacy calibration times use `FromUtcTicks`. Identity checks (`MediaId`,
+`CreatedUtc`) between a legacy BOM header and an upgraded 2.1 TOC then still agree, because both values
+went through the same conversion. Tests: `Format_LegacyTape_IdentityAfterUpgrade` under two time zones.
+
+**R2 — UTC leaks into consumers.** Moving to UTC changes semantics beyond TapeLibNET:
+- `FclTapeFileFilter` must expose **local** times through `IFclFileInfo` (FCL relative dates such as
+  `today-7d` and absolute dates are local by spec).
+- Incremental up-to-date detection compares the TOC time against `FileInfo.LastWriteTimeUtc`, never the
+  local getter.
+- TapeWinNET / TapeConNET display paths call `ToLocalTime()`; gRPC DTOs carry UTC (`Timestamp` is UTC
+  already — verify the mapping no longer double-converts).
+
+**R3 — The critical bit belongs to the tag, not the value.** A reader matches fields on `Number`
+(ignoring the bit) once known; the bit matters only for unknown numbers. Writers emit a tag's bit
+consistently. `DataFormat` (tag 11) is therefore **always** written critical when present. Separately:
+**an unknown value of a known enum field that drives interpretation** (`DataFormat`, `Compression`,
+`Codec`, `HashAlgorithm`, `TNFH.Flags`, future `Encryption`) refuses the record (`Unparseable`).
+
+**R4 — Nested record encoding.** A field holding a nested record (`TNST`/13 `File`, `TNST` `KeyEnvelope`)
+carries the **complete** nested record (magic + version + length + body) as its `Value`. The outer field
+`Length` must equal the nested envelope's total length; a mismatch refuses the record. Field groups
+that are not records (`TNCH`/6 `Plan`) carry a bare `Field*` body.
+
+**R5 — Bounded allocation.** Declared lengths are never trusted for allocation: `string`/`bytes`
+lengths are capped (`MaxStringBytes = 64 KiB`, `MaxBytesField = 16 MiB`), `BodyLength` of a streamed
+record is checked against the remaining input where known, and the reader enforces end-of-body exactly
+(overrun and underrun both refuse). Nested-record depth is capped at 4.
+
+**R6 — `TNTH` must fit its block.** `Description` in `TNTH` is clamped with the existing `ClampUtf8`
+helper to 8 KiB; `WrittenBy` to 256 bytes. The writer asserts `TNTH` length ≤ TOC block size − 64.
+
+**R7 — Minor version semantics.** Readers never gate on `Minor`; it is informational (diagnostics and
+`TocVersion` reporting). New non-critical fields do not require a minor bump; a minor bump marks a
+release that introduced new *critical* tags, so error messages can name the needed version.
+
+**R8 — Identification wording.** §5.7's "bytes 2–3 are zero" holds for 16 KiB header blocks but not
+for large calibration run blocks. The safe statement: a legacy frame length is < 2^24, so its **byte 3 is
+zero**, while every 2.1 magic has a letter at byte 3. The dispatch tests the full 4-byte magic.
+
+**R9 — Legacy TOC detection memory.** §7.2 buffers a whole legacy TOC copy. Bound it: buffer up to
+`LegacyTocMaxInMemory = 256 MiB`; beyond that spill to a temporary file stream and re-parse from it.
+The 2.1 path stays fully streamed.
+
+**R10 — Front coding is per set and per pass.** The `CountingStream` measuring pass and the real pass
+must run the identical front-coding state machine; implement it once in `TapeNameFrontCoder` (stateful,
+`Reset()` per set) and use it in both passes and in the reader.
+
+**R11 — `.tapetoc` hash.** `SaveTOCToFile` keeps the trailing CRC-64; `LoadTOCFromFile` dispatches on
+the first bytes (`TNTH` vs. legacy). An unknown `TN` magic in a `.tapetoc` reports "written by a newer
+TapeNET" rather than "corrupt".
+
+---
+
+## 16. Detailed Implementation Plan (for GitHub Copilot)
+
+Work on branch `format-v2`. Each step ends with `dotnet build` and the named tests green; commit per
+step. Follow `.github/copilot-instructions.md` (C# 12, file-scoped namespaces, primary constructors,
+`m_` fields in TapeLibNET, constants for magic numbers, nullable discipline). Do not change behaviour
+outside the step's scope.
+
+### Phase 0 — Freeze legacy
+
+1. **Add `TapeLibNET.Tests/Helpers/LegacyFormatWriter.cs`.** Copy today's `TapeSerializer` write half,
+   `TapeFramer.Pack`, and every `SerializeTo` body (TOC, set, file entry, media / set / calibration
+   headers, `TapeCalibrationRunHeader`, checkpoint, 12-byte file header) verbatim as static methods.
+   Add a `Layout` switch (`A`, `B`) and a `withMediaId` switch for the TOC.
+2. **Add `GoldenGenerator` test (category `Golden`, skipped by default)** that, on the *current* build,
+   writes every golden of §11.1 into `TapeLibNET.Tests/Golden/Legacy/` (binary files, plus a
+   `*.expected.json` with the hand-checkable field values). Virtual tape images use the existing
+   virtual-drive image export.
+3. **Run it once, check in the goldens**, mark them `CopyToOutputDirectory=PreserveNewest` in
+   `TapeLibNET.Tests.csproj`.
+4. **Add `LegacyGoldenTests`** asserting that the *current* readers load every golden and match the
+   JSON. This test must stay green through every later phase (it then exercises `Legacy/`).
+
+### Phase 1 — Format core (`TapeLibNET/Format/`)
+
+5. **`TapeFormat.cs`** — constants: magics (`ReadOnlySpan<byte>` u8 literals), `Major = 2`,
+   `Minor = 1`, per-record nested static classes of tag numbers, caps from R5, `FileHeaderSize = 16`,
+   `LegacyFileHeaderSize = 12`; enum `TapeDataFormat { Legacy = 1, V2 = 2 }`;
+   `TapeFormatException` (message + `FormatErrorKind { NewerMajor, UnknownCritical, MissingRequired,
+   Duplicate, Overrun, Underrun, BadValue, UnknownKind }`).
+6. **`TapePrimitives.cs`** — static span-based encode/decode for §4.1 (`varuint` with overlong / >10-byte
+   rejection, ZigZag `varint`, LE fixed ints via `BinaryPrimitives`, `f64`, strict `bool`, UTF-8 with
+   `throwOnInvalidBytes`, `guid`, `timestamp` → `DateTimeKind.Utc`). Stream helpers use `ReadExactly`.
+7. **`TapeRecordWriter.cs`** — wraps a `Stream`; `BeginRecord(magic)` / `EndRecord()` with an
+   `ArrayPool`-backed buffer stack for small records; `WriteField(tag, value)` overloads per type with
+   default elision helpers (`WriteFieldIfNot(tag, value, default)`); `WriteNestedRecord<T>(tag, T)`
+   (R4); `WriteGroup(tag, Action<TapeRecordWriter>)` for `Plan`. Critical bit via `TapeTag.Critical(n)`.
+8. **`CountingStream.cs`** — write-only `Stream` that counts bytes; used for the set measuring pass.
+9. **`TapeRecordReader.cs`** — `ReadEnvelope(expectedMagic)` (major check, R7), field iterator
+   `bool TryNextField(out int number, out bool critical)`, typed `Read*` for the current value,
+   `Skip()`, `RefuseUnknown()` (R3), `SeenTags` bitset for duplicates and `RequireTags(params int[])`,
+   `ReadNestedRecord<T>()`, end-of-body enforcement and caps (R5). Works over a `Stream` (TOC) and over
+   `ReadOnlySpan<byte>` (framed blocks).
+10. **`ITapeRecord.cs`** — `ITapeRecord<TSelf>` and `ITapeFramedRecord<TSelf>` per §8.1.
+11. **`TapeNameFrontCoder.cs`** (R10) — `Encode(string full, out int prefix, out string suffix)` with
+    surrogate back-off; `Decode(int prefix, string suffix)`; `Reset()`.
+12. **`TapeSampleCoder.cs`** — delta coding of calibration samples (§5.9).
+13. **Tests `FormatPrimitivesTests`, `FormatEnvelopeTests`, `FrontCoderTests`, `SampleCoderTests`**
+    covering every bullet of §11.2 plus R3–R5.
+
+### Phase 2 — Legacy readers (`TapeLibNET/Legacy/`, all `internal`)
+
+14. **Move `TapeDeserializer` → `Legacy/LegacyDeserializer.cs`**; replace the single `Read` in
+    `DeserializeBytes` with `ReadExactly`; fix `Deserialize<List,T>` to throw on a `null` item instead
+    of dropping it. Add `LegacyTime` (R1).
+15. **`LegacyFramer.cs`** — today's `TapeFramer` unpack half, verbatim.
+16. **`LegacyHeaderReader.cs`** — preamble + kind byte, media (tolerant `HasSetHeaders`), set,
+    calibration, and `TapeCalibrationRunHeader` (lifted from the `#if LEGACY_…` block); converts times
+    per R1.
+17. **`LegacyCheckpointReader.cs`**, **`LegacyFileHeader.cs`** (12-byte `Check`), **`LegacyIdentify.cs`**
+    (today's `TryPeek` + offset-4 probe verbatim).
+18. **`LegacyTocReader.cs`** — §7.2 algorithm: buffer (R9), try layout B then A, CRC-64 anchor,
+    plausibility, header versions `0x0101`/`0x0102`; produces `TapeTOC` with every set
+    `DataFormat = Legacy`.
+19. **Switch `LegacyGoldenTests` to the `Legacy/` readers; add `LegacyReaderTests`** (§11.4 except the
+    2.1 round trip, which lands in Phase 3).
+
+### Phase 3 — TOC on 2.1
+
+20. **`TapeTOC.cs`** — add `TapeSetTOC.DataFormat` (default `V2`); switch `DateTime.Now` →
+    `DateTime.UtcNow`; add `WrittenBy`. Implement `WriteTo`/`ReadFrom` for TOC header, set (two-pass
+    via `CountingStream`, R10), file entry (front coding), `TNTE`. Keep public API shapes.
+21. **`Format/TapeTocFormat.cs`** — `Write(Stream, TapeTOC)` (sequence §5.1, TNTH clamp R6) and
+    `Read(Stream)` with cross-checks (§9, `TNTE`).
+22. **`Format/TapeFormatDispatch.cs`** — `ReadToc(Stream)`: peek 4 bytes; `TNTH` → `TapeTocFormat`,
+    other `TN` → newer-build error, else `LegacyTocReader`.
+23. **`TapeAgentBase`** — `BackupTOCCore` / `SaveTOCToFile` use `TapeTocFormat.Write` inside the existing
+    `HashingStream`; `RestoreTOCCore` / `LoadTOCFromFile` / `RestoreTOCAt` use `ReadToc` (R11).
+    `TapeTOC.TryPeek` dispatches (§8.4).
+24. **`Format/TapeFileHeader.cs`** (16-byte `TNFH`, `Write`, `Check` refusing unknown flags);
+    `TapeFileInfo.EstimateSerializedHeaderSize(TapeDataFormat)`; update all call sites in `TapeTOC.cs`
+    and `TapeFileRestoreAgent.cs`.
+25. **Backup agents** write `TNFH`; **restore agents** pick the check per `CurrentSetTOC.DataFormat`
+    (§6.1), including the aligned paths.
+26. **UTC consumers (R2)** — file timestamps captured / applied via `…Utc` APIs; incremental compare;
+    `FclTapeFileFilter` local view; TapeWinNET / TapeConNET display; gRPC mapping.
+27. **TOC capacity estimator** — conservative 2.1 estimate (no shared prefix, max varint widths).
+28. **Delete product `TapeSerializer` write half**; fix compile errors; mechanically update the
+    existing suite (§11.6). Add `Format_TimeZoneShift`, `Format_TocSize_Smaller`, legacy → 2.1 → reload.
+
+### Phase 4 — Framer, headers, identification
+
+29. **`TapeFramer.cs`** — §8.3 API; 2.1 frame (§5.6) with bounds-before-trust; `TryUnpack` dispatches to
+    `LegacyFramer` + `ReadLegacy` when byte 0–1 ≠ `TN`.
+30. **`TapeHeader` hierarchy** — shared tags 1–3; `WriteTo`/`ReadFrom`; magic ↔ `TapeHeaderKind`;
+    `ReadFrom` dispatch replaces `ConstructFrom`; `ReadLegacy` forwards to `LegacyHeaderReader`;
+    remove `ReadSetHeadersFlag` from the product.
+31. **`TapeHeaderBlock.Identify.cs`** — §5.7 dispatch (R8); `CarriesRecordSignature` update; doc comment
+    in `TapeHeaderBlock.cs`.
+32. **`TapeScanner.Identify.cs`** — `TocVersion = 0x0201`, `TNCP` fragment kind, newer-record fragment.
+33. **Tests** `FramerTests` (every `FrameStatus`), `IdentifyBlockTests` matrix (§11.3).
+
+### Phase 5 — Calibration
+
+34. **`TapeCalibrationHeader`** → `TNCH` with nested `Plan` group; **`TapeCalibrationCheckpoint`** →
+    `TNCP` with `TapeSampleCoder`; `TapeCalibrationFramer` follows `TapeFramer`.
+35. **`TapeCalibrator`** — remove `#if LEGACY_TapeCalibrationRunHeader`; `ReadRecord<T>` constraint →
+    `ITapeFramedRecord<T>`; resume walks accept both checkpoint families.
+36. **Tests** `Format_Calibration_ResumeLegacyRun`, `Format_Calibration_CheckpointHeadroom`; full
+    calibration suite green.
+
+### Phase 6 — Mixed media and services
+
+37. **`TapeServiceBase*`** — one-time log *"TOC upgraded to format 2.1 …"* when a legacy-loaded TOC is
+    first written (flag on `TapeTOC`: `LoadedFromLegacy`).
+38. **`MixedMediaTests`** — every row of §11.5 × 4 drive profiles, plus
+    `Format_LegacyTape_IdentityAfterUpgrade` (R1) and `Format_NewerRecord_Refused` (unknown critical tag
+    in a TOC and a header).
+39. **Full solution test run** (`TapeLibNET.Tests`, `TapeConNET.Tests`, `FclNET.Tests`) green.
+
+### Phase 7 — Documentation
+
+40. **`docs/TapeNET-Format-2.md`** — normative spec extracted from §4–§5 and §15, with byte-level
+    examples generated from the 2.1 goldens.
+41. **Update** `TapeNET-Context-Primer.md` (format section, test counts), Design-Compression §4–5 note,
+    Design-TapeHeader "known wart" note, Design-Encryption pointer (§10).
+42. **Add 2.1 goldens** (`TapeLibNET.Tests/Golden/V21/`) generated by the finished build, with a test
+    that byte-compares fresh output to them — this freezes 2.1 the way Phase 0 froze legacy.
