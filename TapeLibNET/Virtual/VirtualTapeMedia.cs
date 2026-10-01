@@ -252,6 +252,41 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
         // Load full state from metadata
         metadataStream.Position = 0;
+
+        // Dispatch on the first bytes: format 2.1 record, else the legacy serializer layout
+        Span<byte> head = stackalloc byte[4];
+        int headRead = metadataStream.Read(head);
+        metadataStream.Position = 0;
+        if (headRead == head.Length && Format.TapeFormat.IsV2(head))
+        {
+            VirtualMediaStateRecord state;
+            try
+            {
+                state = Format.TapeFrame.ReadInline<VirtualMediaStateRecord>(metadataStream);
+            }
+            catch (Format.TapeFormatException ex)
+            {
+                throw new FormatException(ex.Message, ex);
+            }
+
+            m_minBlockSize = state.MinBlockSize;
+            m_maxBlockSize = state.MaxBlockSize;
+            m_defaultBlockSize = state.DefaultBlockSize;
+            m_blockSize = state.DefaultBlockSize;
+            m_virtualBlocks.AddRange(state.Rebuild(stream.Length));   // validates ranges and cross-checks
+            m_capacity = (long)state.Capacity;
+            m_name = state.Name;
+            m_bytesWritten = (long)state.BytesWritten;
+
+            m_currentBlock = 0;
+            m_currentVirtualBlockIndex = 0;
+            m_stateDirty = false;
+
+            m_logger.LogTrace("{Prefix}: Loaded state with {Count} virtual blocks, {Bytes} bytes written",
+                LogPrefix, m_virtualBlocks.Count, m_bytesWritten);
+            return;
+        }
+
         var deserializer = new TapeDeserializer(metadataStream);
 
         // Read and validate header
@@ -990,21 +1025,9 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         try
         {
             m_metadataStream.Position = 0;
-            var serializer = new TapeSerializer(m_metadataStream);
-
-            // Signature and version
-            serializer.SerializeSignature(StateVersion);
-
-            // Configuration
-            serializer.Serialize(m_minBlockSize);
-            serializer.Serialize(m_maxBlockSize);
-            serializer.Serialize(m_defaultBlockSize);
-            serializer.Serialize(m_capacity);
-            serializer.Serialize(m_name);
-
-            // Data state
-            serializer.Serialize(m_bytesWritten);
-            serializer.Serialize<List<VirtualTapeBlock>, VirtualTapeBlock>(m_virtualBlocks);
+            var state = VirtualMediaStateRecord.Create(m_minBlockSize, m_maxBlockSize, m_defaultBlockSize,
+                m_capacity, m_bytesWritten, TotalBlockCount, m_name, m_virtualBlocks);
+            Format.TapeFrame.WriteInline(m_metadataStream, state);
 
             m_metadataStream.Flush();
             m_metadataStream.SetLength(m_metadataStream.Position);
