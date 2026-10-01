@@ -1,3 +1,4 @@
+﻿using TapeLibNET.Legacy;
 namespace TapeLibNET;
 
 /// <summary>What one block turned out to be. Every value but <see cref="Foreign"/> is a POSITIVE finding.</summary>
@@ -125,26 +126,7 @@ public static partial class TapeHeaderBlock
     /// </para>
     /// </remarks>
     public static IdentifiedBlock IdentifyBlock(byte[] block, int length)
-    {
-        if (block is null || length <= 0 || length > block.Length)
-            return IdentifiedBlock.Foreign;
-
-        // 1. A TOC copy: a raw stream, verified by its structure — not by a header failing to parse.
-        if (TapeTOC.TryPeek(block, length, out ushort tocVersion, out Guid tocMediaId))
-            return new(HeaderBlockIdentity.TocCopy, TocVersion: tocVersion, TocMediaId: tocMediaId);
-
-        // 2. A framed record: ours whether or not it verifies.
-        if (HasSignatureAt(block, length, FramedPayloadOffset, out _))
-        {
-            var status = TapeFramer.TryUnpack(block, length, out TapeHeader? header);
-
-            return status == TapeFramer.FrameStatus.Ok && header is not null
-                ? new(HeaderBlockIdentity.Header, Header: header, FrameStatus: status)
-                : new(HeaderBlockIdentity.DamagedRecord, FrameStatus: status);
-        }
-
-        return IdentifiedBlock.Foreign;
-    }
+    => LegacyIdentify.IdentifyBlock(block, length);
 
     #endregion
 
@@ -190,7 +172,7 @@ public static partial class TapeHeaderBlock
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Tolerant of the version, deliberately.</b> <see cref="TapeDeserializer.ValidateSignature()"/>
+    /// <b>Tolerant of the version, deliberately.</b> <see cref="LegacyDeserializer.ValidateSignature()"/>
     ///  demands exactly <see cref="TapeSerializer.Version"/>, which made every current TOC — written as
     ///  0x0102 — read as foreign. It would do the same to a header of a newer format, which is our record,
     ///  merely unreadable to this build: exactly what <see cref="TapeFramer.FrameStatus.Unparseable"/>
@@ -202,25 +184,7 @@ public static partial class TapeHeaderBlock
     /// </para>
     /// </remarks>
     private static bool HasSignatureAt(byte[] block, int usable, int offset, out ushort version)
-    {
-        version = 0;
-
-        if (offset >= usable)
-            return false;
-
-        try
-        {
-            using var ms = new MemoryStream(block, offset, usable - offset, writable: false);
-
-            return new TapeDeserializer(ms).ValidateSignature(out version)
-                && version is >= MinPlausibleVersion and <= MaxPlausibleVersion;
-        }
-        catch (Exception)
-        {
-            // A block too short to even hold a signature is simply not ours — never an error.
-            return false;
-        }
-    }
+    => LegacyIdentify.HasSignatureAt(block, usable, offset, out version);
 
     #endregion
 }

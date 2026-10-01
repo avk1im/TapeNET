@@ -1,6 +1,7 @@
-#define LEGACY_TapeCalibrationRunHeader // FIXME: temporary to keep compatibility with legacy calibration cartridges
+﻿#define LEGACY_TapeCalibrationRunHeader // FIXME: temporary to keep compatibility with legacy calibration cartridges
 
 using System;
+using TapeLibNET.Legacy;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Hashing;
@@ -90,31 +91,8 @@ public sealed record TapeCalibrationRunHeader(
         s.Serialize(Plan.NumCheckpoints);
     }
 
-    public static ITapeSerializable? ConstructFrom(TapeDeserializer d)
-    {
-        if (!d.ValidateSignature())
-            return null;                             // wrong signature/version → not our record
-
-        var runId = new Guid(d.DeserializeBytes(16) ?? throw new FormatException("RunId"));
-        string profileKey = d.DeserializeString();
-        long capacity = d.DeserializeInt64();
-        uint blockSize = d.DeserializeUInt32();
-        DateTime started = d.DeserializeDateTime();
-
-        var plan = new TapeCalibrationPlan(
-            d.DeserializeInt32(),                    // SampleCount
-            d.DeserializeInt32(),                    // BodySampleCount
-            d.DeserializeInt32(),                    // TailSampleCount
-            d.DeserializeUInt32(),                   // BlockSize
-            d.DeserializeInt32(),                    // BlocksPerChunk
-            d.DeserializeInt32(),                    // ChunkSize
-            d.DeserializeInt32(),                    // TailBlocksPerChunk
-            d.DeserializeInt32(),                    // TailChunkSize
-            d.DeserializeDouble(),                   // TailCapacityFraction
-            d.DeserializeInt32());                   // NumCheckpoints
-
-        return new TapeCalibrationRunHeader(runId, profileKey, capacity, blockSize, started, plan);
-    }
+    public static ITapeSerializable? ConstructFrom(LegacyDeserializer d)
+    => LegacyCheckpointReader.ReadRunHeader(d);
 
     /// <summary>Adapts this legacy record to the unified <see cref="TapeCalibrationHeader"/>.</summary>
     public TapeCalibrationHeader ToHeader() =>
@@ -163,26 +141,8 @@ public sealed record TapeCalibrationCheckpoint(
         }
     }
 
-    public static ITapeSerializable? ConstructFrom(TapeDeserializer d)
-    {
-        if (!d.ValidateSignature())
-            return null;
-
-        var runId = new Guid(d.DeserializeBytes(16) ?? throw new FormatException("RunId"));
-        int index = d.DeserializeInt32();
-        long bytesWritten = d.DeserializeInt64();
-
-        (long, long)? ew = null;
-        if (d.DeserializeBoolean())
-            ew = (d.DeserializeInt64(), d.DeserializeInt64());
-
-        int count = d.DeserializeInt32();
-        var samples = new List<(long ActualWritten, long ReportedRemaining)>(Math.Max(0, count));
-        for (int i = 0; i < count; i++)
-            samples.Add((d.DeserializeInt64(), d.DeserializeInt64()));
-
-        return new TapeCalibrationCheckpoint(runId, index, bytesWritten, ew, samples);
-    }
+    public static ITapeSerializable? ConstructFrom(LegacyDeserializer d)
+    => LegacyCheckpointReader.ReadCheckpoint(d);
 }
 
 /// <summary>

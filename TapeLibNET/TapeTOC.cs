@@ -1,4 +1,5 @@
-﻿using System.Collections;
+﻿using TapeLibNET.Legacy;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -189,7 +190,7 @@ public class TapeFileInfo(TypeUID UID, TapeAddress address, TapeFileDescriptor f
         serializer.Serialize(SizeOnTape);
         serializer.Serialize((byte)Codec);
     }
-    public static ITapeSerializable? ConstructFrom(TapeDeserializer deserializer)
+    public static ITapeSerializable? ConstructFrom(LegacyDeserializer deserializer)
     {
         if (!deserializer.ValidateSignature())
             return null; // version mismatch
@@ -250,14 +251,8 @@ public class TapeFileInfo(TypeUID UID, TapeAddress address, TapeFileDescriptor f
     }
 
     // deserailize header and check if it matches this file info
-    public bool DeserializeAndCheckHeaderFrom(TapeDeserializer deserializer)
-    {
-        if (!deserializer.ValidateSignature())
-            return false; // version mismatch
-
-        var UID = (TypeUID)deserializer.DeserializeUInt64();
-        return UID == this.UID;
-    }
+    public bool DeserializeAndCheckHeaderFrom(LegacyDeserializer deserializer)
+    => LegacyFileHeader.Matches(deserializer, (ulong)UID);
 
 } // struct TapeFileInfo
 
@@ -344,7 +339,7 @@ public class TapeSetTOC : ITapeSerializable, IReadOnlyList<TapeFileInfo>
         serializer.Serialize(CompressionLevel);
     }
 
-    public static ITapeSerializable? ConstructFrom(TapeDeserializer deserializer)
+    public static ITapeSerializable? ConstructFrom(LegacyDeserializer deserializer)
     {
         if (!deserializer.ValidateSignature())
             return null;
@@ -1135,7 +1130,7 @@ public class TapeTOC : ITapeSerializable, IEnumerable<TapeSetTOC>
         serializer.Serialize(ContinuedOnNextVolume);
     }
 
-    public static ITapeSerializable? ConstructFrom(TapeDeserializer deserializer)
+    public static ITapeSerializable? ConstructFrom(LegacyDeserializer deserializer)
     {
         // Tolerant read: capture the on-tape version instead of demanding an exact match,
         //  so this build reads both legacy (pre-MediaId) and current TOCs. The nested
@@ -1200,57 +1195,7 @@ public class TapeTOC : ITapeSerializable, IEnumerable<TapeSetTOC>
     /// </para>
     /// </remarks>
     public static bool TryPeek(byte[] block, int length, out ushort version, out Guid mediaId)
-    {
-        version = 0;
-        mediaId = Guid.Empty;
-
-        if (block is null || length <= 0)
-            return false;
-
-        try
-        {
-            using var ms = new MemoryStream(block, 0, Math.Min(length, block.Length), writable: false);
-            var d = new TapeDeserializer(ms);
-
-            if (!d.ValidateSignature(out version))
-                return false;
-
-            if (version < TocVersionInitial || version > TocVersion)
-                return false;
-
-            if (d.DeserializeUInt64() == 0UL)                       // nextUID: 0 is never valid
-                return false;
-
-            if (version >= TocVersionWithMediaId)
-                mediaId = d.DeserializeGuid();
-
-            int setCount = d.DeserializeInt32();                    // the List<TapeSetTOC> count
-
-            if (setCount < 0 || setCount > MaxPlausibleSetCount)
-                return false;
-
-            // The first set record begins right here — with its own, strictly versioned signature.
-            if (setCount > 0)
-                return d.ValidateSignature();
-
-            // Empty TOC: no set record to anchor on, but the whole tail fits in this block. Check that it
-            //  reads as a TOC tail — it is what rejects a legacy file record at block address zero, whose
-            //  zero words would otherwise pass for "no sets, empty description".
-            _ = d.DeserializeString();                              // Description
-            DateTime created = d.DeserializeDateTime();
-            DateTime saved = d.DeserializeDateTime();
-            int volume = d.DeserializeInt32();
-
-            return IsPlausibleTimestamp(created) && IsPlausibleTimestamp(saved) && volume >= 1;
-        }
-        catch (Exception)
-        {
-            // A block that ends mid-field, or holds an impossible DateTime, is simply not a TOC.
-            return false;
-        }
-
-        static bool IsPlausibleTimestamp(DateTime t) => t.Year is >= 1990 and <= 2200;
-    }
+    => LegacyIdentify.TryPeekToc(block, length, out version, out mediaId);
 
     #endregion
 

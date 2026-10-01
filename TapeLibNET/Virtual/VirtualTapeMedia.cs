@@ -1,3 +1,4 @@
+﻿using TapeLibNET.Legacy;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Diagnostics;
@@ -136,7 +137,7 @@ internal readonly record struct VirtualTapeBlock : ITapeSerializable
     }
 
     /// <summary>Deserializes a virtual block.</summary>
-    public static ITapeSerializable? ConstructFrom(TapeDeserializer deserializer)
+    public static ITapeSerializable? ConstructFrom(LegacyDeserializer deserializer)
     {
         return new VirtualTapeBlock
         {
@@ -257,9 +258,10 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         Span<byte> head = stackalloc byte[4];
         int headRead = metadataStream.Read(head);
         metadataStream.Position = 0;
+        VirtualMediaStateRecord state;
+        bool legacy = false;
         if (headRead == head.Length && Format.TapeFormat.IsV2(head))
         {
-            VirtualMediaStateRecord state;
             try
             {
                 state = Format.TapeFrame.ReadInline<VirtualMediaStateRecord>(metadataStream);
@@ -268,6 +270,16 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
             {
                 throw new FormatException(ex.Message, ex);
             }
+        }
+        else if (Legacy.LegacyVirtualMediaState.IsLegacy(head))
+        {
+            state = Legacy.LegacyVirtualMediaState.Read(metadataStream);
+            legacy = true;
+        }
+        else
+            throw new FormatException("Unrecognized virtual media metadata signature");
+
+        {
 
             m_minBlockSize = state.MinBlockSize;
             m_maxBlockSize = state.MaxBlockSize;
@@ -280,48 +292,13 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
             m_currentBlock = 0;
             m_currentVirtualBlockIndex = 0;
-            m_stateDirty = false;
+            m_stateDirty = false;   // legacy metadata is upgraded lazily, on the first save
 
+            if (legacy)
+                m_logger.LogInformation("Virtual media '{Name}': legacy metadata - will be saved in format 2.1 on the next change.", m_name);
             m_logger.LogTrace("{Prefix}: Loaded state with {Count} virtual blocks, {Bytes} bytes written",
                 LogPrefix, m_virtualBlocks.Count, m_bytesWritten);
-            return;
         }
-
-        var deserializer = new TapeDeserializer(metadataStream);
-
-        // Read and validate header
-        if (!deserializer.ValidateSignature(out ushort version) || version > StateVersion)
-            throw new FormatException($"Invalid state signature or unsupported version {version} (max: {StateVersion})");
-
-        // Load configuration
-        m_minBlockSize = deserializer.DeserializeUInt32();
-        m_maxBlockSize = deserializer.DeserializeUInt32();
-        m_defaultBlockSize = deserializer.DeserializeUInt32();
-        m_capacity = deserializer.DeserializeInt64();
-        m_name = deserializer.DeserializeString();
-
-        // Validate deserialized values
-        if (m_minBlockSize == 0)
-            throw new FormatException("Invalid minBlockSize (0) in saved state");
-        if (m_maxBlockSize < m_minBlockSize)
-            throw new FormatException($"Invalid block size range in saved state: max {m_maxBlockSize} < min {m_minBlockSize}");
-        if (m_defaultBlockSize < m_minBlockSize || m_defaultBlockSize > m_maxBlockSize)
-            throw new FormatException($"Invalid defaultBlockSize {m_defaultBlockSize} not in range [{m_minBlockSize}..{m_maxBlockSize}]");
-
-        m_blockSize = m_defaultBlockSize;
-
-        // Load data state
-        m_bytesWritten = deserializer.DeserializeInt64();
-        var virtualBlocks = deserializer.Deserialize<List<VirtualTapeBlock>, VirtualTapeBlock>();
-        if (virtualBlocks != null)
-            m_virtualBlocks.AddRange(virtualBlocks);
-
-        m_currentBlock = 0;
-        m_currentVirtualBlockIndex = 0;
-        m_stateDirty = false;
-
-        m_logger.LogTrace("{Prefix}: Loaded state with {Count} virtual blocks, {Bytes} bytes written",
-            LogPrefix, m_virtualBlocks.Count, m_bytesWritten);
     }
 
     /// <summary>

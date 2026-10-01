@@ -1,3 +1,4 @@
+﻿using TapeLibNET.Legacy;
 using System;
 
 namespace TapeLibNET;
@@ -93,22 +94,12 @@ public sealed record TapeCalibrationHeader : TapeHeader
     ///  by <see cref="TapeHeader.ConstructFrom"/> once the kind byte selected
     ///  <see cref="TapeHeaderKind.Calibration"/>.
     /// </summary>
-    internal static TapeCalibrationHeader ConstructBody(TapeDeserializer d, in TapeHeaderPreamble p)
+    internal static TapeCalibrationHeader ConstructBody(LegacyDeserializer d, in TapeHeaderPreamble p)
     {
         string profileKey = d.DeserializeString();
         long capacity     = d.DeserializeInt64();
 
-        var plan = new TapeCalibrationPlan(
-            d.DeserializeInt32(),                    // SampleCount
-            d.DeserializeInt32(),                    // BodySampleCount
-            d.DeserializeInt32(),                    // TailSampleCount
-            d.DeserializeUInt32(),                   // BlockSize
-            d.DeserializeInt32(),                    // BlocksPerChunk
-            d.DeserializeInt32(),                    // ChunkSize
-            d.DeserializeInt32(),                    // TailBlocksPerChunk
-            d.DeserializeInt32(),                    // TailChunkSize
-            d.DeserializeDouble(),                   // TailCapacityFraction
-            d.DeserializeInt32());                   // NumCheckpoints
+        var plan = LegacyCheckpointReader.ReadPlan(d);
 
         return new TapeCalibrationHeader
         {

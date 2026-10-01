@@ -1,3 +1,4 @@
+﻿using TapeLibNET.Legacy;
 using System;
 
 namespace TapeLibNET;
@@ -176,7 +177,7 @@ public sealed record TapeSetHeader : TapeHeader
     /// Reads the set-specific fields after the shared preamble has been decoded. Called only by
     ///  <see cref="TapeHeader.ConstructFrom"/> once the kind byte selected <see cref="TapeHeaderKind.Set"/>.
     /// </summary>
-    internal static TapeSetHeader ConstructBody(TapeDeserializer d, in TapeHeaderPreamble p)
+    internal static TapeSetHeader ConstructBody(LegacyDeserializer d, in TapeHeaderPreamble p)
     {
         int volume   = d.DeserializeInt32();
         int volIndex = d.DeserializeInt32();

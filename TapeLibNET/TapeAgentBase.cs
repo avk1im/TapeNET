@@ -1,4 +1,5 @@
-﻿using System.ComponentModel;
+﻿using TapeLibNET.Legacy;
+using System.ComponentModel;
 using System.IO.Hashing;
 using System.Diagnostics;
 using Windows.Win32.Foundation;
@@ -500,7 +501,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
 
             if (hasher == null)
             {
-                var deserializer = new TapeDeserializer(rstream);
+                var deserializer = new LegacyDeserializer(rstream);
                 var toc = deserializer.Deserialize<TapeTOC>();
                 if (toc != null)
                 {
@@ -519,7 +520,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
             else
             {
                 using var hashingStream = new HashingStream(rstream, hasher, ownInner: false);
-                var deserializer = new TapeDeserializer(hashingStream);
+                var deserializer = new LegacyDeserializer(hashingStream);
                 var toc = deserializer.Deserialize<TapeTOC>();
                 if (toc != null)
                 {
@@ -789,7 +790,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
 
             if (hasher == null)
             {
-                var deserializer = new TapeDeserializer(fs);
+                var deserializer = new LegacyDeserializer(fs);
                 var toc = deserializer.Deserialize<TapeTOC>();
                 if (toc == null)
                 {
@@ -802,7 +803,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
             else
             {
                 using var hashingStream = new HashingStream(fs, hasher, ownInner: false);
-                var deserializer = new TapeDeserializer(hashingStream);
+                var deserializer = new LegacyDeserializer(hashingStream);
                 var toc = deserializer.Deserialize<TapeTOC>();
                 if (toc == null)
                 {

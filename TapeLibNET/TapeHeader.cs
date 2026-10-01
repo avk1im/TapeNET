@@ -1,3 +1,4 @@
+﻿using TapeLibNET.Legacy;
 using System;
 using System.Text;
 
@@ -97,23 +98,6 @@ public abstract record TapeHeader : ITapeSerializable
         s.Serialize(BlockSize);
     }
 
-    /// <summary>
-    /// Reads and validates the shared preamble. Returns <see langword="null"/> when the signature
-    ///  does not match (⇒ not one of our records), so the caller classifies the block as foreign.
-    /// </summary>
-    private static TapeHeaderPreamble? ReadPreamble(TapeDeserializer d)
-    {
-        if (!d.ValidateSignature())
-            return null;
-
-        var kind    = (TapeHeaderKind)(d.DeserializeBytes(1)?[0] ?? (byte)TapeHeaderKind.Unknown);
-        var id      = new Guid(d.DeserializeBytes(16) ?? throw new FormatException("TapeHeader: Id"));
-        var created = d.DeserializeDateTime();
-        var bs      = d.DeserializeUInt32();
-
-        return new TapeHeaderPreamble(kind, id, created, bs);
-    }
-
     /// <summary>Writes this header (preamble + kind-specific fields) to <paramref name="s"/>.</summary>
     public abstract void SerializeTo(TapeSerializer s);
 
@@ -126,20 +110,8 @@ public abstract record TapeHeader : ITapeSerializable
     /// <remarks>
     /// Returns <see langword="null"/> when the signature does not match, or for a kind not yet wired in.
     /// </remarks>
-    public static ITapeSerializable? ConstructFrom(TapeDeserializer d)
-    {
-        if (ReadPreamble(d) is not { } p)
-            return null;
-
-        return p.Kind switch
-        {
-            TapeHeaderKind.Media        => TapeMediaHeader.ConstructBody(d, p),
-            TapeHeaderKind.Calibration  => TapeCalibrationHeader.ConstructBody(d, p),
-            TapeHeaderKind.Set          => TapeSetHeader.ConstructBody(d, p),
-
-            _ => null,
-        };
-    }
+    public static ITapeSerializable? ConstructFrom(LegacyDeserializer d)
+    => LegacyHeaderReader.Read(d);
 
     /// <summary>A short, human-readable description used in user prompts and logs.</summary>
     public abstract override string ToString();

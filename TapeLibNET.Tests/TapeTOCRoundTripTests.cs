@@ -1,3 +1,4 @@
+﻿using TapeLibNET.Legacy;
 using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
@@ -60,7 +61,7 @@ public class TapeTOCRoundTripTests
 
         ms.Position = 0;
 
-        var deserializer = new TapeDeserializer(ms);
+        var deserializer = new LegacyDeserializer(ms);
         var result = deserializer.Deserialize<TapeTOC>();
 
         Assert.NotNull(result);
@@ -80,7 +81,7 @@ public class TapeTOCRoundTripTests
 
         ms.Position = 0;
 
-        var deserializer = new TapeDeserializer(ms);
+        var deserializer = new LegacyDeserializer(ms);
         var result = TapeFileInfo.ConstructFrom(deserializer) as TapeFileInfo;
 
         Assert.NotNull(result);
@@ -345,7 +346,7 @@ public class TapeTOCRoundTripTests
         original.SerializeHeaderTo(serializer);
 
         ms.Position = 0;
-        var deserializer = new TapeDeserializer(ms);
+        var deserializer = new LegacyDeserializer(ms);
         Assert.True(original.DeserializeAndCheckHeaderFrom(deserializer));
     }
 
@@ -360,7 +361,7 @@ public class TapeTOCRoundTripTests
         original.SerializeHeaderTo(serializer);
 
         ms.Position = 0;
-        var deserializer = new TapeDeserializer(ms);
+        var deserializer = new LegacyDeserializer(ms);
 
         // different UID should fail the check
         Assert.False(different.DeserializeAndCheckHeaderFrom(deserializer));
@@ -605,7 +606,7 @@ public class TapeTOCRoundTripTests
             creation: creation, lastSave: lastSave, volume: 2, continued: true);
 
         using var ms = new MemoryStream(bytes);
-        var toc = new TapeDeserializer(ms).Deserialize<TapeTOC>();
+        var toc = new LegacyDeserializer(ms).Deserialize<TapeTOC>();
 
         Assert.NotNull(toc);
 

@@ -1,3 +1,4 @@
+﻿using TapeLibNET.Legacy;
 using System;
 using System.Collections.Generic;
 using System.IO.Hashing;
@@ -95,50 +96,6 @@ public static class TapeFramer
     public static FrameStatus TryUnpack<T>(byte[] block, int length, out T? record)
         where T : class, ITapeSerializable
     {
-        ArgumentNullException.ThrowIfNull(block);
-        record = null;
-
-        byte[]? payload;
-        byte[]? crcStored;
-
-        try
-        {
-            using var ms = new MemoryStream(block, 0, Math.Min(length, block.Length), writable: false);
-            var d = new TapeDeserializer(ms);
-
-            int payloadLen = d.DeserializeInt32();
-
-            if (payloadLen < 0 || payloadLen > block.Length - 8)
-                return FrameStatus.NotFramed;           // implausible length ⇒ not a valid frame
-
-            payload = d.DeserializeBytes(payloadLen);
-            crcStored = d.DeserializeBytes(4);
-        }
-        catch (Exception)
-        {
-            return FrameStatus.NotFramed;               // the block ends inside the frame
-        }
-
-        if (payload is null || crcStored is null)
-            return FrameStatus.NotFramed;
-
-        var crc = new Crc32();
-        crc.Append(payload);
-
-        if (!crc.GetCurrentHash().AsSpan().SequenceEqual(crcStored))
-            return FrameStatus.CrcMismatch;             // CRC mismatch ⇒ torn / corrupt
-
-        try
-        {
-            using var pms = new MemoryStream(payload, writable: false);
-            record = T.ConstructFrom(new TapeDeserializer(pms)) as T;   // ConstructFrom re-checks signature/version
-        }
-        catch (Exception)
-        {
-            // A format error past a GOOD CRC is a record we cannot read — not a torn one.
-            record = null;
-        }
-
-        return record is null ? FrameStatus.Unparseable : FrameStatus.Ok;
+        return LegacyFramer.TryUnpack(block, length, out record);
     }
 }

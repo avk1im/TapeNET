@@ -1,3 +1,4 @@
+﻿using TapeLibNET.Legacy;
 using System;
 
 namespace TapeLibNET;
@@ -141,7 +142,7 @@ public sealed record TapeMediaHeader : TapeHeader
     /// Reads the media-specific fields after the shared preamble has been decoded. Called only by
     ///  <see cref="TapeHeader.ConstructFrom"/> once the kind byte selected <see cref="TapeHeaderKind.Media"/>.
     /// </summary>
-    internal static TapeMediaHeader ConstructBody(TapeDeserializer d, in TapeHeaderPreamble p)
+    internal static TapeMediaHeader ConstructBody(LegacyDeserializer d, in TapeHeaderPreamble p)
     {
         int volume    = d.DeserializeInt32();
         var partition = (MediaPartition)(d.DeserializeBytes(1)?[0] ?? (byte)MediaPartition.Content);
@@ -165,17 +166,8 @@ public sealed record TapeMediaHeader : TapeHeader
     // Reads the trailing set-header flag, tolerating its absence on media written before the field
     //  existed. Such a header's frame simply ends here, so the read may return null OR throw,
     //  depending on how the framer bounds the record — both mean "no flag recorded" = false.
-    private static bool ReadSetHeadersFlag(TapeDeserializer d)
-    {
-        try
-        {
-            return (d.DeserializeBytes(1)?[0] ?? 0) != 0;
-        }
-        catch (Exception)
-        {
-            return false;   // pre-set-header media: field absent, not corrupt
-        }
-    }
+    private static bool ReadSetHeadersFlag(LegacyDeserializer d)
+    => LegacyHeaderReader.ReadSetHeadersFlag(d);
 
     /// <inheritdoc/>
     public override string ToString() =>

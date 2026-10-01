@@ -1,3 +1,4 @@
+﻿using TapeLibNET.Legacy;
 using System.IO.Hashing;
 using TapeLibNET.Tests.Helpers;
 
@@ -33,7 +34,7 @@ public class LegacyGoldenTests
     private static T? Read<T>(byte[] bytes) where T : class, ITapeSerializable
     {
         using var ms = new MemoryStream(bytes);
-        return new TapeDeserializer(ms).Deserialize<T>();
+        return new LegacyDeserializer(ms).Deserialize<T>();
     }
 
     #region *** Byte-for-byte reproduction ***
@@ -233,7 +234,7 @@ public class LegacyGoldenTests
         Assert.Equal(12, bytes.Length);
 
         using var ms = new MemoryStream(bytes);
-        var d = new TapeDeserializer(ms);
+        var d = new LegacyDeserializer(ms);
         Assert.True(d.ValidateSignature());
         Assert.Equal(42UL, d.DeserializeUInt64());
     }

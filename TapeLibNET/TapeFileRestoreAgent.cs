@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using TapeLibNET.Legacy;
+using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.IO.Hashing;
 using System.Net.Http.Headers;
@@ -176,7 +177,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             }
 
             // Validate header (UID + signature) before delivering the body.
-            var deserializer = new TapeDeserializer(rstream);
+            var deserializer = new LegacyDeserializer(rstream);
             if (!tfi.DeserializeAndCheckHeaderFrom(deserializer))
             {
                 throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,

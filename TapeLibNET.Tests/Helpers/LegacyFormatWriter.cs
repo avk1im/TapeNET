@@ -313,4 +313,35 @@ public static class LegacyFormatWriter
         });
 
     #endregion
+
+    #region *** Legacy virtual media state ***
+
+    /// <summary>One legacy virtual block as persisted (30 bytes): everything, including the derivable fields.</summary>
+    public readonly record struct LegacyVirtualBlock(bool IsMark, byte MarkType, uint BlockSize, long BeginAtBlock, long DataLength, long StreamOffset);
+
+    /// <summary>Legacy <c>VirtualTapeMedia.SaveState</c> layout, version 0x0100.</summary>
+    public static byte[] WriteVirtualMediaState(uint min, uint max, uint def, long capacity, string name,
+        long bytesWritten, IReadOnlyList<LegacyVirtualBlock> blocks) =>
+        Build(w =>
+        {
+            w.Signature(0x0100);
+            w.U32(min);
+            w.U32(max);
+            w.U32(def);
+            w.I64(capacity);
+            w.String(name);
+            w.I64(bytesWritten);
+            w.I32(blocks.Count);
+            foreach (var b in blocks)
+            {
+                w.Bool(b.IsMark);
+                w.U8(b.MarkType);
+                w.U32(b.BlockSize);
+                w.I64(b.BeginAtBlock);
+                w.I64(b.DataLength);
+                w.I64(b.StreamOffset);
+            }
+        });
+
+    #endregion
 }
