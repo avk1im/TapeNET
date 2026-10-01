@@ -62,7 +62,7 @@ public class LegacyGoldenTests
     public void TocLayoutB_ReadsWithCurrentReader()
     {
         var expected = GoldenData.RichToc();
-        var toc = Read<TapeTOC>(TocBody(Load("toc-layoutB.bin")));
+        var toc = LoadToc(Load("toc-layoutB.bin"));
 
         Assert.NotNull(toc);
         Assert.Equal(expected.MediaId, toc!.MediaId);
@@ -77,6 +77,8 @@ public class LegacyGoldenTests
         {
             var es = expected.Sets[i];
             var set = toc[i + 1]; // public set index is 1-based, ascending from the oldest (0 = newest)
+            Assert.Equal(TapeDataFormat.Legacy, set.DataFormat);
+            Assert.Equal(Guid.Empty, set.SetId);
             Assert.Equal(es.Description, set.Description);
             Assert.Equal(es.Volume, set.Volume);
             Assert.Equal(es.Incremental, set.Incremental);
@@ -106,7 +108,7 @@ public class LegacyGoldenTests
     public void TocPreMediaId_ReadsWithEmptyMediaId()
     {
         var expected = GoldenData.SimpleToc();
-        var toc = Read<TapeTOC>(TocBody(Load("toc-preMediaId.bin")));
+        var toc = LoadToc(Load("toc-preMediaId.bin"));
 
         Assert.NotNull(toc);
         Assert.Equal(Guid.Empty, toc!.MediaId);
@@ -119,11 +121,75 @@ public class LegacyGoldenTests
     [Fact]
     public void TocLayoutA_HasNoCompressionOrCodecFields()
     {
-        // Layout A is shorter than B for the same content; the dedicated legacy reader (later phase) will detect it.
+        // Layout A is shorter than B for the same content; LegacyTocReader.Load detects it.
         var a = Load("toc-layoutA.bin");
         var b = LegacyFormatWriter.SerializeToc(GoldenData.SimpleToc(), LegacyTocLayout.B);
         int expectedDelta = 2 * 1 /* codec per file */ + 8 /* compression + level per set */;
         Assert.Equal(b.Length + 8 - expectedDelta, a.Length);
+    }
+
+    [Fact]
+    public void TocLayoutA_DetectedAndRead()
+    {
+        var expected = GoldenData.SimpleToc();
+        var toc = LoadToc(Load("toc-layoutA.bin"));
+
+        Assert.NotNull(toc);
+        Assert.True(toc!.LoadedFromLegacy);
+        Assert.Equal(expected.Description, toc.Description);
+        Assert.Equal(expected.Sets.Count, toc.Count);
+        for (int i = 0; i < expected.Sets.Count; i++)
+        {
+            var set = toc[i + 1];
+            Assert.Equal(TapeDataFormat.Legacy, set.DataFormat);
+            Assert.Equal(TapeCompression.None, set.Compression);
+            Assert.Equal(expected.Sets[i].Files.Count, set.Count);
+            for (int j = 0; j < set.Count; j++)
+            {
+                Assert.Equal(TapeFileCodec.Stored, set[j].Codec);
+                Assert.Equal(expected.Sets[i].Files[j].Uid, (ulong)set[j].FileId);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("toc-layoutA.bin")]
+    [InlineData("toc-layoutB.bin")]
+    [InlineData("toc-preMediaId.bin")]
+    public void Toc_CorruptedCrc_Throws(string name)
+    {
+        var bytes = Load(name);
+        bytes[^1] ^= 0xFF; // damage the CRC-64 trailer: body still parses
+        var ex = Assert.Throws<IOException>(() => LoadToc(bytes));
+        Assert.Equal((int)Windows.Win32.Foundation.WIN32_ERROR.ERROR_CRC, ex.HResult & 0xFFFF);
+    }
+
+    [Fact]
+    public void Toc_NextFileId_ContinuesAfterLargestLegacyId()
+    {
+        var toc = LoadToc(Load("toc-layoutB.bin"))!;
+        foreach (var set in toc)
+        {
+            ulong max = 0;
+            foreach (var tfi in set)
+                max = Math.Max(max, tfi.FileId);
+            Assert.Equal(max + 1, set.GenerateFileId());
+        }
+    }
+
+    [Fact]
+    public void Toc_GarbageOrTruncated_ReturnsNullOrThrowsCrc()
+    {
+        Assert.Null(LoadToc(new byte[64]));
+        Assert.Null(LoadToc([]));
+        var truncated = Load("toc-layoutB.bin")[..40];
+        Assert.Null(LoadToc(truncated));
+    }
+
+    private static TapeTOC? LoadToc(byte[] stream)
+    {
+        using var ms = new MemoryStream(stream);
+        return LegacyTocReader.Load(ms);
     }
 
     #endregion
