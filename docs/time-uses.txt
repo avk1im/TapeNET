@@ -1,0 +1,52 @@
+﻿TapeConNET/Excluded Files/Program.Legacy.1.2.cs.txt:553:    Console.WriteLine($" ii Created on: {toc.CreationTime}");
+TapeConNET/Excluded Files/Program.Legacy.1.2.cs.txt:554:    Console.WriteLine($" ii Last saved: {toc.LastSaveTime}");
+TapeConNET/Excluded Files/Program.Legacy.1.2.cs.txt:576:    Console.WriteLine($" ii Created on: {setTOC.CreationTime}");
+TapeConNET/Excluded Files/Program.Legacy.1.2.cs.txt:577:    Console.WriteLine($" ii Last saved: {setTOC.LastSaveTime}");
+TapeConNET/Excluded Files/Program.Legacy.1.2.cs.txt:592:    return $"{tfi.Block,10:N0}: {fileDescr.LastWriteTime,24:G} {fileDescr.Length,16:N0}\t{name}";
+TapeConNET/Excluded Files/Program.Legacy.1.2.cs.txt:599:    return $"{index,10:N0}# {fileDescr.LastWriteTime,24:G} {fileDescr.Length,16:N0}\t{name}";
+TapeConNET/Excluded Files/Program.cs.txt:547:    Console.WriteLine($" ii Created on: {toc.CreationTime}");
+TapeConNET/Excluded Files/Program.cs.txt:548:    Console.WriteLine($" ii Last saved: {toc.LastSaveTime}");
+TapeConNET/Excluded Files/Program.cs.txt:564:    Console.WriteLine($" ii Created on: {setTOC.CreationTime}");
+TapeConNET/Excluded Files/Program.cs.txt:565:    Console.WriteLine($" ii Last saved: {setTOC.LastSaveTime}");
+TapeConNET/Excluded Files/Program.cs.txt:580:    return $"{tfi.Block,10:N0}: {fileDescr.LastWriteTime,24:G} {fileDescr.Length,16:N0}\t{name}";
+TapeConNET/Excluded Files/Program.cs.txt:587:    return $"{index,10:N0}# {fileDescr.LastWriteTime,24:G} {fileDescr.Length,16:N0}\t{name}";
+TapeConNET/FclTapeFileFilter.cs:27:            fileDescr.CreationTime,
+TapeConNET/FclTapeFileFilter.cs:28:            fileDescr.LastWriteTime,
+TapeLibNET/Services/TapeServiceBase.List.cs:296:            LogInfoSub($"#{setIndex,3} | {alt,3}  {setTOC.CreationTime,20:G}  {setTOC.Count,6:N0} files  {size,14}  Vol #{setTOC.Volume}  {setTOC.Description}{flags}");
+TapeLibNET/Services/TapeServiceBase.List.cs:313:        LogInfoSub($"Created on: {toc.CreationTime}");
+TapeLibNET/Services/TapeServiceBase.List.cs:314:        LogInfoSub($"Last saved: {toc.LastSaveTime}");
+TapeLibNET/Services/TapeServiceBase.List.cs:341:        LogInfoSub($"Created on: {setTOC.CreationTime}");
+TapeLibNET/Services/TapeServiceBase.List.cs:342:        LogInfoSub($"Last saved: {setTOC.LastSaveTime}");
+TapeLibNET/Services/TapeServiceBase.List.cs:360:        return $"{tfi.Address,10}: {fileDescr.LastWriteTime,24:G} {fileDescr.Length,16:N0}\t{name}";
+TapeLibNET/Services/TapeServiceBase.cs:967:        LogInfoSub($"Created: {_toc.CreationTime}");
+TapeLibNET/Services/TapeServiceBase.cs:968:        LogInfoSub($"Last saved: {_toc.LastSaveTime}");
+TapeLibNET/TapeSerializer.cs:71:            Serialize(fileDescr.CreationTime);
+TapeLibNET/TapeSerializer.cs:72:            Serialize(fileDescr.LastWriteTime);
+TapeLibNET/TapeSerializer.cs:73:            Serialize(fileDescr.LastAccessTime);
+TapeLibNET/TapeTOC.cs:57:            CreationTime = fsi.CreationTime;
+TapeLibNET/TapeTOC.cs:58:            LastWriteTime = fsi.LastWriteTime;
+TapeLibNET/TapeTOC.cs:59:            LastAccessTime = fsi.LastAccessTime;
+TapeLibNET/TapeTOC.cs:74:            CreationTime = fsi.CreationTime;
+TapeLibNET/TapeTOC.cs:75:            LastWriteTime = fsi.LastWriteTime;
+TapeLibNET/TapeTOC.cs:76:            LastAccessTime = fsi.LastAccessTime;
+TapeLibNET/TapeTOC.cs:94:            fileInfo.CreationTime = CreationTime;
+TapeLibNET/TapeTOC.cs:95:            fileInfo.LastWriteTime = LastWriteTime;
+TapeLibNET/TapeTOC.cs:96:            fileInfo.LastAccessTime = LastAccessTime;
+TapeLibNET/TapeTOC.cs:106:        CreationTime = fsi.CreationTime;
+TapeLibNET/TapeTOC.cs:107:        LastWriteTime = fsi.LastWriteTime;
+TapeLibNET/TapeTOC.cs:108:        LastAccessTime = fsi.LastAccessTime;
+TapeLibNET/TapeTOC.cs:399:        CreationTime = toc.CreationTime;
+TapeLibNET/TapeTOC.cs:401:        LastSaveTime = toc.LastSaveTime;
+TapeLibNET/TapeTOC.cs:831:            CreatedUtc = setTOC.CreationTime,     // the SET's own creation moment (cf. remark below)
+TapeLibNET/TapeTOC.cs:1056:        CreationTime = toc.CreationTime;
+TapeLibNET/TapeTOC.cs:1057:        LastSaveTime = toc.LastSaveTime;
+TapeLibNET/TapeTOC.cs:1316:            if (m_setTOCs[i].Any(tfi => tfi.SameFileName(fileInfo) && tfi.FileDescr.LastWriteTime >= fileInfo.LastWriteTime))
+TapeWinNET/Models/BackupSetListItem.cs:137:    public DateTime CreatedOn => _setTOC.CreationTime;
+TapeWinNET/Models/BackupSetListItem.cs:139:    public string CreatedOnFormatted => _setTOC.CreationTime.ToString("G");
+TapeWinNET/Models/FileListItem.cs:72:    public DateTime LastModified => _fileInfo.FileDescr.LastWriteTime;
+TapeWinNET/Utils/FileFilter.cs:19:            fileDescr.CreationTime,
+TapeWinNET/Utils/FileFilter.cs:20:            fileDescr.LastWriteTime,
+TapeWinNET/ViewModels/MainViewModel.cs:1745:        PropertyList.Add(new PropertyItem("Created On", toc.CreationTime.ToString("G")));
+TapeWinNET/ViewModels/MainViewModel.cs:1746:        PropertyList.Add(new PropertyItem("Last Saved", toc.LastSaveTime.ToString("G")));
+TapeWinNET/ViewModels/MainViewModel.cs:1814:            PropertyList.Add(new PropertyItem("Created On", setTOC.CreationTime.ToString("G")));
+TapeWinNET/ViewModels/MainViewModel.cs:1815:            PropertyList.Add(new PropertyItem("Last Saved", setTOC.LastSaveTime.ToString("G")));

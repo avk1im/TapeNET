@@ -1240,7 +1240,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
         try
         {
-            m_packerBackend?.Dispose();
+            m_packerBufferPool?.Dispose();
         }
         catch (Exception ex)
         {
