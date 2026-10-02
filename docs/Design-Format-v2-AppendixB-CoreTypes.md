@@ -26,7 +26,7 @@ Each layer knows only the one below. Domain types never touch the prologue, leng
 
 ---
 
-## B.2 Ground Rules (for Copilot — non-negotiable)
+## B.2 Ground Rules (for Copilot-driven code generation)
 
 1. **No reflection in product code.** Codecs bind at compile time through overload resolution (§B.5).
 2. **C# 12 compatible.** No `ref struct` in lambdas or generic arguments: `TapeFieldWriter` / `TapeFieldReader`
