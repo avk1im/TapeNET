@@ -33,19 +33,17 @@ internal sealed class VirtualMediaStateRecord : ITapeRecord<VirtualMediaStateRec
         { 5, r => r.BytesWritten, (r, v) => r.BytesWritten = v, FieldFlags.Required },
         { 6, r => r.BlockCount, (r, v) => r.BlockCount = v, FieldFlags.Required },
         { 7, r => r.TotalLogicalBlocks, (r, v) => r.TotalLogicalBlocks = v, FieldFlags.Required },
-        { 32, r => r.Name, (r, v) => r.Name = v, "" },
+        { 32, r => r.Name, (r, v) => r.Name = v },
+        { 48, r => r.Blocks, (r, v) => r.Blocks = v, FieldFlags.Required },
     };
 
-    static VirtualMediaStateRecord()
-    {
-        s_schema.AddCustom(48, (w, r) => w.WriteBytes(48, r.Blocks), (f, r) => r.Blocks = f.ReadBytes(), FieldFlags.Required);
-    }
+    public TapeRecordKind RecordKind => TapeRecordKind.VirtualMediaState;
 
-    public static TapeRecordKind Kind => TapeRecordKind.VirtualMediaState;
+    public void WriteBody(TapeFieldWriter fields) => s_schema.Write(fields, this);
 
-    public void WriteTo(TapeRecordWriter writer) => s_schema.Write(writer, this);
+    public static bool Accepts(TapeRecordKind kind) => kind == TapeRecordKind.VirtualMediaState;
 
-    public static VirtualMediaStateRecord ReadFrom(TapeFieldReader fields) => s_schema.Read(fields, new VirtualMediaStateRecord());
+    public static VirtualMediaStateRecord ReadBody(TapeFieldReader fields) => s_schema.Read(fields, new VirtualMediaStateRecord());
 
     #region *** Run coding ***
 

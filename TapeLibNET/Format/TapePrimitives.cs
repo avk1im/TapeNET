@@ -16,6 +16,20 @@ public static class TapePrimitives
     /// <summary>UTF-8 without BOM that refuses invalid input in both directions.</summary>
     internal static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
+    /// <summary>Smallest timestamp: zero ticks, UTC. The schema default for <see cref="DateTime"/> fields.</summary>
+    public static readonly DateTime MinUtc = new(0, DateTimeKind.Utc);
+
+    /// <summary>
+    /// UTC ticks of <paramref name="value"/>: <c>Utc</c> as is, <c>Local</c> converted,
+    ///  <c>Unspecified</c> taken as UTC and never shifted.
+    /// </summary>
+    public static long ToUtcTicks(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value.Ticks,
+        DateTimeKind.Local => value.ToUniversalTime().Ticks,
+        _ => value.Ticks,
+    };
+
     #region *** varuint / varint ***
 
     private enum VarUIntStatus { Ok, Truncated, Overlong }
@@ -183,7 +197,7 @@ public static class TapePrimitives
     public static string DecodeString(ReadOnlySpan<byte> value)
     {
         if (value.Length > TapeFormat.MaxStringBytes)
-            throw TapeFormatException.Bad($"string of {value.Length} bytes exceeds {TapeFormat.MaxStringBytes}");
+            throw new TapeFormatException(FormatErrorKind.LimitExceeded, $"string of {value.Length} bytes exceeds {TapeFormat.MaxStringBytes}");
         try
         {
             return StrictUtf8.GetString(value);
@@ -198,7 +212,7 @@ public static class TapePrimitives
     public static byte[] DecodeBytes(ReadOnlySpan<byte> value)
     {
         if (value.Length > TapeFormat.MaxBytesField)
-            throw TapeFormatException.Bad($"bytes value of {value.Length} bytes exceeds {TapeFormat.MaxBytesField}");
+            throw new TapeFormatException(FormatErrorKind.LimitExceeded, $"bytes value of {value.Length} bytes exceeds {TapeFormat.MaxBytesField}");
         return value.ToArray();
     }
 

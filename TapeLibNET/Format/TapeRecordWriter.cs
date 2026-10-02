@@ -10,6 +10,7 @@ namespace TapeLibNET.Format;
 public sealed class TapeRecordWriter(Stream stream) : IDisposable
 {
     private TapeBuffer? m_buffer;
+    private TapeFieldWriter? m_root;
     private bool m_active;
     private TapeRecordKind m_kind;
 
@@ -28,10 +29,11 @@ public sealed class TapeRecordWriter(Stream stream) : IDisposable
             throw new ArgumentOutOfRangeException(nameof(kind), kind, "not a registered record kind");
 
         m_buffer ??= new TapeBuffer(TapeFormat.MaxPrologueLength);
-        m_buffer.Clear();
+        m_root ??= new TapeFieldWriter(m_buffer, 0);
+        m_root.Reset();
         m_kind = kind;
         m_active = true;
-        return new TapeFieldWriter(m_buffer, 0);
+        return m_root;
     }
 
     /// <summary>Writes prologue + body of the record begun with <see cref="BeginRecord"/>.</summary>
@@ -60,7 +62,20 @@ public sealed class TapeRecordWriter(Stream stream) : IDisposable
     }
 
     /// <summary>Writes <paramref name="record"/> as a complete record.</summary>
-    public void Write<T>(T record) where T : ITapeRecord<T> => record.WriteTo(this);
+    public void Write<T>(T record) where T : ITapeRecord<T>
+    {
+        TapeFieldWriter fields = BeginRecord(record.RecordKind);
+        try
+        {
+            record.WriteBody(fields);
+        }
+        catch
+        {
+            AbandonRecord();
+            throw;
+        }
+        EndRecord();
+    }
 
     /// <summary>Encodes a record prologue into <paramref name="destination"/>; returns its length.</summary>
     internal static int WritePrologue(Span<byte> destination, TapeRecordKind kind, int bodyLength)
@@ -74,6 +89,8 @@ public sealed class TapeRecordWriter(Stream stream) : IDisposable
 
     public void Dispose()
     {
+        m_root?.Release();
+        m_root = null;
         m_buffer?.Dispose();
         m_buffer = null;
         m_active = false;

@@ -28,7 +28,7 @@ public static class TapeFrame
     {
         using var ms = new MemoryStream();
         using (var writer = new TapeRecordWriter(ms))
-            record.WriteTo(writer);
+            writer.Write(record);
 
         byte[] recordBytes = ms.ToArray();
         return [.. recordBytes, .. ComputeCrc(recordBytes)];
@@ -64,9 +64,14 @@ public static class TapeFrame
     /// </summary>
     /// <param name="frameLength">Length of the frame (record + CRC) when the bounds fit; else 0.</param>
     public static TapeFramer.FrameStatus TryUnpackRecord(ReadOnlySpan<byte> data, out TapeRecord? record, out int frameLength)
+        => TryUnpackRecord(data, out record, out frameLength, out _);
+
+    internal static TapeFramer.FrameStatus TryUnpackRecord(ReadOnlySpan<byte> data, out TapeRecord? record,
+        out int frameLength, out TapeFormatException? error)
     {
         record = null;
         frameLength = 0;
+        error = null;
 
         switch (TapeRecordReader.ParsePrologue(data, out TapeRecordReader.Prologue p))
         {
@@ -89,10 +94,14 @@ public static class TapeFrame
         {
             parsed.RequireSupportedMajor();
             if (!TapeFormat.IsKnownKind(parsed.Kind))
-                return TapeFramer.FrameStatus.Unparseable;  // unknown kind: a frame carries one record, nothing to skip to
+            {
+                error = new TapeFormatException(FormatErrorKind.UnknownKind, $"record kind 0x{p.RawKind:X4} is unknown to this build");
+                return TapeFramer.FrameStatus.Unparseable;  // a frame carries one record, nothing to skip to
+            }
         }
-        catch (TapeFormatException)
+        catch (TapeFormatException ex)
         {
+            error = ex;
             return TapeFramer.FrameStatus.Unparseable;
         }
 
@@ -100,15 +109,21 @@ public static class TapeFrame
         return TapeFramer.FrameStatus.Ok;
     }
 
+    /// <summary>Status-only form of <c>TryUnpack</c>.</summary>
+    public static TapeFramer.FrameStatus TryUnpack<T>(ReadOnlySpan<byte> data, out T? value) where T : class, ITapeRecord<T>
+        => TryUnpack(data, out value, out _, out _);
+
     /// <summary>
     /// As <see cref="TryUnpackRecord"/>, then interprets the record as <typeparamref name="T"/>.
     /// A wrong kind or a body this build cannot read (unknown critical tag, missing required field, bad enum) is
     ///  <see cref="TapeFramer.FrameStatus.Unparseable"/>.
     /// </summary>
-    public static TapeFramer.FrameStatus TryUnpack<T>(ReadOnlySpan<byte> data, out T? value) where T : class, ITapeRecord<T>
+    public static TapeFramer.FrameStatus TryUnpack<T>(ReadOnlySpan<byte> data, out T? value,
+        out int frameLength, out TapeFormatException? error) where T : class, ITapeRecord<T>
     {
         value = null;
-        var status = TryUnpackRecord(data, out TapeRecord? record, out _);
+        error = null;
+        var status = TryUnpackRecord(data, out TapeRecord? record, out frameLength, out error);
         if (status != TapeFramer.FrameStatus.Ok)
             return status;
 
@@ -117,10 +132,27 @@ public static class TapeFrame
             value = record!.Read<T>();     // Ok implies a non-null record
             return TapeFramer.FrameStatus.Ok;
         }
-        catch (TapeFormatException)
+        catch (TapeFormatException ex)
         {
+            error = ex;
             return TapeFramer.FrameStatus.Unparseable;
         }
+    }
+
+    /// <summary>
+    /// 2.1 frame, or the legacy form via <see cref="ITapeFramedRecord{TSelf}.TryReadLegacy"/> when the magic is absent.
+    /// Never throws.
+    /// </summary>
+    public static TapeFramer.FrameStatus TryUnpackWithLegacy<T>(ReadOnlySpan<byte> data, out T? value,
+        out int frameLength, out TapeFormatException? error) where T : class, ITapeFramedRecord<T>
+    {
+        if (!TapeFormat.IsV2(data))
+        {
+            error = null;
+            frameLength = 0;
+            return T.TryReadLegacy(data, out value);
+        }
+        return TryUnpack(data, out value, out frameLength, out error);
     }
 
     /// <summary>Reads one inline frame from <paramref name="stream"/>, verifying its CRC; consumes exactly the frame.</summary>

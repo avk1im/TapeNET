@@ -34,13 +34,30 @@ public class FormatCoreTests
 
         static Sample()
         {
-            s_schema.AddCustom(48, (w, s) => { foreach (var i in s.Items) w.WriteInt(48, i); },
-                (f, s) => s.Items.Add(f.ReadInt64()), repeated: true);
+            // Repeated group 48 holding one varint (field 1) per item
+            s_schema.AddCustom(48, FieldShape.Group,
+                (w, s) =>
+                {
+                    foreach (var i in s.Items)
+                    {
+                        var g = w.BeginGroup(48);
+                        g.WriteInt(1, i);
+                        w.EndGroup(g);
+                    }
+                },
+                (f, s) =>
+                {
+                    var g = f.ReadGroup();
+                    Assert.True(g.MoveNext());
+                    s.Items.Add(g.ReadInt());
+                },
+                flags: FieldFlags.Repeated);
         }
 
-        public static TapeRecordKind Kind => TapeRecordKind.TocSet;
-        public void WriteTo(TapeRecordWriter writer) => s_schema.Write(writer, this);
-        public static Sample ReadFrom(TapeFieldReader fields) => s_schema.Read(fields, new Sample());
+        public TapeRecordKind RecordKind => TapeRecordKind.TocSet;
+        public void WriteBody(TapeFieldWriter fields) => s_schema.Write(fields, this);
+        public static bool Accepts(TapeRecordKind kind) => kind == TapeRecordKind.TocSet;
+        public static Sample ReadBody(TapeFieldReader fields) => s_schema.Read(fields, new Sample());
     }
 
     private static Sample MakeSample() => new()
@@ -266,7 +283,7 @@ public class FormatCoreTests
         prologue[7] = 1;
         int n = 8 + TapePrimitives.WriteVarUInt(prologue.AsSpan(8), (ulong)TapeFormat.MaxRecordBody + 1);
         using var ms = new MemoryStream(prologue[..n]);
-        AssertRefused(FormatErrorKind.BadValue, () => new TapeRecordReader(ms).ReadRecord());
+        AssertRefused(FormatErrorKind.LimitExceeded, () => new TapeRecordReader(ms).ReadRecord());
     }
 
     [Fact]
@@ -319,7 +336,7 @@ public class FormatCoreTests
     public void Schema_RoundTrips_AllShapes()
     {
         var original = MakeSample();
-        var back = ReadOne(Bytes(w => original.WriteTo(w)));
+        var back = ReadOne(Bytes(w => w.Write(original)));
 
         Assert.Equal(original.Id, back.Id);
         Assert.Equal(original.When, back.When);
@@ -335,7 +352,7 @@ public class FormatCoreTests
     [Fact]
     public void Schema_EmitsAscendingTags()
     {
-        var r = TapeRecordReader.Parse(Bytes(w => MakeSample().WriteTo(w)), out _).Fields;
+        var r = TapeRecordReader.Parse(Bytes(w => w.Write(MakeSample())), out _).Fields;
         int last = 0;
         while (r.MoveNext())
         {
@@ -349,7 +366,7 @@ public class FormatCoreTests
     {
         var s = new Sample { Id = Guid.Empty, When = DateTime.MinValue, Name = "" };   // Count = 5, Flag = false, Mode = Alpha, Note = null
         var numbers = new List<int>();
-        var r = TapeRecordReader.Parse(Bytes(w => s.WriteTo(w)), out _).Fields;
+        var r = TapeRecordReader.Parse(Bytes(w => w.Write(s)), out _).Fields;
         while (r.MoveNext())
             numbers.Add(r.Number);
 
@@ -359,7 +376,7 @@ public class FormatCoreTests
     [Fact]
     public void Schema_RequiredEmptyString_RoundTrips()
     {
-        var back = ReadOne(Bytes(w => new Sample { Id = Guid.NewGuid(), When = DateTime.UtcNow, Name = "" }.WriteTo(w)));
+        var back = ReadOne(Bytes(w => w.Write(new Sample { Id = Guid.NewGuid(), When = DateTime.UtcNow, Name = "" })));
         Assert.Equal("", back.Name);
     }
 
@@ -367,15 +384,26 @@ public class FormatCoreTests
     public void Schema_ReadsFieldsInAnyOrder()
     {
         var id = Guid.NewGuid();
-        byte[] bytes = RecordWith(f =>
-        {
-            f.WriteString(32, "late");
-            f.WriteTimestamp(2, new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc));
-            f.WriteGuid(1, id);
-        });
+        // The writer enforces ascending numbers, so concatenate separately written single-field bodies in descending order
+        static byte[] BodyOf(Action<TapeFieldWriter> fill) => TapeRecordReader.Parse(RecordWith(fill), out _).Body.ToArray();
+        byte[] bytes = Raw((ushort)TapeRecordKind.TocSet, 2,
+        [
+            .. BodyOf(f => f.WriteString(32, "late")),
+            .. BodyOf(f => f.WriteTimestamp(2, new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc))),
+            .. BodyOf(f => f.WriteGuid(1, id)),
+        ]);
         var back = ReadOne(bytes);
         Assert.Equal(id, back.Id);
         Assert.Equal("late", back.Name);
+    }
+
+    // Required fields with extra fields slotted in ascending order between fields 2 and 32
+    private static void WriteRequiredWith(TapeFieldWriter f, Action<TapeFieldWriter> mid)
+    {
+        f.WriteGuid(1, Guid.NewGuid());
+        f.WriteTimestamp(2, DateTime.UtcNow);
+        mid(f);
+        f.WriteString(32, "n");
     }
 
     private static void WriteRequired(TapeFieldWriter f)
@@ -412,12 +440,21 @@ public class FormatCoreTests
 
     [Fact]
     public void Schema_DuplicateField_Refused()
-        => AssertRefused(FormatErrorKind.Duplicate, () => ReadOne(RecordWith(f => { WriteRequired(f); f.WriteUInt(3, 1); f.WriteUInt(3, 2); })));
+        => AssertRefused(FormatErrorKind.Duplicate, () => ReadOne(RecordWith(f => WriteRequiredWith(f, g => { g.WriteUInt(3, 1); g.WriteUInt(3, 2); }))));
 
     [Fact]
     public void Schema_RepeatedField_AllowsManyOccurrences()
     {
-        var back = ReadOne(RecordWith(f => { WriteRequired(f); f.WriteInt(48, 1); f.WriteInt(48, 2); }));
+        var back = ReadOne(RecordWith(f =>
+                {
+                    WriteRequired(f);
+                    foreach (long v in new long[] { 1, 2 })
+                    {
+                        var g = f.BeginGroup(48);
+                        g.WriteInt(1, v);
+                        f.EndGroup(g);
+                    }
+                }));
         Assert.Equal([1L, 2L], back.Items);
     }
 
@@ -431,16 +468,16 @@ public class FormatCoreTests
 
     [Fact]
     public void Schema_UndefinedEnumValue_Refused()
-        => AssertRefused(FormatErrorKind.BadValue, () => ReadOne(RecordWith(f => { WriteRequired(f); f.WriteUInt(6, 77); })));
+        => AssertRefused(FormatErrorKind.BadValue, () => ReadOne(RecordWith(f => WriteRequiredWith(f, g => g.WriteUInt(6, 77)))));
 
     [Fact]
     public void Schema_EnumAboveItsRange_Refused()
-        => AssertRefused(FormatErrorKind.BadValue, () => ReadOne(RecordWith(f => { WriteRequired(f); f.WriteUInt(6, 256); })));
+        => AssertRefused(FormatErrorKind.BadValue, () => ReadOne(RecordWith(f => WriteRequiredWith(f, g => g.WriteUInt(6, 256)))));
 
     [Fact]
     public void Schema_CriticalEnum_IsWrittenWithTheCriticalBit()
     {
-        var r = TapeRecordReader.Parse(Bytes(w => MakeSample().WriteTo(w)), out _).Fields;
+        var r = TapeRecordReader.Parse(Bytes(w => w.Write(MakeSample())), out _).Fields;
         while (r.MoveNext())
             if (r.Number == 6)
             {
@@ -455,12 +492,14 @@ public class FormatCoreTests
     {
         var schema = new TapeSchema<Sample>(TapeRecordKind.TocSet);
         schema.Add(1, s => s.Flag, (s, v) => s.Flag = v);
-        Assert.Throws<InvalidOperationException>(() => schema.Add(1, s => s.Flag, (s, v) => s.Flag = v));
+        schema.Add(1, s => s.Flag, (s, v) => s.Flag = v);
+        // Duplicates are detected when the schema freezes on first use (Appendix B §B.3.5)
+        Assert.Throws<InvalidOperationException>(() => Bytes(w => w.Write(TapeRecordKind.TocSet, f => schema.Write(f, new Sample()))));
     }
 
     [Fact]
     public void Record_OfAnotherKind_Refused()
-        => AssertRefused(FormatErrorKind.BadValue, () => TapeRecordReader.Parse(RecordWith(WriteRequired, TapeRecordKind.TocHeader), out _).Read<Sample>());
+        => AssertRefused(FormatErrorKind.UnexpectedKind, () => TapeRecordReader.Parse(RecordWith(WriteRequired, TapeRecordKind.TocHeader), out _).Read<Sample>());
 
     #endregion
 
@@ -486,7 +525,7 @@ public class FormatCoreTests
     {
         // Hand-built oversized value: the writer would refuse, so bypass it with a bytes field of the same wire shape.
         byte[] bytes = RecordWith(f => f.WriteBytes(33, new byte[TapeFormat.MaxStringBytes + 1]));
-        AssertRefused(FormatErrorKind.BadValue, () =>
+        AssertRefused(FormatErrorKind.LimitExceeded, () =>
         {
             var r = TapeRecordReader.Parse(bytes, out _).Fields;
             r.MoveNext();
@@ -510,7 +549,7 @@ public class FormatCoreTests
             if (levels == 0)
                 f.WriteUInt(1, 1);
             else
-                f.WriteGroup(48, g => Nest(g, levels - 1));
+                { var g = f.BeginGroup(48); Nest(g, levels - 1); f.EndGroup(g); }
         }
 
         byte[] ok = RecordWith(f => Nest(f, TapeFormat.MaxGroupDepth));
@@ -521,7 +560,7 @@ public class FormatCoreTests
             r = r.ReadGroup();
         }
         Assert.True(r.MoveNext());
-        Assert.Equal(1UL, r.ReadUInt64());
+        Assert.Equal(1UL, r.ReadUInt());
 
         Assert.Throws<InvalidOperationException>(() => RecordWith(f => Nest(f, TapeFormat.MaxGroupDepth + 1)));
     }
@@ -534,7 +573,7 @@ public class FormatCoreTests
         for (int i = 0; i < TapeFormat.MaxGroupDepth + 1; i++)
             inner = [(48 << 1), (byte)inner.Length, .. inner];
 
-        AssertRefused(FormatErrorKind.BadValue, () =>
+        AssertRefused(FormatErrorKind.LimitExceeded, () =>
         {
             var r = TapeRecordReader.Parse(Raw((ushort)TapeRecordKind.TocSet, 2, inner), out _).Fields;
             while (r.MoveNext())
@@ -658,7 +697,7 @@ public class FormatCoreTests
         {
             using var w = new TapeRecordWriter(s);
             foreach (var sample in samples)
-                sample.WriteTo(w);
+                w.Write(sample);
         });
         return ms.ToArray();
     }
@@ -785,7 +824,7 @@ public class FormatCoreTests
             TapeFrame.TryUnpack(Seal(RecordWith(f => f.WriteString(32, "n"))), out Sample? _));
         // bad enum value
         Assert.Equal(TapeFramer.FrameStatus.Unparseable,
-            TapeFrame.TryUnpack(Seal(RecordWith(f => { WriteRequired(f); f.WriteUInt(6, 77); })), out Sample? _));
+            TapeFrame.TryUnpack(Seal(RecordWith(f => WriteRequiredWith(f, g => g.WriteUInt(6, 77)))), out Sample? _));
         // a different (known) kind than asked for
         Assert.Equal(TapeFramer.FrameStatus.Unparseable,
             TapeFrame.TryUnpack(Seal(RecordWith(WriteRequired, TapeRecordKind.TocHeader)), out Sample? _));

@@ -39,12 +39,14 @@ public sealed class TapeRecordReader(Stream stream)
         TapeRecord record = ReadRecord()
             ?? throw new TapeFormatException(FormatErrorKind.Truncated, $"stream ended where a {expected} record was expected");
         if (record.Kind != expected)
-            throw TapeFormatException.Bad($"expected record kind {expected}, found {record.Kind}");
+            throw new TapeFormatException(FormatErrorKind.UnexpectedKind, $"expected record kind {expected}, found {record.Kind}");
         return record;
     }
 
     /// <summary>Reads the next record and interprets it as <typeparamref name="T"/>.</summary>
-    public T Read<T>() where T : ITapeRecord<T> => ReadRecord(T.Kind).Read<T>();
+    public T Read<T>() where T : ITapeRecord<T>
+        => (ReadRecord() ?? throw new TapeFormatException(FormatErrorKind.Truncated,
+            $"stream ended where a {typeof(T).Name} record was expected")).Read<T>();
 
     /// <summary>
     /// Reads prologue + body with structural checks only (magic, length bound) - no kind / version judgement.
@@ -68,7 +70,7 @@ public sealed class TapeRecordReader(Stream stream)
 
         ulong bodyLength = ReadVarUIntFromStream();
         if (bodyLength > TapeFormat.MaxRecordBody)
-            throw TapeFormatException.Bad($"record body of {bodyLength} bytes exceeds {TapeFormat.MaxRecordBody}");
+            throw new TapeFormatException(FormatErrorKind.LimitExceeded, $"record body of {bodyLength} bytes exceeds {TapeFormat.MaxRecordBody}");
 
         return new TapeRecord(rawKind, major, minor, ReadBody((int)bodyLength));
     }

@@ -117,14 +117,14 @@ public class LegacyVirtualGoldenTests
         Assert.Equal(1, fx.TOC.Count);
         Assert.Equal(SetDescription, fx.TOC.CurrentSetTOC.Description);
 
-        var dest = Path.Combine(Path.GetTempPath(), "TapeNET_VGoldR_" + Guid.NewGuid().ToString("N"));
+        string dest = Path.Combine(Path.GetTempPath(), "TapeNET_VGoldR_" + Guid.NewGuid().ToString("N"));
         try
         {
             using var agent = fx.CreateRestoreAgent(dest);
             Assert.True(agent.RestoreAllFilesFromCurrentSet(ignoreFailures: false, fileNotify: null), "Restore from golden image failed");
 
             var restored = Directory.GetFiles(dest, "*", SearchOption.AllDirectories)
-                .ToDictionary(Path.GetFileName, File.ReadAllBytes);
+                .ToDictionary(f => Path.GetFileName(f) ?? string.Empty, File.ReadAllBytes);
             Assert.Equal(s_fileNames.Length, restored.Count);
             for (int i = 0; i < s_fileNames.Length; i++)
                 Assert.Equal(ContentOf(i), restored[Path.GetFileName(s_fileNames[i])]);

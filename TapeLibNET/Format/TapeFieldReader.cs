@@ -18,15 +18,59 @@ public sealed class TapeFieldReader
     private int m_valueLength;
     private bool m_hasCurrent;
 
+    private delegate T SpanDecoder<T>(ReadOnlySpan<byte> value);
+
     /// <summary>Creates a reader over a record body or group body.</summary>
-    public TapeFieldReader(ReadOnlyMemory<byte> body) : this(body, 0)
+    public TapeFieldReader(ReadOnlyMemory<byte> body) : this(body, default, 0)
     {
     }
 
-    private TapeFieldReader(ReadOnlyMemory<byte> body, int depth)
+    internal TapeFieldReader(ReadOnlyMemory<byte> body, TapeRecordInfo record) : this(body, record, 0)
+    {
+    }
+
+    private TapeFieldReader(ReadOnlyMemory<byte> body, TapeRecordInfo record, int depth)
     {
         m_body = body;
+        Record = record;
         m_depth = depth;
+    }
+
+    /// <summary>What is known about the record this reader is in (default when unknown).</summary>
+    public TapeRecordInfo Record { get; }
+
+    /// <summary>Builds an exception carrying <see cref="Record"/>, the current field and the body offset.</summary>
+    public TapeFormatException Error(FormatErrorKind kind, string detail) => new(kind, detail)
+    {
+        Record = Record.Kind == 0 ? null : Record.Kind,
+        Field = m_hasCurrent ? Number : null,
+        Offset = m_hasCurrent ? m_valueStart : null,
+    };
+
+    /// <summary>Unknown field number: a no-op, or <see cref="FormatErrorKind.UnknownCritical"/> when its tag is critical.</summary>
+    public void SkipUnknown()
+    {
+        if (IsCritical)
+            throw Error(FormatErrorKind.UnknownCritical, $"feature {Number} unknown to this build (format {TapeFormat.VersionText})");
+    }
+
+    // Runs a primitive decoder; adds record / field / offset context to any format error
+    private T Decode<T>(SpanDecoder<T> decoder)
+    {
+        ReadOnlySpan<byte> value = Value;
+        try
+        {
+            return decoder(value);
+        }
+        catch (TapeFormatException ex) when (ex.Record is null && ex.Field is null)
+        {
+            throw new TapeFormatException(ex.Kind, ex.Message, ex.InnerException)
+            {
+                Record = Record.Kind == 0 ? null : Record.Kind,
+                Field = Number,
+                Offset = m_valueStart,
+            };
+        }
     }
 
     /// <summary>Number of the current field.</summary>
@@ -84,37 +128,37 @@ public sealed class TapeFieldReader
     #region *** Typed value accessors (current field) ***
 
     /// <summary>The value as <c>varuint</c>.</summary>
-    public ulong ReadUInt64() => TapePrimitives.DecodeVarUInt(Value);
+    public ulong ReadUInt() => Decode(TapePrimitives.DecodeVarUInt);
 
     /// <summary>The value as <c>varuint</c> that must fit 32 bits.</summary>
-    public uint ReadUInt32() => TapePrimitives.DecodeUInt32(Value);
+    public uint ReadUInt32() => Decode(TapePrimitives.DecodeUInt32);
 
     /// <summary>The value as <c>varuint</c> that must fit a non-negative Int32.</summary>
-    public int ReadInt32() => TapePrimitives.DecodeInt32(Value);
+    public int ReadInt32() => Decode(TapePrimitives.DecodeInt32);
 
     /// <summary>The value as <c>varuint</c> that must fit a non-negative Int64.</summary>
-    public long ReadNonNegativeInt64() => TapePrimitives.DecodeNonNegativeInt64(Value);
+    public long ReadNonNegativeInt64() => Decode(TapePrimitives.DecodeNonNegativeInt64);
 
     /// <summary>The value as ZigZag <c>varint</c>.</summary>
-    public long ReadInt64() => TapePrimitives.DecodeVarInt(Value);
+    public long ReadInt() => Decode(TapePrimitives.DecodeVarInt);
 
     /// <summary>The value as strict <c>bool</c>.</summary>
-    public bool ReadBool() => TapePrimitives.DecodeBool(Value);
+    public bool ReadBool() => Decode(TapePrimitives.DecodeBool);
 
     /// <summary>The value as <c>f64</c>.</summary>
-    public double ReadF64() => TapePrimitives.DecodeF64(Value);
+    public double ReadF64() => Decode(TapePrimitives.DecodeF64);
 
     /// <summary>The value as <c>guid</c>.</summary>
-    public Guid ReadGuid() => TapePrimitives.DecodeGuid(Value);
+    public Guid ReadGuid() => Decode(TapePrimitives.DecodeGuid);
 
     /// <summary>The value as <c>timestamp</c> (<see cref="DateTimeKind.Utc"/>).</summary>
-    public DateTime ReadTimestamp() => TapePrimitives.DecodeTimestamp(Value);
+    public DateTime ReadTimestamp() => Decode(TapePrimitives.DecodeTimestamp);
 
     /// <summary>The value as validated UTF-8 <c>string</c>.</summary>
-    public string ReadString() => TapePrimitives.DecodeString(Value);
+    public string ReadString() => Decode(TapePrimitives.DecodeString);
 
     /// <summary>The value as a copied <c>bytes</c> array.</summary>
-    public byte[] ReadBytes() => TapePrimitives.DecodeBytes(Value);
+    public byte[] ReadBytes() => Decode(TapePrimitives.DecodeBytes);
 
     /// <summary>The value as a nested group; groups nest up to <see cref="TapeFormat.MaxGroupDepth"/> levels.</summary>
     public TapeFieldReader ReadGroup()
@@ -122,9 +166,9 @@ public sealed class TapeFieldReader
         if (!m_hasCurrent)
             throw new InvalidOperationException("no current field - call MoveNext first");
         if (m_depth + 1 > TapeFormat.MaxGroupDepth)
-            throw TapeFormatException.Bad($"group nesting exceeds {TapeFormat.MaxGroupDepth}");
+            throw Error(FormatErrorKind.LimitExceeded, $"group nesting exceeds {TapeFormat.MaxGroupDepth}");
 
-        return new TapeFieldReader(m_body.Slice(m_valueStart, m_valueLength), m_depth + 1);
+        return new TapeFieldReader(m_body.Slice(m_valueStart, m_valueLength), Record, m_depth + 1);
     }
 
     #endregion

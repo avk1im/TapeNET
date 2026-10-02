@@ -22,7 +22,7 @@ public sealed class TapeRecord(ushort rawKind, byte major, byte minor, ReadOnlyM
     public ReadOnlyMemory<byte> Body => body;
 
     /// <summary>A fresh field reader over the body.</summary>
-    public TapeFieldReader Fields => new(body);
+    public TapeFieldReader Fields => new(body, new TapeRecordInfo(Kind, major, minor));
 
     /// <summary>
     /// Decides whether this build handles the record: <see langword="true"/> = deliver, <see langword="false"/> =
@@ -54,8 +54,9 @@ public sealed class TapeRecord(ushort rawKind, byte major, byte minor, ReadOnlyM
     public T Read<T>() where T : ITapeRecord<T>
     {
         RequireSupportedMajor();
-        if (Kind != T.Kind)
-            throw TapeFormatException.Bad($"expected record kind {T.Kind}, found 0x{rawKind:X4}");
-        return T.ReadFrom(Fields);
+        if (!T.Accepts(Kind))
+            throw new TapeFormatException(FormatErrorKind.UnexpectedKind,
+                $"record kind 0x{rawKind:X4} is not accepted by {typeof(T).Name}");
+        return T.ReadBody(Fields);
     }
 }

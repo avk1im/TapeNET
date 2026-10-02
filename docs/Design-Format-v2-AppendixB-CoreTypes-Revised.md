@@ -1,7 +1,6 @@
 # Design-Format-v2 — Appendix B (Revised): Format Core Types
 
-**Status:** binding for implementation. **Replaces:** `Design-Format-v2-AppendixB-CoreTypes.md` and
-`Design-Format-v2-AppendixB-Rulings.md` — delete both; this is the only Appendix B.
+**Status:** binding for implementation. **Replaces:** `Design-Format-v2-AppendixB-CoreTypes.md` — delete; this is the only Appendix B.
 **Applies to:** the Phase 1 code already in `TapeLibNET/Format/`, which this document amends (§B.4), and Phase 3
 (TOC), which it prepares (§B.8). **Last updated:** 2026-10-02
 
@@ -37,7 +36,7 @@ Each layer knows only the one below. Domain types never touch prologues, lengths
 
 ---
 
-## B.2 Ground Rules (non-negotiable)
+## B.2 Ground Rules (must-follow)
 
 | # | Rule |
 |---|---|
