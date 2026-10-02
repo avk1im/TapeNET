@@ -1,11 +1,11 @@
 # Design: On-Tape Format 2.1 — Clean Cut with Read-Only Legacy Support
 
-**Status:** v4.2 — for implementation. **Branch:** `format-v2` — lands before `encryption`.
+**Status:** v4.3 — for implementation. **Branch:** `format-v2` — lands before `encryption`.
 **Last updated:** 2026-10-01
 
 **Augmented by**:
 - `Design-Format-v2-AppendixA-VirtualMedia.md` virtual media state, host-side metadata file.
-- `Design-Format-v2-AppendixB-CoreTypes.md` Core Types (`TapeSchema<T>`, `ITapeRecord<T>`, `ITapeFramedRecord<T>`).
+- `Design-Format-v2-AppendixB-CoreTypes-Revised.md` Core Types (`TapeSchema<T>`, `ITapeRecord<T>`, `ITapeFramedRecord<T>`).
 
 ---
 
