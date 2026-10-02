@@ -40,11 +40,11 @@ public sealed class TapeFieldReader
     public TapeRecordInfo Record { get; }
 
     /// <summary>Builds an exception carrying <see cref="Record"/>, the current field and the body offset.</summary>
-    public TapeFormatException Error(FormatErrorKind kind, string detail) => new(kind, detail)
+    public TapeFormatException Error(FormatErrorKind kind, string detail, int? field = null) => new(kind, detail)
     {
         Record = Record.Kind == 0 ? null : Record.Kind,
-        Field = m_hasCurrent ? Number : null,
-        Offset = m_hasCurrent ? m_valueStart : null,
+        Field = field ?? (m_hasCurrent ? Number : null),
+        Offset = field is null && m_hasCurrent ? m_valueStart : null,
     };
 
     /// <summary>Unknown field number: a no-op, or <see cref="FormatErrorKind.UnknownCritical"/> when its tag is critical.</summary>
@@ -95,11 +95,11 @@ public sealed class TapeFieldReader
 
         ulong tag = ReadVarUIntInBody(span, ref m_pos);
         if (tag > uint.MaxValue || (tag >> 1) == 0)
-            throw TapeFormatException.Bad($"invalid field tag {tag}");
+            throw Error(FormatErrorKind.BadValue, $"invalid field tag {tag}");
 
         ulong length = ReadVarUIntInBody(span, ref m_pos);
         if (length > (ulong)(span.Length - m_pos))
-            throw new TapeFormatException(FormatErrorKind.Overrun, $"field {tag >> 1} runs past the end of its body");
+            throw Error(FormatErrorKind.Overrun, $"field {tag >> 1} runs past the end of its body", (int)Math.Min(tag >> 1, int.MaxValue));
 
         Number = (int)(tag >> 1);
         IsCritical = (tag & 1) != 0;
@@ -111,7 +111,7 @@ public sealed class TapeFieldReader
     }
 
     // A varuint that ends mid-body is an overrun of the body, not of the stream.
-    private static ulong ReadVarUIntInBody(ReadOnlySpan<byte> span, ref int pos)
+    private ulong ReadVarUIntInBody(ReadOnlySpan<byte> span, ref int pos)
     {
         try
         {
@@ -121,7 +121,10 @@ public sealed class TapeFieldReader
         }
         catch (TapeFormatException ex) when (ex.Kind == FormatErrorKind.Truncated)
         {
-            throw new TapeFormatException(FormatErrorKind.Overrun, "field header runs past the end of its body", ex);
+            throw new TapeFormatException(FormatErrorKind.Overrun, "field header runs past the end of its body", ex)
+            {
+                Record = Record.Kind == 0 ? null : Record.Kind,
+            };
         }
     }
 

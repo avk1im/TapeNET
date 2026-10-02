@@ -57,7 +57,16 @@ public sealed class TapeRecordWriter(Stream stream) : IDisposable
     public void Write(TapeRecordKind kind, Action<TapeFieldWriter> fill)
     {
         ArgumentNullException.ThrowIfNull(fill);
-        fill(BeginRecord(kind));
+        TapeFieldWriter fields = BeginRecord(kind);
+        try
+        {
+            fill(fields);
+        }
+        catch
+        {
+            AbandonRecord();
+            throw;
+        }
         EndRecord();
     }
 

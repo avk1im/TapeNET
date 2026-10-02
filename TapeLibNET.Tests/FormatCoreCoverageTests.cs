@@ -981,7 +981,7 @@ public class FormatCoreCoverageTests
         Assert.Null(error);
 
         block[12] ^= 1;     // damaged behind the magic: still ours, never handed to the legacy reader
-        Assert.Equal(TapeFramer.FrameStatus.CrcMismatch, TapeFrame.TryUnpackWithLegacy(block, out _, out _, out _));
+        Assert.Equal(TapeFramer.FrameStatus.CrcMismatch, TapeFrame.TryUnpackWithLegacy(block, out Legacyish? _, out _, out _));
         Assert.Equal(before, Legacyish.LegacyCalls);
     }
 

@@ -57,6 +57,14 @@ public sealed class TapeRecord(ushort rawKind, byte major, byte minor, ReadOnlyM
         if (!T.Accepts(Kind))
             throw new TapeFormatException(FormatErrorKind.UnexpectedKind,
                 $"record kind 0x{rawKind:X4} is not accepted by {typeof(T).Name}");
-        return T.ReadBody(Fields);
+        try
+        {
+            return T.ReadBody(Fields);
+        }
+        catch (Exception ex) when (ex is ArgumentException or OverflowException)
+        {
+            // Domain conversion refused the data (ToRecord): report it as a format error (G8).
+            throw new TapeFormatException(FormatErrorKind.BadValue, $"{typeof(T).Name}: {ex.Message}", ex) { Record = Kind };
+        }
     }
 }

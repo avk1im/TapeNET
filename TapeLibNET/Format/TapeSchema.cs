@@ -150,7 +150,7 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
         public override void ApplyDefault(T target) => set(target, []);     // absent: empty (a setter takes no null)
     }
 
-    private sealed class GroupField<TChild>(int number, FieldFlags flags, Func<T, TChild?> get, Action<T, TChild> set,
+    private sealed class GroupField<TChild>(int number, FieldFlags flags, Func<T, TChild?> get, Action<T, TChild?> set,
         TapeSchema<TChild> child) : FieldBase(number, flags, FieldShape.Group) where TChild : class, new()
     {
         public override void Write(TapeFieldWriter w, T source)
@@ -163,6 +163,8 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
                 child.Write(cw, value);
             w.EndGroup(cw);
         }
+
+        public override void ApplyDefault(T target) => set(target, null);   // absent optional group: null, not the previous value
 
         public override void Read(TapeFieldReader r, T target) => set(target, child.Read(r.ReadGroup(), new TChild()));
     }
@@ -433,14 +435,17 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
         => Add(n, get, set, default(TEnum), flags);
 
     /// <summary>Adds a nested group field described by <paramref name="child"/>; optional null is elided.</summary>
-    public void Add<TChild>(int n, Func<T, TChild?> get, Action<T, TChild> set, TapeSchema<TChild> child, FieldFlags flags = FieldFlags.None)
+    public void Add<TChild>(int n, Func<T, TChild?> get, Action<T, TChild?> set, TapeSchema<TChild> child, FieldFlags flags = FieldFlags.None)
         where TChild : class, new()
     {
         RequireGroupSchema(child);
         Register(new GroupField<TChild>(n, flags, get, set, child));
     }
 
-    /// <summary>Adds a repeated nested group field: one occurrence per item.</summary>
+    /// <summary>
+    /// Adds a repeated nested group field: one occurrence per item. Read appends each occurrence;
+    ///  read schemas with repeated groups into a fresh target.
+    /// </summary>
     public void Add<TChild>(int n, Func<T, IEnumerable<TChild>> getAll, Action<T, TChild> add, TapeSchema<TChild> child,
         FieldFlags flags = FieldFlags.Repeated) where TChild : class, new()
     {
@@ -553,7 +558,7 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
             if ((seen & (1UL << field.Number)) != 0)
                 continue;
             if ((field.Flags & FieldFlags.Required) != 0)
-                throw r.Error(FormatErrorKind.MissingRequired, $"required field {field.Number} is absent");
+                throw r.Error(FormatErrorKind.MissingRequired, $"required field {field.Number} is absent", field.Number);
             field.ApplyDefault(target);     // absent: the schema default, never the constructor's value
         }
 

@@ -128,7 +128,7 @@ public sealed class TapeRecordReader(Stream stream)
 
     #region *** Span variant ***
 
-    internal enum PrologueStatus { Ok, NotRecord, Truncated, BadLength }
+    internal enum PrologueStatus { Ok, NotRecord, Truncated, BadLength, TooLarge }
 
     internal readonly record struct Prologue(ushort RawKind, byte Major, byte Minor, int BodyLength, int PrologueLength);
 
@@ -149,7 +149,7 @@ public sealed class TapeRecordReader(Stream stream)
                 ? PrologueStatus.Truncated : PrologueStatus.BadLength;
         }
         if (bodyLength > TapeFormat.MaxRecordBody)
-            return PrologueStatus.BadLength;
+            return PrologueStatus.TooLarge;
 
         prologue = new Prologue(BinaryPrimitives.ReadUInt16LittleEndian(data[TapeFormat.MagicLength..]),
             data[6], data[7], (int)bodyLength, TapeFormat.FixedPrologueLength + consumed);
@@ -172,7 +172,9 @@ public sealed class TapeRecordReader(Stream stream)
                 case PrologueStatus.Truncated:
                     throw new TapeFormatException(FormatErrorKind.Truncated, "data ends inside a record prologue");
                 case PrologueStatus.BadLength:
-                    throw TapeFormatException.Bad("record body length is malformed or exceeds the limit");
+                    throw TapeFormatException.Bad("record body length is malformed");
+                case PrologueStatus.TooLarge:
+                    throw new TapeFormatException(FormatErrorKind.LimitExceeded, $"record body exceeds {TapeFormat.MaxRecordBody} bytes");
             }
 
             int bodyStart = pos + p.PrologueLength;

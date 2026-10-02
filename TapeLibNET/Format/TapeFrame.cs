@@ -168,7 +168,8 @@ public static class TapeFrame
             throw new TapeFormatException(FormatErrorKind.Truncated, "stream ended where a frame was expected");
 
         byte[] stored = new byte[CrcLength];
-        stream.ReadExactly(stored);
+        if (stream.ReadAtLeast(stored, CrcLength, throwOnEndOfStream: false) < CrcLength)
+            throw new TapeFormatException(FormatErrorKind.Truncated, "stream ended inside the frame CRC-64");
         if (!crc.GetCurrentHash().AsSpan().SequenceEqual(stored))
             throw new TapeFormatException(FormatErrorKind.CrcMismatch, "frame CRC-64 does not match");
 

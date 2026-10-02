@@ -507,7 +507,7 @@ public class FormatCoreTests
 
     [Fact]
     public void Limits_StringAboveMax_RefusedOnWrite()
-        => AssertRefused(FormatErrorKind.BadValue, () => RecordWith(f => f.WriteString(32, new string('a', TapeFormat.MaxStringBytes + 1))));
+        => AssertRefused(FormatErrorKind.LimitExceeded, () => RecordWith(f => f.WriteString(32, new string('a', TapeFormat.MaxStringBytes + 1))));
 
     [Fact]
     public void Limits_StringAtMax_RoundTrips()
@@ -535,7 +535,7 @@ public class FormatCoreTests
 
     [Fact]
     public void Limits_RecordBodyAboveMax_RefusedOnWrite()
-        => AssertRefused(FormatErrorKind.BadValue, () => RecordWith(f =>
+        => AssertRefused(FormatErrorKind.LimitExceeded, () => RecordWith(f =>
         {
             for (int i = 0; i < 3; i++)
                 f.WriteBytes(48, new byte[TapeFormat.MaxBytesField]);   // 3 x 16 MiB > 16 MiB record body

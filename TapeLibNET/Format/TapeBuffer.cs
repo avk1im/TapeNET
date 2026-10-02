@@ -63,7 +63,7 @@ internal sealed class TapeBuffer : IDisposable
     private void Ensure(int extra)
     {
         if (Count + extra > TapeFormat.MaxRecordBody)
-            throw TapeFormatException.Bad($"record body would exceed {TapeFormat.MaxRecordBody} bytes");
+            throw new TapeFormatException(FormatErrorKind.LimitExceeded, $"record body would exceed {TapeFormat.MaxRecordBody} bytes");
 
         if (m_length + extra <= m_array.Length)
             return;

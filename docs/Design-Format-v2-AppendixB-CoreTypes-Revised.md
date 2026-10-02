@@ -47,8 +47,8 @@ Each layer knows only the one below. Domain types never touch prologues, lengths
 | G5 | **Integers are non-negative `varuint`.** Every integer field of the catalog is a count, size, index, address, id or volume. Signed values exist only where the catalog says `varint`: timestamps, and inside coded blobs (calibration sample deltas). A negative `int` / `long` on write is a programming error → `ArgumentOutOfRangeException` naming record and field. |
 | G6 | **Timestamps are UTC.** Writers normalize: `Utc` as is; `Local` → `ToUniversalTime()`; `Unspecified` → taken as UTC (`SpecifyKind`), **never** shifted. Readers return `DateTimeKind.Utc`. No `Debug.Assert` on `Unspecified` — it would fail-fast the test host. |
 | G7 | **Inside a field, values carry no own length prefix** — the field's `Length` delimits them. Every typed read consumes exactly `Value.Length` bytes or throws. |
-| G8 | **Read paths throw only `TapeFormatException`.** Carriers turn it into a `FrameStatus`, or let it propagate to the agent, which maps it to a `WIN32_ERROR`. |
-| G9 | **Writers emit ascending field numbers** (`Debug.Assert` in the field writer); a repeated field repeats in place. Readers accept any order. |
+to a `WIN32_ERROR`. `TapeRecord.Read<T>` maps `ArgumentException` / `OverflowException` from `ReadBody` to `BadValue` (F7). |
+| G9 | **Writers emit ascending field numbers** — enforced by `InvalidOperationException` in the field writer; a repeated field repeats in place. Readers accept any order. |
 | G10 | **Readers never read past the record they were asked for** — a CRC trailer or a file body follows directly. |
 | G11 | **A record the own reader would refuse never reaches tape.** The schema runs its `validate` hook on write too. |
 
@@ -150,7 +150,7 @@ public sealed class TapeFieldReader
     /// Unknown field number: no-op, or UnknownCritical when the tag's critical bit is set.
     public void SkipUnknown();
     /// Builds an exception carrying Record, current Field and body Offset.
-    public TapeFormatException Error(FormatErrorKind kind, string detail);
+    public TapeFormatException Error(FormatErrorKind kind, string detail, int? field = null);
 }
 ```
 
@@ -196,8 +196,8 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
     public void Add<TEnum>(int n, Func<T, TEnum> get, Action<T, TEnum> set,                 FieldFlags flags = 0)
         where TEnum : unmanaged, Enum;
 
-    // Groups
-    public void Add<TChild>(int n, Func<T, TChild?> get, Action<T, TChild> set,
+    // Groups: an absent optional group is set to null; repeated groups append on read - read them into fresh targets
+    public void Add<TChild>(int n, Func<T, TChild?> get, Action<T, TChild?> set,
                             TapeSchema<TChild> child, FieldFlags flags = 0) where TChild : class, new();
     public void Add<TChild>(int n, Func<T, IEnumerable<TChild>> getAll, Action<T, TChild> add,
                             TapeSchema<TChild> child, FieldFlags flags = FieldFlags.Repeated) where TChild : class, new();
@@ -209,7 +209,7 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
 ```
 
 Defaults when no default is given: numbers `0`, `bool` `false`, `Guid.Empty`, `DateTime` = `TapePrimitives.MinUtc`
-(`new DateTime(0, DateTimeKind.Utc)`), `string` `""`, `byte[]` `null`, enum `default(TEnum)`.
+`byte[]` empty array,
 
 Optional blobs: `null` **and** empty are both elided and read back as the default. A required string writes `null`
 as `""`.
@@ -533,6 +533,8 @@ it to `Format/` when `TapeFramer` itself is reworked.
   test wire types per G4.
 
 ### R6 — New and updated tests (`TapeLibNET.Tests/Format/`)
+
+*Implemented in `FormatCoreTests.cs` + `FormatCoreCoverageTests.cs`.*
 
 | Test | Covers |
 |---|---|

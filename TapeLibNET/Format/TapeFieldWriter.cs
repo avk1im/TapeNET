@@ -5,7 +5,7 @@ namespace TapeLibNET.Format;
 /// Obtained from <see cref="TapeRecordWriter.BeginRecord"/> or <see cref="BeginGroup"/>.
 /// </summary>
 /// <remarks>
-/// Writers emit ascending tags (the <see cref="TapeSchema{T}"/> does so by construction); a DEBUG assertion checks it.
+/// Writers emit ascending tags (the <see cref="TapeSchema{T}"/> does so by construction); an InvalidOperationException enforces it.
 ///  Every <c>critical</c> flag is part of the tag - emit it consistently per field number (R3).
 /// </remarks>
 public sealed class TapeFieldWriter
@@ -25,9 +25,6 @@ public sealed class TapeFieldWriter
         m_buffer = buffer;
         m_depth = depth;
     }
-
-    /// <summary>Largest legal field number (the tag must fit 32 bits).</summary>
-    public const int MaxFieldNumber = int.MaxValue;
 
     /// <summary>Body bytes written so far (for batch size control).</summary>
     public int BytesWritten => m_buffer.Count;
@@ -59,7 +56,8 @@ public sealed class TapeFieldWriter
     {
         if (number < 1)
             throw new ArgumentOutOfRangeException(nameof(number), number, "field numbers start at 1");
-        System.Diagnostics.Debug.Assert(number >= m_lastNumber, $"field {number} written after field {m_lastNumber}: numbers must ascend");
+        if (number < m_lastNumber)
+            throw new InvalidOperationException($"field {number} written after field {m_lastNumber}: numbers must ascend");
         m_lastNumber = number;
 
         Span<byte> header = stackalloc byte[2 * TapeFormat.MaxVarUIntBytes];
@@ -126,7 +124,7 @@ public sealed class TapeFieldWriter
         }
 
         if (length > TapeFormat.MaxStringBytes)
-            throw TapeFormatException.Bad($"string of {length} bytes exceeds {TapeFormat.MaxStringBytes}");
+            throw new TapeFormatException(FormatErrorKind.LimitExceeded, $"string of {length} bytes exceeds {TapeFormat.MaxStringBytes}");
 
         WriteHeader(number, critical, length);
         TapePrimitives.StrictUtf8.GetBytes(value, m_buffer.GetSpan(length));
@@ -137,7 +135,7 @@ public sealed class TapeFieldWriter
     public void WriteBytes(int number, ReadOnlySpan<byte> value, bool critical = false)
     {
         if (value.Length > TapeFormat.MaxBytesField)
-            throw TapeFormatException.Bad($"bytes value of {value.Length} bytes exceeds {TapeFormat.MaxBytesField}");
+            throw new TapeFormatException(FormatErrorKind.LimitExceeded, $"bytes value of {value.Length} bytes exceeds {TapeFormat.MaxBytesField}");
         WriteField(number, critical, value);
     }
 
