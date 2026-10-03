@@ -75,8 +75,8 @@ internal static class LegacyIdentify
             //  reads as a TOC tail -- it is what rejects a legacy file record at block address zero, whose
             //  zero words would otherwise pass for "no sets, empty description".
             _ = d.DeserializeString();                              // Description
-            DateTime created = d.DeserializeDateTime();
-            DateTime saved = d.DeserializeDateTime();
+            DateTime created = LegacyTime.FromLocal(d.DeserializeDateTime());
+            DateTime saved = LegacyTime.FromLocal(d.DeserializeDateTime());
             int volume = d.DeserializeInt32();
             return IsPlausibleTimestamp(created) && IsPlausibleTimestamp(saved) && volume >= 1;
         }

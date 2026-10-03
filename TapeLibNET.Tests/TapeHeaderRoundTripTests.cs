@@ -70,7 +70,8 @@ public class TapeHeaderRoundTripTests
 
         var media = Assert.IsType<TapeMediaHeader>(back);
         Assert.Equal(original.MediaId, media.MediaId);
-        Assert.Equal(original.CreatedUtc, media.CreatedUtc);   // DateTime equality compares ticks
+        // Interim (until Phase 5): headers still travel in the legacy format, whose media / set times read back as LOCAL
+        Assert.Equal(LegacyTestTime.AsLegacyLocal(original.CreatedUtc), media.CreatedUtc);
         Assert.Equal(original.TocBlockSize, media.TocBlockSize);
         Assert.Equal(original.Volume, media.Volume);
         Assert.Equal(original.Partition, media.Partition);

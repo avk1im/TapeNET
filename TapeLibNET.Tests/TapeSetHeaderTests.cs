@@ -1,6 +1,7 @@
 using System;
 using System.Text;
 using TapeLibNET;
+using TapeLibNET.Tests.Helpers;
 using Xunit;
 
 namespace TapeLibNET.Tests;
@@ -62,7 +63,7 @@ public class TapeSetHeaderTests
         var set = Assert.IsType<TapeSetHeader>(read);
         Assert.Equal(TapeHeaderKind.Set, set.Kind);
         Assert.Equal(original.MediaId,        set.MediaId);
-        Assert.Equal(original.CreatedUtc,     set.CreatedUtc);
+        Assert.Equal(LegacyTestTime.AsLegacyLocal(original.CreatedUtc), set.CreatedUtc);
         Assert.Equal(original.SetBlockSize,   set.SetBlockSize);
         Assert.Equal(original.Volume,         set.Volume);
         Assert.Equal(original.VolumeSetIndex, set.VolumeSetIndex);

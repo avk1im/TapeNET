@@ -1,3 +1,5 @@
+using Windows.Win32.Foundation;
+
 namespace TapeLibNET.Format;
 
 /// <summary>What a field reader knows about its record - for error context and polymorphic dispatch.</summary>
@@ -71,6 +73,7 @@ public sealed class TapeFormatException : FormatException
         : base(message, inner)
     {
         Kind = kind;
+        HResult = (int)ToErrorWin32(kind);
     }
 
     /// <summary>The message, with record / field / offset context appended when set.</summary>
@@ -88,4 +91,33 @@ public sealed class TapeFormatException : FormatException
 
     /// <summary>Shorthand for a <see cref="FormatErrorKind.BadValue"/> refusal.</summary>
     internal static TapeFormatException Bad(string message) => new(FormatErrorKind.BadValue, message);
+
+    internal static WIN32_ERROR ToErrorWin32(FormatErrorKind kind) =>
+    kind switch
+    {
+        FormatErrorKind.NewerMajor => WIN32_ERROR.ERROR_REVISION_MISMATCH,
+
+        FormatErrorKind.BadMagic => WIN32_ERROR.ERROR_BAD_FORMAT,
+        FormatErrorKind.UnknownKind => WIN32_ERROR.ERROR_BAD_FORMAT,
+        FormatErrorKind.UnexpectedKind => WIN32_ERROR.ERROR_BAD_FORMAT,
+
+        FormatErrorKind.UnknownCritical => WIN32_ERROR.ERROR_NOT_SUPPORTED,
+
+        FormatErrorKind.MissingRequired => WIN32_ERROR.ERROR_INVALID_DATA,
+        FormatErrorKind.Overrun => WIN32_ERROR.ERROR_INVALID_DATA,
+        FormatErrorKind.Underrun => WIN32_ERROR.ERROR_INVALID_DATA,
+        FormatErrorKind.BadValue => WIN32_ERROR.ERROR_INVALID_DATA,
+        FormatErrorKind.CrossCheck => WIN32_ERROR.ERROR_INVALID_DATA,
+
+        FormatErrorKind.Duplicate => WIN32_ERROR.ERROR_ALREADY_EXISTS,
+
+        FormatErrorKind.CrcMismatch => WIN32_ERROR.ERROR_CRC,
+
+        FormatErrorKind.Truncated => WIN32_ERROR.ERROR_HANDLE_EOF,
+
+        FormatErrorKind.LimitExceeded => WIN32_ERROR.ERROR_BUFFER_OVERFLOW,
+
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
+    };
+
 }

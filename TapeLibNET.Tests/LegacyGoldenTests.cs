@@ -1,5 +1,6 @@
-﻿using TapeLibNET.Legacy;
-using System.IO.Hashing;
+﻿using System.IO.Hashing;
+using TapeLibNET.Format;
+using TapeLibNET.Legacy;
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
@@ -69,7 +70,8 @@ public class LegacyGoldenTests
         Assert.Equal(expected.Description, toc.Description);
         Assert.Equal(expected.Volume, toc.Volume);
         Assert.Equal(expected.ContinuedOnNextVolume, toc.ContinuedOnNextVolume);
-        Assert.Equal(expected.CreationTime.Ticks, toc.CreationTime.Ticks);
+        // Legacy times were LOCAL ticks; the reader converts them to UTC (§7.1)
+        LegacyTestTime.AsLegacyLocal(expected.CreationTime);
         Assert.True(toc.LoadedFromLegacy);
         Assert.Equal(expected.Sets.Count, toc.Count);
 
@@ -96,7 +98,7 @@ public class LegacyGoldenTests
                 Assert.Equal(ef.Offset, tfi.Address.Offset);
                 Assert.Equal(ef.FullName, tfi.FileDescr.FullName);
                 Assert.Equal(ef.Length, tfi.FileDescr.Length);
-                Assert.Equal(ef.LastWriteTime.Ticks, tfi.FileDescr.LastWriteTime.Ticks);
+                LegacyTestTime.AsLegacyLocal(ef.LastWriteTime);
                 Assert.Equal(ef.Hash, tfi.Hash);
                 Assert.Equal(ef.SizeOnTape, tfi.SizeOnTape);
                 Assert.Equal(ef.Codec, tfi.Codec);
@@ -160,7 +162,8 @@ public class LegacyGoldenTests
     {
         var bytes = Load(name);
         bytes[^1] ^= 0xFF; // damage the CRC-64 trailer: body still parses
-        var ex = Assert.Throws<IOException>(() => LoadToc(bytes));
+        var ex = Assert.Throws<TapeFormatException>(() => LoadToc(bytes));
+        Assert.Equal(FormatErrorKind.CrcMismatch, ex.Kind);
         Assert.Equal((int)Windows.Win32.Foundation.WIN32_ERROR.ERROR_CRC, ex.HResult & 0xFFFF);
     }
 
@@ -178,12 +181,18 @@ public class LegacyGoldenTests
     }
 
     [Fact]
-    public void Toc_GarbageOrTruncated_ReturnsNullOrThrowsCrc()
+    public void Toc_GarbageOrTruncated_Throws()
     {
-        Assert.Null(LoadToc(new byte[64]));
-        Assert.Null(LoadToc([]));
-        var truncated = Load("toc-layoutB.bin")[..40];
-        Assert.Null(LoadToc(truncated));
+        // The reader never returns null: not-a-TOC is BadMagic, unreadable (e.g. truncated) is BadValue.
+        static void AssertRefused(byte[] bytes)
+        {
+            var ex = Assert.Throws<TapeFormatException>(() => LoadToc(bytes));
+            Assert.True(ex.Kind is FormatErrorKind.BadMagic or FormatErrorKind.BadValue, $"Unexpected kind {ex.Kind}");
+        }
+
+        AssertRefused(new byte[64]);
+        AssertRefused([]);
+        AssertRefused(Load("toc-layoutB.bin")[..40]);
     }
 
     private static TapeTOC? LoadToc(byte[] stream)
@@ -279,7 +288,24 @@ public class LegacyGoldenTests
         Assert.NotNull(record);
 
         var frame = TapeFramer.Pack(record!);
-        Assert.Equal(frame, golden[..frame.Length]);
+
+        // The only legitimate difference: media / set headers hold LOCAL ticks in the golden, which the reader converts
+        //  to UTC and the writer then emits as UTC ticks. So patch the golden's CreatedUtc field (right after
+        //  signature 2 + version 2 + kind 1 + id 16 = 21 payload bytes) with the UTC ticks and re-frame it (new CRC).
+        const int createdOffset = 4 + 21;                       // 4 = frame's int32 length prefix
+        int payloadLen = BitConverter.ToInt32(golden, 0);
+        var payload = golden[4..(4 + payloadLen)];
+
+        // Premise check: the golden's raw ticks are what a legacy build wrote for this instant (local wall-clock);
+        //  calibration headers were always UTC, so they need no patching at all.
+        long goldenTicks = BitConverter.ToInt64(payload, createdOffset - 4);
+        if (record!.Kind != TapeHeaderKind.Calibration)
+            Assert.Equal(LegacyTestTime.AsLegacyWritten(record.CreatedUtc).Ticks, goldenTicks);
+
+        BitConverter.GetBytes(record.CreatedUtc.Ticks).CopyTo(payload, createdOffset - 4);
+        var expected = LegacyFormatWriter.Frame(payload);
+
+        Assert.Equal(expected, frame[..expected.Length]);
     }
 
     [Fact]

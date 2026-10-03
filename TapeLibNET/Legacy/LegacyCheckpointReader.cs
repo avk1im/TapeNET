@@ -41,7 +41,7 @@ internal static class LegacyCheckpointReader
         string profileKey = d.DeserializeString();
         long capacity = d.DeserializeInt64();
         uint blockSize = d.DeserializeUInt32();
-        DateTime started = d.DeserializeDateTime();
+        DateTime started = LegacyTime.FromUtc(d.DeserializeDateTime());   // written from DateTime.UtcNow
 
         var plan = ReadPlan(d);
 

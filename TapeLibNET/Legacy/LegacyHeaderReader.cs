@@ -17,7 +17,10 @@ internal static class LegacyHeaderReader
 
         var kind    = (TapeHeaderKind)(d.DeserializeBytes(1)?[0] ?? (byte)TapeHeaderKind.Unknown);
         var id      = new Guid(d.DeserializeBytes(16) ?? throw new FormatException("TapeHeader: Id"));
-        var created = d.DeserializeDateTime();
+        // Legacy writer evidence: media/set headers took CreatedUtc from TapeTOC/TapeSetTOC.CreationTime
+        //  (DateTime.Now => LOCAL ticks despite the name); calibration headers used DateTime.UtcNow.
+        var raw     = d.DeserializeDateTime();
+        var created = kind == TapeHeaderKind.Calibration ? LegacyTime.FromUtc(raw) : LegacyTime.FromLocal(raw);
         var bs      = d.DeserializeUInt32();
 
         return new TapeHeaderPreamble(kind, id, created, bs);
