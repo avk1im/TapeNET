@@ -172,7 +172,7 @@ public partial class TapeFileInfo(ulong fileId, TapeAddress address, TapeFileDes
     public static int EstimateSerializedHeaderSize()
     {
         // Signature: 2 bytes + Version: 2 bytes
-        int size = TapeSerializer.Signature.Length + sizeof(ushort);
+        int size = LegacyFormat.Signature.Length + sizeof(ushort);
         // UID: 8 bytes (ulong)
         size += sizeof(ulong);
         return size;
@@ -574,7 +574,7 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
 
     /// <summary>
     /// On-tape format version for the <see cref="TapeTOC"/> record specifically, kept
-    ///  independent of the library-wide <see cref="TapeSerializer.Version"/> so the TOC
+    ///  independent of the library-wide <see cref="LegacyFormat.Version"/> so the TOC
     ///  layout can evolve without invalidating every other serialized type's signature.
     /// <para>Legacy TOCs — written before per-record versioning — carry the then-current
     ///  library version (<c>0x0101</c>) in their signature; that value doubles as our

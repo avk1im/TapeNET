@@ -78,17 +78,17 @@ public class LegacyDeserializer(Stream rstream)
 
     public bool ValidateSignature()
     {
-        var signature = DeserializeBytes(TapeSerializer.Signature.Length);
-        if (signature == null || !signature.SequenceEqual(TapeSerializer.Signature))
+        var signature = DeserializeBytes(LegacyFormat.Signature.Length);
+        if (signature == null || !signature.AsSpan().SequenceEqual(LegacyFormat.Signature))
             return false; // signature does not match
 
         var version = DeserializeUInt16();
-        return version == TapeSerializer.Version; // version mismatch => false
+        return version == LegacyFormat.Version; // version mismatch => false
     }
     public bool ValidateSignature(out ushort version)
     {
-        var signature = DeserializeBytes(TapeSerializer.Signature.Length);
-        if (signature == null || !signature.SequenceEqual(TapeSerializer.Signature))
+        var signature = DeserializeBytes(LegacyFormat.Signature.Length);
+        if (signature == null || !signature.AsSpan().SequenceEqual(LegacyFormat.Signature))
         {
             version = 0;
             return false; // signature does not match

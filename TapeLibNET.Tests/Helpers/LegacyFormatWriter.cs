@@ -1,5 +1,6 @@
 using System.IO.Hashing;
 using System.Text;
+using TapeLibNET.Legacy;
 
 
 namespace TapeLibNET.Tests.Helpers;
@@ -68,10 +69,10 @@ public sealed record LegacyCalibrationPlan(
 public static class LegacyFormatWriter
 {
     /// <summary>Library-wide legacy signature.</summary>
-    private static readonly byte[] Signature = [(byte)'T', (byte)'F'];
+    private static byte[] Signature => LegacyFormat.Signature.ToArray();
 
     /// <summary>Version of every nested legacy record and of the headers.</summary>
-    public const ushort RecordVersion = 0x0101;
+    public static ushort RecordVersion => LegacyFormat.Version;
     /// <summary>TOC version without MediaId.</summary>
     public const ushort TocVersionPreMediaId = 0x0101;
     /// <summary>TOC version with MediaId.</summary>
@@ -104,7 +105,7 @@ public static class LegacyFormatWriter
             I32(bytes.Length);
             Bytes(bytes);
         }
-        public void Signature(ushort version = RecordVersion)
+        public void Signature(ushort version = LegacyFormat.Version)
         {
             Bytes(LegacyFormatWriter.Signature);
             U16(version);
@@ -352,64 +353,7 @@ public static class LegacyFormatWriter
     /// A legacy TOC file entry (layout B) — what a pre-2.1 build wrote inside a TOC, and the first bytes of a
     ///  legacy content block.
     /// </summary>
-    public static byte[] FileEntryBytes(TapeFileInfo tfi)
-    {
-        using var ms = new MemoryStream();
-        var serializer = new TapeSerializer(ms);
-
-        /*
-        // The legacy serialization for TapeFileInfo:
-
-            // ITapeSerializable {
-            public void SerializeTo(TapeSerializer serializer)
-            {
-                serializer.SerializeSignature();
-                serializer.Serialize((ulong)UID);
-                serializer.Serialize(Address);
-                serializer.Serialize(FileDescr);
-                serializer.SerializeNullableWithLength(Hash);
-                serializer.Serialize(SizeOnTape);
-                serializer.Serialize((byte)Codec);
-            }
-            public static ITapeSerializable? ConstructFrom(TapeDeserializer deserializer)
-            {
-                if (!deserializer.ValidateSignature())
-                    return null; // version mismatch
-
-                var UID = (TypeUID)deserializer.DeserializeUInt64();
-                var address = deserializer.DeserializeTapeAddress();
-                var fileDescr = deserializer.DeserializeFileDescriptor();
-
-                var hash       = deserializer.DeserializeNullableBytesWithLength();
-                var sizeOnTape = deserializer.DeserializeInt64();
-                // Codec byte was added in v2 (compression support); default to Stored for older tapes.
-                var codecBytes = deserializer.DeserializeBytes(1);
-                var codec      = (codecBytes != null) ? (TapeFileCodec)codecBytes[0] : TapeFileCodec.Stored;
-
-                return new TapeFileInfo(UID, address, fileDescr)
-                {
-                    Hash       = hash,
-                    SizeOnTape = sizeOnTape,
-                    Codec      = codec,
-                };
-            }
-            // } ITapeSerializable
-
-        */
-
-        // ── BEGIN: former TapeFileInfo.SerializeTo(serializer), verbatim ──
-        //  signature · UID (ulong) · TapeAddress · TapeFileDescriptor · nullable hash bytes · SizeOnTape (long) · codec (1 byte)
-        serializer.SerializeSignature();
-        serializer.Serialize(tfi.FileId); // former UID
-        serializer.Serialize(tfi.Address);
-        serializer.Serialize(tfi.FileDescr);
-        serializer.SerializeNullableWithLength(tfi.Hash);
-        serializer.Serialize(tfi.SizeOnTape);
-        serializer.Serialize((byte)tfi.Codec);
-        // ── END ──
-
-        return ms.ToArray();
-    }
+    public static byte[] FileEntryBytes(TapeFileInfo tfi) => LegacyTocWriter.FileEntryBytes(tfi);
 
     #endregion
 }

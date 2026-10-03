@@ -1,11 +1,16 @@
 ﻿using System.Runtime.CompilerServices;
 using System.Text;
 
+using TapeLibNET.Legacy; // signature and version constants
+
+
 namespace TapeLibNET
 {
+
     /// <summary>
     /// Contract for types that can be written to / read from tape via <see cref="TapeSerializer"/> and <see cref="Legacy.LegacyDeserializer"/>.
     /// </summary>
+    //[Obsolete("Legacy writer — product uses removed by Phases 4–6; moves to TapeLibNET.Tests (Design-Format-v2 §7.3)")]
     public interface ITapeSerializable
     {
         /// <summary>Writes this instance to the given <paramref name="serializer"/>.</summary>
@@ -20,11 +25,13 @@ namespace TapeLibNET
     ///  since <see cref="TapeStream"/> already buffers. Strings are UTF-8 with a 32-bit length prefix.</para>
     /// </summary>
     /// <param name="wstream">Target stream to write serialized data to.</param>
+    //[Obsolete("Legacy writer — product uses removed by Phases 4–6; moves to TapeLibNET.Tests (Design-Format-v2 §7.3)")]
     public class TapeSerializer(Stream wstream)
     {
-        internal static readonly byte[] Signature = [(byte)'T', (byte)'F'];
-        /// <summary>Current on-tape format version. Bumped from 0x0100 for TapeAddress (Block+Offset).</summary>
-        public const ushort Version = 0x0101;
+        // Signature moved to LegacyFormat.Signature, Version moved to LegacyFormat.Version
+        //  internal static readonly byte[] Signature = [(byte)'T', (byte)'F'];
+        //  /// <summary>Current on-tape format version. Bumped from 0x0100 for TapeAddress (Block+Offset).</summary>
+        //  public const ushort Version = 0x0101;
 
         // The following works for any type, yet makes no sense for reference types (handles the reference only)
         private static byte[] GetBytesUnmanaged<TUnmanaged>(TUnmanaged v) where TUnmanaged: unmanaged
@@ -73,9 +80,9 @@ namespace TapeLibNET
             Serialize(fileDescr.LastAccessTime);
         }
 
-        public void SerializeSignature(ushort version = Version)
+        public void SerializeSignature(ushort version = LegacyFormat.Version)
         {
-            Serialize(Signature);
+            Serialize(LegacyFormat.Signature.ToArray());
             Serialize(version);
         }
 

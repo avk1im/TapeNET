@@ -1,3 +1,4 @@
+// Save as: TapeLibNET/Legacy/LegacyTime.cs  (replaces the previous version: adds the zone-explicit overload)
 namespace TapeLibNET.Legacy;
 
 /// <summary>
@@ -23,14 +24,29 @@ namespace TapeLibNET.Legacy;
 /// </remarks>
 internal static class LegacyTime
 {
-    /// <summary>A legacy LOCAL timestamp as UTC. <c>default</c> stays the UTC minimum (never shifted).</summary>
-    public static DateTime FromLocal(DateTime value)
+    /// <summary>A legacy LOCAL timestamp as UTC, in the reading machine's zone.</summary>
+    public static DateTime FromLocal(DateTime value) => FromLocal(value, TimeZoneInfo.Local);
+
+    /// <summary>
+    /// A legacy wall-clock timestamp as UTC, interpreted in <paramref name="zone"/>. <c>default</c> stays the UTC
+    ///  minimum (never shifted). Zone-explicit so tests can pin the conversion independently of the machine.
+    /// </summary>
+    /// <remarks>
+    /// An ambiguous wall-clock time (the repeated hour when DST ends) resolves to standard time, as
+    ///  <see cref="TimeZoneInfo.ConvertTimeToUtc(DateTime, TimeZoneInfo)"/> does; an invalid one (the skipped hour) is
+    ///  shifted forward by the DST delta rather than throwing — a legacy tape must always load.
+    /// </remarks>
+    public static DateTime FromLocal(DateTime value, TimeZoneInfo zone)
     {
         if (value.Kind == DateTimeKind.Utc)
             return value;
         if (value.Ticks == 0)
             return new DateTime(0, DateTimeKind.Utc);         // "not set" must stay "not set", whatever the zone
-        return DateTime.SpecifyKind(value, DateTimeKind.Local).ToUniversalTime();
+
+        var wallClock = DateTime.SpecifyKind(value, DateTimeKind.Unspecified);
+        if (zone.IsInvalidTime(wallClock))
+            wallClock = wallClock.AddHours(1);                 // inside the spring-forward gap: no such local time
+        return TimeZoneInfo.ConvertTimeToUtc(wallClock, zone);
     }
 
     /// <summary>A legacy descriptor with its three times converted from local to UTC.</summary>

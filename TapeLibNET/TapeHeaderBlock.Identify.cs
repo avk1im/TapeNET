@@ -173,7 +173,7 @@ public static partial class TapeHeaderBlock
     /// <remarks>
     /// <para>
     /// <b>Tolerant of the version, deliberately.</b> <see cref="LegacyDeserializer.ValidateSignature()"/>
-    ///  demands exactly <see cref="TapeSerializer.Version"/>, which made every current TOC — written as
+    ///  demands exactly <see cref="LegacyFormat.Version"/>, which made every current TOC — written as
     ///  0x0102 — read as foreign. It would do the same to a header of a newer format, which is our record,
     ///  merely unreadable to this build: exactly what <see cref="TapeFramer.FrameStatus.Unparseable"/>
     ///  reports once the record gets past this check.
