@@ -1,9 +1,11 @@
-﻿using TapeLibNET.Legacy;
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.IO.Hashing;
 using System.Diagnostics;
 using Windows.Win32.Foundation;
 using Microsoft.Extensions.Logging;
+
+using TapeLibNET.Format;
+using TapeLibNET.Legacy;
 
 namespace TapeLibNET;
 
@@ -18,9 +20,6 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
 {
     /// <summary>BlockSize used for header and TOC read / write, fixed since it needs to be known upfront.</summary>
     private const uint c_fixedTOCBlockSize = 16 * 1024; // 16 KiB
-
-    /// <summary>Hashing for TOC, fixed since it needs to be known upfront for each tape.</summary>
-    private readonly TapeHashAlgorithm c_hashForTOC = TapeHashAlgorithm.Crc64;
 
     #region Properties
 
@@ -303,29 +302,9 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
             // NOTE: no ThrowIfAbortRequested here — TOC writing is a critical
             // data-integrity operation and must never be aborted.
 
-            var hasher = CreateHasher(c_hashForTOC);
-
-            if (hasher == null)
-            {
-                // serialize the TOC without hashing
-                var serializer = new TapeSerializer(wstream);
-                serializer.Serialize(TOC);
-            }
-            else
-            {
-                // serialize the TOC with hashing; careful not to dispose wstream!
-                using var hashingStream = new HashingStream(wstream, hasher, ownInner: false);
-                var serializer = new TapeSerializer(hashingStream);
-                serializer.Serialize(TOC);
-                serializer.Serialize(hasher.GetCurrentHash()); // notice the hash bytes themselves aren't added to the hash!
-
-/*#if DEBUG
-                // TEST: serialize a 55 MB dummy array
-                m_logger.LogTrace("***** Serializing dummy TOC array");
-                byte[] dummy = new byte[55 * 1024 * 1024];
-                serializer.Serialize(dummy);
-#endif*/
-            }
+            // The TOC owns its format and integrity: a 2.1 record stream with its CRC-64 trailer (Design-Format-v2 §5.1).
+            //  SaveTo never disposes wstream.
+            TOC.SaveTo(wstream);
 
             BytesBackedup += wstream.Length;
             return true;
@@ -333,7 +312,6 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
         catch (Exception ex)
         {
             SetError(ex);
-
             m_logger.LogWarning("Exception {Exception} in {Method}", ex, nameof(BackupTOCCore));
             LatchFailure();
             return false;
@@ -341,10 +319,13 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     }
 
     /// <summary>
-    /// Writes two copies of the <see cref="TOC"/> to tape with CRC integrity hashing.
+    /// Writes two copies of the <see cref="TOC"/> to tape, each a 2.1 TOC stream with its CRC-64.
     /// <para>
     /// Succeeds if at least one copy is written successfully. The dual-copy
     ///  strategy ensures TOC recoverability even with partial media damage.
+    /// </para>
+    /// <para>
+    /// On success, clears <see cref="TapeTOC.LoadedFromLegacy"/>: from here on the tape carries a 2.1 TOC.
     /// </para>
     /// <para>
     /// <b>Notice</b> this public call <b>resets the latched error</b>, hence make sure
@@ -366,13 +347,13 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
 #if DEBUG
         _tocCopyCounter = 0;
 #endif
+
         m_logger.LogTrace("Backing up TOC, 1st copy");
 
         if (enforce)
         {
             Manager.EndReadWrite();
             Navigator.ResetContentSet();
-
             if (Navigator.TOCUnlocated && Navigator is TapeNavigatorTOCInSet)
             {
                 // Do NOT try to navigate if TOC-in-set has been invalidated -- we may end up overwriting content
@@ -380,7 +361,6 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
                 m_logger.LogTrace("Cannot enforce TOC backup by resetting content set since TOC has been invalidated");
                 return FailedOperationResult;
             }
-
             m_logger.LogTrace("Enforcing TOC backup by resetting content set");
         }
 
@@ -400,14 +380,18 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
         m_logger.LogTrace("Backing up TOC, 2nd copy");
         ResetError();
         ResetLatchedFailure(); // if the 2nd copy succeeds, we treat it as the overall success
-
         bool result2 = BackupTOCCore();
         if (result2)
             m_logger.LogTrace("TOC 2nd copy backed up ok");
         else
             m_logger.LogWarning("TOC 2nd copy backup failed");
 
-        return (result1 || result2) ? TapeResult.OK : FailedOperationResult;
+        if (!result1 && !result2)
+            return FailedOperationResult;
+
+        // A 2.1 TOC now stands on tape: a legacy tape is upgraded (the service logs it, Design-Format-v2 §8.6)
+        TOC.LoadedFromLegacy = false;
+        return TapeResult.OK;
     }
 
     /// <summary>
@@ -497,65 +481,40 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
 
             ThrowIfAbortRequested($"load TOC core");
 
-            var hasher = CreateHasher(c_hashForTOC);
-
-            if (hasher == null)
-            {
-                var deserializer = new LegacyDeserializer(rstream);
-                var toc = deserializer.Deserialize<TapeTOC>();
-                if (toc != null)
-                {
-                    TOC.CopyFrom(toc);
-                    BytesRestored += rstream.Length;
-                    return true;
-                }
-                else
-                {
-                    m_logger.LogWarning("Failed to deserialize TOC in {Method}", nameof(RestoreTOCCore));
-                    SetError(WIN32_ERROR.ERROR_INVALID_DATA, "Failed to deserialize TOC: data not found or unreadable");
-                    LatchFailure();
-                    return false;
-                }
-            }
-            else
-            {
-                // Legacy loader detects the layout and verifies the CRC-64 (throws IOException on mismatch)
-                var toc = LegacyTocReader.Load(rstream);
-                if (toc != null)
-                {
-                    TOC.CopyFrom(toc);
-                    BytesRestored += rstream.Length;
-                    return true;
-                }
-                else
-                {
-                    m_logger.LogWarning("Failed to deserialize TOC in {Method}", nameof(RestoreTOCCore));
-                    SetError(WIN32_ERROR.ERROR_INVALID_DATA, "Failed to deserialize TOC: data not found or unreadable");
-                    LatchFailure();
-                    return false;
-                }
-
-            }
+            // Either format: a 2.1 TOC stream, or a legacy TOC (layout detection) - both CRC-64 verified
+            TapeTOC toc = TapeTOC.LoadFrom(rstream);
+            TOC.CopyFrom(toc);
+            BytesRestored += rstream.Length;
+            return true;
         }
         catch (TapeAbortRequestedException)
         {
             m_logger.LogWarning("TOC restore aborted by user request");
-            IsAbortRequested = true; // shopuld be set already, but doesn't hurt to ensure
-            // No need for user-requested abort to LatchFailure()
+            IsAbortRequested = true; // should be set already, but doesn't hurt to ensure
+                                     // No need for user-requested abort to LatchFailure()
+            return false;
+        }
+        catch (TapeFormatException ex)
+        {
+            // ANY format error means THIS copy is bad - damage usually surfaces before the CRC is compared.
+            //  RestoreTOC() then tries the other copy.
+            SetError(ex.Kind == FormatErrorKind.CrcMismatch ? WIN32_ERROR.ERROR_CRC : WIN32_ERROR.ERROR_INVALID_DATA,
+                $"TOC copy unreadable: {ex.Message}");
+            LatchFailure();
+            m_logger.LogWarning("TOC copy unreadable ({Kind}): {Message}", ex.Kind, ex.Message);
             return false;
         }
         catch (Exception ex)
         {
             SetError(ex);
             LatchFailure();
-
             m_logger.LogWarning("Exception {Exception} while restoring TOC", ex);
             // Stream disposal (using var) already cleared Manager/Drive errors;
             //  capture the exception on the agent so callers see a meaningful message
             return false;
         }
     }
-
+    
     /// <summary>
     /// Reads the <see cref="TOC"/> from tape, trying up to three strategies:
     ///  1st copy → 2nd copy (sequential) → 2nd copy (direct seek).
@@ -718,9 +677,12 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     public const string TOCFileExtension = ".tapetoc";
 
     /// <summary>
-    /// Saves the current TOC to a file using the same serialization format and CRC
-    /// as the on-tape copy. The file is self-validating via the appended hash.
+    /// Saves the current TOC to a file in the same 2.1 format and with the same CRC-64 as the on-tape copy.
+    ///  The file is self-validating via its CRC-64 trailer.
     /// </summary>
+    /// <remarks>
+    /// Does not clear <see cref="TapeTOC.LoadedFromLegacy"/>: an export upgrades nothing on tape.
+    /// </remarks>
     /// <param name="filePath">Full path to the file to create/overwrite.</param>
     /// <returns>Result indicating success or failure with error details.</returns>
     public TapeResult SaveTOCToFile(string filePath)
@@ -728,22 +690,8 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
         try
         {
             m_logger.LogTrace("Saving TOC to file: {Path}", filePath);
-
             using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None);
-            var hasher = CreateHasher(c_hashForTOC);
-
-            if (hasher == null)
-            {
-                var serializer = new TapeSerializer(fs);
-                serializer.Serialize(TOC);
-            }
-            else
-            {
-                using var hashingStream = new HashingStream(fs, hasher, ownInner: false);
-                var serializer = new TapeSerializer(hashingStream);
-                serializer.Serialize(TOC);
-                serializer.Serialize(hasher.GetCurrentHash());
-            }
+            TOC.SaveTo(fs);
         }
         catch (Exception ex)
         {
@@ -757,9 +705,9 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     }
 
     /// <summary>
-    /// Loads a TOC from a file previously saved by <see cref="SaveTOCToFile"/>.
-    /// The file format and CRC validation are identical to the on-tape format.
-    /// On success, the loaded TOC replaces the current <see cref="TOC"/> content.
+    /// Loads a TOC from a file previously saved by <see cref="SaveTOCToFile"/> — or by a legacy build, whose
+    ///  format is still read. CRC validation is identical to the on-tape copy.
+    ///  On success, the loaded TOC replaces the current <see cref="TOC"/> content.
     /// </summary>
     /// <param name="filePath">Full path to the TOC file to load.</param>
     /// <returns>Result indicating success or failure with error details.</returns>
@@ -768,47 +716,22 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
         try
         {
             m_logger.LogTrace("Loading TOC from file: {Path}", filePath);
-
             using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            var hasher = CreateHasher(c_hashForTOC);
-
-            if (hasher == null)
-            {
-                var deserializer = new LegacyDeserializer(fs);
-                var toc = deserializer.Deserialize<TapeTOC>();
-                if (toc == null)
-                {
-                    m_logger.LogWarning("Failed to deserialize TOC from file {Path}", filePath);
-                    SetError(WIN32_ERROR.ERROR_INVALID_DATA, "Failed to deserialize TOC from file");
-                    return FailedOperationResult;
-                }
-                TOC.CopyFrom(toc);
-            }
-            else
-            {
-                TapeTOC? toc;
-                try
-                {
-                    toc = LegacyTocReader.Load(fs); // detects layout, verifies CRC-64
-                }
-                catch (IOException ex) when (ex.HResult == (int)WIN32_ERROR.ERROR_CRC)
-                {
-                    m_logger.LogWarning("CRC check failed for TOC file {Path}", filePath);
-                    SetError(WIN32_ERROR.ERROR_CRC, $"CRC check failed for TOC file. Hasher: {c_hashForTOC}");
-                    return FailedOperationResult;
-                }
-                if (toc == null)
-                {
-                    m_logger.LogWarning("Failed to deserialize TOC from file {Path}", filePath);
-                    SetError(WIN32_ERROR.ERROR_INVALID_DATA, "Failed to deserialize TOC from file");
-                    return FailedOperationResult;
-                }
-
-                TOC.CopyFrom(toc);
-            }
-
+            TOC.CopyFrom(TapeTOC.LoadFrom(fs));
             m_logger.LogTrace("TOC loaded from file successfully: {Sets} set(s)", TOC.Count);
             return TapeResult.OK;
+        }
+        catch (TapeFormatException ex) when (ex.Kind == FormatErrorKind.CrcMismatch)
+        {
+            m_logger.LogWarning("CRC check failed for TOC file {Path}", filePath);
+            SetError(WIN32_ERROR.ERROR_CRC, "CRC check failed for TOC file");
+            return FailedOperationResult;
+        }
+        catch (TapeFormatException ex)
+        {
+            m_logger.LogWarning("Failed to read TOC from file {Path}: {Message}", filePath, ex.Message);
+            SetError(WIN32_ERROR.ERROR_INVALID_DATA, $"Failed to read TOC from file: {ex.Message}");
+            return FailedOperationResult;
         }
         catch (Exception ex)
         {

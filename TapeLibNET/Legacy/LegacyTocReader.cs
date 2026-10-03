@@ -1,4 +1,5 @@
 using System.IO.Hashing;
+using TapeLibNET.Format;
 
 namespace TapeLibNET.Legacy;
 
@@ -6,7 +7,8 @@ namespace TapeLibNET.Legacy;
 /// Frozen, read-only reader of the pre-2.1 TOC wire format (TOC 0x0101 / 0x0102, set 0x0101, file entry 0x0101).
 /// Maps everything into the current in-memory model: every set gets <see cref="TapeDataFormat.Legacy"/>,
 ///  <see cref="Guid.Empty"/> as <see cref="TapeSetTOC.SetId"/>, and its legacy per-file UIDs become
-///  <see cref="TapeFileInfo.FileId"/>; the TOC reports <see cref="TapeTOC.LoadedFromLegacy"/>.
+///  <see cref="TapeFileInfo.FileId"/>; all times become UTC (<see cref="LegacyTime"/>); the TOC reports
+///  <see cref="TapeTOC.LoadedFromLegacy"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -16,7 +18,9 @@ namespace TapeLibNET.Legacy;
 ///  parse ends exactly where the CRC-64 of the consumed bytes equals the next 8 bytes.
 /// </para>
 /// <para>Item readers (<see cref="ReadSet"/>, <see cref="ReadFile"/>, <see cref="ReadToc"/>) are layout-explicit and
-///  never check the CRC; they throw <see cref="FormatException"/> on truncated data.</para>
+///  never check the CRC; they throw <see cref="FormatException"/> (or <see cref="EndOfStreamException"/>) on bad data.
+///  <see cref="Load"/> is the only entry point the product uses, and reports in 2.1 terms: it returns a TOC or throws
+///  <see cref="TapeFormatException"/>.</para>
 /// </remarks>
 internal static class LegacyTocReader
 {
@@ -39,17 +43,14 @@ internal static class LegacyTocReader
     {
         if (!d.ValidateSignature())
             return null;
-
         var fileId = d.DeserializeUInt64();
         var address = d.DeserializeTapeAddress();
-        var fileDescr = d.DeserializeFileDescriptor();
-
+        var fileDescr = LegacyTime.FromLocal(d.DeserializeFileDescriptor());   // legacy file times are local
         var hash = d.DeserializeNullableBytesWithLength();
         var sizeOnTape = d.DeserializeInt64();
         var codec = TapeFileCodec.Stored; // layout A has no codec byte
         if (layout == Layout.B)
             codec = (TapeFileCodec)(d.DeserializeBytes(1) ?? throw new FormatException("Truncated file codec"))[0];
-
         return new TapeFileInfo(fileId, address, fileDescr)
         {
             Hash = hash,
@@ -63,22 +64,20 @@ internal static class LegacyTocReader
     {
         if (!d.ValidateSignature())
             return null;
-
         // File list: int32 count, then entries
         var count = d.DeserializeInt32();
         if (count < 0)
             throw new FormatException($"Invalid file count {count}");
-
         var files = new List<TapeFileInfo>(Math.Min(count, 4096)); // never trust the count for allocation
         for (int i = 0; i < count; i++)
             files.Add(ReadFile(d, layout) ?? throw new FormatException($"Error reading file entry {i} of {count}"));
-
+        // Initializer order IS the wire order - keep it
         var set = new TapeSetTOC(files)
         {
             Description = d.DeserializeString(),
-            CreationTime = d.DeserializeDateTime(),
+            CreationTime = LegacyTime.FromLocal(d.DeserializeDateTime()),
             BlockSize = d.DeserializeUInt32(),
-            LastSaveTime = d.DeserializeDateTime(),
+            LastSaveTime = LegacyTime.FromLocal(d.DeserializeDateTime()),
             HashAlgorithm = (TapeHashAlgorithm)d.DeserializeInt32(),
             Incremental = d.DeserializeBoolean(),
             Volume = d.DeserializeInt32(),
@@ -86,19 +85,16 @@ internal static class LegacyTocReader
             DataFormat = TapeDataFormat.Legacy,
             SetId = Guid.Empty,
         };
-
         if (layout == Layout.B)
         {
             set.Compression = (TapeCompression)d.DeserializeInt32();
             set.CompressionLevel = d.DeserializeInt32();
         }
-
         // Legacy FileIds were unique per TOC; per set, continue after the largest one
         ulong maxId = 0;
         foreach (var tfi in files)
             maxId = Math.Max(maxId, tfi.FileId);
         set.NextFileId = maxId + 1;
-
         return set;
     }
 
@@ -108,28 +104,24 @@ internal static class LegacyTocReader
         // Tolerant read: capture the version so both pre-MediaId and current TOCs load
         if (!d.ValidateSignature(out ushort version))
             return null;
-
         var uidSeed = d.DeserializeUInt64(); // the TOC-wide UID seed; superseded by per-set NextFileId
         if (uidSeed == 0UL)
             return null;
-
         // MediaId appears only from TocVersionWithMediaId on; older TOCs get Guid.Empty and a new id on the next write
         var mediaId = (version >= TapeTOC.TocVersionWithMediaId) ? d.DeserializeGuid() : Guid.Empty;
-
         var setCount = d.DeserializeInt32();
         if (setCount < 0)
             throw new FormatException($"Invalid set count {setCount}");
-
         var sets = new List<TapeSetTOC>(Math.Min(setCount, 1024));
         for (int i = 0; i < setCount; i++)
             sets.Add(ReadSet(d, layout) ?? throw new FormatException($"Error reading set {i} of {setCount}"));
-
+        // Initializer order IS the wire order - keep it
         return new TapeTOC(sets)
         {
             MediaId = mediaId,
             Description = d.DeserializeString(),
-            CreationTime = d.DeserializeDateTime(),
-            LastSaveTime = d.DeserializeDateTime(),
+            CreationTime = LegacyTime.FromLocal(d.DeserializeDateTime()),
+            LastSaveTime = LegacyTime.FromLocal(d.DeserializeDateTime()),
             Volume = d.DeserializeInt32(),
             ContinuedOnNextVolume = d.DeserializeBoolean(),
             LoadedFromLegacy = true,
@@ -139,18 +131,20 @@ internal static class LegacyTocReader
     /// <summary>
     /// Loads a complete legacy TOC copy (body + CRC-64 trailer) from <paramref name="stream"/>, detecting the layout.
     /// </summary>
-    /// <returns>The TOC, or <see langword="null"/> if the data is not a legacy TOC at all.</returns>
-    /// <exception cref="IOException">The data parses as a TOC but the CRC-64 does not match
-    ///  (<c>ERROR_CRC</c>), same as the pre-2.1 loader.</exception>
-    public static TapeTOC? Load(Stream stream)
+    /// <returns>The TOC — never <see langword="null"/>.</returns>
+    /// <exception cref="TapeFormatException">
+    /// <see cref="FormatErrorKind.BadMagic"/>: not a legacy TOC at all. <see cref="FormatErrorKind.CrcMismatch"/>: parses
+    ///  as a TOC, but the CRC-64 does not match. <see cref="FormatErrorKind.BadValue"/>: unreadable in either layout.
+    /// </exception>
+    public static TapeTOC Load(Stream stream)
     {
         using var buffer = Buffer(stream);
-
         bool parsedButBadCrc = false;
+        Exception? lastParseError = null;
+
         foreach (var layout in new[] { Layout.B, Layout.A })
         {
             buffer.Position = 0;
-
             TapeTOC? toc;
             byte[] actualCrc;
             byte[]? storedCrc;
@@ -162,25 +156,29 @@ internal static class LegacyTocReader
                 actualCrc = crc.GetCurrentHash(); // before reading the trailer!
                 storedCrc = new LegacyDeserializer(buffer).DeserializeBytes(CrcLength);
             }
-            catch (FormatException)
+            catch (Exception ex) when (IsParseFailure(ex))
             {
+                lastParseError = ex;
                 continue; // wrong layout (or garbage) -- try the next one
             }
 
             if (toc == null)
-                return null; // not a TOC signature: no point trying the other layout
+                throw new TapeFormatException(FormatErrorKind.BadMagic, "not a TOC: neither 2.1 nor legacy");
 
             if (storedCrc != null && storedCrc.AsSpan().SequenceEqual(actualCrc) && IsPlausible(toc, layout))
                 return toc;
-
             parsedButBadCrc = true;
         }
 
         if (parsedButBadCrc)
-            throw new IOException("CRC check failed for TOC. Hasher: Crc64", (int)Windows.Win32.Foundation.WIN32_ERROR.ERROR_CRC);
-
-        return null;
+            throw new TapeFormatException(FormatErrorKind.CrcMismatch, "legacy TOC: CRC-64 does not match");
+        throw new TapeFormatException(FormatErrorKind.BadValue, "legacy TOC unreadable in either layout", lastParseError);
     }
+
+    // What a wrong layout, truncation or garbage produces in the legacy item readers. Anything else (I/O failure,
+    //  out of memory) is not a parse failure and propagates unchanged.
+    private static bool IsParseFailure(Exception ex) =>
+        ex is FormatException or EndOfStreamException or ArgumentException or OverflowException;
 
     // Layout B must carry defined Compression / Codec values: guards against a layout-A TOC that happens
     //  to parse as B -- practically impossible given the CRC, but cheap to check. Software compression
@@ -189,7 +187,6 @@ internal static class LegacyTocReader
     {
         if (layout == Layout.A)
             return true;
-
         foreach (var set in toc)
         {
             if (!Enum.IsDefined(set.Compression))
@@ -203,7 +200,7 @@ internal static class LegacyTocReader
         return true;
     }
 
-    // Buffers the copy:
+    // Buffers the copy: in memory up to MaxInMemoryBytes, beyond that in a delete-on-close temp file (R9)
     private static Stream Buffer(Stream source)
     {
         var memory = new MemoryStream();
@@ -211,7 +208,6 @@ internal static class LegacyTocReader
         int n;
         while (memory.Length < MaxInMemoryBytes && (n = source.Read(chunk, 0, chunk.Length)) > 0)
             memory.Write(chunk, 0, n);
-
         if (memory.Length < MaxInMemoryBytes)
             return memory;
 

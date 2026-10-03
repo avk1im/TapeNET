@@ -2,15 +2,8 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
-using System.IO.Hashing;
-using System.Linq;
-using System.Runtime.Serialization;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
-using Windows.Win32.Foundation;
 
 
 namespace TapeLibNET;
@@ -44,6 +37,9 @@ public enum TapeHashAlgorithm
 /// Lightweight mirror of <see cref="FileSystemInfo"/> properties, avoiding access to the actual file.
 /// <para>Used instead of <see cref="FileInfo"/> because setting properties on a <c>FileInfo</c>
 ///  instance would attempt to modify the real file on disk.</para>
+/// <para><b>All times are UTC</b> (Design-Format-v2 §8.5): captured with the <c>…Utc</c> getters and applied with
+///  the <c>…Utc</c> setters, so a backup restored in another time zone or across a DST change keeps its times.
+///  Displays convert with <c>ToLocalTime()</c>.</para>
 /// </summary>
 public struct TapeFileDescriptor
 {
@@ -62,35 +58,27 @@ public struct TapeFileDescriptor
     // Safe access to FileSystemInfo fields -- only if the file/directory exists
     public TapeFileDescriptor(FileSystemInfo fsi)
     {
+        FullName = fsi.FullName;
         if (fsi.Exists)
         {
-            FullName = fsi.FullName;
             Attributes = fsi.Attributes;
-            CreationTime = fsi.CreationTime;
-            LastWriteTime = fsi.LastWriteTime;
-            LastAccessTime = fsi.LastAccessTime;
-        }
-        else
-        {
-            FullName = fsi.FullName;
+            CreationTime = fsi.CreationTimeUtc;
+            LastWriteTime = fsi.LastWriteTimeUtc;
+            LastAccessTime = fsi.LastAccessTimeUtc;
         }
     }
 
     // Safe access to FileInfo fields -- only if the file exists
     public TapeFileDescriptor(FileInfo fsi)
     {
+        FullName = fsi.FullName;
         if (fsi.Exists)
         {
-            FullName = fsi.FullName;
             Attributes = fsi.Attributes;
-            CreationTime = fsi.CreationTime;
-            LastWriteTime = fsi.LastWriteTime;
-            LastAccessTime = fsi.LastAccessTime;
+            CreationTime = fsi.CreationTimeUtc;
+            LastWriteTime = fsi.LastWriteTimeUtc;
+            LastAccessTime = fsi.LastAccessTimeUtc;
             Length = fsi.Length;
-        }
-        else
-        {
-            FullName = fsi.FullName;
         }
     }
 
@@ -98,44 +86,34 @@ public struct TapeFileDescriptor
     public readonly bool SameFileName(TapeFileDescriptor other) => SameFileName(other.FullName);
 
     public readonly FileInfo CreateFileInfo() => new(FullName);
+
     public readonly bool ApplyToFileInfo(FileInfo fileInfo)
     {
         if (fileInfo.Exists)
         {
             fileInfo.Attributes = Attributes;
-            fileInfo.CreationTime = CreationTime;
-            fileInfo.LastWriteTime = LastWriteTime;
-            fileInfo.LastAccessTime = LastAccessTime;
+            fileInfo.CreationTimeUtc = CreationTime;
+            fileInfo.LastWriteTimeUtc = LastWriteTime;
+            fileInfo.LastAccessTimeUtc = LastAccessTime;
             return true;
         }
         else
             return false;
     }
+
     public void FillFrom(FileSystemInfo fsi)
     {
         FullName = fsi.FullName;
         Attributes = fsi.Attributes;
-        CreationTime = fsi.CreationTime;
-        LastWriteTime = fsi.LastWriteTime;
-        LastAccessTime = fsi.LastAccessTime;
+        CreationTime = fsi.CreationTimeUtc;
+        LastWriteTime = fsi.LastWriteTimeUtc;
+        LastAccessTime = fsi.LastAccessTimeUtc;
     }
+
     public void FillFrom(FileInfo fsi)
     {
         FillFrom(fsi as FileSystemInfo);
         Length = fsi.Length;
-    }
-
-    // Estimate serialized size
-    public readonly int EstimateSerializedSize()
-    {
-        // string length (4 bytes) + UTF8 bytes
-        int size = sizeof(int) + Encoding.UTF8.GetByteCount(FullName);
-        unsafe // for size(DateTime)
-        {
-            // Length (8) + Attributes (4) + 3x DateTime (8 each)
-            size += sizeof(long) + sizeof(FileAttributes) + 3 * sizeof(DateTime);
-        }
-        return size;
     }
 }
 
@@ -143,9 +121,9 @@ public struct TapeFileDescriptor
 /// On-tape file record — serves as both a TOC entry and an on-tape file header.
 /// <para>Each instance carries a <see cref="FileId"/> unique within its set, the tape
 ///  a <see cref="TapeFileDescriptor"/>, and an optional integrity <see cref="Hash"/>.
-///  Implements <see cref="ITapeSerializable"/> for full and header-only serialization.</para>
+///  Serialized in the TOC by TocFileEntryWire (format 2.1).</para>
 /// </summary>
-public class TapeFileInfo(ulong fileId, TapeAddress address, TapeFileDescriptor fileDescr) : ITapeSerializable
+public partial class TapeFileInfo(ulong fileId, TapeAddress address, TapeFileDescriptor fileDescr)
 {
     /// <summary>
     /// Identity of this file within its set; 0 means "not set". Allocated per attempt by
@@ -156,8 +134,6 @@ public class TapeFileInfo(ulong fileId, TapeAddress address, TapeFileDescriptor 
     /// <summary>Media address (block + offset) where this file's data begins.</summary>
     public TapeAddress Address { get; } = address;
     /// <summary>Block number where this file's data begins. Convenience accessor for <see cref="Address"/>.Block.</summary>
-    [Obsolete("Use Address")]
-    public long Block => Address.Block;
     public TapeFileDescriptor FileDescr { get; } = fileDescr;
     internal byte[]? Hash { get; set; } = null;
     /// <summary>
@@ -176,18 +152,8 @@ public class TapeFileInfo(ulong fileId, TapeAddress address, TapeFileDescriptor 
     /// </summary>
     internal TapeFileCodec Codec { get; set; } = TapeFileCodec.Stored;
 
-    /// <summary>Convenience constructor for transition: wraps a bare block number in a <see cref="TapeAddress"/> with zero offset.</summary>
-    [Obsolete("Use TapeAddress address instead of long block")]
-    public TapeFileInfo(ulong fileId, long block, TapeFileDescriptor fileDescr)
-        : this(fileId, new TapeAddress(block, 0), fileDescr)
-    { }
-
     public TapeFileInfo(ulong fileId, TapeAddress address, FileInfo fileInfo)
         : this(fileId, address, new TapeFileDescriptor(fileInfo))
-    { }
-    [Obsolete("Use TapeAddress address instead of long block")]
-    public TapeFileInfo(ulong fileId, long block, FileInfo fileInfo)
-        : this(fileId, new TapeAddress(block, 0), new TapeFileDescriptor(fileInfo))
     { }
 
     public bool SameFileName(TapeFileInfo other) => FileDescr.SameFileName(other.FileDescr);
@@ -195,42 +161,6 @@ public class TapeFileInfo(ulong fileId, TapeAddress address, TapeFileDescriptor 
 
     /// <summary>Whether this entry carries a real <see cref="FileId"/> and a file name.</summary>
     public bool IsValid => FileId != 0 && !string.IsNullOrEmpty(FileDescr.FullName);
-
-    // ITapeSerializable {
-    public void SerializeTo(TapeSerializer serializer)
-    {
-        serializer.SerializeSignature();
-        serializer.Serialize(FileId);
-        serializer.Serialize(Address);
-        serializer.Serialize(FileDescr);
-        serializer.SerializeNullableWithLength(Hash);
-        serializer.Serialize(SizeOnTape);
-        serializer.Serialize((byte)Codec);
-    }
-    /// <summary>Reads a file entry in the current legacy layout; see <see cref="LegacyTocReader"/>.</summary>
-    public static ITapeSerializable? ConstructFrom(LegacyDeserializer deserializer)
-        => LegacyTocReader.ReadFile(deserializer, LegacyTocReader.Layout.B);
-    // } ITapeSerializable
-
-    public int EstimateSerializedSize()
-    {
-        // Signature: 2 bytes + Version: 2 bytes
-        int size = TapeSerializer.Signature.Length + sizeof(ushort);
-        // UID: 8 bytes (ulong)
-        size += sizeof(ulong);
-        // Address
-        size += sizeof(long) + sizeof(uint);
-        // FileDescr
-        size += FileDescr.EstimateSerializedSize();
-        // Hash: length prefix (4 bytes) + optional bytes
-        size += sizeof(int) + (Hash?.Length ?? 0);
-        // SizeOnTape: 8 bytes (long)
-        size += sizeof(long);
-        // Codec: 1 byte
-        size += sizeof(byte);
-
-        return size;
-    }
 
     // serailize only minimal information necessary to check file match on tape 
     public void SerializeHeaderTo(TapeSerializer serializer)
@@ -278,7 +208,7 @@ public record TapeSetTOCParams(
 ///  with per-set metadata (description, hash algorithm, block size, incremental flag, volume).
 /// <para>New instances are created only via <see cref="TapeTOC.AddNewSetTOC"/>.</para>
 /// </summary>
-public class TapeSetTOC : ITapeSerializable, IReadOnlyList<TapeFileInfo>
+public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
 {
     private readonly List<TapeFileInfo> m_tapeFileInfos;
 
@@ -294,6 +224,10 @@ public class TapeSetTOC : ITapeSerializable, IReadOnlyList<TapeFileInfo>
         CopyFrom(setTOC);
         ContinuedFromPrevVolume = setTOC.ContinuedFromPrevVolume;
     }
+    /// <summary>Deserialization constructor -- used by the legacy readers.</summary>
+    /// <param name="fileInfos"></param>
+    internal TapeSetTOC(List<TapeFileInfo> fileInfos) => m_tapeFileInfos = fileInfos;
+
     /// <summary>
     /// Globally unique identity of this set; <c>SetId ‖ FileId</c> identifies any file on any tape.
     ///  Freshly minted for every new set; shared by all volumes of a multi-volume continuation;
@@ -314,21 +248,10 @@ public class TapeSetTOC : ITapeSerializable, IReadOnlyList<TapeFileInfo>
     /// </summary>
     internal ulong GenerateFileId() => NextFileId++;
 
-    /// <summary>
-    /// Gives this (empty) set a fresh identity: new <see cref="SetId"/>, <see cref="NextFileId"/> back to 1,
-    ///  current data format. Used when a trailing empty set is reused for a new backup.
-    /// </summary>
-    internal void ResetIdentity()
-    {
-        SetId = Guid.NewGuid();
-        NextFileId = 1UL;
-        DataFormat = TapeDataFormat.V2;
-    }
-
     public string Description { get; set; } = string.Empty;
-    public DateTime CreationTime { get; internal set; } = DateTime.Now;
+    public DateTime CreationTime { get; internal set; } = DateTime.UtcNow;
     public uint BlockSize { get; set; } = 0;
-    public DateTime LastSaveTime { get; internal set; } = DateTime.Now;
+    public DateTime LastSaveTime { get; internal set; } = DateTime.UtcNow;
     public TapeHashAlgorithm HashAlgorithm { get; set; } = TapeHashAlgorithm.Crc32;
     /// <summary>Per-set compression mode. Mirrors <see cref="HashAlgorithm"/> in lifecycle and UI placement.</summary>
     public TapeCompression Compression { get; set; } = TapeCompression.None;
@@ -352,33 +275,6 @@ public class TapeSetTOC : ITapeSerializable, IReadOnlyList<TapeFileInfo>
     public TapeSetTOCParams ToParams() =>
         new(Description, HashAlgorithm, BlockSize, Incremental, Capacity, Compression, CompressionLevel,
             SetId, NextFileId);
-
-    // deserialization constructor -- used by the legacy readers
-    internal TapeSetTOC(List<TapeFileInfo> fileInfos) => m_tapeFileInfos = fileInfos;
-
-    #region ITapeSerializable
-    public void SerializeTo(TapeSerializer serializer)
-    {
-        serializer.SerializeSignature();
-
-        serializer.Serialize<List<TapeFileInfo>, TapeFileInfo>(m_tapeFileInfos);
-        serializer.Serialize(Description);
-        serializer.Serialize(CreationTime);
-        serializer.Serialize(BlockSize);
-        serializer.Serialize(LastSaveTime = DateTime.Now);
-        serializer.Serialize((int)HashAlgorithm);
-        serializer.Serialize(Incremental);
-        serializer.Serialize(Volume);
-        serializer.Serialize(ContinuedFromPrevVolume);
-        serializer.Serialize((int)Compression);
-        serializer.Serialize(CompressionLevel);
-    }
-
-    /// <summary>Reads a set in the current legacy layout; see <see cref="LegacyTocReader"/>.</summary>
-    public static ITapeSerializable? ConstructFrom(LegacyDeserializer deserializer)
-        => LegacyTocReader.ReadSet(deserializer, LegacyTocReader.Layout.B);
-    #endregion // } ITapeSerializable
-
 
     public int Count => m_tapeFileInfos.Count;
     public int IndexOf(TapeFileInfo item) => m_tapeFileInfos.IndexOf(item);
@@ -417,10 +313,13 @@ public class TapeSetTOC : ITapeSerializable, IReadOnlyList<TapeFileInfo>
         SetId = toc.SetId;
         NextFileId = toc.NextFileId;
         DataFormat = toc.DataFormat;
-        // ContinuedFromPrevVolume
+        // ContinuedFromPrevVolume is init-only: the copy constructor carries it
         m_isPackedLayout = toc.m_isPackedLayout;
-    }
 
+        // A copy is exactly as persisted as its source: a set loaded from tape and copied into the live TOC
+        //  (TapeTOC.CopyFrom) must not count as modified, or its LastSaveTime would be restamped on the next save.
+        m_savedState = toc.m_savedState;
+    }
 
     // IReadOnlyList<TapeFileInfo> {
     public TapeFileInfo this[int index] => m_tapeFileInfos[index];
@@ -660,15 +559,16 @@ public class TapeSetTOC : ITapeSerializable, IReadOnlyList<TapeFileInfo>
 
 /// <summary>
 /// Master table of contents — ordered list of <see cref="TapeSetTOC"/> instances with
-///  UID generation, multi-volume tracking, and file selection across incremental chains.
-/// <para><b>Dual set indexation:</b></para>
-/// <code>
-/// Standard: 1, 2, 3, …, N   (1 = oldest, N = newest)
-/// Alternative: −(N−1), …, −1, 0  (0 = newest, −1 = second newest)
-/// Internal: 0, 1, …, N−1    (0 = oldest, used only inside this class)
+///  per-set FileId allocation (<see cref="TapeSetTOC.GenerateFileId"/>), multi-volume tracking,
+///  and file selection across incremental chains.
+/// <para><b>Three flavors of set indexation:</b></para>
+///  <code>
+///  Standard: 1, 2, 3, …, N   (1 = oldest, N = newest)
+///  Alternative: −(N−1), …, −1, 0  (0 = newest, −1 = second newest, etc.)
+///  Internal: 0, 1, …, N−1    (0 = oldest, used only inside this class)
 /// </code>
 /// </summary>
-public class TapeTOC : ITapeSerializable, IEnumerable<TapeSetTOC>
+public partial class TapeTOC : IEnumerable<TapeSetTOC>
 {
     private readonly List<TapeSetTOC> m_setTOCs;
 
@@ -677,14 +577,12 @@ public class TapeTOC : ITapeSerializable, IEnumerable<TapeSetTOC>
     ///  independent of the library-wide <see cref="TapeSerializer.Version"/> so the TOC
     ///  layout can evolve without invalidating every other serialized type's signature.
     /// <para>Legacy TOCs — written before per-record versioning — carry the then-current
-    ///  library version (0x0101) in their signature; that value doubles as our
+    ///  library version (<c>0x0101</c>) in their signature; that value doubles as our
     ///  "initial, pre-MediaId" TOC version.</para>
     /// </summary>
     public const ushort TocVersionInitial = 0x0101;
     /// <summary>TOC format version that introduced the <see cref="MediaId"/> field.</summary>
     public const ushort TocVersionWithMediaId = 0x0102;
-    /// <summary>Current TOC format version written by this build.</summary>
-    public const ushort TocVersion = TocVersionWithMediaId;
 
     public TapeTOC()
     {
@@ -750,8 +648,8 @@ public class TapeTOC : ITapeSerializable, IEnumerable<TapeSetTOC>
     /// </summary>
     public void ResetMediaId() => MediaId = Guid.Empty;   // EnsureMediaId() re-mints on next write
 
-    public DateTime CreationTime { get; internal set; } = DateTime.Now;
-    public DateTime LastSaveTime { get; internal set; } = DateTime.Now;
+    public DateTime CreationTime { get; internal set; } = DateTime.UtcNow;
+    public DateTime LastSaveTime { get; internal set; } = DateTime.UtcNow;
 
     /// <summary>Current volume number (1-based).</summary>
     public int Volume { get; internal set; } = 1; // volume indexing starts from 1
@@ -1008,29 +906,34 @@ public class TapeTOC : ITapeSerializable, IEnumerable<TapeSetTOC>
     }
 
     /// <summary>
-    /// Appends a new (or reuses the last empty) <see cref="TapeSetTOC"/> and makes it current.
+    /// Appends a new <see cref="TapeSetTOC"/> — or replaces a trailing EMPTY one — and makes it current.
     /// <para>The first set in a TOC is never marked incremental, regardless of the parameter.</para>
     /// </summary>
+    /// <remarks>
+    /// A trailing empty set (e.g. left by an aborted backup) is REPLACED by a fresh instance, not recycled: the new
+    ///  set starts with every attribute at its default — a fresh <see cref="TapeSetTOC.SetId"/>, FileIds from 1,
+    ///  the current <see cref="TapeDataFormat"/>, and no description, hash, compression or block size inherited from
+    ///  the abandoned attempt. Replacing rather than resetting field by field means a future attribute can never be
+    ///  forgotten. The new object identity also lets consumers detect the replacement, as with
+    ///  <see cref="ReplaceCurrentSetTOC"/>.
+    /// </remarks>
     public void AddNewSetTOC(int capacity = 0, bool incremental = false)
     {
-        // if the last set is empty, use it and set its capacity to 'size'
-        //  Do not use CurrentSetTOC since it can call AddNewSetTOC() recursively!
-        if (m_setTOCs.Count > 0 && m_setTOCs.Last() is var last && last.Count == 0)
+        // Do NOT use CurrentSetTOC here: it calls AddNewSetTOC() itself when the TOC is empty.
+        if (m_setTOCs.Count > 0 && m_setTOCs[^1].Count == 0)
         {
-            last.ResetIdentity(); // reused set is new content: fresh SetId, FileIds restart at 1
-            last.Volume = Volume;
-            last.Capacity = capacity;
-            last.Incremental = incremental && m_setTOCs.Count > 1; // the very first set shouldn't be incremental
-                // Count > 1 means "there's at least one other set before this empty one."
-                //  If Count == 1, the empty set IS the first set → not incremental.
+            // Count > 1 means "there's at least one other set before this empty one."
+            //  If Count == 1, the empty set IS the first set → not incremental.
+            m_setTOCs[^1] = new TapeSetTOC(Volume, capacity, incremental && m_setTOCs.Count > 1);
         }
         else
+        {
+            // Count > 0 means "there's at least one set already present before the one we're about to add."
+            //  If Count == 0, we're adding the very first set → not incremental.
             m_setTOCs.Add(new TapeSetTOC(Volume, capacity, incremental && m_setTOCs.Count > 0));
-                // Count > 0 means "there's at least one set already present before the one we're about to add."
-                //  If Count == 0, we're adding the very first set → not incremental.
+        }
 
         Debug.Assert(m_setTOCs.Count > 0);
-
         MakeLastSetCurrent();
     }
 
@@ -1136,71 +1039,6 @@ public class TapeTOC : ITapeSerializable, IEnumerable<TapeSetTOC>
     // serialization constructor
     internal TapeTOC(List<TapeSetTOC> setTOCs) => m_setTOCs = setTOCs;
 
-    #region ITapeSerializable
-
-    public void SerializeTo(TapeSerializer serializer)
-    {
-        // Write our own TOC-specific version (decoupled from the library-wide
-        //  TapeSerializer.Version) so the TOC layout can grow without disturbing
-        //  any other serialized type's signature.
-        serializer.SerializeSignature(TocVersion);
-
-        // The legacy wire carries one TOC-wide UID seed; with per-set FileIds the largest NextFileId
-        //  is a safe stand-in (the legacy reader derives per-set NextFileId from the files anyway).
-        serializer.Serialize(m_setTOCs.Count == 0 ? 1UL : m_setTOCs.Max(s => s.NextFileId));
-
-        // MediaId sits early — right after the UID —
-        //  peek the series identity without deserializing the whole set list.
-        serializer.Serialize(MediaId);
-
-        serializer.Serialize<List<TapeSetTOC>, TapeSetTOC>(m_setTOCs);
-        serializer.Serialize(Description);
-        serializer.Serialize(CreationTime);
-        serializer.Serialize(LastSaveTime = DateTime.Now);
-        serializer.Serialize(Volume);
-        serializer.Serialize(ContinuedOnNextVolume);
-    }
-
-    /// <summary>Reads a TOC record in the current legacy layout; see <see cref="LegacyTocReader"/>.</summary>
-    public static ITapeSerializable? ConstructFrom(LegacyDeserializer deserializer)
-        => LegacyTocReader.ReadToc(deserializer, LegacyTocReader.Layout.B);
-
-    #endregion // ITapeSerializable
-
-    #region *** Partial Deserialization ***
-
-    /// <summary>Upper bound on sets a plausible TOC declares — a guard against reading garbage as a count.</summary>
-    private const int MaxPlausibleSetCount = 100_000;
-
-    /// <summary>
-    /// Whether <paramref name="block"/> — the FIRST block of a stream — opens a <see cref="TapeTOC"/>.
-    ///  Structural and cheap: reads only the fields that fit in one block, never the set list.
-    /// </summary>
-    /// <param name="version">The TOC format version, when recognized.</param>
-    /// <param name="mediaId">The series identity; <see cref="Guid.Empty"/> for a pre-MediaId TOC.</param>
-    /// <remarks>
-    /// <para>
-    /// <b>Positive, not by elimination.</b> The signature alone cannot identify a TOC: every serialized
-    ///  record starts with it, and a legacy aligned file (<see cref="TapeFileInfo.SerializeHeaderTo"/>)
-    ///  starts a block with exactly the bytes a v0x0101 TOC does. What only a TOC has is what FOLLOWS the
-    ///  signature: a non-zero UID seed, a set count, and then either the first set's OWN signature or —
-    ///  for an empty TOC — a plausible description, timestamps and volume.
-    /// </para>
-    /// <para>
-    /// Reads in exactly the order <see cref="ConstructFrom"/> does. The nested set signature is checked
-    ///  STRICTLY, because <see cref="TapeSetTOC.ConstructFrom"/> checks it strictly.
-    /// </para>
-    /// <para>
-    /// A version newer than <see cref="TocVersion"/> is NOT recognized: its layout past the signature is
-    ///  unknown to this build, so a structural check would be guessing. The block then maps as foreign
-    ///  data, with a fingerprint.
-    /// </para>
-    /// </remarks>
-    public static bool TryPeek(byte[] block, int length, out ushort version, out Guid mediaId)
-    => LegacyIdentify.TryPeekToc(block, length, out version, out mediaId);
-
-    #endregion
-
     #region IEnumerable<TapeSetTOC> 
 
     // Implementation of the generic IEnumerable<T> interface
@@ -1222,7 +1060,6 @@ public class TapeTOC : ITapeSerializable, IEnumerable<TapeSetTOC>
     }
     
     #endregion IEnumerable<TapeSetTOC>
-
 
     #region *** File selection methods ***
 
@@ -1251,16 +1088,27 @@ public class TapeTOC : ITapeSerializable, IEnumerable<TapeSetTOC>
 
     public int LastNonIncSet => InternalToSetIndex(LastNonIncSetInternal);
 
+    /// <summary>
+    /// Checks if the given file is already backed up in the current set or any previous incremental sets.
+    /// </summary>
+    /// <param name="fileInfo">The file to check.</param>
+    /// <returns>
+    /// <see langword="true"/> if the file is already backed up; otherwise, <see langword="false"/>.
+    /// </returns>
+    /// <remarks>
+    /// Legacy sets: their times are converted to UTC by the legacy reader (<see cref="LegacyTime"/>),
+    ///  so the comparison holds across formats.
+    /// </remarks>
     public bool IsFileUptodateInc(FileInfo fileInfo)
     {
         // check if the same or newer version of the file is already backed up in the current set
-        //  or in any of the previous incremental sets
-
+        //  or in any of the previous incremental sets.
+        //  Times are UTC on both sides: TapeFileDescriptor stores UTC, so compare with LastWriteTimeUtc.
+        DateTime lastWriteUtc = fileInfo.LastWriteTimeUtc;
         int firstNonInc = LastNonIncSetInternal; // find the latest non-incremental set
-
         for (int i = m_currSetInternal; i >= firstNonInc; i--)
         {
-            if (m_setTOCs[i].Any(tfi => tfi.SameFileName(fileInfo) && tfi.FileDescr.LastWriteTime >= fileInfo.LastWriteTime))
+            if (m_setTOCs[i].Any(tfi => tfi.SameFileName(fileInfo) && tfi.FileDescr.LastWriteTime >= lastWriteUtc))
                 return true;
         } // for i
         return false;

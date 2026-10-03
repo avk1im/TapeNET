@@ -42,43 +42,35 @@ internal static class LegacyIdentify
 
     /// <summary>
     /// Whether <paramref name="block"/> -- the FIRST block of a stream -- opens a legacy TOC (versions
-    ///  <see cref="TapeTOC.TocVersionInitial"/> .. <see cref="TapeTOC.TocVersion"/>). Structural and cheap:
+    ///  <see cref="TapeTOC.TocVersionInitial"/> .. <see cref="TapeTOC.LegacyTocVersionMax"/>). Structural and cheap:
     ///  reads only the fields that fit in one block, never the set list. See <see cref="TapeTOC.TryPeek"/>.
     /// </summary>
     public static bool TryPeekToc(byte[] block, int length, out ushort version, out Guid mediaId)
     {
         version = 0;
         mediaId = Guid.Empty;
-
         if (block is null || length <= 0)
             return false;
-
         try
         {
             using var ms = new MemoryStream(block, 0, Math.Min(length, block.Length), writable: false);
             var d = new LegacyDeserializer(ms);
-
             if (!d.ValidateSignature(out version))
                 return false;
-
-            if (version < TapeTOC.TocVersionInitial || version > TapeTOC.TocVersion)
+            // LegacyTocVersionMax, NOT TapeTOC.TocVersion: the latter is the 2.1 version (0x0201) and would
+            //  open this frozen probe to versions no legacy build ever wrote.
+            if (version < TapeTOC.TocVersionInitial || version > TapeTOC.LegacyTocVersionMax)
                 return false;
-
             if (d.DeserializeUInt64() == 0UL)                       // nextUID: 0 is never valid
                 return false;
-
             if (version >= TapeTOC.TocVersionWithMediaId)
                 mediaId = d.DeserializeGuid();
-
             int setCount = d.DeserializeInt32();                    // the List<TapeSetTOC> count
-
             if (setCount < 0 || setCount > MaxPlausibleSetCount)
                 return false;
-
             // The first set record begins right here -- with its own, strictly versioned signature.
             if (setCount > 0)
                 return d.ValidateSignature();
-
             // Empty TOC: no set record to anchor on, but the whole tail fits in this block. Check that it
             //  reads as a TOC tail -- it is what rejects a legacy file record at block address zero, whose
             //  zero words would otherwise pass for "no sets, empty description".
@@ -86,7 +78,6 @@ internal static class LegacyIdentify
             DateTime created = d.DeserializeDateTime();
             DateTime saved = d.DeserializeDateTime();
             int volume = d.DeserializeInt32();
-
             return IsPlausibleTimestamp(created) && IsPlausibleTimestamp(saved) && volume >= 1;
         }
         catch (Exception)
@@ -99,23 +90,27 @@ internal static class LegacyIdentify
     }
 
     /// <summary>
-    /// Identifies one block positively: a TOC copy, an intact header, a damaged header -- or none of them.
-    ///  Pure, total, TOC-free. See <see cref="TapeHeaderBlock.IdentifyBlock"/> for the rationale of the order.
+    /// Identifies one block positively: a TOC copy (either format), an intact header, a damaged header -- or none
+    ///  of them. Pure, total, TOC-free. See <see cref="TapeHeaderBlock.IdentifyBlock"/> for the rationale of the order.
     /// </summary>
+    /// <remarks>
+    /// Interim (Phase 3): the TOC check calls <see cref="TapeTOC.TryPeek"/>, which recognizes 2.1 copies and forwards
+    ///  everything else to <see cref="TryPeekToc"/>. Phase 5 moves the 2.1 dispatch into
+    ///  <see cref="TapeHeaderBlock.IdentifyBlock"/> and restores this method to legacy-only.
+    /// </remarks>
     public static IdentifiedBlock IdentifyBlock(byte[] block, int length)
     {
         if (block is null || length <= 0 || length > block.Length)
             return IdentifiedBlock.Foreign;
 
         // 1. A TOC copy: a raw stream, verified by its structure -- not by a header failing to parse.
-        if (TryPeekToc(block, length, out ushort tocVersion, out Guid tocMediaId))
+        if (TapeTOC.TryPeek(block, length, out ushort tocVersion, out Guid tocMediaId))
             return new(HeaderBlockIdentity.TocCopy, TocVersion: tocVersion, TocMediaId: tocMediaId);
 
         // 2. A framed record: ours whether or not it verifies.
         if (HasSignatureAt(block, length, FramedPayloadOffset, out _))
         {
             var status = TapeFramer.TryUnpack(block, length, out TapeHeader? header);
-
             return status == TapeFramer.FrameStatus.Ok && header is not null
                 ? new(HeaderBlockIdentity.Header, Header: header, FrameStatus: status)
                 : new(HeaderBlockIdentity.DamagedRecord, FrameStatus: status);

@@ -185,8 +185,9 @@ public class TapeHeaderRoundTripTests
             new TapeFileDescriptor(@"C:\data\file.dat") { Length = 100 });
 
         using var ms = new MemoryStream();
-        tfi.SerializeTo(new TapeSerializer(ms));
-        byte[] raw = ms.ToArray();
+        //tfi.SerializeTo(new TapeSerializer(ms));
+        //byte[] raw = ms.ToArray();
+        var raw = LegacyFormatWriter.FileEntryBytes(tfi);
 
         var block = new byte[TapeHeader.FixedHeaderBlockSize];
         Array.Copy(raw, block, raw.Length);

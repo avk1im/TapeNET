@@ -12,6 +12,12 @@ public sealed class TapeNameFrontCoder
     /// <summary>Forgets the previous name: the next entry has no shared prefix.</summary>
     public void Reset() => m_previous = "";
 
+    /// <summary>
+    /// Sets the previous name without encoding it — for a name stored outside front coding (the UTF-16 fallback for
+    ///  names that are not well-formed UTF-16). Writer and reader both call it, so they stay in step.
+    /// </summary>
+    public void Remember(string name) => m_previous = name ?? "";
+
     /// <summary>Encodes <paramref name="name"/> against the previous name and remembers it.</summary>
     /// <param name="shared">UTF-16 chars shared with the previous name; never splits a surrogate pair.</param>
     /// <returns>The differing tail (<c>name[shared..]</c>).</returns>

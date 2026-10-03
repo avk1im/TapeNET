@@ -7,8 +7,6 @@ using TapeWinNET.Utils;
 
 namespace TapeWinNET.Models;
 
-using TypeUID = ulong;
-
 /// <summary>
 /// Per-source-entry snapshot of the resolved disk files. Mirrors
 /// <see cref="BackupSetView"/> for the Restore workflow: wraps the resolved
@@ -158,7 +156,7 @@ public class BackupSourceSetView
 /// belonging to a New Backup Set session. Mirrors <see cref="TOCView"/> for the
 /// Restore workflow.
 /// <para>
-/// Manages <see cref="BackupSourceEntry"/> sources, assigns monotonic UIDs to
+/// Manages <see cref="BackupSourceEntry"/> sources, assigns monotonic file IDs to
 /// resolved disk files, and provides aggregate statistics for the Preview panel.
 /// </para>
 /// <param name="getSourceFiles">A function to retrieve source files for a given set index.</param>
@@ -167,7 +165,7 @@ public class BackupSourceView(Func<int, List<TapeFileInfo>>? getSourceFiles = nu
 {
     private readonly Dictionary<BackupSourceEntry, BackupSourceSetView> _setViews = [];
     private readonly Func<int, List<TapeFileInfo>>? _getSourceFiles = getSourceFiles;
-    private TypeUID _nextUID = 1UL; // 0 is reserved / invalid, same as TapeTOC
+    private ulong _nextFileId = 1UL; // 0 is reserved / invalid, same as TapeTOC
 
     // ─────────────────────────────────────────────────
     //  Session-level options
@@ -180,14 +178,14 @@ public class BackupSourceView(Func<int, List<TapeFileInfo>>? getSourceFiles = nu
     public bool IncludeSubdirectories { get; set; } = true;
 
     // ─────────────────────────────────────────────────
-    //  UID generation
+    //  File ID generation
     // ─────────────────────────────────────────────────
 
     /// <summary>
-    /// Generates a monotonic UID for a resolved disk file.
-    /// Mirrors <c>TapeTOC.GenerateUID()</c>.
+    /// Generates a monotonic file ID for a resolved disk file.
+    /// Mirrors <see cref="TapeSetTOC.GenerateFileId"/>.
     /// </summary>
-    internal TypeUID GenerateUID() => _nextUID++;
+    internal ulong GenerateFileId() => _nextFileId++;
 
     // ─────────────────────────────────────────────────
     //  Set view management
@@ -219,7 +217,7 @@ public class BackupSourceView(Func<int, List<TapeFileInfo>>? getSourceFiles = nu
     public void Clear()
     {
         _setViews.Clear();
-        _nextUID = 1UL;
+        _nextFileId = 1UL;
     }
 
     // ─────────────────────────────────────────────────
@@ -238,7 +236,7 @@ public class BackupSourceView(Func<int, List<TapeFileInfo>>? getSourceFiles = nu
         if (!fi.Exists)
             return null;
 
-        var tfi = new BackupSourceFileInfo(GenerateUID(), fi);
+        var tfi = new BackupSourceFileInfo(GenerateFileId(), fi);
         var view = new BackupSourceSetView([tfi]);
         SetView(entry, view);
         return view;
@@ -294,7 +292,7 @@ public class BackupSourceView(Func<int, List<TapeFileInfo>>? getSourceFiles = nu
         void AddFile(FileInfo fi)
         {
             ct.ThrowIfCancellationRequested();
-            var tfi = new BackupSourceFileInfo(GenerateUID(), fi);
+            var tfi = new BackupSourceFileInfo(GenerateFileId(), fi);
             result.Add(tfi);
 
             // Report progress periodically (every 100 files)

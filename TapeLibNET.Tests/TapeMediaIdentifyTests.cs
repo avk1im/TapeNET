@@ -242,7 +242,7 @@ public class TapeMediaIdentifyTests
     }
 
     /// <summary>
-    /// Legacy content at block 0 — raw <see cref="TapeFileInfo"/> bytes, not a framed record. Pre-header
+    /// Legacy content at block 0 — raw legacy <see cref="TapeFileInfo"/> bytes, not a framed record. Pre-header
     ///  media legitimately begins this way, and must map to "unidentified", never to a false header.
     /// </summary>
     [Fact]
@@ -250,12 +250,8 @@ public class TapeMediaIdentifyTests
     {
         var tfi = new TapeFileInfo(42UL, TapeAddress.Zero,
             new TapeFileDescriptor(@"C:\data\file.dat") { Length = 100 });
-
-        using var ms = new MemoryStream();
-        tfi.SerializeTo(new TapeSerializer(ms));
-
         var block = new byte[TapeHeaderBlock.Size];
-        ms.ToArray().CopyTo(block, 0);
+        LegacyFormatWriter.FileEntryBytes(tfi).CopyTo(block, 0);
 
         Assert.False(TapeHeaderBlock.TryIdentifyHeaderBlock(block, block.Length, out TapeHeader? header));
         Assert.Null(header);
@@ -340,7 +336,7 @@ public class TapeMediaIdentifyTests
     private static byte[] TocBlock(TapeTOC toc)
     {
         using var ms = new MemoryStream();
-        new TapeSerializer(ms).Serialize(toc);
+        toc.SaveTo(ms);
 
         var block = new byte[TapeHeaderBlock.Size];
         byte[] bytes = ms.ToArray();
@@ -425,8 +421,7 @@ public class TapeMediaIdentifyTests
     // ── TOC copies ───────────────────────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// The second regression: a real TOC copy — written as v0x0102, which the strict signature check
-    ///  rejected — is recognized, with its version and the series it describes.
+    /// A 2.1 TOC copy is recognized positively, with its version and the series it describes.
     /// </summary>
     [Fact]
     public void IdentifyBlock_TocCopy_IsRecognized_WithVersionAndMediaId()
@@ -460,28 +455,21 @@ public class TapeMediaIdentifyTests
     {
         var tfi = new TapeFileInfo(42UL, TapeAddress.Zero,
             new TapeFileDescriptor(@"C:\data\file.dat") { Length = 100 });
-
-        using var ms = new MemoryStream();
-        tfi.SerializeTo(new TapeSerializer(ms));
-
         var block = new byte[TapeHeaderBlock.Size];
-        ms.ToArray().CopyTo(block, 0);
+        LegacyFormatWriter.FileEntryBytes(tfi).CopyTo(block, 0);
 
         Assert.Equal(HeaderBlockIdentity.Foreign, TapeHeaderBlock.IdentifyBlock(block, block.Length).Kind);
     }
 
-    /// <summary>The same record at a NON-zero address fails earlier — on the nested set signature.</summary>
+    /// <summary>The same record as in <see cref="IdentifyBlock_LegacyFileRecordAtAddressZero_IsNotATocCopy"/>
+    /// at a NON-zero address fails earlier — on the nested set signature.</summary>
     [Fact]
     public void IdentifyBlock_LegacyFileRecordAtNonZeroAddress_IsNotATocCopy()
     {
         var tfi = new TapeFileInfo(42UL, new TapeAddress(1234, 0),
             new TapeFileDescriptor(@"C:\data\file.dat") { Length = 100 });
-
-        using var ms = new MemoryStream();
-        tfi.SerializeTo(new TapeSerializer(ms));
-
         var block = new byte[TapeHeaderBlock.Size];
-        ms.ToArray().CopyTo(block, 0);
+        LegacyFormatWriter.FileEntryBytes(tfi).CopyTo(block, 0);
 
         Assert.Equal(HeaderBlockIdentity.Foreign, TapeHeaderBlock.IdentifyBlock(block, block.Length).Kind);
     }

@@ -48,48 +48,34 @@ public class TapeTOCRoundTripTests
 
     #region *** Helpers ***
 
+    private static readonly DateTime s_saveTime = new(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+
     /// <summary>
-    /// Serializes a <see cref="TapeTOC"/> to a <see cref="MemoryStream"/> and deserializes
-    /// it back, returning the round-tripped copy. Pure in-memory — no tape involved.
+    /// Saves a <see cref="TapeTOC"/> as a 2.1 TOC stream to a <see cref="MemoryStream"/> and loads it back.
+    ///  Pure in-memory — no tape involved.
     /// </summary>
     private static TapeTOC SerializeAndDeserialize(TapeTOC toc)
     {
         using var ms = new MemoryStream();
-
-        var serializer = new TapeSerializer(ms);
-        serializer.Serialize(toc);
-
+        toc.SaveTo(ms);
         ms.Position = 0;
-
-        var deserializer = new LegacyDeserializer(ms);
-        var result = deserializer.Deserialize<TapeTOC>();
-
-        Assert.NotNull(result);
-        return result!;
+        return TapeTOC.LoadFrom(ms);
     }
 
     /// <summary>
-    /// Serializes a <see cref="TapeFileInfo"/> to a <see cref="MemoryStream"/> and
-    /// deserializes it back.
+    /// Round-trips a single <see cref="TapeFileInfo"/> as the only entry of a one-set TOC — a file entry has no
+    ///  stand-alone wire form in 2.1 (it is a group inside a TocFileBatch record).
     /// </summary>
     private static TapeFileInfo SerializeAndDeserialize(TapeFileInfo tfi)
     {
-        using var ms = new MemoryStream();
-
-        var serializer = new TapeSerializer(ms);
-        tfi.SerializeTo(serializer);
-
-        ms.Position = 0;
-
-        var deserializer = new LegacyDeserializer(ms);
-        var result = TapeFileInfo.ConstructFrom(deserializer) as TapeFileInfo;
-
-        Assert.NotNull(result);
-        return result!;
+        var toc = new TapeTOC("single file");
+        toc.AddNewSetTOC();
+        toc.CurrentSetTOC.Append(tfi);
+        return SerializeAndDeserialize(toc)[1][0];
     }
 
     /// <summary>
-    /// Creates a <see cref="TapeFileDescriptor"/> with fully populated fields.
+    /// Creates a <see cref="TapeFileDescriptor"/> with fully populated fields. Times are UTC, as in memory (§8.5).
     /// </summary>
     private static TapeFileDescriptor MakeDescriptor(
         string fullName,
@@ -99,7 +85,7 @@ public class TapeTOCRoundTripTests
         DateTime? lastWriteTime = null,
         DateTime? lastAccessTime = null)
     {
-        var baseTime = new DateTime(2024, 6, 15, 10, 30, 0, DateTimeKind.Local);
+        var baseTime = new DateTime(2024, 6, 15, 10, 30, 0, DateTimeKind.Utc);
         return new TapeFileDescriptor(fullName)
         {
             Length = length,
@@ -118,18 +104,6 @@ public class TapeTOCRoundTripTests
         long length = 1024, byte[]? hash = null)
     {
         var tfi = new TapeFileInfo(uid, address, MakeDescriptor(fullName, length))
-        {
-            Hash = hash
-        };
-        return tfi;
-    }
-
-    [Obsolete("Use TapeAddress address instead of long block")]
-    private static TapeFileInfo MakeFileInfo(
-        ulong uid, long block, string fullName,
-        long length = 1024, byte[]? hash = null)
-    {
-        var tfi = new TapeFileInfo(uid, block, MakeDescriptor(fullName, length))
         {
             Hash = hash
         };
@@ -220,8 +194,15 @@ public class TapeTOCRoundTripTests
         Assert.Equal(expected.Incremental, actual.Incremental);
         Assert.Equal(expected.Volume, actual.Volume);
         Assert.Equal(expected.ContinuedFromPrevVolume, actual.ContinuedFromPrevVolume);
-        Assert.Equal(expected.Count, actual.Count);
+        // 2.1 fields:
+        Assert.Equal(expected.SetId, actual.SetId);
+        Assert.Equal(expected.NextFileId, actual.NextFileId);
+        Assert.Equal(expected.DataFormat, actual.DataFormat);
+        Assert.Equal(expected.Compression, actual.Compression);
+        Assert.Equal(expected.CompressionLevel, actual.CompressionLevel);
 
+        // content file list:
+        Assert.Equal(expected.Count, actual.Count);
         for (int i = 0; i < expected.Count; i++)
             AssertFileInfoEqual(expected[i], actual[i]);
     }
@@ -383,11 +364,10 @@ public class TapeTOCRoundTripTests
     [Fact]
     public void TapeFileInfo_DateTimePrecision_RoundTrip()
     {
-        // Verify tick-level precision is preserved
-        var creation = new DateTime(2023, 12, 31, 23, 59, 59, 999, DateTimeKind.Local).AddTicks(1234);
-        var lastWrite = new DateTime(2024, 1, 1, 0, 0, 0, 0, DateTimeKind.Local).AddTicks(5678);
-        var lastAccess = new DateTime(2024, 6, 15, 12, 0, 0, 0, DateTimeKind.Local).AddTicks(9012);
-
+        // Verify tick-level precision is preserved (UTC in memory and on tape)
+        var creation = new DateTime(2023, 12, 31, 23, 59, 59, 999, DateTimeKind.Utc).AddTicks(1234);
+        var lastWrite = new DateTime(2024, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc).AddTicks(5678);
+        var lastAccess = new DateTime(2024, 6, 15, 12, 0, 0, 0, DateTimeKind.Utc).AddTicks(9012);
         var descr = MakeDescriptor(@"C:\Timed\precise.dat",
             creationTime: creation, lastWriteTime: lastWrite, lastAccessTime: lastAccess);
         var original = new TapeFileInfo(1UL, TapeAddress.Zero, descr);
@@ -397,7 +377,9 @@ public class TapeTOCRoundTripTests
         Assert.Equal(creation.Ticks, result.FileDescr.CreationTime.Ticks);
         Assert.Equal(lastWrite.Ticks, result.FileDescr.LastWriteTime.Ticks);
         Assert.Equal(lastAccess.Ticks, result.FileDescr.LastAccessTime.Ticks);
+        Assert.Equal(DateTimeKind.Utc, result.FileDescr.LastWriteTime.Kind);
     }
+
 
     #endregion
 
@@ -520,6 +502,7 @@ public class TapeTOCRoundTripTests
 
     #endregion
 
+
     #region *** MediaId (Guid) ***
 
     [Fact]
@@ -600,23 +583,20 @@ public class TapeTOCRoundTripTests
     {
         var creation = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Local);
         var lastSave = new DateTime(2020, 1, 2, 0, 0, 0, DateTimeKind.Local);
-
         var bytes = BuildLegacyEmptyTOCBytes(
             nextUID: 5UL, description: "Legacy Media",
             creation: creation, lastSave: lastSave, volume: 2, continued: true);
 
         using var ms = new MemoryStream(bytes);
-        var toc = new LegacyDeserializer(ms).Deserialize<TapeTOC>();
+        var toc = LegacyTocReader.ReadToc(new LegacyDeserializer(ms), LegacyTocReader.Layout.B);
 
         Assert.NotNull(toc);
-
         // The crucial guarantee: the legacy stream reads back with NO identity and the
         //  trailing fields stay aligned (no phantom 16-byte Guid read corrupting them).
         Assert.Equal(Guid.Empty, toc!.MediaId);
         Assert.Equal("Legacy Media", toc.Description);
         Assert.Equal(2, toc.Volume);
         Assert.True(toc.ContinuedOnNextVolume);
-
         // The legacy TOC-wide UID seed is superseded by per-set NextFileId; the loaded TOC is flagged legacy.
         Assert.True(toc.LoadedFromLegacy);
     }
@@ -639,6 +619,7 @@ public class TapeTOCRoundTripTests
     }
 
     #endregion
+
 
     #region *** TapeTOC — In-Memory Serialization ***
 
@@ -710,7 +691,7 @@ public class TapeTOCRoundTripTests
     [Fact]
     public void TapeTOC_MetadataFields_AllPreserved()
     {
-        var creationTime = new DateTime(2024, 1, 15, 8, 0, 0, DateTimeKind.Local);
+        var creationTime = new DateTime(2024, 1, 15, 8, 0, 0, DateTimeKind.Utc);
         var toc = new TapeTOC("Metadata Test")
         {
             CreationTime = creationTime,
@@ -1438,22 +1419,22 @@ public class TapeTOCRoundTripTests
     #region *** Serialization Size Estimation ***
 
     [Fact]
-    public void TapeFileInfo_EstimateSerializedSize_ReasonablyAccurate()
+    public void TapeFileInfo_EstimateSerializedSize_IsUpperBound()
     {
-        var tfi = MakeFileInfo(42UL, new TapeAddress(128L, 32U), @"C:\Data\report.xlsx", 54321,
+        // A 2.1 entry has no stand-alone form: measure it as the growth of a one-set TOC
+        var toc = new TapeTOC("Estimate");
+        toc.AddNewSetTOC();
+        using var before = new MemoryStream();
+        toc.SaveTo(before, s_saveTime, "test");
+
+        var tfi = MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(128L, 32U), @"C:\Data\report.xlsx", 54321,
             hash: [0x01, 0x02, 0x03, 0x04]);
+        toc.CurrentSetTOC.Append(tfi);
+        using var after = new MemoryStream();
+        toc.SaveTo(after, s_saveTime, "test");
 
-        int estimated = tfi.EstimateSerializedSize();
-
-        // Serialize and compare
-        using var ms = new MemoryStream();
-        var serializer = new TapeSerializer(ms);
-        tfi.SerializeTo(serializer);
-        int actual = (int)ms.Length;
-
-        // Estimate should be close to actual (within reasonable margin for alignment)
-        Assert.True(estimated > 0);
-        Assert.InRange(actual, estimated - 50, estimated + 50);
+        int actual = (int)(after.Length - before.Length);
+        Assert.InRange(actual, 1, tfi.EstimateSerializedSize());
     }
 
     [Fact]
@@ -1639,24 +1620,42 @@ public class TapeTOCRoundTripTests
     }
 
     [Fact]
-    public void SerializedBytes_DeterministicExceptTimestamp()
+    public void SerializedBytes_Deterministic()
     {
         var toc = BuildComplexTOC(2, 3, description: "Deterministic");
 
         using var ms1 = new MemoryStream();
-        new TapeSerializer(ms1).Serialize(toc);
-
+        toc.SaveTo(ms1, s_saveTime, "test");
         using var ms2 = new MemoryStream();
-        new TapeSerializer(ms2).Serialize(toc);
+        toc.SaveTo(ms2, s_saveTime, "test");
 
-        var bytes1 = ms1.ToArray();
-        var bytes2 = ms2.ToArray();
+        // With time and writer pinned, a 2.1 TOC is byte-for-byte reproducible
+        Assert.Equal(ms1.ToArray(), ms2.ToArray());
+    }
 
-        // Lengths should match
-        Assert.Equal(bytes1.Length, bytes2.Length);
+    #endregion
 
-        // Content may differ only in LastSaveTime fields (DateTime.Now in SerializeTo),
-        //  so we can't assert exact byte equality, but lengths must match
+
+    #region *** Legacy ***
+
+    /// <summary>
+    /// Legacy times were local ticks; they must enter the model as UTC, or an incremental backup on a legacy chain
+    ///  compares against times shifted by the UTC offset.
+    /// </summary>
+    [Fact]
+    public void LegacyToc_Times_ConvertedFromLocalToUtc()
+    {
+        var creationLocal = new DateTime(2020, 7, 1, 12, 0, 0, DateTimeKind.Local);
+        var bytes = BuildLegacyEmptyTOCBytes(
+            nextUID: 5UL, description: "Legacy Media",
+            creation: creationLocal, lastSave: creationLocal, volume: 1, continued: false);
+
+        using var ms = new MemoryStream(bytes);
+        var toc = LegacyTocReader.ReadToc(new LegacyDeserializer(ms), LegacyTocReader.Layout.B);
+
+        Assert.NotNull(toc);
+        Assert.Equal(DateTimeKind.Utc, toc!.CreationTime.Kind);
+        Assert.Equal(creationLocal.ToUniversalTime(), toc.CreationTime);
     }
 
     #endregion

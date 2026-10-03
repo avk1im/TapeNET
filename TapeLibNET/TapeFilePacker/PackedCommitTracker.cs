@@ -25,7 +25,7 @@ internal sealed class PackedCommitTracker(TapeSetTOC setTOC, ILogger logger)
     // Per-file state held until FilesCommitted fires for the file's token.
     private sealed class PendingEntry
     {
-        public required TapeFileInfo Template;   // UID + FileDescr only -- Address is provisional
+        public required TapeFileInfo Template;   // FileID + FileDescr only -- Address is provisional
         public required int FileIndex;           // index in the agent's fileList
         public byte[]? Hash;                     // hash captured after writing the body
         public TapeFileCodec Codec;              // per-file codec (Stored or Zstd) decided at write time
