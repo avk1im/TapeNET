@@ -5,11 +5,12 @@ namespace TapeLibNET.Tests;
 
 /// <summary>
 /// Phase 3 (Design-Format-v2 §5.1, §5.2, Appendix B §B.8.6): the 2.1 TOC stream - <see cref="TapeTOC.SaveTo(Stream)"/>,
-///  <see cref="TapeTOC.LoadFrom"/>, batching, cross-checks, identity and <see cref="TapeTOC.TryPeek"/>.
+///  <see cref="TapeTOC.LoadFrom"/>, batching, cross-checks, identity, per-set save stamps and <see cref="TapeTOC.TryPeek"/>.
 /// </summary>
 public class TapeTOCFormatTests
 {
     private static readonly DateTime T0 = new(2026, 10, 1, 8, 30, 0, DateTimeKind.Utc);
+    private static readonly DateTime T1 = new(2026, 10, 2, 9, 45, 0, DateTimeKind.Utc);
     private const string Writer = "TapeTOCFormatTests";
 
     #region *** Helpers ***
@@ -36,6 +37,7 @@ public class TapeTOCFormatTests
         return tfi;
     }
 
+    // One set per argument. Note: AddNewSetTOC replaces a trailing EMPTY set, so a 0 is only kept at the end.
     private static TapeTOC MakeToc(params int[] filesPerSet)
     {
         var toc = new TapeTOC("media \u00FC");
@@ -47,15 +49,14 @@ public class TapeTOCFormatTests
             set.BlockSize = 65536;
             for (int i = 0; i < files; i++)
                 AddFile(set, $@"C:\data\dir{i / 100}\file{i}.bin", block: 1 + i, offset: (uint)(i % 7 * 512));
-            // keep a trailing empty set from being reused by the next AddNewSetTOC
         }
         return toc;
     }
 
-    private static byte[] Save(TapeTOC toc)
+    private static byte[] Save(TapeTOC toc, DateTime? at = null)
     {
         using var ms = new MemoryStream();
-        toc.SaveTo(ms, T0, Writer);
+        toc.SaveTo(ms, at ?? T0, Writer);
         return ms.ToArray();
     }
 
@@ -112,6 +113,18 @@ public class TapeTOCFormatTests
         f.WriteUInt(7, 1);
         f.WriteUInt(13, 0);
         mid?.Invoke(f);
+    }
+
+    // The required file entry fields of one group
+    private static void RequiredEntryFields(TapeFieldWriter g, ulong fileId, string name, Action<TapeFieldWriter>? mid = null)
+    {
+        g.WriteUInt(1, fileId);
+        g.WriteUInt(2, 1);
+        g.WriteTimestamp(8, T0);
+        g.WriteTimestamp(9, T0);
+        g.WriteTimestamp(10, T0);
+        mid?.Invoke(g);
+        g.WriteString(32, name);
     }
 
     private static byte[] RawRecord(ushort kind, byte[] body)
@@ -201,6 +214,7 @@ public class TapeTOCFormatTests
             Assert.Equal(a.NextFileId, b.NextFileId);
             Assert.Equal(a.Description, b.Description);
             Assert.Equal(a.CreationTime, b.CreationTime);
+            Assert.Equal(a.LastSaveTime, b.LastSaveTime);
             Assert.Equal(a.BlockSize, b.BlockSize);
             Assert.Equal(a.HashAlgorithm, b.HashAlgorithm);
             Assert.Equal(a.Compression, b.Compression);
@@ -228,10 +242,7 @@ public class TapeTOCFormatTests
 
     [Fact]
     public void Toc21_EmptyToc_RoundTrips()
-    {
-        TapeTOC back = RoundTrip(new TapeTOC());
-        Assert.Equal(0, back.Count);
-    }
+        => Assert.Equal(0, RoundTrip(new TapeTOC()).Count);
 
     [Fact]
     public void Toc21_FileAttributes_Combined()
@@ -245,27 +256,88 @@ public class TapeTOCFormatTests
     [Fact]
     public void Toc21_Timestamps_UtcAndTimeZoneIndependent()
     {
-        var toc = MakeToc(1);
-        TapeFileInfo f = RoundTrip(toc)[1][0];
+        TapeTOC back = RoundTrip(MakeToc(1));
+        TapeFileInfo f = back[1][0];
         Assert.Equal(DateTimeKind.Utc, f.FileDescr.LastWriteTime.Kind);
         Assert.Equal(T0.AddDays(-2).Ticks, f.FileDescr.LastWriteTime.Ticks);
-        Assert.Equal(DateTimeKind.Utc, RoundTrip(toc).LastSaveTime.Kind);
+        Assert.Equal(DateTimeKind.Utc, back.LastSaveTime.Kind);
     }
 
     [Fact]
     public void Toc21_LoneSurrogateName_RoundTripsLosslessly()
     {
         var toc = MakeToc(0);
-        string bad = "C:\\data\\odd\uD800name.txt";                     // valid on NTFS, invalid UTF-16
+        string bad = "C:\\data\\odd\uD800name.txt";                      // valid on NTFS, not well-formed UTF-16
+        string badToo = "C:\\data\\odd\uD800name.txt.bak";               // shares the ill-formed prefix
         AddFile(toc.CurrentSetTOC, @"C:\data\odd\first.txt");
         AddFile(toc.CurrentSetTOC, bad, block: 2);
-        AddFile(toc.CurrentSetTOC, "C:\\data\\odd\uD800name.txt.bak", block: 3);   // shares the ill-formed prefix
-        AddFile(toc.CurrentSetTOC, @"C:\data\other.txt", block: 4);
+        AddFile(toc.CurrentSetTOC, badToo, block: 3);
+        AddFile(toc.CurrentSetTOC, @"C:\data\other.txt", block: 4);    // front-coded against a UTF-16 name
 
         TapeSetTOC back = RoundTrip(toc)[1];
+        Assert.Equal(@"C:\data\odd\first.txt", back[0].FileDescr.FullName);
         Assert.Equal(bad, back[1].FileDescr.FullName);
-        Assert.Equal("C:\\data\\odd\uD800name.txt.bak", back[2].FileDescr.FullName);
+        Assert.Equal(badToo, back[2].FileDescr.FullName);
         Assert.Equal(@"C:\data\other.txt", back[3].FileDescr.FullName);
+    }
+
+    #endregion
+
+    #region *** LastSaveTime: only modified sets are stamped ***
+
+    [Fact]
+    public void Toc21_LastSaveTime_StampsOnlyModifiedSets()
+    {
+        TapeTOC loaded = Load(Save(MakeToc(2, 3), at: T0));
+        Assert.All(loaded, s => Assert.False(s.IsModified));
+
+        loaded[2].Description = "renamed";
+        Assert.True(loaded[2].IsModified);
+
+        TapeTOC back = Load(Save(loaded, at: T1));
+        Assert.Equal(T0, back[1].LastSaveTime);            // untouched set keeps its stamp
+        Assert.Equal(T1, back[2].LastSaveTime);            // changed set is restamped
+        Assert.Equal(T1, back.LastSaveTime);               // the TOC itself always is
+    }
+
+    [Fact]
+    public void Toc21_LastSaveTime_AppendAndBurnedFileId_CountAsModified()
+    {
+        TapeTOC loaded = Load(Save(MakeToc(2, 2), at: T0));
+
+        AddFile(loaded[1], @"C:\new.txt", block: 99);      // appended file
+        loaded[2].GenerateFileId();                        // a failed attempt burned an id: persisted state changed
+
+        TapeTOC back = Load(Save(loaded, at: T1));
+        Assert.Equal(T1, back[1].LastSaveTime);
+        Assert.Equal(T1, back[2].LastSaveTime);
+    }
+
+    [Fact]
+    public void Toc21_SecondSave_KeepsStamps()
+    {
+        TapeTOC toc = MakeToc(1);
+        Save(toc, at: T0);                                 // first TOC copy
+        Save(toc, at: T1);                                 // second copy: nothing changed in between
+        Assert.Equal(T0, toc[1].LastSaveTime);
+        Assert.Equal(T1, toc.LastSaveTime);
+    }
+
+    [Fact]
+    public void Toc21_CopyFrom_PreservesSavedState()
+    {
+        TapeTOC loaded = Load(Save(MakeToc(2), at: T0));
+        var copy = new TapeTOC(loaded);
+        Assert.False(copy[1].IsModified);
+    }
+
+    [Fact]
+    public void Toc21_FailedSave_LeavesSetsModified()
+    {
+        TapeTOC toc = MakeToc(1);
+        toc.CurrentSetTOC.SetId = Guid.Empty;                         // the set record refuses to be written
+        Assert.Throws<InvalidOperationException>(() => Save(toc));
+        Assert.True(toc[1].IsModified);
     }
 
     #endregion
@@ -287,10 +359,11 @@ public class TapeTOCFormatTests
     [Fact]
     public void Toc21_BatchClosedBySize()
     {
+        // ~20 KB per name and NO long shared prefix (the index comes first), so front coding cannot shrink the
+        //  entries: 120 of them exceed the 1 MiB batch budget well before the 4,096-file cap.
         var toc = MakeToc(0);
-        string longDir = @"C:\" + new string('d', 20_000) + @"\";
         for (int i = 0; i < 120; i++)
-            AddFile(toc.CurrentSetTOC, longDir + new string((char)('a' + i % 26), 5_000) + i, block: i + 1);
+            AddFile(toc.CurrentSetTOC, $@"C:\{i:D4}" + new string('x', 20_000), block: i + 1);
 
         byte[] bytes = Save(toc);
         Assert.True(Records(bytes).Count(r => r.Kind == TapeRecordKind.TocFileBatch) > 1);
@@ -310,8 +383,10 @@ public class TapeTOCFormatTests
                 TapeFieldReader entry = body.ReadGroup();
                 int shared = 0;
                 while (entry.MoveNext())
+                {
                     if (entry.Number == 11)
                         shared = entry.ReadInt32();
+                }
                 if (index == 0)
                     Assert.Equal(0, shared);                   // a batch decodes on its own
                 else if (index == 1)
@@ -323,15 +398,12 @@ public class TapeTOCFormatTests
 
     [Fact]
     public void Toc21_EmptySet_WritesNoBatch()
-    {
-        List<TapeRecord> records = Records(Save(MakeToc(0)));
-        Assert.Equal(
+        => Assert.Equal(
             [TapeRecordKind.TocHeader, TapeRecordKind.TocSet, TapeRecordKind.TocEnd],
-            records.Select(r => r.Kind).ToArray());
-    }
+            Records(Save(MakeToc(0))).Select(r => r.Kind).ToArray());
 
     [Fact]
-    public void Toc21_Smaller_ThanEstimate()
+    public void Toc21_EstimateIsAnUpperBound()
     {
         TapeTOC toc = MakeToc(2000);
         long estimate = toc[1].Sum(f => (long)f.EstimateSerializedSize());
@@ -367,26 +439,27 @@ public class TapeTOCFormatTests
     }
 
     [Fact]
-    public void Toc21_LegacySet_RoundTrips()
+    public void Toc21_LegacySet_RoundTrips_WithCriticalDataFormat()
     {
         var toc = MakeToc(2);
         TapeSetTOC set = toc.CurrentSetTOC;
         set.DataFormat = TapeDataFormat.Legacy;
         set.SetId = Guid.Empty;
 
-        TapeSetTOC back = RoundTrip(toc)[1];
+        byte[] bytes = Save(toc);
+        TapeSetTOC back = Load(bytes)[1];
         Assert.Equal(TapeDataFormat.Legacy, back.DataFormat);
         Assert.Equal(Guid.Empty, back.SetId);
         Assert.Equal(set[1].FileId, back[1].FileId);
 
-        // DataFormat travels with the critical bit when it is not the default
-        TapeRecord setRecord = Records(Save(toc)).First(r => r.Kind == TapeRecordKind.TocSet);
-        TapeFieldReader f = setRecord.Fields;
-        bool seen = false;
+        TapeFieldReader f = Records(bytes).First(r => r.Kind == TapeRecordKind.TocSet).Fields;
+        bool critical = false;
         while (f.MoveNext())
+        {
             if (f.Number == 6)
-                seen = f.IsCritical;
-        Assert.True(seen);
+                critical = f.IsCritical;
+        }
+        Assert.True(critical);
     }
 
     [Fact]
@@ -396,17 +469,12 @@ public class TapeTOCFormatTests
         {
             w.Write(Header(1));
             TapeSetTOC.Wire wire = SetWire(fileCount: 1);
-            wire.NextFileId = 1;
+            wire.NextFileId = 1;                                     // stale: below the file's id
             w.Write(wire);
             w.Write(TapeRecordKind.TocFileBatch, f =>
             {
                 TapeFieldWriter g = f.BeginGroup(TapeSetTOC.BatchFileField);
-                g.WriteUInt(1, 42);                            // FileId 42 - above the declared NextFileId 1
-                g.WriteUInt(2, 1);
-                g.WriteTimestamp(8, T0);
-                g.WriteTimestamp(9, T0);
-                g.WriteTimestamp(10, T0);
-                g.WriteString(32, @"C:\x");
+                RequiredEntryFields(g, 42, @"C:\x");
                 f.EndGroup(g);
             });
             w.Write(new TocEndWire { SetCount = 1, TotalFileCount = 1 });
@@ -425,8 +493,39 @@ public class TapeTOCFormatTests
         toc.AddContinuationSetTOC(toc.CurrentSetTOC.ToParams(), contFromPrevVolume: true);
         Assert.Equal(next, toc.CurrentSetTOC.GenerateFileId());
 
+        AddFile(toc.CurrentSetTOC, @"C:\cont.txt");
         toc.AddNewSetTOC();
         Assert.Equal(1UL, toc.CurrentSetTOC.GenerateFileId());
+    }
+
+    [Fact]
+    public void AddNewSetTOC_ReusedEmptySlot_StartsFresh()
+    {
+        var toc = new TapeTOC();
+        toc.AddNewSetTOC();
+        TapeSetTOC old = toc.CurrentSetTOC;
+        old.Description = "aborted backup";
+        old.BlockSize = 1234;
+        old.HashAlgorithm = TapeHashAlgorithm.XxHash128;
+        old.Compression = TapeCompression.Software;
+        old.CompressionLevel = 19;
+        old.GenerateFileId();
+        Guid oldId = old.SetId;
+
+        toc.AddNewSetTOC(capacity: 8);
+
+        TapeSetTOC fresh = toc.CurrentSetTOC;
+        Assert.Equal(1, toc.Count);
+        Assert.NotSame(old, fresh);
+        Assert.NotEqual(oldId, fresh.SetId);
+        Assert.Equal("", fresh.Description);
+        Assert.Equal(0u, fresh.BlockSize);
+        Assert.Equal(TapeHashAlgorithm.Crc32, fresh.HashAlgorithm);
+        Assert.Equal(TapeCompression.None, fresh.Compression);
+        Assert.Equal(ZstdLevel.Default, fresh.CompressionLevel);
+        Assert.Equal(1UL, fresh.NextFileId);
+        Assert.Equal(TapeDataFormat.V2, fresh.DataFormat);
+        Assert.True(fresh.Capacity >= 8);
     }
 
     #endregion
@@ -455,10 +554,8 @@ public class TapeTOCFormatTests
     [Fact]
     public void Toc21_CrossCheck_SetFileCount()
     {
-        byte[] bytes = Save(MakeToc(2));
-        List<TapeRecord> records = Records(bytes);
+        List<TapeRecord> records = Records(Save(MakeToc(2)));      // Header, Set, Batch, End
 
-        // Rebuild the stream with the set claiming 3 files
         byte[] crafted = Envelope((w, s) =>
         {
             w.Write(Header(1));
@@ -497,13 +594,40 @@ public class TapeTOCFormatTests
             w.Write(new TocEndWire { SetCount = 1, TotalFileCount = 7 });
         })));
 
+    /// <summary>
+    /// A TOC copy without its end record. On tape the stream does NOT end after the last set: the CRC-64 trailer
+    ///  follows, and the record reader meets those 8 bytes where the next prologue should be — so the copy is refused
+    ///  as <see cref="FormatErrorKind.BadMagic"/>, never accepted. (<see cref="FormatErrorKind.Truncated"/> is only
+    ///  reported when the stream itself ends; see <see cref="Toc21_StreamEndsWithoutTocEnd_Truncated"/>.)
+    /// </summary>
     [Fact]
-    public void Toc21_MissingTocEnd_Truncated()
-        => AssertRefused(FormatErrorKind.Truncated, () => Load(Envelope((w, _) =>
+    public void Toc21_MissingTocEnd_Refused()
+        => AssertRefused(FormatErrorKind.BadMagic, () => Load(Envelope((w, _) =>
         {
             w.Write(Header(1));
             w.Write(SetWire());
         })));
+
+    /// <summary>The record stream ends cleanly after the last set, without a TocEnd: Truncated.</summary>
+    [Fact]
+    public void Toc21_StreamEndsWithoutTocEnd_Truncated()
+    {
+        using var ms = new MemoryStream();
+        using (var w = new TapeRecordWriter(ms))
+        {
+            w.Write(Header(1));
+            w.Write(SetWire());
+        }
+        ms.Position = 0;
+        AssertRefused(FormatErrorKind.Truncated, () => TapeCrc64Envelope.Read(ms, s =>
+        {
+            var reader = new TapeRecordReader(s);
+            reader.Read<TocHeaderWire>();
+            reader.ReadRecord(TapeRecordKind.TocSet);
+            return reader.ReadRecord()
+                ?? throw new TapeFormatException(FormatErrorKind.Truncated, "TOC ends without a TocEnd record");
+        }));
+    }
 
     [Fact]
     public void Toc21_HeaderNotFirst_Refused()
@@ -545,6 +669,10 @@ public class TapeTOCFormatTests
     }
 
     [Fact]
+    public void Toc21_NotATocAtAll_BadMagic()
+        => AssertRefused(FormatErrorKind.BadMagic, () => Load(new byte[64]));
+
+    [Fact]
     public void Toc21_UnknownSkippableRecord_Skipped_UnknownKind_Refused()
     {
         byte[] Build(ushort kind) => Envelope((w, s) =>
@@ -582,13 +710,7 @@ public class TapeTOCFormatTests
             w.Write(TapeRecordKind.TocFileBatch, f =>
             {
                 TapeFieldWriter g = f.BeginGroup(TapeSetTOC.BatchFileField);
-                g.WriteUInt(1, 1);
-                g.WriteUInt(2, 1);
-                g.WriteTimestamp(8, T0);
-                g.WriteTimestamp(9, T0);
-                g.WriteTimestamp(10, T0);
-                g.WriteUInt(20, 1, critical: true);
-                g.WriteString(32, "x");
+                RequiredEntryFields(g, 1, "x", mid => mid.WriteUInt(20, 1, critical: true));
                 f.EndGroup(g);
             });
             w.Write(new TocEndWire { SetCount = 1, TotalFileCount = 1 });
@@ -617,7 +739,7 @@ public class TapeTOCFormatTests
         Array.Copy(bytes, block, Math.Min(bytes.Length, block.Length));
 
         Assert.True(TapeTOC.TryPeek(block, block.Length, out ushort version, out Guid mediaId));
-        Assert.Equal(TapeTOC.LegacyTocVersionMax, version);
+        Assert.Equal(TapeTOC.TocVersion, version);                       // 0x0201 — a 2.1 copy, not a legacy one
         Assert.Equal(toc.MediaId, mediaId);
 
         Assert.False(TapeTOC.TryPeek(block, 12, out _, out _));       // header cut off by the block length
@@ -626,17 +748,21 @@ public class TapeTOCFormatTests
     [Fact]
     public void Toc21_TryPeek_OtherRecordFirst_NotAToc()
     {
-        byte[] frame = TapeFrame.PackBlock(new TocEndWire(), 1024);    // any 2.1 record that is not a TocHeader
+        byte[] frame = TapeFrame.PackBlock(new TocEndWire(), 1024);    // a 2.1 record that is not a TocHeader
         Assert.False(TapeTOC.TryPeek(frame, frame.Length, out _, out _));
     }
 
+    /// <summary>
+    /// <see cref="TapeTOC.SaveTo(Stream)"/> also serves .tapetoc exports, which upgrade nothing on tape — so it leaves
+    ///  <see cref="TapeTOC.LoadedFromLegacy"/> alone. The agent clears the flag once a TOC copy reached the tape.
+    /// </summary>
     [Fact]
-    public void Toc21_SaveTo_ClearsLoadedFromLegacy_StampsWriter()
+    public void Toc21_SaveTo_StampsWriter_LeavesLoadedFromLegacy()
     {
         var toc = MakeToc(1);
         toc.LoadedFromLegacy = true;
         Save(toc);
-        Assert.False(toc.LoadedFromLegacy);
+        Assert.True(toc.LoadedFromLegacy);
         Assert.Equal(Writer, toc.WrittenBy);
         Assert.Equal(T0, toc.CurrentSetTOC.LastSaveTime);
     }
