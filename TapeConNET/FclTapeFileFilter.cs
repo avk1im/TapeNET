@@ -24,8 +24,8 @@ public sealed class FclTapeFileFilter(FclEvaluator evaluator) : ITapeFileFilter
         var snapshot = new FclFileInfo(
             fileDescr.FullName,
             fileDescr.Length,
-            fileDescr.CreationTime,
-            fileDescr.LastWriteTime,
+            fileDescr.CreationTime.ToLocalTime(),      // FCL dates are local by spec; TapeFileDescriptor holds UTC
+            fileDescr.LastWriteTime.ToLocalTime(),
             fileDescr.Attributes);
         return evaluator.Evaluate(snapshot);
     }

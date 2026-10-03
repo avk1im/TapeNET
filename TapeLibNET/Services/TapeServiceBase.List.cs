@@ -293,7 +293,7 @@ public partial class TapeServiceBase
                 flags.Append(" [<Vol]");
             if (toc.IsCurrentSetContOnNextVolume)
                 flags.Append(" [Vol>]");
-            LogInfoSub($"#{setIndex,3} | {alt,3}  {setTOC.CreationTime,20:G}  {setTOC.Count,6:N0} files  {size,14}  Vol #{setTOC.Volume}  {setTOC.Description}{flags}");
+            LogInfoSub($"#{setIndex,3} | {alt,3}  {setTOC.CreationTime.ToLocalTime(),20:G}  {setTOC.Count,6:N0} files  {size,14}  Vol #{setTOC.Volume}  {setTOC.Description}{flags}");
         }
     }
 
@@ -310,8 +310,8 @@ public partial class TapeServiceBase
         LogInfoSub($"Name: >{toc.Description}<");
         if (toc.MediaId != Guid.Empty)
             LogInfoSub($"Media ID: {toc.MediaId}");
-        LogInfoSub($"Created on: {toc.CreationTime}");
-        LogInfoSub($"Last saved: {toc.LastSaveTime}");
+        LogInfoSub($"Created on: {toc.CreationTime.ToLocalTime()}");
+        LogInfoSub($"Last saved: {toc.LastSaveTime.ToLocalTime()}");
         LogInfoSub($"Backup sets: {toc.Count}");
         LogInfoSub($"Capacity: {Helpers.BytesToStringLong(Capacity)}");
         LogInfoSub($"Used: {Helpers.BytesToStringLong(Used)}");
@@ -338,8 +338,8 @@ public partial class TapeServiceBase
         LogInfoSub($"Name: >{setTOC.Description}<");
         LogInfoSub($"Files: {setTOC.Count}");
         LogInfoSub($"Total file size on tape: {Helpers.BytesToStringLong(setTOC.ComputeTotalFileSizeOnTape(_drive.DefaultBlockSize))}");
-        LogInfoSub($"Created on: {setTOC.CreationTime}");
-        LogInfoSub($"Last saved: {setTOC.LastSaveTime}");
+        LogInfoSub($"Created on: {setTOC.CreationTime.ToLocalTime()}");
+        LogInfoSub($"Last saved: {setTOC.LastSaveTime.ToLocalTime()}");
         LogInfoSub($"Block size: {Helpers.BytesToStringLong(setTOC.BlockSize)}");
         LogInfoSub($"Hash algorithm: {setTOC.HashAlgorithm}");
         LogInfoSub($"Incremental: {(setTOC.Incremental ? "Yes" : "No")}");
@@ -357,7 +357,7 @@ public partial class TapeServiceBase
     {
         var fileDescr = tfi.FileDescr;
         var name = fullPath ? fileDescr.FullName : Path.GetFileName(fileDescr.FullName);
-        return $"{tfi.Address,10}: {fileDescr.LastWriteTime,24:G} {fileDescr.Length,16:N0}\t{name}";
+        return $"{tfi.Address,10}: {fileDescr.LastWriteTime.ToLocalTime(),24:G} {fileDescr.Length,16:N0}\t{name}";
     }
 
     #endregion

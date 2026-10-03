@@ -1742,8 +1742,8 @@ public partial class MainViewModel : ViewModelBase
         PropertyList.Add(new PropertyItem("Description", toc.Description ?? "(unnamed)"));
         if (toc.MediaId != Guid.Empty)
             PropertyList.Add(new PropertyItem("Media ID", toc.MediaId.ToString()));
-        PropertyList.Add(new PropertyItem("Created On", toc.CreationTime.ToString("G")));
-        PropertyList.Add(new PropertyItem("Last Saved", toc.LastSaveTime.ToString("G")));
+        PropertyList.Add(new PropertyItem("Created On", toc.CreationTime.ToLocalTime().ToString("G")));
+        PropertyList.Add(new PropertyItem("Last Saved", toc.LastSaveTime.ToLocalTime().ToString("G")));
         PropertyList.Add(new PropertyItem("Backup Sets", toc.Count.ToString()));
         PropertyList.Add(new PropertyItem("Used", Helpers.BytesToStringLong(_tapeService.Used)));
         AddCapacityProperties();
@@ -1811,8 +1811,8 @@ public partial class MainViewModel : ViewModelBase
                 Helpers.BytesToStringLong(setTOC.Sum(tfi => tfi.FileDescr.Length))));
             PropertyList.Add(new PropertyItem("Total File Size on Media",
                 Helpers.BytesToStringLong(setTOC.ComputeTotalFileSizeOnTape(_tapeService.DefaultBlockSize))));
-            PropertyList.Add(new PropertyItem("Created On", setTOC.CreationTime.ToString("G")));
-            PropertyList.Add(new PropertyItem("Last Saved", setTOC.LastSaveTime.ToString("G")));
+            PropertyList.Add(new PropertyItem("Created On", setTOC.CreationTime.ToLocalTime().ToString("G")));
+            PropertyList.Add(new PropertyItem("Last Saved", setTOC.LastSaveTime.ToLocalTime().ToString("G")));
             PropertyList.Add(new PropertyItem("Block Size", Helpers.BytesToStringLong(setTOC.BlockSize)));
             PropertyList.Add(new PropertyItem("Hash Algorithm", setTOC.HashAlgorithm.ToString()));
             PropertyList.Add(new PropertyItem("Compression",

@@ -69,7 +69,7 @@ public class FileListItem(FilteredFileList? owner, TapeFileInfo fileInfo, bool s
 
     public string SizeFormatted => Helpers.BytesToString(_fileInfo.FileDescr.Length);
 
-    public DateTime LastModified => _fileInfo.FileDescr.LastWriteTime;
+    public DateTime LastModified => _fileInfo.FileDescr.LastWriteTime.ToLocalTime();
 
     public string AddressFormatted => _fileInfo.Address.ToString();
 
