@@ -1,28 +1,29 @@
-﻿using TapeLibNET.Legacy;
-using System;
+using TapeLibNET.Format;
+using TapeLibNET.Legacy;
 
 namespace TapeLibNET;
 
 /// <summary>
-/// Calibration run header written once at BOM of a scratch cartridge — the calibration kind of the
-///  unified <see cref="TapeHeader"/> hierarchy (renamed from the former <c>TapeCalibrationRunHeader</c>).
+/// Calibration run header written once at BOM of a scratch cartridge — the calibration kind of the unified
+///  <see cref="TapeHeader"/> hierarchy.
 /// </summary>
 /// <remarks>
 /// <para>
 /// Self-identifies the run and cartridge so <see cref="TapeCalibrator.Resume"/> can verify "same run"
-///  (<see cref="RunId"/> consistency) before trusting any checkpoint, and so a returned cartridge is
-///  inspectable ("what run / drive / when does this hold?"). Profile MATCHING against the current
-///  drive is deliberately NOT done here — that is the caller's / service layer's responsibility.
+///  (<see cref="RunId"/> consistency) before trusting any checkpoint, and so a returned cartridge is inspectable.
+///  Profile MATCHING against the current drive is deliberately NOT done here — that is the caller's responsibility.
 /// </para>
 /// <para>
-/// Sharing the <see cref="TapeHeader"/> base means one BOM read now classifies a cartridge as media,
-///  set, or calibration: a backup load that meets a calibration cartridge learns so from the kind
-///  byte instead of fruitlessly seeking a TOC. Only the record grammar is shared — the calibration
-///  header still rides in the run's own block via the calibrator's <c>RecordBlockWriter</c>, NOT the
-///  fixed 16 KiB header block, so <see cref="TapeHeader.BlockSize"/> carries the run block size.
+/// <b>Transitional (Phase 5):</b> still written in the LEGACY frame through <see cref="ITapeSerializable"/> and
+///  <see cref="TapeFramer.Pack(ITapeSerializable)"/>, like the calibration checkpoint; both move to format 2.1 together
+///  in Phase 6 (Design-Format-v2 §5.4, §5.5). <see cref="WriteBody"/> therefore refuses.
+/// </para>
+/// <para>
+/// The calibration header rides in the run's own block via the calibrator's <c>RecordBlockWriter</c>, NOT the fixed
+///  16 KiB header block, so <see cref="TapeHeader.BlockSize"/> carries the run block size.
 /// </para>
 /// </remarks>
-public sealed record TapeCalibrationHeader : TapeHeader
+public sealed record TapeCalibrationHeader : TapeHeader, ITapeSerializable
 {
     /// <inheritdoc/>
     public override TapeHeaderKind Kind => TapeHeaderKind.Calibration;
@@ -46,36 +47,36 @@ public sealed record TapeCalibrationHeader : TapeHeader
     public TapeCalibrationPlan Plan { get; init; }
 
     /// <summary>
-    /// Builds the run header, mirroring <see cref="TapeTOC.CreateHeader"/> so a header is always
-    ///  assembled through one factory and cannot silently diverge from the record's field layout.
+    /// Builds the run header, mirroring <see cref="TapeTOC.CreateHeader"/> so a header is always assembled through one
+    ///  factory and cannot silently diverge from the record's field layout.
     /// </summary>
-    /// <param name="runId">The run's unique id.</param>
-    /// <param name="profileKey">The drive+media profile key (usually <see cref="TapeDrive.DriveProfileKey"/>).</param>
-    /// <param name="capacityReportedAtBom">Driver-reported remaining at BOM.</param>
-    /// <param name="blockSize">The run's effective block size (NOT the fixed header block).</param>
-    /// <param name="startedUtc">Run start time, UTC.</param>
-    /// <param name="plan">The resolved calibration plan.</param>
     public static TapeCalibrationHeader CreateHeader(
         Guid runId, string profileKey, long capacityReportedAtBom, uint blockSize,
         DateTime startedUtc, TapeCalibrationPlan plan) =>
         new()
         {
-            Id                    = runId,          // protected base member — settable from within the hierarchy
-            CreatedUtc            = startedUtc,
-            BlockSize             = blockSize,
-            ProfileKey            = profileKey,
+            Id = runId,          // protected base member — settable from within the hierarchy
+            CreatedUtc = startedUtc,
+            BlockSize = blockSize,
+            ProfileKey = profileKey,
             CapacityReportedAtBom = capacityReportedAtBom,
-            Plan                  = plan,
+            Plan = plan,
         };
 
+    /// <summary>Format 2.1 write — not before Phase 6. Callers pack through <see cref="TapeFramer.PackHeader"/>.</summary>
+    public override void WriteBody(TapeFieldWriter fields)
+        => throw new InvalidOperationException(
+            "The calibration header is written in the legacy frame until Phase 6 (TapeFramer.Pack)");
+
+    #region *** Legacy (ITapeSerializable) — removed in Phase 6 ***
+
     /// <inheritdoc/>
-    public override void SerializeTo(TapeSerializer s)
+    /// <remarks>The calibration golden file pins these bytes: change nothing here until Phase 6 replaces it.</remarks>
+    public void SerializeTo(TapeSerializer s)
     {
         SerializePreamble(s);   // signature + Kind + RunId (16 bytes) + StartedUtc + BlockSize
-
         s.Serialize(ProfileKey);            // length-prefixed UTF-8
         s.Serialize(CapacityReportedAtBom);
-
         // Plan — enough to resume with an IDENTICAL cadence/chunking, without re-resolving.
         s.Serialize(Plan.SampleCount);
         s.Serialize(Plan.BodySampleCount);
@@ -90,27 +91,47 @@ public sealed record TapeCalibrationHeader : TapeHeader
     }
 
     /// <summary>
-    /// Reads the calibration-specific fields after the shared preamble has been decoded. Called only
-    ///  by <see cref="TapeHeader.ConstructFrom"/> once the kind byte selected
-    ///  <see cref="TapeHeaderKind.Calibration"/>.
+    /// <see cref="ITapeSerializable"/> factory for the legacy framer (<see cref="TapeFramer.Unpack{T}"/>): reads a legacy
+    ///  header of ANY kind through <see cref="LegacyHeaderReader.Read"/> and keeps it only if it is a calibration header.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Until Phase 5 this was inherited from <see cref="TapeHeader"/>; the base no longer implements
+    ///  <see cref="ITapeSerializable"/> (media and set headers write format 2.1), so the calibration kind declares it itself.
+    /// </para>
+    /// <para>
+    /// Explicit on purpose: it stays off the public surface, so no caller mistakes it for the dual-format header read
+    ///  (<see cref="TapeFramer.UnpackHeader{T}"/>). The framer reaches it through its type parameter.
+    /// </para>
+    /// <para>
+    /// A media or set header yields <see langword="null"/>, which the framer reports as
+    ///  <see cref="TapeFramer.FrameStatus.Unparseable"/> — the narrow "not my kind" contract the calibrator relies on.
+    /// </para>
+    /// </remarks>
+    static ITapeSerializable? ITapeSerializable.ConstructFrom(LegacyDeserializer d)
+        => LegacyHeaderReader.Read(d) as TapeCalibrationHeader;
+
+    /// <summary>
+    /// Reads the calibration-specific fields after the shared preamble has been decoded. Called only by
+    ///  <see cref="LegacyHeaderReader.Read"/> once the kind byte selected <see cref="TapeHeaderKind.Calibration"/>.
     /// </summary>
     internal static TapeCalibrationHeader ConstructBody(LegacyDeserializer d, in TapeHeaderPreamble p)
     {
         string profileKey = d.DeserializeString();
-        long capacity     = d.DeserializeInt64();
-
+        long capacity = d.DeserializeInt64();
         var plan = LegacyCheckpointReader.ReadPlan(d);
-
         return new TapeCalibrationHeader
         {
-            Id                    = p.Id,
-            CreatedUtc            = p.CreatedUtc,
-            BlockSize             = p.BlockSize,
-            ProfileKey            = profileKey,
+            Id = p.Id,
+            CreatedUtc = p.CreatedUtc,
+            BlockSize = p.BlockSize,
+            ProfileKey = profileKey,
             CapacityReportedAtBom = capacity,
-            Plan                  = plan,
+            Plan = plan,
         };
     }
+
+    #endregion
 
     /// <inheritdoc/>
     public override string ToString() =>

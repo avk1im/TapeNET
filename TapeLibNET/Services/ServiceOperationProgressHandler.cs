@@ -367,6 +367,7 @@ public abstract class ServiceOperationProgressHandler(
         TapeSetHeaderVerdict.Unreadable => "set marker unreadable",
         TapeSetHeaderVerdict.WrongMedia => "different cartridge",
         TapeSetHeaderVerdict.WrongVolume => "different volume",
+        TapeSetHeaderVerdict.SetIdMismatch => "set ID mismatch (stale or foreign TOC?)",
         _ => verdict.ToString(),
     };
 }

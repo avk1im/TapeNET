@@ -26,7 +26,7 @@ public static class TapeFrame
     /// <summary>Builds the frame bytes <c>Record ‖ CRC-64</c> for <paramref name="record"/>.</summary>
     public static byte[] Pack<T>(T record) where T : ITapeRecord<T>
     {
-#warning Consider reusing single instances of MemoryStream and TapeRecordWriter (per thread) for multiple calls to TapeFrame.Pack().
+#warning Consider reusing single instances of MemoryStream and TapeRecordWriter (per thread / session) for multiple calls to TapeFrame.Pack().
         using var ms = new MemoryStream();
         using (var writer = new TapeRecordWriter(ms))
             writer.Write(record);

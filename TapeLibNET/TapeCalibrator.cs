@@ -534,11 +534,7 @@ public sealed class TapeCalibrator : TapeDriveHolder<TapeCalibrator>
             if (Drive.Rewind())
             {
                 int read = Drive.ReadDirect(recordBuffer, 0, recordBuffer.Length, out _, out _);
-                any = read > 0 ? TapeCalibrationFramer.Unpack<TapeHeader>(recordBuffer, read) : null;
-#if LEGACY_TapeCalibrationRunHeader
-                if (any is null && read > 0)
-                    any = TapeCalibrationFramer.Unpack<TapeCalibrationRunHeader>(recordBuffer, read)?.ToHeader();
-#endif
+                any = read > 0 ? TapeFramer.UnpackHeader(recordBuffer, read) : null;
                 if (any is not null)
                     m_logger.LogInformation("{Prefix}: Calibration header found in the legacy run-block shape", LogPrefix);
             }

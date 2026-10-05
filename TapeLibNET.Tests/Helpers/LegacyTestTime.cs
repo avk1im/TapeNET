@@ -15,7 +15,10 @@ public static class LegacyTestTime
     public static DateTime AsLegacyLocal(DateTime written) =>
         LegacyTime.FromLocal(DateTime.SpecifyKind(written, DateTimeKind.Unspecified));
 
-    // Inverse of <see cref="AsLegacyLocal"/>: the wall-clock ticks a legacy build held for this UTC instant.
+    /// <summary>
+    /// Inverse of <see cref="AsLegacyLocal"/>: the wall-clock ticks a legacy build held for this UTC instant.
+    ///  After Phase 5 not used anymore. 
+    /// </summary>
     public static DateTime AsLegacyWritten(DateTime utc) =>
         DateTime.SpecifyKind(utc.ToLocalTime(), DateTimeKind.Unspecified);
 }

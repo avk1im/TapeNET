@@ -1,5 +1,6 @@
-﻿using TapeLibNET.Legacy;
-using System;
+// Save as: TapeLibNET/TapeMediaHeader.cs
+using TapeLibNET.Format;
+using TapeLibNET.Legacy;
 
 namespace TapeLibNET;
 
@@ -8,29 +9,46 @@ public enum TapeTocPlacement : byte
 {
     /// <summary>Single-partition medium: the TOC follows the content in the same partition.</summary>
     InSet = 0,
-
     /// <summary>Initiator-partition medium: the TOC lives in its own partition.</summary>
     InPartition = 1,
 }
 
+/// <summary>Wire form of the 2.1 media header (record kind <c>MediaHeader</c>, Design-Format-v2 §5.4).</summary>
+internal sealed class TapeMediaHeaderWire : TapeHeaderWire
+{
+    public int Volume = 1;
+    public MediaPartition Partition = MediaPartition.Content;
+    public TapeTocPlacement TocPlacement = TapeTocPlacement.InSet;
+    public bool HasSetHeaders;
+    public string OriginalName = "";
+
+    public static readonly TapeSchema<TapeMediaHeaderWire> Schema = new(TapeRecordKind.MediaHeader, inherits: Shared)
+    {
+        // ── scalars 1–31 (1–3 inherited) ──
+        { 4,  w => w.Volume,        (w, v) => w.Volume = v,        1 },
+        { 5,  w => w.Partition,     (w, v) => w.Partition = v,     MediaPartition.Content },
+        { 6,  w => w.TocPlacement,  (w, v) => w.TocPlacement = v,  TapeTocPlacement.InSet },
+        { 7,  w => w.HasSetHeaders, (w, v) => w.HasSetHeaders = v },
+        // ── strings 32–47 ──
+        { 32, w => w.OriginalName,  (w, v) => w.OriginalName = v },
+    };
+}
+
 /// <summary>
-/// Media (volume) header written once at the beginning of medium (BOM) of the content partition,
-///  positively identifying the cartridge as "ours" so a fresh load need not seek to end-of-data
-///  merely to discover whether a TOC exists.
+/// Media (volume) header written once at the beginning of medium (BOM) of the content partition, positively identifying
+///  the cartridge as "ours" so a fresh load need not seek to end-of-data merely to discover whether a TOC exists.
 /// </summary>
 /// <remarks>
 /// <para>
-/// An immutable identity projection of the <see cref="TapeTOC"/>: it carries only values that never
-///  change once the medium is formatted — the series <see cref="MediaId"/>, the immutable per-tape
-///  <see cref="Volume"/>, the creation time, where the TOC lives (<see cref="TocPlacement"/>), and a
-///  creation-time snapshot of the name. Written once at format (and on a fresh continuation volume),
-///  never rewritten. Placed on ALL formatted media, single- and multi-partition alike, so every
-///  medium has one cheap, uniform identity/verification block.
+/// An immutable identity projection of the <see cref="TapeTOC"/>: it carries only values that never change once the
+///  medium is formatted — the series <see cref="MediaId"/>, the immutable per-tape <see cref="Volume"/>, the creation
+///  time, where the TOC lives (<see cref="TocPlacement"/>), and a creation-time snapshot of the name. Written once at
+///  format (and on a fresh continuation volume), never rewritten — a legacy media header stays legacy (§3.3).
 /// </para>
 /// <para>
-/// The current, user-renameable media name is deliberately NOT stored here — renaming rewrites the
-///  TOC, not this once-written header — so UIs must show the TOC's live description, never
-///  <see cref="OriginalName"/>. Build one only via <see cref="TapeTOC.CreateHeader"/>.
+/// The current, user-renameable media name is deliberately NOT stored here — renaming rewrites the TOC, not this
+///  once-written header — so UIs must show the TOC's live description, never <see cref="OriginalName"/>. Build one only
+///  via <see cref="TapeTOC.CreateHeader"/>.
 /// </para>
 /// </remarks>
 public sealed record TapeMediaHeader : TapeHeader
@@ -49,8 +67,8 @@ public sealed record TapeMediaHeader : TapeHeader
     }
 
     /// <summary>
-    /// The TOC's on-tape block size — reinterprets the base <see cref="TapeHeader.BlockSize"/> slot.
-    ///  Immutable at format; lets a reader adopt larger TOC blocks in future without probing.
+    /// The TOC's on-tape block size — reinterprets the base <see cref="TapeHeader.BlockSize"/> slot. Immutable at
+    ///  format; lets a reader adopt larger TOC blocks in future without probing.
     /// </summary>
     public uint TocBlockSize
     {
@@ -61,52 +79,39 @@ public sealed record TapeMediaHeader : TapeHeader
     /// <summary>The volume number within a multi-volume series — immutable for the life of this tape.</summary>
     public int Volume { get; init; }
 
-    /// <summary>
-    /// <see cref="MediaPartition"/> where this header resides.
-    /// </summary>
+    /// <summary><see cref="MediaPartition"/> where this header resides.</summary>
     public MediaPartition Partition { get; init; }
 
     /// <summary>Where the TOC lives, so a reader knows the layout without probing.</summary>
     public TapeTocPlacement TocPlacement { get; init; }
 
     /// <summary>
-    /// Creation-time snapshot of the media name, kept only for recovery/diagnostics; may be
-    ///  <see langword="null"/> when none was recorded (<see cref="DisplayName"/> then synthesizes one).
+    /// Creation-time snapshot of the media name, kept only for recovery/diagnostics; may be <see langword="null"/> when
+    ///  none was recorded (<see cref="DisplayName"/> then synthesizes one).
     /// </summary>
     /// <remarks>
-    /// NOT the current media name: renaming rewrites the TOC, not this header. UIs should show the
-    ///  TOC's live description instead of this value.
+    /// NOT the current media name: renaming rewrites the TOC, not this header. UIs should show the TOC's live
+    ///  description instead of this value.
     /// </remarks>
     public string? OriginalName { get; init; }
 
-    /// <summary>
-    /// Whether the sets on this volume carry their own <see cref="TapeSetHeader"/> (SH-1).
-    /// </summary>
+    /// <summary>Whether the sets on this volume carry their own <see cref="TapeSetHeader"/> (SH-1).</summary>
     /// <remarks>
     /// <para>
-    /// <b>Presence is declared, never probed.</b> The media header is already read once per volume at
-    ///  every content choke-point and at every load, so this flag rides along at zero I/O cost — and
-    ///  re-resolves per volume for free, which is what makes a mixed series (legacy volume 1, headed
-    ///  volume 2+) answer correctly on each cartridge. Probing instead would turn "no header here"
-    ///  into an ambiguity (blank? torn? legacy? foreign?) at a point where the answer is knowable.
+    /// <b>Presence is declared, never probed.</b> The media header is already read once per volume at every content
+    ///  choke-point and at every load, so this flag rides along at zero I/O cost — and re-resolves per volume for free,
+    ///  which is what makes a mixed series (legacy volume 1, headed volume 2+) answer correctly on each cartridge.
     /// </para>
     /// <para>
-    /// A volume is headed-with-sets, headed-without-sets, or legacy — never mixed within itself. The
-    ///  middle state is what this flag exists to express: media written before set headers shipped.
-    /// </para>
-    /// <para>
-    /// <b>Serialized AFTER <see cref="OriginalName"/></b>, deliberately: a header written before this field existed then
-    ///  deserializes correctly, because the extra read either falls off the end of the frame or
-    ///  lands on the block's zero padding — both yield FALSE, the right legacy answer. Placing it
-    ///  before the string (the tidier "variable-length last" convention) would misparse those bytes.
+    /// A volume is headed-with-sets, headed-without-sets, or legacy — never mixed within itself. In format 2.1 the field
+    ///  is an ordinary optional tag; legacy headers written before it existed read <see langword="false"/>.
     /// </para>
     /// </remarks>
     public bool HasSetHeaders { get; init; }
 
     /// <summary>
-    /// A never-empty, human-readable name: the recorded <see cref="OriginalName"/> when present,
-    ///  otherwise one synthesized from <see cref="MediaId"/>, <see cref="Volume"/>, and
-    ///  <see cref="TapeHeader.CreatedUtc"/>.
+    /// A never-empty, human-readable name: the recorded <see cref="OriginalName"/> when present, otherwise one
+    ///  synthesized from <see cref="MediaId"/>, <see cref="Volume"/>, and <see cref="TapeHeader.CreatedUtc"/>.
     /// </summary>
     public string DisplayName =>
         !string.IsNullOrWhiteSpace(OriginalName)
@@ -115,28 +120,51 @@ public sealed record TapeMediaHeader : TapeHeader
 
     /// <summary>
     /// Clamps a candidate name to the header's UTF-8 byte budget so the framed record always fits one
-    ///  <see cref="TapeHeader.FixedHeaderBlockSize"/> block. A null or empty name maps to
-    ///  <see langword="null"/> ("no name recorded"). Delegates to <see cref="TapeHeader.ClampUtf8"/>
-    ///  with the header's budget.
+    ///  <see cref="TapeHeader.FixedHeaderBlockSize"/> block. A null or empty name maps to <see langword="null"/>.
     /// </summary>
     public static string? ClampName(string? name) => ClampUtf8(name, c_maxOriginalNameBytes);
 
+    #region *** Format 2.1 ***
+
     /// <inheritdoc/>
-    public override void SerializeTo(TapeSerializer s)
+    public override void WriteBody(TapeFieldWriter fields) => TapeMediaHeaderWire.Schema.Write(fields, new TapeMediaHeaderWire
     {
-        SerializePreamble(s);
+        Id = MediaId,
+        CreatedUtc = CreatedUtc,
+        BlockSize = TocBlockSize,
+        Volume = Volume,
+        Partition = Partition,
+        TocPlacement = TocPlacement,
+        HasSetHeaders = HasSetHeaders,
+        OriginalName = OriginalName ?? "",       // "" is elided; read back as null
+    });
 
-        s.Serialize(Volume);
-        s.Serialize((byte)Partition);
-        s.Serialize((byte)TocPlacement);
-        s.Serialize(OriginalName ?? string.Empty);   // empty stands in for "no name"; normalized back to null on read
-
-        // Serialized AFTER OriginalName, deliberately: a header written before this field existed then
-        //  deserializes correctly, because the extra read either falls off the end of the frame or
-        //  lands on the block's zero padding — both yield FALSE, the right legacy answer. Placing it
-        //  before the string (the tidier "variable-length last" convention) would misparse those bytes.
-        s.Serialize(HasSetHeaders ? (byte)1 : (byte)0);
+    /// <summary>Reads a 2.1 media header body. Called by <see cref="TapeHeader.ReadBody"/>.</summary>
+    internal static TapeMediaHeader ReadWire(TapeFieldReader fields)
+    {
+        TapeMediaHeaderWire w = TapeMediaHeaderWire.Schema.Read(fields, new TapeMediaHeaderWire());
+        return new TapeMediaHeader
+        {
+            MediaId = w.Id,
+            CreatedUtc = w.CreatedUtc,
+            TocBlockSize = w.BlockSize,
+            Volume = w.Volume,
+            Partition = w.Partition,
+            TocPlacement = w.TocPlacement,
+            OriginalName = string.IsNullOrEmpty(w.OriginalName) ? null : w.OriginalName,
+            HasSetHeaders = w.HasSetHeaders,
+        };
     }
+
+    #endregion
+
+    #region *** Legacy read — removed in Phase 6 ***
+
+    // Reads the trailing set-header flag, tolerating its absence on media written before the field
+    //  existed. Such a header's frame simply ends here, so the read may return null OR throw,
+    //  depending on how the framer bounds the record — both mean "no flag recorded" = false.
+    private static bool ReadSetHeadersFlag(LegacyDeserializer d)
+        => LegacyHeaderReader.ReadSetHeadersFlag(d);
 
     /// <summary>
     /// Reads the media-specific fields after the shared preamble has been decoded. Called only by
@@ -144,30 +172,26 @@ public sealed record TapeMediaHeader : TapeHeader
     /// </summary>
     internal static TapeMediaHeader ConstructBody(LegacyDeserializer d, in TapeHeaderPreamble p)
     {
-        int volume    = d.DeserializeInt32();
+        int volume = d.DeserializeInt32();
         var partition = (MediaPartition)(d.DeserializeBytes(1)?[0] ?? (byte)MediaPartition.Content);
         var placement = (TapeTocPlacement)(d.DeserializeBytes(1)?[0] ?? (byte)TapeTocPlacement.InSet);
-        string name   = d.DeserializeString();
+        string name = d.DeserializeString();
         bool hasSetHeaders = ReadSetHeadersFlag(d);
 
         return new TapeMediaHeader
         {
-            MediaId      = p.Id,
-            CreatedUtc   = p.CreatedUtc,
-            BlockSize    = p.BlockSize,
-            Volume       = volume,
-            Partition    = partition,
+            MediaId = p.Id,
+            CreatedUtc = p.CreatedUtc,
+            BlockSize = p.BlockSize,
+            Volume = volume,
+            Partition = partition,
             TocPlacement = placement,
             OriginalName = string.IsNullOrEmpty(name) ? null : name,
             HasSetHeaders = hasSetHeaders,
         };
     }
 
-    // Reads the trailing set-header flag, tolerating its absence on media written before the field
-    //  existed. Such a header's frame simply ends here, so the read may return null OR throw,
-    //  depending on how the framer bounds the record — both mean "no flag recorded" = false.
-    private static bool ReadSetHeadersFlag(LegacyDeserializer d)
-    => LegacyHeaderReader.ReadSetHeadersFlag(d);
+    #endregion
 
     /// <inheritdoc/>
     public override string ToString() =>

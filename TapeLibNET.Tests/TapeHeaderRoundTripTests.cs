@@ -1,18 +1,20 @@
+// Save as: TapeLibNET.Tests/TapeHeaderRoundTripTests.cs
 using System.Text;
+using TapeLibNET.Format;
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
 
 /// <summary>
 /// Tier-1 (pure, no tape) tests for the unified <see cref="TapeHeader"/> hierarchy:
-///  <see cref="TapeMediaHeader"/>, <see cref="TapeCalibrationHeader"/>, the <see cref="TapeFramer"/>
-///  framing, and the polymorphic <see cref="TapeHeader.ConstructFrom"/> classifier.
+///  <see cref="TapeMediaHeader"/>, <see cref="TapeCalibrationHeader"/>, the <see cref="TapeFramer"/> framing, and the
+///  polymorphic header classification.
 /// </summary>
 /// <remarks>
-/// These exercise the on-tape record GRAMMAR in isolation — serialization round-trips, kind
-///  discrimination, narrow-vs-polymorphic <c>Unpack</c>, name clamping/fallback, and the
-///  <see cref="TapeTOC.CreateHeader"/> factory — without any drive. On-tape behavior (write/read
-///  through the agent) lives in <see cref="TapeHeaderAgentTests"/>.
+/// These exercise the on-tape record GRAMMAR in isolation — serialization round-trips, kind discrimination,
+///  narrow-vs-polymorphic unpack, name clamping/fallback, and the <see cref="TapeTOC.CreateHeader"/> factory — without
+///  any drive. Media headers are written in format 2.1; the calibration header stays legacy until Phase 6. On-tape
+///  behavior lives in <see cref="TapeHeaderAgentTests"/>.
 /// </remarks>
 public class TapeHeaderRoundTripTests
 {
@@ -21,10 +23,9 @@ public class TapeHeaderRoundTripTests
     /// <summary>Frames <paramref name="header"/> into a full fixed-size block (as the agent does before WriteDirect).</summary>
     private static byte[] PackIntoBlock(TapeHeader header)
     {
-        byte[] frame = TapeFramer.Pack(header);
+        byte[] frame = TapeFramer.PackHeader(header);
         Assert.True(frame.Length <= TapeHeader.FixedHeaderBlockSize,
             $"Framed header ({frame.Length} B) must fit the fixed block ({TapeHeader.FixedHeaderBlockSize} B)");
-
         var block = new byte[TapeHeader.FixedHeaderBlockSize];
         Array.Copy(frame, block, frame.Length);   // remainder stays zero padding — ignored on read-back
         return block;
@@ -56,6 +57,11 @@ public class TapeHeaderRoundTripTests
             TailBlocksPerChunk: 1, TailChunkSize: 64 * 1024,
             TailCapacityFraction: 0.05, NumCheckpoints: 128);
 
+    private static TapeCalibrationHeader MakeCalibrationHeader() =>
+        TapeCalibrationHeader.CreateHeader(
+            Guid.NewGuid(), "V|P|R|100GB", 100L * 1024 * 1024 * 1024,
+            64 * 1024, new DateTime(2026, 8, 14, 10, 0, 0, DateTimeKind.Utc), MakePlan());
+
     #endregion
 
     #region *** Media header — round-trip ***
@@ -63,20 +69,43 @@ public class TapeHeaderRoundTripTests
     [Fact]
     public void MediaHeader_AllFields_RoundTrip()
     {
-        var original = MakeMediaHeader(volume: 7);
+        var original = MakeMediaHeader(volume: 7) with { HasSetHeaders = true };
         var block = PackIntoBlock(original);
 
-        var back = TapeFramer.Unpack<TapeHeader>(block, block.Length);
+        var media = Assert.IsType<TapeMediaHeader>(TapeFramer.UnpackHeader(block, block.Length));
 
-        var media = Assert.IsType<TapeMediaHeader>(back);
         Assert.Equal(original.MediaId, media.MediaId);
-        // Interim (until Phase 5): headers still travel in the legacy format, whose media / set times read back as LOCAL
-        Assert.Equal(LegacyTestTime.AsLegacyLocal(original.CreatedUtc), media.CreatedUtc);
+        Assert.Equal(original.CreatedUtc, media.CreatedUtc);                 // 2.1: UTC on tape, no conversion
+        Assert.Equal(DateTimeKind.Utc, media.CreatedUtc.Kind);
         Assert.Equal(original.TocBlockSize, media.TocBlockSize);
         Assert.Equal(original.Volume, media.Volume);
         Assert.Equal(original.Partition, media.Partition);
         Assert.Equal(original.TocPlacement, media.TocPlacement);
         Assert.Equal(original.OriginalName, media.OriginalName);
+        Assert.True(media.HasSetHeaders);
+    }
+
+    /// <summary>New media headers are 2.1 block frames: magic and record kind at byte 0.</summary>
+    [Fact]
+    public void MediaHeader_IsWrittenInFormat21()
+    {
+        byte[] block = PackIntoBlock(MakeMediaHeader());
+        Assert.True(TapeFormat.IsV2(block));
+        Assert.Equal((ushort)TapeRecordKind.MediaHeader, BitConverter.ToUInt16(block, 4));
+    }
+
+    /// <summary>A LEGACY media header (still on every pre-2.1 cartridge) reads into the same type.</summary>
+    [Fact]
+    public void MediaHeader_Legacy_StillReads()
+    {
+        var original = MakeMediaHeader(volume: 4);
+        byte[] block = LegacyHeaderWriter.Block(original);
+        Assert.False(TapeFormat.IsV2(block));
+
+        var media = Assert.IsType<TapeMediaHeader>(TapeFramer.UnpackHeader(block, block.Length));
+        Assert.Equal(original.MediaId, media.MediaId);
+        Assert.Equal(original.CreatedUtc, media.CreatedUtc);                 // local on disk, UTC after LegacyTime
+        Assert.Equal(4, media.Volume);
     }
 
     [Theory]
@@ -88,7 +117,8 @@ public class TapeHeaderRoundTripTests
         var original = MakeMediaHeader(partition: partition, placement: placement);
         var block = PackIntoBlock(original);
 
-        var media = Assert.IsType<TapeMediaHeader>(TapeFramer.Unpack<TapeHeader>(block, block.Length));
+        var media = Assert.IsType<TapeMediaHeader>(TapeFramer.UnpackHeader(block, block.Length));
+
         Assert.Equal(partition, media.Partition);
         Assert.Equal(placement, media.TocPlacement);
     }
@@ -99,8 +129,9 @@ public class TapeHeaderRoundTripTests
         var original = MakeMediaHeader(originalName: null);
         var block = PackIntoBlock(original);
 
-        var media = Assert.IsType<TapeMediaHeader>(TapeFramer.Unpack<TapeHeader>(block, block.Length));
-        Assert.Null(media.OriginalName);                        // empty-on-wire normalizes back to null
+        var media = Assert.IsType<TapeMediaHeader>(TapeFramer.UnpackHeader(block, block.Length));
+
+        Assert.Null(media.OriginalName);                            // absent on the wire, null in memory
         Assert.False(string.IsNullOrWhiteSpace(media.DisplayName)); // synthesized from Id/Volume/CreatedUtc
         Assert.Contains(media.Volume.ToString(), media.DisplayName);
     }
@@ -111,7 +142,8 @@ public class TapeHeaderRoundTripTests
         var original = MakeMediaHeader(originalName: string.Empty);
         var block = PackIntoBlock(original);
 
-        var media = Assert.IsType<TapeMediaHeader>(TapeFramer.Unpack<TapeHeader>(block, block.Length));
+        var media = Assert.IsType<TapeMediaHeader>(TapeFramer.UnpackHeader(block, block.Length));
+
         Assert.Null(media.OriginalName);
     }
 
@@ -127,8 +159,7 @@ public class TapeHeaderRoundTripTests
 
         var original = MakeMediaHeader(originalName: clamped);
         var block = PackIntoBlock(original);   // must not throw / must fit
-
-        var media = Assert.IsType<TapeMediaHeader>(TapeFramer.Unpack<TapeHeader>(block, block.Length));
+        var media = Assert.IsType<TapeMediaHeader>(TapeFramer.UnpackHeader(block, block.Length));
         Assert.Equal(clamped, media.OriginalName);
     }
 
@@ -149,22 +180,19 @@ public class TapeHeaderRoundTripTests
     {
         var block = PackIntoBlock(MakeMediaHeader());
 
-        // Unpack<TapeHeader> dispatches on the Kind byte and hands back the concrete type.
-        var back = TapeFramer.Unpack<TapeHeader>(block, block.Length);
-        Assert.IsType<TapeMediaHeader>(back);
+        // The polymorphic read dispatches on the record kind (2.1) or the kind byte (legacy) and hands back the
+        //  concrete type.
+        Assert.IsType<TapeMediaHeader>(TapeFramer.UnpackHeader(block, block.Length));
     }
 
     [Fact]
     public void Unpack_Narrow_MediaHeader_FromCalibrationBlock_ReturnsNull()
     {
-        // A calibration block narrowed to the WRONG kind must classify as null (not-my-kind),
-        //  because the inherited ConstructFrom dispatches then `as TapeMediaHeader` fails.
-        var calBlock = PackIntoBlock(TapeCalibrationHeader.CreateHeader(
-            Guid.NewGuid(), "V|P|R|100GB", 100L * 1024 * 1024 * 1024,
-            64 * 1024, DateTime.UtcNow, MakePlan()));
+        // A calibration block narrowed to the WRONG kind must classify as null (not-my-kind), never misparse.
+        var calBlock = PackIntoBlock(MakeCalibrationHeader());
 
-        Assert.Null(TapeFramer.Unpack<TapeMediaHeader>(calBlock, calBlock.Length));
-        Assert.IsType<TapeCalibrationHeader>(TapeFramer.Unpack<TapeHeader>(calBlock, calBlock.Length));
+        Assert.Null(TapeFramer.UnpackHeader<TapeMediaHeader>(calBlock, calBlock.Length));
+        Assert.IsType<TapeCalibrationHeader>(TapeFramer.UnpackHeader(calBlock, calBlock.Length));
     }
 
     [Fact]
@@ -172,35 +200,39 @@ public class TapeHeaderRoundTripTests
     {
         var mediaBlock = PackIntoBlock(MakeMediaHeader());
 
-        Assert.Null(TapeFramer.Unpack<TapeCalibrationHeader>(mediaBlock, mediaBlock.Length));
-        Assert.IsType<TapeMediaHeader>(TapeFramer.Unpack<TapeHeader>(mediaBlock, mediaBlock.Length));
+        Assert.Null(TapeFramer.UnpackHeader<TapeCalibrationHeader>(mediaBlock, mediaBlock.Length));
+        Assert.IsType<TapeMediaHeader>(TapeFramer.UnpackHeader(mediaBlock, mediaBlock.Length));
+    }
+
+    [Fact]
+    public void TryUnpack_Narrow_WrongKind_IsUnparseable()
+    {
+        var mediaBlock = PackIntoBlock(MakeMediaHeader());
+        Assert.Equal(TapeFramer.FrameStatus.Unparseable,
+            TapeFramer.TryUnpackHeader(mediaBlock, mediaBlock.Length, out TapeSetHeader? set));
+        Assert.Null(set);
     }
 
     [Fact]
     public void Unpack_LegacyContentBytes_ReturnsNull()
     {
-        // Raw content at BOM begins with a TapeFileInfo header (signature TF + version + UID), NOT a
-        //  framed record. TapeFramer reads the first int32 as an implausible payload length and rejects
-        //  it — so legacy content can never false-classify as a header.
+        // Raw content at BOM begins with a legacy file header (signature TF + version + UID), NOT a framed record.
+        //  The legacy framer reads the first int32 as an implausible payload length and rejects it — so legacy content
+        //  can never false-classify as a header.
         var tfi = new TapeFileInfo(42UL, TapeAddress.Zero,
             new TapeFileDescriptor(@"C:\data\file.dat") { Length = 100 });
-
-        using var ms = new MemoryStream();
-        //tfi.SerializeTo(new TapeSerializer(ms));
-        //byte[] raw = ms.ToArray();
         var raw = LegacyFormatWriter.FileEntryBytes(tfi);
-
         var block = new byte[TapeHeader.FixedHeaderBlockSize];
         Array.Copy(raw, block, raw.Length);
 
-        Assert.Null(TapeFramer.Unpack<TapeHeader>(block, block.Length));
+        Assert.Null(TapeFramer.UnpackHeader(block, block.Length));
     }
 
     [Fact]
     public void Unpack_BlankBlock_ReturnsNull()
     {
         var blank = new byte[TapeHeader.FixedHeaderBlockSize];   // all zeros
-        Assert.Null(TapeFramer.Unpack<TapeHeader>(blank, blank.Length));
+        Assert.Null(TapeFramer.UnpackHeader(blank, blank.Length));
     }
 
     #endregion
@@ -215,10 +247,10 @@ public class TapeHeaderRoundTripTests
             runId: Guid.NewGuid(), profileKey: "VEND|PROD|REV|780GB",
             capacityReportedAtBom: 780L * 1024 * 1024 * 1024, blockSize: 1024 * 1024,
             startedUtc: new DateTime(2026, 8, 14, 10, 0, 0, DateTimeKind.Utc), plan: plan);
-
         var block = PackIntoBlock(original);
 
-        var cal = Assert.IsType<TapeCalibrationHeader>(TapeFramer.Unpack<TapeHeader>(block, block.Length));
+        var cal = Assert.IsType<TapeCalibrationHeader>(TapeFramer.UnpackHeader(block, block.Length));
+
         Assert.Equal(original.RunId, cal.RunId);                       // Id alias
         Assert.Equal(original.StartedUtc, cal.StartedUtc);             // CreatedUtc alias
         Assert.Equal(original.ProfileKey, cal.ProfileKey);
@@ -226,6 +258,15 @@ public class TapeHeaderRoundTripTests
         Assert.Equal(plan.SampleCount, cal.Plan.SampleCount);
         Assert.Equal(plan.NumCheckpoints, cal.Plan.NumCheckpoints);
         Assert.Equal(plan.TailCapacityFraction, cal.Plan.TailCapacityFraction);
+    }
+
+    /// <summary>Transitional until Phase 6: the calibration header is still written in the LEGACY frame.</summary>
+    [Fact]
+    public void CalibrationHeader_IsStillLegacyFramed()
+    {
+        byte[] block = PackIntoBlock(MakeCalibrationHeader());
+        Assert.False(TapeFormat.IsV2(block));
+        Assert.Throws<InvalidOperationException>(() => TapeFrame.Pack<TapeHeader>(MakeCalibrationHeader()));
     }
 
     #endregion
@@ -248,7 +289,6 @@ public class TapeHeaderRoundTripTests
     public void CreateHeader_IsIdempotentOnMediaId()
     {
         var toc = new TapeTOC("Once");
-
         var first = toc.CreateHeader(TapeHeader.FixedHeaderBlockSize, TapeTocPlacement.InSet).MediaId;
         var second = toc.CreateHeader(TapeHeader.FixedHeaderBlockSize, TapeTocPlacement.InSet).MediaId;
 
@@ -259,14 +299,14 @@ public class TapeHeaderRoundTripTests
     public void CreateHeader_CarriesTocIdentityFields_AndRoundTrips()
     {
         var toc = new TapeTOC("Carry Fields");
-
         var header = toc.CreateHeader(TapeHeader.FixedHeaderBlockSize, TapeTocPlacement.InSet);
+
         Assert.Equal(toc.Volume, header.Volume);
         Assert.Equal(TapeHeader.FixedHeaderBlockSize, header.TocBlockSize);
         Assert.Equal("Carry Fields", header.OriginalName);
 
         var block = PackIntoBlock(header);
-        var back = Assert.IsType<TapeMediaHeader>(TapeFramer.Unpack<TapeHeader>(block, block.Length));
+        var back = Assert.IsType<TapeMediaHeader>(TapeFramer.UnpackHeader(block, block.Length));
         Assert.Equal(toc.MediaId, back.MediaId);
         Assert.Equal("Carry Fields", back.OriginalName);
     }
@@ -280,7 +320,6 @@ public class TapeHeaderRoundTripTests
     {
         var h = MakeMediaHeader(volume: 4);
         string s = h.ToString();
-
         Assert.Contains("Media header", s);
         Assert.Contains(h.MediaId.ToString("N"), s);
         Assert.Contains("4", s);   // volume
@@ -292,7 +331,6 @@ public class TapeHeaderRoundTripTests
         var h = TapeCalibrationHeader.CreateHeader(
             Guid.NewGuid(), "VEND|PROD|REV|100GB", 100L * 1024 * 1024 * 1024,
             64 * 1024, DateTime.UtcNow, MakePlan());
-
         string s = h.ToString();
         Assert.Contains("Calibration", s);
         Assert.Contains(h.RunId.ToString("N"), s);

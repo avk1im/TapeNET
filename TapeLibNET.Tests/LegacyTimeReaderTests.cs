@@ -17,7 +17,7 @@ public class LegacyTimeReaderTests
     private static readonly DateTime s_utcStamp = new(2025, 1, 15, 10, 20, 30, DateTimeKind.Unspecified);
 
     private static T Unpack<T>(byte[] payload) where T : TapeHeader
-        => TapeFramer.Unpack<T>(LegacyFormatWriter.PadToBlock(LegacyFormatWriter.Frame(payload), BlockSize), BlockSize)
+        => TapeFramer.UnpackHeader<T>(LegacyFormatWriter.PadToBlock(LegacyFormatWriter.Frame(payload), BlockSize), BlockSize)
            ?? throw new InvalidOperationException("Legacy header did not unpack");
 
     [Fact]

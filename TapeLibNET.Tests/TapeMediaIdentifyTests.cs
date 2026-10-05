@@ -85,9 +85,8 @@ public class TapeMediaIdentifyTests
     #region *** (A) The three header kinds ***
 
     /// <summary>
-    /// The core claim of §4: ONE call identifies all three kinds, because
-    ///  <see cref="TapeHeader.ConstructFrom"/> dispatches on the kind byte. The scanner never needs to know
-    ///  the kinds apart before parsing — only after.
+    /// The core claim of §4: ONE call identifies all three kinds — the read dispatches on the record kind (2.1) or the
+    ///  kind byte (legacy). The scanner never needs to know the kinds apart before parsing — only after.
     /// </summary>
     [Fact]
     public void TryIdentify_MediaHeader_YieldsMediaHeaderAndItsFields()
@@ -95,7 +94,6 @@ public class TapeMediaIdentifyTests
         byte[] block = Block(MakeMediaHeader());
 
         Assert.True(TapeHeaderBlock.TryIdentifyHeaderBlock(block, block.Length, out TapeHeader? header));
-
         var media = Assert.IsType<TapeMediaHeader>(header);
         Assert.Equal(s_mediaId, media.MediaId);
         Assert.Equal(2, media.Volume);
@@ -206,18 +204,14 @@ public class TapeMediaIdentifyTests
     }
 
     /// <summary>
-    /// A CRC-corrupted header: the block is structurally OURS — right signature, right length prefix — and
-    ///  only the CRC knows it is wrong. This is what a torn header write physically leaves behind, and the
-    ///  scanner must map it to <see cref="FragmentKind.Unknown"/> rather than to a plausible-looking header.
+    /// A CRC-corrupted header: the block is structurally OURS — magic, kind, body length intact — and only the CRC knows
+    ///  it is wrong. This is what a torn header write physically leaves behind.
     /// </summary>
     [Fact]
     public void TryIdentify_CorruptedCrc_ReturnsFalse()
     {
         byte[] block = Block(MakeSetHeader());
-
-        // Flip a bit INSIDE the payload, past the 4-byte length prefix — the same technique
-        //  CalibrationResumeTests uses to prove the framer's CRC actually guards the record.
-        block[8] ^= 0xFF;
+        block[20] ^= 0xFF;       // inside the record body, past the prologue
 
         Assert.False(TapeHeaderBlock.TryIdentifyHeaderBlock(block, block.Length, out TapeHeader? header));
         Assert.Null(header);
@@ -395,12 +389,13 @@ public class TapeMediaIdentifyTests
         Assert.Null(id.Header);
     }
 
-    /// <summary>A damaged LENGTH PREFIX leaves the framed signature intact: still ours, still damaged.</summary>
+    /// <summary>A damaged BODY LENGTH leaves the magic intact: still ours, still damaged — its bounds no longer fit.</summary>
     [Fact]
-    public void IdentifyBlock_DamagedLengthPrefix_IsDamagedRecord()
+    public void IdentifyBlock_DamagedBodyLength_IsDamagedRecord()
     {
         byte[] block = Block(MakeSetHeader());
-        BitConverter.GetBytes(-1).CopyTo(block, 0);
+        block[8] = 0xFF;          // varuint body length → 16,383: runs past the 16 KiB block
+        block[9] = 0x7F;
 
         IdentifiedBlock id = TapeHeaderBlock.IdentifyBlock(block, block.Length);
 
@@ -408,12 +403,12 @@ public class TapeMediaIdentifyTests
         Assert.Equal(TapeFramer.FrameStatus.NotFramed, id.FrameStatus);
     }
 
-    /// <summary>A damaged header SIGNATURE leaves nothing to recognize: foreign. The honest limit.</summary>
+    /// <summary>A damaged MAGIC leaves nothing to recognize: foreign. The honest limit.</summary>
     [Fact]
-    public void IdentifyBlock_DamagedHeaderSignature_IsForeign()
+    public void IdentifyBlock_DamagedHeaderMagic_IsForeign()
     {
         byte[] block = Block(MakeSetHeader());
-        block[4] ^= 0xFF;           // first signature byte, just past the length prefix
+        block[0] ^= 0xFF;           // first magic byte
 
         Assert.Equal(HeaderBlockIdentity.Foreign, TapeHeaderBlock.IdentifyBlock(block, block.Length).Kind);
     }
@@ -497,25 +492,26 @@ public class TapeMediaIdentifyTests
         Assert.Null(id.Header);
     }
 
-    /// <summary><c>Unpack</c> keeps its contract: null for every outcome except Ok.</summary>
+    /// <summary><c>UnpackHeader</c> keeps its contract: null for every outcome except Ok.</summary>
     [Fact]
     public void Unpack_StillReturnsNullForADamagedFrame()
     {
         byte[] block = Block(MakeSetHeader());
         block[48] ^= 0x03;
 
-        Assert.Null(TapeFramer.Unpack<TapeHeader>(block, block.Length));
+        Assert.Null(TapeFramer.UnpackHeader(block, block.Length));
     }
 
-    /// <summary><c>TryUnpack</c> and <c>Unpack</c> agree on an intact frame.</summary>
+    /// <summary><see cref="TapeFramer.TryUnpackHeader"/> and <see cref="TapeFramer.UnpackHeader"/>
+    ///  agree on an intact frame.</summary>
     [Fact]
     public void TryUnpack_IntactFrame_IsOk_AndMatchesUnpack()
     {
         byte[] block = Block(MakeSetHeader());
 
-        Assert.Equal(TapeFramer.FrameStatus.Ok, TapeFramer.TryUnpack(block, block.Length, out TapeHeader? header));
+        Assert.Equal(TapeFramer.FrameStatus.Ok, TapeFramer.TryUnpackHeader(block, block.Length, out TapeHeader? header));
         Assert.IsType<TapeSetHeader>(header);
-        Assert.NotNull(TapeFramer.Unpack<TapeHeader>(block, block.Length));
+        Assert.NotNull(TapeFramer.UnpackHeader(block, block.Length));
     }
 
     #endregion

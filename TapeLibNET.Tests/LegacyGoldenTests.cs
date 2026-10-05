@@ -208,7 +208,7 @@ public class LegacyGoldenTests
     [Fact]
     public void MediaHeaders_ReadWithCurrentReader()
     {
-        var withFlag = TapeFramer.Unpack<TapeMediaHeader>(Load("media-header-withflag.bin"), (int)GoldenData.BlockSize);
+        var withFlag = TapeFramer.UnpackHeader<TapeMediaHeader>(Load("media-header-withflag.bin"), (int)GoldenData.BlockSize);
         Assert.NotNull(withFlag);
         Assert.Equal(GoldenData.MediaId, withFlag!.MediaId);
         Assert.Equal(1, withFlag.Volume);
@@ -216,7 +216,7 @@ public class LegacyGoldenTests
         Assert.Equal("Orig", withFlag.OriginalName);
         Assert.True(withFlag.HasSetHeaders);
 
-        var noFlag = TapeFramer.Unpack<TapeMediaHeader>(Load("media-header-noflag.bin"), (int)GoldenData.BlockSize);
+        var noFlag = TapeFramer.UnpackHeader<TapeMediaHeader>(Load("media-header-noflag.bin"), (int)GoldenData.BlockSize);
         Assert.NotNull(noFlag);
         Assert.Equal(TapeTocPlacement.InPartition, noFlag!.TocPlacement);
         Assert.Null(noFlag.OriginalName);
@@ -226,7 +226,7 @@ public class LegacyGoldenTests
     [Fact]
     public void SetHeaders_ReadWithCurrentReader()
     {
-        var withDesc = TapeFramer.Unpack<TapeSetHeader>(Load("set-header-desc.bin"), (int)GoldenData.BlockSize);
+        var withDesc = TapeFramer.UnpackHeader<TapeSetHeader>(Load("set-header-desc.bin"), (int)GoldenData.BlockSize);
         Assert.NotNull(withDesc);
         Assert.Equal(GoldenData.MediaId, withDesc!.MediaId);
         Assert.Equal(1, withDesc.Volume);
@@ -234,7 +234,7 @@ public class LegacyGoldenTests
         Assert.Equal(3, withDesc.GlobalSetIndex);
         Assert.Equal("Set \u00fc", withDesc.Description);
 
-        var noDesc = TapeFramer.Unpack<TapeSetHeader>(Load("set-header-nodesc.bin"), (int)GoldenData.BlockSize);
+        var noDesc = TapeFramer.UnpackHeader<TapeSetHeader>(Load("set-header-nodesc.bin"), (int)GoldenData.BlockSize);
         Assert.NotNull(noDesc);
         Assert.Null(noDesc!.Description);
     }
@@ -280,32 +280,15 @@ public class LegacyGoldenTests
     [InlineData("set-header-desc.bin")]
     [InlineData("set-header-nodesc.bin")]
     [InlineData("calibration-header-standard.bin")]
-    public void Headers_CurrentWriterReproducesGolden(string name)
+    public void Headers_LegacyWriterReproducesGolden(string name)
     {
-        // The current production writer must still emit the frozen legacy bytes for these records.
-        var golden = Load(name);
-        var record = TapeFramer.Unpack<TapeHeader>(golden, golden.Length);
-        Assert.NotNull(record);
-
-        var frame = TapeFramer.Pack(record!);
-
-        // The only legitimate difference: media / set headers hold LOCAL ticks in the golden, which the reader converts
-        //  to UTC and the writer then emits as UTC ticks. So patch the golden's CreatedUtc field (right after
-        //  signature 2 + version 2 + kind 1 + id 16 = 21 payload bytes) with the UTC ticks and re-frame it (new CRC).
-        const int createdOffset = 4 + 21;                       // 4 = frame's int32 length prefix
-        int payloadLen = BitConverter.ToInt32(golden, 0);
-        var payload = golden[4..(4 + payloadLen)];
-
-        // Premise check: the golden's raw ticks are what a legacy build wrote for this instant (local wall-clock);
-        //  calibration headers were always UTC, so they need no patching at all.
-        long goldenTicks = BitConverter.ToInt64(payload, createdOffset - 4);
-        if (record!.Kind != TapeHeaderKind.Calibration)
-            Assert.Equal(LegacyTestTime.AsLegacyWritten(record.CreatedUtc).Ticks, goldenTicks);
-
-        BitConverter.GetBytes(record.CreatedUtc.Ticks).CopyTo(payload, createdOffset - 4);
-        var expected = LegacyFormatWriter.Frame(payload);
-
-        Assert.Equal(expected, frame[..expected.Length]);
+        // Reader converts legacy local ticks to UTC; LegacyHeaderWriter converts back — the bytes must match exactly.
+        //  The calibration header is still product-legacy until Phase 6; LegacyHeaderWriter forwards it to TapeFramer.Pack.
+        byte[] golden = Load(name);
+        TapeHeader header = TapeHeaderBlock.Classify(golden, golden.Length)
+            ?? throw new InvalidOperationException($"{name} did not read");
+        byte[] frame = LegacyHeaderWriter.Frame(header);
+        Assert.Equal(golden[..frame.Length], frame);
     }
 
     [Fact]
@@ -337,7 +320,7 @@ public class LegacyGoldenTests
         var golden = Load("set-header-desc.bin");
         golden[20] ^= 0xFF;
         Assert.Equal(TapeFramer.FrameStatus.CrcMismatch,
-            TapeFramer.TryUnpack<TapeSetHeader>(golden, golden.Length, out _));
+            TapeFramer.TryUnpackHeader<TapeSetHeader>(golden, golden.Length, out _));
     }
 
     #endregion

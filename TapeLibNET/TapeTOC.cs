@@ -717,12 +717,12 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
                 $"Set index {setIndex} is outside {MinSetIndex}..{MaxSetIndex}");
 
         var setTOC = m_setTOCs[setInternal];
-
         return new TapeSetHeader
         {
             MediaId = EnsureMediaId(),         // idempotent — the same id the media header carries
-            CreatedUtc = setTOC.CreationTime,     // the SET's own creation moment (cf. remark below)
-            SetBlockSize = setTOC.BlockSize,        // advisory (SH-11); the TOC stays authoritative
+            SetId = setTOC.SetId,              // the set's own identity — the same id its file headers carry
+            CreatedUtc = setTOC.CreationTime,  // the SET's own creation moment
+            SetBlockSize = setTOC.BlockSize,   // advisory (SH-11); the TOC stays authoritative
             Volume = setTOC.Volume,
             VolumeSetIndex = setInternal - FirstSetInternalOfVolume(setTOC.Volume),
             GlobalSetIndex = InternalToSetIndex(setInternal),   // ALWAYS standard, whatever form came in

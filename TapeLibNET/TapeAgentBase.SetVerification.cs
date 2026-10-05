@@ -156,13 +156,27 @@ public partial class TapeAgentBase
     ///  <see cref="TapeTOC.CurrentSetIndex"/>. Pure — no I/O, no state change — so the ladder is unit
     ///  testable without a tape.
     ///  <para>
-    ///  The check is skipped if <c>TOC.MediaId</c> is <see cref="Guid.Empty"/> (imported / legacy media).
+    ///  The media-identity check is skipped if <c>TOC.MediaId</c> is <see cref="Guid.Empty"/> (imported / legacy media);
+    ///   the set-identity check whenever either side carries no <c>SetId</c>.
     ///  </para>
     /// </summary>
     /// <remarks>
-    /// Checked in order of what each field can tell us: identity first (is this even the right
-    ///  cartridge?), then position (are we where we think we are?). Reversing the order would make a
-    ///  swapped cartridge look like a navigation miscount and invite a correction that cannot help.
+    /// <para>
+    /// Checked in order of what each field can tell us: identity first (is this even the right cartridge?), then
+    ///  position (are we where we think we are?), then the set's own identity (is the right set standing here?).
+    ///  Reversing the first two would make a swapped cartridge look like a navigation miscount and invite a correction
+    ///  that cannot help.
+    /// </para>
+    /// <para>
+    /// <b>Drift outranks <see cref="TapeSetHeaderVerdict.SetIdMismatch"/>.</b> A drifted landing stands on ANOTHER set, so
+    ///  its <c>SetId</c> differs too — but a drift is correctable, and the delta stage must get its chance. Only at the
+    ///  RIGHT position does a differing <c>SetId</c> mean the TOC describes a set this tape does not hold.
+    /// </para>
+    /// <para>
+    /// <b>A replacement set is exempt.</b> On an overwrite the TOC's current set is the fresh replacement — new
+    ///  <c>SetId</c>, no files yet — while the header still belongs to the set being replaced. The check therefore only
+    ///  applies to a set that already describes content (<c>Count &gt; 0</c>).
+    /// </para>
     /// </remarks>
     internal TapeSetHeaderVerdict ClassifySetHeader(TapeSetHeader? header)
     {
@@ -180,6 +194,12 @@ public partial class TapeAgentBase
 
         if (header.VolumeSetIndex != TOC.CurrentSetIndexOnVolume)
             return TapeSetHeaderVerdict.SetIndexDrift;
+
+        // Design-Format-v2 §5.4. Both ids must be known: legacy set headers and legacy TOC sets carry none.
+        TapeSetTOC expectedSet = TOC.CurrentSetTOC;
+        if (header.SetId != Guid.Empty && expectedSet.SetId != Guid.Empty && expectedSet.Count > 0
+            && header.SetId != expectedSet.SetId)
+            return TapeSetHeaderVerdict.SetIdMismatch;
 
         return TapeSetHeaderVerdict.Match;
     }
@@ -469,6 +489,15 @@ public partial class TapeAgentBase
                 //  garbage on this volume.
                 RejectSet(verdict, header, fileNotify, WIN32_ERROR.ERROR_INVALID_DATA,
                     $"volume mismatch — tape carries volume {header!.Volume}, expected volume {TOC.Volume}");
+                return TerminalHere();
+
+            case TapeSetHeaderVerdict.SetIdMismatch:
+                // Right cartridge, right position — another set. The TOC describes a set this tape does not hold
+                //  (stale or foreign TOC). No repositioning can help, and a destructive write here would destroy a
+                //  set nobody asked to replace.
+                RejectSet(verdict, header, fileNotify, WIN32_ERROR.ERROR_INVALID_DATA,
+                    $"set identity mismatch — the set at this position carries set id {header!.SetId:N}, the TOC " +
+                    $"expects {TOC.CurrentSetTOC.SetId:N}; the TOC may be stale or belong to another tape");
                 return TerminalHere();
 
             case TapeSetHeaderVerdict.SetIndexDrift:

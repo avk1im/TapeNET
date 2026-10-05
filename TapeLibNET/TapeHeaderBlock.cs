@@ -22,37 +22,26 @@ namespace TapeLibNET;
 ///  them — without TOC, navigator, or agent.
 /// </para>
 /// <para>
-/// <b>Why four layers, and what each one buys.</b> Every layer answers a question the others cannot;
-///  each is reused independently elsewhere on tape.
+/// <b>Three layers, and what each one buys.</b>
 /// </para>
 /// <code>
-///  Layer                  Job                                          Why it cannot go
+///  Layer                  Job                                          Why it is critical - must-retain
 ///  ─────────────────────  ───────────────────────────────────────────  ──────────────────────────────────
 ///  TapeHeaderBlock        fixed 16 KiB block; sets and restores the    tape reads are block-granular, so
 ///                          drive block size; zero padding              a header must be readable BEFORE
 ///                                                                      its length is known
 ///
-///  TapeFramer             [len][payload][crc]                          the length separates payload from
-///                                                                      padding; the CRC makes a torn
+///  TapeFrame              Record ‖ CRC-64, magic "TpN#" at byte 0      "is this ours?" is one 4-byte
+///                                                                      compare; the CRC makes a torn
 ///                                                                      write DETECTABLE, not plausible
 ///
-///  TapeSerializer         signature + format version                   the on-tape format contract,
-///                                                                      shared with the TOC and every
-///                                                                      other record
-///
-///  TapeHeader preamble    kind byte, id, timestamps                    lets ONE read classify a cartridge
-///                                                                      as media, set, or calibration
+///  TapeRecord prologue    kind, format version, body length;           one read classifies a block as
+///   + header schemas      shared tags 1–3 (id, created, block size)    media, set, or calibration
 /// </code>
 /// <para>
-/// The composition is load-bearing: the TOC reuses the serializer WITHOUT the framer, and the calibration
-///  trail reuses the framer with different payloads.
-/// </para>
-/// <para>
-/// <b>One known wart.</b> The signature sits at offset <c>sizeof(int)</c>, behind the framer's length
-///  prefix — so the outermost layer is the only one that does not identify itself, and "is this block
-///  ours?" cannot be answered without first reading an untrusted int32 as a length. Preserved deliberately:
-///  every cartridge ever written carries this layout. <see cref="CarriesRecordSignature"/> centralizes the
-///  knowledge so no caller has to assume it. A future frame version should put the magic word first.
+/// <b>The legacy wart, resolved for new media.</b> Legacy frames put the signature behind an int32 length, so "is this
+///  ours?" first had to trust an untrusted length. Format 2.1 puts the magic first (Design-Format-v2 §4.5). Legacy
+///  headers stay readable through <see cref="Legacy.LegacyFramer"/> — every cartridge ever written keeps its layout.
 /// </para>
 /// </remarks>
 public static partial class TapeHeaderBlock
@@ -68,29 +57,28 @@ public static partial class TapeHeaderBlock
     public const bool WritesTrailingMark = true;
 
     /// <summary>
-    /// Frames <paramref name="header"/> into exactly <see cref="Size"/> bytes (remainder left as zero
-    ///  padding, ignored on read). Returns <see langword="null"/> when the framed record does not fit,
-    ///  which is a programming error rather than a media condition.
+    /// Frames <paramref name="header"/> into exactly <see cref="Size"/> bytes — a 2.1 block frame (<c>Record ‖ CRC-64</c>,
+    ///  magic first; the calibration header still legacy until Phase 6), remainder zero padding, ignored on read.
+    ///  Returns <see langword="null"/> when the frame does not fit, which is a programming error rather than a media
+    ///  condition.
     /// </summary>
     public static byte[]? Frame(TapeHeader header)
     {
         ArgumentNullException.ThrowIfNull(header);
-
-        byte[] frame = TapeFramer.Pack(header);
+        byte[] frame = TapeFramer.PackHeader(header);
         if (frame.Length > Size)
             return null;
-
         var block = new byte[Size];
         Array.Copy(frame, block, frame.Length);
         return block;
     }
 
     /// <summary>
-    /// Classifies a block that was already read, returning the concrete header kind (media, calibration)
-    ///  or <see langword="null"/> for blank / foreign / torn. The single call site of the polymorphic probe.
+    /// Classifies a block that was already read, returning the concrete header kind (media, set, calibration) in either
+    ///  format, or <see langword="null"/> for blank / foreign / torn / unreadable.
     /// </summary>
     public static TapeHeader? Classify(byte[] buffer, int length)
-        => length > 0 ? TapeFramer.Unpack<TapeHeader>(buffer, length) : null;
+        => length > 0 ? TapeFramer.UnpackHeader(buffer, length) : null;
 
     /// <summary>
     /// Writes <paramref name="header"/> as one standard block at the CURRENT position, temporarily

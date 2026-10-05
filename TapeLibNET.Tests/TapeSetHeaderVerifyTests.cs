@@ -218,6 +218,143 @@ public class TapeSetHeaderVerifyTests
 
     #endregion
 
+    #region *** (A2) Set identity — SetIdMismatch ***
+
+    /// <summary>
+    /// Right media, right volume, right position — another set. Only the set identity can tell, and it must: a stale or
+    ///  foreign TOC would otherwise restore — or overwrite — a set it does not describe.
+    /// </summary>
+    [Fact]
+    public void Classify_ForeignSetId_AtRightPosition_IsSetIdMismatch()
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("sid", count: 2, minSize: 256, maxSize: 2 * 1024);
+        using var fixture = new VirtualTapeFixture(DriveProfile.Setmarks, withMediaHeader: true, withSetHeaders: true);
+        fixture.BackupFiles(tree.Files, description: "Set id");
+        using var agent = fixture.CreateValidateAgent();
+
+        var header = fixture.TOC.CreateSetHeaderForCurrentSet() with { SetId = Guid.NewGuid() };
+
+        Assert.Equal(TapeSetHeaderVerdict.SetIdMismatch, agent.ClassifySetHeader(header));
+    }
+
+    /// <summary>Drift outranks the set identity: a drifted landing stands on another set, and the delta must get its chance.</summary>
+    [Fact]
+    public void Classify_DriftAndForeignSetId_IsSetIndexDrift()
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("sdr", count: 2, minSize: 256, maxSize: 2 * 1024);
+        using var fixture = new VirtualTapeFixture(DriveProfile.Setmarks, withMediaHeader: true, withSetHeaders: true);
+        fixture.BackupFiles(tree.Files, description: "Drift wins");
+        using var agent = fixture.CreateValidateAgent();
+
+        var header = fixture.TOC.CreateSetHeaderForCurrentSet();
+        var drifted = header with { VolumeSetIndex = header.VolumeSetIndex + 1, SetId = Guid.NewGuid() };
+
+        Assert.Equal(TapeSetHeaderVerdict.SetIndexDrift, agent.ClassifySetHeader(drifted));
+    }
+
+    /// <summary>Either side without a set identity (legacy header, legacy TOC set) cannot be judged — and is not.</summary>
+    [Fact]
+    public void Classify_MissingSetIdOnEitherSide_StillMatches()
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("sle", count: 2, minSize: 256, maxSize: 2 * 1024);
+        using var fixture = new VirtualTapeFixture(DriveProfile.Setmarks, withMediaHeader: true, withSetHeaders: true);
+        fixture.BackupFiles(tree.Files, description: "Legacy ids");
+        using var agent = fixture.CreateValidateAgent();
+
+        var header = fixture.TOC.CreateSetHeaderForCurrentSet();
+        Assert.Equal(TapeSetHeaderVerdict.Match, agent.ClassifySetHeader(header with { SetId = Guid.Empty }));
+
+        Guid real = fixture.TOC.CurrentSetTOC.SetId;
+        fixture.TOC.CurrentSetTOC.SetId = Guid.Empty;                        // a legacy TOC set
+        Assert.Equal(TapeSetHeaderVerdict.Match, agent.ClassifySetHeader(header));
+        fixture.TOC.CurrentSetTOC.SetId = real;
+    }
+
+    /// <summary>
+    /// The overwrite case: the TOC's current set is a fresh, EMPTY replacement with a new id, while the header on tape
+    ///  belongs to the set being replaced. That is the expected state, not a mismatch.
+    /// </summary>
+    [Fact]
+    public void Classify_FreshReplacementSet_IsNotSetIdMismatch()
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("srp", count: 2, minSize: 256, maxSize: 2 * 1024);
+        using var fixture = new VirtualTapeFixture(DriveProfile.Setmarks, withMediaHeader: true, withSetHeaders: true);
+        fixture.BackupFiles(tree.Files, description: "Replaced");
+        using var agent = fixture.CreateValidateAgent();
+
+        var headerOfOldSet = fixture.TOC.CreateSetHeaderForCurrentSet();
+        fixture.TOC.ReplaceCurrentSetTOC(capacity: 0);                       // new SetId, no files
+
+        Assert.NotEqual(headerOfOldSet.SetId, fixture.TOC.CurrentSetTOC.SetId);
+        Assert.Equal(TapeSetHeaderVerdict.Match, agent.ClassifySetHeader(headerOfOldSet));
+    }
+
+    /// <summary>End to end, read path: a TOC whose set id disagrees with the tape fails the set, naming the reason.</summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Restore_WithForeignSetIdInToc_FailsTheSet(DriveProfile profile)
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("rsid", count: 3, minSize: 512, maxSize: 4 * 1024);
+        var notify = new TestNotifiable();
+
+        using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);
+        fixture.BackupFiles(tree.Files, description: "Foreign id");
+        fixture.TOC.CurrentSetTOC.SetId = Guid.NewGuid();                    // the TOC now describes another set
+
+        using var agent = fixture.CreateValidateAgent();
+        Assert.False(agent.RestoreAllFilesFromCurrentSet(ignoreFailures: false, fileNotify: notify));
+
+        var anomaly = Assert.Single(notify.SetAnomalies).Anomaly;
+        Assert.Equal(TapeSetHeaderVerdict.SetIdMismatch, anomaly.Verdict);
+        Assert.Equal(0, agent.Statistics.Sets.AnomaliesRecovered);          // nothing positional was attempted
+    }
+
+    /// <summary>End to end, write path: the overwrite is refused BEFORE a byte is destroyed.</summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Overwrite_WithForeignSetIdInToc_IsRefused_AndTapeIntact(DriveProfile profile)
+    {
+        using var tree1 = new TempFileTree();
+        tree1.AddFiles("ow1", count: 3, minSize: 512, maxSize: 4 * 1024);
+        using var tree2 = new TempFileTree();
+        tree2.AddFiles("ow2", count: 3, minSize: 512, maxSize: 4 * 1024);
+        using var replacement = new TempFileTree();
+        replacement.AddFiles("owr", count: 2, minSize: 512, maxSize: 4 * 1024);
+        string restoreDir = NewRestoreDir();
+        try
+        {
+            using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);
+            fixture.BackupFiles(tree1.Files, description: "One");
+            fixture.BackupFiles(tree2.Files, description: "Two");
+
+            fixture.TOC.CurrentSetIndex = 1;
+            Guid real = fixture.TOC.CurrentSetTOC.SetId;
+            fixture.TOC.CurrentSetTOC.SetId = Guid.NewGuid();                // the TOC set still holds files
+
+            using (var agent = fixture.CreateBackupAgent())
+                Assert.False(agent.BackupFileListToCurrentSet(newSet: false, replacement.Files, ignoreFailures: false),
+                    "an overwrite of a set the TOC misidentifies must be refused");
+
+            // Restore the truth, then prove nothing was destroyed.
+            fixture.TOC.CurrentSetIndex = 1;
+            fixture.TOC.CurrentSetTOC.SetId = real;
+            using var restore = fixture.CreateRestoreAgent(restoreDir);
+            Assert.True(restore.RestoreAllFilesFromCurrentSet(ignoreFailures: false));
+            AssertRestoredMatches(tree1, restoreDir);
+        }
+        finally
+        {
+            TryDeleteDirectory(restoreDir);
+        }
+    }
+
+    #endregion
+
     #region *** (B) The happy path, end to end ***
 
     /// <summary>

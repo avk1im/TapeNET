@@ -1,7 +1,7 @@
 namespace TapeLibNET.Legacy;
 
 /// <summary>
-/// Frozen, read-only block identification for the pre-2.1 layouts: the TOC structural probe (<c>TryPeek</c>),
+/// Frozen, read-only block identification for the pre-2.1 layouts: the TOC structural probe (<see cref="TryPeekToc"/>),
 ///  the signature probe, and the offset-4 framed-record probe. Verbatim logic, relocated.
 /// </summary>
 internal static class LegacyIdentify
@@ -90,27 +90,23 @@ internal static class LegacyIdentify
     }
 
     /// <summary>
-    /// Identifies one block positively: a TOC copy (either format), an intact header, a damaged header -- or none
-    ///  of them. Pure, total, TOC-free. See <see cref="TapeHeaderBlock.IdentifyBlock"/> for the rationale of the order.
+    /// Identifies one LEGACY block (no 2.1 magic): a legacy TOC copy, an intact legacy header, a damaged legacy record —
+    ///  or foreign. Pure, total, TOC-free. Called by <see cref="TapeHeaderBlock.IdentifyBlock"/> for every block that
+    ///  does not start with <c>TpN#</c>.
     /// </summary>
-    /// <remarks>
-    /// Interim (Phase 3): the TOC check calls <see cref="TapeTOC.TryPeek"/>, which recognizes 2.1 copies and forwards
-    ///  everything else to <see cref="TryPeekToc"/>. Phase 5 moves the 2.1 dispatch into
-    ///  <see cref="TapeHeaderBlock.IdentifyBlock"/> and restores this method to legacy-only.
-    /// </remarks>
     public static IdentifiedBlock IdentifyBlock(byte[] block, int length)
     {
         if (block is null || length <= 0 || length > block.Length)
             return IdentifiedBlock.Foreign;
 
         // 1. A TOC copy: a raw stream, verified by its structure -- not by a header failing to parse.
-        if (TapeTOC.TryPeek(block, length, out ushort tocVersion, out Guid tocMediaId))
+        if (TryPeekToc(block, length, out ushort tocVersion, out Guid tocMediaId))
             return new(HeaderBlockIdentity.TocCopy, TocVersion: tocVersion, TocMediaId: tocMediaId);
 
         // 2. A framed record: ours whether or not it verifies.
         if (HasSignatureAt(block, length, FramedPayloadOffset, out _))
         {
-            var status = TapeFramer.TryUnpack(block, length, out TapeHeader? header);
+            var status = LegacyFramer.TryUnpack<TapeHeader>(block, length, LegacyHeaderReader.Read, out TapeHeader? header);
             return status == TapeFramer.FrameStatus.Ok && header is not null
                 ? new(HeaderBlockIdentity.Header, Header: header, FrameStatus: status)
                 : new(HeaderBlockIdentity.DamagedRecord, FrameStatus: status);
@@ -118,4 +114,5 @@ internal static class LegacyIdentify
 
         return IdentifiedBlock.Foreign;
     }
+
 }
