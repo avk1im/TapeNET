@@ -303,6 +303,10 @@ public sealed class VirtualTapeFixture : IDisposable
     /// <param name="notifiable">Optional callback handler.</param>
     /// <param name="compression">Software compression mode (default <see cref="TapeCompression.None"/>).</param>
     /// <param name="compressionLevel">ZSTD level; only used when <paramref name="compression"/> is <see cref="TapeCompression.Software"/>.</param>
+    /// <param name="setId">
+    /// Pins the new set's <see cref="TapeSetTOC.SetId"/> — for tests that compare the bytes of two independent backups.
+    ///  <see langword="null"/> keeps the freshly minted id.
+    /// </param>
     /// <returns>Statistics snapshot after backup completes.</returns>
     public TapeFileStatistics BackupFiles(
         List<string> fileList,
@@ -312,7 +316,8 @@ public sealed class VirtualTapeFixture : IDisposable
         uint blockSize = 0,
         ITapeFileNotifiable? notifiable = null,
         TapeCompression compression = TapeCompression.None,
-        int compressionLevel = ZstdLevel.Default)
+        int compressionLevel = ZstdLevel.Default,
+        Guid? setId = null)
     {
         // Configure the set
         TOC.AddNewSetTOC(0, incremental);
@@ -322,13 +327,16 @@ public sealed class VirtualTapeFixture : IDisposable
         TOC.CurrentSetTOC.Compression = compression;
         TOC.CurrentSetTOC.CompressionLevel = compressionLevel;
 
+        if (setId is { } id)
+            TOC.CurrentSetTOC.SetId = id;
+
         using var agent = CreateBackupAgent();
 
-bool success = agent.BackupFileListToCurrentSet(
-    newSet: true,
-    fileList,
-    ignoreFailures: true,
-    fileNotify: notifiable);
+        bool success = agent.BackupFileListToCurrentSet(
+            newSet: true,
+            fileList,
+            ignoreFailures: true,
+            fileNotify: notifiable);
 
         Assert.True(success, "Backup failed");
 

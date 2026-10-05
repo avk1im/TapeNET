@@ -22,21 +22,49 @@ public class PartitionsVsSetmarksComparisonTests(ITestOutputHelper output)
 {
     #region *** Helpers ***
 
+    /// <summary>Deterministic, non-empty SetId for the set at <paramref name="index"/> — the same in every fixture.</summary>
+    private static Guid PinnedSetId(int index) => new(index + 1, 0x7A9E, 0x5E7D, [0, 0, 0, 0, 0, 0, 0, 1]);
+
+    /// <summary>The fixed last-access instant every backed-up file carries.</summary>
+    private static readonly DateTime s_pinnedAccessTimeUtc = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+
+    /// <summary>
+    /// Resets the last-access time of <paramref name="files"/>, which the previous backup's reads advanced. The capture
+    ///  (<see cref="TapeFileDescriptor"/> from <see cref="FileInfo"/>) happens before the file is read, so the value
+    ///  pinned here is the value written into the header.
+    /// </summary>
+    private static void PinLastAccessTimes(IEnumerable<string> files)
+    {
+        foreach (string file in files)
+            File.SetLastAccessTimeUtc(file, s_pinnedAccessTimeUtc);
+    }
+
     /// <summary>
     /// Creates a fixture, backs up the given file lists as sequential sets, and saves the TOC.
-    /// Returns the fixture (caller must dispose).
+    ///  Returns the fixture (caller must dispose).
     /// </summary>
+    /// <remarks>
+    /// Every 2.1 file header is self-describing (Design-Format-v2 §5.3), so two independent backups of the same files
+    ///  are byte-identical only if everything the header carries is identical. Two values are not by nature, and are
+    ///  pinned here:
+    /// <list type="bullet">
+    ///   <item><see cref="TapeSetTOC.SetId"/> — a fresh random Guid per backup; pinned per set position.</item>
+    ///   <item>Each file's last-access time — the previous backup's <c>BackupRead</c> updates it; reset to a fixed
+    ///    instant right before each set is written.</item>
+    /// </list>
+    /// </remarks>
     private static VirtualTapeFixture BackupSets(
         DriveProfile profile,
         params (List<string> Files, string Description)[] sets)
     {
         var fixture = new VirtualTapeFixture(profile);
-
-        foreach (var (files, description) in sets)
+        for (int i = 0; i < sets.Length; i++)
         {
-            fixture.BackupFiles(files, description: description, hashAlgorithm: TapeHashAlgorithm.Crc64);
+            var (files, description) = sets[i];
+            PinLastAccessTimes(files);
+            fixture.BackupFiles(files, description: description, hashAlgorithm: TapeHashAlgorithm.Crc64,
+                setId: PinnedSetId(i));
         }
-
         return fixture;
     }
 
