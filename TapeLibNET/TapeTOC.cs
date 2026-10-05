@@ -118,10 +118,12 @@ public struct TapeFileDescriptor
 }
 
 /// <summary>
-/// On-tape file record — serves as both a TOC entry and an on-tape file header.
-/// <para>Each instance carries a <see cref="FileId"/> unique within its set, the tape
-///  a <see cref="TapeFileDescriptor"/>, and an optional integrity <see cref="Hash"/>.
-///  Serialized in the TOC by TocFileEntryWire (format 2.1).</para>
+/// One file of a backup set as recorded in the TOC.
+/// <para>Carries a <see cref="FileId"/> unique within its set, the tape <see cref="Address"/> where the file begins,
+///  a <see cref="TapeFileDescriptor"/>, and an optional integrity <see cref="Hash"/>. Serialized in the TOC by
+///  <c>TocFileEntryWire</c> (format 2.1).</para><para>On tape, each file is preceded by its own header:
+///  <see cref="TapeFileHeader"/> in <see cref="TapeDataFormat.V2"/> sets, the 12-byte legacy header
+///  (<see cref="Legacy.LegacyFileHeader"/>) in legacy sets.</para>
 /// </summary>
 public partial class TapeFileInfo(ulong fileId, TapeAddress address, TapeFileDescriptor fileDescr)
 {
@@ -131,16 +133,19 @@ public partial class TapeFileInfo(ulong fileId, TapeAddress address, TapeFileDes
     ///  can never collide with the committed file. For legacy sets this is the former per-TOC UID.
     /// </summary>
     public ulong FileId { get; } = fileId;
-    /// <summary>Media address (block + offset) where this file's data begins.</summary>
+
+    /// <summary>Media address (block + offset) where this file's on-tape record — header first — begins.</summary>
     public TapeAddress Address { get; } = address;
-    /// <summary>Block number where this file's data begins. Convenience accessor for <see cref="Address"/>.Block.</summary>
+
+    /// <summary>Name, length, attributes and UTC times of the file.</summary>
     public TapeFileDescriptor FileDescr { get; } = fileDescr;
+
     internal byte[]? Hash { get; set; } = null;
+
     /// <summary>
-    /// Actual on-tape size (header + blob body) in bytes, excluding block-alignment padding.
-    ///  Set post-construction on packed-path commit; zero for legacy aligned files or when
-    ///  not yet committed. Required for packed-set restore read-window sizing since files
-    ///  are packed back-to-back with no per-file delimiters.
+    /// Actual on-tape size in bytes, excluding block-alignment padding: header + body for legacy sets,
+    ///  header frame + codec byte + body for V2 sets. Set on packed-path commit; zero for legacy aligned
+    ///  files or when not yet committed — restore then falls back to <see cref="TapeSetTOC.EstimateFileOverhead"/>.
     /// </summary>
     internal long SizeOnTape { get; set; } = 0L;
 
@@ -148,7 +153,7 @@ public partial class TapeFileInfo(ulong fileId, TapeAddress address, TapeFileDes
     /// Per-file codec used to compress this file's body on tape.
     ///  <see cref="TapeFileCodec.Stored"/> means the body is uncompressed (passthrough or
     ///  auto-store fallback); <see cref="TapeFileCodec.Zstd"/> means ZSTD-compressed.
-    ///  Restore reads this flag to decide whether to wrap the read stream with a decompressor.
+    ///  V2 bodies also carry it as their first byte; restore requires both to agree.
     /// </summary>
     internal TapeFileCodec Codec { get; set; } = TapeFileCodec.Stored;
 
@@ -161,28 +166,7 @@ public partial class TapeFileInfo(ulong fileId, TapeAddress address, TapeFileDes
 
     /// <summary>Whether this entry carries a real <see cref="FileId"/> and a file name.</summary>
     public bool IsValid => FileId != 0 && !string.IsNullOrEmpty(FileDescr.FullName);
-
-    // serailize only minimal information necessary to check file match on tape 
-    public void SerializeHeaderTo(TapeSerializer serializer)
-    {
-        serializer.SerializeSignature();
-        serializer.Serialize(FileId);
-    }
-
-    public static int EstimateSerializedHeaderSize()
-    {
-        // Signature: 2 bytes + Version: 2 bytes
-        int size = LegacyFormat.Signature.Length + sizeof(ushort);
-        // UID: 8 bytes (ulong)
-        size += sizeof(ulong);
-        return size;
-    }
-
-    // deserailize header and check if it matches this file info
-    public bool DeserializeAndCheckHeaderFrom(LegacyDeserializer deserializer)
-    => LegacyFileHeader.Matches(deserializer, FileId);
-
-} // struct TapeFileInfo
+} // class TapeFileInfo
 
 
 /// <summary>
@@ -457,18 +441,12 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
     public long TotalFileSize => m_tapeFileInfos.Sum(tfi => tfi.FileDescr.Length);
 
     /// <summary>
-    /// Estimates the tape footprint of a single file under the legacy block-aligned
-    ///  layout: file data + serialized header, rounded up to the next block boundary.
-    /// <para>For packed sets, files share blocks, so per-file rounding is wrong;
-    ///  use <see cref="ComputeTotalFileSizeOnTape(uint)"/> on the whole set instead.</para>
+    /// What a file of this set occupies on tape in front of its body, for size estimates when
+    ///  <see cref="TapeFileInfo.SizeOnTape"/> is unknown: the legacy 12-byte header, or a 2.1 header frame plus codec byte.
     /// </summary>
-    public static long EstimateFileSizeOnTape(long fileLength, uint blockSize)
-    {
-        long rawSize = fileLength + TapeFileInfo.EstimateSerializedHeaderSize();
-        if (blockSize <= 1)
-            return rawSize;
-        return (rawSize + blockSize - 1) / blockSize * blockSize;
-    }
+    internal long EstimateFileOverhead(TapeFileInfo tfi) => DataFormat == TapeDataFormat.Legacy
+        ? LegacyFileHeader.Size
+        : TapeFileHeader.EstimateOverhead(tfi.FileDescr.FullName);
 
     // Cached dynamic detection of packed vs aligned layout, derived from file addresses.
     //  null = not yet determined; true = at least one file has Address.Offset != 0;
@@ -481,50 +459,62 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
     /// <summary>
     /// Computes the total size of all files in the set on tape, considering the block size
     /// and file block alignment or packing, plus the set header block when present (SH-12).
-    /// <para>Works properly for both packed and aligned (deprecated) layouts.</para>
+    /// <para>Works properly for both packed and aligned (legacy) layouts, and for both data formats.</para>
     /// </summary>
-    /// <param name="defaultBlockSize">The default block size to use if the set's block size is not specified.</param>
-    /// <returns>The total size of all files on tape, rounded up to the nearest block boundary.</returns>
     // We detect packed-layout sets dynamically: if any file has a non-zero intra-block
     //  offset (Address.Offset != 0), the set is packed and files share blocks, so we
     //  only round the *total* of (file + header) sizes up to one block boundary
     //  rather than rounding each file individually. The detection result is cached.
-    /// <param name="blockSize">
-    /// Block size to assume; 0 uses the set's own <see cref="BlockSize"/>.
-    /// </param>
+    /// <param name="defaultBlockSize">Block size to assume when the set's own <see cref="BlockSize"/> is 0.</param>
     /// <param name="withSetHeader">
     /// Whether this set carries a <see cref="TapeSetHeader"/>. The set TOC cannot know this itself — the
     ///  media header declares it per volume (SH-1) — so the caller supplies it.
     /// </param>
     public long ComputeTotalFileSizeOnTape(uint defaultBlockSize = 0, bool withSetHeader = false)
     {
+        // -- Local helpers ---
+
+        long SumRawFileSizes()
+        {
+            long sum = 0L;
+            foreach (var tfi in this)
+                sum += RawFileSize(tfi);
+            return sum;
+        }
+
+        // SizeOnTape when available (packed files with committed size); otherwise an estimate in this set's
+        //  own data format — legacy header for legacy sets, 2.1 header frame + codec byte for V2 sets.
+        long RawFileSize(TapeFileInfo tfi)
+            => (tfi.SizeOnTape > 0) ? tfi.SizeOnTape : tfi.FileDescr.Length + EstimateFileOverhead(tfi);
+
+        static long RoundUpToBlock(long size, uint blockSize)
+            => (blockSize <= 1) ? size : (size + blockSize - 1) / blockSize * blockSize;
+
+        // --- End local helpers ---
+
         if (Count == 0)
             return 0L;
+
         uint blockSize = (BlockSize > 0) ? BlockSize : defaultBlockSize;
 
         // If we already know the set is packed, sum raw and round once.
         if (m_isPackedLayout == true)
-            return RoundUpToBlock(SumRawFileSizes(), blockSize);
+            return RoundUpToBlock(SumRawFileSizes(), blockSize) + (withSetHeader ? TapeHeaderBlock.Size : 0);
 
         // Otherwise walk once: detect packed-ness while computing the aligned total.
         //  As soon as we discover a non-zero offset, switch to packed accounting.
         long alignedTotal = 0L;
-        long rawTotal     = 0L;
-        bool packed       = false;
+        long rawTotal = 0L;
+        bool packed = false;
         foreach (var tfi in this)
         {
-            // Use SizeOnTape when available (packed files with committed size);
-            //  fall back to estimated size for legacy/aligned or uncommitted files.
-            long raw = (tfi.SizeOnTape > 0)
-                ? tfi.SizeOnTape
-                : tfi.FileDescr.Length + TapeFileInfo.EstimateSerializedHeaderSize();
+            long raw = RawFileSize(tfi);
             rawTotal += raw;
             if (!packed && tfi.Address.Offset != 0)
                 packed = true;
             if (!packed)
                 alignedTotal += RoundUpToBlock(raw, blockSize);
         }
-
         m_isPackedLayout = packed;
         long total = packed ? RoundUpToBlock(rawTotal, blockSize) : alignedTotal;
 
@@ -533,25 +523,7 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
         //  content: it draws on the same capacity the files do, and the early-warning reserve must see it.
         if (withSetHeader)
             total += TapeHeaderBlock.Size;
-
         return total;
-
-        long SumRawFileSizes()
-        {
-            long sum = 0L;
-            foreach (var tfi in this)
-            {
-                // Use SizeOnTape when available (packed files with committed size);
-                //  fall back to estimated size for legacy/aligned or uncommitted files.
-                sum += (tfi.SizeOnTape > 0)
-                    ? tfi.SizeOnTape
-                    : tfi.FileDescr.Length + TapeFileInfo.EstimateSerializedHeaderSize();
-            }
-            return sum;
-        }
-
-        static long RoundUpToBlock(long size, uint blockSize)
-            => (blockSize <= 1) ? size : (size + blockSize - 1) / blockSize * blockSize;
     }
 
 } // class TapeSetTOC

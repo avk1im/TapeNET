@@ -1,5 +1,5 @@
 using TapeLibNET;
-using TapeLibNET.TapeFilePacker;
+using TapeLibNET.Packer;
 
 namespace TapeLibNET.Tests.TapeFilePacker;
 

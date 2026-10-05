@@ -1,6 +1,6 @@
 using System.Buffers;
 
-namespace TapeLibNET.TapeFilePacker;
+namespace TapeLibNET.Packer;
 
 /// <summary>
 /// In-memory test backend for the read path. Mirrors <see cref="MemoryTapeWriteBackend"/>

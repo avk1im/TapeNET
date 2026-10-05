@@ -827,6 +827,11 @@ Do not change behaviour outside a step's scope.
 30. `TapeScanner.Identify`: TOC version, checkpoint and newer-record fragments.
 31. Tests §11.3, `Format_SetHeader_SetIdMismatch_BlocksOverwrite`, `Format_ScanMedia_BothFamilies`.
 
+> Note for Phase 5: A block that begins with a `FileHeader` (0x0201) record is content — the first file of a set
+  (offset 0) — not a damaged or newer-build record. The §5.9 dispatch must map kind 0x0201 at offset 0 to content,
+  before its "other kind → `DamagedRecord`" branch. Today's interim `LegacyIdentify.IdentifyBlock` already reports it
+  as `Foreign`, as it did legacy content.
+
 ### Phase 6 — Calibration and virtual media
 
 32. Calibration header and checkpoint on schemas + `TapeSampleCoder`; `TapeCalibrationFramer` follows `TapeFrame`;

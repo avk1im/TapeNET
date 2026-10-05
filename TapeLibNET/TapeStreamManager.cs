@@ -7,7 +7,7 @@ using Windows.Win32.Foundation;
 using Microsoft.Extensions.Logging;
 using System.Runtime.InteropServices;
 using TapeLibNET;
-using TapeLibNET.TapeFilePacker;
+using TapeLibNET.Packer;
 
 
 namespace TapeLibNET;

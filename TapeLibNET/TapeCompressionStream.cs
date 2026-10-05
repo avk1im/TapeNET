@@ -195,7 +195,7 @@ internal sealed class ProbingCompressionStream : Stream
         }
 
         /// <summary>Raw-bytes probe buffer (capacity = <see cref="ProbeLength"/>).</summary>
-        internal MemoryStream RawBuf  { get; } = new(ProbeLength);
+        internal MemoryStream RawBuf { get; } = new(ProbeLength);
         /// <summary>
         /// Compressed-bytes probe buffer (capacity = <see cref="ProbeBufLength"/> =
         ///  <c>ZSTD_compressBound(<see cref="ProbeLength"/>)</c>), large enough to hold the
@@ -206,7 +206,7 @@ internal sealed class ProbingCompressionStream : Stream
         /// <summary>Resets both probe buffers to empty, ready for the next file.</summary>
         internal void ResetBuffers()
         {
-            RawBuf .SetLength(0);
+            RawBuf.SetLength(0);
             CompBuf.SetLength(0);
         }
 
@@ -231,9 +231,9 @@ internal sealed class ProbingCompressionStream : Stream
     ///   <see cref="Session.ResetBuffers"/> automatically.</param>
     internal ProbingCompressionStream(Stream inner, Session session, int level, bool resetSession = true)
     {
-        _inner   = inner;
+        _inner = inner;
         _session = session;
-        _codec   = session.GetOrUpdateCodec(level);
+        _codec = session.GetOrUpdateCodec(level);
         if (resetSession) session.ResetBuffers();
 
         _probeZstream = _codec.Options != null
@@ -243,7 +243,7 @@ internal sealed class ProbingCompressionStream : Stream
 
     // ── state ─────────────────────────────────────────────────────────────────
 
-    private readonly Stream  _inner;
+    private readonly Stream _inner;
     private readonly Session _session;
     private readonly ZstdCodec _codec;
 
@@ -262,20 +262,27 @@ internal sealed class ProbingCompressionStream : Stream
     /// </summary>
     public TapeFileCodec FinalCodec { get; private set; } = TapeFileCodec.Stored;
 
+    /// <summary>
+    /// When <see langword="true"/>, <c>Commit()</c> writes the chosen codec as ONE byte to <c>inner</c> before the
+    ///  body — the codec prefix of a 2.1 file body (Design-Format-v2 §5.3). Off by default, so standalone use
+    ///  (tests, tools) keeps emitting a bare ZSTD frame or raw bytes.
+    /// </summary>
+    internal bool EmitsCodecPrefix { get; init; }
+
     // ── Stream overrides ─────────────────────────────────────────────────────
 
-    public override bool CanRead  => false;
+    public override bool CanRead => false;
     public override bool CanWrite => !_disposed;
-    public override bool CanSeek  => false;
+    public override bool CanSeek => false;
 
-    public override long Length   => throw new NotSupportedException();
+    public override long Length => throw new NotSupportedException();
     public override long Position
     {
         get => throw new NotSupportedException();
         set => throw new NotSupportedException();
     }
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-    public override void SetLength(long value)                 => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
     public override int Read(byte[] buffer, int offset, int count) =>
         throw new NotSupportedException("ProbingCompressionStream is write-only.");
 
@@ -297,7 +304,7 @@ internal sealed class ProbingCompressionStream : Stream
                     _session.RawBuf.Write(buffer, offset, take);
                     _probeZstream!.Write(buffer, offset, take);
                     offset += take;
-                    count  -= take;
+                    count -= take;
                     probeRemaining -= take;
                 }
 
@@ -352,21 +359,29 @@ internal sealed class ProbingCompressionStream : Stream
 
     // ── Probe commit ─────────────────────────────────────────────────────────
 
-    // Seals the probe compression stream, compares sizes, and flushes the winning
-    //  content to inner. Opens the live path (compressed or raw) for the remainder.
+    /// <summary>
+    /// Seals the probe compression stream, compares sizes, and flushes the winning
+    ///  content to inner. Opens the live path (compressed or raw) for the remainder.
+    ///  With EmitsCodecPrefix, the decision itself goes to inner first, as one byte.
+    /// </summary>
     private void Commit()
     {
         // Finalize the probe ZSTD frame so CompBuf.Length is accurate.
         _probeZstream!.Dispose();
         _probeZstream = null;
 
-        long rawLen  = _session.RawBuf.Length;
+        long rawLen = _session.RawBuf.Length;
         long compLen = _session.CompBuf.Length;
 
-        if (compLen < rawLen)
+        FinalCodec = compLen < rawLen ? TapeFileCodec.Zstd : TapeFileCodec.Stored;
+
+        // The codec prefix precedes every body byte: a restore reads it before choosing the decoder.
+        if (EmitsCodecPrefix)
+            _inner.WriteByte((byte)FinalCodec);
+
+        if (FinalCodec == TapeFileCodec.Zstd)
         {
             // Compression wins: flush the compressed probe to inner.
-            FinalCodec = TapeFileCodec.Zstd;
             _session.CompBuf.Position = 0;
             _session.CompBuf.CopyTo(_inner);
 
@@ -385,7 +400,6 @@ internal sealed class ProbingCompressionStream : Stream
         else
         {
             // Store wins: flush raw probe bytes, live path is a direct pass-through.
-            FinalCodec = TapeFileCodec.Stored;
             _session.RawBuf.Position = 0;
             _session.RawBuf.CopyTo(_inner);
             // _liveZstream stays null; Write() will call _inner.Write() directly.
@@ -394,7 +408,6 @@ internal sealed class ProbingCompressionStream : Stream
         _committed = true;
     }
 }
-
 
 /// <summary>
 /// Read-only stream that transparently decompresses ZSTD-compressed bytes read from

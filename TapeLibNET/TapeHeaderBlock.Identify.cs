@@ -116,9 +116,12 @@ public static partial class TapeHeaderBlock
     ///  version. So a TOC match cannot swallow an intact frame, while the reverse order could.
     /// </para>
     /// <para>
-    /// <b>The signature alone never identifies a TOC.</b> A legacy aligned file record
-    ///  (<see cref="TapeFileInfo.SerializeHeaderTo"/>) opens a block with the very bytes a v0x0101 TOC does.
-    ///  <see cref="TapeTOC.TryPeek"/> checks what only a TOC has: the fields that follow the signature.
+    /// <b>The signature alone never identifies a TOC.</b> A legacy file header (<c>Legacy.LegacyFileHeader</c>:
+    ///  <c>"TF" · 0x0101 · UID</c>) opens a content block with the very bytes a v0x0101 TOC does.
+    ///  <see cref="TapeTOC.TryPeek"/> checks what only a TOC has: the fields that follow the signature. A 2.1 file
+    ///  header (<see cref="TapeFileHeader"/>) carries the <c>TpN#</c> magic with
+    ///  <see cref="Format.TapeRecordKind.FileHeader"/>, which no TOC probe accepts, so it identifies as
+    ///  <see cref="HeaderBlockIdentity.Foreign"/> — i.e. content — until Phase 5 gives content its own identity.
     /// </para>
     /// <para>
     /// A record whose SIGNATURE is damaged cannot be told from foreign data, and is reported as

@@ -1,4 +1,4 @@
-namespace TapeLibNET.TapeFilePacker;
+namespace TapeLibNET.Packer;
 
 /// <summary>
 /// Status of an <see cref="ITapeWriteBackend"/>.

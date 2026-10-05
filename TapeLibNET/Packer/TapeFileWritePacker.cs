@@ -2,7 +2,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace TapeLibNET.TapeFilePacker;
+namespace TapeLibNET.Packer;
 
 /// <summary>
 /// Phase 2 high-layer write packer. Accumulates source bytes from one or more files into

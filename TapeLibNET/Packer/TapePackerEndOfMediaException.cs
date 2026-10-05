@@ -1,4 +1,4 @@
-namespace TapeLibNET.TapeFilePacker;
+namespace TapeLibNET.Packer;
 
 /// <summary>
 /// Thrown by <see cref="TapeFileWritePacker"/> operations when the underlying tape reaches

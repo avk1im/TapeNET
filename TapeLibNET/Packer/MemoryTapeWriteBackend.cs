@@ -1,4 +1,4 @@
-namespace TapeLibNET.TapeFilePacker;
+namespace TapeLibNET.Packer;
 
 /// <summary>
 /// In-memory test backend. Records every handed-off buffer's content (block-aligned

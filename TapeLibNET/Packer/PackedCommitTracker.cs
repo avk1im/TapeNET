@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging;
 
-namespace TapeLibNET.TapeFilePacker;
+namespace TapeLibNET.Packer;
 
 /// <summary>
 /// Bookkeeping helper for the packed backup path: consolidates the three collections

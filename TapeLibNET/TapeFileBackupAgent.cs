@@ -1,13 +1,9 @@
-﻿using Grpc.Net.Client.Balancer;
+﻿using System.Diagnostics;
 using Microsoft.Extensions.Logging;
-using System.Diagnostics;
-using System.Reflection.PortableExecutable;
-using TapeLibNET;
-using TapeLibNET.Remote;
-using TapeLibNET.TapeFilePacker;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices;
-using static System.Runtime.InteropServices.JavaScript.JSType;
+
+using TapeLibNET.Packer;
 
 
 namespace TapeLibNET;
@@ -113,14 +109,20 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         base.Dispose(disposing);
     }
 
+    /// <summary>
+    /// Computes the remaining content capacity for the current set, based on the drive's calibrated estimate.
+    /// </summary>
+    /// <returns>The remaining content capacity in bytes.</returns>
+    /// <remarks>
+    /// The authoritative remaining-capacity figure is the drive's calibrated ESTIMATE
+    ///  (quantity (6)). The TOC reserve is NOT subtracted here: it is armed once, at the drive,
+    ///  via <see cref="TapeDrive.SetEarlyWarning"/> in <see cref="BeginWriteContentForCurrentSet"/>.
+    ///  Subtracting it again would reserve room for the TOC twice and prematurely cut the set short
+    ///  (see the multi-volume regression). Early warning is the real stop signal; this value is advisory
+    ///  only (see <seealso cref="TapeStreamManager.CapacityForCurrentSet"/>).
+    /// </remarks>
     private long ComputeRemainingCapacity()
     {
-        // The authoritative remaining-capacity figure is the drive's calibrated ESTIMATE
-        //  (quantity (6)). The TOC reserve is NOT subtracted here: it is armed once, at the drive,
-        //  via SetEarlyWarning() in BeginWriteContentForCurrentSet(). Subtracting it again would
-        //  reserve room for the TOC twice and prematurely cut the set short (see the multi-volume
-        //  regression). Early warning is the real stop signal; this value only feeds the coarse
-        //  pre-checks on the (obsolete) aligned write path.
         return Math.Max(Drive.EstimatedContentRemaining, 0L);
     }
 
@@ -488,21 +490,45 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     }
 
     // =====================================================================
-    //  Packed backup
+    //  Packed backup (s. also doc comment of BackupFile):
     //
-    //  Route
-    //  small files can share tape blocks. The packer surfaces final
-    //  TapeAddress values asynchronously via Manager.FilesCommitted, so:
-    //    * TapeFileInfo for each file is constructed with its REAL address
-    //      inside the commit handler (the loop's per-file tfi is a template
-    //      carrying UID + FileDescr only; its Block field is unused on the
-    //      packed path),
+    //  Routes content writes through the shared-block packer, so small files can share tape blocks. The packer
+    //  surfaces final TapeAddress values asynchronously via Manager.FilesCommitted, so:
+    //    * TapeFileInfo for each file is constructed with its REAL address inside the commit handler
+    //      (the loop's per-file template carries FileId + FileDescr only; its Address is unused),
     //    * NotifyPostProcessFile is deferred until the file is committed.
     // =====================================================================
 
-    // Writes the file (header + hashed body) via the packer's per-file façade.
-    //  Returns the CommitToken so the caller can register the pending entry.
-    //  Throws on any failure -- the caller catches and decides recovery.
+    /// <summary>
+    /// Writes the file (2.1 header + codec byte + hashed body) via the packer's per-file façade.
+    ///  Returns the CommitToken so the caller can register the pending entry.
+    ///  Throws on any failure -- the caller catches and decides recovery.
+    /// </summary>
+    /// <param name="template">The template TapeFileInfo containing file metadata.</param>
+    /// <param name="hash">The output hash of the file's contents.</param>
+    /// <param name="codec">The codec used for compression.</param>
+    /// <returns>The CommitToken representing the pending commit operation.</returns>
+    /// <exception cref="Exception">
+    /// Throws on any failure -- the caller catches and decides recovery.
+    /// </exception>
+    /// <remarks>
+    /// <b>Packed backup</b> routes content writes through the shared-block packer, so small files
+    ///  can share tape blocks. The packer surfaces final <see cref="TapeAddress"/> values asynchronously
+    ///  via <see cref="TapeStreamManager.FilesCommitted"/>, so that:
+    /// <list type="bullet">
+    ///    <item><see cref="TapeFileInfo"/> for each file is constructed with its REAL address inside the commit handler
+    ///      (the loop's per-file template carries FileId + FileDescr only; its Address is unused),</item>
+    ///    <item><see cref="TapeAgentBase.NotifyPostProcessFile"/> is deferred until the file is committed.</item>
+    /// </list>
+    /// <para>
+    /// <b>On-tape layout</b> of a V2.1 file (Design-Format-v2 §5.3): self-describing, CRC-64 framed,
+    ///  excluded from the hash, checked on restore against the set's <see cref="TapeSetTOC.SetId"/>
+    ///  and the file's <see cref="TapeFileInfo.FileId"/>.
+    ///  <code>
+    ///   [file header frame: TpN# · kind 0x0201 · fields · CRC-64][codec u8][body]
+    ///  </code>
+    /// </para>
+    /// </remarks>
     private CommitToken BackupFile(TapeFileInfo template, out byte[]? hash, out TapeFileCodec codec)
     {
         m_logger.LogTrace("Backing up (packed) file >{File}< in {Method}",
@@ -510,18 +536,16 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         var wstream = Manager.BeginPackedFile() ??
             throw new TapeIOException(this, this, $"failed to open packed write stream for >{template.FileDescr.FullName}<");
-
         CommitToken token = wstream.CommitToken;
-        hash  = null;
+        hash = null;
         codec = TapeFileCodec.Stored;
-
         try
         {
-            var hasher = CreateHasher(TOC.CurrentSetTOC.HashAlgorithm);
+            var setTOC = TOC.CurrentSetTOC;
+            var hasher = CreateHasher(setTOC.HashAlgorithm);
 
-            TapeSerializer ts = new(wstream);
-            template.SerializeHeaderTo(ts);
-            // header is excluded from CRC hashing -- validated via DeserializeAndCheckHeaderFrom()
+            // Write the 2.1 header frame (with CRC-64); the codec byte follows with the body below.
+            TapeFileHeader.Write(wstream, setTOC.SetId, template);
 
 #if DEBUG
             if (SimulateFileFailures.ShouldFailNow())
@@ -538,19 +562,21 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             // Use TapeBackupSourceStream to capture all NTFS streams (ACL, ADS, EA, etc.)
             //  via BackupRead as an opaque blob.
             var fileInfo = template.FileDescr.CreateFileInfo();
-            var setTOC   = TOC.CurrentSetTOC;
 
             if (setTOC.Compression == TapeCompression.Software)
             {
                 // Software-ZSTD path via ProbingCompressionStream:
                 //  - Probes the first 128 KiB (one ZSTD block) to decide compress vs store.
+                //  - Writes the decision as the body's codec prefix (EmitsCodecPrefix), then the body.
                 //  - Remainder is piped directly to wstream without any intermediate buffer.
                 //  - Session (codec + probe buffers) is created once and reused across files.
                 //  - Hashing always covers the uncompressed bytes (codec-independent hash).
                 var session = GetOrCreateCompressionSession();
-                using var probing = new ProbingCompressionStream(wstream, session, setTOC.CompressionLevel);
+                using var probing = new ProbingCompressionStream(wstream, session, setTOC.CompressionLevel)
+                {
+                    EmitsCodecPrefix = true,
+                };
                 using var srcFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
-
                 if (hasher == null)
                 {
                     srcFileStream.CopyTo(probing);
@@ -569,8 +595,9 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             }
             else
             {
-                // None / Hardware path — no software compression; Codec stays Stored
+                // None / Hardware path — no software compression; the body is stored as is.
                 codec = TapeFileCodec.Stored;
+                TapeFileHeader.WriteCodec(wstream, codec);
                 if (hasher == null)
                 {
                     using var srcFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
@@ -590,7 +617,6 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             // Close the packer file slot. The actual TapeAddress will be reported
             //  later via Manager.FilesCommitted, keyed by the returned token.
             Manager.EndPackedFile();
-
             m_logger.LogTrace("File >{File}< handed off to packer ok", template.FileDescr.FullName);
             return token;
         }
@@ -602,7 +628,6 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             //  Critically, do NOT MoveToBlock here: that would clobber prior files.
             try { Manager.Packer?.DiscardOpenFile(); }
             catch (Exception dex) { m_logger.LogDebug(dex, "Packer.DiscardOpenFile threw"); }
-
             throw;
         }
     } // BackupFile()
@@ -930,6 +955,11 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     /// Backs up a pre-built file list to the current set.
     ///  Routes content writes through the shared-block packer; supports multi-volume continuation.
     /// </summary>
+    /// <remarks>
+    /// Files are written in format 2.1 only. An EMPTY legacy set (e.g. a trailing slot from a legacy TOC) is upgraded
+    ///  to 2.1 in place. A legacy set that already holds files cannot be upgraded — its existing files carry legacy
+    ///  headers, and one set has one data format (§6.1) -> hence refuse adding files to a legacy set.
+    /// </remarks>
     public TapeResult BackupFileListToCurrentSet(bool newSet, List<string> fileList, bool ignoreFailures = true,
         ITapeFileNotifiable? fileNotify = null)
     {
@@ -944,9 +974,25 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         ResetLatchedFailure();
         MediaHeaderStamped = false; // reset for the new series (per-series, cross-volume artifact)
 
+        TapeSetTOC set = TOC.CurrentSetTOC;
+        if (set.DataFormat != TapeDataFormat.V2)
+        {
+            if (set.Count > 0)
+            {
+                SetError(WIN32_ERROR.ERROR_INVALID_STATE,
+                    $"Set #{TOC.CurrentSetIndex} is a legacy set holding files — new files can only go to a 2.1 set");
+                LatchFailure();
+                return FailedOperationResult;
+            }
+            set.DataFormat = TapeDataFormat.V2;
+            set.SetId = Guid.NewGuid();
+            m_logger.LogInformation("Empty legacy set #{Set} upgraded to format 2.1 before backup", TOC.CurrentSetIndex);
+        }
+
         // Background estimation: source files can be scanned (stat'd) concurrently with the
         //  backup itself, progressively growing Statistics.BytesTotal as the scan proceeds.
         StartBackgroundSizeEstimate(fileList);
+
         // Do NOT call NotifySetStart(fileNotify, fileList.Count) here -- we do so once per set,
         //  ONLY in our private BackupFilesToCurrentSet()
 
@@ -956,7 +1002,6 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             m_logger.LogTrace("Performing incremental (packed) backup to incremental set #{Set}", TOC.CurrentSetIndex);
 
         MultiVolumeContext = new(fileList, ignoreFailures, fileNotify, TOC.CurrentSetTOC.Incremental);
-
         var result = BackupFilesToCurrentSet(newSet)
             ? TapeResult.OK : FailedOperationResult;
 

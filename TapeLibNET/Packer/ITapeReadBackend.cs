@@ -1,4 +1,4 @@
-namespace TapeLibNET.TapeFilePacker;
+namespace TapeLibNET.Packer;
 
 /// <summary>
 /// Outcome of one read operation submitted to <see cref="ITapeReadBackend.ReadOneBlock"/>.

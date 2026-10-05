@@ -1,4 +1,4 @@
-namespace TapeLibNET.TapeFilePacker;
+namespace TapeLibNET.Packer;
 
 /// <summary>
 /// Minimal abstraction the <see cref="TapeReadStreamFacade"/> uses to push reads back to

@@ -10,9 +10,8 @@ namespace TapeLibNET.Tests;
 /// <para>
 /// These tests exercise:
 /// <list type="bullet">
-///   <item><see cref="TapeFileInfo"/> serialization/deserialization (full + header-only)</item>
-///   <item><see cref="TapeSetTOC"/> serialization with all metadata fields</item>
-///   <item><see cref="TapeTOC"/> serialization with multiple sets and UID continuity</item>
+///   <item><see cref="TapeFileInfo"/> round trips as TOC entries, and their link to the on-tape file headers</item>
+///   <item><see cref="TapeSetTOC"/> serialization with all metadata fields, per-set FileId continuity</item>///   <item><see cref="TapeTOC"/> serialization with multiple sets and UID continuity</item>
 ///   <item>Edge cases: empty sets, 0-byte files, long paths, Unicode, large file counts</item>
 ///   <item>On-tape round-trips via <see cref="TapeAgentBase"/> (all drive profiles)</item>
 ///   <item>TOC copy redundancy — both copies readable after write</item>
@@ -259,6 +258,53 @@ public class TapeTOCRoundTripTests
     #endregion
 
 
+    #region *** TapeFileHeader and TapeFileInfo in TOC ***
+
+    /// <summary>
+    /// The identity restore checks a V2 file header against — <c>SetId</c> and <c>FileId</c> — survives a TOC round
+    ///  trip: a header written from the original entry matches the reloaded entry exactly.
+    /// </summary>
+    [Fact]
+    public void TapeFileHeader_MatchesTocEntry_AfterTocRoundTrip()
+    {
+        var toc = new TapeTOC("Header identity");
+        toc.AddNewSetTOC();
+        var original = MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(100L, 10U), @"C:\Data\test.txt");
+        toc.CurrentSetTOC.Append(original);
+
+        using var ms = new MemoryStream();
+        TapeFileHeader.Write(ms, toc.CurrentSetTOC.SetId, original);
+        ms.Position = 0;
+        TapeFileHeader header = TapeFileHeader.Read(ms);
+
+        TapeTOC reloaded = SerializeAndDeserialize(toc);
+        Assert.Equal(reloaded[1].SetId, header.SetId);
+        Assert.Equal(reloaded[1][0].FileId, header.FileId);
+        Assert.Equal(reloaded[1][0].FileDescr.FullName, header.Name);
+    }
+
+    /// <summary>
+    /// FileIds restart at 1 in every set, so FileId alone is ambiguous across sets — SetId tells them apart.
+    /// </summary>
+    [Fact]
+    public void TapeFileHeader_OtherSetOrFile_DoesNotMatchTocEntry()
+    {
+        var toc = BuildComplexTOC(2, 2, description: "Two sets");
+        TapeFileInfo file = toc[1][0];
+
+        using var ms = new MemoryStream();
+        TapeFileHeader.Write(ms, toc[1].SetId, file);
+        ms.Position = 0;
+        TapeFileHeader header = TapeFileHeader.Read(ms);
+
+        Assert.Equal(toc[2][0].FileId, header.FileId);     // same FileId in the other set...
+        Assert.NotEqual(toc[2].SetId, header.SetId);       // ...but a different SetId
+        Assert.NotEqual(toc[1][1].FileId, header.FileId);  // another file of the same set
+    }
+
+    #endregion
+
+
     #region *** TapeFileInfo — In-Memory Serialization ***
 
     [Fact]
@@ -315,37 +361,6 @@ public class TapeTOCRoundTripTests
         var result = SerializeAndDeserialize(original);
 
         AssertFileInfoEqual(original, result);
-    }
-
-    [Fact]
-    public void TapeFileInfo_HeaderSerialize_MatchesUID()
-    {
-        var original = MakeFileInfo(42UL, new TapeAddress(100L, 10U), @"C:\Data\test.txt");
-
-        using var ms = new MemoryStream();
-        var serializer = new TapeSerializer(ms);
-        original.SerializeHeaderTo(serializer);
-
-        ms.Position = 0;
-        var deserializer = new LegacyDeserializer(ms);
-        Assert.True(original.DeserializeAndCheckHeaderFrom(deserializer));
-    }
-
-    [Fact]
-    public void TapeFileInfo_HeaderSerialize_MismatchUID_ReturnsFalse()
-    {
-        var original = MakeFileInfo(42UL, new TapeAddress(100L, 10U), @"C:\Data\test.txt");
-        var different = MakeFileInfo(99UL, new TapeAddress(200L, 20U), @"C:\Data\other.txt");
-
-        using var ms = new MemoryStream();
-        var serializer = new TapeSerializer(ms);
-        original.SerializeHeaderTo(serializer);
-
-        ms.Position = 0;
-        var deserializer = new LegacyDeserializer(ms);
-
-        // different UID should fail the check
-        Assert.False(different.DeserializeAndCheckHeaderFrom(deserializer));
     }
 
     [Fact]
@@ -552,30 +567,26 @@ public class TapeTOCRoundTripTests
         Assert.Equal(original.MediaId, copy.MediaId);
     }
 
+    //private static byte[] BuildLegacyEmptyTOCBytes(
+    //    ulong nextUID, string description, DateTime creation, DateTime lastSave,
+    //    int volume, bool continued)
+
     /// <summary>
-    /// Builds a pre-MediaId (TocVersionInitial / 0x0101) on-tape image of an EMPTY TOC:
-    ///  identical to the current layout but WITHOUT the MediaId field and with the old
-    ///  version in the signature. An empty set list serializes as just its count (0),
-    ///  so we can hand-write the whole stream with serializer primitives.
+    /// A pre-MediaId (<see cref="TapeTOC.TocVersionInitial"/>) on-tape image of an EMPTY TOC, via the test-only
+    ///  <see cref="LegacyTocWriter"/>. Times are given as the LOCAL wall-clock a legacy build held.
     /// </summary>
     private static byte[] BuildLegacyEmptyTOCBytes(
-        ulong nextUID, string description, DateTime creation, DateTime lastSave,
+        string description, DateTime creationLocal, DateTime lastSaveLocal,
         int volume, bool continued)
     {
-        using var ms = new MemoryStream();
-        var s = new TapeSerializer(ms);
-
-        s.SerializeSignature(TapeTOC.TocVersionInitial); // 0x0101 — no MediaId follows
-
-        s.Serialize(nextUID);
-        s.Serialize(0);            // setTOCs: empty list == count 0 (NO MediaId before it)
-        s.Serialize(description);
-        s.Serialize(creation);
-        s.Serialize(lastSave);
-        s.Serialize(volume);
-        s.Serialize(continued);
-
-        return ms.ToArray();
+        var toc = new TapeTOC(description)
+        {
+            CreationTime = creationLocal.ToUniversalTime(),
+            LastSaveTime = lastSaveLocal.ToUniversalTime(),
+            Volume = volume,
+            ContinuedOnNextVolume = continued,
+        };
+        return LegacyTocWriter.TocBytes(toc, TapeTOC.TocVersionInitial);
     }
 
     [Fact]
@@ -584,8 +595,8 @@ public class TapeTOCRoundTripTests
         var creation = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Local);
         var lastSave = new DateTime(2020, 1, 2, 0, 0, 0, DateTimeKind.Local);
         var bytes = BuildLegacyEmptyTOCBytes(
-            nextUID: 5UL, description: "Legacy Media",
-            creation: creation, lastSave: lastSave, volume: 2, continued: true);
+            description: "Legacy Media",
+            creationLocal: creation, lastSaveLocal: lastSave, volume: 2, continued: true);
 
         using var ms = new MemoryStream(bytes);
         var toc = LegacyTocReader.ReadToc(new LegacyDeserializer(ms), LegacyTocReader.Layout.B);
@@ -1392,9 +1403,9 @@ public class TapeTOCRoundTripTests
         toc.AddNewSetTOC(2);
         toc.CurrentSetTOC.BlockSize = 1024;
 
-        // File 1: 100 bytes → header + 100 = ~112 bytes → 1 block = 1024
+        // File 1: 100 bytes + V2 header frame and codec byte (~135 B) → fits 1 block
         toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), TapeAddress.Zero, @"C:\A.txt", 100));
-        // File 2: 2000 bytes → header + 2000 = ~2012 bytes → 2 blocks = 2048
+        // File 2: 2000 bytes + ~135 B → 3 blocks if aligned; the set is packed (offset 1), so the total rounds once
         toc.CurrentSetTOC.Append(MakeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(10L, 1U), @"C:\B.txt", 2000));
 
         long totalSize = toc.CurrentSetTOC.ComputeTotalFileSizeOnTape();
@@ -1437,19 +1448,21 @@ public class TapeTOCRoundTripTests
         Assert.InRange(actual, 1, tfi.EstimateSerializedSize());
     }
 
+    /// <summary>The per-format overhead estimate: exact for legacy sets, an upper bound for V2 sets.</summary>
     [Fact]
-    public void TapeFileInfo_EstimateSerializedHeaderSize_MatchesActual()
+    public void TapeSetTOC_EstimateFileOverhead_PerDataFormat()
     {
-        var tfi = MakeFileInfo(42UL, new TapeAddress(128L, 32U), @"C:\Data\report.xlsx");
+        var toc = new TapeTOC("Overhead");
+        toc.AddNewSetTOC();
+        TapeSetTOC set = toc.CurrentSetTOC;
+        var tfi = MakeFileInfo(set.GenerateFileId(), new TapeAddress(128L, 32U), @"C:\Data\report.xlsx");
 
-        int estimated = TapeFileInfo.EstimateSerializedHeaderSize();
+        int v2Exact = TapeFileHeader.Measure(set.SetId, tfi) + TapeFileHeader.CodecPrefixLength;
+        Assert.InRange(v2Exact, 1, set.EstimateFileOverhead(tfi));
 
-        using var ms = new MemoryStream();
-        var serializer = new TapeSerializer(ms);
-        tfi.SerializeHeaderTo(serializer);
-        int actual = (int)ms.Length;
-
-        Assert.Equal(estimated, actual);
+        set.DataFormat = TapeDataFormat.Legacy;
+        Assert.Equal(LegacyFileHeader.Size, set.EstimateFileOverhead(tfi));
+        Assert.Equal(LegacyFileHeader.Size, LegacyFileHeaderWriter.Bytes(tfi.FileId).Length);
     }
 
     #endregion
@@ -1647,8 +1660,8 @@ public class TapeTOCRoundTripTests
     {
         var creationLocal = new DateTime(2020, 7, 1, 12, 0, 0, DateTimeKind.Local);
         var bytes = BuildLegacyEmptyTOCBytes(
-            nextUID: 5UL, description: "Legacy Media",
-            creation: creationLocal, lastSave: creationLocal, volume: 1, continued: false);
+            description: "Legacy Media",
+            creationLocal: creationLocal, lastSaveLocal: creationLocal, volume: 1, continued: false);
 
         using var ms = new MemoryStream(bytes);
         var toc = LegacyTocReader.ReadToc(new LegacyDeserializer(ms), LegacyTocReader.Layout.B);

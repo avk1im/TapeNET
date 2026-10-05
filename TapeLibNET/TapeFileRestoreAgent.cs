@@ -1,12 +1,10 @@
-﻿using TapeLibNET.Legacy;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.IO.Hashing;
-using System.Net.Http.Headers;
-using System.Runtime.Intrinsics.X86;
-using TapeLibNET;
 using Windows.Win32.Foundation;
 
+using TapeLibNET.Format;
+using TapeLibNET.Legacy;
 
 namespace TapeLibNET;
 
@@ -140,8 +138,15 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     //  reads are synchronous and notifications fire in-line.
     // =====================================================================
 
-    // Returns true on success, false on failure.
-    //  Sets fileFailedAction only if the caller should abort entire operation.
+    /// <summary>
+    /// Returns <see langword="true"/> on success, <see langword="false"/> on failure.
+    ///  Sets <paramref name="fileFailedAction"/> only if the caller should abort entire operation.
+    /// </summary>
+    /// <param name="tfi">The tape file info.</param>
+    /// <param name="fileFailedAction">The action to take if the file fails.</param>
+    /// <param name="fileNotify">The file notifiable.</param>
+    /// <returns><see langword="true"/> if the file was restored successfully; otherwise, <see langword="false"/>.</returns>
+    /// <exception cref="TapeIOException"></exception>
     private bool RestoreNextFile(TapeFileInfo tfi, ref FileFailedAction fileFailedAction, ITapeFileNotifiable? fileNotify = null)
     {
         try
@@ -154,12 +159,15 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 return false;
             }
 
+            TapeSetTOC setTOC = TOC.CurrentSetTOC;
+
             // The packer needs the file's exact tape position and length to bound its
             //  read window. Use SizeOnTape (set during packed backup) when available;
-            //  fall back to estimated size for legacy/aligned files.
+            //  fall back to an estimate in the set's own data format otherwise.
             long totalBytes = (tfi.SizeOnTape > 0)
                 ? tfi.SizeOnTape
-                : TapeFileInfo.EstimateSerializedHeaderSize() + tfi.FileDescr.Length;
+                : setTOC.EstimateFileOverhead(tfi) + tfi.FileDescr.Length;
+
             using var rstream = Manager.BeginPackedFileRead(tfi.Address, totalBytes);
             if (rstream == null)
             {
@@ -176,13 +184,9 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 return false;
             }
 
-            // Validate header (UID + signature) before delivering the body.
-            var deserializer = new LegacyDeserializer(rstream);
-            if (!tfi.DeserializeAndCheckHeaderFrom(deserializer))
-            {
-                throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
-                    $"Header mismatch for file >{tfi.FileDescr.FullName}<");
-            }
+            // Validate the file header (per data format) and read the body's codec, before delivering the body.
+            CheckFileHeader(rstream, setTOC, tfi);
+            TapeFileCodec codec = ReadBodyCodec(rstream, setTOC, tfi);
 
 #if DEBUG
             if (SimulateFileFailures.ShouldFailNow())
@@ -192,8 +196,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             }
 #endif
 
-            var hasher = CreateHasher(TOC.CurrentSetTOC.HashAlgorithm);
-
+            var hasher = CreateHasher(setTOC.HashAlgorithm);
             var fileDescr = tfi.FileDescr;
             if (!PreProcessFileInternal(ref fileDescr) || !NotifyPreProcessFile(fileNotify, tfi))
             {
@@ -202,12 +205,13 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 m_logger.LogTrace("Skipping (packed) file >{File}< per pre-processor request", tfi.FileDescr.FullName);
                 return true;
             }
+
             FileInfo fileInfo = fileDescr.CreateFileInfo();
 
             // Wrap rstream with a decompressor when the file was ZSTD-compressed at backup time.
             //  The hasher inside RestoreFileCore always sees decompressed bytes (codec-independent hash).
             //  For Stored files, bodyStream == rstream (no allocation, no copy).
-            ZstdCodec? zstdCodec = tfi.Codec == TapeFileCodec.Zstd ? new ZstdCodec() : null;
+            ZstdCodec? zstdCodec = codec == TapeFileCodec.Zstd ? new ZstdCodec() : null;
             using (zstdCodec)
             {
                 Stream bodyStream = zstdCodec != null
@@ -228,19 +232,16 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 if (tfi.Hash == null)
                     throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
                         $"Hash missing in file info for file >{tfi.FileDescr.FullName}<");
-
                 if (!tfi.Hash.SequenceEqual(hasher.GetCurrentHash()))
                 {
                     throw new TapeIOException((uint)WIN32_ERROR.ERROR_CRC,
-                        $"CRC check failed for file >{tfi.FileDescr.FullName}<. Hasher: {TOC.CurrentSetTOC.HashAlgorithm}");
+                        $"CRC check failed for file >{tfi.FileDescr.FullName}<. Hasher: {setTOC.HashAlgorithm}");
                 }
             }
 
             BytesRestored += tfi.FileDescr.Length;
-
             if (NotifyPostProcessFile(fileNotify, tfi))
                 return PostProcessFileInternal(fileDescr, fileInfo);
-
             return true;
         }
         catch (TapeAbortRequestedException)
@@ -254,21 +255,95 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         catch (Exception ex)
         {
             SetError(ex);
-
             // NotifyFileFailed wrapper will catch TapeAbortRequestedException and set IsAbortRequested
             //  if the caller requested abort, so we don't need to worry here
             fileFailedAction = NotifyFileFailed(fileNotify, tfi, ex);
-
             m_logger.LogWarning("Exception {Exception} while processing (packed) file >{File}<", ex, tfi.FileDescr.FullName);
             return false;
         }
     } // RestoreNextFile()
 
+    /// <summary>
+    /// Reads and checks the per-file header in front of <paramref name="tfi"/>'s body, in the set's data format.
+    ///  Leaves <paramref name="rstream"/> at the first byte after the header.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>V2:</b> the frame's CRC-64, then identity — <c>SetId</c> and <c>FileId</c> must both match. A path mismatch is
+    ///  only logged: the TOC is authoritative for names, and a later TOC-level rename is conceivable.
+    /// </para>
+    /// <para><b>Legacy:</b> the 12-byte <c>TF</c> header must carry the file's legacy UID (its <c>FileId</c>).</para>
+    /// </remarks>
+    /// <exception cref="TapeIOException">ERROR_CRC for a damaged frame, ERROR_INVALID_DATA for anything else.</exception>
+    private void CheckFileHeader(Stream rstream, TapeSetTOC setTOC, TapeFileInfo tfi)
+    {
+        if (setTOC.DataFormat == TapeDataFormat.Legacy)
+        {
+            if (!LegacyFileHeader.Matches(new LegacyDeserializer(rstream), tfi.FileId))
+                throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                    $"Header mismatch for file >{tfi.FileDescr.FullName}<");
+            return;
+        }
 
-    // Restore the files specified by 'tfis' from the current set via the packer.
-    //  Mirrors RestoreFilesFromCurrentSet(List<TapeFileInfo>?, ...) but uses TapeAddress
-    //  positioning and the packed read façade. No tape MoveToBlock is needed here -- the
-    //  packer seeks to the file's exact (block, offset) on BeginRead.
+        TapeFileHeader header;
+        try
+        {
+            header = TapeFileHeader.Read(rstream);
+        }
+        catch (TapeFormatException ex)
+        {
+            throw new TapeIOException(
+                ex.Kind == FormatErrorKind.CrcMismatch ? (uint)WIN32_ERROR.ERROR_CRC : (uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                $"File header unreadable for file >{tfi.FileDescr.FullName}<: {ex.Message}");
+        }
+
+        if (header.SetId != setTOC.SetId || header.FileId != tfi.FileId)
+            throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                $"Header mismatch for file >{tfi.FileDescr.FullName}<: tape carries set {header.SetId:N} file " +
+                $"{header.FileId}, expected set {setTOC.SetId:N} file {tfi.FileId}");
+
+        if (!string.Equals(header.Name, tfi.FileDescr.FullName, StringComparison.Ordinal))
+            m_logger.LogWarning("File header name >{TapeName}< differs from the TOC name >{TocName}< (FileId {FileId}); " +
+                "the TOC is authoritative", header.Name, tfi.FileDescr.FullName, tfi.FileId);
+    }
+
+    /// <summary>
+    /// Reads the codec byte at the start of a V2 body and checks it against the TOC. Legacy bodies carry no codec byte:
+    ///  their codec comes from the TOC alone.
+    /// </summary>
+    /// <exception cref="TapeIOException">ERROR_INVALID_DATA — missing, unknown, or disagreeing codec.</exception>
+    private static TapeFileCodec ReadBodyCodec(Stream rstream, TapeSetTOC setTOC, TapeFileInfo tfi)
+    {
+        if (setTOC.DataFormat == TapeDataFormat.Legacy)
+            return tfi.Codec;
+
+        TapeFileCodec codec;
+        try
+        {
+            codec = TapeFileHeader.ReadCodec(rstream);
+        }
+        catch (TapeFormatException ex)
+        {
+            throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                $"Codec byte unreadable for file >{tfi.FileDescr.FullName}<: {ex.Message}");
+        }
+
+        if (codec != tfi.Codec)
+            throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                $"Codec mismatch for file >{tfi.FileDescr.FullName}<: tape says {codec}, TOC says {tfi.Codec}");
+        return codec;
+    }
+
+    /// <summary>
+    /// Restore the files specified by 'tfis' from the current set via the packer.
+    ///  Uses <see cref="TapeAddress"/> positioning and the packed read façade.
+    ///  No <see cref="TapeDrive.MoveToBlock"/> is needed here -- thepacker seeks to the file's
+    ///  exact <c>(block, offset)</c> on <see cref="TapeStreamManager.BeginPackedFileRead"/> .
+    /// </summary>
+    /// <param name="tfis">The list of TapeFileInfo objects representing the files to restore.</param>
+    /// <param name="ignoreFailures">Whether to ignore failures during the restore process.</param>
+    /// <param name="fileNotify">An optional notifier for file restore progress.</param>
+    /// <returns>True if all files were restored successfully; otherwise, false.</returns>
     private bool RestoreFilesFromCurrentSet(List<TapeFileInfo>? tfis, bool ignoreFailures = true,
         ITapeFileNotifiable? fileNotify = null)
     {
@@ -710,7 +785,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 
 /// <summary>
 /// Restore agent that writes tape data to disk files and applies original file attributes.
-///  Uses double-buffered reads via <see cref="BufferedTapeReadStream"/>.
+///  Reads come through the packer's pipelined read ring; <see cref="TapeBackupTargetStream"/> restores all NTFS streams.
 /// </summary>
 public class TapeFileRestoreAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeFileRestoreBaseAgent(drive, legacyTOC)
 {

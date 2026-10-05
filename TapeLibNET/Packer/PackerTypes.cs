@@ -1,4 +1,4 @@
-namespace TapeLibNET.TapeFilePacker;
+namespace TapeLibNET.Packer;
 
 /// <summary>
 /// Opaque correlation handle returned by <see cref="TapeFileWritePacker.EndFile"/>.

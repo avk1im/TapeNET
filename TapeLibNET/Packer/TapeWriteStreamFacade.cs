@@ -1,4 +1,4 @@
-namespace TapeLibNET.TapeFilePacker;
+namespace TapeLibNET.Packer;
 
 /// <summary>
 /// Thin <see cref="Stream"/> façade returned by <see cref="TapeFileWritePacker.BeginFile"/>.

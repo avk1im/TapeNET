@@ -22,7 +22,7 @@ public sealed class TapeBackupAgentPackedTests_SetHeaders : TapeBackupAgentPacke
 /// <see cref="TapeFileBackupAgent.BackupFileListToCurrentSet"/> and
 /// <see cref="TapeFileBackupAgent.BackupFilesToCurrentSet(bool, System.Collections.Generic.List{string}, bool, bool, ITapeFileNotifiable?)"/>.
 /// <para>
-/// These tests exercise the <c>TapeFilePacker</c>-backed write pipeline introduced
+/// These tests exercise the <c>Packer</c>-backed write pipeline introduced
 /// in Phase 2: file slots are opened on the packer, addresses are surfaced
 /// asynchronously through <c>FilesCommitted</c>, and post-process notifications
 /// are deferred until commit time. They do NOT exercise restore, since the
