@@ -7,6 +7,7 @@ namespace TapeLibNET;
 /// <remarks>
 /// Each outcome rests on evidence in the block itself, never on another test having failed. Concluding "TOC" merely
 ///  because a block carried our signature and no header parsed turned every CRC-damaged header into a phantom TOC copy.
+///  New values are APPENDED.
 /// </remarks>
 public enum HeaderBlockIdentity
 {
@@ -24,6 +25,11 @@ public enum HeaderBlockIdentity
     DamagedRecord,
     /// <summary>The first block of a table-of-contents copy, verified structurally by <see cref="TapeTOC.TryPeek"/>.</summary>
     TocCopy,
+    /// <summary>
+    /// A 2.1 calibration checkpoint block, identified by its record kind (Design-Format-v2 §5.9). Legacy checkpoints carry
+    ///  no kind of their own and still identify as <see cref="DamagedRecord"/>, as they always did.
+    /// </summary>
+    CalibrationCheckpoint,
 }
 
 /// <summary>The outcome of <see cref="TapeHeaderBlock.IdentifyBlock"/>, with whatever evidence the kind carries.</summary>
@@ -96,8 +102,8 @@ public static partial class TapeHeaderBlock
     #region *** Positive identification ***
 
     /// <summary>
-    /// Identifies one block positively: a TOC copy, an intact header, a damaged record — or none of them. Pure, total,
-    ///  TOC-free (Design-Format-v2 §5.9).
+    /// Identifies one block positively: a TOC copy, an intact header, a calibration checkpoint, a damaged record — or
+    ///  none of them. Pure, total, TOC-free (Design-Format-v2 §5.9).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -112,6 +118,8 @@ public static partial class TapeHeaderBlock
     ///    (<see cref="TapeTOC.TryPeek"/>), else <see cref="HeaderBlockIdentity.DamagedRecord"/>.</item>
     ///   <item><c>FileHeader</c> → <see cref="HeaderBlockIdentity.Foreign"/>: content, the first file of a set standing at
     ///    a block boundary — not a damaged or newer record.</item>
+    ///   <item><c>CalibrationCheckpoint</c> → <see cref="HeaderBlockIdentity.CalibrationCheckpoint"/> when it verifies,
+    ///    else <see cref="HeaderBlockIdentity.DamagedRecord"/> with the reason.</item>
     ///   <item>Every other kind → the header frame: <see cref="HeaderBlockIdentity.Header"/> when it verifies and parses,
     ///    else <see cref="HeaderBlockIdentity.DamagedRecord"/> with the reason. An unknown kind or a newer major with an
     ///    intact CRC is "ours, from a newer TapeNET" (<see cref="TapeFramer.FrameStatus.Unparseable"/>).</item>
@@ -146,11 +154,21 @@ public static partial class TapeHeaderBlock
             case TapeRecordKind.FileHeader:
                 return IdentifiedBlock.Foreign;    // content: the first file of a set at a block boundary
 
+            case TapeRecordKind.CalibrationCheckpoint:
+            {
+                var status = TapeFrame.TryUnpack(data, out TapeCalibrationCheckpoint? _, out _, out _);
+                return status == TapeFramer.FrameStatus.Ok
+                    ? new(HeaderBlockIdentity.CalibrationCheckpoint, FrameStatus: status)
+                    : new(HeaderBlockIdentity.DamagedRecord, FrameStatus: status);
+            }
+
             default:
+            {
                 var status = TapeFramer.TryUnpackHeader(block, length, out TapeHeader? header);
                 return status == TapeFramer.FrameStatus.Ok && header is not null
                     ? new(HeaderBlockIdentity.Header, Header: header, FrameStatus: status)
                     : new(HeaderBlockIdentity.DamagedRecord, FrameStatus: status);
+            }
         }
     }
 

@@ -95,15 +95,12 @@ public static class TapePrimitives
     /// <exception cref="TapeFormatException"><see cref="FormatErrorKind.Truncated"/> or <see cref="FormatErrorKind.BadValue"/>.</exception>
     public static ulong ReadVarUInt(ReadOnlySpan<byte> source, out int consumed)
     {
-        switch (TryReadVarUIntCore(source, out ulong value, out consumed))
+        return TryReadVarUIntCore(source, out ulong value, out consumed) switch
         {
-            case VarUIntStatus.Ok:
-                return value;
-            case VarUIntStatus.Truncated:
-                throw new TapeFormatException(FormatErrorKind.Truncated, "varuint is cut off");
-            default:
-                throw TapeFormatException.Bad("varuint is overlong or overflows 64 bits");
-        }
+            VarUIntStatus.Ok => value,
+            VarUIntStatus.Truncated => throw new TapeFormatException(FormatErrorKind.Truncated, "varuint is cut off"),
+            _ => throw TapeFormatException.Bad("varuint is overlong or overflows 64 bits"),
+        };
     }
 
     /// <summary>ZigZag: maps small magnitudes of either sign to small unsigned values.</summary>

@@ -11,22 +11,16 @@ internal static class LegacyFramer
     /// <summary>Bytes a frame adds around its payload: the int32 length prefix and the CRC-32 trailer.</summary>
     public const int Overhead = sizeof(int) + sizeof(uint);
 
-    /// <summary>Parses a framed <see cref="ITapeSerializable"/> record (calibration header / checkpoint until Phase 6).</summary>
-    public static TapeFramer.FrameStatus TryUnpack<T>(byte[] block, int length, out T? record)
-        where T : class, ITapeSerializable
-        => TryUnpack(block, length, d => T.ConstructFrom(d) as T, out record);
-
     /// <summary>
     /// Parses a framed record out of <paramref name="block"/> with <paramref name="parse"/> and verifies its CRC.
     /// </summary>
     /// <param name="block">The block as read from tape; padding behind the frame is ignored.</param>
     /// <param name="length">Bytes actually read (may be less than <paramref name="block"/>'s length).</param>
-    /// <param name="parse">Payload reader; returns null for a payload that is not the expected record.</param>
+    /// <param name="parse">
+    /// Payload reader — <see cref="LegacyHeaderReader.Read"/> for headers, <see cref="LegacyCheckpointReader.ReadCheckpoint"/>
+    ///  for checkpoints; returns null for a payload that is not the expected record.
+    /// </param>
     /// <param name="record">The record when the result is <see cref="TapeFramer.FrameStatus.Ok"/>; null otherwise.</param>
-    /// <remarks>
-    /// The delegate form serves records that no longer implement <see cref="ITapeSerializable"/> — the media and set
-    ///  headers, which write format 2.1 but must still read their legacy ancestors (<see cref="LegacyHeaderReader.Read"/>).
-    /// </remarks>
     public static TapeFramer.FrameStatus TryUnpack<T>(byte[] block, int length, Func<LegacyDeserializer, T?> parse,
         out T? record) where T : class
     {

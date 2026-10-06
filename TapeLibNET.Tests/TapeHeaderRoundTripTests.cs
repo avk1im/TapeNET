@@ -260,13 +260,15 @@ public class TapeHeaderRoundTripTests
         Assert.Equal(plan.TailCapacityFraction, cal.Plan.TailCapacityFraction);
     }
 
-    /// <summary>Transitional until Phase 6: the calibration header is still written in the LEGACY frame.</summary>
+    /// <summary>
+    /// Since Phase 6 the calibration header is written in format 2.1, like every other header.
+    /// </summary>
     [Fact]
-    public void CalibrationHeader_IsStillLegacyFramed()
+    public void CalibrationHeader_IsWrittenInFormat21()
     {
         byte[] block = PackIntoBlock(MakeCalibrationHeader());
-        Assert.False(TapeFormat.IsV2(block));
-        Assert.Throws<InvalidOperationException>(() => TapeFrame.Pack<TapeHeader>(MakeCalibrationHeader()));
+        Assert.True(TapeFormat.IsV2(block));
+        Assert.Equal((ushort)TapeRecordKind.CalibrationRunHeader, BitConverter.ToUInt16(block, 4));
     }
 
     #endregion

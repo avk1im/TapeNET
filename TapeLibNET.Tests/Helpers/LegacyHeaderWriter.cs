@@ -16,10 +16,6 @@ namespace TapeLibNET.Tests.Helpers;
 ///  converts them with <c>LegacyTime.FromLocal</c>. This writer converts back with <see cref="DateTime.ToLocalTime"/>,
 ///  so <c>read → Frame</c> reproduces the original bytes (away from DST transitions).
 /// </para>
-/// <para>
-/// The calibration header is still legacy in the product until Phase 6: for it, <see cref="Frame"/> forwards to
-///  <see cref="TapeFramer.Pack(ITapeSerializable)"/>.
-/// </para>
 /// </remarks>
 internal static class LegacyHeaderWriter
 {
@@ -34,9 +30,20 @@ internal static class LegacyHeaderWriter
     {
         TapeMediaHeader media => FramePayload(MediaPayload(media, includeSetHeadersFlag)),
         TapeSetHeader set => FramePayload(SetPayload(set)),
-        TapeCalibrationHeader calibration => TapeFramer.Pack(calibration),
+        TapeCalibrationHeader calibration => CalibrationFrame(calibration),
         _ => throw new ArgumentException($"no legacy writer for {header.GetType().Name}", nameof(header)),
     };
+
+    // Calibration headers held UTC ticks (DateTime.UtcNow): written as they are, unlike media / set headers.
+    private static byte[] CalibrationFrame(TapeCalibrationHeader h)
+    {
+        TapeCalibrationPlan p = h.Plan;
+        return LegacyFormatWriter.Frame(LegacyFormatWriter.CalibrationHeaderPayload(
+            h.RunId, h.StartedUtc, h.RunBlockSize, h.ProfileKey, h.CapacityReportedAtBom,
+            new LegacyCalibrationPlan(p.SampleCount, p.BodySampleCount, p.TailSampleCount, p.BlockSize,
+                p.BlocksPerChunk, p.ChunkSize, p.TailBlocksPerChunk, p.TailChunkSize,
+                p.TailCapacityFraction, p.NumCheckpoints)));
+    }
 
     /// <summary>The legacy frame padded into one standard header block.</summary>
     public static byte[] Block(TapeHeader header, bool includeSetHeadersFlag = true)

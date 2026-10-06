@@ -4,6 +4,51 @@ using TapeLibNET.Legacy;
 namespace TapeLibNET;
 
 /// <summary>
+/// Schema target for the run plan, nested as a group in the calibration header (Design-Format-v2 §5.4).
+/// </summary>
+/// <remarks>
+/// Wraps the immutable <see cref="TapeCalibrationPlan"/> and updates it field by field with <c>with</c>, so each schema
+///  line binds to the plan property's OWN type — no copy of the plan's field types to keep in step.
+/// </remarks>
+internal sealed class TapeCalibrationPlanWire
+{
+    public TapeCalibrationPlan Plan;
+
+    /// <summary>Group schema (no record kind). All fields required: a resume must reproduce the cadence exactly.</summary>
+    public static readonly TapeSchema<TapeCalibrationPlanWire> Schema = new()
+    {
+        { 1,  w => w.Plan.SampleCount,          (w, v) => w.Plan = w.Plan with { SampleCount = v },          FieldFlags.Required },
+        { 2,  w => w.Plan.BodySampleCount,      (w, v) => w.Plan = w.Plan with { BodySampleCount = v },      FieldFlags.Required },
+        { 3,  w => w.Plan.TailSampleCount,      (w, v) => w.Plan = w.Plan with { TailSampleCount = v },      FieldFlags.Required },
+        { 4,  w => w.Plan.BlockSize,            (w, v) => w.Plan = w.Plan with { BlockSize = v },            FieldFlags.Required },
+        { 5,  w => w.Plan.BlocksPerChunk,       (w, v) => w.Plan = w.Plan with { BlocksPerChunk = v },       FieldFlags.Required },
+        { 6,  w => w.Plan.ChunkSize,            (w, v) => w.Plan = w.Plan with { ChunkSize = v },            FieldFlags.Required },
+        { 7,  w => w.Plan.TailBlocksPerChunk,   (w, v) => w.Plan = w.Plan with { TailBlocksPerChunk = v },   FieldFlags.Required },
+        { 8,  w => w.Plan.TailChunkSize,        (w, v) => w.Plan = w.Plan with { TailChunkSize = v },        FieldFlags.Required },
+        { 9,  w => w.Plan.TailCapacityFraction, (w, v) => w.Plan = w.Plan with { TailCapacityFraction = v }, FieldFlags.Required },
+        { 10, w => w.Plan.NumCheckpoints,       (w, v) => w.Plan = w.Plan with { NumCheckpoints = v },       FieldFlags.Required },
+    };
+}
+
+/// <summary>Wire form of the 2.1 calibration run header (record kind <c>CalibrationRunHeader</c>, §5.4).</summary>
+internal sealed class TapeCalibrationHeaderWire : TapeHeaderWire
+{
+    public long CapacityReportedAtBom;
+    public string ProfileKey = "";
+    public TapeCalibrationPlanWire? Plan = new();
+
+    public static readonly TapeSchema<TapeCalibrationHeaderWire> Schema = new(TapeRecordKind.CalibrationRunHeader, inherits: Shared)
+    {
+        // ── scalars 1–31 (1–3 inherited: RunId, StartedUtc, RunBlockSize) ──
+        { 4,  w => w.CapacityReportedAtBom, (w, v) => w.CapacityReportedAtBom = v, FieldFlags.Required },
+        // ── strings 32–47 ──
+        { 32, w => w.ProfileKey,            (w, v) => w.ProfileKey = v },
+        // ── groups 48–63 ──
+        { 48, w => w.Plan,                  (w, v) => w.Plan = v,                  TapeCalibrationPlanWire.Schema, FieldFlags.Required },
+    };
+}
+
+/// <summary>
 /// Calibration run header written once at BOM of a scratch cartridge — the calibration kind of the unified
 ///  <see cref="TapeHeader"/> hierarchy.
 /// </summary>
@@ -14,16 +59,17 @@ namespace TapeLibNET;
 ///  Profile MATCHING against the current drive is deliberately NOT done here — that is the caller's responsibility.
 /// </para>
 /// <para>
-/// <b>Transitional (Phase 5):</b> still written in the LEGACY frame through <see cref="ITapeSerializable"/> and
-///  <see cref="TapeFramer.Pack(ITapeSerializable)"/>, like the calibration checkpoint; both move to format 2.1 together
-///  in Phase 6 (Design-Format-v2 §5.4, §5.5). <see cref="WriteBody"/> therefore refuses.
+/// <b>Format 2.1</b> block frame (Design-Format-v2 §5.4): the shared tags 1–3 carry <see cref="RunId"/>,
+///  <see cref="StartedUtc"/> and <see cref="RunBlockSize"/>; the plan travels as a nested group. Legacy run headers on
+///  existing cartridges keep reading (<see cref="ConstructBody"/>), so Resume and Recalibrate of a legacy run still work.
 /// </para>
 /// <para>
-/// The calibration header rides in the run's own block via the calibrator's <c>RecordBlockWriter</c>, NOT the fixed
-///  16 KiB header block, so <see cref="TapeHeader.BlockSize"/> carries the run block size.
+/// Written either as one standard header block (<see cref="TapeHeaderBlock.Write"/>) or — on drives whose maximum block
+///  is smaller — in the run's own block via the calibrator's <c>RecordBlockWriter</c>. <see cref="TapeHeader.BlockSize"/>
+///  carries the run block size in both cases.
 /// </para>
 /// </remarks>
-public sealed record TapeCalibrationHeader : TapeHeader, ITapeSerializable
+public sealed record TapeCalibrationHeader : TapeHeader
 {
     /// <inheritdoc/>
     public override TapeHeaderKind Kind => TapeHeaderKind.Calibration;
@@ -63,57 +109,41 @@ public sealed record TapeCalibrationHeader : TapeHeader, ITapeSerializable
             Plan = plan,
         };
 
-    /// <summary>Format 2.1 write — not before Phase 6. Callers pack through <see cref="TapeFramer.PackHeader"/>.</summary>
-    public override void WriteBody(TapeFieldWriter fields)
-        => throw new InvalidOperationException(
-            "The calibration header is written in the legacy frame until Phase 6 (TapeFramer.Pack)");
-
-    #region *** Legacy (ITapeSerializable) — removed in Phase 6 ***
+    #region *** Format 2.1 ***
 
     /// <inheritdoc/>
-    /// <remarks>The calibration golden file pins these bytes: change nothing here until Phase 6 replaces it.</remarks>
-    public void SerializeTo(TapeSerializer s)
+    public override void WriteBody(TapeFieldWriter fields) => TapeCalibrationHeaderWire.Schema.Write(fields, new TapeCalibrationHeaderWire
     {
-        SerializePreamble(s);   // signature + Kind + RunId (16 bytes) + StartedUtc + BlockSize
-        s.Serialize(ProfileKey);            // length-prefixed UTF-8
-        s.Serialize(CapacityReportedAtBom);
-        // Plan — enough to resume with an IDENTICAL cadence/chunking, without re-resolving.
-        s.Serialize(Plan.SampleCount);
-        s.Serialize(Plan.BodySampleCount);
-        s.Serialize(Plan.TailSampleCount);
-        s.Serialize(Plan.BlockSize);
-        s.Serialize(Plan.BlocksPerChunk);
-        s.Serialize(Plan.ChunkSize);
-        s.Serialize(Plan.TailBlocksPerChunk);
-        s.Serialize(Plan.TailChunkSize);
-        s.Serialize(Plan.TailCapacityFraction);
-        s.Serialize(Plan.NumCheckpoints);
+        Id = RunId,
+        CreatedUtc = StartedUtc,
+        BlockSize = RunBlockSize,
+        CapacityReportedAtBom = CapacityReportedAtBom,
+        ProfileKey = ProfileKey ?? "",
+        Plan = new TapeCalibrationPlanWire { Plan = Plan },
+    });
+
+    /// <summary>Reads a 2.1 calibration header body. Called by <see cref="TapeHeader.ReadBody"/>.</summary>
+    internal static TapeCalibrationHeader ReadWire(TapeFieldReader fields)
+    {
+        TapeCalibrationHeaderWire w = TapeCalibrationHeaderWire.Schema.Read(fields, new TapeCalibrationHeaderWire());
+        return new TapeCalibrationHeader
+        {
+            Id = w.Id,
+            CreatedUtc = w.CreatedUtc,
+            BlockSize = w.BlockSize,
+            ProfileKey = w.ProfileKey,
+            CapacityReportedAtBom = w.CapacityReportedAtBom,
+            Plan = w.Plan!.Plan,      // '!' safe: field 48 is Required, so a successful read always set it
+        };
     }
 
-    /// <summary>
-    /// <see cref="ITapeSerializable"/> factory for the legacy framer (<see cref="TapeFramer.Unpack{T}"/>): reads a legacy
-    ///  header of ANY kind through <see cref="LegacyHeaderReader.Read"/> and keeps it only if it is a calibration header.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Until Phase 5 this was inherited from <see cref="TapeHeader"/>; the base no longer implements
-    ///  <see cref="ITapeSerializable"/> (media and set headers write format 2.1), so the calibration kind declares it itself.
-    /// </para>
-    /// <para>
-    /// Explicit on purpose: it stays off the public surface, so no caller mistakes it for the dual-format header read
-    ///  (<see cref="TapeFramer.UnpackHeader{T}"/>). The framer reaches it through its type parameter.
-    /// </para>
-    /// <para>
-    /// A media or set header yields <see langword="null"/>, which the framer reports as
-    ///  <see cref="TapeFramer.FrameStatus.Unparseable"/> — the narrow "not my kind" contract the calibrator relies on.
-    /// </para>
-    /// </remarks>
-    static ITapeSerializable? ITapeSerializable.ConstructFrom(LegacyDeserializer d)
-        => LegacyHeaderReader.Read(d) as TapeCalibrationHeader;
+    #endregion
+
+    #region *** Legacy read ***
 
     /// <summary>
-    /// Reads the calibration-specific fields after the shared preamble has been decoded. Called only by
-    ///  <see cref="LegacyHeaderReader.Read"/> once the kind byte selected <see cref="TapeHeaderKind.Calibration"/>.
+    /// Reads the calibration-specific fields of a LEGACY header after the shared preamble has been decoded. Called only
+    ///  by <see cref="LegacyHeaderReader.Read"/> once the kind byte selected <see cref="TapeHeaderKind.Calibration"/>.
     /// </summary>
     internal static TapeCalibrationHeader ConstructBody(LegacyDeserializer d, in TapeHeaderPreamble p)
     {

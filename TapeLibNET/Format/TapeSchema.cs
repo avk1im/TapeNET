@@ -62,22 +62,26 @@ public interface ITapeField<in T>
 
 /// <summary>
 /// Declarative field table of a record or group: one line per field, both directions, no reflection
-/// (Design-Format-v2 §5.7, Appendix B §B.3.3).
+///  (Design-Format-v2 §5.7, Appendix B §B.3.3).
 /// </summary>
 /// <remarks>
 /// <para>
 /// Collection-initializer form: <c>new(kind) { { 2, s =&gt; s.X, (s, v) =&gt; s.X = v, FieldFlags.Required }, ... }</c>.
-/// The property's CLR type picks the codec through overload resolution. Default comes BEFORE flags.
+///  The property's CLR type picks the codec through overload resolution. Default comes BEFORE flags.
 /// </para>
 /// <para>
 /// Writing emits ascending field numbers and elides OPTIONAL fields at their default. Reading accepts any order,
-/// skips unknown non-critical fields, refuses unknown critical ones, duplicates of non-repeated fields and missing
-/// required fields; an absent optional field receives the schema default. Per-field flag consistency is checked as
-/// fields are added; numbering, duplicates and inheritance are validated when the schema freezes on first use.
+///  skips unknown non-critical fields, refuses unknown critical ones, duplicates of non-repeated fields and missing
+///  required fields; an absent optional field receives the schema default. Per-field flag consistency is checked as
+///  fields are added; numbering, duplicates and inheritance are validated when the schema freezes on first use.
 /// </para>
 /// </remarks>
 /// <typeparam name="T">The (mutable, parameterless-constructible) wire type.</typeparam>
-public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
+/// <param name="kind">Record kind; null for a group schema (nested only).</param>
+/// <param name="inherits">Fields of a base wire type, e.g. the shared header tags 1–3.</param>
+/// <param name="validate">Cross-field check; returns an error text or null. Runs on read AND write.</param>
+public sealed class TapeSchema<T>(TapeRecordKind? kind = null,
+    IEnumerable<ITapeField<T>>? inherits = null, Func<T, string?>? validate = null) : IEnumerable<ITapeField<T>> where T : class
 {
     #region *** Field implementations ***
 
@@ -197,24 +201,14 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
 
     #endregion
 
-    private readonly TapeRecordKind? m_kind;
-    private readonly Func<T, string?>? m_validate;
-    private readonly List<ITapeField<T>> m_inherited;
+    private readonly TapeRecordKind? m_kind = kind;
+    private readonly Func<T, string?>? m_validate = validate;
+    private readonly List<ITapeField<T>> m_inherited = inherits is null ? [] : [.. inherits];
     private readonly List<ITapeField<T>> m_declared = [];
     private readonly object m_lock = new();
     private volatile bool m_frozen;
     private ITapeField<T>[] m_sorted = [];
     private ITapeField<T>?[] m_byNumber = [];
-
-    /// <param name="kind">Record kind; null for a group schema (nested only).</param>
-    /// <param name="inherits">Fields of a base wire type, e.g. the shared header tags 1–3.</param>
-    /// <param name="validate">Cross-field check; returns an error text or null. Runs on read AND write.</param>
-    public TapeSchema(TapeRecordKind? kind = null, IEnumerable<ITapeField<T>>? inherits = null, Func<T, string?>? validate = null)
-    {
-        m_kind = kind;
-        m_validate = validate;
-        m_inherited = inherits is null ? [] : [.. inherits];
-    }
 
     /// <summary>Whether this is a record schema (has a kind); group schemas have none.</summary>
     public bool HasKind => m_kind.HasValue;
@@ -312,7 +306,7 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
             isDefault ?? EqualityComparer<V>.Default.Equals));
 
     private static ulong NonNegative(int n, long v)
-        => v >= 0 ? (ulong)v : throw new ArgumentOutOfRangeException("value", v, $"field {n} must not be negative");
+        => v >= 0 ? (ulong)v : throw new ArgumentOutOfRangeException(nameof(v), v, $"field {n} must not be negative");
 
     private static byte ReadByte(TapeFieldReader r)
     {
@@ -326,7 +320,7 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
         return v <= ushort.MaxValue ? (ushort)v : throw r.Error(FormatErrorKind.BadValue, $"value {v} exceeds 16 bits");
     }
 
-    /// <summary>Adds a <c>bool</c> field.</summary>
+    /// <summary>Adds a <see langword="bool"/> field.</summary>
     public void Add(int n, Func<T, bool> get, Action<T, bool> set, bool @default, FieldFlags flags = FieldFlags.None)
         => AddValue(n, get, set, @default, flags, static (w, num, v, c) => w.WriteBool(num, v, c), static r => r.ReadBool());
 
@@ -334,7 +328,7 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
     public void Add(int n, Func<T, bool> get, Action<T, bool> set, FieldFlags flags = FieldFlags.None)
         => Add(n, get, set, false, flags);
 
-    /// <summary>Adds a <c>varuint</c> field mapped to <see cref="byte"/> (range-checked on read).</summary>
+    /// <summary>Adds a <c>varuint</c> field mapped to <see langword="byte"/> (range-checked on read).</summary>
     public void Add(int n, Func<T, byte> get, Action<T, byte> set, byte @default, FieldFlags flags = FieldFlags.None)
         => AddValue(n, get, set, @default, flags, static (w, num, v, c) => w.WriteUInt(num, v, c), ReadByte);
 
@@ -342,7 +336,7 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
     public void Add(int n, Func<T, byte> get, Action<T, byte> set, FieldFlags flags = FieldFlags.None)
         => Add(n, get, set, (byte)0, flags);
 
-    /// <summary>Adds a <c>varuint</c> field mapped to <see cref="ushort"/> (range-checked on read).</summary>
+    /// <summary>Adds a <c>varuint</c> field mapped to <see langword="ushort"/> (range-checked on read).</summary>
     public void Add(int n, Func<T, ushort> get, Action<T, ushort> set, ushort @default, FieldFlags flags = FieldFlags.None)
         => AddValue(n, get, set, @default, flags, static (w, num, v, c) => w.WriteUInt(num, v, c), ReadUShort);
 
@@ -350,7 +344,7 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
     public void Add(int n, Func<T, ushort> get, Action<T, ushort> set, FieldFlags flags = FieldFlags.None)
         => Add(n, get, set, (ushort)0, flags);
 
-    /// <summary>Adds a <c>varuint</c> field mapped to <see cref="uint"/> (range-checked on read).</summary>
+    /// <summary>Adds a <c>varuint</c> field mapped to <see langword="uint"/> (range-checked on read).</summary>
     public void Add(int n, Func<T, uint> get, Action<T, uint> set, uint @default, FieldFlags flags = FieldFlags.None)
         => AddValue(n, get, set, @default, flags, static (w, num, v, c) => w.WriteUInt(num, v, c), static r => r.ReadUInt32());
 
@@ -358,7 +352,7 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
     public void Add(int n, Func<T, uint> get, Action<T, uint> set, FieldFlags flags = FieldFlags.None)
         => Add(n, get, set, 0U, flags);
 
-    /// <summary>Adds a <c>varuint</c> field mapped to <see cref="ulong"/>.</summary>
+    /// <summary>Adds a <c>varuint</c> field mapped to <see langword="ulong"/>.</summary>
     public void Add(int n, Func<T, ulong> get, Action<T, ulong> set, ulong @default, FieldFlags flags = FieldFlags.None)
         => AddValue(n, get, set, @default, flags, static (w, num, v, c) => w.WriteUInt(num, v, c), static r => r.ReadUInt());
 
@@ -366,7 +360,7 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
     public void Add(int n, Func<T, ulong> get, Action<T, ulong> set, FieldFlags flags = FieldFlags.None)
         => Add(n, get, set, 0UL, flags);
 
-    /// <summary>Adds a <c>varuint</c> field mapped to a non-negative <see cref="int"/> (negative on write throws).</summary>
+    /// <summary>Adds a <c>varuint</c> field mapped to a non-negative <see langword="int"/> (negative on write throws).</summary>
     public void Add(int n, Func<T, int> get, Action<T, int> set, int @default, FieldFlags flags = FieldFlags.None)
         => AddValue(n, get, set, @default, flags, static (w, num, v, c) => w.WriteUInt(num, NonNegative(num, v), c), static r => r.ReadInt32());
 
@@ -374,13 +368,37 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
     public void Add(int n, Func<T, int> get, Action<T, int> set, FieldFlags flags = FieldFlags.None)
         => Add(n, get, set, 0, flags);
 
-    /// <summary>Adds a <c>varuint</c> field mapped to a non-negative <see cref="long"/> (negative on write throws).</summary>
+    /// <summary>Adds a ZigZag <c>varint</c> field mapped to <see langword="int"/> (negative values ok).</summary>
+    /// <remarks>We use <c>checked((int)r.ReadInt())</c> rather than simply casting. A corrupt or future writer
+    ///  could theoretically emit a ZigZag varint outside the <see cref="Int32"/> range. <see langword="checked"/>
+    ///  would produce a clean overflow exception instead of silent truncation. The existing unsigned overloads
+    ///  already perform explicit range checking, so this keeps the style consistent.</remarks>
+    public void AddSigned(int n, Func<T, int> get, Action<T, int> set, int @default, FieldFlags flags = FieldFlags.None)
+        => AddValue(n, get, set, @default, flags,
+            static (w, num, v, c) => w.WriteInt(num, v, c),
+            static r => checked((int)r.ReadInt()));
+
+    /// <inheritdoc cref="AddSigned(int, Func{T, int}, Action{T, int}, int, FieldFlags)"/>
+    public void AddSigned(int n, Func<T, int> get, Action<T, int> set, FieldFlags flags = FieldFlags.None)
+        => AddSigned(n, get, set, 0, flags);
+
+    /// <summary>Adds a <c>varuint</c> field mapped to a non-negative <see langword="long"/> (negative on write throws).</summary>
     public void Add(int n, Func<T, long> get, Action<T, long> set, long @default, FieldFlags flags = FieldFlags.None)
         => AddValue(n, get, set, @default, flags, static (w, num, v, c) => w.WriteUInt(num, NonNegative(num, v), c), static r => r.ReadNonNegativeInt64());
 
     /// <inheritdoc cref="Add(int, Func{T, long}, Action{T, long}, long, FieldFlags)"/>
     public void Add(int n, Func<T, long> get, Action<T, long> set, FieldFlags flags = FieldFlags.None)
         => Add(n, get, set, 0L, flags);
+
+    /// <summary>Adds a ZigZag <c>varint</c> field mapped to <see langword="long"/> (negative values ok).</summary>
+    public void AddSigned(int n, Func<T, long> get, Action<T, long> set, long @default, FieldFlags flags = FieldFlags.None)
+        => AddValue(n, get, set, @default, flags,
+            static (w, num, v, c) => w.WriteInt(num, v, c),
+            static r => r.ReadInt());
+
+    /// <inheritdoc cref="AddSigned(int, Func{T, long}, Action{T, long}, long, FieldFlags)"/>
+    public void AddSigned(int n, Func<T, long> get, Action<T, long> set, FieldFlags flags = FieldFlags.None)
+        => AddSigned(n, get, set, 0L, flags);
 
     /// <summary>Adds an <c>f64</c> field.</summary>
     public void Add(int n, Func<T, double> get, Action<T, double> set, double @default, FieldFlags flags = FieldFlags.None)
@@ -390,7 +408,7 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
     public void Add(int n, Func<T, double> get, Action<T, double> set, FieldFlags flags = FieldFlags.None)
         => Add(n, get, set, 0.0, flags);
 
-    /// <summary>Adds a <c>guid</c> field.</summary>
+    /// <summary>Adds a <see cref="Guid"/> field.</summary>
     public void Add(int n, Func<T, Guid> get, Action<T, Guid> set, Guid @default, FieldFlags flags = FieldFlags.None)
         => AddValue(n, get, set, @default, flags, static (w, num, v, c) => w.WriteGuid(num, v, c), static r => r.ReadGuid());
 
@@ -398,7 +416,7 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
     public void Add(int n, Func<T, Guid> get, Action<T, Guid> set, FieldFlags flags = FieldFlags.None)
         => Add(n, get, set, Guid.Empty, flags);
 
-    /// <summary>Adds a <c>timestamp</c> field (UTC; see <see cref="TapePrimitives.ToUtcTicks"/>).</summary>
+    /// <summary>Adds a <see cref="DateTime"/> field (UTC; see <see cref="TapePrimitives.ToUtcTicks"/>).</summary>
     public void Add(int n, Func<T, DateTime> get, Action<T, DateTime> set, DateTime @default, FieldFlags flags = FieldFlags.None)
         => AddValue(n, get, set, @default, flags, static (w, num, v, c) => w.WriteTimestamp(num, v, c), static r => r.ReadTimestamp(),
             static (a, b) => TapePrimitives.ToUtcTicks(a) == TapePrimitives.ToUtcTicks(b));
@@ -407,7 +425,8 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
     public void Add(int n, Func<T, DateTime> get, Action<T, DateTime> set, FieldFlags flags = FieldFlags.None)
         => Add(n, get, set, TapePrimitives.MinUtc, flags);
 
-    /// <summary>Adds a UTF-8 <c>string</c> field; optional null and empty are elided. A required null writes "".</summary>
+    /// <summary>Adds a UTF-8 <see langword="string"/> field; optional <see langword="null"/> and empty are elided.
+    ///  A required <see langword="null"/> writes <c>""</c>.</summary>
     public void Add(int n, Func<T, string?> get, Action<T, string> set, string? @default, FieldFlags flags = FieldFlags.None)
         => Register(new StringField(n, flags, get, set, @default));
 
@@ -415,7 +434,8 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
     public void Add(int n, Func<T, string?> get, Action<T, string> set, FieldFlags flags = FieldFlags.None)
         => Register(new StringField(n, flags, get, set, ""));
 
-    /// <summary>Adds a <c>bytes</c> field; optional null and empty are elided and read back as an empty array.</summary>
+    /// <summary>Adds a <c><see langword="byte">[]</c> field; optional <see langword="null"/> and empty
+    ///  are elided and read back as an empty array.</summary>
     public void Add(int n, Func<T, byte[]?> get, Action<T, byte[]> set, FieldFlags flags = FieldFlags.None)
         => Register(new BytesField(n, flags, get, set));
 
@@ -432,9 +452,9 @@ public sealed class TapeSchema<T> : IEnumerable<ITapeField<T>> where T : class
     /// <inheritdoc cref="Add{TEnum}(int, Func{T, TEnum}, Action{T, TEnum}, TEnum, FieldFlags)"/>
     public void Add<TEnum>(int n, Func<T, TEnum> get, Action<T, TEnum> set, FieldFlags flags = FieldFlags.None)
         where TEnum : unmanaged, Enum
-        => Add(n, get, set, default(TEnum), flags);
+        => Add(n, get, set, default, flags);
 
-    /// <summary>Adds a nested group field described by <paramref name="child"/>; optional null is elided.</summary>
+    /// <summary>Adds a nested group field described by <paramref name="child"/>; optional <see langword="null"/> is elided.</summary>
     public void Add<TChild>(int n, Func<T, TChild?> get, Action<T, TChild?> set, TapeSchema<TChild> child, FieldFlags flags = FieldFlags.None)
         where TChild : class, new()
     {

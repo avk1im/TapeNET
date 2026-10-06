@@ -48,29 +48,24 @@ internal abstract class TapeHeaderWire
 /// <b>Format 2.1</b> (Design-Format-v2 §5.4): one block frame <c>Record ‖ CRC-64</c> at block offset 0. The record kind
 ///  names the header kind; the shared tags 1–3 carry <see cref="Id"/>, <see cref="CreatedUtc"/> and
 ///  <see cref="BlockSize"/>. One read through <see cref="TapeFramer.TryUnpackHeader(byte[], int, out TapeHeader?)"/>
-///  classifies any block as media, set, or calibration — in either format.
+///  classifies any block as media, set, or calibration — in either format. The product writes 2.1 only.
 /// </para>
 /// <para>
-/// <b>Legacy</b> headers keep reading through <see cref="LegacyHeaderReader"/> (<see cref="TryReadLegacy"/>). The
-///  legacy READ members of the concrete kinds (<c>ConstructBody</c>) are unchanged from Phase 2.
-/// </para>
-/// <para>
-/// <b>Transitional (Phase 5):</b> the calibration header is still WRITTEN in the legacy frame
-///  (<see cref="TapeFramer.Pack(ITapeSerializable)"/>); it moves to 2.1 with the checkpoint in Phase 6. Hence
-///  <see cref="Accepts"/> lists media and set headers only.
+/// <b>Legacy</b> headers keep reading through <see cref="LegacyHeaderReader"/> (<see cref="TryReadLegacy"/>), which
+///  decodes the shared <see cref="TapeHeaderPreamble"/> and hands it to the concrete kind's <c>ConstructBody</c>.
 /// </para>
 /// <para>
 /// The whole record sits in the front of one block; the remaining bytes are padding, ignored on read-back. Backup and
-///  set headers use the fixed <see cref="FixedHeaderBlockSize"/> block; the calibration header rides in the run's own
-///  block. Only the record grammar is shared — never the physical write path.
+///  set headers use the fixed <see cref="FixedHeaderBlockSize"/> block; the calibration header rides in the standard
+///  block too, or in the run's own block on drives that cannot carry one. Only the record grammar is shared — never the
+///  physical write path.
 /// </para>
 /// </remarks>
 public abstract record TapeHeader : ITapeFramedRecord<TapeHeader>
 {
     /// <summary>
     /// Fixed on-tape block size for the backup media/set headers, reusing the TOC's proven 16 KiB block — large enough to
-    ///  read a header in one <c>ReadDirect</c>, and above any drive's minimum block-size quirks. The calibration header is
-    ///  exempt: it uses the run's block size instead.
+    ///  read a header in one <c>ReadDirect</c>, and above any drive's minimum block-size quirks.
     /// </summary>
     public const uint FixedHeaderBlockSize = 16 * 1024;
 
@@ -103,14 +98,16 @@ public abstract record TapeHeader : ITapeFramedRecord<TapeHeader>
     /// <inheritdoc/>
     public abstract void WriteBody(TapeFieldWriter fields);
 
-    /// <summary>The header kinds this build reads in format 2.1. The calibration header joins in Phase 6.</summary>
-    public static bool Accepts(TapeRecordKind kind) => kind is TapeRecordKind.MediaHeader or TapeRecordKind.SetHeader;
+    /// <summary>The header kinds this build reads in format 2.1.</summary>
+    public static bool Accepts(TapeRecordKind kind)
+        => kind is TapeRecordKind.MediaHeader or TapeRecordKind.SetHeader or TapeRecordKind.CalibrationRunHeader;
 
     /// <summary>Reads the body of a 2.1 header record, dispatching on the record kind.</summary>
     public static TapeHeader ReadBody(TapeFieldReader fields) => fields.Record.Kind switch
     {
         TapeRecordKind.MediaHeader => TapeMediaHeader.ReadWire(fields),
         TapeRecordKind.SetHeader => TapeSetHeader.ReadWire(fields),
+        TapeRecordKind.CalibrationRunHeader => TapeCalibrationHeader.ReadWire(fields),
         _ => throw fields.Error(FormatErrorKind.UnexpectedKind,
             $"record kind {fields.Record.Kind} is not a header this build reads"),
     };
@@ -118,24 +115,6 @@ public abstract record TapeHeader : ITapeFramedRecord<TapeHeader>
     /// <summary>Parses a LEGACY header frame (<c>[int32 len][payload][crc32]</c>) at the start of the block. Never throws.</summary>
     public static TapeFramer.FrameStatus TryReadLegacy(ReadOnlySpan<byte> block, out TapeHeader? record)
         => LegacyFramer.TryUnpack<TapeHeader>(block.ToArray(), block.Length, LegacyHeaderReader.Read, out record);
-
-    #endregion
-
-    #region *** Legacy write — calibration header only, removed in Phase 6 ***
-
-    /// <summary>
-    /// Writes the legacy preamble — signature, <see cref="Kind"/>, <see cref="Id"/>, <see cref="CreatedUtc"/>,
-    ///  <see cref="BlockSize"/>. Used only by <see cref="TapeCalibrationHeader"/> until Phase 6.
-    /// </summary>
-    /// <remarks>Keep the body EXACTLY as it was before Phase 5 — the calibration golden file pins it.</remarks>
-    protected void SerializePreamble(TapeSerializer s)
-    {
-        s.SerializeSignature();
-        s.Serialize((byte)Kind);
-        s.Serialize(Id.ToByteArray());
-        s.Serialize(CreatedUtc);
-        s.Serialize(BlockSize);
-    }
 
     #endregion
 

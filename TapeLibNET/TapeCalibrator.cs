@@ -1,8 +1,5 @@
-#define LEGACY_TapeCalibrationRunHeader // FIXME: temporary to keep compatibility with legacy calibration cartridges
-
 using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
+using TapeLibNET.Format;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices;
 
@@ -949,13 +946,13 @@ public sealed class TapeCalibrator : TapeDriveHolder<TapeCalibrator>
 
     #region *** Resume read helpers ***
 
-    /// <summary>Reads one record block at the current position and unpacks+CRC-checks it as <typeparamref name="T"/>.</summary>
-    private T? ReadRecord<T>(byte[] recordBuffer) where T : class, ITapeSerializable
+    /// <summary>Reads one record block at the current position and unpacks+CRC-checks it as <typeparamref name="T"/>,
+    ///  in either format (Design-Format-v2 §6.5: a trail may mix legacy and 2.1 records).</summary>
+    private T? ReadRecord<T>(byte[] recordBuffer) where T : class, ITapeFramedRecord<T>
     {
         int read = Drive.ReadDirect(recordBuffer, 0, recordBuffer.Length, out _, out _);
         if (read <= 0)
             return null;
-
         return TapeCalibrationFramer.Unpack<T>(recordBuffer, read);
     }
 
@@ -1025,11 +1022,10 @@ public sealed class TapeCalibrator : TapeDriveHolder<TapeCalibrator>
     #region *** Record block writer ***
 
     /// <summary>
-    /// Writes calibration RECORDS (header, checkpoints) into single full-size blocks: the framed record
-    /// (see <see cref="TapeCalibrationFramer.Pack"/>) at the front, random padding for the rest. A fixed
-    /// random block is reused across records (padding content is immaterial with compression off; only the
-    /// front is overwritten per record), so no per-record allocation churn. The full block is counted into
-    /// the run's <c>bytesWritten</c>.
+    /// Writes calibration RECORDS (header, checkpoints) into single full-size blocks: the V2.1 block frame (see
+    ///  <see cref="TapeCalibrationFramer"/>) at the front, random padding for the rest. A fixed random block is reused
+    ///  across records (padding content is immaterial with compression off; only the front is overwritten per record),
+    ///  so no per-record allocation churn. The full block is counted into the run's <c>bytesWritten</c>.
     /// </summary>
     private sealed class RecordBlockWriter : IDisposable
     {
@@ -1046,15 +1042,22 @@ public sealed class TapeCalibrator : TapeDriveHolder<TapeCalibrator>
             Random.Shared.NextBytes(m_block); // random padding, filled once
         }
 
+        /// <summary>Writes the run header in the run-block shape (drives that cannot carry a standard header block).</summary>
+        public bool Emit(TapeCalibrationHeader header, ref long bytesWritten, bool writeLeadingFilemark)
+            => EmitFrame(TapeCalibrationFramer.Pack(header), ref bytesWritten, writeLeadingFilemark);
+
+        /// <summary>Writes a body checkpoint.</summary>
+        public bool Emit(TapeCalibrationCheckpoint checkpoint, ref long bytesWritten, bool writeLeadingFilemark)
+            => EmitFrame(TapeCalibrationFramer.Pack(checkpoint), ref bytesWritten, writeLeadingFilemark);
+
         /// <summary>
-        /// Optionally writes a leading filemark, then writes <paramref name="record"/> as one full block,
-        /// advancing <paramref name="bytesWritten"/> by the block size. Returns <see langword="false"/> on
-        /// any write failure (error state set on the drive), or when the framed record does not fit one
-        /// block (checkpointing is then skipped — the run still completes, just not resumably).
+        /// Optionally writes a leading filemark, then writes <paramref name="frame"/> as one full block, advancing
+        /// <paramref name="bytesWritten"/> by the block size. Returns <see langword="false"/> on any write failure (error
+        /// state set on the drive), or <see langword="true"/> without writing when the frame does not fit one block
+        /// (checkpointing is then skipped — the run still completes, just not resumably).
         /// </summary>
-        public bool Emit(ITapeSerializable record, ref long bytesWritten, bool writeLeadingFilemark)
+        private bool EmitFrame(byte[] frame, ref long bytesWritten, bool writeLeadingFilemark)
         {
-            byte[] frame = TapeCalibrationFramer.Pack(record);
             if (frame.Length > m_blockSize)
             {
                 if (!m_tooLargeWarned)
@@ -1075,14 +1078,12 @@ public sealed class TapeCalibrator : TapeDriveHolder<TapeCalibrator>
 
             // Overwrite only the front with the frame; the remainder stays random padding.
             Array.Copy(frame, m_block, frame.Length);
-
             int written = m_cal.Drive.WriteDirect(m_block, 0, m_blockSize, out _, out _, out _);
             if (written != m_blockSize)
             {
                 m_cal.SyncErrorFrom(m_cal.Drive);
                 return false;
             }
-
             bytesWritten += written;
             return true;
         }

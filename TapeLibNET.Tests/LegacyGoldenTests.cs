@@ -32,11 +32,14 @@ public class LegacyGoldenTests
         return body;
     }
 
+    /*
+    // Not used past V2.1 Phase 6
     private static T? Read<T>(byte[] bytes) where T : class, ITapeSerializable
     {
         using var ms = new MemoryStream(bytes);
         return new LegacyDeserializer(ms).Deserialize<T>();
     }
+    */
 
     #region *** Byte-for-byte reproduction ***
 
@@ -244,7 +247,7 @@ public class LegacyGoldenTests
     [InlineData("calibration-header-run.bin", 1 << 20)]
     public void CalibrationHeaders_ReadWithCurrentReader(string name, int blockSize)
     {
-        var h = TapeFramer.Unpack<TapeCalibrationHeader>(Load(name), blockSize);
+        var h = TapeFramer.UnpackHeader<TapeCalibrationHeader>(Load(name), blockSize);
         Assert.NotNull(h);
         Assert.Equal(GoldenData.RunId, h!.RunId);
         Assert.Equal("LTO-9|test", h.ProfileKey);
@@ -260,7 +263,7 @@ public class LegacyGoldenTests
     [Fact]
     public void Checkpoints_ReadWithCurrentReader()
     {
-        var noEw = TapeFramer.Unpack<TapeCalibrationCheckpoint>(Load("checkpoint-noew.bin"), (int)GoldenData.BlockSize);
+        var noEw = TapeCalibrationFramer.Unpack<TapeCalibrationCheckpoint>(Load("checkpoint-noew.bin"), (int)GoldenData.BlockSize);
         Assert.NotNull(noEw);
         Assert.Equal(GoldenData.RunId, noEw!.RunId);
         Assert.Equal(1, noEw.Index);
@@ -268,7 +271,7 @@ public class LegacyGoldenTests
         Assert.Null(noEw.EarlyWarning);
         Assert.Equal(2, noEw.Samples.Count);
 
-        var ew = TapeFramer.Unpack<TapeCalibrationCheckpoint>(Load("checkpoint-ew-manysamples.bin"), (int)GoldenData.BlockSize);
+        var ew = TapeCalibrationFramer.Unpack<TapeCalibrationCheckpoint>(Load("checkpoint-ew-manysamples.bin"), (int)GoldenData.BlockSize);
         Assert.NotNull(ew);
         Assert.Equal((17_000_000_000_000L, 1_000_000_000_000L), ew!.EarlyWarning);
         Assert.Equal(200, ew.Samples.Count);
@@ -291,15 +294,25 @@ public class LegacyGoldenTests
         Assert.Equal(golden[..frame.Length], frame);
     }
 
+    /// <summary>
+    /// Pins the legacy checkpoint layout both ways: the shipping reader parses the frozen golden, and the test-only
+    ///  legacy writer reproduces it byte for byte from what was read. Checkpoints carry no timestamps, so — unlike the
+    ///  media / set headers — there is no local ↔ UTC conversion to undo.
+    /// </summary>
     [Fact]
-    public void Checkpoints_CurrentWriterReproducesGolden()
+    public void Checkpoints_LegacyWriterReproducesGolden()
     {
-        var golden = Load("checkpoint-ew-manysamples.bin");
-        var record = TapeFramer.Unpack<TapeCalibrationCheckpoint>(golden, golden.Length);
+        byte[] golden = Load("checkpoint-ew-manysamples.bin");
+
+        // The shipping reader: no 2.1 magic, so it falls back to the legacy frame.
+        var record = TapeCalibrationFramer.Unpack<TapeCalibrationCheckpoint>(golden, golden.Length);
         Assert.NotNull(record);
 
-        var frame = TapeFramer.Pack(record!);
-        Assert.Equal(frame, golden[..frame.Length]);
+        // The frozen legacy writer (test-only) — NOT TapeCalibrationFramer.Pack, which writes format 2.1.
+        byte[] frame = LegacyFormatWriter.Frame(LegacyFormatWriter.CheckpointPayload(
+            record.RunId, record.Index, record.BytesWritten, record.EarlyWarning, record.Samples));
+
+        Assert.Equal(golden[..frame.Length], frame);
     }
 
     [Fact]

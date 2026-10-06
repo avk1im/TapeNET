@@ -5,11 +5,12 @@ namespace TapeLibNET.Legacy;
 
 /// <summary>
 /// Frozen, read-only reader of the pre-2.1 binary layout (formerly <c>TapeDeserializer</c>):
-///  primitives, UTF-8 strings with a 32-bit length prefix, and <see cref="ITapeSerializable"/> objects.
+///  primitives, UTF-8 strings with a 32-bit length prefix.
 /// Differences from the original: reads are exact (short reads from a stream are retried, not mistaken
 ///  for end of data), and a list item that fails to construct is an error.
 /// </summary>
 /// <param name="rstream">Source stream to read serialized data from.</param>
+/// <remarks><see cref="ITapeSerializable"/> not used, not offered past V2.1 Phase 6.</remarks>
 public class LegacyDeserializer(Stream rstream)
 {
     /// <summary>Reads exactly <paramref name="length"/> bytes; <see langword="null"/> if the stream ends first.</summary>
@@ -98,6 +99,8 @@ public class LegacyDeserializer(Stream rstream)
         return true;
     }
 
+    /*
+    // Not used past V2.1 Phase 6
     public TClass? Deserialize<TClass>() where TClass : class, ITapeSerializable
         => TClass.ConstructFrom(this) as TClass;
 
@@ -118,4 +121,5 @@ public class LegacyDeserializer(Stream rstream)
 
         return list;
     }
+    */
 }

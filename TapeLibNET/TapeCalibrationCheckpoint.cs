@@ -1,10 +1,5 @@
-﻿#define LEGACY_TapeCalibrationRunHeader // FIXME: temporary to keep compatibility with legacy calibration cartridges
-
-using System;
+using TapeLibNET.Format;
 using TapeLibNET.Legacy;
-using System.Collections.Generic;
-using System.IO;
-using System.IO.Hashing;
 
 namespace TapeLibNET;
 
@@ -48,67 +43,63 @@ namespace TapeLibNET;
 //  The FULL block is counted in bytesWritten, so the reported→actual mapping
 //  stays honest and even reflects real set-delimited overhead.
 //
+//  FORMAT (Design-Format-v2 §5.5): records are written as 2.1 block frames
+//  (Record ‖ CRC-64, magic first). Legacy frames ([len][payload][crc32]) of
+//  earlier runs keep reading, block by block — so a trail may mix both, and a
+//  legacy run resumes and recalibrates unchanged.
+//
 //  NOTE: checkpoints are laid down in the BODY only (never the tail), so the
 //  last checkpoint is always PRE-tail — exactly the restart point Resume needs
 //  and the re-measure point Recalibrate needs.
 // =============================================================================
 
-#if LEGACY_TapeCalibrationRunHeader
-/// <summary>
-/// Written once as the header block at BOM. Self-identifies the run and cartridge so <c>Resume</c> can
-/// verify "same run" (internal <see cref="RunId"/> consistency) before trusting any checkpoint, and so a
-/// returned cartridge is inspectable ("what run / drive / when does this hold?"). Profile MATCHING against
-/// the current drive is deliberately NOT done here — that is the caller's / service layer's responsibility.
-/// </summary>
-public sealed record TapeCalibrationRunHeader(
-    Guid RunId,
-    string ProfileKey,
-    long CapacityReportedAtBom,
-    uint BlockSize,
-    DateTime StartedUtc,
-    TapeCalibrationPlan Plan) : ITapeSerializable
+/// <summary>Wire form of the early-warning landmark — a nested group; its absence means "no EW seen".</summary>
+/// <remarks>
+/// A group rather than two optional scalars: the EW point legitimately carries a ReportedRemaining of 0 (LTO-3 collapses
+///  to 0 exactly at EW), which default elision would drop. A group is present or absent as a whole.
+/// </remarks>
+internal sealed class TapeCalibrationEwWire
 {
-    public void SerializeTo(TapeSerializer s)
+    public long ActualWritten;
+    public long ReportedRemaining;
+
+    /// <summary>Group schema (no record kind).</summary>
+    public static readonly TapeSchema<TapeCalibrationEwWire> Schema = new()
     {
-        s.SerializeSignature();
-
-        s.Serialize(RunId.ToByteArray());            // 16 raw bytes (fixed length)
-        s.Serialize(ProfileKey);                     // length-prefixed UTF-8
-        s.Serialize(CapacityReportedAtBom);
-        s.Serialize(BlockSize);
-        s.Serialize(StartedUtc);                     // ticks
-
-        // Plan — enough to resume with an IDENTICAL cadence/chunking, without re-resolving.
-        s.Serialize(Plan.SampleCount);
-        s.Serialize(Plan.BodySampleCount);
-        s.Serialize(Plan.TailSampleCount);
-        s.Serialize(Plan.BlockSize);
-        s.Serialize(Plan.BlocksPerChunk);
-        s.Serialize(Plan.ChunkSize);
-        s.Serialize(Plan.TailBlocksPerChunk);
-        s.Serialize(Plan.TailChunkSize);
-        s.Serialize(Plan.TailCapacityFraction);
-        s.Serialize(Plan.NumCheckpoints);
-    }
-
-    public static ITapeSerializable? ConstructFrom(LegacyDeserializer d)
-    => LegacyCheckpointReader.ReadRunHeader(d);
-
-    /// <summary>Adapts this legacy record to the unified <see cref="TapeCalibrationHeader"/>.</summary>
-    public TapeCalibrationHeader ToHeader() =>
-        TapeCalibrationHeader.CreateHeader(RunId, ProfileKey,
-            CapacityReportedAtBom, BlockSize, StartedUtc, Plan);
+        { 1, w => w.ActualWritten,     (w, v) => w.ActualWritten = v,     FieldFlags.Required },
+        { 2, w => w.ReportedRemaining, (w, v) => w.ReportedRemaining = v, FieldFlags.Required },
+    };
 }
-#endif // LEGACY_TapeCalibrationRunHeader
+
+/// <summary>Wire form of the 2.1 calibration checkpoint (record kind <c>CalibrationCheckpoint</c>, §5.5).</summary>
+internal sealed class TapeCalibrationCheckpointWire
+{
+    public Guid RunId;
+    public int Index;
+    public long BytesWritten;
+    public byte[] Samples = [];
+    public TapeCalibrationEwWire? EarlyWarning;
+
+    public static readonly TapeSchema<TapeCalibrationCheckpointWire> Schema = new(TapeRecordKind.CalibrationCheckpoint)
+    {
+        // ── scalars 1–31 ──
+        { 1,  w => w.RunId,        (w, v) => w.RunId = v,        FieldFlags.Required },
+        { 2,  w => w.Index,        (w, v) => w.Index = v,        FieldFlags.Required },
+        { 3,  w => w.BytesWritten, (w, v) => w.BytesWritten = v, FieldFlags.Required },
+        // ── bulk / groups 48–63 ──
+        { 48, w => w.Samples,      (w, v) => w.Samples = v },                                  // delta-coded (TapeSampleCoder)
+        { 49, w => w.EarlyWarning, (w, v) => w.EarlyWarning = v, TapeCalibrationEwWire.Schema },  // absent ⇔ no EW
+    };
+}
 
 /// <summary>
-/// Written at each body checkpoint. CUMULATIVE and self-contained: a single valid read fully restores
-/// run state (bytes written so far, all samples, the EW landmark if seen). Small — ~16 bytes per sample,
-/// so ≤ ~16 KB even near the end — comfortably inside one calibration block.
+/// Written at each body checkpoint. CUMULATIVE and self-contained: a single valid read fully restores run state (bytes
+///  written so far, all samples, the EW landmark if seen). Samples are delta-coded on tape (a few bytes each), so a
+///  checkpoint stays comfortably inside one calibration block.
 /// <para>
-/// <see cref="BytesWritten"/> is the byte count as of the FM that PRECEDES this checkpoint block (i.e.
-/// before the "FM + checkpoint block" pair is written). On resume the tape is repositioned BOP-side of
-/// that FM and the pair is rewritten from the restored state, reproducing identical byte accounting.
+/// <see cref="BytesWritten"/> is the byte count as of the FM that PRECEDES this checkpoint block (i.e. before the
+///  "FM + checkpoint block" pair is written). On resume the tape is repositioned BOP-side of that FM and the pair is
+///  rewritten from the restored state, reproducing identical byte accounting.
 /// </para>
 /// </summary>
 public sealed record TapeCalibrationCheckpoint(
@@ -116,55 +107,81 @@ public sealed record TapeCalibrationCheckpoint(
     int Index,
     long BytesWritten,
     (long ActualWritten, long ReportedRemaining)? EarlyWarning,
-    IReadOnlyList<(long ActualWritten, long ReportedRemaining)> Samples) : ITapeSerializable
+    IReadOnlyList<(long ActualWritten, long ReportedRemaining)> Samples) : ITapeFramedRecord<TapeCalibrationCheckpoint>
 {
-    public void SerializeTo(TapeSerializer s)
+    #region *** Format 2.1 ***
+
+    /// <inheritdoc/>
+    public TapeRecordKind RecordKind => TapeRecordKind.CalibrationCheckpoint;
+
+    /// <inheritdoc/>
+    public void WriteBody(TapeFieldWriter fields) => TapeCalibrationCheckpointWire.Schema.Write(fields, new TapeCalibrationCheckpointWire
     {
-        s.SerializeSignature();
+        RunId = RunId,
+        Index = Index,
+        BytesWritten = BytesWritten,
+        Samples = TapeSampleCoder.Encode(Samples),
+        EarlyWarning = EarlyWarning is { } ew
+            ? new TapeCalibrationEwWire { ActualWritten = ew.ActualWritten, ReportedRemaining = ew.ReportedRemaining }
+            : null,
+    });
 
-        s.Serialize(RunId.ToByteArray());
-        s.Serialize(Index);
-        s.Serialize(BytesWritten);
+    /// <inheritdoc/>
+    public static bool Accepts(TapeRecordKind kind) => kind == TapeRecordKind.CalibrationCheckpoint;
 
-        s.Serialize(EarlyWarning.HasValue);
-        if (EarlyWarning is { } ew)
-        {
-            s.Serialize(ew.ActualWritten);
-            s.Serialize(ew.ReportedRemaining);
-        }
-
-        s.Serialize(Samples.Count);
-        foreach (var (aw, rr) in Samples)
-        {
-            s.Serialize(aw);
-            s.Serialize(rr);
-        }
+    /// <inheritdoc/>
+    public static TapeCalibrationCheckpoint ReadBody(TapeFieldReader fields)
+    {
+        TapeCalibrationCheckpointWire w = TapeCalibrationCheckpointWire.Schema.Read(fields, new TapeCalibrationCheckpointWire());
+        return new TapeCalibrationCheckpoint(
+            w.RunId, w.Index, w.BytesWritten,
+            w.EarlyWarning is { } ew ? (ew.ActualWritten, ew.ReportedRemaining) : null,
+            TapeSampleCoder.Decode(w.Samples));
     }
 
-    public static ITapeSerializable? ConstructFrom(LegacyDeserializer d)
-    => LegacyCheckpointReader.ReadCheckpoint(d);
+    #endregion
+
+    #region *** Legacy read ***
+
+    /// <summary>Parses a LEGACY checkpoint frame (<c>[int32 len][payload][crc32]</c>). Never throws.</summary>
+    public static TapeFramer.FrameStatus TryReadLegacy(ReadOnlySpan<byte> block, out TapeCalibrationCheckpoint? record)
+        => LegacyFramer.TryUnpack(block.ToArray(), block.Length, LegacyCheckpointReader.ReadCheckpoint, out record);
+
+    #endregion
 }
 
 /// <summary>
-/// Frames an <see cref="ITapeSerializable"/> calibration record for on-tape storage with a CRC-32 guard,
-/// so a torn tail record is DETECTED (and the resume walk steps back) rather than silently deserialized
-/// into garbage. Uses <see cref="TapeFramer"/>.
-/// <remarks>
-/// We keep it distinct from <see cref="TapeFramer"/> to allow future calibration-specific logic.
-/// </remarks>
+/// Frames calibration records for on-tape storage with a CRC guard, so a torn tail record is DETECTED (and the resume
+///  walk steps back) rather than silently deserialized into garbage.
 /// </summary>
+/// <remarks>
+/// Writes format 2.1 (<see cref="TapeFrame"/>, <see cref="TapeFramer.PackHeader"/>); reads both formats, block by block,
+///  so a trail mixing legacy and 2.1 checkpoints reads correctly. Kept distinct from <see cref="TapeFramer"/> to allow
+///  future calibration-specific logic.
+/// </remarks>
 public static class TapeCalibrationFramer
 {
-    /// <summary>Serializes <paramref name="record"/> and returns the framed <c>[len][payload][crc]</c> bytes.</summary>
-    public static byte[] Pack(ITapeSerializable record) => TapeFramer.Pack(record);
+    /// <summary>The 2.1 block frame (<c>Record ‖ CRC-64</c>) of a checkpoint.</summary>
+    public static byte[] Pack(TapeCalibrationCheckpoint checkpoint) => TapeFrame.Pack(checkpoint);
+
+    /// <summary>The 2.1 block frame of a run header — for the run-block shape on drives without a standard header block.</summary>
+    public static byte[] Pack(TapeCalibrationHeader header) => TapeFramer.PackHeader(header);
 
     /// <summary>
-    /// Parses a framed record out of a full block read back from tape and verifies its CRC. Returns the
-    /// reconstructed record, or <see langword="null"/> when the block is not one of our records, is torn,
-    /// or fails the CRC — the exact signals the resume walk treats as "step back to the previous checkpoint".
+    /// Parses a framed record out of a full block read back from tape and verifies its CRC, in either format. Returns
+    ///  the record, or <see langword="null"/> when the block is not one of our records, is torn, or fails the CRC — the
+    ///  exact signals the resume walk treats as "step back to the previous checkpoint".
     /// </summary>
-    public static T? Unpack<T>(byte[] block, int length) where T : class, ITapeSerializable
-        => TapeFramer.Unpack<T>(block, length);
+    public static T? Unpack<T>(byte[] block, int length) where T : class, ITapeFramedRecord<T>
+    {
+        ArgumentNullException.ThrowIfNull(block);
+        ReadOnlySpan<byte> data = block.AsSpan(0, Math.Clamp(length, 0, block.Length));
+        return TapeFrame.TryUnpackWithLegacy(data, out T? record, out _, out _) == TapeFramer.FrameStatus.Ok ? record : null;
+    }
+
+    /// <summary>A run header in either format, or <see langword="null"/> for anything else — including another header kind.</summary>
+    public static TapeCalibrationHeader? UnpackHeader(byte[] block, int length)
+        => TapeFramer.UnpackHeader<TapeCalibrationHeader>(block, length);
 }
 
 /// <summary>

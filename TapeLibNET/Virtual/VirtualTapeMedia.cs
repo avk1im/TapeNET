@@ -20,17 +20,20 @@ public enum TapeMarkType : byte
 /// <summary>Outcome of probing a virtual media metadata stream.</summary>
 public enum VirtualMediaStateProbe { Absent, Loaded, Unreadable }
 
-// Semantics:
-//  "logical block" -- a data block visible to the caller. "Block" names mean logical block
-//  "virtual block" -- our internal implementation, never exposed to caller.
-//                     Always called out in names "VirtualBlock"
-
 /// <summary>
 /// A virtual block on virtual tape - represents either a contiguous range of logical data blocks or a tapemark.
-/// For data: spans multiple logical blocks of the same BlockSize.
-/// For marks: occupies exactly one logical block position.
+///  For data: spans multiple logical blocks of the same BlockSize.
+///  For marks: occupies exactly one logical block position.
 /// </summary>
-internal readonly record struct VirtualTapeBlock : ITapeSerializable
+/// <remarks>
+/// Semantics:
+/// <list type="bullet">
+///  <item><b>"logical block"</b> -- a data block visible to the caller. "Block" names mean logical block.</item>
+///  <item><b>"virtual block"</b> -- our internal implementation, never exposed to caller.
+///                     Always called out in names "VirtualBlock".</item>
+/// </list>
+/// </remarks>
+internal readonly record struct VirtualTapeBlock
 {
     /// <summary>True if this is a tape mark, false if data.</summary>
     public bool IsMark { get; init; }
@@ -123,7 +126,7 @@ internal readonly record struct VirtualTapeBlock : ITapeSerializable
         return StreamOffset + (logicalBlock - BeginAtBlock) * BlockSize;
     }
 
-    #region *** ITapeSerializable ***
+    /*
 
     /// <summary>Serializes this virtual block.</summary>
     public void SerializeTo(TapeSerializer serializer)
@@ -150,13 +153,13 @@ internal readonly record struct VirtualTapeBlock : ITapeSerializable
         };
     }
 
-    #endregion
+    */
 }
 
 /// <summary>
-/// Simulates tape media backed by a Stream.
-/// Handles block-based I/O and tapemark tracking.
-/// Enforces real tape behavior: block-aligned reads/writes, tapemark handling.
+/// Simulates tape media backed by a <see cref="Stream"/>.
+///  Handles block-based I/O and tapemark tracking.
+///  Enforces real tape behavior: block-aligned reads/writes, tapemark handling.
 /// </summary>
 public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 {

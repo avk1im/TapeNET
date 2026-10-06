@@ -373,14 +373,21 @@ reads like `WrongVolume`.
 | 1 | `RunId` | guid | R |
 | 2 | `Index` | varuint | R |
 | 3 | `BytesWritten` | varuint | R |
-| 4 | `EwActualWritten` | varuint | present ⇔ EW seen |
-| 5 | `EwReportedRemaining` | varuint | pairs with 4 |
+| // 4 | `EwActualWritten` | varuint | present ⇔ EW seen |
+| // 5 | `EwReportedRemaining` | varuint | pairs with 4 |
 | 48 | `Samples` | bytes | delta-coded |
+| 49 | `EarlyWarning` | group | 1 `ActualWritten` R, 2 `ReportedRemaining` R, absent as a whole ⇔ no EW
 
 **Delta-coded samples:** `varuint count`, then per sample `varuint ΔActualWritten` (monotone) and
 `varint ΔReportedRemaining`, the first from `(0, 0)`. A few bytes per sample instead of 16 — the checkpoint
-stays within its run block for several times longer, keeping long runs resumable (`RecordBlockWriter.Emit`
+stays within its run block for ≈1.6–3× longer (depending on the sample cadence), keeping long runs resumable (`RecordBlockWriter.Emit`
 stops checkpointing once a frame outgrows the block).
+
+> **Correction:** §5.5 specified `EwActualWritten` / `EwReportedRemaining` as optional scalars 4 / 5, "present ⇔ EW seen". That breaks
+on LTO-3: reported remaining collapses to **0 exactly at EW**, and default elision drops a 0. The EW point is now a
+nested group (field **49**, two required fields) — present or absent as a whole. Test
+`Checkpoint_EarlyWarningWithZeroReported_RoundTrips` pins it.
+
 
 ### 5.6 Virtual media state (0x0F01)
 
@@ -460,7 +467,7 @@ checks them with `LegacyFileHeader.Check(rstream, tfi.FileId)`. The size fallbac
 bytes[0..3] == "TpN#"
   ├─ kind TocHeader         → 2.1 TOC copy (parse TocHeader from this block: version, MediaId)
   ├─ kind Media/Set/CalHdr  → block frame → Header | DamagedRecord
-  ├─ kind CalCheckpoint     → calibration-checkpoint fragment
+  ├─ kind HeaderBlockIdentity.CalibrationCheckpoint     → calibration-checkpoint fragment
   └─ other kind             → DamagedRecord: "ours, from a newer TapeNET"
 otherwise
   └─ LegacyIdentify          → today's logic, moved verbatim (TryPeek first, then offset-4 signature)
@@ -468,7 +475,8 @@ otherwise
 
 Random data passes the magic once in 2³² blocks, then must pass kind, version, bounds and a CRC-64 (or a full
 `TocHeader` parse). A record damaged behind its magic reports as damaged, never as a phantom TOC.
-`CarriesRecordSignature` accepts `TpN#` at 0 plus the legacy signature at 0 and 4.
+`CarriesRecordSignature` accepts `TpN#` at 0 plus the legacy signature at 0 and 4. Legacy checkpoints stay
+`DamagedRecord`.
 
 ---
 
@@ -512,7 +520,10 @@ Import: both formats. Export and emergency export: 2.1 only.
 
 Resume and Recalibrate of a legacy run work unchanged: `ReadRunHeader` keeps its two probes;
 `FindLastCheckpoint` classifies each block on its own, so mixed trails read correctly; the rewritten boundary
-checkpoint and all later ones are 2.1. The `#define LEGACY_TapeCalibrationRunHeader` block is deleted.
+checkpoint and all later ones are 2.1. A resume rewrites the boundary checkpoint in 2.1, so a resumed legacy
+run carries a mixed trail.
+
+The `#define LEGACY_TapeCalibrationRunHeader` block is deleted.
 
 ### 6.6 Scan Media
 
@@ -590,7 +601,7 @@ golden-tested, and the product's promise is that old cartridges stay readable.
 
 ### 8.2 Removed
 
-- `TapeSerializer.cs` from the product (reader → `Legacy/`, writer → tests). `ITapeSerializable` retires.
+- `TapeSerializer.cs` from the product (reader → `Legacy/`, writer → test helpers). `ITapeSerializable` retires.
 - **All aligned agent APIs** (§8.4).
 - `TapeTOC.GenerateUID`, `m_nextUID`, `TocVersion*` constants, `TapeFileInfo.UID` / `SerializeHeaderTo` /
   `DeserializeAndCheckHeaderFrom`, obsolete `long block` constructors and `Block`.
@@ -724,10 +735,15 @@ today; `LegacyFormatWriter` output equals goldens byte for byte; legacy → 2.1 
 | `Format_TapetocImportBoth_ExportOnly21` | §6.4 |
 | `Format_ScanMedia_BothFamilies` | legacy, 2.1, mixed images |
 | `Format_Calibration_ResumeLegacyRun` | mixed checkpoint trail; `InspectMedia` |
-| `Format_Calibration_CheckpointHeadroom` | ≥ 3× legacy samples per block |
+| `Format_Calibration_CheckpointHeadroom` | fewer samples per block than legacy, ratio reported |
 | `Format_TimeZoneShift` | backup under one `TimeZoneInfo`, restore under another → identical UTC times |
 | `Format_TocSize_Smaller` | 2.1 TOC ≤ legacy for a deep tree |
 | `Format_VirtualMedia_LegacyMetadataOpens` | golden `.vt` opens; re-saved metadata is 2.1 |
+
+> **Correction** to the "≥ 3× legacy samples per block" claim in §11.5 `Format_Calibration_CheckpointHeadroom`. Each
+legacy sample is 16 bytes; a delta-coded one is ~4–6 bytes at a 1 MiB cadence but ~10 bytes at an LTO-9 cadence
+(~30 GiB deltas need 5-byte varints). The gain is real but cadence-dependent (≈1.6–3×). `Checkpoint_SmallerThanLegacy`
+asserts "smaller" and prints the ratio.
 
 ### 11.6 Existing suite — known touch points (from `git grep`)
 
@@ -835,9 +851,22 @@ Do not change behaviour outside a step's scope.
 ### Phase 6 — Calibration and virtual media
 
 32. Calibration header and checkpoint on schemas + `TapeSampleCoder`; `TapeCalibrationFramer` follows `TapeFrame`;
-    delete the `LEGACY_TapeCalibrationRunHeader` block.
+    delete the `LEGACY_TapeCalibrationRunHeader` block. Calibration header → 2.1 wire (needs `TapeCalibrationPlan`'s field types); add `CalibrationRunHeader` to
+   `TapeHeader.Accepts` / `ReadBody`; checkpoint → 2.1 with `TapeSampleCoder`.
+   - Remove `TapeFramer`'s legacy half, `TapeHeader.SerializePreamble`, `ITapeSerializable` on `TapeCalibrationHeader`;
+     fold `TapeFramer` into `Format/TapeFrame`; `FrameStatus` → `Format/TapeFrameStatus`.
+   - `IdentifyBlock`: `CalibrationCheckpoint` → calibration fragment (today `DamagedRecord / Unparseable`, as legacy
+     checkpoints always were).
+   - Then `TapeSerializer` has no product user left and moves to `TapeLibNET.Tests`.
+
+> **Files for Phase 6:** `TapeCalibrator*.cs`, `TapeCalibrationCheckpoint.cs`, `TapeCalibrationPlan` (wherever it lives),
+`Legacy/LegacyCheckpointReader.cs`, `Legacy/LegacyHeaderReader.cs`, the current `TapeCalibrationHeader.cs` and
+`TapeFramer.cs` (after this phase), and the calibration tests.
+
 33. (moved to 11a/11b)
 34. Tests: calibration suite, `Format_Calibration_*`, `Format_VirtualMedia_LegacyMetadataOpens`.
+
+> `TapeFramer` fold + `FrameStatus` → `Format/` deferred to the move-only commit.
 
 ### Phase 7 — Service and mixed media
 

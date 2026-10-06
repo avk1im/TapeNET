@@ -139,8 +139,8 @@ public class CalibrationResumeTests
             EarlyWarning: (150L, 850L), Samples: samples);
 
         byte[] frame = TapeCalibrationFramer.Pack(cp);
-
         var back = TapeCalibrationFramer.Unpack<TapeCalibrationCheckpoint>(frame, frame.Length);
+
         Assert.NotNull(back);
         Assert.Equal(runId, back!.RunId);
         Assert.Equal(3, back.Index);
@@ -149,9 +149,9 @@ public class CalibrationResumeTests
         Assert.Equal(3, back.Samples.Count);
         Assert.Equal(samples[1], back.Samples[1]);
 
-        // Flip a byte INSIDE the payload (past the 4-byte length prefix) ⇒ CRC catches it ⇒ null.
+        // Flip a byte INSIDE the record body (past the 8-byte fixed prologue and its length) ⇒ CRC-64 catches it ⇒ null.
         byte[] corrupt = (byte[])frame.Clone();
-        corrupt[8] ^= 0xFF;
+        corrupt[12] ^= 0xFF;
         Assert.Null(TapeCalibrationFramer.Unpack<TapeCalibrationCheckpoint>(corrupt, corrupt.Length));
     }
 
@@ -179,27 +179,24 @@ public class CalibrationResumeTests
             BlockSize: (uint)(1 << 20), BlocksPerChunk: 8, ChunkSize: 8 << 20,
             TailBlocksPerChunk: 1, TailChunkSize: 1 << 20,
             TailCapacityFraction: 0.05, NumCheckpoints: 128);
-
         var header = TapeCalibrationHeader.CreateHeader(
             runId, "VENDOR|PRODUCT|REV|64MB", capacityReportedAtBom: 12345L,
             blockSize: (uint)(1 << 20), startedUtc: DateTime.UtcNow, plan: plan);
 
         byte[] frame = TapeCalibrationFramer.Pack(header);
-        var back = TapeCalibrationFramer.Unpack<TapeCalibrationHeader>(frame, frame.Length);
+        var back = TapeCalibrationFramer.UnpackHeader(frame, frame.Length);
 
         Assert.NotNull(back);
         Assert.Equal(runId, back!.RunId);
         Assert.Equal("VENDOR|PRODUCT|REV|64MB", back.ProfileKey);
         Assert.Equal(12345L, back.CapacityReportedAtBom);
-        Assert.Equal(plan.NumCheckpoints, back.Plan.NumCheckpoints);
-        Assert.Equal(plan.TailCapacityFraction, back.Plan.TailCapacityFraction);
-        Assert.Equal(plan.SampleCount, back.Plan.SampleCount);
+        Assert.Equal(plan, back.Plan);
     }
 
     [Fact]
     public void Unpack_OfForeignBlock_ReturnsNull()
     {
-        // A block of random bytes is not one of our records: no valid signature / length ⇒ null.
+        // A block of random bytes is not one of our records: no magic, no valid legacy frame ⇒ null.
         var junk = new byte[4096];
         new Random(7).NextBytes(junk);
         Assert.Null(TapeCalibrationFramer.Unpack<TapeCalibrationCheckpoint>(junk, junk.Length));
