@@ -10,7 +10,8 @@ namespace TapeLibNET.Tests.Helpers;
 
 /*
 /// <summary>
-/// Contract for types that can be written to / read from tape via <see cref="TapeSerializer"/> and <see cref="Legacy.LegacyDeserializer"/>.
+/// Contract for types that can be written to / read from tape via <see cref="TapeSerializer"/> and
+///  <see cref="TapeLibNET.Legacy.LegacyDeserializer"/>.
 ///  Not used past V2.1 Phase 6
 /// </summary>
 public interface ITapeSerializable
@@ -18,7 +19,7 @@ public interface ITapeSerializable
     /// <summary>Writes this instance to the given <paramref name="serializer"/>.</summary>
     void SerializeTo(TapeSerializer serializer);
     /// <summary>Reconstructs an instance from the given <paramref name="deserializer"/>, or returns <see langword="null"/> on failure.</summary>
-    abstract static ITapeSerializable? ConstructFrom(Legacy.LegacyDeserializer deserializer);
+    abstract static ITapeSerializable? ConstructFrom(TapeLibNET.Legacy.LegacyDeserializer deserializer);
 }
 */
 

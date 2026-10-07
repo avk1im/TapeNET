@@ -169,14 +169,16 @@ function Invoke-Move {
     }
 
     # 6. Shadowing: inside TapeLibNET.Tests.*, "Virtual.X" now binds to TapeLibNET.Tests.Virtual first.
-    $folders = ($Layout.Keys + 'Services', 'Physical', 'Helpers' | Sort-Object -Unique) -join '|'
+    #  Case-sensitive (-cmatch): lowercase locals such as drive.Rewind() are member access, never a namespace.
+    #  Only the NEW folders matter -- Services, Physical and Helpers already exist today.
+    $folders = ($Layout.Keys | Sort-Object -Unique) -join '|'
     $shadowRx = "(?<![\w\.])(?:$folders)\.[A-Z]\w*"
     foreach ($file in Get-SourceFiles $TestRoot) {
         $n = 0
         foreach ($line in [IO.File]::ReadAllLines($file.FullName)) {
             $n++
-            if ($line -match '^\s*(using|namespace)\b' -or $line -match '^\s*//') { continue }
-            if ($line -match $shadowRx) {
+            if ($line -cmatch '^\s*(using|namespace)\b' -or $line -cmatch '^\s*//') { continue }
+            if ($line -cmatch $shadowRx) {
                 Write-Warning "Possible shadowed name '$($Matches[0])' in $($file.Name):$n -- qualify as TapeLibNET.<Layer>.… if the build complains"
             }
         }
