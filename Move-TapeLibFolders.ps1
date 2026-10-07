@@ -53,7 +53,7 @@ $Layout = [ordered]@{
 }
 
 # Root files that deliberately stay in TapeLibNET (shared vocabulary).
-$StayInRoot = @('TapeResult.cs', 'TapeError.cs', 'TapeAddress.cs', 'OnceLatch.cs', 'CsWin32Extras.cs')
+$StayInRoot = @('TapeResult.cs', 'TapeError.cs', 'TapeAddress.cs', 'OnceLatch.cs', 'CsWin32Extras.cs', 'FailureSimulator.cs')
 
 $LibRoot = Join-Path $RepoRoot 'TapeLibNET'
 if (-not (Test-Path (Join-Path $LibRoot 'TapeLibNET.csproj'))) {
@@ -62,7 +62,7 @@ if (-not (Test-Path (Join-Path $LibRoot 'TapeLibNET.csproj'))) {
 
 function Assert-CleanTree {
     $status = git -C $RepoRoot status --porcelain
-    if ($status) { throw "Working tree not clean — commit or stash first:`n$status" }
+    if ($status) { throw "Working tree not clean -- commit or stash first:`n$status" }
 }
 
 function Get-SourceFiles([string] $projectDir) {
@@ -174,7 +174,7 @@ function Invoke-Usings {
         Write-Host "$projName : candidates injected into $count file(s)"
     }
 
-    Write-Host @"
+    $text = @'
 
 Done. Next:
   1. dotnet build                      (fix name clashes the build reports)
@@ -182,7 +182,8 @@ Done. Next:
                                        (prunes every unused using, file by file)
   3. dotnet build && dotnet test
   If step 2 removes nothing, enable IDE0005 first — see Design-FolderLayout.md §6.
-"@ -ForegroundColor Green
+'@
+    Write-Host $text -ForegroundColor Green
 }
 
 switch ($Phase) {
