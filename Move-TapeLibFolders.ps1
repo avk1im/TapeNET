@@ -55,6 +55,10 @@ $Layout = [ordered]@{
 # Root files that deliberately stay in TapeLibNET (shared vocabulary).
 $StayInRoot = @('TapeResult.cs', 'TapeError.cs', 'TapeAddress.cs', 'OnceLatch.cs', 'CsWin32Extras.cs', 'FailureSimulator.cs')
 
+# .NET file APIs resolve relative paths against the PROCESS working directory, which PowerShell's Set-Location does
+#  not update (often C:\Windows\system32). Make the root absolute once, so git and [IO.File] agree.
+$RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).ProviderPath
+
 $LibRoot = Join-Path $RepoRoot 'TapeLibNET'
 if (-not (Test-Path (Join-Path $LibRoot 'TapeLibNET.csproj'))) {
     throw "TapeLibNET\TapeLibNET.csproj not found under $RepoRoot"
