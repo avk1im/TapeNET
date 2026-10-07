@@ -1,5 +1,3 @@
-using System.Runtime.CompilerServices;
-
 using TapeLibNET.Virtual;
 using TapeLibNET.Agents;
 
@@ -19,13 +17,11 @@ namespace TapeLibNET.Tests;
 /// </remarks>
 public class LegacyVirtualGoldenTests
 {
-    private const string VirtualDirName = "Virtual";
     private const string TocFileName = "legacy.tapetoc";
     private const string SetDescription = "Legacy golden set";
     private static readonly string[] s_fileNames = ["alpha.txt", "beta.bin", "sub/gamma.dat"];
 
-    private static string GoldenDir([CallerFilePath] string thisFile = "") =>
-        Path.Combine(Path.GetDirectoryName(thisFile)!, "Golden", "Legacy", VirtualDirName);
+    private static string GoldenDir() => GoldenPaths.LegacyVirtual;
 
     private static string Img(string name) => Path.Combine(GoldenDir(), name);
 
@@ -55,7 +51,7 @@ public class LegacyVirtualGoldenTests
         try { Directory.Delete(dir, true); } catch { /* best effort */ }
     }
 
-    public static TheoryData<DriveProfile> Profiles() => new() { DriveProfile.Setmarks, DriveProfile.Partitions };
+    public static TheoryData<DriveProfile> Profiles() => [DriveProfile.Setmarks, DriveProfile.Partitions];
 
     private static string ImageBase(DriveProfile profile) => "legacy-" + profile.ToString().ToLowerInvariant();
 

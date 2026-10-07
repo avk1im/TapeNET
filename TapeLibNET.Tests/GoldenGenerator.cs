@@ -1,5 +1,3 @@
-using System.Runtime.CompilerServices;
-
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
@@ -11,8 +9,7 @@ namespace TapeLibNET.Tests;
 /// </summary>
 public class GoldenGenerator
 {
-    private static string GoldenDir([CallerFilePath] string thisFile = "") =>
-        Path.Combine(Path.GetDirectoryName(thisFile)!, "Golden", "Legacy");
+    private static string GoldenDir() => GoldenPaths.Legacy;
 
     [Fact(Skip = "Manual: regenerates the frozen legacy goldens. Remove Skip temporarily to run.")]
     public void GenerateLegacyGoldens()
