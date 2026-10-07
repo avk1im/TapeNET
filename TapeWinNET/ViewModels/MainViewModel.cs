@@ -1,23 +1,27 @@
-﻿using TapeLibNET.Drive;
-using TapeLibNET.Compression;
-using TapeLibNET.Toc;
-using TapeLibNET.Agents;
-using FclNET;
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
-using TapeLibNET.Services;
+
+using Windows.Win32.System.SystemServices; // for Helpers
+
+using FclNET;
+
+using TapeLibNET.Drive;
 using TapeLibNET.Virtual;
+using TapeLibNET.Compression;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
+using TapeLibNET.Services;
+
 using TapeWinNET.Controls;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
 using TapeWinNET.Utils;
-using Windows.Win32.System.SystemServices; // for Helpers
-
 
 namespace TapeWinNET.ViewModels;
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Naming vocabulary — one verb per lifecycle stage (keep new names consistent!)

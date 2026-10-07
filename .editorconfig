@@ -4,11 +4,14 @@
 root = true
 
 [*.cs]
-# P1 — folder = namespace
+# Require folder = namespace
 dotnet_style_namespace_match_folder = true
 dotnet_diagnostic.IDE0130.severity = warning
-# P8 — no stale usings
+# No stale using's
 dotnet_diagnostic.IDE0005.severity = warning
+# Visual Studio's "groups" are based only on the first part of the name,
+#  so with true it would want a blank line between Microsoft.* and Windows.*
+dotnet_separate_import_directive_groups = false
 
 # CS8321 — unused local function
 # These are intentional: log-helper families (logOkSub, logWarnSub, etc.) are
