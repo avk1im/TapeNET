@@ -1,11 +1,8 @@
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging.Abstractions;
-using System.IO;
-using TapeLibNET;
+using TapeLibNET.Toc;
 using TapeLibNET.Services;
 using TapeLibNET.Tests.Helpers; // TempFileTree, FileComparer, TestTapeServiceHost,
 using TapeLibNET.Virtual;
-                                //  TempVirtualMedia, MultiVolumeTapeServiceHost
+//  TempVirtualMedia, MultiVolumeTapeServiceHost
 
 namespace TapeLibNET.Tests.Services;
 
@@ -108,9 +105,8 @@ public abstract class ServiceTestBase : IDisposable
     // ── Single-volume factory helpers ─────────────────────────────────────────
 
     /// <summary>
-    /// Creates a <see cref="TestTapeService"/> (concrete: <see cref="TapeService"/>)
-    ///  wired to a fresh <see cref="TestTapeServiceHost"/> that records every
-    ///  <see cref="ITapeServiceHost.Report"/> call and every
+    /// Creates a <see cref="TestTapeService"/> wired to a fresh <see cref="TestTapeServiceHost"/>
+    ///  that records every <see cref="ITapeServiceHost.Report"/> call and every
     ///  <see cref="ServiceStateChange"/> notification for post-hoc assertions.
     /// </summary>
     protected (TestTapeService service, TestTapeServiceHost host) CreateService()

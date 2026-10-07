@@ -1,5 +1,4 @@
 using System.Runtime.CompilerServices;
-using System.Text;
 
 using HelpNET.Assistants;
 using HelpNET.Content;

@@ -1,7 +1,9 @@
-﻿using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
-using System.Security.Cryptography.Xml;
-using TapeLibNET;
+﻿using TapeLibNET.Drive;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Media;
+using TapeLibNET.Agents;
+using Microsoft.Extensions.Logging;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests.Helpers;
@@ -70,10 +72,12 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
     /// <summary>
     /// Default TOC capacity override for tests — small enough to keep
-    /// <c>CapacityForCurrentSet</c> positive on small volumes so the library's
-    /// software capacity check (<see cref="TapeStreamManager.CheckContentCapacity"/>)
-    /// triggers volume transitions before the tape physically fills.
-    /// 32 KB ≈ 2 blocks at 16 KB block size, plenty for the test TOC.
+    ///  <c>CapacityForCurrentSet</c> positive on small volumes so the library's
+    ///  software capacity check triggers volume transitions before the tape physically
+    ///  fills.
+    /// <para>
+    ///  32 KB ≈ 2 blocks at 16 KB block size, plenty for the test TOC.
+    /// </para>
     /// </summary>
     public const long DefaultTOCCapacity = 32L * 1024;
 

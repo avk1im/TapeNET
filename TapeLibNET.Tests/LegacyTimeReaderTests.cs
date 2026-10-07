@@ -1,3 +1,5 @@
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
 using TapeLibNET.Legacy;
 using TapeLibNET.Tests.Helpers;
 

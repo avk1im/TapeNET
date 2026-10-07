@@ -1,3 +1,5 @@
+using TapeLibNET.Drive;
+using TapeLibNET.Calibration;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;

@@ -1,5 +1,5 @@
+using TapeLibNET.Agents;
 using TapeLibNET.Tests.Helpers;
-using TapeLibNET.Virtual;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Tests;
@@ -130,7 +130,7 @@ public class TapeSetNavigationRecoveryTests
     /// </remarks>
     private static void DamageTheTail(VirtualTapeFixture fixture, TempFileTree doomed)
     {
-        var notify = new TestNotifiable { AbortAfterNPreProcessed = 1 };
+        var notify = new TestNotifiable { AbortInPreProcessAfterN = 1 };
 
         using var agent = fixture.CreateBackupAgent();
         fixture.TOC.AddNewSetTOC();

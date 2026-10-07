@@ -1,15 +1,12 @@
-﻿using System.Collections.Concurrent;
-using System.Globalization;
+﻿using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using System.Windows.Media.TextFormatting;
 using TapeWinNET.Models;
 using TapeWinNET.Utils;
 using Windows.Win32;
-using Windows.Win32.System.SystemServices;
 using Windows.Win32.UI.Shell;
 
 

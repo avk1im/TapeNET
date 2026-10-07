@@ -1,6 +1,5 @@
-using System.IO;
-
-using TapeLibNET;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
 using TapeLibNET.Services;
 using TapeLibNET.Tests.Helpers; // TempFileTree, FileComparer, TempVirtualMedia
 
@@ -17,8 +16,8 @@ public class ServiceIncrementalTests : ServiceTestBase
     /// Verifies per-wave statistics across a three-wave incremental chain:
     ///  wave 0 full backup → wave 1 incremental (5 changed) → wave 2 incremental (3 changed + 2 new).
     /// <para>
-    /// Assertions per wave cover <see cref="BackupResult.FilesSucceeded"/>,
-    ///  <see cref="BackupResult.FilesSkipped"/>, <see cref="BackupResult.FilesTotal"/>,
+    /// Assertions per wave cover <see cref="FileOperationResult.FilesSucceeded"/>,
+    ///  <see cref="FileOperationResult.FilesSkipped"/>, <see cref="FileOperationResult.FilesTotal"/>,
     ///  <see cref="TapeSetTOC.Count"/>, and <see cref="TapeSetTOC.Incremental"/>.
     /// </para>
     /// </summary>

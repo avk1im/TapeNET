@@ -1,11 +1,9 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
+using TapeLibNET.Drive;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
 
-namespace TapeLibNET;
+namespace TapeLibNET.Calibration;
 
 /// <summary>
 /// A single calibrated mapping point on the <c>ReportedRemaining → ActualRemaining</c> curve,

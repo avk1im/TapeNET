@@ -1,6 +1,10 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using TapeLibNET.Drive;
+using TapeLibNET.Compression;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using TapeLibNET;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests.Helpers;

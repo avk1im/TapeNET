@@ -1,3 +1,4 @@
+using TapeLibNET.Toc;
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
@@ -134,7 +135,7 @@ public class FileEdgeCaseTests
     public void LargeFile_SeveralMB_RoundTrips(DriveProfile profile)
     {
         using var tree = new TempFileTree();
-        // 4 MB — exercises multi-block read/write across many blocks
+        // 4 MB ï¿½ exercises multi-block read/write across many blocks
         tree.AddFile("large_4mb.dat", 4L * 1024 * 1024);
 
         using var fixture = new VirtualTapeFixture(profile);
@@ -181,7 +182,7 @@ public class FileEdgeCaseTests
         using var tree = new TempFileTree();
         tree.AddFile(Path.Combine("names", fileName), 256);
 
-        // Use Setmarks as representative — name handling is profile-independent
+        // Use Setmarks as representative ï¿½ name handling is profile-independent
         using var fixture = new VirtualTapeFixture(DriveProfile.Setmarks);
         var notifiable = new TestNotifiable();
 
@@ -334,7 +335,7 @@ public class FileEdgeCaseTests
     public void ManySmallFiles_500Plus_StressesTocAndFileIndex(DriveProfile profile)
     {
         using var tree = new TempFileTree();
-        // 500 small files (10–500 bytes each) — stresses TOC serialization and file-index machinery
+        // 500 small files (10ï¿½500 bytes each) ï¿½ stresses TOC serialization and file-index machinery
         tree.AddFiles("batch", count: 500, minSize: 10, maxSize: 500);
 
         using var fixture = new VirtualTapeFixture(profile);
@@ -380,14 +381,14 @@ public class FileEdgeCaseTests
 
     /// <summary>
     /// Parameterized test for sizes around the block boundary:
-    /// blockSize - 1, blockSize, blockSize + 1, 2 × blockSize, 2 × blockSize + 1.
+    /// blockSize - 1, blockSize, blockSize + 1, 2 ï¿½ blockSize, 2 ï¿½ blockSize + 1.
     /// </summary>
     [Theory]
     [InlineData(-1, "block minus 1")]
     [InlineData(0, "exact block")]
     [InlineData(1, "block plus 1")]
-    [InlineData(16384, "two blocks")]       // blockSize * 1 offset ? 2 × blockSize
-    [InlineData(16385, "two blocks plus 1")] // blockSize * 1 + 1 offset ? 2 × blockSize + 1
+    [InlineData(16384, "two blocks")]       // blockSize * 1 offset ? 2 ï¿½ blockSize
+    [InlineData(16385, "two blocks plus 1")] // blockSize * 1 + 1 offset ? 2 ï¿½ blockSize + 1
     public void BlockBoundarySizes_BackupRestore_RoundTrips(int offsetFromBlock, string label)
     {
         using var fixture = new VirtualTapeFixture(DriveProfile.Setmarks);
@@ -445,7 +446,7 @@ public class FileEdgeCaseTests
             description: "Edge validate",
             hashAlgorithm: TapeHashAlgorithm.Crc64);
 
-        // CRC-only validation — no disk writes
+        // CRC-only validation ï¿½ no disk writes
         var notifiable = new TestNotifiable();
         using var validateAgent = fixture.CreateValidateAgent();
         fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
@@ -507,7 +508,7 @@ public class FileEdgeCaseTests
         }
         catch
         {
-            // Best effort — temp directories may be locked
+            // Best effort ï¿½ temp directories may be locked
         }
     }
 

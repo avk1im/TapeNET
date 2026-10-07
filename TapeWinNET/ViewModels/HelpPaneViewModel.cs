@@ -189,14 +189,14 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
 
     /// <summary>
     /// Raised when <see cref="IsRevealActive"/> changes so <see cref="Controls.HelpPane"/>
-    /// can activate or deactivate the <see cref="Overlays.RevealOverlay"/>.
+    /// can activate or deactivate the <see cref="Help.Overlays.RevealOverlay"/>.
     /// The boolean argument is the new value of <see cref="IsRevealActive"/>.
     /// </summary>
     public event EventHandler<bool>? RevealRequested;
 
     /// <summary>
     /// Raised when <see cref="IsGuideActive"/> changes so <see cref="Controls.HelpPane"/>
-    /// can activate or deactivate the <see cref="Overlays.WalkthroughOverlay"/>.
+    /// can activate or deactivate the <see cref="Help.Overlays.WalkthroughOverlay"/>.
     /// The boolean argument is the new value of <see cref="IsGuideActive"/>.
     /// </summary>
     public event EventHandler<bool>? GuideRequested;
@@ -282,7 +282,7 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     /// <summary>
     /// <see langword="true"/> while a walkthrough tour is active on the host window.
     /// Setting this raises <see cref="GuideRequested"/> so <see cref="Controls.HelpPane"/>
-    /// can activate or deactivate the <see cref="Overlays.WalkthroughOverlay"/>.
+    /// can activate or deactivate the <see cref="Help.Overlays.WalkthroughOverlay"/>.
     /// </summary>
     public bool IsGuideActive
     {

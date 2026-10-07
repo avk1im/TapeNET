@@ -1,8 +1,7 @@
+using TapeLibNET.Agents;
 using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Input;
-
-using TapeLibNET;
 using TapeLibNET.Scan;
 using TapeLibNET.Services;
 

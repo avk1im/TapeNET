@@ -1,12 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Logging;
-using System.Diagnostics;
-using System.Reflection;
-using Windows.Win32.Foundation;
+﻿using Windows.Win32.Foundation;
 
 
 namespace TapeLibNET.Virtual;

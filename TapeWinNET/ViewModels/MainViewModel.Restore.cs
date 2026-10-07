@@ -1,13 +1,9 @@
+using TapeLibNET.Toc;
 using System.Windows;
 using System.Windows.Input;
-
-using TapeLibNET;
 using TapeLibNET.Services;
-using TapeWinNET.Converters;
 using TapeWinNET.Models;
-using TapeWinNET.Services;
 using TapeWinNET.Utils;
-using System.Diagnostics;
 
 namespace TapeWinNET.ViewModels;
 

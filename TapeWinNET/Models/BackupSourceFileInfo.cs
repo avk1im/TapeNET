@@ -1,3 +1,4 @@
+using TapeLibNET.Toc;
 using System.IO;
 using TapeLibNET;
 

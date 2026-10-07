@@ -1,14 +1,9 @@
-﻿using System.Collections.ObjectModel;
+﻿using TapeLibNET.Calibration;
 using System.IO;
 using System.Windows.Input;
 using Microsoft.Win32;
-
-using TapeLibNET;
 using TapeLibNET.Virtual;
 using TapeLibNET.Services;
-using TapeWinNET.Converters;
-using TapeWinNET.Models;
-using TapeWinNET.Services;
 
 namespace TapeWinNET.ViewModels;
 

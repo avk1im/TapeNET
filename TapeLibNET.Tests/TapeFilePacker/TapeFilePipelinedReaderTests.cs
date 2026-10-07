@@ -34,8 +34,8 @@ public class TapeFilePipelinedReaderTests
         return blocks;
     }
 
-    /// <summary>Concatenate the seeded tape content from block <paramref name="start"/>
-    /// covering <paramref name="length"/> bytes starting at <paramref name="offset"/>
+    /// <summary>Concatenate the seeded tape content from block <paramref name="startBlock"/>
+    /// covering <paramref name="length"/> bytes starting at <paramref name="offsetInBlock"/>
     /// inside that block.</summary>
     private static byte[] ExpectedBytes(byte[][] blocks, long startBlock, int offsetInBlock, long length)
     {

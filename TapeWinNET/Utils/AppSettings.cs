@@ -1,16 +1,11 @@
+using TapeLibNET.Streams;
+using TapeLibNET.Calibration;
 using AiNET;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using System.ComponentModel;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-
-using System.Windows;
-using System.Windows.Input;
-using System.Windows.Media.TextFormatting;
-
-using TapeLibNET; // for TapeCalibrationStore
 
 namespace TapeWinNET.Utils;
 

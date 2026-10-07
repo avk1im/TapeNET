@@ -1,4 +1,6 @@
 // Save as: TapeLibNET.Tests/TapeSetHeaderTests.cs
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
 using TapeLibNET.Format;
 using TapeLibNET.Tests.Helpers;
 

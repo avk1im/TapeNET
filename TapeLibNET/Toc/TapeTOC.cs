@@ -1,12 +1,15 @@
-﻿using TapeLibNET.Legacy;
+﻿using TapeLibNET.Drive;
+using TapeLibNET.Compression;
+using TapeLibNET.Headers;
+using TapeLibNET.Media;
+using TapeLibNET.Agents;
+using TapeLibNET.Legacy;
 using System.Collections;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Text;
 using System.Text.RegularExpressions;
 
 
-namespace TapeLibNET;
+namespace TapeLibNET.Toc;
 
 /// <summary>
 /// How a backup set's data is laid out on tape: governs the per-file header and set-header formats.
@@ -458,18 +461,22 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
 
     /// <summary>
     /// Computes the total size of all files in the set on tape, considering the block size
-    /// and file block alignment or packing, plus the set header block when present (SH-12).
-    /// <para>Works properly for both packed and aligned (legacy) layouts, and for both data formats.</para>
+    ///  and file block alignment or packing, plus the set header block when present (SH-12).
+    /// <para>Works properly for both packed and aligned (legacy) layouts, and for both data formats.
+    /// </para>
     /// </summary>
-    // We detect packed-layout sets dynamically: if any file has a non-zero intra-block
-    //  offset (Address.Offset != 0), the set is packed and files share blocks, so we
-    //  only round the *total* of (file + header) sizes up to one block boundary
-    //  rather than rounding each file individually. The detection result is cached.
-    /// <param name="defaultBlockSize">Block size to assume when the set's own <see cref="BlockSize"/> is 0.</param>
+    /// <param name="defaultBlockSize">Block size to assume when the set's own <see cref="BlockSize"/> is 0.
+    /// </param>
     /// <param name="withSetHeader">
     /// Whether this set carries a <see cref="TapeSetHeader"/>. The set TOC cannot know this itself — the
     ///  media header declares it per volume (SH-1) — so the caller supplies it.
     /// </param>
+    /// <remarks>
+    /// We detect packed-layout sets dynamically: if any file has a non-zero intra-block
+    ///  offset (Address.Offset != 0), the set is packed and files share blocks, so we
+    ///  only round the *total* of (file + header) sizes up to one block boundary
+    ///  rather than rounding each file individually. The detection result is cached.
+    /// </remarks>
     public long ComputeTotalFileSizeOnTape(uint defaultBlockSize = 0, bool withSetHeader = false)
     {
         // -- Local helpers ---
@@ -1326,7 +1333,7 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     /// Returns per-set file counts from a pre-assembled <paramref name="combined"/> selection
     ///  array (as produced by <see cref="SelectFilesFromSets"/>), plus the overall total.
     ///  A <c>null</c> entry in <paramref name="combined"/> means "all files in set", so the
-    ///  file count and size come from the corresponding <see cref="SetTOC"/>.
+    ///  file count and size come from the corresponding <see cref="TapeSetTOC"/>.
     /// </summary>
     /// <param name="combined">Selection array (index 0 = newest set, running down to oldest).</param>
     /// <param name="newestSetIndex">Standard 1-based index of the newest set (slot 0).</param>
@@ -1360,7 +1367,7 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     /// Returns the total file size in bytes from a pre-assembled <paramref name="combined"/> selection
     ///  array (as produced by <see cref="SelectFilesFromSets"/>), plus the overall total.
     ///  A <c>null</c> entry in <paramref name="combined"/> means "all files in set", so the
-    ///  file size comes from the corresponding <see cref="SetTOC"/>.
+    ///  file size comes from the corresponding <see cref="TapeSetTOC"/>.
     /// </summary>
     /// <param name="combined">Selection array (index 0 = newest set, running down to oldest).</param>
     /// <param name="newestSetIndex">Standard 1-based index of the newest set (slot 0).</param>

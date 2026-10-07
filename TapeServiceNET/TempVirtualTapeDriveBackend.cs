@@ -1,5 +1,4 @@
-using Microsoft.Extensions.Logging;
-using TapeLibNET;
+using TapeLibNET.Drive;
 using TapeLibNET.Virtual;
 
 namespace TapeServiceNET;
@@ -16,7 +15,7 @@ namespace TapeServiceNET;
 internal sealed class TempVirtualTapeDriveBackend(
     VirtualTapeDriveBackend inner,
     string contentFilePath,
-    string? initiatorFilePath) : TapeLibNET.TapeDriveBackend(inner.LoggerFactory)
+    string? initiatorFilePath) : TapeDriveBackend(inner.LoggerFactory)
 {
     private readonly VirtualTapeDriveBackend _inner = inner;
     private readonly string _contentFilePath = contentFilePath;
@@ -71,12 +70,12 @@ internal sealed class TempVirtualTapeDriveBackend(
         => _inner.Write(buffer, offset, count, out tapemark, out pew, out ew, out eom);
 
     public override bool SetPosition(long block) => _inner.SetPosition(block);
-    public override bool SetPositionToPartition(TapeLibNET.MediaPartition partition, long block)
+    public override bool SetPositionToPartition(MediaPartition partition, long block)
         => _inner.SetPositionToPartition(partition, block);
     public override long GetPosition() => _inner.GetPosition();
-    public override TapeLibNET.MediaPartition GetCurrentPartition() => _inner.GetCurrentPartition();
+    public override MediaPartition GetCurrentPartition() => _inner.GetCurrentPartition();
     public override bool Rewind() => _inner.Rewind();
-    public override bool SeekToEnd(TapeLibNET.MediaPartition partition) => _inner.SeekToEnd(partition);
+    public override bool SeekToEnd(MediaPartition partition) => _inner.SeekToEnd(partition);
     public override bool SpaceFilemarks(int count) => _inner.SpaceFilemarks(count);
     public override bool SpaceSetmarks(int count) => _inner.SpaceSetmarks(count);
     public override bool SpaceSequentialFilemarks(int count) => _inner.SpaceSequentialFilemarks(count);
@@ -84,9 +83,9 @@ internal sealed class TempVirtualTapeDriveBackend(
     public override bool WriteFilemarks(uint count, out bool ew) => _inner.WriteFilemarks(count, out ew);
     public override bool WriteSetmarks(uint count, out bool ew) => _inner.WriteSetmarks(count, out ew);
 
-    public override void FillDriveCapabilities(out TapeLibNET.DriveCapabilities parameters)
+    public override void FillDriveCapabilities(out DriveCapabilities parameters)
         => _inner.FillDriveCapabilities(out parameters);
-    public override void FillMediaParameters(out TapeLibNET.MediaParameters parameters)
+    public override void FillMediaParameters(out MediaParameters parameters)
         => _inner.FillMediaParameters(out parameters);
 
     public override bool ReportsEarlyWarning => _inner.ReportsEarlyWarning;

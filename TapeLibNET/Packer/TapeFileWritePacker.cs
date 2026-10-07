@@ -1,4 +1,5 @@
-using System.Diagnostics;
+using TapeLibNET.Drive;
+using TapeLibNET.Media;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 

@@ -1,6 +1,8 @@
+using TapeLibNET.Toc;
+using TapeLibNET.Media;
 using ZstdNet;
 
-namespace TapeLibNET;
+namespace TapeLibNET.Compression;
 
 // ── Per-file codec flag ───────────────────────────────────────────────────────
 

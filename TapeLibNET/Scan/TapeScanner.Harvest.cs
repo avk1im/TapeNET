@@ -1,5 +1,6 @@
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
 using Microsoft.Extensions.Logging;
-using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Scan;
 

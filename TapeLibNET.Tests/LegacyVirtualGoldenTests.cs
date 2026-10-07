@@ -1,3 +1,4 @@
+using TapeLibNET.Agents;
 using System.Runtime.CompilerServices;
 using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;

@@ -1,5 +1,6 @@
-using System.IO;
-using TapeLibNET;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
+using TapeLibNET.Calibration;
 using TapeLibNET.Services;
 using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;

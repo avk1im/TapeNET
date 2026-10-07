@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using TapeLibNET.Toc;
 using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 using Xunit.Abstractions;

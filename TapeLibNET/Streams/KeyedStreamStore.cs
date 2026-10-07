@@ -1,24 +1,20 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text;
-using System.Threading;
 using Microsoft.Extensions.Logging;
 
-namespace TapeLibNET;
+namespace TapeLibNET.Streams;
 
 /// <summary>
 /// Generic, root-agnostic keyed stream store. Each stream lives in its OWN sub-folder
-/// (named from a sanitized key + a short stable hash) under the supplied root; the payload
-/// sits in a data file (by default the legacy <c>blob.bin</c>, or an optionally supplied
-/// human-readable name such as <c>profile.tapecal.json</c>), and the raw key in <c>key.txt</c>.
+///  (named from a sanitized key + a short stable hash) under the supplied root; the payload
+///  sits in a data file (by default the legacy <c>blob.bin</c>, or an optionally supplied
+///  human-readable name such as <c>profile.tapecal.json</c>), and the raw key in <c>key.txt</c>.
 /// <para>
 /// The store stays deliberately opaque: it moves <see cref="Stream"/>s keyed by
-/// <see cref="string"/> and never interprets the payload. Scope (app-private vs.
-/// shared) belongs to the CALLER — pick the root accordingly. Living in
-/// <c>TapeLibNET</c> lets both the library and any app reuse it (dependency flows
-/// app → library, never the reverse).
+///  <see cref="string"/> and never interprets the payload. Scope (app-private vs.
+///  shared) belongs to the CALLER — pick the root accordingly. Living in
+///  <c>TapeLibNET</c> lets both the library and any app reuse it (dependency flows
+///  app → library, never the reverse).
 /// </para>
 /// <para>
 /// CROSS-PROCESS SAFE: because a shared root may be hit by several TapeLibNET apps
@@ -205,15 +201,15 @@ public sealed class KeyedStreamStore : ErrorManageableBase
 
     /// <summary>
     /// Returns a DETACHED, seekable copy of the stream (position 0), or <see langword="null"/>.
-    /// A null result means EITHER the key is absent (<c>WentOK</c> stays true) OR the read
-    /// failed (<c>WentBad</c>, error state set). The bytes are read under the per-key lock and
-    /// handed back as an in-memory stream, so the caller's read never races a concurrent
-    /// replace. Caller disposes.
+    ///  A null result means EITHER the key is absent (<c>WentOK</c> stays true) OR the read
+    ///  failed (<c>WentBad</c>, error state set). The bytes are read under the per-key lock and
+    ///  handed back as an in-memory stream, so the caller's read never races a concurrent
+    ///  replace. Caller disposes.
     /// <para>
     /// LEGACY FALLBACK: when the named data file (constructor-supplied or the legacy <c>blob.bin</c>)
-    /// is absent, the folder is probed for ANY other file next to <c>key.txt</c> — so a folder that
-    /// only carries an older per-call filename (e.g. a prior <see cref="MeasuredUtc"/>-stamped name)
-    /// or the legacy <c>blob.bin</c> is still read.
+    ///  is absent, the folder is probed for ANY other file next to <c>key.txt</c> — so a folder that
+    ///  only carries an older per-call filename (e.g. a prior <c>MeasuredUtc</c>-stamped name)
+    ///  or the legacy <c>blob.bin</c> is still read.
     /// </para>
     /// </summary>
     public Stream? Open(string key)

@@ -1,6 +1,5 @@
+using TapeLibNET.Drive;
 using Grpc.Core;
-using Microsoft.Extensions.Logging;
-using TapeLibNET;
 using TapeLibNET.Remote;
 using TapeLibNET.Virtual;
 
@@ -527,7 +526,7 @@ public class TapeDriveGrpcService(TapeDriveSessionRegistry registry, ILogger<Tap
         var response = new ProbeDrivesResponse();
         for (uint i = 0; i <= maxDrive; i++)
         {
-            if (TapeLibNET.TapeDrive.ProbeWin32(i))
+            if (TapeDrive.ProbeWin32(i))
                 response.DriveNumbers.Add(i);
         }
 

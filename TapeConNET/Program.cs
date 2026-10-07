@@ -3,8 +3,6 @@
 //  the parsed command, and translates any TapeConException into the
 //  appropriate TapeConExitCode for the OS.
 
-using System.CommandLine;
-
 using TapeConNET.Cli;
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;

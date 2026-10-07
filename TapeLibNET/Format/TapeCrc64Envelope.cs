@@ -1,3 +1,4 @@
+using TapeLibNET.Streams;
 using System.IO.Hashing;
 
 namespace TapeLibNET.Format;

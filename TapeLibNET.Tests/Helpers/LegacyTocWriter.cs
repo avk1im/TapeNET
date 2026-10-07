@@ -1,4 +1,5 @@
 // Save as: TapeLibNET.Tests/Helpers/LegacyTocWriter.cs
+using TapeLibNET.Toc;
 using System.IO.Hashing;
 using TapeLibNET.Legacy;
 

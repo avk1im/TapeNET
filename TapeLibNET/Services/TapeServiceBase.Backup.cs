@@ -1,8 +1,7 @@
-using System.IO;
-using System.Reflection.PortableExecutable;
-using System.Runtime.ConstrainedExecution;
-using TapeLibNET;
-using Windows.Win32.Foundation;
+using TapeLibNET.Compression;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
 using Windows.Win32.System.SystemServices; // Helpers, Stopwatch
 using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
 
@@ -1374,7 +1373,7 @@ public partial class TapeServiceBase
     /// The base implementation returns a plain <see cref="ServiceBackupProgressHandler"/>
     ///  that logs through <see cref="_host"/> and applies the optional file filter.
     ///  Subclasses override this to add a progress-bar display (CLI: <c>IProgressScope</c>;
-    ///  WPF: <see cref="WpfServiceHost.UpdateBackupProgress"/> calls).
+    ///  WPF: <c>WpfServiceHost.UpdateBackupProgress</c> calls).
     /// </para>
     /// </summary>
     protected virtual ServiceBackupProgressHandler CreateBackupProgressHandler(

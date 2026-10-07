@@ -1,4 +1,4 @@
-using TapeLibNET;
+using TapeLibNET.Drive;
 
 namespace TapeLibNET.Tests.Helpers;
 

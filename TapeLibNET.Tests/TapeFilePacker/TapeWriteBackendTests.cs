@@ -1,3 +1,4 @@
+using TapeLibNET.Drive;
 using TapeLibNET.Packer;
 
 namespace TapeLibNET.Tests.TapeFilePacker;

@@ -1,5 +1,6 @@
-﻿using TapeLibNET.Tests.Helpers;
-using TapeLibNET.Virtual;
+﻿using TapeLibNET.Toc;
+using TapeLibNET.Agents;
+using TapeLibNET.Tests.Helpers;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Tests;
@@ -518,8 +519,9 @@ public class ErrorHandlingTests
 
     #region *** (C) Backup Proactive Abort ***
 
+    /// <summary>
     /// User aborts from <see cref="ITapeFileNotifiable.PreProcessFile"/> after N
-    /// files have succeeded. The remaining files should not be processed.
+    ///  files have succeeded. The remaining files should not be processed.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -531,7 +533,7 @@ public class ErrorHandlingTests
         using var tree = new TempFileTree();
         tree.AddFiles("abort_pre", count: fileCount, minSize: 100, maxSize: 4 * 1024);
 
-        var notifiable = new TestNotifiable { AbortAfterNPreProcessed = abortAfter };
+        var notifiable = new TestNotifiable { AbortInPreProcessAfterN = abortAfter };
 
         using var fixture = new VirtualTapeFixture(profile);
 
@@ -1100,7 +1102,7 @@ public class ErrorHandlingTests
         using var tree = new TempFileTree();
         tree.AddFiles("abortdiag", count: 10, minSize: 512, maxSize: 4 * 1024);
 
-        var notifiable = new TestNotifiable { AbortAfterNPreProcessed = 3 };
+        var notifiable = new TestNotifiable { AbortInPreProcessAfterN = 3 };
 
         using var fixture = new VirtualTapeFixture(profile);
         fixture.TOC.AddNewSetTOC(0, incremental: false);
@@ -1515,7 +1517,7 @@ public class ErrorHandlingTests
 
             case AbortChannel.Exception:
                 // The void-callback channel: throwing is the ONLY way PreProcessFile can say "stop".
-                notifiable.AbortAfterNPreProcessed = abortAfter;
+                notifiable.AbortInPreProcessAfterN = abortAfter;
                 break;
         }
 
@@ -1665,7 +1667,7 @@ public class ErrorHandlingTests
 #endif
                 break;
             case AbortChannel.Exception:
-                notifiable.AbortAfterNPreProcessed = 2;
+                notifiable.AbortInPreProcessAfterN = 2;
                 break;
         }
 

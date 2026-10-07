@@ -1,7 +1,5 @@
 using System.CommandLine;
 
-using TapeLibNET;
-
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
 

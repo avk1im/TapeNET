@@ -1,4 +1,10 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using TapeLibNET.Streams;
+using TapeLibNET.Drive;
+using TapeLibNET.Compression;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Media;
+using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.IO.Hashing;
 using Windows.Win32.Foundation;
@@ -6,7 +12,7 @@ using Windows.Win32.Foundation;
 using TapeLibNET.Format;
 using TapeLibNET.Legacy;
 
-namespace TapeLibNET;
+namespace TapeLibNET.Agents;
 
 /// <summary>
 /// Abstract restore agent — reads files from tape content sets, validates headers and CRC,

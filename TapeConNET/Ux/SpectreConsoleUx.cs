@@ -1,8 +1,7 @@
+using TapeLibNET.Drive;
 using System.Reflection;
 
 using Spectre.Console;
-
-using TapeLibNET;
 
 namespace TapeConNET.Ux;
 

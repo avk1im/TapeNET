@@ -1,7 +1,6 @@
+using TapeLibNET.Calibration;
 using System.Windows;
 using System.Windows.Input;
-
-using TapeLibNET;
 using TapeLibNET.Services;
 using TapeWinNET.Services;
 

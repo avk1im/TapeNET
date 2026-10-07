@@ -1,4 +1,4 @@
-using TapeLibNET;
+using TapeLibNET.Drive;
 using TapeLibNET.Tests.Helpers;
 using Xunit.Abstractions;
 

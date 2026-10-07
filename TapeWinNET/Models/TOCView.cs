@@ -1,7 +1,7 @@
+using TapeLibNET.Toc;
 using System.Diagnostics;
 
 using FclNET;
-using TapeLibNET;
 using TapeWinNET.Utils;
 
 namespace TapeWinNET.Models;
@@ -226,12 +226,14 @@ public class TOCView(TapeTOC toc)
     /// Invalidates stale <see cref="BackupSetView"/> instances whose underlying
     ///  <see cref="TapeSetTOC"/> has been replaced, so that subsequent
     ///  <see cref="GetOrCreate"/> calls will rebuild them with the new source files.
-    /// Unchanged views are preserved to carry over checked state.
-    /// We don't checjk for incremental status, since GetOrCreate() handles the check.
+    /// <para>
+    ///  Unchanged views are preserved to carry over checked state.
+    /// </para>
     /// </summary>
-    /// <param name="showIncrementalSets">Current incremental display setting.</param>
     /// <param name="refreshSets">Force re-creation of all existing views (e.g. when
     ///  incremental display setting changed).</param>
+    /// <remarks>We don't check for incremental status, since <see cref="GetOrCreate"/> handles
+    ///  the check.</remarks>
     public void Refresh(bool refreshSets = false)
     {
         // TOC size might've changed -> resize _setViews if needed

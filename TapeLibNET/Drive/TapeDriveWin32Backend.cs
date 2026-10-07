@@ -7,7 +7,7 @@ using Windows.Win32.Foundation;
 using Windows.Win32.Storage.FileSystem;
 using Windows.Win32.System.SystemServices;
 
-namespace TapeLibNET;
+namespace TapeLibNET.Drive;
 
 /// <summary>
 /// Win32 implementation of <see cref="TapeDriveBackend"/> using the Windows Media Backup API.

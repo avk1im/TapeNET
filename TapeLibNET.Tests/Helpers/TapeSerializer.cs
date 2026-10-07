@@ -1,4 +1,6 @@
-﻿using System.Runtime.CompilerServices;
+﻿using TapeLibNET.Drive;
+using TapeLibNET.Toc;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 using TapeLibNET.Legacy; // signature and version constants

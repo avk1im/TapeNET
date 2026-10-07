@@ -1,12 +1,9 @@
-using System;
-using System.Collections.Generic;
+using TapeLibNET.Streams;
 using System.Globalization;
-using System.IO;
-using System.Linq;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
-namespace TapeLibNET;
+namespace TapeLibNET.Calibration;
 
 /// <summary>
 /// Typed façade over <see cref="KeyedStreamStore"/> for <see cref="ITapeCalibration"/> profiles.

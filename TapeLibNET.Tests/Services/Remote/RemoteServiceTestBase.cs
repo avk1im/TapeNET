@@ -1,8 +1,3 @@
-using System.IO;
-
-using Microsoft.Extensions.Logging.Abstractions;
-
-using TapeLibNET;
 using TapeLibNET.Remote;
 using TapeLibNET.Services;
 using TapeLibNET.Tests.Helpers; // TempVirtualMedia, TestTapeServiceHost, RemoteMultiVolumeServiceHost

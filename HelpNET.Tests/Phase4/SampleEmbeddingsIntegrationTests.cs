@@ -2,8 +2,6 @@
 using System.Text.Json;
 using HelpNET.Content;
 using HelpNET.Embeddings;
-using HelpNET.Indexing;
-using HelpNET.Retrieval;
 using Xunit;
 using Xunit.Abstractions;
 

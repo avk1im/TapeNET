@@ -1,3 +1,4 @@
+using TapeLibNET.Drive;
 namespace TapeLibNET.Virtual;
 
 /// <summary>

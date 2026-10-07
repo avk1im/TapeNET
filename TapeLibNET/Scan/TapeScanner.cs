@@ -1,3 +1,8 @@
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
+using TapeLibNET.Media;
+using TapeLibNET.Agents;
+using TapeLibNET.Calibration;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using Windows.Win32.Foundation;

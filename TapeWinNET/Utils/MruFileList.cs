@@ -41,8 +41,10 @@ public class MruFileList
     /// <summary>
     /// Creates an MRU list backed by AppSettings
     /// </summary>
-    /// <param name="setting">The AppSettings instance.</param>
-    /// <param name="appSettingsKey">The key in AppSettings to store the MRU list.</param>
+    /// <param name="settings">The <see cref="AppSettings"/> instance.</param>
+    /// <param name="settingsKey">
+    ///  The key in <see cref="AppSettings"/> to store the MRU list.
+    /// </param>
     /// <param name="maxCount">Maximum number of entries to keep.</param>
     public MruFileList(AppSettings settings, string settingsKey, int maxCount = 4)
     {

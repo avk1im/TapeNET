@@ -1,4 +1,8 @@
-using System.Text;
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Media;
+using TapeLibNET.Calibration;
 
 using TapeLibNET.Scan;
 using TapeLibNET.Format; // TapeFrameStatus

@@ -1,11 +1,6 @@
-using System.IO;
 using Microsoft.Extensions.Logging;
 
-using TapeLibNET;
 using TapeLibNET.Services;
-using TapeLibNET.Virtual;
-
-using TapeLibNET.Tests.Helpers; // TestTapeServiceHost
 
 namespace TapeLibNET.Tests.Helpers;
 
@@ -69,10 +64,13 @@ public sealed class MultiVolumeTapeServiceHost(
         => true;
 
     /// <inheritdoc/>
+    /// <returns>
+    /// <see langword="false"/> if the requested volume index is out of range.
+    /// </returns>
     /// <remarks>
     /// Inserts the next blank volume (0-based index = <paramref name="nextVolume"/> − 1)
-    ///  from the pre-provided <see cref="volumes"/> list.
-    /// Returns <see langword="false"/> if the requested volume index is out of range.
+    ///  from the list <c>volumes</c> provided as the c'tor parameter to
+    ///  <see cref="MultiVolumeTapeServiceHost"/>.
     /// </remarks>
     public override bool OnInsertNewMediaConfirm(int nextVolume)
     {
@@ -96,7 +94,7 @@ public sealed class MultiVolumeTapeServiceHost(
     /// <inheritdoc/>
     /// <remarks>
     /// Re-inserts a previously written volume (<paramref name="volumeNeeded"/> is
-    ///  1-based) from the pre-provided <see cref="volumes"/> list.
+    ///  1-based) from the <c>volumes</c> list provided to the class c'tor.
     /// Returns <see langword="false"/> if the requested volume index is out of range.
     /// </remarks>
     public override bool OnInsertMediaConfirm(int volumeNeeded, RestoreMode mode)

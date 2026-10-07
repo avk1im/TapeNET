@@ -1,9 +1,6 @@
+using TapeLibNET.Drive;
 using System.Collections.Concurrent;
-using System.IO;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using TapeLibNET;
 
 namespace TapeServiceNET;
 

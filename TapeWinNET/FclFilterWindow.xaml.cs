@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Windows;
-using System.Windows.Controls;
 
 using TapeWinNET.Help;
 using TapeWinNET.ViewModels;

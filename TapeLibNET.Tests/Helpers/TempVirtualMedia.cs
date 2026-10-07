@@ -4,9 +4,9 @@ namespace TapeLibNET.Tests.Helpers;
 
 /// <summary>
 /// Owns a temporary on-disk virtual-tape file (and optional initiator file)
-/// used to drive <c>tapecon --virtual PATH</c> end-to-end tests across
-/// multiple in-process invocations. The media file persists across
-/// <see cref="TapeConHost"/> calls so backup → restore round-trips work.
+///  used to drive <c>tapecon --virtual PATH</c> end-to-end tests across
+///  multiple in-process invocations. The media file persists across
+///  <see cref="TestTapeServiceHost"/> calls so backup → restore round-trips work.
 /// </summary>
 public sealed class TempVirtualMedia : IDisposable
 {

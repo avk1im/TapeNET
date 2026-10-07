@@ -1,7 +1,8 @@
-﻿using TapeLibNET.Tests.Helpers;
-using TapeLibNET.Virtual;
-using Windows.Win32.Foundation;
-//using static Google.Protobuf.Compiler.CodeGeneratorResponse.Types; // how did that make it in??
+﻿using Windows.Win32.Foundation;
+
+using TapeLibNET.Headers;
+using TapeLibNET.Agents;
+using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
 
@@ -103,7 +104,7 @@ public class TapeSetHeaderWriteVerificationTests
     /// <remarks>
     /// The agent only appends to <c>CurrentSetTOC</c>, so the caller must clear it first -- otherwise the stale
     ///  entries survive ahead of the new ones, still carrying addresses the new files now occupy, and restore
-    ///  meets the wrong file's <c>UID</c>. (<see cref="TapeServiceBase"/> does this; agent-level callers must too.)
+    ///  meets the wrong file's <c>UID</c>. (<see cref="TapeLibNET.Services.TapeServiceBase"/> does this; agent-level callers must too.)
     /// </remarks>
     /// <param name="fixture">The virtual tape fixture.</param>
     /// <param name="newCapacity">The capacity of the new set TOC.</param>

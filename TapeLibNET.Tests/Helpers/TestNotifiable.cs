@@ -1,3 +1,5 @@
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
 namespace TapeLibNET.Tests.Helpers;
 
 /// <summary>
@@ -91,7 +93,7 @@ public class TestNotifiable : ITapeFileNotifiable
     /// NOTE: on the packed backup path, <c>FilesSucceeded</c> only advances when
     /// the packer surfaces a commit (typically at flush time), so this trigger
     /// may never fire mid-loop for small-file workloads. Use
-    /// <see cref="AbortAfterNPreProcessed"/> for a packed-friendly per-file trigger.
+    /// <see cref="AbortInPreProcessAfterN"/> for a packed-friendly per-file trigger.
     /// </para>
     /// </summary>
     public int AbortAfterNSucceeded { get; set; } = 0;
@@ -103,7 +105,7 @@ public class TestNotifiable : ITapeFileNotifiable
     /// works uniformly on both the legacy and packed backup paths.
     /// &lt;= 0 means disabled (default).
     /// </summary>
-    public int AbortAfterNPreProcessed { get; set; } = 0;
+    public int AbortInPreProcessAfterN { get; set; } = 0;
 
     /// <summary>
     /// When positive, <see cref="PostProcessFile"/> throws
@@ -148,7 +150,7 @@ public class TestNotifiable : ITapeFileNotifiable
         PreProcessed.Add(new PreProcessEvent(fileInfo, stats));
 
         // Proactive abort: throw on the Nth PreProcess call (commit-timing-independent)
-        if (AbortAfterNPreProcessed > 0 && PreProcessed.Count > AbortAfterNPreProcessed)
+        if (AbortInPreProcessAfterN > 0 && PreProcessed.Count > AbortInPreProcessAfterN)
             throw new TapeAbortRequestedException($"Test abort at PreProcess #{PreProcessed.Count}");
 
         // Skip if in the skip set

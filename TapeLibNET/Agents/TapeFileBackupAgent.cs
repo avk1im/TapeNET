@@ -1,4 +1,10 @@
-﻿using System.Diagnostics;
+﻿using TapeLibNET.Streams;
+using TapeLibNET.Drive;
+using TapeLibNET.Compression;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Media;
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices;
@@ -6,7 +12,7 @@ using Windows.Win32.System.SystemServices;
 using TapeLibNET.Packer;
 
 
-namespace TapeLibNET;
+namespace TapeLibNET.Agents;
 
 /// <summary>
 /// Backup agent — writes file lists to tape content sets with per-file CRC hashing,
@@ -18,7 +24,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     private long BytesBackedupMarker { get; set; } = 0L;
     /// <summary>
     /// Media bytes written since the current set began — the one genuinely PER-SET figure the agent
-    ///  exposes, and the counterpart to the cumulative <see cref="BytesBackedup"/>.
+    ///  exposes, and the counterpart to the cumulative <see cref="TapeAgentBase.BytesBackedup"/>.
     /// </summary>
     /// <remarks>
     /// Anchored once, by <see cref="BeginWriteContentForCurrentSet"/>, and deliberately not re-anchored at set
@@ -127,8 +133,9 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     }
 
     /// <summary>
-    /// Prepares the <see cref="Drive"/>, <see cref="Navigator"/>, and <see cref="Manager"/> for writing
-    ///  content to the current set, and leaves the head at the set's first content block.
+    /// Prepares the <see cref="Drive"/>, <see cref="TapeAgentBase.Navigator"/>, and
+    ///  <see cref="TapeAgentBase.Manager"/> for writing content to the current set, and leaves the head at
+    ///  the set's first content block.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -417,7 +424,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         internal bool overallSuccess = true;
 
         /// <summary>
-        /// <see langword="true"> once this context has survived an EOM and is resuming on a fresh volume.
+        /// <see langword="true"/> once this context has survived an EOM and is resuming on a fresh volume.
         ///  Explicit rather than inferred from <see cref="fileIndex"/>, which can legitimately be <c>0</c>
         ///  on a continuation when end-of-media struck on the very first file.
         /// </summary>

@@ -1,8 +1,6 @@
 using HelpNET.Assistants;
 using HelpNET.Content;
 using HelpNET.Embeddings;
-using HelpNET.Retrieval;
-using HelpNET.Session;
 using HelpNET.Tests.Phase4;
 
 using Xunit;

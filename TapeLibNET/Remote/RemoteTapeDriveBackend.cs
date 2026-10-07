@@ -1,16 +1,17 @@
-using System.IO;
-
 using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Net.Client;
+
 using Microsoft.Extensions.Logging;
+
+using TapeLibNET.Drive;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Remote;
 
 /// <summary>
 /// Media drive backend that forwards all operations to a remote
-/// <see cref="TapeDriveGrpcService"/> via gRPC. Transparently substitutes
+/// <c>TapeServiceNET.TapeDriveGrpcService</c> via gRPC. Transparently substitutes
 /// for <see cref="TapeDriveWin32Backend"/> or <see cref="Virtual.VirtualTapeDriveBackend"/>
 /// in the <see cref="TapeDrive"/> constructor.
 /// <para>
@@ -262,12 +263,12 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
 
     /// <summary>
     /// Creates a temporary virtual tape drive on the remote host for testing.
-    /// Unnamed drives (empty <paramref name="mediaName"/>) are in-memory and vanish when the session closes.
+    /// Unnamed drives (empty <paramref name="name"/>) are in-memory and vanish when the session closes.
     /// Named drives are file-backed in the server's temp folder and are deleted on <see cref="Close"/>.
     /// Safe to call before any <see cref="Open"/> — establishes a new session on success.
     /// </summary>
     /// <param name="capacityBytes">Total tape capacity in bytes (0 → server default of 500 MB).</param>
-    /// <param name="mediaName">Optional media name; null or empty string creates an in-memory drive.</param>
+    /// <param name="name">Optional media name; null or empty string creates an in-memory drive.</param>
     /// <param name="blockSize">Default block size in bytes (0 → drive default).</param>
     /// <param name="caps">Drive capabilities (null → server uses <c>WithFilemarksOnlyLargeBlocks</c>).</param>
     /// <returns>True if the temporary drive was created and opened successfully.</returns>

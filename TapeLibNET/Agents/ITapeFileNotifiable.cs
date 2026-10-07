@@ -1,10 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using TapeLibNET.Headers;
+using TapeLibNET.Toc;
 
-namespace TapeLibNET;
+namespace TapeLibNET.Agents;
 
 /// <summary>
 /// Exception thrown when user requests to abort a tape operation.

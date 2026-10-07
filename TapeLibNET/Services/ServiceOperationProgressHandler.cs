@@ -1,6 +1,7 @@
-using System.IO;
-using System.Linq;
-using TapeLibNET;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
+using TapeLibNET.Calibration;
 using TapeLibNET.Scan;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices; // Helpers.BytesToString

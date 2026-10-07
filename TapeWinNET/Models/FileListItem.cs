@@ -1,10 +1,9 @@
+using TapeLibNET.Toc;
 using System.ComponentModel;
 using System.IO;
 using System.Windows.Media.Imaging;
 
 using Windows.Win32.System.SystemServices;
-
-using TapeLibNET;
 using TapeWinNET.Utils;
 
 

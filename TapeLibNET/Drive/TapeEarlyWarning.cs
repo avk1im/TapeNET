@@ -1,8 +1,4 @@
-using System;
-using System.IO;
-using Windows.Win32.Foundation;
-
-namespace TapeLibNET;
+namespace TapeLibNET.Drive;
 
 /// <summary>
 /// How the drive's <c>ReportsEarlyWarning</c> reserve is currently realized, from worst to best.

@@ -1,7 +1,5 @@
-﻿using System;
-using System.IO;
-using TapeLibNET;
-using Xunit;
+﻿using TapeLibNET.Headers;
+using TapeLibNET.Toc;
 
 namespace TapeLibNET.Tests;
 

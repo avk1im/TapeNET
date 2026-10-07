@@ -1,3 +1,7 @@
+using TapeLibNET.Drive;
+using TapeLibNET.Compression;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
 using System.Text;
 
 namespace TapeLibNET.Tests.Helpers;

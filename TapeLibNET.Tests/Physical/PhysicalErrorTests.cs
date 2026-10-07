@@ -1,4 +1,7 @@
 ﻿#if DEBUG
+using TapeLibNET.Drive;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
 using TapeLibNET.Tests.Helpers;
 using Xunit.Abstractions;
 

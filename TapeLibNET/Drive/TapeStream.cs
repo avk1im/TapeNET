@@ -1,9 +1,10 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using TapeLibNET.Media;
+using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
 
-namespace TapeLibNET
+namespace TapeLibNET.Drive
 {
 
     /// <summary>

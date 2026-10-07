@@ -1,8 +1,10 @@
 // Save as: TapeLibNET/TapeFileHeader.cs
+using TapeLibNET.Compression;
+using TapeLibNET.Toc;
 using System.Text;
 using TapeLibNET.Format;
 
-namespace TapeLibNET;
+namespace TapeLibNET.Headers;
 
 /// <summary>
 /// The 2.1 per-file header (record kind <c>FileHeader</c>, 0x0201) written in front of every file body of a

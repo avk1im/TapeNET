@@ -1,4 +1,7 @@
-using TapeLibNET; // TapeHashAlgorithm, TapeHowToHandleExisting, ITapeFileFilter, TapeFileInfo
+using TapeLibNET.Compression;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
+using TapeLibNET.Calibration;
 using TapeLibNET.Scan; // MediaScanMap
 
 namespace TapeLibNET.Services;
@@ -191,7 +194,7 @@ public enum CalibrationMode
 ///  itself prompts via <see cref="ITapeServiceHost.Confirm"/> and, if accepted, chains straight into a
 ///  full re-run before returning (the interactive CLI model). Hosts that instead want to present the
 ///  verdict/delta in their own UI and let the user trigger a follow-up run themselves (e.g. TapeWinNET's
-///  <see cref ="CalibrationResultViewModel"/> banner) should set this to <see langword="false"/> — the service
+///  <c>CalibrationResultViewModel</c> banner) should set this to <see langword="false"/> — the service
 ///  then simply returns the reassessed result and verdict without prompting or chaining.
 /// </param>
 public sealed record CalibrateRequest(

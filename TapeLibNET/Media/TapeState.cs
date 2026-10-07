@@ -1,6 +1,6 @@
 ﻿using System.Collections.ObjectModel;
 
-namespace TapeLibNET
+namespace TapeLibNET.Media
 {
 
     /// <summary>

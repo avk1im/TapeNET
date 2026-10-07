@@ -1,4 +1,7 @@
 // Save as: TapeLibNET.Tests/TapeHeaderFormatTests.cs
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
 using System.Buffers.Binary;
 using TapeLibNET.Format;
 using TapeLibNET.Tests.Helpers;

@@ -1,4 +1,5 @@
-namespace TapeLibNET;
+using TapeLibNET.Drive;
+namespace TapeLibNET.Media;
 
 /// <summary>
 /// The on-tape layout a drive+media combination implies, derived from drive capabilities and media

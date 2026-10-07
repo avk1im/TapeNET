@@ -1,5 +1,7 @@
-using System.Reflection.PortableExecutable;
-using System.Timers;
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
+using TapeLibNET.Agents;
+using TapeLibNET.Calibration;
 using TapeLibNET.Virtual;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices; // Helpers, Stopwatch

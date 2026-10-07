@@ -2,7 +2,7 @@
 using System.Diagnostics;
 
 
-namespace TapeLibNET;
+namespace TapeLibNET.Drive;
 
 // Wrapper around ArrayPool<byte> that exposes the logical Capacity
 //  rather than the (potentially oversized) array Length.

@@ -24,7 +24,7 @@
 param(
     [Parameter(Mandatory)] [string] $RepoRoot,
     [Parameter(Mandatory)] [ValidateSet('Move', 'Usings')] [string] $Phase,
-    [string[]] $Projects = @('TapeLibNET', 'TapeLibNET.Tests', 'TapeWinNET', 'TapeConNET'),
+    [string[]] $Projects = @('TapeLibNET', 'TapeLibNET.Tests', 'TapeWinNET', 'TapeConNET', 'TapeServiceNET'),
     [switch] $DryRun
 )
 

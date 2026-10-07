@@ -1,8 +1,7 @@
-using System.Diagnostics;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
 using System.IO;
 using System.Windows;
-
-using TapeLibNET;
 using TapeWinNET.Utils;
 
 namespace TapeWinNET.Models;
@@ -183,7 +182,7 @@ public class BackupSourceView(Func<int, List<TapeFileInfo>>? getSourceFiles = nu
 
     /// <summary>
     /// Generates a monotonic file ID for a resolved disk file.
-    /// Mirrors <see cref="TapeSetTOC.GenerateFileId"/>.
+    ///  Mirrors <c>TapeSetTOC.GenerateFileId</c> (internal to TapeLibNET, hence not cref-able here).
     /// </summary>
     internal ulong GenerateFileId() => _nextFileId++;
 

@@ -1,5 +1,4 @@
-﻿using TapeLibNET.Legacy;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Diagnostics;
 using Windows.Win32.Foundation;

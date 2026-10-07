@@ -1,4 +1,8 @@
-using System.IO;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Media;
+using TapeLibNET.Agents;
+using TapeLibNET.Calibration;
 using TapeLibNET.Scan;
 using TapeLibNET.Services;
 using TapeLibNET.Tests.Helpers;

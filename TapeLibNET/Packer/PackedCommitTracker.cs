@@ -1,3 +1,6 @@
+using TapeLibNET.Compression;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
 using Microsoft.Extensions.Logging;
 
 namespace TapeLibNET.Packer;

@@ -1,3 +1,7 @@
+using TapeLibNET.Drive;
+using TapeLibNET.Compression;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
 using System.IO.Hashing;
 using System.Text;
 using TapeLibNET.Legacy;

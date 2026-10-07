@@ -1,3 +1,4 @@
+using TapeLibNET.Compression;
 using System.Runtime.InteropServices;
 using Windows.Win32;
 

@@ -1,4 +1,6 @@
-using TapeLibNET; // TapeFileInfo, TapeTOC, TapeCalibrationHeader, TapeSetHeader, TapeMediaHeader, ITapeCalibration, etc.
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
+using TapeLibNET.Calibration;
 using TapeLibNET.Scan; // MediaScanMap, ScannedMediaKind
 
 namespace TapeLibNET.Services;
@@ -189,8 +191,9 @@ public enum RecalibrationVerdict
 /// </summary>
 /// <remarks>
 /// To preserve the established operation-triad shape, the inherited "file" counters map
-/// calibration chunks → files. <see cref="BytesTotal"/> / <see cref="BytesProcessed"/> remain
-/// the more meaningful quantities for callers and UI progress.
+///  calibration chunks → files. <see cref="FileOperationResult.BytesTotal"/> /
+///  <see cref="ServiceOperationResult.BytesProcessed"/> remain the more meaningful quantities for callers
+///  and UI progress.
 /// </remarks>
 public sealed record CalibrateResult : FileOperationResult
 {

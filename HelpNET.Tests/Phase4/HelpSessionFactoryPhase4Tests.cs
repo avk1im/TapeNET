@@ -1,6 +1,5 @@
 using AiNET;
 using HelpNET.Assistants;
-using HelpNET.Content;
 using HelpNET.Session;
 using Microsoft.Extensions.AI;
 using Xunit;

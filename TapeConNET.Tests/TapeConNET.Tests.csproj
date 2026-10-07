@@ -14,11 +14,11 @@
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
-    <NoWarn>1701;1702;CS1591</NoWarn>
+    <NoWarn>1701;1702;CS1591;CS1573;CS0419;</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
-    <NoWarn>1701;1702;CS1591</NoWarn>
+    <NoWarn>1701;1702;CS1591;CS1573;CS0419;</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -46,6 +46,15 @@
     </Compile>
     <Compile Include="..\TapeLibNET.Tests\Helpers\TempVirtualMedia.cs">
       <Link>Shared\TempVirtualMedia.cs</Link>
+    </Compile>
+    <Compile Include="..\TapeLibNET.Tests\Helpers\TestTapeServiceHost.cs">
+      <Link>Shared\TestTapeServiceHost.cs</Link>
+    </Compile>
+    <Compile Include="..\TapeLibNET.Tests\Helpers\TestLoggerFactory.cs">
+      <Link>Shared\TestLoggerFactory.cs</Link>
+    </Compile>
+    <Compile Include="..\TapeLibNET.Tests\Helpers\TestNotifiable.cs">
+      <Link>Shared\TestNotifiable.cs</Link>
     </Compile>
   </ItemGroup>
 

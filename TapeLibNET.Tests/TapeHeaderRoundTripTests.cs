@@ -1,4 +1,8 @@
 // Save as: TapeLibNET.Tests/TapeHeaderRoundTripTests.cs
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Calibration;
 using System.Text;
 using TapeLibNET.Format;
 using TapeLibNET.Tests.Helpers;

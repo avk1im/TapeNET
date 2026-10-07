@@ -3,8 +3,6 @@ using System.Runtime.CompilerServices;
 using System.Windows.Media.Imaging;
 using Windows.Win32.System.SystemServices; // for Helpers
 
-using TapeLibNET;
-
 namespace TapeWinNET.Models;
 
 /// <summary>

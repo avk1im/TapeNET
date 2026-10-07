@@ -1,3 +1,4 @@
+using TapeLibNET.Media;
 namespace TapeLibNET.Packer;
 
 /// <summary>

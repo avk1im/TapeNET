@@ -1,5 +1,10 @@
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Media;
+using TapeLibNET.Agents;
+using TapeLibNET.Calibration;
 using Microsoft.Extensions.Logging;
-using System.Diagnostics.CodeAnalysis;
 using Windows.Win32.Foundation;
 
 using TapeLibNET.Format; // TapeFrameStatus

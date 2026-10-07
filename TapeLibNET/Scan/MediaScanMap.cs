@@ -1,3 +1,5 @@
+using TapeLibNET.Media;
+using TapeLibNET.Calibration;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 

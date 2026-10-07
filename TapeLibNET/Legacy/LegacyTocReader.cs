@@ -1,3 +1,6 @@
+using TapeLibNET.Streams;
+using TapeLibNET.Compression;
+using TapeLibNET.Toc;
 using System.IO.Hashing;
 using TapeLibNET.Format;
 

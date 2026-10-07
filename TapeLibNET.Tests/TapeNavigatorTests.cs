@@ -1,6 +1,6 @@
+using TapeLibNET.Drive;
+using TapeLibNET.Media;
 using TapeLibNET.Tests.Helpers;
-using TapeLibNET.Virtual;
-using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Tests;
 

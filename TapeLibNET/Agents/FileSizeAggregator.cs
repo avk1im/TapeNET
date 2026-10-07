@@ -1,9 +1,6 @@
-﻿using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Threading.Tasks;
+﻿using System.Collections.Concurrent;
 
-namespace TapeLibNET;
+namespace TapeLibNET.Agents;
 
 /// <summary>
 /// Aggregates the total size of a collection of files, including both local and remote files.

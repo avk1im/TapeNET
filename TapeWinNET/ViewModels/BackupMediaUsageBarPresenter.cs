@@ -1,9 +1,8 @@
+using TapeLibNET.Toc;
 using System.Windows;
 using System.Windows.Media;
 
 using Windows.Win32.System.SystemServices; // for Helpers
-
-using TapeLibNET;
 
 using TapeWinNET.Models;
 using TapeWinNET.Services;

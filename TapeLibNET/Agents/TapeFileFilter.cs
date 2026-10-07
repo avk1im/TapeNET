@@ -1,6 +1,7 @@
+using TapeLibNET.Toc;
 using System.Text.RegularExpressions;
 
-namespace TapeLibNET
+namespace TapeLibNET.Agents
 {
     /// <summary>
     /// Abstraction for filtering tape files by their descriptor.

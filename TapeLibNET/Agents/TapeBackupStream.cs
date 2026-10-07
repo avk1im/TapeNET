@@ -5,7 +5,7 @@ using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Storage.FileSystem;
 
-namespace TapeLibNET;
+namespace TapeLibNET.Agents;
 
 /// <summary>
 /// Abstract base for <see cref="TapeBackupSourceStream"/> and <see cref="TapeBackupTargetStream"/>.

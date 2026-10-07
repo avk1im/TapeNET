@@ -1,12 +1,10 @@
-﻿using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using TapeLibNET.Drive;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using Microsoft.Extensions.Logging;
 using Windows.Win32.Foundation;
 
-namespace TapeLibNET;
+namespace TapeLibNET.Agents;
 
 public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgentBase(drive, legacyTOC)
 {
@@ -34,8 +32,8 @@ public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgen
     ///  target is read and classified before anything is destroyed. Only <c>Match</c> authorizes the
     ///  write; every other verdict — including <c>Unreadable</c>, which on a mark-counted write is the
     ///  miscount's own signature — fails the method with the tape untouched.
-    ///  <see cref="VerifiesSetHeader"/> opts out, which is the deliberate escape for a cartridge whose
-    ///  set headers are themselves damaged.
+    ///  <see cref="TapeAgentBase.VerifiesSetHeader"/> opts out, which is the deliberate escape for
+    ///  a cartridge whose set headers are themselves damaged.
     /// </para>
     /// <para>
     /// In the delete-ALL branch the verification is purely <b>positional</b>: begin-of-content is a

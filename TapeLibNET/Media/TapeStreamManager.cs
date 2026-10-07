@@ -1,16 +1,13 @@
-﻿using System.Text;
+﻿using TapeLibNET.Drive;
+using TapeLibNET.Headers;
 using System.Diagnostics;
-
-using Windows.Win32;
 using Windows.Win32.Foundation;
 
 using Microsoft.Extensions.Logging;
-using System.Runtime.InteropServices;
-using TapeLibNET;
 using TapeLibNET.Packer;
 
 
-namespace TapeLibNET;
+namespace TapeLibNET.Media;
 
 /// <summary>
 /// High-level tape stream provisioning with state-machine-guarded read/write transitions.

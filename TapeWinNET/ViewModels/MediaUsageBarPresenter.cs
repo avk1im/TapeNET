@@ -1,8 +1,7 @@
+using TapeLibNET.Toc;
 using System.Windows.Input;
 
 using Windows.Win32.System.SystemServices; // for Helpers
-
-using TapeLibNET;
 
 using TapeWinNET.Controls;
 using TapeWinNET.Models;

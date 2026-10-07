@@ -1,3 +1,5 @@
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
 using System.Text.Json.Serialization;
 
 namespace TapeLibNET.Scan;

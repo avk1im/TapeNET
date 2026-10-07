@@ -1,4 +1,7 @@
 // Save as: TapeLibNET.Tests/TapeFileHeaderTests.cs
+using TapeLibNET.Compression;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
 using TapeLibNET.Format;
 using TapeLibNET.Legacy;
 using TapeLibNET.Tests.Helpers;

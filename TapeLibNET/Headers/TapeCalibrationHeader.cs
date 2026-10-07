@@ -1,7 +1,9 @@
+using TapeLibNET.Toc;
+using TapeLibNET.Calibration;
 using TapeLibNET.Format;
 using TapeLibNET.Legacy;
 
-namespace TapeLibNET;
+namespace TapeLibNET.Headers;
 
 /// <summary>
 /// Schema target for the run plan, nested as a group in the calibration header (Design-Format-v2 §5.4).

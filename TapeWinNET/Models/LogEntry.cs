@@ -1,6 +1,5 @@
 // WarningLevel is an alias for ServiceReportLevel — same enum, single definition in TapeLibNET.
 global using WarningLevel = TapeLibNET.Services.ServiceReportLevel;
-
 using System.Windows;
 using System.Windows.Media;
 

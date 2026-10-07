@@ -1,3 +1,4 @@
+using TapeLibNET.Drive;
 using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 

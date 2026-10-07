@@ -1,9 +1,8 @@
+using TapeLibNET.Calibration;
 using System.Collections.ObjectModel;
 using System.Windows.Input;
 
 using Windows.Win32.System.SystemServices; // for Helpers
-
-using TapeLibNET;
 using TapeLibNET.Virtual;
 
 namespace TapeWinNET.ViewModels;

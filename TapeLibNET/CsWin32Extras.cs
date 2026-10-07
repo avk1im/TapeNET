@@ -1,6 +1,4 @@
-﻿using System.Formats.Asn1;
-using System.Runtime.InteropServices;
-using System.Text;
+﻿using System.Text;
 using Microsoft.Win32.SafeHandles;
 using Windows.Win32.Foundation;
 
@@ -13,7 +11,7 @@ namespace Windows.Win32
             /// <summary>
             /// WAIT_TIMEOUT (258) — not included in CsWin32's WIN32_ERROR enum.
             ///  Used by the tape backend to signal that a polled operation exceeded OperationTimeout.
-            ///  Compare against <see cref="IErrorManageable.LastError"/> (uint).
+            ///  Compare against <see cref="TapeLibNET.IErrorManageable.LastError"/> (uint).
             /// </summary>
             public const uint WAIT_TIMEOUT = 258;
             internal const WIN32_ERROR WIN32_ERROR_WAIT_TIMEOUT = (WIN32_ERROR)WAIT_TIMEOUT;

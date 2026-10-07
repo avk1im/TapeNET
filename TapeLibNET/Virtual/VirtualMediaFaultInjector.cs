@@ -1,4 +1,3 @@
-using System.ComponentModel.DataAnnotations;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Virtual;

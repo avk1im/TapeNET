@@ -4,10 +4,8 @@ using System.Text;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Storage.FileSystem;
-using Windows.Win32.System.SystemServices;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
-namespace TapeLibNET;
+namespace TapeLibNET.Drive;
 
 /// <summary>
 /// LTO SCSI pass-through (SPTI) support for <see cref="TapeDriveWin32Backend"/>.

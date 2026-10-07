@@ -1,8 +1,10 @@
 // Save as: TapeLibNET/TapeMediaHeader.cs
+using TapeLibNET.Drive;
+using TapeLibNET.Toc;
 using TapeLibNET.Format;
 using TapeLibNET.Legacy;
 
-namespace TapeLibNET;
+namespace TapeLibNET.Headers;
 
 /// <summary>Where the TOC lives on a medium, recorded in a <see cref="TapeMediaHeader"/>.</summary>
 public enum TapeTocPlacement : byte

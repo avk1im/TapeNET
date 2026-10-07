@@ -1,9 +1,9 @@
-﻿using System.Diagnostics;
-using Windows.Win32.Foundation;
+﻿using TapeLibNET.Drive;
+using TapeLibNET.Toc;
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
-using TapeLibNET;
 
-namespace TapeLibNET
+namespace TapeLibNET.Agents
 {
     /// <summary>Policy for handling files that already exist at the restore target location.</summary>
     public enum TapeHowToHandleExisting

@@ -1,10 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using TapeLibNET.Agents;
 using System.ComponentModel;
-using System.Linq;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET;
@@ -124,7 +119,7 @@ public class TapeResultBuilder(IErrorManageable owner)
     /// <summary>Latches the agent's CURRENT error state. Call at the moment of failure, never later.</summary>
     public void LatchFailure() => LatchFailure(TapeResult.Fail(m_owner));
 
-    /// <summary>Clears the latch. Called wherever e.g. <see cref="TapeAgentBase.ResetStatistics"/>
+    /// <summary>Clears the latch. Called wherever e.g. <see cref="TapeAgentBase"/>
     ///  starts a fresh operation.</summary>
     public void Reset() => m_firstFailure = TapeResult.OK;
 }

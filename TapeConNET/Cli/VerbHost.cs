@@ -1,9 +1,4 @@
 using System.CommandLine;
-using System.IO;
-
-using Microsoft.Extensions.Logging;
-
-using TapeLibNET;
 using TapeLibNET.Virtual;
 using TapeLibNET.Services;
 

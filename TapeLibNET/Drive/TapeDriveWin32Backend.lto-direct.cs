@@ -1,9 +1,10 @@
+using TapeLibNET.Media;
 using Microsoft.Extensions.Logging;
 using System.Runtime.InteropServices;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 
-namespace TapeLibNET;
+namespace TapeLibNET.Drive;
 
 /// <summary>
 /// LTO SCSI pass-through DIRECT (SPTD) write path for <see cref="TapeDriveWin32Backend"/>.
@@ -686,7 +687,7 @@ public partial class TapeDriveWin32Backend
     /// <remarks>
     /// Setmarks must only be requested on drives that actually support them (AIT/DAT etc.); LTO/DLT are
     /// filemark-only. <see cref="TapeNavigator"/> already gates this via
-    /// <c><see cref="TapeNavigator.UseSmks"/> &amp;&amp; <see cref="Drive.SupportsSetmarks"/></c>,
+    /// <c><see cref="TapeNavigator.UseSmks"/> &amp;&amp; <see cref="TapeDrive.SupportsSetmarks"/></c>,
     /// so by the time a setmark reaches here the drive supports it. A drive that nonetheless rejects WSMK
     /// answers CHECK CONDITION (INVALID FIELD IN CDB) and surfaces as a normal failure.
     /// </remarks>

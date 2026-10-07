@@ -1,3 +1,7 @@
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Media;
+using TapeLibNET.Agents;
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;

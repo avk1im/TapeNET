@@ -1,4 +1,6 @@
-using System.IO;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
 using TapeLibNET.Scan;
 using Windows.Win32.Foundation;
 

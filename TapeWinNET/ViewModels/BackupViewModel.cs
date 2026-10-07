@@ -1,15 +1,14 @@
+using TapeLibNET.Compression;
+using TapeLibNET.Toc;
 using Microsoft.Win32;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
-using TapeLibNET;
 using TapeLibNET.Services;
-using TapeWinNET.Converters;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
 using Windows.Win32.System.SystemServices; // for Helpers
-using static Grpc.Core.Metadata;
 
 namespace TapeWinNET.ViewModels;
 
@@ -1116,8 +1115,8 @@ public class BackupViewModel : ViewModelBase
 
     /// <summary>
     /// Called from code-behind when a source checkbox is toggled in the Folders pane.
-    /// Maps the tri-state toggle to check/uncheck all files in the source's
-    /// <see cref="FilteredFileList"/>. Saves partial selection before overwriting
+    ///  Maps the tri-state toggle to check/uncheck all files in the source's
+    ///  <see cref="Utils.FilteredFileList"/>. Saves partial selection before overwriting
     ///  with all/none, and restores it when the user clicks to indeterminate.
     /// </summary>
     public void OnSourceCheckChanged(BackupSourceListItem? changedItem = null)
@@ -1214,9 +1213,9 @@ public class BackupViewModel : ViewModelBase
 
     /// <summary>
     /// Generates block size options as powers of two from the drive's minimum
-    /// to maximum block size. Falls back to a sensible default range if the
-    /// drive reports zero. Returns the values, display strings, and the index
-    /// matching <see cref="TapeService.DefaultBlockSize"/>.
+    ///  to maximum block size. Falls back to a sensible default range if the
+    ///  drive reports zero. Returns the values, display strings, and the index
+    ///  matching <see cref="TapeServiceBase.DefaultBlockSize"/>.
     /// </summary>
     private (uint[] values, string[] labels, int defaultIndex)
         BuildBlockSizeOptions()

@@ -1,7 +1,5 @@
-using System.Text;
 using System.Text.Json;
 using HelpNET.Content;
-using HelpNET.Embeddings;
 using HelpNET.Indexing;
 using Microsoft.Extensions.AI;
 

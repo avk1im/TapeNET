@@ -1,4 +1,10 @@
 using Microsoft.Extensions.Logging;
+
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Media;
+using TapeLibNET.Agents;
+
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
@@ -30,10 +36,10 @@ public sealed class TapeRestoreAgentPipelinedTests_SetHeaders : TapeRestoreAgent
 
 /// <summary>
 /// Step 7 integration coverage for the pipelined read path
-/// (<see cref="TapeFilePipelinedReader"/> wired into
+/// (<see cref="Packer.TapeFilePipelinedReader"/> wired into
 /// <see cref="TapeStreamManager"/>).
 /// <para>
-/// Sister suite to <see cref="TapeRestoreAgentPackedTests"/>, focused on
+/// Sister suite to <see cref="TapeRestoreAgentPackedTestsBase"/>, focused on
 /// scenarios that exercise the prefetch ring's behavior end-to-end through
 /// the real agent:
 /// </para>
@@ -148,6 +154,7 @@ public abstract class TapeRestoreAgentPipelinedTestsBase
 
     #endregion
 
+
     #region *** Fixture Validation ***
 
     /// <summary>
@@ -177,6 +184,7 @@ public abstract class TapeRestoreAgentPipelinedTestsBase
     }
 
     #endregion
+
 
     #region *** Backward-Seek Selective Restore ***
 
@@ -303,7 +311,7 @@ public abstract class TapeRestoreAgentPipelinedTestsBase
     /// agent (i.e. without disposing it between sets). Between sets the
     /// manager transitions back through <c>BeginReadContent</c>, which calls
     /// <c>DisposeReadPacker</c>; the next set must therefore allocate and
-    /// arm a fresh <see cref="TapeFilePipelinedReader"/> with a clean ring.
+    /// arm a fresh <see cref="Packer.TapeFilePipelinedReader"/> with a clean ring.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]

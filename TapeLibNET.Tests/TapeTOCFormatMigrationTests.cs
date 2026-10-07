@@ -1,3 +1,4 @@
+using TapeLibNET.Toc;
 using Xunit.Abstractions;
 
 using TapeLibNET.Format;

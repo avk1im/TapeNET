@@ -1,3 +1,4 @@
+using TapeLibNET.Calibration;
 namespace TapeLibNET.Virtual;
 
 /// <summary>
@@ -142,8 +143,8 @@ public sealed record VirtualTapeEwProfile
     /// <see cref="ITapeCalibration.EwToEomDistance"/>.
     /// <para>
     /// NOTE the DUALITY: a calibration is normally an ESTIMATION artifact, translating reported → actual
-    /// (<see cref="ITapeCalibration.TranslateRemaining"/>). Here it is used in the opposite direction, as an
-    /// EMULATION source, translating actual → reported. Both directions ride the same curve, so scaling must
+    /// (<see cref="ITapeCalibration.TranslateReportedToActual"/>). Here it is used in the opposite direction,
+    /// as an EMULATION source for actual → reported. Both directions ride the same curve, so scaling must
     /// stay on the <b>actual</b> axis — hence <see cref="ITapeCalibration.CapacityActual"/> is the scale
     /// reference, and the fallback is the curve's own top actual anchor, never a reported figure.
     /// </para>

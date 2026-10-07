@@ -1,3 +1,7 @@
+using TapeLibNET.Drive;
+using TapeLibNET.Toc;
+using TapeLibNET.Media;
+using TapeLibNET.Agents;
 using TapeLibNET.Scan;
 using TapeLibNET.Tests.Helpers;
 

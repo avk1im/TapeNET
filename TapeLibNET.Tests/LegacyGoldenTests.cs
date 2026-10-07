@@ -1,4 +1,7 @@
-﻿using System.IO.Hashing;
+﻿using TapeLibNET.Compression;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Calibration;
 using TapeLibNET.Format;
 using TapeLibNET.Legacy;
 using TapeLibNET.Tests.Helpers;

@@ -1,6 +1,4 @@
 using System.Windows.Input;
-
-using TapeLibNET;
 using TapeLibNET.Scan;
 using TapeLibNET.Services;
 

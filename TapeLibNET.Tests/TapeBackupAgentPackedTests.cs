@@ -1,4 +1,7 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using TapeLibNET.Compression;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
+using Microsoft.Extensions.Logging;
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
@@ -473,8 +476,8 @@ public abstract class TapeBackupAgentPackedTestsBase
         //  use AbortAfterNSucceeded here: on the packed path FilesSucceeded only
         //  advances when the packer surfaces a commit (typically at flush time),
         //  so a "after N succeeded" trigger would never fire mid-loop for small
-        //  files. AbortAfterNPreProcessed is commit-timing-independent.
-        var notifiable = new TestNotifiable { AbortAfterNPreProcessed = 3 };
+        //  files. AbortInPreProcessAfterN is commit-timing-independent.
+        var notifiable = new TestNotifiable { AbortInPreProcessAfterN = 3 };
 
         using var fixture = CreateFixture(profile);
         using var agent = fixture.CreateBackupAgent();

@@ -1,3 +1,5 @@
+using TapeLibNET.Compression;
+using TapeLibNET.Toc;
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;

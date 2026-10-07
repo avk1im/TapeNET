@@ -1,8 +1,7 @@
 using System.Buffers;
-using System.Diagnostics;
 
 
-namespace TapeLibNET
+namespace TapeLibNET.Drive
 {
 
     /// <summary>

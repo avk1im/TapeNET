@@ -1,10 +1,10 @@
-﻿using TapeLibNET.Tests.Helpers;
-using TapeLibNET.Virtual;
+﻿using TapeLibNET.Agents;
+using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
 
 /// <summary>
-/// Tests for <see cref="TapeAgentBase.DeleteSetsFromCurrentSetUp"/> — verifies that
+/// Tests for <see cref="TapeSetAgent.DeleteSetsFromCurrentSetUp"/> — verifies that
 /// deleting trailing backup sets correctly overwrites the tape, updates the TOC,
 /// and leaves remaining sets intact and restorable.
 /// All profiles are tested to surface profile-specific positioning bugs.

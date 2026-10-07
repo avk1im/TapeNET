@@ -1,8 +1,8 @@
-using System.IO;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
 
 using Windows.Win32.System.SystemServices; // Helpers
-
-using TapeLibNET;
 using System.Diagnostics; // TapeTOC, TapeFileInfo, ITapeFileFilter
 
 namespace TapeLibNET.Services;
@@ -269,7 +269,7 @@ public partial class TapeServiceBase
     }
 
     /// <summary>
-    /// Logs a compact table of all backup sets in <paramref name="toc"/>.
+    /// Logs a compact table of all backup sets in <see cref="_toc"/>.
     ///  Called by <see cref="ListContentsAsync"/> when
     ///  <see cref="ListDepth.SetTable"/> is set without <see cref="ListDepth.FileDetails"/>.
     /// Each row contains the set's dual index, description, file count, total size,

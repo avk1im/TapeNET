@@ -1,3 +1,6 @@
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
+using TapeLibNET.Calibration;
 using TapeLibNET.Scan;
 using TapeLibNET.Virtual;
 using Windows.Win32.Foundation;

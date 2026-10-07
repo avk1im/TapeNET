@@ -1,6 +1,5 @@
 using TapeConNET.Infrastructure;
 using TapeConNET.Tests.Helpers;
-using TapeConNET.Ux;
 
 namespace TapeConNET.Tests;
 

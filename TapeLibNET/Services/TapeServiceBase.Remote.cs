@@ -1,10 +1,7 @@
-using System.IO;
-using System.Threading;
+using TapeLibNET.Drive;
 
 using Grpc.Core;
 using Grpc.Net.Client;
-
-using Microsoft.Extensions.Logging;
 
 using TapeLibNET.Remote;
 using TapeLibNET.Virtual;
@@ -302,7 +299,8 @@ public partial class TapeServiceBase
     ///  <see cref="CreateRemoteVirtualDriveAsync"/> or a prior remote backup session.
     /// <para>
     ///  Used by the remote service test suite to "reopen" a tape between test phases,
-    ///  mirroring how local service tests reopen <see cref="TempVirtualMedia"/> files.
+    ///  mirroring how local service tests reopen <c>TapeLibNET.Tests.Helpers.TempVirtualMedia</c>
+    ///  files.
     /// </para>
     /// On success fires <see cref="ServiceStateChange.DriveOpened"/>.
     /// </summary>
@@ -443,7 +441,7 @@ public partial class TapeServiceBase
     ///  which issues the <c>InsertMedia</c> gRPC RPC so the server replaces the session's
     ///  backing store without closing the session.
     /// <para>
-    ///  Used by <see cref="RemoteMultiVolumeServiceHost"/> to service volume-swap callbacks
+    ///  Used by <c>RemoteMultiVolumeServiceHost</c> to service volume-swap callbacks
     ///  in multi-volume backup/restore test sequences.
     /// </para>
     /// </summary>

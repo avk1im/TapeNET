@@ -1,22 +1,20 @@
-﻿using System.Text;
+﻿using TapeLibNET.Drive;
+using TapeLibNET.Headers;
+using TapeLibNET.Agents;
 using System.Diagnostics;
-
-using Windows.Win32;
 using Windows.Win32.Foundation;
 
 using Microsoft.Extensions.Logging;
-using TapeLibNET;
 
 
-namespace TapeLibNET;
+namespace TapeLibNET.Media;
 
 /// <summary>
 /// Whether "our" media header is present at BOM, as tracked by the navigator.
 /// </summary>
 /// <remarks>
 /// The navigator only STORES this (the agent parses and sets it — INV-13); it never reads a header
-///  itself. <see cref="NotNeeded"/> marks a layout that carries no content-BOM header (currently the
-///  initiator-partition navigator, pending the partitioned-media header feature).
+///  itself.
 /// </remarks>
 public enum TapeHeaderPresence
 {
@@ -308,7 +306,7 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
 
     /// <summary>
     /// Resets presence to <see cref="TapeHeaderPresence.Unknown"/> so the agent re-resolves it — call on
-    ///  every media (re)load (INV-10). Preserves <see cref="TapeHeaderPresence.NotNeeded"/>.
+    ///  every media (re)load (INV-10)./>.
     /// </summary>
     internal void InvalidateMediaHeaderPresence()
     {
@@ -320,7 +318,7 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     /// Positions the head at the BOM header block. Read intent errors when the header is known
     ///  <see cref="TapeHeaderPresence.Absent"/> (seeking an absent header is a bug); write intent
     ///  (<paramref name="forWrite"/>) rewinds regardless, since a header is written at BOM whatever the
-    ///  current presence. Both error on <see cref="TapeHeaderPresence.NotNeeded"/>.
+    ///  current presence./>.
     /// </summary>
     public virtual bool MoveToBomHeader(bool forWrite = false)
     {

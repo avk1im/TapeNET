@@ -5,17 +5,17 @@ using System.Windows.Input;
 
 using Microsoft.Win32;
 
-using TapeLibNET;
-using TapeWinNET.Controls;
+using TapeLibNET.Calibration;
+
 using TapeWinNET.Services;
 
 namespace TapeWinNET.ViewModels;
 
 /// <summary>
 /// ViewModel for the "Calibration Profiles..." browser window (Media menu). Lists every
-/// calibration profile version previously persisted to <see cref="AppSettings.Calibrations"/>, lets the
-/// user inspect one, apply it to the currently loaded media, remove a specific version, or exchange
-/// profiles as files (import/export bundles).
+///  calibration profile version previously persisted to <see cref="Utils.AppSettings.Calibrations"/>,
+///  lets the user inspect one, apply it to the currently loaded media, remove a specific version,
+///  or exchange profiles as files (import/export bundles).
 /// </summary>
 public sealed class CalibrationProfilesViewModel : CalibrationResultViewModelBase
 {

@@ -1,10 +1,13 @@
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
+using TapeLibNET.Agents;
 using Microsoft.Extensions.Logging;
 using TapeLibNET.Format;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices;
 
 
-namespace TapeLibNET;
+namespace TapeLibNET.Calibration;
 
 /// <summary>
 /// A progress sample emitted during a calibration run, suitable for <see cref="IProgress{T}"/>.

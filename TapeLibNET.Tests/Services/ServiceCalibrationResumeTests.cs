@@ -1,4 +1,4 @@
-using System;
+using TapeLibNET.Calibration;
 using TapeLibNET.Services;
 using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
@@ -7,7 +7,7 @@ namespace TapeLibNET.Tests.Services;
 
 /// <summary>
 /// Service-level coverage for the extended calibration surface: the <see cref="CalibrationMode"/>
-/// dispatch (New / Resume / Recalibrate) through <see cref="TestTapeService.ExecuteCalibrateAsync"/>,
+/// dispatch (New / Resume / Recalibrate) through <see cref="TapeServiceBase.ExecuteCalibrateAsync"/>,
 /// result tagging (<see cref="CalibrateResult.Mode"/> / <see cref="CalibrateResult.RecalibrationDelta"/> /
 /// <see cref="CalibrateResult.RecalibrationVerdict"/>), and host-pane logging — driven over small
 /// memory-backed virtual cartridges.

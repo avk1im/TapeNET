@@ -1,4 +1,5 @@
-﻿using System.Runtime.InteropServices;
+﻿using TapeLibNET.Drive;
+using System.Runtime.InteropServices;
 using Windows.Win32.Foundation;
 using System.ComponentModel;
 using System.Text;

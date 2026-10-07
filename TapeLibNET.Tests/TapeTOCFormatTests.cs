@@ -1,3 +1,5 @@
+using TapeLibNET.Compression;
+using TapeLibNET.Toc;
 using System.Buffers.Binary;
 using TapeLibNET.Format;
 

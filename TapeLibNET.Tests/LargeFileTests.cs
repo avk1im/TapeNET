@@ -1,3 +1,5 @@
+using TapeLibNET.Compression;
+using TapeLibNET.Toc;
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
@@ -22,10 +24,10 @@ public class LargeFileTests
 {
     #region *** Constants ***
 
-    /// <summary>2 GB + 1 MB — just past <c>int.MaxValue</c> (2,147,483,647).</summary>
+    /// <summary>2 GB + 1 MB ï¿½ just past <c>int.MaxValue</c> (2,147,483,647).</summary>
     private const long Size2GBPlus = 2L * 1024 * 1024 * 1024 + 1024 * 1024;
 
-    /// <summary>4 GB + 1 MB — just past <c>uint.MaxValue</c> (4,294,967,295).</summary>
+    /// <summary>4 GB + 1 MB ï¿½ just past <c>uint.MaxValue</c> (4,294,967,295).</summary>
     private const long Size4GBPlus = 4L * 1024 * 1024 * 1024 + 1024 * 1024;
 
     #endregion
@@ -46,7 +48,7 @@ public class LargeFileTests
         using var tree = new TempFileTree();
         tree.AddSparseFile("large_2gb.dat", Size2GBPlus);
 
-        // 3 GB tape capacity — enough for the file plus TOC overhead
+        // 3 GB tape capacity ï¿½ enough for the file plus TOC overhead
         using var fixture = new VirtualTapeFixture(
             DriveProfile.Setmarks,
             contentCapacity: 3L * 1024 * 1024 * 1024,
@@ -62,7 +64,7 @@ public class LargeFileTests
 
         notifiable.AssertAllSucceeded(1);
 
-        // BytesProcessed tracks cumulative logical bytes — should exceed int.MaxValue
+        // BytesProcessed tracks cumulative logical bytes ï¿½ should exceed int.MaxValue
         Assert.True(stats.FileBytesProcessed > int.MaxValue,
             $"BytesProcessed ({stats.FileBytesProcessed}) should exceed int.MaxValue " +
             $"after backing up a {Size2GBPlus}-byte file");
@@ -113,7 +115,7 @@ public class LargeFileTests
         using var tree = new TempFileTree();
         tree.AddSparseFile("large_4gb.dat", Size4GBPlus);
 
-        // 5 GB tape capacity — with compression the sparse file uses far less tape
+        // 5 GB tape capacity ï¿½ with compression the sparse file uses far less tape
         using var fixture = new VirtualTapeFixture(
             DriveProfile.Setmarks,
             contentCapacity: 5L * 1024 * 1024 * 1024,
@@ -186,7 +188,7 @@ public class LargeFileTests
         tree.AddSparseFile("batch/file_a.dat", Size2GBPlus);
         tree.AddSparseFile("batch/file_b.dat", Size2GBPlus);
 
-        // Two files ˜ 2.1 GB ? 4.2 GB total; with compression sparse files use far less tape
+        // Two files ï¿½ 2.1 GB ? 4.2 GB total; with compression sparse files use far less tape
         using var fixture = new VirtualTapeFixture(
             DriveProfile.Setmarks,
             contentCapacity: 5L * 1024 * 1024 * 1024,
@@ -202,7 +204,7 @@ public class LargeFileTests
 
         notifiable.AssertAllSucceeded(2);
 
-        // Cumulative BytesProcessed should exceed uint.MaxValue (2 × 2.1 GB ˜ 4.2 GB)
+        // Cumulative BytesProcessed should exceed uint.MaxValue (2 ï¿½ 2.1 GB ï¿½ 4.2 GB)
         Assert.True(stats.FileBytesProcessed > uint.MaxValue,
             $"BytesProcessed ({stats.FileBytesProcessed}) should exceed uint.MaxValue " +
             $"after backing up {Size2GBPlus * 2} bytes across 2 files");
@@ -241,7 +243,7 @@ public class LargeFileTests
     #region *** Validate Agent on Large Files ***
 
     /// <summary>
-    /// CRC-only validation of a file exceeding 2 GB — no disk writes, just verifies
+    /// CRC-only validation of a file exceeding 2 GB ï¿½ no disk writes, just verifies
     /// tape data integrity via hash check. When <paramref name="compress"/> is
     ///  <see langword="true"/>, the backup uses software compression.
     /// </summary>
@@ -264,7 +266,7 @@ public class LargeFileTests
             hashAlgorithm: TapeHashAlgorithm.Crc64,
             compression: compress ? TapeCompression.Software : TapeCompression.None);
 
-        // CRC-only validation — no disk writes
+        // CRC-only validation ï¿½ no disk writes
         var notifiable = new TestNotifiable();
         using var validateAgent = fixture.CreateValidateAgent();
         fixture.TOC.CurrentSetIndex = fixture.TOC.Count;
@@ -316,7 +318,7 @@ public class LargeFileTests
         }
         catch
         {
-            // Best effort — temp directories may be locked
+            // Best effort ï¿½ temp directories may be locked
         }
     }
 

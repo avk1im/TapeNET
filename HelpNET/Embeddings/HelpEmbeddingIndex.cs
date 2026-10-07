@@ -1,5 +1,4 @@
 using HelpNET.Content;
-using HelpNET.Indexing;
 using HelpNET.Retrieval;
 using Microsoft.Extensions.AI;
 

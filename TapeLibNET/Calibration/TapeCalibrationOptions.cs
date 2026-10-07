@@ -1,6 +1,6 @@
-using System;
+using TapeLibNET.Drive;
 
-namespace TapeLibNET;
+namespace TapeLibNET.Calibration;
 
 /// <summary>
 /// Caller intent for a calibration run. The calibrator resolves this against a specific
@@ -35,7 +35,7 @@ public readonly record struct TapeCalibrationOptions
 
     /// <summary>
     /// EXPERIMENTAL: capture the drive's own LOG SENSE 0x31 remaining alongside the driver figure into
-    /// <see cref="ITapeCalibration.LtoRemainingCurve"/>. LTO-3/4/6 runs proved it EQUALS the driver value
+    /// <see cref="TapeCalibration.LtoRemainingCurve"/>. LTO-3/4/6 runs proved it EQUALS the driver value
     /// (LTO-4/6) or collapses identically (LTO-3), so it carries no independent signal — hence default
     /// <see langword="false"/>. Flip on only to re-verify on a new drive/generation.
     /// <para>Not supported on DLT-V4.</para>

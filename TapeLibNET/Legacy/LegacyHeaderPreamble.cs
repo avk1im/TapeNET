@@ -1,4 +1,5 @@
-﻿namespace TapeLibNET.Legacy;
+﻿using TapeLibNET.Headers;
+namespace TapeLibNET.Legacy;
 
 
 /// <summary>

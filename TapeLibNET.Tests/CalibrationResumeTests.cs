@@ -1,5 +1,6 @@
-using System;
-using System.Collections.Generic;
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
+using TapeLibNET.Calibration;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;

@@ -1,5 +1,3 @@
-using Xunit;
-
 using TapeConNET.Infrastructure;
 using TapeConNET.Tests.Helpers;
 

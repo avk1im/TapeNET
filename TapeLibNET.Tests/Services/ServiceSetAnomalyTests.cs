@@ -1,8 +1,7 @@
-using System.IO;
-using TapeLibNET;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
 using TapeLibNET.Services;
 using TapeLibNET.Tests.Helpers;
-using TapeLibNET.Virtual;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Tests.Services;

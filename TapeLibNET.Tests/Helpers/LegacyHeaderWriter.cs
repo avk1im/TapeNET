@@ -1,3 +1,5 @@
+using TapeLibNET.Headers;
+using TapeLibNET.Calibration;
 using System.IO.Hashing;
 
 namespace TapeLibNET.Tests.Helpers;

@@ -1,3 +1,6 @@
+using TapeLibNET.Drive;
+using TapeLibNET.Agents;
+using TapeLibNET.Calibration;
 using TapeLibNET.Scan;
 using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;

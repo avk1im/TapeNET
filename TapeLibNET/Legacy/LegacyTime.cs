@@ -1,4 +1,5 @@
 // Save as: TapeLibNET/Legacy/LegacyTime.cs  (replaces the previous version: adds the zone-explicit overload)
+using TapeLibNET.Toc;
 namespace TapeLibNET.Legacy;
 
 /// <summary>

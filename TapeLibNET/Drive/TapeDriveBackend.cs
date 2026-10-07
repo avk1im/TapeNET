@@ -1,10 +1,10 @@
-using System;
-using System.IO;
+using TapeLibNET.Media;
+using TapeLibNET.Calibration;
 using Microsoft.Extensions.Logging;
 using System.Runtime.CompilerServices;
 using Windows.Win32.Foundation;
 
-namespace TapeLibNET;
+namespace TapeLibNET.Drive;
 
 /// <summary>
 /// Drive capabilities and parameters (abstracted from TAPE_GET_DRIVE_PARAMETERS).
@@ -238,12 +238,13 @@ public abstract class TapeDriveBackend : ErrorManageableBase, IDisposable
     /// <param name="offset">Offset in buffer.</param>
     /// <param name="count">Number of bytes to write (must be multiple of BlockSize).</param>
     /// <param name="tapemark">Set to true if a filemark/setmark was encountered.</param>
-    /// <param name="pew">Set to true if a programmable early-warning boundary was encountered (if supported -- e.g. on LTO-5+).</param>
+    /// <param name="pew">Set to true if a programmable early-warning boundary was encountered
+    ///  (if supported -- e.g. on LTO-5+).</param>
     /// <param name="ew">Set to true if an early-warning boundary was encountered.</param>
     /// <param name="eom">Set to true if end-of-media was encountered. Callers can also distinguish
-    /// via <see cref="IErrorManageable.LastError"/>: <see cref="WIN32_ERROR.ERROR_END_OF_MEDIA"/>
-    /// for hard EOM (data NOT written) versus <see cref="TapeEarlyWarning.EarlyWarningError"/> for early
-    /// warning (data WAS written — wrap up and write the TOC).
+    ///  via <see cref="IErrorManageable.LastError"/>: <see cref="WIN32_ERROR.ERROR_END_OF_MEDIA"/>
+    ///  for hard EOM (data NOT written) versus <paramref name="ew"/> set to <see langword="true"/>
+    ///  for early warning (data WAS written — wrap up and write the TOC).
     /// </param>
     /// <returns>Number of bytes actually written.</returns>
     public abstract int Write(byte[] buffer, int offset, int count,

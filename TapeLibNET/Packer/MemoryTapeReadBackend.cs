@@ -1,5 +1,3 @@
-using System.Buffers;
-
 namespace TapeLibNET.Packer;
 
 /// <summary>

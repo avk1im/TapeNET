@@ -1,9 +1,8 @@
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
 using System.CommandLine;
 
-using TapeLibNET;
-
 using TapeConNET.Infrastructure;
-using TapeConNET.Services;
 using TapeConNET.Ux;
 using TapeConNET.Filtering;
 using TapeLibNET.Services;

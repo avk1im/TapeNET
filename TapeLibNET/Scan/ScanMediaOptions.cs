@@ -1,3 +1,6 @@
+using TapeLibNET.Drive;
+using TapeLibNET.Agents;
+using TapeLibNET.Calibration;
 namespace TapeLibNET.Scan;
 
 /// <summary>

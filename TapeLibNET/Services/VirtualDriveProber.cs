@@ -1,8 +1,8 @@
-using System.IO;
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
+using TapeLibNET.Agents;
 
 using Microsoft.Extensions.Logging.Abstractions;
-
-using TapeLibNET;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Services;

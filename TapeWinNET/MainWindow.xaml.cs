@@ -2,9 +2,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
 using System.ComponentModel;
-using System.Data.Common;
 using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;

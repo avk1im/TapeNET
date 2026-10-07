@@ -1,6 +1,6 @@
-using System.IO;
-
-using TapeLibNET;
+using TapeLibNET.Toc;
+using TapeLibNET.Media;
+using TapeLibNET.Agents;
 using TapeLibNET.Services;
 using TapeLibNET.Virtual;
 using TapeLibNET.Tests.Helpers; // TempFileTree, FileComparer, TempVirtualMedia

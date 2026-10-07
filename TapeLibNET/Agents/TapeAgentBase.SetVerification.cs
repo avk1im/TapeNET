@@ -1,13 +1,11 @@
-﻿using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
+﻿using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Media;
+using Microsoft.Extensions.Logging;
 using System.Diagnostics;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using Windows.Win32.Foundation;
 
-namespace TapeLibNET;
+namespace TapeLibNET.Agents;
 
 public partial class TapeAgentBase
 {

@@ -1,11 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using TapeLibNET.Drive;
 using System.IO.Hashing;
 
-namespace TapeLibNET
+namespace TapeLibNET.Streams
 {
 
     /// <summary>

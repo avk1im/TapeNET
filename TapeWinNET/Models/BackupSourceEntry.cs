@@ -1,8 +1,7 @@
+using TapeLibNET.Agents;
 using System.ComponentModel;
-using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows.Media.Imaging;
-using TapeLibNET;
 using Windows.Win32.System.SystemServices;
 
 namespace TapeWinNET.Models;

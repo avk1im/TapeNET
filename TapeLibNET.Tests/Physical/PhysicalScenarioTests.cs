@@ -1,4 +1,6 @@
-﻿using TapeLibNET;
+﻿using TapeLibNET.Drive;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
 using TapeLibNET.Tests.Helpers;
 using Xunit.Abstractions;
 
@@ -391,10 +393,10 @@ public class PhysicalScenarioTests(PhysicalDriveFixtureWrapper fixtureWrapper, I
     #region *** (6) Multi-Set: Random Files from Random Sets ***
 
     /// <summary>
-    /// Backup A ? B ? C ? Select random files from sets A and C (skip B) ?
-    /// Restore via <see cref="TapeFileRestoreBaseAgent.RestoreFilesFromCurrentSetDownAligned"/>
-    /// with a pre-assembled <c>filesSelected</c> array ? Verify only the selected
-    /// files are present on disk.
+    /// Backup A, B, C. Select random files from sets A and C (skip B).
+    ///  Restore via <see cref="TapeFileRestoreBaseAgent.RestoreFilesFromCurrentSetDown"/>
+    ///  with a pre-assembled <c>filesSelected</c> array. Verify only the selected
+    ///  files are present on disk.
     /// </summary>
     [SkippableFact]
     public void MultiSet_RandomFiles_RoundTrips()

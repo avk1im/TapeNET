@@ -1,7 +1,5 @@
 using System.Windows;
 
-using TapeWinNET;
-
 namespace TapeWinNET.Help;
 
 /// <summary>

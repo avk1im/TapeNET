@@ -1,5 +1,3 @@
-using System.CommandLine;
-
 using TapeConNET.Cli;
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
