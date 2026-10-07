@@ -157,7 +157,7 @@ public class CountToBoolConverter : IValueConverter
 }
 
 /// <summary>
-/// Converts a <see cref="ConversationItemRole"/> enum value to Visibility.
+/// Converts a <c>ConversationItemRole</c> enum value to Visibility.
 /// ConverterParameter is the role name to match (e.g. "User" or "Assistant");
 /// matching → Visible, non-matching → Collapsed.
 /// </summary>

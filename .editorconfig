@@ -4,6 +4,11 @@
 root = true
 
 [*.cs]
+# P1 — folder = namespace
+dotnet_style_namespace_match_folder = true
+dotnet_diagnostic.IDE0130.severity = warning
+# P8 — no stale usings
+dotnet_diagnostic.IDE0005.severity = warning
 
 # CS8321 — unused local function
 # These are intentional: log-helper families (logOkSub, logWarnSub, etc.) are

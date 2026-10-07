@@ -12,6 +12,9 @@
     <RootNamespace>TapeConNET</RootNamespace>
     <!-- TapeConNET 2.0: override the shared 1.2.x version baseline from Versioning.targets -->
     <VersionBase>2.0.0</VersionBase>
+	<!-- Enable IDE0005 reports during build and dotnet format -->
+	<GenerateDocumentationFile>true</GenerateDocumentationFile>
+	<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
   </PropertyGroup>
 
   <Import Project="..\Versioning.targets" />

@@ -139,7 +139,7 @@ public sealed class EmbeddedResourceHelpContentSource : IHelpContentSource
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Converts a bare resource suffix (after the <see cref="ResourcePrefix"/>) to a
+    /// Converts a bare resource suffix (after the <c>ResourcePrefix</c>) to a
     /// human-readable logical path.  The SDK replaces path separators with dots and
     /// hyphens in filenames with underscores, so we reverse that transformation.
     /// </summary>

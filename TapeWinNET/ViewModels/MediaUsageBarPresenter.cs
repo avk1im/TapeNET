@@ -15,7 +15,7 @@ namespace TapeWinNET.ViewModels;
 ///  and lives for the entire lifetime of the host view model.
 /// <para>
 /// Encapsulates the logic that builds <see cref="UsageSegment"/>s from the
-///  current <see cref="TapeService.TOC"/>, manages the highlight, and dispatches
+///  current <c>TapeService.TOC</c>, manages the highlight, and dispatches
 ///  segment clicks. The base implementation reproduces what
 ///  <c>MainViewModel</c> used to do directly; derived classes override
 ///  <see cref="AddContentSegments"/> (and optionally

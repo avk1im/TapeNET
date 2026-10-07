@@ -2,6 +2,8 @@ using Microsoft.Extensions.Logging;
 using System.Diagnostics.CodeAnalysis;
 using Windows.Win32.Foundation;
 
+using TapeLibNET.Format; // TapeFrameStatus
+
 namespace TapeLibNET.Scan;
 
 /// <summary>
@@ -26,7 +28,7 @@ public sealed partial class TapeScanner
     ///  <see cref="TapeAgentBase.ReadBomHeader"/> already own — including the partition handling that
     ///  differs between layouts. Re-implementing it against raw <see cref="TapeDrive"/> verbs would create
     ///  a second definition with a risk of divergence.
-    ///  <seealso cref="TapeServiceBase.RefreshLoadedHeader"/> employs a utility agent in the same way.
+    ///  <seealso cref="Services.TapeServiceBase.RefreshLoadedHeader"/> employs a utility agent in the same way.
     /// </para>
     /// <para>
     /// The empty TOC for the agent is harmless and honest: the BOM path never consults it (unlike
@@ -281,12 +283,12 @@ public sealed partial class TapeScanner
     ///  "unidentifiable content". WHY is the diagnosis, where every other fragment records its failure too.
     /// </remarks>
     private TapeMediaFragment DamagedRecordFragment(int ordinal, long startBlock, byte[] buffer, int read,
-                                                    TapeFramer.FrameStatus status)
+                                                    TapeFrameStatus status)
     {
         (WIN32_ERROR code, string why) = status switch
         {
-            TapeFramer.FrameStatus.CrcMismatch => (WIN32_ERROR.ERROR_CRC, "CRC mismatch"),
-            TapeFramer.FrameStatus.Unparseable => (WIN32_ERROR.ERROR_INVALID_DATA, "payload does not parse (unknown kind or newer version)"),
+            TapeFrameStatus.CrcMismatch => (WIN32_ERROR.ERROR_CRC, "CRC mismatch"),
+            TapeFrameStatus.Unparseable => (WIN32_ERROR.ERROR_INVALID_DATA, "payload does not parse (unknown kind or newer version)"),
             _ => (WIN32_ERROR.ERROR_INVALID_DATA, "torn frame"),
         };
 

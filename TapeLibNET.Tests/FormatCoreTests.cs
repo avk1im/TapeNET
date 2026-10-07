@@ -776,7 +776,7 @@ public class FormatCoreTests
     {
         byte[] block = TapeFrame.PackBlock(MakeSample(), 4096);
         Assert.Equal(4096, block.Length);
-        Assert.Equal(TapeFramer.FrameStatus.Ok, TapeFrame.TryUnpack(block, out Sample? back));
+        Assert.Equal(TapeFrameStatus.Ok, TapeFrame.TryUnpack(block, out Sample? back));
         Assert.Equal(MakeSample().Name, back!.Name);
     }
 
@@ -784,17 +784,17 @@ public class FormatCoreTests
     public void Frame_Block_RandomPadding_IsIgnored()
     {
         byte[] block = TapeFrame.PackBlock(MakeSample(), 4096, new Random(1));
-        Assert.Equal(TapeFramer.FrameStatus.Ok, TapeFrame.TryUnpack(block, out Sample? _));
+        Assert.Equal(TapeFrameStatus.Ok, TapeFrame.TryUnpack(block, out Sample? _));
     }
 
     [Fact]
     public void Frame_Status_NotFramed()
     {
-        Assert.Equal(TapeFramer.FrameStatus.NotFramed, TapeFrame.TryUnpack(new byte[512], out Sample? _));
-        Assert.Equal(TapeFramer.FrameStatus.NotFramed, TapeFrame.TryUnpack(new byte[2], out Sample? _));
+        Assert.Equal(TapeFrameStatus.NotFramed, TapeFrame.TryUnpack(new byte[512], out Sample? _));
+        Assert.Equal(TapeFrameStatus.NotFramed, TapeFrame.TryUnpack(new byte[2], out Sample? _));
 
         byte[] frame = TapeFrame.Pack(MakeSample());
-        Assert.Equal(TapeFramer.FrameStatus.NotFramed, TapeFrame.TryUnpack(frame.AsSpan(0, frame.Length - 9), out Sample? _));   // length runs past the bytes
+        Assert.Equal(TapeFrameStatus.NotFramed, TapeFrame.TryUnpack(frame.AsSpan(0, frame.Length - 9), out Sample? _));   // length runs past the bytes
     }
 
     [Fact]
@@ -802,7 +802,7 @@ public class FormatCoreTests
     {
         byte[] block = TapeFrame.PackBlock(MakeSample(), 4096);
         block[20] ^= 0x01;
-        Assert.Equal(TapeFramer.FrameStatus.CrcMismatch, TapeFrame.TryUnpack(block, out Sample? _));
+        Assert.Equal(TapeFrameStatus.CrcMismatch, TapeFrame.TryUnpack(block, out Sample? _));
     }
 
     [Fact]
@@ -811,22 +811,22 @@ public class FormatCoreTests
         static byte[] Seal(byte[] record) => [.. record, .. TapeFrame.ComputeCrc(record)];
 
         // newer major
-        Assert.Equal(TapeFramer.FrameStatus.Unparseable,
+        Assert.Equal(TapeFrameStatus.Unparseable,
             TapeFrame.TryUnpack(Seal(Raw((ushort)TapeRecordKind.TocSet, 3, [])), out Sample? _));
         // unknown kind
-        Assert.Equal(TapeFramer.FrameStatus.Unparseable,
+        Assert.Equal(TapeFrameStatus.Unparseable,
             TapeFrame.TryUnpack(Seal(Raw(0x0999, 2, [])), out Sample? _));
         // unknown critical tag
-        Assert.Equal(TapeFramer.FrameStatus.Unparseable,
+        Assert.Equal(TapeFrameStatus.Unparseable,
             TapeFrame.TryUnpack(Seal(RecordWith(f => { WriteRequired(f); f.WriteUInt(40, 1, critical: true); })), out Sample? _));
         // missing required field
-        Assert.Equal(TapeFramer.FrameStatus.Unparseable,
+        Assert.Equal(TapeFrameStatus.Unparseable,
             TapeFrame.TryUnpack(Seal(RecordWith(f => f.WriteString(32, "n"))), out Sample? _));
         // bad enum value
-        Assert.Equal(TapeFramer.FrameStatus.Unparseable,
+        Assert.Equal(TapeFrameStatus.Unparseable,
             TapeFrame.TryUnpack(Seal(RecordWith(f => WriteRequiredWith(f, g => g.WriteUInt(6, 77)))), out Sample? _));
         // a different (known) kind than asked for
-        Assert.Equal(TapeFramer.FrameStatus.Unparseable,
+        Assert.Equal(TapeFrameStatus.Unparseable,
             TapeFrame.TryUnpack(Seal(RecordWith(WriteRequired, TapeRecordKind.TocHeader)), out Sample? _));
     }
 

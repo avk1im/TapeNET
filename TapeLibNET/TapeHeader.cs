@@ -113,7 +113,7 @@ public abstract record TapeHeader : ITapeFramedRecord<TapeHeader>
     };
 
     /// <summary>Parses a LEGACY header frame (<c>[int32 len][payload][crc32]</c>) at the start of the block. Never throws.</summary>
-    public static TapeFramer.FrameStatus TryReadLegacy(ReadOnlySpan<byte> block, out TapeHeader? record)
+    public static TapeFrameStatus TryReadLegacy(ReadOnlySpan<byte> block, out TapeHeader? record)
         => LegacyFramer.TryUnpack<TapeHeader>(block.ToArray(), block.Length, LegacyHeaderReader.Read, out record);
 
     #endregion

@@ -332,7 +332,7 @@ public class LegacyGoldenTests
     {
         var golden = Load("set-header-desc.bin");
         golden[20] ^= 0xFF;
-        Assert.Equal(TapeFramer.FrameStatus.CrcMismatch,
+        Assert.Equal(TapeFrameStatus.CrcMismatch,
             TapeFramer.TryUnpackHeader<TapeSetHeader>(golden, golden.Length, out _));
     }
 

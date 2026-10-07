@@ -32,5 +32,5 @@ public interface ITapeFramedRecord<TSelf> : ITapeRecord<TSelf>
     /// Parses a legacy frame ([int32 len][payload][crc32]) at the start of the block. Never throws.
     /// Implementations are one-line forwards into <c>Legacy/</c>.
     /// </summary>
-    static abstract TapeFramer.FrameStatus TryReadLegacy(ReadOnlySpan<byte> block, out TSelf? record);
+    static abstract TapeFrameStatus TryReadLegacy(ReadOnlySpan<byte> block, out TSelf? record);
 }

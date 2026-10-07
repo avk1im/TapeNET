@@ -1097,8 +1097,9 @@ public sealed class TapeCalibrator : TapeDriveHolder<TapeCalibrator>
 
     /// <summary>
     /// Neutralizes any active reserve and loaded calibrations for the duration of a run so
-    /// <see cref="TapeDrive.WriteDirect"/> surfaces the RAW physical early warning the run must measure
-    /// (not a logical/calibrated remapping), and restores them afterward regardless of how the run ended.
+    ///  <see cref="TapeDrive.WriteDirect(byte[], int, int, out bool, out bool, out bool)"/> surfaces
+    ///  the RAW physical early warning the run must measure (not a logical/calibrated remapping),
+    ///  and restores them afterward regardless of how the run ended.
     /// </summary>
     private readonly struct RunGuard
     {

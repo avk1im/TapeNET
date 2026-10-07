@@ -1,7 +1,7 @@
 using System.Text;
 
 using TapeLibNET.Scan;
-
+using TapeLibNET.Format; // TapeFrameStatus
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
@@ -368,7 +368,7 @@ public class TapeMediaIdentifyTests
             IdentifiedBlock id = TapeHeaderBlock.IdentifyBlock(block, block.Length);
 
             Assert.Equal(HeaderBlockIdentity.Header, id.Kind);
-            Assert.Equal(TapeFramer.FrameStatus.Ok, id.FrameStatus);
+            Assert.Equal(TapeFrameStatus.Ok, id.FrameStatus);
             Assert.IsType(original.GetType(), id.Header);
         }
     }
@@ -385,7 +385,7 @@ public class TapeMediaIdentifyTests
         IdentifiedBlock id = TapeHeaderBlock.IdentifyBlock(block, block.Length);
 
         Assert.Equal(HeaderBlockIdentity.DamagedRecord, id.Kind);
-        Assert.Equal(TapeFramer.FrameStatus.CrcMismatch, id.FrameStatus);
+        Assert.Equal(TapeFrameStatus.CrcMismatch, id.FrameStatus);
         Assert.Null(id.Header);
     }
 
@@ -400,7 +400,7 @@ public class TapeMediaIdentifyTests
         IdentifiedBlock id = TapeHeaderBlock.IdentifyBlock(block, block.Length);
 
         Assert.Equal(HeaderBlockIdentity.DamagedRecord, id.Kind);
-        Assert.Equal(TapeFramer.FrameStatus.NotFramed, id.FrameStatus);
+        Assert.Equal(TapeFrameStatus.NotFramed, id.FrameStatus);
     }
 
     /// <summary>A damaged MAGIC leaves nothing to recognize: foreign. The honest limit.</summary>
@@ -509,7 +509,7 @@ public class TapeMediaIdentifyTests
     {
         byte[] block = Block(MakeSetHeader());
 
-        Assert.Equal(TapeFramer.FrameStatus.Ok, TapeFramer.TryUnpackHeader(block, block.Length, out TapeHeader? header));
+        Assert.Equal(TapeFrameStatus.Ok, TapeFramer.TryUnpackHeader(block, block.Length, out TapeHeader? header));
         Assert.IsType<TapeSetHeader>(header);
         Assert.NotNull(TapeFramer.UnpackHeader(block, block.Length));
     }

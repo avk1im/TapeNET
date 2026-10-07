@@ -9,7 +9,7 @@ namespace TapeWinNET.Help;
 /// <remarks>
 /// Strategy:
 /// <list type="number">
-///   <item>Try to expand the window to the right by <paramref name="desiredWidth"/>.</item>
+///   <item>Try to expand the window to the right by <c>desiredWidth</c>.</item>
 ///   <item>If that runs off the work area, shift the window left until it fits.</item>
 ///   <item>If there is still not enough room, clamp the width to whatever remains.</item>
 /// </list>

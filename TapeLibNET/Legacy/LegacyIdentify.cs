@@ -1,3 +1,5 @@
+using TapeLibNET.Format; // TapeFrameStatus
+
 namespace TapeLibNET.Legacy;
 
 /// <summary>
@@ -107,7 +109,7 @@ internal static class LegacyIdentify
         if (HasSignatureAt(block, length, FramedPayloadOffset, out _))
         {
             var status = LegacyFramer.TryUnpack<TapeHeader>(block, length, LegacyHeaderReader.Read, out TapeHeader? header);
-            return status == TapeFramer.FrameStatus.Ok && header is not null
+            return status == TapeFrameStatus.Ok && header is not null
                 ? new(HeaderBlockIdentity.Header, Header: header, FrameStatus: status)
                 : new(HeaderBlockIdentity.DamagedRecord, FrameStatus: status);
         }

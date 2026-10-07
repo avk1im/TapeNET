@@ -241,8 +241,8 @@ public partial class MainViewModel
     // ── Event handlers ──────────────────────────────────────────────────────
 
     /// <summary>
-    /// Handles <see cref="Services.TapeService.LogMessageReceived"/> by
-    /// enqueuing the entry into the batched buffer.
+    /// Handles <c>Services.TapeService.LogMessageReceived</c> by
+    ///  enqueuing the entry into the batched buffer.
     /// </summary>
     private void OnLogMessageReceived(object? sender, LogEntry entry) => AddLog(entry);
 
@@ -250,9 +250,9 @@ public partial class MainViewModel
 
     /// <summary>
     /// Drains the <see cref="_logBuffer"/> into <see cref="LogMessages"/> in one
-    /// UI-thread batch. If the collection exceeds <see cref="LogMaxCount"/> after
-    /// the flush, <see cref="PruneLogMessages"/> removes the lowest-priority
-    /// (oldest) entries first.
+    ///  UI-thread batch. If the collection exceeds <see cref="LogMaxCount"/> after
+    ///  the flush, <see cref="PruneLogMessages"/> removes the lowest-priority
+    ///  (oldest) entries first.
     /// </summary>
     private void FlushLogBuffer()
     {

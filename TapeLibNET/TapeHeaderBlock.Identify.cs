@@ -41,7 +41,7 @@ public enum HeaderBlockIdentity
 public readonly record struct IdentifiedBlock(
     HeaderBlockIdentity Kind,
     TapeHeader? Header = null,
-    TapeFramer.FrameStatus FrameStatus = TapeFramer.FrameStatus.NotFramed,
+    TapeFrameStatus FrameStatus = TapeFrameStatus.NotFramed,
     ushort TocVersion = 0,
     Guid TocMediaId = default)
 {
@@ -49,9 +49,10 @@ public readonly record struct IdentifiedBlock(
     public static readonly IdentifiedBlock Foreign = new(HeaderBlockIdentity.Foreign);
 }
 
-// TOC-less identification of a block already read from tape (SM-2). Split out from the I/O half so a caller that holds
-//  bytes — and no TOC, no navigator, no agent — can still classify them.
-/// <include file='docs/TapeHeaderBlock.xml' path='docs/TapeHeaderBlock/TryIdentifyHeaderBlock/*' />
+/// <summary>
+/// TOC-less identification of a block already read from tape (SM-2). Split out from the I/O half so a caller that holds
+///  bytes — and no TOC, no navigator, no agent — can still classify them.
+/// </summary>
 public static partial class TapeHeaderBlock
 {
     #region *** Header parse ***
@@ -122,7 +123,7 @@ public static partial class TapeHeaderBlock
     ///    else <see cref="HeaderBlockIdentity.DamagedRecord"/> with the reason.</item>
     ///   <item>Every other kind → the header frame: <see cref="HeaderBlockIdentity.Header"/> when it verifies and parses,
     ///    else <see cref="HeaderBlockIdentity.DamagedRecord"/> with the reason. An unknown kind or a newer major with an
-    ///    intact CRC is "ours, from a newer TapeNET" (<see cref="TapeFramer.FrameStatus.Unparseable"/>).</item>
+    ///    intact CRC is "ours, from a newer TapeNET" (<see cref="TapeFrameStatus.Unparseable"/>).</item>
     /// </list>
     /// </para>
     /// <para>
@@ -141,7 +142,7 @@ public static partial class TapeHeaderBlock
 
         // Ours by the magic. A prologue that does not even parse is a torn record.
         if (TapeRecordReader.ParsePrologue(data, out TapeRecordReader.Prologue prologue) != TapeRecordReader.PrologueStatus.Ok)
-            return new(HeaderBlockIdentity.DamagedRecord, FrameStatus: TapeFramer.FrameStatus.NotFramed);
+            return new(HeaderBlockIdentity.DamagedRecord, FrameStatus: TapeFrameStatus.NotFramed);
 
         switch ((TapeRecordKind)prologue.RawKind)
         {
@@ -149,7 +150,7 @@ public static partial class TapeHeaderBlock
                 // The TOC stream carries no per-block CRC; a header record that does not parse is damaged or newer.
                 return TapeTOC.TryPeek(block, length, out ushort tocVersion, out Guid tocMediaId)
                     ? new(HeaderBlockIdentity.TocCopy, TocVersion: tocVersion, TocMediaId: tocMediaId)
-                    : new(HeaderBlockIdentity.DamagedRecord, FrameStatus: TapeFramer.FrameStatus.Unparseable);
+                    : new(HeaderBlockIdentity.DamagedRecord, FrameStatus: TapeFrameStatus.Unparseable);
 
             case TapeRecordKind.FileHeader:
                 return IdentifiedBlock.Foreign;    // content: the first file of a set at a block boundary
@@ -157,7 +158,7 @@ public static partial class TapeHeaderBlock
             case TapeRecordKind.CalibrationCheckpoint:
             {
                 var status = TapeFrame.TryUnpack(data, out TapeCalibrationCheckpoint? _, out _, out _);
-                return status == TapeFramer.FrameStatus.Ok
+                return status == TapeFrameStatus.Ok
                     ? new(HeaderBlockIdentity.CalibrationCheckpoint, FrameStatus: status)
                     : new(HeaderBlockIdentity.DamagedRecord, FrameStatus: status);
             }
@@ -165,7 +166,7 @@ public static partial class TapeHeaderBlock
             default:
             {
                 var status = TapeFramer.TryUnpackHeader(block, length, out TapeHeader? header);
-                return status == TapeFramer.FrameStatus.Ok && header is not null
+                return status == TapeFrameStatus.Ok && header is not null
                     ? new(HeaderBlockIdentity.Header, Header: header, FrameStatus: status)
                     : new(HeaderBlockIdentity.DamagedRecord, FrameStatus: status);
             }

@@ -28,10 +28,6 @@ namespace TapeWinNET.Services;
 /// Creates the service and wires it to the supplied ViewModel for log output
 ///  and state notifications.
 /// </remarks>
-/// <param name="dispatcher">UI dispatcher used by the <see cref="WpfServiceHost"/>.</param>
-/// <param name="viewModel">
-///  ViewModel whose <c>AddLog</c> sink receives all service log entries.
-/// </param>
 public partial class TapeService : TapeServiceBase
 {
     // ── WPF-specific fields ───────────────────────────────────────────────────

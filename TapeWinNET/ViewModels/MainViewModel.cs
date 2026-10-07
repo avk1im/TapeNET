@@ -951,7 +951,7 @@ public partial class MainViewModel : ViewModelBase
     /// </summary>
     /// <param name="busyMessage">The message to display while the operation is in progress.</param>
     /// <returns>
-    /// <langword cref="true"/> if the TOC was successfully restored; otherwise, <langword cref="false"/>.
+    /// <see langword="true"/> if the TOC was successfully restored; otherwise, <see langword="false"/>.
     /// </returns>
 
     private async Task<bool> RestoreTOCCoreAsync(string busyMessage = "Restoring TOC...")
@@ -1189,7 +1189,7 @@ public partial class MainViewModel : ViewModelBase
 
     /// <summary>
     /// Resets the <see cref="_tapeService"/> state via <see cref="TapeServiceBase.Reset"/>,
-    ///  then reloads media content and updates the tree & content panes accordingly via
+    ///  then reloads media content and updates the tree and content panes accordingly via
     ///  <see cref="ReloadMediaAsync"/>
     /// </summary>
     private async Task RereadMediaAsync()

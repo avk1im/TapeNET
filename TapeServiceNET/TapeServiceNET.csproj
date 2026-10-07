@@ -5,6 +5,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>tapesvc</AssemblyName>
+	<!-- Enable IDE0005 reports during build and dotnet format -->
+	<GenerateDocumentationFile>true</GenerateDocumentationFile>
+	<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
   </PropertyGroup>
 
   <Import Project="..\Versioning.targets" />

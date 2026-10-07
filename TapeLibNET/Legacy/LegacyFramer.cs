@@ -1,10 +1,12 @@
 using System.IO.Hashing;
 
+using TapeLibNET.Format; // TapeFrameStatus
+
 namespace TapeLibNET.Legacy;
 
 /// <summary>
 /// Frozen, read-only reader of the pre-2.1 frame: <c>[int32 payloadLen][payload][crc32]</c>, where the CRC-32 covers the
-///  payload only. Total: every framing and format fault becomes a <see cref="TapeFramer.FrameStatus"/>.
+///  payload only. Total: every framing and format fault becomes a <see cref="TapeFrameStatus"/>.
 /// </summary>
 internal static class LegacyFramer
 {
@@ -20,8 +22,8 @@ internal static class LegacyFramer
     /// Payload reader — <see cref="LegacyHeaderReader.Read"/> for headers, <see cref="LegacyCheckpointReader.ReadCheckpoint"/>
     ///  for checkpoints; returns null for a payload that is not the expected record.
     /// </param>
-    /// <param name="record">The record when the result is <see cref="TapeFramer.FrameStatus.Ok"/>; null otherwise.</param>
-    public static TapeFramer.FrameStatus TryUnpack<T>(byte[] block, int length, Func<LegacyDeserializer, T?> parse,
+    /// <param name="record">The record when the result is <see cref="TapeFrameStatus.Ok"/>; null otherwise.</param>
+    public static TapeFrameStatus TryUnpack<T>(byte[] block, int length, Func<LegacyDeserializer, T?> parse,
         out T? record) where T : class
     {
         ArgumentNullException.ThrowIfNull(block);
@@ -36,21 +38,21 @@ internal static class LegacyFramer
             var d = new LegacyDeserializer(ms);
             int payloadLen = d.DeserializeInt32();
             if (payloadLen < 0 || payloadLen > block.Length - Overhead)
-                return TapeFramer.FrameStatus.NotFramed;    // implausible length => not a valid frame
+                return TapeFrameStatus.NotFramed;    // implausible length => not a valid frame
             payload = d.DeserializeBytes(payloadLen);
             crcStored = d.DeserializeBytes(sizeof(uint));
         }
         catch (Exception)
         {
-            return TapeFramer.FrameStatus.NotFramed;        // the block ends inside the frame
+            return TapeFrameStatus.NotFramed;        // the block ends inside the frame
         }
         if (payload is null || crcStored is null)
-            return TapeFramer.FrameStatus.NotFramed;
+            return TapeFrameStatus.NotFramed;
 
         var crc = new Crc32();
         crc.Append(payload);
         if (!crc.GetCurrentHash().AsSpan().SequenceEqual(crcStored))
-            return TapeFramer.FrameStatus.CrcMismatch;      // torn / corrupt
+            return TapeFrameStatus.CrcMismatch;      // torn / corrupt
 
         try
         {
@@ -62,6 +64,6 @@ internal static class LegacyFramer
             // A format error past a GOOD CRC is a record we cannot read -- not a torn one.
             record = null;
         }
-        return record is null ? TapeFramer.FrameStatus.Unparseable : TapeFramer.FrameStatus.Ok;
+        return record is null ? TapeFrameStatus.Unparseable : TapeFrameStatus.Ok;
     }
 }

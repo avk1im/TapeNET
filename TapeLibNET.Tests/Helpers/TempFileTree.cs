@@ -266,9 +266,10 @@ public sealed class TempFileTree : IDisposable
         return created;
     }
 
-
-    /// zero-byte, exact block size, block+1, large, special characters,
-    /// and various file attributes.
+    /// <summary>
+    /// Generates multiple files to exercise edge cases for file size and naming,
+    ///  such as zero-byte, exact block size, block+1, large, special characters,
+    ///  and various file attributes.
     /// </summary>
     /// <param name="blockSize">Drive block size for boundary calculations.</param>
     /// <returns>Full paths of all edge-case files.</returns>
@@ -426,7 +427,7 @@ public sealed class TempFileTree : IDisposable
 
     /// <summary>
     /// Overwrites an existing file with version-tagged content, ensuring a newer
-    /// <see cref="FileInfo.LastWriteTime"/> for incremental backup detection.
+    /// <see cref="FileSystemInfo.LastWriteTime"/> for incremental backup detection.
     /// The content is a repeating pattern that encodes the <paramref name="version"/>
     /// so that restored files can be verified against the expected version.
     /// </summary>

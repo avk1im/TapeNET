@@ -168,7 +168,7 @@ public sealed record TapeMediaHeader : TapeHeader
 
     /// <summary>
     /// Reads the media-specific fields after the shared preamble has been decoded. Called only by
-    ///  <see cref="TapeHeader.ConstructFrom"/> once the kind byte selected <see cref="TapeHeaderKind.Media"/>.
+    ///  <see cref="LegacyHeaderReader.Read"/> once the kind byte selected <see cref="TapeHeaderKind.Media"/>.
     /// </summary>
     internal static TapeMediaHeader ConstructBody(LegacyDeserializer d, in TapeHeaderPreamble p)
     {

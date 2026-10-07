@@ -226,11 +226,11 @@ public class FormatCoreCoverageTests
             return record;
         }
 
-        public static TapeFramer.FrameStatus TryReadLegacy(ReadOnlySpan<byte> block, out Legacyish? record)
+        public static TapeFrameStatus TryReadLegacy(ReadOnlySpan<byte> block, out Legacyish? record)
         {
             LegacyCalls++;
             record = block.Length > 0 && block[0] == 0x42 ? new Legacyish { Origin = "legacy" } : null;
-            return record is null ? TapeFramer.FrameStatus.NotFramed : TapeFramer.FrameStatus.Ok;
+            return record is null ? TapeFrameStatus.NotFramed : TapeFrameStatus.Ok;
         }
     }
 
@@ -408,7 +408,7 @@ public class FormatCoreCoverageTests
         }
         catch (ReflectionTypeLoadException ex)
         {
-            types = ex.Types.OfType<Type>().ToArray();
+            types = [.. ex.Types.OfType<Type>()];
         }
 
         int found = 0;
@@ -527,7 +527,9 @@ public class FormatCoreCoverageTests
         };
 
         byte[] bytes = RecordWith(f => Prim.Schema.Write(f, p));
+#pragma warning disable CA1861 // Avoid constant arrays as arguments
         Assert.Equal(new[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 32, 33, 48, 49, 49 }, NumbersOf(bytes));
+#pragma warning restore CA1861 // Avoid constant arrays as arguments
 
         Prim back = Prim.Schema.Read(FieldsOf(bytes), new Prim());
         Assert.True(back.Bo);
@@ -547,7 +549,9 @@ public class FormatCoreCoverageTests
         Assert.Equal(p.B, back.B);
         Assert.Equal(1U, back.One!.V);
         Assert.Equal("one", back.One.S);
+#pragma warning disable IDE0305 // Simplify collection initialization -- to prevent xUnit call ambiguity byte[] / Span<byte>
         Assert.Equal(new uint[] { 2, 3 }, back.Many.Select(c => c.V).ToArray());
+#pragma warning restore IDE0305 // Simplify collection initialization
         Assert.Equal("three", back.Many[1].S);
     }
 
@@ -659,7 +663,9 @@ public class FormatCoreCoverageTests
         byte[] bytes = RecordWith(f => DerivedWire.Schema.Write(f, new DerivedWire { Id = id, Size = 3, Flag = true, Name = "n" }));
 
         // inherited and own fields merged ascending; inherited Size at its default is elided
+#pragma warning disable CA1861 // Avoid constant arrays as arguments
         Assert.Equal(new[] { 1, 4, 32 }, NumbersOf(bytes));
+#pragma warning restore CA1861 // Avoid constant arrays as arguments
 
         DerivedWire back = DerivedWire.Schema.Read(FieldsOf(bytes), new DerivedWire { Size = 99 });
         Assert.Equal(id, back.Id);
@@ -868,7 +874,7 @@ public class FormatCoreCoverageTests
         Assert.IsType<ArgumentException>(ex.InnerException);
         Assert.Equal(TapeRecordKind.TocEnd, ex.Record);
 
-        Assert.Equal(TapeFramer.FrameStatus.Unparseable, TapeFrame.TryUnpack(Seal(record), out Boom? _, out _, out var error));
+        Assert.Equal(TapeFrameStatus.Unparseable, TapeFrame.TryUnpack(Seal(record), out Boom? _, out _, out var error));
         Assert.Equal(FormatErrorKind.BadValue, error!.Kind);
     }
 
@@ -943,7 +949,7 @@ public class FormatCoreCoverageTests
         {
             byte[] frame = Seal(record);
             var status = TapeFrame.TryUnpack(frame, out Ranged? value, out int frameLength, out TapeFormatException? error);
-            Assert.Equal(TapeFramer.FrameStatus.Unparseable, status);
+            Assert.Equal(TapeFrameStatus.Unparseable, status);
             Assert.Null(value);
             Assert.NotNull(error);
             Assert.Equal(kind, error.Kind);
@@ -957,13 +963,13 @@ public class FormatCoreCoverageTests
         byte[] frame = TapeFrame.Pack(new Ranged { Lo = 1, Hi = 2 });
         byte[] block = [.. frame, .. new byte[100]];
 
-        Assert.Equal(TapeFramer.FrameStatus.Ok, TapeFrame.TryUnpack(block, out Ranged? value, out int frameLength, out var error));
+        Assert.Equal(TapeFrameStatus.Ok, TapeFrame.TryUnpack(block, out Ranged? value, out int frameLength, out var error));
         Assert.Equal(2U, value!.Hi);
         Assert.Equal(frame.Length, frameLength);
         Assert.Null(error);
 
         block[frame.Length - 1] ^= 1;
-        Assert.Equal(TapeFramer.FrameStatus.CrcMismatch, TapeFrame.TryUnpack(block, out value, out frameLength, out error));
+        Assert.Equal(TapeFrameStatus.CrcMismatch, TapeFrame.TryUnpack(block, out value, out frameLength, out error));
         Assert.Null(value);
         Assert.Null(error);
         Assert.Equal(frame.Length, frameLength);
@@ -975,13 +981,13 @@ public class FormatCoreCoverageTests
         int before = Legacyish.LegacyCalls;
         byte[] block = TapeFrame.PackBlock(new Legacyish { Origin = "v2" }, 1024);
 
-        Assert.Equal(TapeFramer.FrameStatus.Ok, TapeFrame.TryUnpackWithLegacy(block, out Legacyish? value, out int length, out var error));
+        Assert.Equal(TapeFrameStatus.Ok, TapeFrame.TryUnpackWithLegacy(block, out Legacyish? value, out int length, out var error));
         Assert.Equal("v2", value!.Origin);
         Assert.True(length > 0);
         Assert.Null(error);
 
         block[12] ^= 1;     // damaged behind the magic: still ours, never handed to the legacy reader
-        Assert.Equal(TapeFramer.FrameStatus.CrcMismatch, TapeFrame.TryUnpackWithLegacy(block, out Legacyish? _, out _, out _));
+        Assert.Equal(TapeFrameStatus.CrcMismatch, TapeFrame.TryUnpackWithLegacy(block, out Legacyish? _, out _, out _));
         Assert.Equal(before, Legacyish.LegacyCalls);
     }
 
@@ -990,12 +996,12 @@ public class FormatCoreCoverageTests
     {
         int before = Legacyish.LegacyCalls;
 
-        Assert.Equal(TapeFramer.FrameStatus.Ok, TapeFrame.TryUnpackWithLegacy([0x42, 0, 0, 0], out Legacyish? value, out int length, out var error));
+        Assert.Equal(TapeFrameStatus.Ok, TapeFrame.TryUnpackWithLegacy([0x42, 0, 0, 0], out Legacyish? value, out int length, out var error));
         Assert.Equal("legacy", value!.Origin);
         Assert.Equal(0, length);
         Assert.Null(error);
 
-        Assert.Equal(TapeFramer.FrameStatus.NotFramed, TapeFrame.TryUnpackWithLegacy(new byte[16], out value, out _, out _));
+        Assert.Equal(TapeFrameStatus.NotFramed, TapeFrame.TryUnpackWithLegacy(new byte[16], out value, out _, out _));
         Assert.Null(value);
         Assert.Equal(before + 2, Legacyish.LegacyCalls);
     }

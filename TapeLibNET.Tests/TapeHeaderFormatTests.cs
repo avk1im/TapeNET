@@ -179,7 +179,7 @@ public class TapeHeaderFormatTests
         block[20] ^= 0x5A;
         IdentifiedBlock id = TapeHeaderBlock.IdentifyBlock(block, block.Length);
         Assert.Equal(HeaderBlockIdentity.DamagedRecord, id.Kind);
-        Assert.Equal(TapeFramer.FrameStatus.CrcMismatch, id.FrameStatus);
+        Assert.Equal(TapeFrameStatus.CrcMismatch, id.FrameStatus);
     }
 
     [Fact]
@@ -197,7 +197,7 @@ public class TapeHeaderFormatTests
     {
         IdentifiedBlock id = TapeHeaderBlock.IdentifyBlock(RawBlock(kind, major), TapeHeaderBlock.Size);
         Assert.Equal(HeaderBlockIdentity.DamagedRecord, id.Kind);
-        Assert.Equal(TapeFramer.FrameStatus.Unparseable, id.FrameStatus);
+        Assert.Equal(TapeFrameStatus.Unparseable, id.FrameStatus);
     }
 
     [Fact]

@@ -9,6 +9,11 @@ namespace TapeLibNET.Services;
 
 public partial class TapeServiceBase
 {
+    /// <summary>
+    /// Creates the notifiable for a SET-level operation (currently delete). Override to add a progress
+    ///  display; the base returns a handler that logs through <see cref="_host"/> and routes set
+    ///  anomalies to its prompt.
+    /// </summary>
     protected virtual ServiceSetProgressHandler CreateSetProgressHandler(
             TapeAgentBase agent, string operationName)
         => new(_host, agent, skipAllErrors: false, operationName);
@@ -158,9 +163,4 @@ public partial class TapeServiceBase
     public async Task<bool> DeleteBackupSetsAsync(int deleteFromSetIndex)
         => (await DeleteBackupSetsExAsync(deleteFromSetIndex)).Success;
 
-    /// <summary>
-    /// Creates the notifiable for a SET-level operation (currently delete). Override to add a progress
-    ///  display; the base returns a handler that logs through <see cref="_host"/> and routes set
-    ///  anomalies to its prompt.
-    /// </summary>
 }

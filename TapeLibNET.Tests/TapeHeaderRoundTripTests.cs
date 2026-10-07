@@ -208,7 +208,7 @@ public class TapeHeaderRoundTripTests
     public void TryUnpack_Narrow_WrongKind_IsUnparseable()
     {
         var mediaBlock = PackIntoBlock(MakeMediaHeader());
-        Assert.Equal(TapeFramer.FrameStatus.Unparseable,
+        Assert.Equal(TapeFrameStatus.Unparseable,
             TapeFramer.TryUnpackHeader(mediaBlock, mediaBlock.Length, out TapeSetHeader? set));
         Assert.Null(set);
     }

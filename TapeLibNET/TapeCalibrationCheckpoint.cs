@@ -144,7 +144,7 @@ public sealed record TapeCalibrationCheckpoint(
     #region *** Legacy read ***
 
     /// <summary>Parses a LEGACY checkpoint frame (<c>[int32 len][payload][crc32]</c>). Never throws.</summary>
-    public static TapeFramer.FrameStatus TryReadLegacy(ReadOnlySpan<byte> block, out TapeCalibrationCheckpoint? record)
+    public static TapeFrameStatus TryReadLegacy(ReadOnlySpan<byte> block, out TapeCalibrationCheckpoint? record)
         => LegacyFramer.TryUnpack(block.ToArray(), block.Length, LegacyCheckpointReader.ReadCheckpoint, out record);
 
     #endregion
@@ -176,7 +176,7 @@ public static class TapeCalibrationFramer
     {
         ArgumentNullException.ThrowIfNull(block);
         ReadOnlySpan<byte> data = block.AsSpan(0, Math.Clamp(length, 0, block.Length));
-        return TapeFrame.TryUnpackWithLegacy(data, out T? record, out _, out _) == TapeFramer.FrameStatus.Ok ? record : null;
+        return TapeFrame.TryUnpackWithLegacy(data, out T? record, out _, out _) == TapeFrameStatus.Ok ? record : null;
     }
 
     /// <summary>A run header in either format, or <see langword="null"/> for anything else — including another header kind.</summary>

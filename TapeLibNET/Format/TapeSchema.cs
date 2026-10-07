@@ -434,7 +434,7 @@ public sealed class TapeSchema<T>(TapeRecordKind? kind = null,
     public void Add(int n, Func<T, string?> get, Action<T, string> set, FieldFlags flags = FieldFlags.None)
         => Register(new StringField(n, flags, get, set, ""));
 
-    /// <summary>Adds a <c><see langword="byte">[]</c> field; optional <see langword="null"/> and empty
+    /// <summary>Adds a <c><see langword="byte"/>[]</c> field; optional <see langword="null"/> and empty
     ///  are elided and read back as an empty array.</summary>
     public void Add(int n, Func<T, byte[]?> get, Action<T, byte[]> set, FieldFlags flags = FieldFlags.None)
         => Register(new BytesField(n, flags, get, set));

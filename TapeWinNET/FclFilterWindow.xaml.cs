@@ -54,7 +54,7 @@ public partial class FclFilterWindow : Window, IHelpPaneHost
 
     /// <summary>
     /// Restores the program pane column to a saved width without adjusting
-    /// the window width. Used when the saved <see cref="FclFilterWindowState.Width"/>
+    /// the window width. Used when the saved <c>FclFilterWindowState.Width</c>
     /// already includes the program pane, so <see cref="OnProgramPaneToggled"/>
     /// must not add width a second time.
     /// </summary>

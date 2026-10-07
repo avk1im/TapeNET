@@ -34,13 +34,13 @@ namespace TapeLibNET.Services;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
-/// Outcome of <see cref="RestoreTOCOrCalibrationAsync"/> — lets the app react to each recognized
+/// Outcome of <see cref="TapeServiceBase.IdentifyMediaAsync"/> — lets the app react to each recognized
 ///  media kind explicitly (show the TOC, show a calibration pane, or flag unidentified media)
 ///  without conflating them into a single success/failure bool.
 /// </summary>
 public enum IdentifyMediaOutcome
 {
-    /// <summary>Backup media identified (or the user opted to search): the TOC was read into <see cref="TOC"/>.</summary>
+    /// <summary>Backup media identified (or the user opted to search): the TOC was read.</summary>
     TocLoaded,
 
     /// <summary>A calibration cartridge — no TOC exists; its details were surfaced instead.</summary>
@@ -78,7 +78,7 @@ public enum TOCSource
 /// Threading model: one <see cref="SemaphoreSlim"/> (1,1) guards every mutating
 ///  operation. Callers must never re-enter the service from the UI thread while the
 ///  semaphore is held (deadlock risk). All long-running methods run via
-///  <see cref="Task.Run"/> so the UI thread is never blocked.
+///  <see cref="Task.Run(System.Action)"/> so the UI thread is never blocked.
 /// </para>
 /// <para>
 /// Subclasses (the per-app <c>TapeService</c>) may override the protected virtual
@@ -161,7 +161,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// <summary>True when the current TOC was loaded from a file rather than from tape.</summary>
     public TOCSource TOCIsFrom { get; protected set; } = TOCSource.Media;
 
-    /// <summary>Full path of the TOC file when <see cref="TOCIsFrom"/> is <see cref="TOCSource.File">;
+    /// <summary>Full path of the TOC file when <see cref="TOCIsFrom"/> is <see cref="TOCSource.File"/>;
     ///  <see langword="null"/> otherwise.</summary>
     public string? TOCFilePath { get; protected set; }
 
@@ -1395,13 +1395,13 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     ///  <see cref="TapeMediaVerdict.Match"/> and <see cref="TapeMediaVerdict.Unidentified"/> are benign
     ///  (never prompted); the three positive mismatches are surfaced.
     /// </summary>
-    /// <param name="expectedSeriesId"\>The <c>MediaId</c> we expect, or <see langword="null"/> or <see cref="Guid.Empty"/>
+    /// <param name="expectedSeriesId">The <c>MediaId</c> we expect, or <see langword="null"/> or <see cref="Guid.Empty"/>
     /// to skip the series check.</param>
     /// <remarks>
     /// <b><see cref="Guid.Empty"/> means "no expectation", not "expect zero".</b> Treating it as a value to match would
     /// report <see cref="TapeMediaVerdict.MediaIdMismatch"/> against every legitimately identified
     /// cartridge, prompting the user about a mismatch that exists only because we had nothing to
-    /// compare. Mirrors the same guard in <see cref="TapeFileRestoreBaseAgent.ClassifySetHeader"/>.
+    /// compare. Mirrors the same guard in <see cref="TapeAgentBase.ClassifySetHeader"/>.
     /// </remarks>
     /// <param name="expectedVolume">The volume number we expect, or null to skip the volume check.</param>
     /// <param name="expectNoSets">

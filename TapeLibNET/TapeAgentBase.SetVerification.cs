@@ -132,7 +132,7 @@ public partial class TapeAgentBase
     ///  <see langword="null"/> when the read failed or the block does not classify as one.
     /// </summary>
     /// <remarks>
-    /// Mirrors <see cref="TapeAgentBase.ReadBomHeader"/>: the manager delivers raw bytes, the AGENT
+    /// Mirrors <see cref="ReadBomHeader()"/>: the manager delivers raw bytes, the AGENT
     ///  classifies (INV-12).
     /// </remarks>
     private TapeSetHeader? ReadSetHeader()

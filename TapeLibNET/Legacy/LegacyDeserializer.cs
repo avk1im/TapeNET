@@ -10,7 +10,7 @@ namespace TapeLibNET.Legacy;
 ///  for end of data), and a list item that fails to construct is an error.
 /// </summary>
 /// <param name="rstream">Source stream to read serialized data from.</param>
-/// <remarks><see cref="ITapeSerializable"/> not used, not offered past V2.1 Phase 6.</remarks>
+/// <remarks><c>ITapeSerializable</c> not used, not offered past V2.1 Phase 6.</remarks>
 public class LegacyDeserializer(Stream rstream)
 {
     /// <summary>Reads exactly <paramref name="length"/> bytes; <see langword="null"/> if the stream ends first.</summary>

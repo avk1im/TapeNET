@@ -197,7 +197,7 @@ public sealed record TapeSetHeader : TapeHeader
 
     /// <summary>
     /// Reads the set-specific fields after the shared preamble has been decoded. Called only by
-    ///  <see cref="TapeHeader.ConstructFrom"/> once the kind byte selected <see cref="TapeHeaderKind.Set"/>.
+    ///  <see cref="LegacyHeaderReader.Read"/> once the kind byte selected <see cref="TapeHeaderKind.Set"/>.
     /// </summary>
     internal static TapeSetHeader ConstructBody(LegacyDeserializer d, in TapeHeaderPreamble p)
     {

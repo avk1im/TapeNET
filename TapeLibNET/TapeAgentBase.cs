@@ -214,7 +214,8 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     private readonly TapeResultBuilder _resultBuilder;
     /// <summary>
     /// Latches the first failure encountered during a multi-step operation. Call whenever a failure
-    ///  is detected, AFTER the error on <see langword="this"/> has been set (e.g. via <see cref="ErrorManageableBase.SetError"/>).
+    ///  is detected, AFTER the error on <see langword="this"/> has been set (e.g. via
+    ///  <see cref="ErrorManageableBase.SetError(uint, string?)"/>).
     /// </summary>
     protected void LatchFailure() => _resultBuilder.LatchFailure();
     /// <summary>
@@ -396,7 +397,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
 
     /// <summary>
     /// Backs up the TOC onto media that is known to be blank (e.g. just formatted).
-    /// Equivalent to <see cref="BackupTOC()"/> but tells the navigator that no
+    /// Equivalent to <see cref="BackupTOC"/> but tells the navigator that no
     /// existing TOC mark or content needs to be located first.
     /// </summary>
     /// <param name="writeHeader">

@@ -65,7 +65,8 @@ namespace TapeLibNET
     ///  <see cref="NonCryptographicHashAlgorithm"/> for incremental hash computation.
     /// </summary>
     /// <param name="inner">Inner stream to wrap.</param>
-    /// <param name="hasher">Hash algorithm instance that accumulates data via <see cref="NonCryptographicHashAlgorithm.Append"/>.</param>
+    /// <param name="hasher">Hash algorithm instance that accumulates data via
+    ///  <see cref="NonCryptographicHashAlgorithm.Append(ReadOnlySpan{byte})"/>.</param>
     /// <param name="ownInner">If <see langword="true"/>, disposes <paramref name="inner"/> on dispose.</param>
     public class HashingStream(Stream inner, NonCryptographicHashAlgorithm hasher,
         bool ownInner = false) : ObserverStream(inner, ownInner)

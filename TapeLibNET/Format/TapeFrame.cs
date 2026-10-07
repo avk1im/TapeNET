@@ -7,8 +7,8 @@ namespace TapeLibNET.Format;
 /// </summary>
 /// <remarks>
 /// A frame holds exactly one record. The CRC covers prologue + body and is verified BEFORE the record is judged
-///  (kind, version, fields), so <see cref="TapeFramer.FrameStatus.CrcMismatch"/> (torn / corrupt) is told apart
-///  from <see cref="TapeFramer.FrameStatus.Unparseable"/> (intact but not readable by this build).
+///  (kind, version, fields), so <see cref="TapeFrameStatus.CrcMismatch"/> (torn / corrupt) is told apart
+///  from <see cref="TapeFrameStatus.Unparseable"/> (intact but not readable by this build).
 /// </remarks>
 public static class TapeFrame
 {
@@ -63,10 +63,10 @@ public static class TapeFrame
     /// Total: every fault becomes a status, never an exception.
     /// </summary>
     /// <param name="frameLength">Length of the frame (record + CRC) when the bounds fit; else 0.</param>
-    public static TapeFramer.FrameStatus TryUnpackRecord(ReadOnlySpan<byte> data, out TapeRecord? record, out int frameLength)
+    public static TapeFrameStatus TryUnpackRecord(ReadOnlySpan<byte> data, out TapeRecord? record, out int frameLength)
         => TryUnpackRecord(data, out record, out frameLength, out _);
 
-    internal static TapeFramer.FrameStatus TryUnpackRecord(ReadOnlySpan<byte> data, out TapeRecord? record,
+    internal static TapeFrameStatus TryUnpackRecord(ReadOnlySpan<byte> data, out TapeRecord? record,
         out int frameLength, out TapeFormatException? error)
     {
         record = null;
@@ -78,16 +78,16 @@ public static class TapeFrame
             case TapeRecordReader.PrologueStatus.Ok:
                 break;
             default:
-                return TapeFramer.FrameStatus.NotFramed;   // no magic, cut-off or implausible prologue
+                return TapeFrameStatus.NotFramed;   // no magic, cut-off or implausible prologue
         }
 
         int recordLength = p.PrologueLength + p.BodyLength;
         if (recordLength > data.Length - CrcLength)
-            return TapeFramer.FrameStatus.NotFramed;        // the declared length runs past the bytes available
+            return TapeFrameStatus.NotFramed;        // the declared length runs past the bytes available
 
         frameLength = recordLength + CrcLength;
         if (!ComputeCrc(data[..recordLength]).AsSpan().SequenceEqual(data.Slice(recordLength, CrcLength)))
-            return TapeFramer.FrameStatus.CrcMismatch;
+            return TapeFrameStatus.CrcMismatch;
 
         var parsed = new TapeRecord(p.RawKind, p.Major, p.Minor, data.Slice(p.PrologueLength, p.BodyLength).ToArray());
         try
@@ -96,46 +96,47 @@ public static class TapeFrame
             if (!TapeFormat.IsKnownKind(parsed.Kind))
             {
                 error = new TapeFormatException(FormatErrorKind.UnknownKind, $"record kind 0x{p.RawKind:X4} is unknown to this build");
-                return TapeFramer.FrameStatus.Unparseable;  // a frame carries one record, nothing to skip to
+                return TapeFrameStatus.Unparseable;  // a frame carries one record, nothing to skip to
             }
         }
         catch (TapeFormatException ex)
         {
             error = ex;
-            return TapeFramer.FrameStatus.Unparseable;
+            return TapeFrameStatus.Unparseable;
         }
 
         record = parsed;
-        return TapeFramer.FrameStatus.Ok;
+        return TapeFrameStatus.Ok;
     }
 
     /// <summary>Status-only form of <c>TryUnpack</c>.</summary>
-    public static TapeFramer.FrameStatus TryUnpack<T>(ReadOnlySpan<byte> data, out T? value) where T : class, ITapeRecord<T>
+    public static TapeFrameStatus TryUnpack<T>(ReadOnlySpan<byte> data, out T? value) where T : class, ITapeRecord<T>
         => TryUnpack(data, out value, out _, out _);
 
     /// <summary>
-    /// As <see cref="TryUnpackRecord"/>, then interprets the record as <typeparamref name="T"/>.
-    /// A wrong kind or a body this build cannot read (unknown critical tag, missing required field, bad enum) is
-    ///  <see cref="TapeFramer.FrameStatus.Unparseable"/>.
+    /// As <see cref="TryUnpackRecord(ReadOnlySpan{byte}, out TapeRecord?, out int, out TapeFormatException?)"/>,
+    ///  then interprets the record as <typeparamref name="T"/>.
+    ///  A wrong kind or a body this build cannot read (unknown critical tag, missing required field, bad enum) is
+    ///  <see cref="TapeFrameStatus.Unparseable"/>.
     /// </summary>
-    public static TapeFramer.FrameStatus TryUnpack<T>(ReadOnlySpan<byte> data, out T? value,
+    public static TapeFrameStatus TryUnpack<T>(ReadOnlySpan<byte> data, out T? value,
         out int frameLength, out TapeFormatException? error) where T : class, ITapeRecord<T>
     {
         value = null;
         error = null;
         var status = TryUnpackRecord(data, out TapeRecord? record, out frameLength, out error);
-        if (status != TapeFramer.FrameStatus.Ok)
+        if (status != TapeFrameStatus.Ok)
             return status;
 
         try
         {
             value = record!.Read<T>();     // Ok implies a non-null record
-            return TapeFramer.FrameStatus.Ok;
+            return TapeFrameStatus.Ok;
         }
         catch (TapeFormatException ex)
         {
             error = ex;
-            return TapeFramer.FrameStatus.Unparseable;
+            return TapeFrameStatus.Unparseable;
         }
     }
 
@@ -143,7 +144,7 @@ public static class TapeFrame
     /// 2.1 frame, or the legacy form via <see cref="ITapeFramedRecord{TSelf}.TryReadLegacy"/> when the magic is absent.
     /// Never throws.
     /// </summary>
-    public static TapeFramer.FrameStatus TryUnpackWithLegacy<T>(ReadOnlySpan<byte> data, out T? value,
+    public static TapeFrameStatus TryUnpackWithLegacy<T>(ReadOnlySpan<byte> data, out T? value,
         out int frameLength, out TapeFormatException? error) where T : class, ITapeFramedRecord<T>
     {
         if (!TapeFormat.IsV2(data))

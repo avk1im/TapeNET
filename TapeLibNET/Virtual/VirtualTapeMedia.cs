@@ -777,8 +777,10 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
     /// <summary>
     /// Spaces over tape marks of the specified type.
-    /// Forward (count > 0): ends AFTER the last mark passed.
-    /// Backward (count < 0): ends AT (before) the last mark passed.
+    /// <list type="bullet">
+    ///  <item>Forward (count &gt; 0): ends AFTER the last mark passed.</item>
+    ///  <item>Backward (count &lt; 0): ends AT (before) the last mark passed.</item>
+    /// </list>
     /// </summary>
     public int SpaceMarks(TapeMarkType markType, int count)
     {
