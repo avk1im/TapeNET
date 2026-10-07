@@ -1,5 +1,7 @@
 using TapeLibNET.Drive;
+
 namespace TapeLibNET.Virtual;
+
 
 /// <summary>
 /// Early-warning emulation surface for <see cref="VirtualTapeDriveBackend"/>.

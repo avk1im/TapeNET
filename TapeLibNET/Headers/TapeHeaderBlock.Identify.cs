@@ -1,10 +1,11 @@
+using TapeLibNET.Format;
 using TapeLibNET.Toc;
+using TapeLibNET.Legacy;
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
-using TapeLibNET.Format;
-using TapeLibNET.Legacy;
 
 namespace TapeLibNET.Headers;
+
 
 /// <summary>What one block turned out to be. Every value but <see cref="Foreign"/> is a POSITIVE finding.</summary>
 /// <remarks>

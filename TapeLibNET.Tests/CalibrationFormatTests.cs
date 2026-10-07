@@ -1,12 +1,15 @@
-using TapeLibNET.Drive;
-using TapeLibNET.Headers;
-using TapeLibNET.Calibration;
-using TapeLibNET.Format;
-using TapeLibNET.Tests.Helpers;
-using TapeLibNET.Virtual;
 using Xunit.Abstractions;
 
+using TapeLibNET.Format;
+using TapeLibNET.Drive;
+using TapeLibNET.Virtual;
+using TapeLibNET.Headers;
+using TapeLibNET.Calibration;
+
+using TapeLibNET.Tests.Helpers;
+
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Phase 6 (Design-Format-v2 §5.4, §5.5, §6.5): the calibration run header and checkpoint in format 2.1, reading their

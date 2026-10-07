@@ -3,6 +3,7 @@ using HelpNET.Indexing;
 
 namespace HelpNET.Retrieval;
 
+
 /// <summary>
 /// An <see cref="IHelpRetriever"/> backed exclusively by <see cref="BM25HelpIndex"/>.
 /// Used by <see cref="RagHelpAssistant"/> when no embedding bundle is available.

@@ -1,5 +1,6 @@
-﻿using TapeLibNET.Drive;
-using System.IO.Hashing;
+﻿using System.IO.Hashing;
+
+using TapeLibNET.Drive;
 
 namespace TapeLibNET.Streams
 {

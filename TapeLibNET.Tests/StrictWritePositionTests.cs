@@ -2,6 +2,7 @@ using TapeLibNET.Virtual;   // VirtualTapeMedia, TapeMarkType
 
 namespace TapeLibNET.Tests;
 
+
 /// <summary>
 /// Deterministic (no-hardware) tests of the tape write-position restriction that some real drives impose:
 ///  a WRITE is accepted only at BOP, at EOD, or immediately after a filemark/setmark — writing into the

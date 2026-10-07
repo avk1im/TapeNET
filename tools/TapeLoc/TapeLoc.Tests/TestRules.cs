@@ -2,6 +2,7 @@ using TapeLoc.Configuration;
 
 namespace TapeLoc.Tests;
 
+
 // Shared fixtures for validator tests. Mirrors the shipped loc-rules.json
 //  defaults so tests exercise realistic invariant settings.
 internal static class TestRules

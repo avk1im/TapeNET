@@ -1,9 +1,11 @@
-using TapeLibNET.Toc;
-using TapeLibNET.Agents;
 using System.Collections;
 using System.ComponentModel;
 
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
+
 namespace TapeWinNET.Utils;
+
 
 /// <summary>
 /// Wraps an immutable <see cref="IReadOnlyList{TapeFileInfo}"/> source and exposes

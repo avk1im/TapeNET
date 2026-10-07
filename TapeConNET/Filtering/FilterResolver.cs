@@ -1,10 +1,11 @@
-using TapeLibNET.Agents;
-
 using FclNET;
+
+using TapeLibNET.Agents;
 
 using TapeConNET.Infrastructure;
 
 namespace TapeConNET.Filtering;
+
 
 /// <summary>
 /// Result of classifying a verb's positional/filter arguments.

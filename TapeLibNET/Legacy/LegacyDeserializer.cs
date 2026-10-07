@@ -1,8 +1,10 @@
-using TapeLibNET.Toc;
 using System.Runtime.CompilerServices;
 using System.Text;
 
+using TapeLibNET.Toc;
+
 namespace TapeLibNET.Legacy;
+
 
 /// <summary>
 /// Frozen, read-only reader of the pre-2.1 binary layout (formerly <c>TapeDeserializer</c>):

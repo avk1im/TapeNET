@@ -1,13 +1,15 @@
-using TapeLibNET.Toc;
 using System.Windows;
 using System.Windows.Media;
 
 using Windows.Win32.System.SystemServices; // for Helpers
 
+using TapeLibNET.Toc;
+
 using TapeWinNET.Models;
 using TapeWinNET.Services;
 
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// Specialized <see cref="MediaUsageBarPresenter"/> for DeleteBackupSetsWindow.

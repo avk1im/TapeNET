@@ -1,10 +1,13 @@
-﻿using TapeLibNET.Compression;
-using TapeLibNET.Toc;
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Windows.Media.Imaging;
+
 using Windows.Win32.System.SystemServices; // for Helpers
 
+using TapeLibNET.Compression;
+using TapeLibNET.Toc;
+
 namespace TapeWinNET.Models;
+
 
 /// <summary>
 /// Represents a backup set item for display in the backup sets ListView.

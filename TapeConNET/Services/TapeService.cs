@@ -1,10 +1,12 @@
-﻿using TapeLibNET.Agents;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 
-using TapeConNET.Ux;
+using TapeLibNET.Agents;
 using TapeLibNET.Services;
 
+using TapeConNET.Ux;
+
 namespace TapeConNET.Services;
+
 
 /// <summary>
 /// Console-specific service extending <see cref="TapeServiceBase"/> with

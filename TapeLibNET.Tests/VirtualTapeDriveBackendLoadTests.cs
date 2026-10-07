@@ -2,6 +2,7 @@ using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests;
 
+
 /// <summary>
 /// Format-v2 Appendix A, Phase 0: unreadable virtual media metadata must never wipe the medium.
 /// </summary>

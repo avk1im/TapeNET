@@ -1,16 +1,20 @@
-using TapeLibNET.Compression;
-using TapeLibNET.Toc;
-using Microsoft.Win32;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
-using TapeLibNET.Services;
-using TapeWinNET.Models;
-using TapeWinNET.Services;
+
+using Microsoft.Win32;
 using Windows.Win32.System.SystemServices; // for Helpers
 
+using TapeLibNET.Compression;
+using TapeLibNET.Toc;
+using TapeLibNET.Services;
+
+using TapeWinNET.Models;
+using TapeWinNET.Services;
+
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// Request data gathered by the BackupWindow for executing a backup operation.

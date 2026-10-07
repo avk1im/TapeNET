@@ -1,7 +1,9 @@
 using TapeLibNET.Drive;
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
+
 namespace TapeLibNET.Scan;
+
 
 /// <summary>
 /// Tuning for a Scan Media pass. All defaults are safe on an unknown, possibly damaged cartridge.

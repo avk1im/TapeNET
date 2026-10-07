@@ -2,6 +2,7 @@ using System.Buffers;
 
 namespace TapeLibNET.Format;
 
+
 /// <summary>
 /// Growable pooled byte buffer behind <see cref="TapeFieldWriter"/>. Optionally reserves a gap in front of
 ///  the content so a record's prologue can be written right-aligned before its body and the whole record

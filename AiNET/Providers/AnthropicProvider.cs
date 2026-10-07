@@ -1,10 +1,10 @@
-using AiNET.Internal;
-
 using Anthropic.SDK;
-
 using Microsoft.Extensions.AI;
 
+using AiNET.Internal;
+
 namespace AiNET.Providers;
+
 
 /// <summary>
 /// Provider adapter for the <b>Anthropic Claude</b> cloud API

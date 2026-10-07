@@ -1,8 +1,10 @@
 using System.Windows.Input;
+
 using TapeLibNET.Scan;
 using TapeLibNET.Services;
 
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// ViewModel for the Scan Media setup dialog (<see cref="TapeWinNET.ScanMediaWindow"/>): two options and

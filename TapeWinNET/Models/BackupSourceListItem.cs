@@ -1,9 +1,11 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Media.Imaging;
+
 using Windows.Win32.System.SystemServices; // for Helpers
 
 namespace TapeWinNET.Models;
+
 
 /// <summary>
 /// Display model for a single source entry in the New Backup Set "Folders" pane.

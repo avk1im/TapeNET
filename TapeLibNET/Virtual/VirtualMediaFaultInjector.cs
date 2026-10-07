@@ -2,6 +2,7 @@ using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Virtual;
 
+
 #if DEBUG
 
 /// <summary>

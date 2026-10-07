@@ -1,8 +1,9 @@
-using TapeLibNET.Toc;
 using TapeLibNET.Format;
+using TapeLibNET.Toc;
 using TapeLibNET.Legacy;
 
 namespace TapeLibNET.Headers;
+
 
 /// <summary>
 /// Outcome of verifying a set header against the TOC's expectation for the set just positioned at.

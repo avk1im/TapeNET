@@ -3,6 +3,7 @@ using HelpNET.Session;
 
 namespace HelpNET.Assistants;
 
+
 /// <summary>
 /// Input to <see cref="IHelpAssistant.AskAsync"/>.
 /// </summary>

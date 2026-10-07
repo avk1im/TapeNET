@@ -1,7 +1,9 @@
 using TapeConNET.Infrastructure;
+
 using TapeConNET.Tests.Helpers;
 
 namespace TapeConNET.Tests;
+
 
 /// <summary>
 /// Smoke tests for the System.CommandLine verb tree built by

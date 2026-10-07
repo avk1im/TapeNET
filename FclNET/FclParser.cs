@@ -5,6 +5,7 @@ using FclNET.Ast;
 
 namespace FclNET;
 
+
 /// <summary>
 /// Recursive-descent parser that converts a token stream (produced by
 /// <see cref="FclLexer"/>) into an immutable <see cref="FclExpression"/> AST.

@@ -2,6 +2,7 @@ using HelpNET.Content;
 
 namespace HelpIndexBuilder;
 
+
 /// <summary>
 /// <see cref="IHelpContentSource"/> that enumerates Markdown files from a
 /// local directory tree.  Used exclusively by the <c>HelpIndexBuilder</c> tool;

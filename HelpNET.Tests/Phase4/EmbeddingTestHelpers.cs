@@ -1,9 +1,12 @@
 using System.Text.Json;
-using HelpNET.Content;
-using HelpNET.Indexing;
+
 using Microsoft.Extensions.AI;
 
+using HelpNET.Content;
+using HelpNET.Indexing;
+
 namespace HelpNET.Tests.Phase4;
+
 
 // ── Fake embedding generator ──────────────────────────────────────────────────
 

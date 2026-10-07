@@ -1,10 +1,13 @@
-using TapeLibNET.Calibration;
 using System.Windows;
 using System.Windows.Input;
+
+using TapeLibNET.Calibration;
 using TapeLibNET.Services;
+
 using TapeWinNET.Services;
 
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// ViewModel for the calibration result dialog (<see cref="TapeWinNET.CalibrationWindow"/>), backed by a

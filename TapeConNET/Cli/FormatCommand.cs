@@ -5,6 +5,7 @@ using TapeConNET.Ux;
 
 namespace TapeConNET.Cli;
 
+
 /// <summary>
 /// <c>tapecon format</c> — formats the loaded media (optionally creating an
 /// initiator partition for the TOC) and writes an empty initial TOC.

@@ -1,5 +1,7 @@
 using TapeLibNET.Media;
+
 namespace TapeLibNET.Packer;
+
 
 /// <summary>
 /// Common surface implemented by <see cref="TapeFilePipelinedReader"/>. <see cref="TapeStreamManager"/>

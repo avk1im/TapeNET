@@ -1,8 +1,10 @@
 using TapeLibNET.Toc;
 using TapeLibNET.Agents;
+
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Validates <see cref="TapeFileStatistics"/> across the full agent lifecycle:

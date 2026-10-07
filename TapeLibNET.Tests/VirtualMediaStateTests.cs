@@ -1,8 +1,10 @@
 using TapeLibNET.Format;
-using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
 
+using TapeLibNET.Tests.Helpers;
+
 namespace TapeLibNET.Tests;
+
 
 /// <summary>Appendix A §A.7: the 2.1 virtual media state record and the legacy metadata reader.</summary>
 public class VirtualMediaStateTests

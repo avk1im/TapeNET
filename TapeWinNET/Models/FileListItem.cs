@@ -1,13 +1,15 @@
-using TapeLibNET.Toc;
 using System.ComponentModel;
 using System.IO;
 using System.Windows.Media.Imaging;
 
 using Windows.Win32.System.SystemServices;
+
+using TapeLibNET.Toc;
+
 using TapeWinNET.Utils;
 
-
 namespace TapeWinNET.Models;
+
 
 /// <summary>
 /// Thin WPF binding proxy for a single file row. When an <see cref="Owner"/> is

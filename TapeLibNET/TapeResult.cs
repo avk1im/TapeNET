@@ -1,8 +1,11 @@
-﻿using TapeLibNET.Agents;
-using System.ComponentModel;
+﻿using System.ComponentModel;
+
 using Windows.Win32.Foundation;
 
+using TapeLibNET.Agents;
+
 namespace TapeLibNET;
+
 
 /// <summary>
 /// Result type for compound tape operations that cross the Agent → Service boundary.

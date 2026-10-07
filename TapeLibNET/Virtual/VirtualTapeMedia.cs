@@ -1,9 +1,11 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using System.Diagnostics;
+
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using System.Diagnostics;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Virtual;
+
 
 /// <summary>
 /// Represents a tape mark type.

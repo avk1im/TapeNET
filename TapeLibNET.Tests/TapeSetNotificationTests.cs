@@ -1,10 +1,13 @@
-﻿using TapeLibNET.Headers;
+﻿using Windows.Win32.Foundation;
+
+using TapeLibNET.Headers;
 using TapeLibNET.Toc;
 using TapeLibNET.Agents;
+
 using TapeLibNET.Tests.Helpers;
-using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Step 4 — the set-level notification channel. A set that does not verify reaches the host with enough

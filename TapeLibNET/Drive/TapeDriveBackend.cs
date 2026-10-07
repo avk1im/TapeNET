@@ -1,10 +1,13 @@
-using TapeLibNET.Media;
-using TapeLibNET.Calibration;
-using Microsoft.Extensions.Logging;
 using System.Runtime.CompilerServices;
+
+using Microsoft.Extensions.Logging;
 using Windows.Win32.Foundation;
 
+using TapeLibNET.Media;
+using TapeLibNET.Calibration;
+
 namespace TapeLibNET.Drive;
+
 
 /// <summary>
 /// Drive capabilities and parameters (abstracted from TAPE_GET_DRIVE_PARAMETERS).

@@ -1,10 +1,12 @@
+using System.IO.Hashing;
+
 using TapeLibNET.Streams;
+using TapeLibNET.Format;
 using TapeLibNET.Compression;
 using TapeLibNET.Toc;
-using System.IO.Hashing;
-using TapeLibNET.Format;
 
 namespace TapeLibNET.Legacy;
+
 
 /// <summary>
 /// Frozen, read-only reader of the pre-2.1 TOC wire format (TOC 0x0101 / 0x0102, set 0x0101, file entry 0x0101).

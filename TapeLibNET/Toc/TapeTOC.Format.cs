@@ -1,12 +1,14 @@
-using TapeLibNET.Compression;
-using TapeLibNET.Agents;
 using System.Buffers.Binary;
 using System.Reflection;
 using System.Text;
+
 using TapeLibNET.Format;
+using TapeLibNET.Compression;
 using TapeLibNET.Legacy;
+using TapeLibNET.Agents;
 
 namespace TapeLibNET.Toc;
+
 
 // ============================================================================================================
 //  Format 2.1 representation of the TOC (Design-Format-v2 §5.1, Appendix B §B.8).

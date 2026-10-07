@@ -1,5 +1,7 @@
 using TapeLibNET.Calibration;
+
 namespace TapeLibNET.Legacy;
+
 
 /// <summary>
 /// Frozen, read-only reader of the pre-2.1 calibration records: the checkpoint body and the run plan shared with the

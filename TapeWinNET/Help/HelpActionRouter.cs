@@ -2,6 +2,7 @@ using System.Windows;
 
 namespace TapeWinNET.Help;
 
+
 /// <summary>
 /// Routes <c>help://action/&lt;actionId&gt;</c> URIs to registered
 /// <see cref="System.Windows.Input.ICommand"/> implementations.

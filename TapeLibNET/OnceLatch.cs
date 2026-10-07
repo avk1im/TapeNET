@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 
 namespace TapeLibNET;
 
+
 /// <summary>
 /// A one-shot latch: permits a guarded side effect to run exactly ONCE per armed cycle, then stays closed
 /// until <see cref="Reset"/>. Purpose-built to collapse repetitive per-operation logging (e.g. a SCSI sense

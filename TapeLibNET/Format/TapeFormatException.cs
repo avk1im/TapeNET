@@ -2,6 +2,7 @@ using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Format;
 
+
 /// <summary>What a field reader knows about its record - for error context and polymorphic dispatch.</summary>
 public readonly record struct TapeRecordInfo(TapeRecordKind Kind, byte Major, byte Minor);
 

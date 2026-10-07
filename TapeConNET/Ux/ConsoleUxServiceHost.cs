@@ -3,6 +3,7 @@ using TapeLibNET.Services;
 
 namespace TapeConNET.Ux;
 
+
 /// <summary>
 /// <see cref="ITapeServiceHost"/> adapter that routes all service callbacks through
 ///  an <see cref="IConsoleUx"/> instance. Translates the index-based

@@ -2,6 +2,7 @@ using FclNET.Ast;
 
 namespace FclNET.Tests;
 
+
 /// <summary>
 /// Shared helpers that run the FCL pipeline stages and assert success,
 /// reducing boilerplate across test classes.

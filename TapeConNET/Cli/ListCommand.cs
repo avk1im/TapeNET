@@ -1,11 +1,13 @@
 using System.CommandLine;
 
-using TapeConNET.Infrastructure;
-using TapeConNET.Ux;
-using TapeConNET.Filtering;
 using TapeLibNET.Services;
 
+using TapeConNET.Filtering;
+using TapeConNET.Infrastructure;
+using TapeConNET.Ux;
+
 namespace TapeConNET.Cli;
+
 
 /// <summary>
 /// <c>tapecon list</c> — lists the contents of the loaded media. Optional

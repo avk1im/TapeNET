@@ -2,6 +2,7 @@ using System.Windows;
 
 namespace TapeWinNET.Help;
 
+
 /// <summary>
 /// Attached property <c>help:Help.TopicId</c> that tags a UI element with a
 /// help-topic identifier.  Used by <see cref="GlobalF1HelpBehavior"/> to resolve

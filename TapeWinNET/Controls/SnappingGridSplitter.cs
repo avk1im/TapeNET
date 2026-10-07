@@ -6,6 +6,7 @@ using System.Windows.Media.Animation;
 
 namespace TapeWinNET.Controls;
 
+
 /// <summary>
 /// A <see cref="GridSplitter"/> that snaps the target row or column to
 ///  predefined <see cref="SnapZone"/> positions. Supports:

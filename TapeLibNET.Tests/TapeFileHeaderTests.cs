@@ -1,12 +1,15 @@
 // Save as: TapeLibNET.Tests/TapeFileHeaderTests.cs
+
+using TapeLibNET.Format;
 using TapeLibNET.Compression;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
-using TapeLibNET.Format;
 using TapeLibNET.Legacy;
+
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Phase 4 (Design-Format-v2 §5.3, §5.8): the 2.1 per-file header, the codec prefix, the legacy header check, and the

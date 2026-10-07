@@ -6,6 +6,7 @@ using TapeLoc.Configuration;
 
 namespace TapeLoc.Validation;
 
+
 // Validates a translated C# file against the source (docs/Design-TapeLoc.md §9):
 //  1. Must parse error-free.
 //  2. Identifier / enum-member / type names must match the source set.

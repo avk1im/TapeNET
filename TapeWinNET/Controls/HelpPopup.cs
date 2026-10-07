@@ -7,6 +7,7 @@ using System.Windows.Threading;
 
 namespace TapeWinNET.Controls;
 
+
 /// <summary>
 /// Reusable info popup used by both the glossary link handler (§6.8a) and the
 /// Reveal overlay (Phase 8a).

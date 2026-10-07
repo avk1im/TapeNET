@@ -2,6 +2,7 @@ using Microsoft.Extensions.AI;
 
 namespace AiNET;
 
+
 /// <summary>
 /// Represents an active AI provider connection. One instance is shared
 /// across the whole application process; consumers obtain chat/embedding

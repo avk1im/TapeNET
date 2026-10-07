@@ -1,7 +1,9 @@
 using System.Text.RegularExpressions;
+
 using HelpNET.Content;
 
 namespace HelpNET.Indexing;
+
 
 /// <summary>
 /// BM25 (Okapi BM25) lexical index over help topic plain text.

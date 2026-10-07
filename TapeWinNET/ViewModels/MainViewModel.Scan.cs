@@ -5,6 +5,7 @@ using TapeLibNET.Services;
 
 namespace TapeWinNET.ViewModels;
 
+
 /// <summary>
 /// Partial class containing Scan Media functionality for <see cref="MainViewModel"/>.
 /// A scan is READ-ONLY: it writes nothing and never touches the TOC, so — unlike calibration — nothing

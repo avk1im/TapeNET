@@ -3,6 +3,7 @@ using TapeLibNET.Toc;
 
 namespace TapeLibNET.Tests;
 
+
 /// <summary>
 /// Step 2 coverage for <see cref="TapeTOC.CreateSetHeader(int)"/> — the set-header factory.
 /// <para>

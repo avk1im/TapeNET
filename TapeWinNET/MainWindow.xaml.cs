@@ -1,7 +1,4 @@
-﻿using AiNET;
-using Microsoft.Extensions.Logging;
-using Microsoft.Win32;
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
@@ -11,6 +8,12 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+
+using Microsoft.Extensions.Logging;
+using Microsoft.Win32;
+
+using AiNET;
+
 using TapeWinNET.Help;
 using TapeWinNET.Models;
 using TapeWinNET.Services;

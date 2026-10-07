@@ -1,7 +1,9 @@
-using TapeLibNET.Toc;
 using System.Diagnostics.CodeAnalysis;
 
+using TapeLibNET.Toc;
+
 namespace TapeLibNET.Compression;
+
 
 // ── Compression mode ─────────────────────────────────────────────────────────
 

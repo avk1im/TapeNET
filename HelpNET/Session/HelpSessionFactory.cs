@@ -1,12 +1,15 @@
+using Microsoft.Extensions.AI;
+
 using AiNET;
+
 using HelpNET.Assistants;
 using HelpNET.Content;
 using HelpNET.Embeddings;
 using HelpNET.Indexing;
 using HelpNET.Retrieval;
-using Microsoft.Extensions.AI;
 
 namespace HelpNET.Session;
+
 
 /// <summary>
 /// Creates <see cref="IHelpSession"/> instances and wires them to the appropriate

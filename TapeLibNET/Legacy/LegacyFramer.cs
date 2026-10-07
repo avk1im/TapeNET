@@ -4,6 +4,7 @@ using TapeLibNET.Format; // TapeFrameStatus
 
 namespace TapeLibNET.Legacy;
 
+
 /// <summary>
 /// Frozen, read-only reader of the pre-2.1 frame: <c>[int32 payloadLen][payload][crc32]</c>, where the CRC-32 covers the
 ///  payload only. Total: every framing and format fault becomes a <see cref="TapeFrameStatus"/>.

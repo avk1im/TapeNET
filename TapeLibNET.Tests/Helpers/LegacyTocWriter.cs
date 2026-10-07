@@ -1,9 +1,12 @@
 // Save as: TapeLibNET.Tests/Helpers/LegacyTocWriter.cs
-using TapeLibNET.Toc;
+
 using System.IO.Hashing;
+
+using TapeLibNET.Toc;
 using TapeLibNET.Legacy;
 
 namespace TapeLibNET.Tests.Helpers;
+
 
 /// <summary>
 /// TEST-ONLY writer of legacy (pre-2.1) TOC records — the mirror of <see cref="LegacyTocReader"/>. Produces the legacy

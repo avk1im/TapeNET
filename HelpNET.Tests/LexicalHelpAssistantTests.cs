@@ -1,9 +1,11 @@
+using Xunit;
+
 using HelpNET.Assistants;
 using HelpNET.Content;
 using HelpNET.Indexing;
-using Xunit;
 
 namespace HelpNET.Tests;
+
 
 /// <summary>
 /// Tests for <see cref="LexicalHelpAssistant"/>.

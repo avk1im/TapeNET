@@ -2,6 +2,7 @@ using TapeLoc.Ai;
 
 namespace TapeLoc.Tests;
 
+
 // Tests for HttpAiTranslator.BuildEndpointCandidates — the /v1 <-> /v3 fallback
 //  that lets TapeLoc talk to OpenAI-style (/v1) and OpenVINO Model Server (/v3)
 //  endpoints without a config change.

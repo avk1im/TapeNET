@@ -1,10 +1,11 @@
 using System.Net;
 
-using AiNET.Providers;
-
 using Xunit;
 
+using AiNET.Providers;
+
 namespace AiNET.Tests;
+
 
 /// <summary>
 /// Unit tests for <see cref="OllamaProvider"/> using a fake

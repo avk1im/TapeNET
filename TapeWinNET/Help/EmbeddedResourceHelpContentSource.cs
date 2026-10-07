@@ -7,6 +7,7 @@ using HelpNET.Content;
 
 namespace TapeWinNET.Help;
 
+
 /// <summary>
 /// <see cref="IHelpContentSource"/> that reads help documents from embedded
 /// resources in the TapeWinNET assembly under the logical path prefix

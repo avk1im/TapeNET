@@ -5,6 +5,7 @@ using System.Text.Json;
 
 namespace AiNET.Internal;
 
+
 /// <summary>
 /// Shared helper that performs a real, authenticated <c>GET {base}/models</c>
 /// call against an OpenAI-style endpoint and turns the response into an

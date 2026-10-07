@@ -5,6 +5,7 @@ using TapeLibNET.Scan; // MediaScanMap, ScannedMediaKind
 
 namespace TapeLibNET.Services;
 
+
 // ── Abstract base ────────────────────────────────────────────────────────────
 
 /// <summary>

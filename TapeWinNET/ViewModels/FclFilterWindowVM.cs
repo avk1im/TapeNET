@@ -2,11 +2,11 @@ using System.Collections.ObjectModel;
 using System.Windows.Input;
 
 using FclAiNET;
-
 using FclNET;
 using FclNET.Ast;
 
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// ViewModel for the <see cref="TapeWinNET.FclFilterWindow"/> modal dialog.

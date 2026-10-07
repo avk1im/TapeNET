@@ -4,6 +4,7 @@ using FclNET.Ast;
 
 namespace FclNET;
 
+
 /// <summary>
 /// Converts FCL expressions to Disjunctive Normal Form (DNF) and provides
 /// utilities to check DNF shape and extract groups.

@@ -1,8 +1,10 @@
-using HelpNET.Content;
-using HelpNET.Retrieval;
 using Microsoft.Extensions.AI;
 
+using HelpNET.Content;
+using HelpNET.Retrieval;
+
 namespace HelpNET.Embeddings;
+
 
 /// <summary>
 /// Semantic search index that embeds queries at runtime and searches against

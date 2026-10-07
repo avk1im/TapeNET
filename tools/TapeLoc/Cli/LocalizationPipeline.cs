@@ -10,6 +10,7 @@ using TapeLoc.Validation;
 
 namespace TapeLoc.Cli;
 
+
 // Options bound from the CLI.
 internal sealed record TapeLocOptions(
     string Culture,

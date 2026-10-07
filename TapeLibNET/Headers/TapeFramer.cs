@@ -2,6 +2,7 @@ using TapeLibNET.Format;
 
 namespace TapeLibNET.Headers;
 
+
 /// <summary>
 /// Block framing of header records — the dual-format façade over <see cref="TapeFrame"/> (format 2.1) and
 ///  <see cref="Legacy.LegacyFramer"/> (legacy, read-only).

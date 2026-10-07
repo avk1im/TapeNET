@@ -1,7 +1,9 @@
-﻿using TapeLibNET.Drive;
-using TapeLibNET.Toc;
-using System.Diagnostics;
+﻿using System.Diagnostics;
+
 using Microsoft.Extensions.Logging;
+
+using TapeLibNET.Drive;
+using TapeLibNET.Toc;
 
 namespace TapeLibNET.Agents
 {

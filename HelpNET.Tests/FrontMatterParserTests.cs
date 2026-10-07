@@ -1,7 +1,9 @@
-using HelpNET.Content;
 using Xunit;
 
+using HelpNET.Content;
+
 namespace HelpNET.Tests;
+
 
 /// <summary>
 /// Tests for the YAML front-matter parser embedded in <see cref="FrontMatterParser"/>.

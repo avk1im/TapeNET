@@ -1,8 +1,10 @@
-using HelpNET.Content;
-using HelpNET.Session;
 using Xunit;
 
+using HelpNET.Content;
+using HelpNET.Session;
+
 namespace HelpNET.Tests;
+
 
 /// <summary>
 /// Tests for <see cref="IHelpSession.TryGetControlHelp"/> — the façade that

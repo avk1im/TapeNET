@@ -1,9 +1,12 @@
-using TapeLibNET.Headers;
-using TapeLibNET.Agents;
-using TapeLibNET.Tests.Helpers;
 using Windows.Win32.Foundation;
 
+using TapeLibNET.Headers;
+using TapeLibNET.Agents;
+
+using TapeLibNET.Tests.Helpers;
+
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Step 3 — verified deletion (SH-13). A delete confirms the set header standing at its target before

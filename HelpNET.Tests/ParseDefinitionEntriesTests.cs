@@ -1,7 +1,9 @@
-using HelpNET.Content;
 using Xunit;
 
+using HelpNET.Content;
+
 namespace HelpNET.Tests;
+
 
 /// <summary>
 /// Tests for the generalized definition-entry parser (glossary + Controls chapter)

@@ -9,6 +9,7 @@ using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace TapeWinNET.Utils;
 
+
 /// <summary>
 /// Shell-based file drag-drop that works under elevation.
 /// WPF's OLE drag-drop (<c>AllowDrop</c>) fails when the process runs elevated

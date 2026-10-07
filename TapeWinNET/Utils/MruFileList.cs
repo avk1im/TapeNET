@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 
 namespace TapeWinNET.Utils;
 
+
 /// <summary>
 /// Manages a most-recently-used (MRU) list of file paths with persistence
 /// to a JSON file in the app's local data folder.

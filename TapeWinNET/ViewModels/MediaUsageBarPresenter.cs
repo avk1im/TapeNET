@@ -1,13 +1,15 @@
-using TapeLibNET.Toc;
 using System.Windows.Input;
 
 using Windows.Win32.System.SystemServices; // for Helpers
+
+using TapeLibNET.Toc;
 
 using TapeWinNET.Controls;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
 
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// Owns the segment list and capacity for a <see cref="MediaUsageBarControl"/>

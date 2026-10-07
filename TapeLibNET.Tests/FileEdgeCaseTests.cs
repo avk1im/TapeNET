@@ -1,7 +1,9 @@
 using TapeLibNET.Toc;
+
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Focused edge-case file tests: one [Fact] or [Theory] per tricky file scenario.

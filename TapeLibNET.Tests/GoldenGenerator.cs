@@ -1,7 +1,9 @@
 using System.Runtime.CompilerServices;
+
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Regenerates the Phase 0 legacy goldens into <c>Golden/Legacy/</c> (source tree). Skipped by default:

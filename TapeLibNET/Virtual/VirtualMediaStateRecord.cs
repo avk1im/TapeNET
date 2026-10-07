@@ -2,6 +2,7 @@ using TapeLibNET.Format;
 
 namespace TapeLibNET.Virtual;
 
+
 /// <summary>
 /// Format 2.1 record 0x0F01 holding the persisted state of a <see cref="VirtualTapeMedia"/>
 ///  (Design-Format-v2-AppendixA §A.4). Framed inline as <c>Record ‖ CRC-64</c>.

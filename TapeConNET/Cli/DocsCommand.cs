@@ -5,6 +5,7 @@ using TapeConNET.Ux;
 
 namespace TapeConNET.Cli;
 
+
 /// <summary>
 /// <c>tapecon docs [topic]</c> — renders one of the embedded markdown topics
 /// (<c>concepts</c>, <c>migration</c>, <c>faq</c>) to the console. The

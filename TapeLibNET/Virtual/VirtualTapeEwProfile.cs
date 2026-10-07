@@ -1,5 +1,7 @@
 using TapeLibNET.Calibration;
+
 namespace TapeLibNET.Virtual;
+
 
 /// <summary>
 /// The two INDEPENDENT anchors of an emulated driver's reported-remaining line. See

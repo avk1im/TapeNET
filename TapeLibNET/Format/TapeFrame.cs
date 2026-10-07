@@ -1,7 +1,9 @@
-using TapeLibNET.Streams;
 using System.IO.Hashing;
 
+using TapeLibNET.Streams;
+
 namespace TapeLibNET.Format;
+
 
 /// <summary>
 /// <c>Record ‖ CRC-64(Record)</c> frames - block and inline (Design-Format-v2 §4.5, §8.1).

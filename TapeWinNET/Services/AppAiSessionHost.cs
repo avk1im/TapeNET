@@ -1,8 +1,9 @@
-using AiNET;
-
 using Microsoft.Extensions.Logging;
 
+using AiNET;
+
 namespace TapeWinNET.Services;
+
 
 /// <summary>
 /// Process-wide singleton that owns the <see cref="IAiSession"/>.

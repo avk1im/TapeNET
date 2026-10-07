@@ -1,7 +1,9 @@
-using TapeLibNET.Streams;
 using System.IO.Hashing;
 
+using TapeLibNET.Streams;
+
 namespace TapeLibNET.Format;
+
 
 /// <summary>
 /// The CRC-64 envelope of a stream of records: <c>Record* ‖ CRC-64(all bytes above)</c> (Design-Format-v2 §4.5, §5.7).

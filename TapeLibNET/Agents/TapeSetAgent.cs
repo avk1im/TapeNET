@@ -1,10 +1,12 @@
-﻿using TapeLibNET.Drive;
-using TapeLibNET.Headers;
-using TapeLibNET.Toc;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using Windows.Win32.Foundation;
 
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+
 namespace TapeLibNET.Agents;
+
 
 public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgentBase(drive, legacyTOC)
 {

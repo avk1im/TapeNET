@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 
 namespace TapeLibNET.Format;
 
+
 /// <summary>
 /// Reads records - prologue + body - from a stream or a span (Design-Format-v2 §4.2, §8.1).
 /// </summary>

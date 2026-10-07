@@ -2,17 +2,17 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 
-using FclAiNET;
+using Microsoft.Extensions.Logging;
 
+using FclAiNET;
 using FclNET;
 using FclNET.Ast;
-
-using Microsoft.Extensions.Logging;
 
 using TapeWinNET.Utils;
 using TapeWinNET.ViewModels;
 
 namespace TapeWinNET.Controls;
+
 
 /// <summary>
 /// Captures the <see cref="FclFilterWindow"/> layout so it can be restored

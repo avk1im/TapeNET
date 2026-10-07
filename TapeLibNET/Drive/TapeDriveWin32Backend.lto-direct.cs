@@ -1,10 +1,13 @@
-using TapeLibNET.Media;
-using Microsoft.Extensions.Logging;
 using System.Runtime.InteropServices;
+
+using Microsoft.Extensions.Logging;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 
+using TapeLibNET.Media;
+
 namespace TapeLibNET.Drive;
+
 
 /// <summary>
 /// LTO SCSI pass-through DIRECT (SPTD) write path for <see cref="TapeDriveWin32Backend"/>.

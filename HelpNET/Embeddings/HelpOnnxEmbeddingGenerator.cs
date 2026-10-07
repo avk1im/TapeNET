@@ -5,6 +5,7 @@ using Microsoft.ML.Tokenizers;
 
 namespace HelpNET.Embeddings;
 
+
 /// <summary>
 /// HelpNET-internal ONNX embedding generator that accepts the model and vocabulary
 /// as <see cref="Stream"/>s rather than file paths.  Hosts (TapeWinNET) supply the

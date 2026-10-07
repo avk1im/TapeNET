@@ -5,11 +5,13 @@ using System.Windows.Input;
 using System.Windows.Threading;
 
 using HelpNET.Content;
+
 using TapeWinNET.Help;
 using TapeWinNET.Help.Overlays;
 using TapeWinNET.ViewModels;
 
 namespace TapeWinNET.Controls;
+
 
 /// <summary>
 /// Interaction logic for HelpPane.xaml.

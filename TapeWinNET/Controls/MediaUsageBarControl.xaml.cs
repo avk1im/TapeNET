@@ -9,6 +9,7 @@ using TapeWinNET.Models;
 
 namespace TapeWinNET.Controls;
 
+
 /// <summary>
 /// Horizontal media-usage bar showing TOC, per-set, and free-space regions.
 /// <para>

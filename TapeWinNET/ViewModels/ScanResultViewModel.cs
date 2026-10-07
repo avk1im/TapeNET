@@ -1,11 +1,13 @@
-using TapeLibNET.Agents;
 using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Input;
+
+using TapeLibNET.Agents;
 using TapeLibNET.Scan;
 using TapeLibNET.Services;
 
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// One read-only row of the Scan Media result list — a display rendering of a <see cref="TapeMediaFragment"/>.

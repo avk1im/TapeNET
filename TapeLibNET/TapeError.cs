@@ -1,12 +1,15 @@
-﻿using TapeLibNET.Drive;
-using System.Runtime.InteropServices;
-using Windows.Win32.Foundation;
-using System.ComponentModel;
-using System.Text;
-using Microsoft.Extensions.Logging;
+﻿using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Text;
+
+using Microsoft.Extensions.Logging;
+using Windows.Win32.Foundation;
+
+using TapeLibNET.Drive;
 
 namespace TapeLibNET;
+
 
 /// <summary>
 /// Common error-state contract for all tape-related classes.

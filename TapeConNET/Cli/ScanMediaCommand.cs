@@ -8,6 +8,7 @@ using TapeConNET.Ux;
 
 namespace TapeConNET.Cli;
 
+
 /// <summary>
 /// <c>tapecon scan-media</c> — surveys the loaded media from BOM to EOD with no TOC assumed and prints the
 ///  headline, details and one line per noteworthy fragment (all reported by the service). READ-ONLY.

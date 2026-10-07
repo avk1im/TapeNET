@@ -1,9 +1,11 @@
+using Windows.Win32.Foundation;
+
 using TapeLibNET.Drive;
 using TapeLibNET.Media;
 using TapeLibNET.Calibration;
-using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Headers;
+
 
 /// <summary>
 /// The single point of truth for reading and writing a header as ONE standard-sized tape block.

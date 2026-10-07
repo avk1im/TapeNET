@@ -1,9 +1,11 @@
 using System.Buffers.Binary;
 using System.Collections;
 using System.Reflection;
+
 using TapeLibNET.Format;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Appendix B (Revised) §B.4 R6: the format-core coverage <see cref="FormatCoreTests"/> does not reach - schema

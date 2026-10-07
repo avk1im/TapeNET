@@ -1,9 +1,12 @@
+using Microsoft.Extensions.Logging;
+
 using TapeLibNET.Toc;
 using TapeLibNET.Agents;
-using Microsoft.Extensions.Logging;
+
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Tests for the Win32 backup-stream wrappers: <c>TapeBackupSourceStream</c> and

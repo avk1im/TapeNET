@@ -4,6 +4,7 @@ using System.Windows.Media;
 
 namespace TapeWinNET.Help.Overlays;
 
+
 /// <summary>
 /// Reveal overlay: highlights every control on the active window/dialog that
 /// carries a <c>help:Help.ControlName</c> attached property, and raises

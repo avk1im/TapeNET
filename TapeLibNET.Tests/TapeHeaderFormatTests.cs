@@ -1,12 +1,16 @@
 // Save as: TapeLibNET.Tests/TapeHeaderFormatTests.cs
+
+using System.Buffers.Binary;
+
+using TapeLibNET.Format;
 using TapeLibNET.Drive;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
-using System.Buffers.Binary;
-using TapeLibNET.Format;
+
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Phase 5 (Design-Format-v2 §4.5, §5.4, §5.9): 2.1 block-framed media and set headers, reading legacy headers, and the

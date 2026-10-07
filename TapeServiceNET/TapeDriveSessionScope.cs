@@ -2,6 +2,7 @@ using TapeLibNET.Drive;
 
 namespace TapeServiceNET;
 
+
 /// <summary>
 /// RAII scope that brackets a single RPC handler, protecting the owning session
 /// from being reaped while work is in progress.

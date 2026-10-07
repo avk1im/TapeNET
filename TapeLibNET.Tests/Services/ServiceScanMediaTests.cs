@@ -1,3 +1,6 @@
+using Windows.Win32.Foundation;
+
+using TapeLibNET.Virtual;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
 using TapeLibNET.Media;
@@ -5,11 +8,11 @@ using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
 using TapeLibNET.Scan;
 using TapeLibNET.Services;
+
 using TapeLibNET.Tests.Helpers;
-using TapeLibNET.Virtual;
-using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Tests.Services;
+
 
 /// <summary>
 /// Scan Media Phase 4: <see cref="TapeServiceBase.ScanMediaAsync"/>, <see cref="TapeServiceBase.RecoverTocAsync"/>,

@@ -2,6 +2,7 @@ using TapeLibNET.Legacy;
 
 namespace TapeLibNET.Tests.Helpers;
 
+
 /// <summary>Test-side expectations for legacy time interpretation (Design-Format-v2 §7.1, §8.5).</summary>
 public static class LegacyTestTime
 {

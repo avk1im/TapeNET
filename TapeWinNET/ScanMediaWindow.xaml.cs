@@ -5,6 +5,7 @@ using TapeWinNET.ViewModels;
 
 namespace TapeWinNET;
 
+
 /// <summary>Scan Media setup dialog — see <see cref="ScanMediaViewModel"/>.</summary>
 public partial class ScanMediaWindow : Window, IHelpPaneHost
 {

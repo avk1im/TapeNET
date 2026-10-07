@@ -1,8 +1,10 @@
-using TapeLibNET.Toc;
-using TapeLibNET.Agents;
 using Microsoft.Extensions.Logging;
 
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
+
 namespace TapeLibNET.Scan;
+
 
 /// <summary>
 /// TOC recovery during the walk (§8.3): reading a TOC copy the walk has just identified, through a

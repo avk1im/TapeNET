@@ -4,6 +4,7 @@ using TapeLoc.Configuration;
 
 namespace TapeLoc.Ai;
 
+
 // Builds the self-contained system prompt embedding the translate-vs-preserve
 //  rule-set (docs/Design-TapeLoc.md §8) and injecting the target culture. The
 //  prompt is versioned implicitly via rules.RulesVersion so cache keys change

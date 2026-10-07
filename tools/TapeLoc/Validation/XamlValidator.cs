@@ -5,6 +5,7 @@ using TapeLoc.Configuration;
 
 namespace TapeLoc.Validation;
 
+
 // Validates a translated XAML file against the source (docs/Design-TapeLoc.md §9):
 //  1. Must be well-formed XML.
 //  2. Identical element tree and attribute NAMES.

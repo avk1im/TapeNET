@@ -1,9 +1,11 @@
+using System.Buffers.Binary;
+
+using TapeLibNET.Format;
 using TapeLibNET.Compression;
 using TapeLibNET.Toc;
-using System.Buffers.Binary;
-using TapeLibNET.Format;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Phase 3 (Design-Format-v2 §5.1, §5.2, Appendix B §B.8.6): the 2.1 TOC stream - <see cref="TapeTOC.SaveTo(Stream)"/>,

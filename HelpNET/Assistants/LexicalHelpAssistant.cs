@@ -1,8 +1,10 @@
 using System.Text;
+
 using HelpNET.Content;
 using HelpNET.Indexing;
 
 namespace HelpNET.Assistants;
+
 
 /// <summary>
 /// A pure-lexical assistant that answers queries using BM25 search combined with

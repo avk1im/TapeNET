@@ -1,12 +1,13 @@
 using System.ClientModel;
 using System.Text.Json;
 
-using FclNET;
-
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 
+using FclNET;
+
 namespace FclAiNET;
+
 
 /// <summary>
 /// Translates natural language file filter descriptions into validated FCL

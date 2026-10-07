@@ -4,6 +4,7 @@ using TapeConNET.Ux;
 
 namespace TapeConNET.Tests.Helpers;
 
+
 /// <summary>
 /// End-to-end test runner: invokes the full <see cref="RootCommandFactory"/>
 /// verb tree against a capturing <see cref="SilentConsoleUx"/> and returns

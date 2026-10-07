@@ -3,6 +3,7 @@ using TapeLibNET.Services;
 
 namespace TapeWinNET.Services;
 
+
 /// <summary>
 /// Partial class � backup factory override and WPF-specific progress handler.
 /// The state machine lives in <see cref="TapeServiceBase"/>.

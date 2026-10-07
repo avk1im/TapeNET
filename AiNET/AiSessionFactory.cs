@@ -1,8 +1,10 @@
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using System.Diagnostics;
 
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+
 namespace AiNET;
+
 
 /// <summary>
 /// Entry point for creating an <see cref="IAiSession"/>.

@@ -1,8 +1,10 @@
-using HelpNET.Embeddings;
-using HelpNET.Retrieval;
 using Xunit;
 
+using HelpNET.Embeddings;
+using HelpNET.Retrieval;
+
 namespace HelpNET.Tests.Phase4;
+
 
 /// <summary>
 /// Tests for <see cref="HelpEmbeddingIndex"/> — semantic search over a

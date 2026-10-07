@@ -1,8 +1,9 @@
+using TapeLibNET.Format; // TapeFrameStatus
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
-using TapeLibNET.Format; // TapeFrameStatus
 
 namespace TapeLibNET.Legacy;
+
 
 /// <summary>
 /// Frozen, read-only block identification for the pre-2.1 layouts: the TOC structural probe (<see cref="TryPeekToc"/>),

@@ -2,6 +2,7 @@ using System.Windows;
 
 namespace TapeWinNET.Help;
 
+
 /// <summary>
 /// Handles the geometry negotiation when a HelpPane is opened adjacent to a
 /// dialog window (<see cref="HelpPaneHostMode.Adjacent"/>).

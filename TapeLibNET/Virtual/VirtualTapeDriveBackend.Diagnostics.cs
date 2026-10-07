@@ -1,7 +1,7 @@
 ﻿using Windows.Win32.Foundation;
 
-
 namespace TapeLibNET.Virtual;
+
 
 public partial class VirtualTapeDriveBackend
 {

@@ -2,6 +2,7 @@
 
 namespace TapeLibNET.Agents;
 
+
 /// <summary>
 /// Aggregates the total size of a collection of files, including both local and remote files.
 /// <para>Performs asynchronous aggregation (for remote files, using a thread pool) and can be canceled.</para>

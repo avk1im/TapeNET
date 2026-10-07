@@ -1,8 +1,10 @@
-using HelpNET.Content;
-using HelpNET.Indexing;
 using Xunit;
 
+using HelpNET.Content;
+using HelpNET.Indexing;
+
 namespace HelpNET.Tests;
+
 
 /// <summary>
 /// Tests for <see cref="Chunker"/>.

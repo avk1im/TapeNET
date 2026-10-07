@@ -1,9 +1,11 @@
-using TapeLibNET.Media;
-using TapeLibNET.Calibration;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
+using TapeLibNET.Media;
+using TapeLibNET.Calibration;
+
 namespace TapeLibNET.Scan;
+
 
 /// <summary>What kind of cartridge the scan concluded this is.</summary>
 public enum ScannedMediaKind

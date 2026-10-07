@@ -4,6 +4,7 @@ using Microsoft.ML.Tokenizers;
 
 namespace AiNET.Providers;
 
+
 /// <summary>
 /// Provider adapter for in-process <b>ONNX</b> embedding models.
 /// No network round-trip — the model runs entirely on the local CPU/GPU.

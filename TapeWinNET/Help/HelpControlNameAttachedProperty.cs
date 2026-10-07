@@ -2,6 +2,7 @@ using System.Windows;
 
 namespace TapeWinNET.Help;
 
+
 /// <summary>
 /// Attached property <c>help:Help.ControlName</c> that tags a UI element with
 /// its Reveal/Walkthrough help name.

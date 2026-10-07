@@ -1,10 +1,12 @@
+using System.Text;
+
 using TapeLibNET.Drive;
 using TapeLibNET.Compression;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
-using System.Text;
 
 namespace TapeLibNET.Tests.Helpers;
+
 
 /// <summary>
 /// Deterministic definitions of the Phase 0 legacy goldens (Design-Format-v2 §11.1).

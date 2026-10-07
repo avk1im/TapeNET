@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 
 namespace TapeLibNET.Format;
 
+
 /// <summary>Per-field behaviour in a <see cref="TapeSchema{T}"/> (Design-Format-v2 §4.4, Appendix B §B.3.1).</summary>
 [Flags]
 public enum FieldFlags

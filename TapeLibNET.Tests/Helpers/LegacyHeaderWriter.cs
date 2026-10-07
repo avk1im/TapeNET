@@ -1,8 +1,10 @@
-using TapeLibNET.Headers;
-using TapeLibNET.Calibration;
 using System.IO.Hashing;
 
+using TapeLibNET.Headers;
+using TapeLibNET.Calibration;
+
 namespace TapeLibNET.Tests.Helpers;
+
 
 /// <summary>
 /// TEST-ONLY writer of legacy (pre-2.1) media and set header frames — the mirror of <c>LegacyHeaderReader</c> and

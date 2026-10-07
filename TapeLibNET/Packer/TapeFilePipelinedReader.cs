@@ -1,9 +1,11 @@
 using System.Buffers;
 using System.Diagnostics;
+
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace TapeLibNET.Packer;
+
 
 /// <summary>
 /// Worker-thread pipelined read packer. Mirrors <see cref="TapeFileWritePacker"/> on the

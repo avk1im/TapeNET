@@ -2,6 +2,7 @@ using System.IO.MemoryMappedFiles;
 
 namespace TapeLibNET.Virtual;
 
+
 /// <summary>
 /// A fixed-capacity stream backed by an anonymous memory-mapped file, supporting
 /// sizes beyond the 2 GB limit of <see cref="MemoryStream"/>.

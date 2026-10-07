@@ -3,9 +3,11 @@ using TapeLibNET.Toc;
 using TapeLibNET.Media;
 using TapeLibNET.Agents;
 using TapeLibNET.Scan;
+
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Scan Media Phase 3: TOC recovery — <see cref="TapeAgentBase.RestoreTOCAt"/> on its own, and the

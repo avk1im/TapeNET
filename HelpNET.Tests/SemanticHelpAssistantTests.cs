@@ -1,11 +1,13 @@
+using Xunit;
+
 using HelpNET.Assistants;
 using HelpNET.Content;
 using HelpNET.Embeddings;
+
 using HelpNET.Tests.Phase4;
 
-using Xunit;
-
 namespace HelpNET.Tests;
+
 
 /// <summary>
 /// Tests for <see cref="SemanticHelpAssistant"/> — Mode 2, which ranks excerpts

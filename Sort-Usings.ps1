@@ -258,8 +258,13 @@ function Format-File([IO.FileInfo] $file) {
 
 # --- Run ------------------------------------------------------------------------------------------------------------
 $scope = if ($Path) { (Resolve-Path -LiteralPath (Join-Path $RepoRoot $Path)).ProviderPath } else { $RepoRoot }
-$files = if (Test-Path -LiteralPath $scope -PathType Leaf) { @(Get-Item -LiteralPath $scope) }
-         else { @(Get-ChildItem -LiteralPath $scope -Recurse -Filter *.cs -File | Where-Object { $_.FullName -notmatch $ExcludeRx }) }
+#$files = if (Test-Path -LiteralPath $scope -PathType Leaf) { @(Get-Item -LiteralPath $scope) }
+#         else { @(Get-ChildItem -LiteralPath $scope -Recurse -Filter *.cs -File | Where-Object { $_.FullName -notmatch $ExcludeRx }) }
+# @( ) around the whole if: PowerShell unwraps a branch's result, so a single file would otherwise be a bare FileInfo.
+$files = @(
+    if (Test-Path -LiteralPath $scope -PathType Leaf) { Get-Item -LiteralPath $scope }
+    else { Get-ChildItem -LiteralPath $scope -Recurse -Filter *.cs -File | Where-Object { $_.FullName -notmatch $ExcludeRx } }
+)
 
 $stats = [ordered]@{ changed = 0; unchanged = 0; none = 0; skipped = 0 }
 foreach ($f in $files) {

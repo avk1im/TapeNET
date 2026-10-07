@@ -5,6 +5,7 @@ using FclNET.Ast;
 
 namespace TapeWinNET.ViewModels;
 
+
 /// <summary>
 /// ViewModel for a single FCL condition row in the visual filter editor.
 /// Manages field selection, operator filtering, adaptive value input,

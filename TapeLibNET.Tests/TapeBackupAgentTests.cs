@@ -1,7 +1,9 @@
-﻿using TapeLibNET.Drive;
+﻿using Microsoft.Extensions.Logging;
+
+using TapeLibNET.Drive;
 using TapeLibNET.Toc;
 using TapeLibNET.Agents;
-using Microsoft.Extensions.Logging;
+
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;

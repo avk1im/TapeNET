@@ -2,6 +2,7 @@ using TapeLoc.Validation;
 
 namespace TapeLoc.Tests;
 
+
 // Tests for XamlValidator — ensures translated XAML stays well-formed and
 //  structurally identical, with only whitelisted display-attribute values
 //  changing (docs/Design-TapeLoc.md §9).

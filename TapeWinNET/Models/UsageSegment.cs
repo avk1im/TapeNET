@@ -3,6 +3,7 @@ using System.Windows.Media;
 
 namespace TapeWinNET.Models;
 
+
 /// <summary>Identifies the role of a <see cref="UsageSegment"/> on the media usage bar.</summary>
 public enum UsageSegmentKind
 {

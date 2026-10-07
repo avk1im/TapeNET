@@ -1,14 +1,15 @@
+using TapeLibNET.Format; // TapeFrameStatus
 using TapeLibNET.Drive;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
 using TapeLibNET.Media;
 using TapeLibNET.Calibration;
-
 using TapeLibNET.Scan;
-using TapeLibNET.Format; // TapeFrameStatus
+
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Scan Media Phase 0, pure tier: <see cref="TapeHeaderBlock.TryIdentifyHeaderBlock"/>,

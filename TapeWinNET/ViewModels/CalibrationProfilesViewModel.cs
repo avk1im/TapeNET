@@ -11,6 +11,7 @@ using TapeWinNET.Services;
 
 namespace TapeWinNET.ViewModels;
 
+
 /// <summary>
 /// ViewModel for the "Calibration Profiles..." browser window (Media menu). Lists every
 ///  calibration profile version previously persisted to <see cref="Utils.AppSettings.Calibrations"/>,

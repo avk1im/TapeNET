@@ -1,8 +1,9 @@
-﻿using TapeLibNET.Agents;
-using Windows.Win32.System.SystemServices;
+﻿using Windows.Win32.System.SystemServices;
 
+using TapeLibNET.Agents;
 
 namespace TapeLibNET.Services;
+
 
 /// <summary>
 /// Severity classification for service-level log entries and operation outcomes.

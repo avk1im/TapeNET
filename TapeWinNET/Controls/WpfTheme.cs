@@ -2,6 +2,7 @@ using System.Windows.Media;
 
 namespace TapeWinNET.Controls;
 
+
 /// <summary>
 /// Shared UI color and visual constants used across custom controls in
 ///  <see cref="TapeWinNET.Controls"/>.

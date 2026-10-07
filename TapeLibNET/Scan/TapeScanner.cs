@@ -1,13 +1,16 @@
+using System.Diagnostics;
+
+using Microsoft.Extensions.Logging;
+using Windows.Win32.Foundation;
+
 using TapeLibNET.Drive;
 using TapeLibNET.Headers;
 using TapeLibNET.Media;
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
-using Microsoft.Extensions.Logging;
-using System.Diagnostics;
-using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Scan;
+
 
 /// <summary>
 /// Reads a cartridge from BOM forward and describes everything identifiable on it — with no table of

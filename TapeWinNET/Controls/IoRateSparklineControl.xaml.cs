@@ -7,6 +7,7 @@ using Windows.Win32.System.SystemServices; // Helpers.BytesToString
 
 namespace TapeWinNET.Controls;
 
+
 /// <summary>
 /// A compact sparkline chart that plots recent IO throughput, styled after the
 ///  Windows Explorer "Copying…" dialog.

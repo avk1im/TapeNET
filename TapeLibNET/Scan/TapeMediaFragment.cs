@@ -1,8 +1,10 @@
-using TapeLibNET.Headers;
-using TapeLibNET.Toc;
 using System.Text.Json.Serialization;
 
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+
 namespace TapeLibNET.Scan;
+
 
 /// <summary>What a scanned fragment turned out to be. An OBSERVATION, never a verdict (SM-3).</summary>
 /// <remarks>

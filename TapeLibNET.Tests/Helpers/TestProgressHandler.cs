@@ -4,6 +4,7 @@ using TapeLibNET.Services;
 
 namespace TapeLibNET.Tests.Helpers;
 
+
 /// <summary>
 /// Progress handler that forwards every callback to the base implementation and additionally invokes
 ///  test-supplied hooks — the deterministic way to act at a precise point in the file loop.

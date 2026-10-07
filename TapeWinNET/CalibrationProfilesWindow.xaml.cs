@@ -5,6 +5,7 @@ using TapeWinNET.ViewModels;
 
 namespace TapeWinNET;
 
+
 public partial class CalibrationProfilesWindow : Window, IHelpPaneHost
 {
     private readonly DialogHelpPaneController _help;

@@ -1,11 +1,13 @@
-using Microsoft.Extensions.Logging;
 using System.Runtime.InteropServices;
 using System.Text;
+
+using Microsoft.Extensions.Logging;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Storage.FileSystem;
 
 namespace TapeLibNET.Drive;
+
 
 /// <summary>
 /// LTO SCSI pass-through (SPTI) support for <see cref="TapeDriveWin32Backend"/>.

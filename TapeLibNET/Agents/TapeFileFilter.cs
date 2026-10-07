@@ -1,5 +1,6 @@
-using TapeLibNET.Toc;
 using System.Text.RegularExpressions;
+
+using TapeLibNET.Toc;
 
 namespace TapeLibNET.Agents
 {

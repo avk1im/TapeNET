@@ -3,6 +3,7 @@ using TapeLibNET.Services;
 
 namespace TapeWinNET.Services;
 
+
 /// <summary>
 /// Partial class — calibration factory override for <see cref="TapeService"/>.
 /// All state-machine logic lives in <see cref="TapeServiceBase"/>; this partial only adds the

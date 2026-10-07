@@ -1,8 +1,9 @@
-using AiNET.Providers;
-
 using Xunit;
 
+using AiNET.Providers;
+
 namespace AiNET.Tests;
+
 
 /// <summary>
 /// Tests for the cloud provider adapters (OpenAI, Azure OpenAI, Anthropic) —

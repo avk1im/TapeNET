@@ -1,13 +1,14 @@
-﻿using TapeLibNET.Drive;
-using TapeLibNET.Headers;
-using TapeLibNET.Agents;
-using System.Diagnostics;
-using Windows.Win32.Foundation;
+﻿using System.Diagnostics;
 
 using Microsoft.Extensions.Logging;
+using Windows.Win32.Foundation;
 
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
+using TapeLibNET.Agents;
 
 namespace TapeLibNET.Media;
+
 
 /// <summary>
 /// Whether "our" media header is present at BOM, as tracked by the navigator.

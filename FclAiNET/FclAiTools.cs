@@ -1,11 +1,12 @@
 using System.ComponentModel;
 using System.Text;
 
-using FclNET;
-
 using Microsoft.Extensions.AI;
 
+using FclNET;
+
 namespace FclAiNET;
+
 
 /// <summary>
 /// Provides <see cref="AIFunction"/> tool definitions that the LLM can invoke

@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 
 namespace TapeLibNET.Virtual;
 
+
 /// <summary>
 /// Diagnostic and comparison methods for <see cref="VirtualTapeMedia"/>.
 /// Used by tests to compare the physical tape layout and content between two media instances

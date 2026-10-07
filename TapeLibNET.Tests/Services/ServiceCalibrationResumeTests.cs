@@ -1,9 +1,11 @@
+using TapeLibNET.Virtual;
 using TapeLibNET.Calibration;
 using TapeLibNET.Services;
+
 using TapeLibNET.Tests.Helpers;
-using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests.Services;
+
 
 /// <summary>
 /// Service-level coverage for the extended calibration surface: the <see cref="CalibrationMode"/>

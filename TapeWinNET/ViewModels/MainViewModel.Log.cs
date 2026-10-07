@@ -6,9 +6,11 @@ using System.Text;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Threading;
+
 using TapeWinNET.Models;
 
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// Log pane — batched ingestion, smart pruning, severity filtering,

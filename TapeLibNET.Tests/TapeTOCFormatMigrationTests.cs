@@ -1,11 +1,13 @@
-using TapeLibNET.Toc;
 using Xunit.Abstractions;
 
 using TapeLibNET.Format;
+using TapeLibNET.Toc;
 using TapeLibNET.Legacy;
+
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Pins <see cref="LegacyTocWriter"/> against the SHIPPING legacy reader. Every other legacy test relies on this writer,

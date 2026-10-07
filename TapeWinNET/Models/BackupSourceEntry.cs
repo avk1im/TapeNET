@@ -1,10 +1,13 @@
-using TapeLibNET.Agents;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Media.Imaging;
+
 using Windows.Win32.System.SystemServices;
 
+using TapeLibNET.Agents;
+
 namespace TapeWinNET.Models;
+
 
 /// <summary>
 /// Represents an entry in the "Files to Backup" list.

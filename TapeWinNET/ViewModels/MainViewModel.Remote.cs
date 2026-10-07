@@ -2,12 +2,15 @@ using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using TapeLibNET.Services;
+
 using TapeLibNET.Remote;
+using TapeLibNET.Services;
+
 using TapeWinNET.Models;
 using TapeWinNET.Utils;
 
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// Partial class containing remote host session state and commands for MainViewModel.

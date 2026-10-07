@@ -1,11 +1,14 @@
-using TapeLibNET.Calibration;
 using System.Windows.Input;
 
 using Windows.Win32.System.SystemServices; // Helpers.BytesToStringLong
+
+using TapeLibNET.Calibration;
 using TapeLibNET.Services;
+
 using TapeWinNET.Services;
 
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// ViewModel for the calibration setup/confirmation dialog (<see cref="TapeWinNET.CalibrateWindow"/>).

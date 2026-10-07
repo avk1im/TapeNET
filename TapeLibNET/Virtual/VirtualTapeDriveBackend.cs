@@ -1,10 +1,13 @@
-using TapeLibNET.Drive;
-using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Reflection;
+
+using Microsoft.Extensions.Logging;
 using Windows.Win32.Foundation;
 
+using TapeLibNET.Drive;
+
 namespace TapeLibNET.Virtual;
+
 
 /// <summary>
 /// Configuration for virtual tape drive capabilities.

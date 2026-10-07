@@ -1,12 +1,15 @@
+using Windows.Win32.Foundation;
+
 using TapeLibNET.Drive;
+using TapeLibNET.Virtual;
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
 using TapeLibNET.Scan;
+
 using TapeLibNET.Tests.Helpers;
-using TapeLibNET.Virtual;
-using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Scan Media Phase 1: <see cref="TapeScanner"/> walking real (virtual) cartridges — healthy, damaged,

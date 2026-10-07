@@ -3,6 +3,7 @@ using System.Text;
 
 namespace TapeLibNET.Format;
 
+
 /// <summary>
 /// Span-based encode / decode of the format primitives (Design-Format-v2 §4.1).
 /// </summary>

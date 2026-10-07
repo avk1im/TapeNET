@@ -1,9 +1,11 @@
 using TapeLibNET.Drive;
-using TapeLibNET.Media;
-using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
+using TapeLibNET.Media;
+
+using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Scan Media Phase 0: <see cref="TapeMediaLayout.Predict"/> and its agreement with

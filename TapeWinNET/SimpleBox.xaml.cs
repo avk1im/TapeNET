@@ -4,6 +4,7 @@ using System.Windows.Media;
 
 namespace TapeWinNET;
 
+
 /// <summary>
 /// Interaction logic for SimpleBox.xaml
 /// </summary>

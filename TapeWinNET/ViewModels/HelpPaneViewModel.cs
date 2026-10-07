@@ -12,6 +12,7 @@ using TapeWinNET.Help;
 
 namespace TapeWinNET.ViewModels;
 
+
 // ── Display model for one chat message ───────────────────────────────────────
 
 /// <summary>Whether a chat item is a user query or an assistant answer.</summary>

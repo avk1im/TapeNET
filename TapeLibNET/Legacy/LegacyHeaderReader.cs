@@ -1,5 +1,7 @@
 using TapeLibNET.Headers;
+
 namespace TapeLibNET.Legacy;
+
 
 /// <summary>
 /// Frozen, read-only reader of the pre-2.1 self-identifying headers: the shared preamble, then the media, set

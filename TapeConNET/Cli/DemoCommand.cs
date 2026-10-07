@@ -5,6 +5,7 @@ using TapeConNET.Ux;
 
 namespace TapeConNET.Cli;
 
+
 /// <summary>
 /// <c>tapecon demo</c> — exercises the Phase 2 console infrastructure end to
 /// end (logs at every <see cref="WarningLevel"/>, a bounded progress scope,

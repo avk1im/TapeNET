@@ -1,13 +1,15 @@
-using TapeLibNET.Compression;
-using TapeLibNET.Toc;
 using System.CommandLine;
 
-using TapeConNET.Infrastructure;
-using TapeConNET.Ux;
-using TapeConNET.Filtering;
+using TapeLibNET.Compression;
+using TapeLibNET.Toc;
 using TapeLibNET.Services;
 
+using TapeConNET.Filtering;
+using TapeConNET.Infrastructure;
+using TapeConNET.Ux;
+
 namespace TapeConNET.Cli;
+
 
 /// <summary>
 /// <c>tapecon backup</c> — back up files (and folders, optionally recursively)

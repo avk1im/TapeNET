@@ -1,16 +1,16 @@
 using System.Runtime.CompilerServices;
 
+using Microsoft.Extensions.AI;
+using Xunit;
+
 using HelpNET.Assistants;
 using HelpNET.Content;
 using HelpNET.Indexing;
 using HelpNET.Retrieval;
 using HelpNET.Session;
 
-using Microsoft.Extensions.AI;
-
-using Xunit;
-
 namespace HelpNET.Tests;
+
 
 /// <summary>
 /// Tests for <see cref="RagHelpAssistant"/> — the Retrieval-Augmented Generation

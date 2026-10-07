@@ -1,9 +1,11 @@
-using TapeLibNET.Headers;
-using TapeLibNET.Toc;
 using System.Collections.ObjectModel;
 using System.Windows.Media.Imaging;
 
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+
 namespace TapeWinNET.ViewModels;
+
 
 public enum TreeItemType
 {

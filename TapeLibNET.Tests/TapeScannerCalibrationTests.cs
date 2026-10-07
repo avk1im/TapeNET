@@ -1,11 +1,13 @@
+using Windows.Win32.Foundation;
+
 using TapeLibNET.Drive;
+using TapeLibNET.Virtual;
 using TapeLibNET.Headers;
 using TapeLibNET.Calibration;
 using TapeLibNET.Scan;
-using TapeLibNET.Virtual;
-using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Scan Media Phase 2: calibration cartridges — identified, not walked (SM-7), and optionally enriched by

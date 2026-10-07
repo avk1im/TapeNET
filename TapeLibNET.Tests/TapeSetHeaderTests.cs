@@ -1,10 +1,13 @@
 // Save as: TapeLibNET.Tests/TapeSetHeaderTests.cs
+
+using TapeLibNET.Format;
 using TapeLibNET.Drive;
 using TapeLibNET.Headers;
-using TapeLibNET.Format;
+
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Unit coverage for the set-header record and the media header's <c>HasSetHeaders</c> flag.

@@ -1,8 +1,9 @@
-using AiNET.Providers;
-
 using Xunit;
 
+using AiNET.Providers;
+
 namespace AiNET.Tests;
+
 
 /// <summary>
 /// Integration tests for <see cref="OnnxProvider"/> and

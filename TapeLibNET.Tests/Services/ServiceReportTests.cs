@@ -1,12 +1,15 @@
+using Windows.Win32.Foundation;
+
+using TapeLibNET.Virtual;
 using TapeLibNET.Toc;
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
 using TapeLibNET.Services;
+
 using TapeLibNET.Tests.Helpers;
-using TapeLibNET.Virtual;
-using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Tests.Services;
+
 
 /// <summary>
 /// Step 9.0 coverage: the agent's diagnosis must SURVIVE to the user.

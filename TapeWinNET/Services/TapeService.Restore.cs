@@ -3,6 +3,7 @@ using TapeLibNET.Services;
 
 namespace TapeWinNET.Services;
 
+
 /// <summary>
 /// Partial class — restore/validate/verify factory override for <see cref="TapeService"/>.
 /// All state-machine logic lives in <see cref="TapeServiceBase"/> (TapeServiceBase.Restore.cs);

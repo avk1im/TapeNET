@@ -4,6 +4,7 @@ using HelpNET.Indexing;
 
 namespace HelpNET.Session;
 
+
 /// <summary>
 /// Concrete implementation of <see cref="IHelpSession"/>.
 /// Owns navigation history, conversation state, and an <see cref="IHelpAssistant"/>.

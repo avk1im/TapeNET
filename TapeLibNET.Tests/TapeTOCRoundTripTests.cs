@@ -1,10 +1,12 @@
 ﻿using TapeLibNET.Headers;
 using TapeLibNET.Toc;
-using TapeLibNET.Agents;
 using TapeLibNET.Legacy;
+using TapeLibNET.Agents;
+
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Unit tests for <see cref="TapeTOC"/> and <see cref="TapeSetTOC"/> — serialization

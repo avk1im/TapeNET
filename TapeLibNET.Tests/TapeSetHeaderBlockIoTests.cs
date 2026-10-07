@@ -1,9 +1,11 @@
 using TapeLibNET.Headers;
 using TapeLibNET.Media;
 using TapeLibNET.Agents;
+
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Step 3 coverage for <see cref="TapeStreamManager.WriteSetHeaderBlock"/> /

@@ -5,6 +5,7 @@ using System.Windows;
 
 namespace TapeWinNET.Utils;
 
+
 /// <summary>
 /// Struct representing the position and size of a window, plus whether it's maximized.
 /// </summary>

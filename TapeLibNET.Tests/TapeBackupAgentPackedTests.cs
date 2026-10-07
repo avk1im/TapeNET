@@ -1,7 +1,9 @@
-﻿using TapeLibNET.Compression;
+﻿using Microsoft.Extensions.Logging;
+
+using TapeLibNET.Compression;
 using TapeLibNET.Toc;
 using TapeLibNET.Agents;
-using Microsoft.Extensions.Logging;
+
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;

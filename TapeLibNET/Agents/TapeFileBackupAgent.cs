@@ -1,18 +1,19 @@
-﻿using TapeLibNET.Streams;
+﻿using System.Diagnostics;
+
+using Microsoft.Extensions.Logging;
+using Windows.Win32.Foundation;
+using Windows.Win32.System.SystemServices;
+
+using TapeLibNET.Streams;
 using TapeLibNET.Drive;
 using TapeLibNET.Compression;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
 using TapeLibNET.Media;
-using System.Diagnostics;
-using Microsoft.Extensions.Logging;
-using Windows.Win32.Foundation;
-using Windows.Win32.System.SystemServices;
-
 using TapeLibNET.Packer;
 
-
 namespace TapeLibNET.Agents;
+
 
 /// <summary>
 /// Backup agent — writes file lists to tape content sets with per-file CRC hashing,

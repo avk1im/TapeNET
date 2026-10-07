@@ -1,7 +1,9 @@
 using System.Text.RegularExpressions;
+
 using HelpNET.Content;
 
 namespace HelpNET.Indexing;
+
 
 /// <summary>
 /// Matches a natural-language query against the <c>intents</c> phrases defined in

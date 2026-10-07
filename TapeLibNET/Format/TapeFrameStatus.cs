@@ -1,5 +1,7 @@
 ﻿using TapeLibNET.Headers;
+
 namespace TapeLibNET.Format;
+
 
 /// <summary>Why a <see cref="TapeFramer"/>'s unpack did or did not yield a record.</summary>
 public enum TapeFrameStatus

@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace TapeLoc.Configuration;
 
+
 // Strongly-typed binding of loc-rules.json (see docs/Design-TapeLoc.md §4).
 //  All members are populated from JSON; defaults mirror the shipped rule-set so
 //  a partial config still yields a usable run.

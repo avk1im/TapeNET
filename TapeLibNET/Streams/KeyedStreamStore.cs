@@ -1,8 +1,10 @@
 using System.Runtime.CompilerServices;
 using System.Text;
+
 using Microsoft.Extensions.Logging;
 
 namespace TapeLibNET.Streams;
+
 
 /// <summary>
 /// Generic, root-agnostic keyed stream store. Each stream lives in its OWN sub-folder

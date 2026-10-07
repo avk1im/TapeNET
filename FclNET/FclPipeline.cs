@@ -2,6 +2,7 @@ using FclNET.Ast;
 
 namespace FclNET;
 
+
 /// <summary>
 /// Result of <see cref="FclPipeline.TryParse"/>: holds the parsed AST
 /// (if successful) and any diagnostics from lexing, parsing, or validation.

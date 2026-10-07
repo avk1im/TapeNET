@@ -1,8 +1,8 @@
 ﻿using System.Text.Json;
+
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-
 
 if (args.Length == 0)
 {

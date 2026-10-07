@@ -1,12 +1,14 @@
-﻿using TapeLibNET.Compression;
+﻿using TapeLibNET.Format;
+using TapeLibNET.Compression;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
-using TapeLibNET.Calibration;
-using TapeLibNET.Format;
 using TapeLibNET.Legacy;
+using TapeLibNET.Calibration;
+
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests;
+
 
 /// <summary>
 /// Phase 0 legacy freeze (Design-Format-v2 §11.4): the checked-in goldens must (a) still be reproduced

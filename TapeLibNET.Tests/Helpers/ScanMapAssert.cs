@@ -1,7 +1,9 @@
 using System.Text;
+
 using TapeLibNET.Scan;
 
 namespace TapeLibNET.Tests.Helpers;
+
 
 /// <summary>
 /// Reading and asserting on a <see cref="MediaScanMap"/> — the shape a scan test wants, rather than the

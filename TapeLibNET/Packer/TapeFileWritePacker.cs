@@ -1,9 +1,11 @@
-using TapeLibNET.Drive;
-using TapeLibNET.Media;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
+using TapeLibNET.Drive;
+using TapeLibNET.Media;
+
 namespace TapeLibNET.Packer;
+
 
 /// <summary>
 /// Phase 2 high-layer write packer. Accumulates source bytes from one or more files into

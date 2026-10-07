@@ -2,6 +2,7 @@ using Spectre.Console;
 
 namespace TapeConNET.Ux;
 
+
 /// <summary>
 /// Imperative wrapper around Spectre.Console's callback-based
 /// <see cref="Progress"/> API. The scope spins the live progress display on a

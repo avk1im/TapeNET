@@ -6,6 +6,7 @@ using TapeWinNET.ViewModels;
 
 namespace TapeWinNET;
 
+
 /// <summary>
 /// Advanced FCL filter editor dialog.
 /// Provides a visual DNF condition editor (left pane) and an expandable

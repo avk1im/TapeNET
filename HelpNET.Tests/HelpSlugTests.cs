@@ -1,9 +1,11 @@
-using HelpNET.Content;
 using Xunit;
+
+using HelpNET.Content;
 
 // Access internal HelpSlug via InternalsVisibleTo in HelpNET.csproj.
 
 namespace HelpNET.Tests;
+
 
 /// <summary>
 /// Tests for <see cref="HelpSlug.From"/> slug-generation rules.

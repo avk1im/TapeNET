@@ -1,8 +1,10 @@
 using System.Text;
+
 using TapeLibNET.Format;
 using TapeLibNET.Legacy;
 
 namespace TapeLibNET.Headers;
+
 
 /// <summary>
 /// The kind of a <see cref="TapeHeader"/>. In format 2.1 the record kind carries it (Design-Format-v2 §5.4); legacy

@@ -5,6 +5,7 @@ using TapeConNET.Ux;
 
 namespace TapeConNET.Cli;
 
+
 /// <summary>
 /// <c>tapecon eject</c> — unloads the media from the selected drive.
 /// </summary>

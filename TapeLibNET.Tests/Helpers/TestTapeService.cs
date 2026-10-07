@@ -1,10 +1,12 @@
-﻿using TapeLibNET.Agents;
+﻿using Microsoft.Extensions.Logging;
+
+using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
-using Microsoft.Extensions.Logging;
 using TapeLibNET.Scan;
 using TapeLibNET.Services;
 
 namespace TapeLibNET.Tests.Helpers;
+
 
 internal sealed class TestServiceCalibrateProgressHandler(TestTapeService svc,
     ITapeServiceHost host, TapeCalibrator calibrator, long capacityReported)

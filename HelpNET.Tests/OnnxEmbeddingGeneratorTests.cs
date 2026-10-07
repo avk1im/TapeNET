@@ -1,7 +1,9 @@
-using HelpNET.Embeddings;
 using Xunit;
 
+using HelpNET.Embeddings;
+
 namespace HelpNET.Tests;
+
 
 /// <summary>
 /// Integration tests for <see cref="HelpOnnxEmbeddingGenerator"/> — the HelpNET-internal

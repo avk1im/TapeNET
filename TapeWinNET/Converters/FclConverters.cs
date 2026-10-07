@@ -7,6 +7,7 @@ using TapeWinNET.ViewModels;
 
 namespace TapeWinNET.Converters;
 
+
 /// <summary>
 /// Converts a nullable <see cref="DateTime"/> (assumed UTC, e.g. a calibration's <c>MeasuredUtc</c>)
 /// to a local-time, user-friendly display string, or "legacy" for <see langword="null"/>.

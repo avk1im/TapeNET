@@ -3,6 +3,7 @@ using System.Windows.Input;
 
 namespace TapeWinNET.ViewModels;
 
+
 /// <summary>
 /// Partial class containing calibration-related functionality for <see cref="MainViewModel"/>.
 /// </summary>

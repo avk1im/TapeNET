@@ -1,13 +1,14 @@
+using System.IO.Hashing;
+using System.Text;
+
 using TapeLibNET.Drive;
 using TapeLibNET.Compression;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
-using System.IO.Hashing;
-using System.Text;
 using TapeLibNET.Legacy;
 
-
 namespace TapeLibNET.Tests.Helpers;
+
 
 /// <summary>Which legacy TOC set / file-entry layout to emit (Design-Format-v2 §7.2).</summary>
 public enum LegacyTocLayout

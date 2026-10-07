@@ -2,6 +2,7 @@ using System.Windows.Controls;
 
 namespace TapeWinNET.Controls;
 
+
 /// <summary>
 /// Shared calibration-result display surface: verdict banner, measured-result figures (with an
 /// optional before/after delta for recalibration), and the reported→actual curve. Inherits its
