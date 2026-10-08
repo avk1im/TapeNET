@@ -1,9 +1,8 @@
 // Save as: TapeLibNET/TapeFileHeader.cs
 
 using System.Text;
-
-using TapeLibNET.Format;
 using TapeLibNET.Compression;
+using TapeLibNET.Format;
 using TapeLibNET.Toc;
 
 namespace TapeLibNET.Headers;

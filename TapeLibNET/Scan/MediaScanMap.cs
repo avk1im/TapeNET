@@ -1,8 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-
-using TapeLibNET.Media;
 using TapeLibNET.Calibration;
+using TapeLibNET.Media;
 
 namespace TapeLibNET.Scan;
 

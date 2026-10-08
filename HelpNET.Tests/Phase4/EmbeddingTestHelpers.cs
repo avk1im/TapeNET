@@ -1,9 +1,7 @@
 using System.Text.Json;
-
-using Microsoft.Extensions.AI;
-
 using HelpNET.Content;
 using HelpNET.Indexing;
+using Microsoft.Extensions.AI;
 
 namespace HelpNET.Tests.Phase4;
 

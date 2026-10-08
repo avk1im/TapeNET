@@ -1,14 +1,11 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-
+using AiNET;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-
-using AiNET;
-
-using TapeLibNET.Streams;
 using TapeLibNET.Calibration;
+using TapeLibNET.Streams;
 
 namespace TapeWinNET.Utils;
 

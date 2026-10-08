@@ -2,6 +2,7 @@
 
 namespace TapeLibNET.Tests.Helpers;
 
+
 /// <summary>
 /// Source-tree locations of the checked-in golden files. Anchored at the test PROJECT folder (the one holding
 ///  TapeLibNET.Tests.csproj), so a test file can move between folders without breaking its paths.

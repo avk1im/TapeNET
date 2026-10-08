@@ -1,7 +1,6 @@
-using Xunit;
-
 using HelpNET.Content;
 using HelpNET.Indexing;
+using Xunit;
 
 namespace HelpNET.Tests;
 

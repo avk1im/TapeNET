@@ -1,9 +1,8 @@
-using Windows.Win32.Foundation;
-
-using TapeLibNET.Headers;
-using TapeLibNET.Toc;
 using TapeLibNET.Agents;
+using TapeLibNET.Headers;
 using TapeLibNET.Scan;
+using TapeLibNET.Toc;
+using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Services;
 

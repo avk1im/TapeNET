@@ -1,12 +1,10 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-
-using Microsoft.Extensions.AI;
-
 using HelpNET.Content;
 using HelpNET.Embeddings;
 using HelpNET.Indexing;
+using Microsoft.Extensions.AI;
 
 namespace HelpIndexBuilder;
 

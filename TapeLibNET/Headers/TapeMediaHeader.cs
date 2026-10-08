@@ -1,9 +1,9 @@
 // Save as: TapeLibNET/TapeMediaHeader.cs
 
-using TapeLibNET.Format;
 using TapeLibNET.Drive;
-using TapeLibNET.Toc;
+using TapeLibNET.Format;
 using TapeLibNET.Legacy;
+using TapeLibNET.Toc;
 
 namespace TapeLibNET.Headers;
 

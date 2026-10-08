@@ -1,6 +1,5 @@
-using Xunit;
-
 using HelpNET.Embeddings;
+using Xunit;
 
 namespace HelpNET.Tests;
 

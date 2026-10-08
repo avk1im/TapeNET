@@ -1,11 +1,9 @@
 ﻿using System.IO;
 using System.Windows.Input;
-
 using Microsoft.Win32;
-
-using TapeLibNET.Virtual;
 using TapeLibNET.Calibration;
 using TapeLibNET.Services;
+using TapeLibNET.Virtual;
 
 namespace TapeWinNET.ViewModels;
 

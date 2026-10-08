@@ -7,7 +7,7 @@ using TapeLibNET.Agents;
 
 using TapeLibNET.Tests.Helpers;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Agents;
 
 
 public sealed class TapeRestoreAgentPipelinedTests_Headerless : TapeRestoreAgentPipelinedTestsBase
@@ -36,7 +36,7 @@ public sealed class TapeRestoreAgentPipelinedTests_SetHeaders : TapeRestoreAgent
 
 /// <summary>
 /// Step 7 integration coverage for the pipelined read path
-/// (<see cref="Packer.TapeFilePipelinedReader"/> wired into
+/// (<see cref="TapeLibNET.Packer.TapeFilePipelinedReader"/> wired into
 /// <see cref="TapeStreamManager"/>).
 /// <para>
 /// Sister suite to <see cref="TapeRestoreAgentPackedTestsBase"/>, focused on
@@ -308,10 +308,11 @@ public abstract class TapeRestoreAgentPipelinedTestsBase
 
     /// <summary>
     /// Restores two consecutive sets back-to-back through the same restore
-    /// agent (i.e. without disposing it between sets). Between sets the
-    /// manager transitions back through <c>BeginReadContent</c>, which calls
-    /// <c>DisposeReadPacker</c>; the next set must therefore allocate and
-    /// arm a fresh <see cref="Packer.TapeFilePipelinedReader"/> with a clean ring.
+    ///  agent (i.e. without disposing it between sets). Between sets the
+    ///  manager transitions back through <c>BeginReadContent</c>, which calls
+    ///  <c>DisposeReadPacker</c>; the next set must therefore allocate and
+    ///  arm a fresh <see cref="TapeLibNET.Packer.TapeFilePipelinedReader"/>
+    ///  with a clean ring.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]

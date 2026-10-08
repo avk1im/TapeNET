@@ -3,7 +3,7 @@ using TapeLibNET.Virtual;
 
 using TapeLibNET.Tests.Helpers;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Virtual;
 
 
 /// <summary>Appendix A §A.7: the 2.1 virtual media state record and the legacy metadata reader.</summary>

@@ -6,7 +6,7 @@ using TapeLibNET.Agents;
 
 using TapeLibNET.Tests.Helpers;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Agents;
 
 
 public sealed class TapeBackupAgentTests_Headerless : TapeBackupAgentTestsBase

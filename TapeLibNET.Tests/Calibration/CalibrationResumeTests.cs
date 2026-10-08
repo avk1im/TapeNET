@@ -3,7 +3,7 @@ using TapeLibNET.Virtual;
 using TapeLibNET.Headers;
 using TapeLibNET.Calibration;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Calibration;
 
 
 /// <summary>

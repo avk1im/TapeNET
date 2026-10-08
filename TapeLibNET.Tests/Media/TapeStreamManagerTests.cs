@@ -3,7 +3,7 @@ using TapeLibNET.Media;
 
 using TapeLibNET.Tests.Helpers;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Media;
 
 
 /// <summary>

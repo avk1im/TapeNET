@@ -1,8 +1,8 @@
-using TapeLibNET.Compression;
-using TapeLibNET.Toc;
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
+using TapeLibNET.Compression;
 using TapeLibNET.Scan; // MediaScanMap
+using TapeLibNET.Toc;
 
 namespace TapeLibNET.Services;
 

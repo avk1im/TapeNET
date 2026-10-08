@@ -1,10 +1,8 @@
 using System.Text.Json;
-
-using Xunit;
-
 using HelpNET.Content;
 using HelpNET.Embeddings;
 using HelpNET.Indexing;
+using Xunit;
 
 namespace HelpNET.Tests.Phase4;
 

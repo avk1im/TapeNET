@@ -1,9 +1,8 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
-
-using TapeLibNET.Virtual;
 using TapeLibNET.Remote;
 using TapeLibNET.Services;
+using TapeLibNET.Virtual;
 
 namespace TapeWinNET.ViewModels;
 

@@ -1,6 +1,6 @@
 using TapeLibNET.Virtual;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Virtual;
 
 
 /// <summary>

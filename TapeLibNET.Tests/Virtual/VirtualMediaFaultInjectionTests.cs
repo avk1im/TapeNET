@@ -4,7 +4,7 @@ using TapeLibNET.Headers;
 
 using TapeLibNET.Tests.Helpers;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Virtual;
 
 
 #if DEBUG

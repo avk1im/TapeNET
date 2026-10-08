@@ -1,13 +1,12 @@
 ﻿using System.Collections;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
-
-using TapeLibNET.Drive;
+using TapeLibNET.Agents;
 using TapeLibNET.Compression;
+using TapeLibNET.Drive;
 using TapeLibNET.Headers;
 using TapeLibNET.Legacy;
 using TapeLibNET.Media;
-using TapeLibNET.Agents;
 
 namespace TapeLibNET.Toc;
 

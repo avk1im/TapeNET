@@ -1,6 +1,6 @@
 using TapeLibNET.Drive;
 
-namespace TapeLibNET.Tests.TapeFilePacker;
+namespace TapeLibNET.Tests.Packer;
 
 
 /// <summary>

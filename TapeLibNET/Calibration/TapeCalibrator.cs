@@ -1,11 +1,10 @@
 using Microsoft.Extensions.Logging;
+using TapeLibNET.Agents;
+using TapeLibNET.Drive;
+using TapeLibNET.Format;
+using TapeLibNET.Headers;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices;
-
-using TapeLibNET.Format;
-using TapeLibNET.Drive;
-using TapeLibNET.Headers;
-using TapeLibNET.Agents;
 
 namespace TapeLibNET.Calibration;
 

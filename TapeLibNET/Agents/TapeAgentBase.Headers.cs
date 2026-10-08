@@ -1,9 +1,8 @@
 ﻿using Microsoft.Extensions.Logging;
-using Windows.Win32.Foundation;
-
 using TapeLibNET.Headers;
-using TapeLibNET.Toc;
 using TapeLibNET.Media;
+using TapeLibNET.Toc;
+using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Agents;
 

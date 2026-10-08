@@ -1,6 +1,5 @@
-using Xunit;
-
 using HelpNET.Content;
+using Xunit;
 
 // Access internal HelpSlug via InternalsVisibleTo in HelpNET.csproj.
 

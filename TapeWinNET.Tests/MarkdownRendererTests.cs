@@ -1,12 +1,10 @@
 using System.Windows;
 using System.Windows.Documents;
-
-using Xunit;
-
 using HelpNET.Assistants;
 using HelpNET.Content;
 using HelpNET.Session;
 using TapeWinNET.Help;
+using Xunit;
 
 namespace TapeWinNET.Tests;
 

@@ -1,11 +1,9 @@
 using System.Text;
 using System.Text.RegularExpressions;
-
-using Microsoft.Extensions.AI;
-
 using HelpNET.Assistants.SystemPrompts;
 using HelpNET.Content;
 using HelpNET.Retrieval;
+using Microsoft.Extensions.AI;
 
 namespace HelpNET.Assistants;
 

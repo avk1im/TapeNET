@@ -1,15 +1,13 @@
 using System.Runtime.CompilerServices;
 using System.Text;
-
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Windows.Win32.Foundation;
-using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
-
-using TapeLibNET.Remote;
+using TapeLibNET.Calibration;
 using TapeLibNET.Compression;
 using TapeLibNET.Media;
-using TapeLibNET.Calibration;
+using TapeLibNET.Remote;
+using Windows.Win32.Foundation;
+using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
 
 namespace TapeLibNET.Drive;
 

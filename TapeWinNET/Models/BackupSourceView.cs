@@ -1,9 +1,7 @@
 using System.IO;
 using System.Windows;
-
-using TapeLibNET.Toc;
 using TapeLibNET.Agents;
-
+using TapeLibNET.Toc;
 using TapeWinNET.Utils;
 
 namespace TapeWinNET.Models;

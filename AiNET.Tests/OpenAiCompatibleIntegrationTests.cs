@@ -1,9 +1,7 @@
+using AiNET.Providers;
+using AiNET.Tests.Helpers;
 using Microsoft.Extensions.AI;
 using Xunit;
-
-using AiNET.Providers;
-
-using AiNET.Tests.Helpers;
 
 namespace AiNET.Tests;
 

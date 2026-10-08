@@ -2,7 +2,7 @@ using TapeLibNET.Drive;
 using TapeLibNET.Virtual;
 using TapeLibNET.Calibration;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Virtual;
 
 
 /// <summary>

@@ -1,10 +1,8 @@
 using System.Runtime.InteropServices;
-
 using Microsoft.Extensions.Logging;
+using TapeLibNET.Media;
 using Windows.Win32;
 using Windows.Win32.Foundation;
-
-using TapeLibNET.Media;
 
 namespace TapeLibNET.Drive;
 

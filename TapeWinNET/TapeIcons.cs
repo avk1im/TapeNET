@@ -4,12 +4,10 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-
-using Windows.Win32;
-using Windows.Win32.UI.Shell;
-
 using TapeWinNET.Models;
 using TapeWinNET.Utils;
+using Windows.Win32;
+using Windows.Win32.UI.Shell;
 
 namespace TapeWinNET;
 

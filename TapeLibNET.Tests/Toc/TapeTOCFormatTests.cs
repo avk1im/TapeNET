@@ -4,7 +4,7 @@ using TapeLibNET.Format;
 using TapeLibNET.Compression;
 using TapeLibNET.Toc;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Toc;
 
 
 /// <summary>

@@ -1,6 +1,5 @@
-using Xunit;
-
 using AiNET.Providers;
+using Xunit;
 
 namespace AiNET.Tests;
 

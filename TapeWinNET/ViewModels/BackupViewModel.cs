@@ -2,16 +2,13 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
-
 using Microsoft.Win32;
-using Windows.Win32.System.SystemServices; // for Helpers
-
 using TapeLibNET.Compression;
-using TapeLibNET.Toc;
 using TapeLibNET.Services;
-
+using TapeLibNET.Toc;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
+using Windows.Win32.System.SystemServices; // for Helpers
 
 namespace TapeWinNET.ViewModels;
 

@@ -6,7 +6,7 @@ using TapeLibNET.Headers;
 using TapeLibNET.Calibration;
 using TapeLibNET.Scan;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Scan;
 
 
 /// <summary>

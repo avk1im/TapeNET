@@ -1,10 +1,8 @@
 using System.CommandLine;
-
-using TapeLibNET.Scan;
-using TapeLibNET.Services;
-
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
+using TapeLibNET.Scan;
+using TapeLibNET.Services;
 
 namespace TapeConNET.Cli;
 

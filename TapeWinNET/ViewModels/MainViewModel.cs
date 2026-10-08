@@ -3,22 +3,18 @@ using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
-
-using Windows.Win32.System.SystemServices; // for Helpers
-
 using FclNET;
-
-using TapeLibNET.Drive;
-using TapeLibNET.Virtual;
-using TapeLibNET.Compression;
-using TapeLibNET.Toc;
 using TapeLibNET.Agents;
+using TapeLibNET.Compression;
+using TapeLibNET.Drive;
 using TapeLibNET.Services;
-
+using TapeLibNET.Toc;
+using TapeLibNET.Virtual;
 using TapeWinNET.Controls;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
 using TapeWinNET.Utils;
+using Windows.Win32.System.SystemServices; // for Helpers
 
 namespace TapeWinNET.ViewModels;
 

@@ -1,9 +1,7 @@
 using System.Windows;
 using System.Windows.Input;
-
-using TapeLibNET.Toc;
 using TapeLibNET.Services;
-
+using TapeLibNET.Toc;
 using TapeWinNET.Models;
 using TapeWinNET.Utils;
 

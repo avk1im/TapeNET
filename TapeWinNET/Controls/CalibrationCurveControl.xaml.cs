@@ -3,10 +3,8 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
-
-using Windows.Win32.System.SystemServices; // Helpers.BytesToString
-
 using TapeLibNET.Calibration;
+using Windows.Win32.System.SystemServices; // Helpers.BytesToString
 
 namespace TapeWinNET.Controls;
 

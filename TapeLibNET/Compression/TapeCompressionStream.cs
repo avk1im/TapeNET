@@ -1,7 +1,6 @@
-using ZstdNet;
-
-using TapeLibNET.Toc;
 using TapeLibNET.Media;
+using TapeLibNET.Toc;
+using ZstdNet;
 
 namespace TapeLibNET.Compression;
 

@@ -1,7 +1,6 @@
+using AiNET.Internal;
 using Anthropic.SDK;
 using Microsoft.Extensions.AI;
-
-using AiNET.Internal;
 
 namespace AiNET.Providers;
 

@@ -4,7 +4,7 @@ using TapeLibNET.Toc;
 
 using TapeLibNET.Tests.Helpers;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Virtual;
 
 
 /// <summary>

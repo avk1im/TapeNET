@@ -1,9 +1,12 @@
 using TapeLibNET.Drive;
 using TapeLibNET.Remote;
 
+using TapeLibNET.Tests.Agents;
 using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Tests.Toc;
+using TapeLibNET.Tests.Virtual;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Remote;
 
 
 /// <summary>

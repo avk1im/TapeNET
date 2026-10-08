@@ -1,6 +1,5 @@
-﻿using Windows.Win32.System.SystemServices;
-
-using TapeLibNET.Agents;
+﻿using TapeLibNET.Agents;
+using Windows.Win32.System.SystemServices;
 
 namespace TapeLibNET.Services;
 

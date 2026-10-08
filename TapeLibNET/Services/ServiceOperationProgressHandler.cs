@@ -1,11 +1,10 @@
-using Windows.Win32.Foundation;
-using Windows.Win32.System.SystemServices; // Helpers.BytesToString
-
-using TapeLibNET.Headers;
-using TapeLibNET.Toc;
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
+using TapeLibNET.Headers;
 using TapeLibNET.Scan;
+using TapeLibNET.Toc;
+using Windows.Win32.Foundation;
+using Windows.Win32.System.SystemServices; // Helpers.BytesToString
 
 namespace TapeLibNET.Services;
 

@@ -1,11 +1,10 @@
 using System.Buffers.Binary;
 using System.Reflection;
 using System.Text;
-
-using TapeLibNET.Format;
-using TapeLibNET.Compression;
-using TapeLibNET.Legacy;
 using TapeLibNET.Agents;
+using TapeLibNET.Compression;
+using TapeLibNET.Format;
+using TapeLibNET.Legacy;
 
 namespace TapeLibNET.Toc;
 

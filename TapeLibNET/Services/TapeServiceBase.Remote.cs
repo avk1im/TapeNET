@@ -1,9 +1,8 @@
 using Grpc.Core;
 using Grpc.Net.Client;
-
 using TapeLibNET.Drive;
-using TapeLibNET.Virtual;
 using TapeLibNET.Remote;
+using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Services;
 

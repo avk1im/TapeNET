@@ -1,6 +1,5 @@
-using Xunit;
-
 using HelpNET.Content;
+using Xunit;
 
 namespace HelpNET.Tests;
 

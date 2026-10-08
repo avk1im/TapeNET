@@ -1,8 +1,7 @@
 using System.IO.Hashing;
-
-using TapeLibNET.Streams;
-using TapeLibNET.Format;
 using TapeLibNET.Compression;
+using TapeLibNET.Format;
+using TapeLibNET.Streams;
 using TapeLibNET.Toc;
 
 namespace TapeLibNET.Legacy;

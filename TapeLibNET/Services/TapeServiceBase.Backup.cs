@@ -1,10 +1,9 @@
-using Windows.Win32.System.SystemServices; // Helpers, Stopwatch
-using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
-
+using TapeLibNET.Agents;
 using TapeLibNET.Compression;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
-using TapeLibNET.Agents;
+using Windows.Win32.System.SystemServices; // Helpers, Stopwatch
+using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
 
 namespace TapeLibNET.Services;
 

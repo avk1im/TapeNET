@@ -1,6 +1,6 @@
 using TapeLibNET.Virtual;   // VirtualTapeMedia, TapeMarkType
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Virtual;
 
 
 /// <summary>

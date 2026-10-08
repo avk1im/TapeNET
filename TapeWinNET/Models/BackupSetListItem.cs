@@ -1,10 +1,8 @@
 ﻿using System.ComponentModel;
 using System.Windows.Media.Imaging;
-
-using Windows.Win32.System.SystemServices; // for Helpers
-
 using TapeLibNET.Compression;
 using TapeLibNET.Toc;
+using Windows.Win32.System.SystemServices; // for Helpers
 
 namespace TapeWinNET.Models;
 

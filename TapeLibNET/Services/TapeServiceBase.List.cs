@@ -1,10 +1,8 @@
 using System.Diagnostics; // TapeTOC, TapeFileInfo, ITapeFileFilter
-
-using Windows.Win32.System.SystemServices; // Helpers
-
+using TapeLibNET.Agents;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
-using TapeLibNET.Agents;
+using Windows.Win32.System.SystemServices; // Helpers
 
 namespace TapeLibNET.Services;
 

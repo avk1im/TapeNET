@@ -1,8 +1,6 @@
 using TapeConNET.Infrastructure;
-
-using TapeLibNET.Tests.Helpers; // TempVirtualMedia (linked)
-
 using TapeConNET.Tests.Helpers;
+using TapeLibNET.Tests.Helpers; // TempVirtualMedia (linked)
 
 namespace TapeConNET.Tests;
 

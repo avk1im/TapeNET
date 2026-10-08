@@ -1,8 +1,8 @@
-using TapeLibNET.Format;
-using TapeLibNET.Toc;
-using TapeLibNET.Legacy;
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
+using TapeLibNET.Format;
+using TapeLibNET.Legacy;
+using TapeLibNET.Toc;
 
 namespace TapeLibNET.Headers;
 

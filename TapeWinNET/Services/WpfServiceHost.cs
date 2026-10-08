@@ -1,17 +1,14 @@
 using System.Globalization;
 using System.Windows;
 using System.Windows.Threading;
-
-using Windows.Win32.System.SystemServices; // Helpers.BytesToString
-
-using TapeLibNET.Virtual;
 using TapeLibNET.Agents;
 using TapeLibNET.Services;
-
+using TapeLibNET.Virtual;
 // ReSharper disable once RedundantUsingDirective — WpfServiceHost itself lives in TapeWinNET.Services
 // but its prompt methods reference dialogs from the TapeWinNET root namespace.
 using TapeWinNET.Models;
 using TapeWinNET.ViewModels;
+using Windows.Win32.System.SystemServices; // Helpers.BytesToString
 
 namespace TapeWinNET.Services;
 

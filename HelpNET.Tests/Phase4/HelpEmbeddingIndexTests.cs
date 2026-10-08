@@ -1,7 +1,6 @@
-using Xunit;
-
 using HelpNET.Embeddings;
 using HelpNET.Retrieval;
+using Xunit;
 
 namespace HelpNET.Tests.Phase4;
 

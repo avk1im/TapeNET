@@ -7,7 +7,7 @@ using TapeLibNET.Calibration;
 
 using TapeLibNET.Tests.Helpers;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Legacy;
 
 
 /// <summary>
@@ -16,8 +16,9 @@ namespace TapeLibNET.Tests;
 /// </summary>
 public class LegacyGoldenTests
 {
-    private static string GoldenPath(string name, [System.Runtime.CompilerServices.CallerFilePath] string thisFile = "") =>
-        Path.Combine(Path.GetDirectoryName(thisFile)!, "Golden", "Legacy", name);
+    private static string GoldenDir() => GoldenPaths.Legacy;
+
+    private static string GoldenPath(string name) => Path.Combine(GoldenDir(), name);
 
     private static byte[] Load(string name) => File.ReadAllBytes(GoldenPath(name));
 

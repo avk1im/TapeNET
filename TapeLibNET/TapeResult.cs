@@ -1,8 +1,6 @@
 ﻿using System.ComponentModel;
-
-using Windows.Win32.Foundation;
-
 using TapeLibNET.Agents;
+using Windows.Win32.Foundation;
 
 namespace TapeLibNET;
 

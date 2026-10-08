@@ -1,12 +1,10 @@
 using System.CommandLine;
-
-using TapeLibNET.Virtual;
-using TapeLibNET.Services;
-
 using TapeConNET.Infrastructure;
 using TapeConNET.Logging;
 using TapeConNET.Services;
 using TapeConNET.Ux;
+using TapeLibNET.Services;
+using TapeLibNET.Virtual;
 
 namespace TapeConNET.Cli;
 

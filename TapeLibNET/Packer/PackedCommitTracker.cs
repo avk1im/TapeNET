@@ -1,8 +1,7 @@
 using Microsoft.Extensions.Logging;
-
+using TapeLibNET.Agents;
 using TapeLibNET.Compression;
 using TapeLibNET.Toc;
-using TapeLibNET.Agents;
 
 namespace TapeLibNET.Packer;
 

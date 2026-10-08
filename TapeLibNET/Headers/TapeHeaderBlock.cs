@@ -1,8 +1,7 @@
-using Windows.Win32.Foundation;
-
+using TapeLibNET.Calibration;
 using TapeLibNET.Drive;
 using TapeLibNET.Media;
-using TapeLibNET.Calibration;
+using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Headers;
 

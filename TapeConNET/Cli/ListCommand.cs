@@ -1,10 +1,8 @@
 using System.CommandLine;
-
-using TapeLibNET.Services;
-
 using TapeConNET.Filtering;
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
+using TapeLibNET.Services;
 
 namespace TapeConNET.Cli;
 

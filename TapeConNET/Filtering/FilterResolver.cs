@@ -1,8 +1,6 @@
 using FclNET;
-
-using TapeLibNET.Agents;
-
 using TapeConNET.Infrastructure;
+using TapeLibNET.Agents;
 
 namespace TapeConNET.Filtering;
 

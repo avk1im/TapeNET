@@ -1,9 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
-
+using TapeConNET.Ux;
 using TapeLibNET.Agents;
 using TapeLibNET.Services;
-
-using TapeConNET.Ux;
 
 namespace TapeConNET.Services;
 

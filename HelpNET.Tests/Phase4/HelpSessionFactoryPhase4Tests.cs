@@ -1,9 +1,8 @@
-using Microsoft.Extensions.AI;
-using Xunit;
-
 using AiNET;
 using HelpNET.Assistants;
 using HelpNET.Session;
+using Microsoft.Extensions.AI;
+using Xunit;
 
 namespace HelpNET.Tests.Phase4;
 

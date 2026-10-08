@@ -1,8 +1,6 @@
 using TapeConNET.Infrastructure;
-
-using TapeLibNET.Tests.Helpers; // linked TempFileTree, FileComparer, TempVirtualMedia
-
 using TapeConNET.Tests.Helpers;
+using TapeLibNET.Tests.Helpers; // linked TempFileTree, FileComparer, TempVirtualMedia
 
 namespace TapeConNET.Tests;
 

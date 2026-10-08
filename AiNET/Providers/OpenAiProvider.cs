@@ -1,9 +1,7 @@
 using System.ClientModel;
-
+using AiNET.Internal;
 using Microsoft.Extensions.AI;
 using OpenAI;
-
-using AiNET.Internal;
 
 namespace AiNET.Providers;
 

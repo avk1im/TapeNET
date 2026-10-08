@@ -1,6 +1,5 @@
-using Microsoft.Extensions.Logging;
-
 using AiNET;
+using Microsoft.Extensions.Logging;
 
 namespace TapeWinNET.Services;
 

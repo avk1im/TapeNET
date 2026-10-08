@@ -1,16 +1,14 @@
 ﻿using System.Diagnostics;
-
 using Microsoft.Extensions.Logging;
-using Windows.Win32.Foundation;
-using Windows.Win32.System.SystemServices;
-
-using TapeLibNET.Streams;
-using TapeLibNET.Drive;
 using TapeLibNET.Compression;
+using TapeLibNET.Drive;
 using TapeLibNET.Headers;
-using TapeLibNET.Toc;
 using TapeLibNET.Media;
 using TapeLibNET.Packer;
+using TapeLibNET.Streams;
+using TapeLibNET.Toc;
+using Windows.Win32.Foundation;
+using Windows.Win32.System.SystemServices;
 
 namespace TapeLibNET.Agents;
 

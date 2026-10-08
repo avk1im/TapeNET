@@ -1,9 +1,7 @@
 using System.Windows.Input;
-
-using Windows.Win32.System.SystemServices; // Helpers.BytesToStringLong
-
 using TapeLibNET.Calibration;
 using TapeLibNET.Services;
+using Windows.Win32.System.SystemServices; // Helpers.BytesToStringLong
 
 namespace TapeWinNET.ViewModels;
 

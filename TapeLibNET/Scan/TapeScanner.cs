@@ -1,13 +1,11 @@
 using System.Diagnostics;
-
 using Microsoft.Extensions.Logging;
-using Windows.Win32.Foundation;
-
+using TapeLibNET.Agents;
+using TapeLibNET.Calibration;
 using TapeLibNET.Drive;
 using TapeLibNET.Headers;
 using TapeLibNET.Media;
-using TapeLibNET.Agents;
-using TapeLibNET.Calibration;
+using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Scan;
 

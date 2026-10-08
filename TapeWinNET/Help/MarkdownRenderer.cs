@@ -3,11 +3,9 @@ using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Documents;
 using System.Windows.Media;
-
-using Markdig;
-
 using HelpNET.Content;
 using HelpNET.Session;
+using Markdig;
 
 namespace TapeWinNET.Help;
 

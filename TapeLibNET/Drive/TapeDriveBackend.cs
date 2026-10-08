@@ -1,10 +1,8 @@
 using System.Runtime.CompilerServices;
-
 using Microsoft.Extensions.Logging;
-using Windows.Win32.Foundation;
-
-using TapeLibNET.Media;
 using TapeLibNET.Calibration;
+using TapeLibNET.Media;
+using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Drive;
 

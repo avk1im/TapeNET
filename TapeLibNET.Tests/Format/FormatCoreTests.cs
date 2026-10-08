@@ -3,7 +3,7 @@ using System.IO.Hashing;
 
 using TapeLibNET.Format;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Format;
 
 
 /// <summary>Phase 1 (Design-Format-v2 §11.2): the format core in <c>TapeLibNET/Format/</c>.</summary>

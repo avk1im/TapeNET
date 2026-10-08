@@ -1,7 +1,7 @@
 ﻿using TapeLibNET.Headers;
 using TapeLibNET.Toc;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Headers;
 
 
 /// <summary>

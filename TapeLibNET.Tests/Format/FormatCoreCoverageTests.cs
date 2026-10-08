@@ -4,7 +4,7 @@ using System.Reflection;
 
 using TapeLibNET.Format;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Format;
 
 
 /// <summary>

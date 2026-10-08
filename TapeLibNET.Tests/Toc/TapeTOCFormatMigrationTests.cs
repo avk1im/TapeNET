@@ -6,7 +6,7 @@ using TapeLibNET.Legacy;
 
 using TapeLibNET.Tests.Helpers;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Toc;
 
 
 /// <summary>

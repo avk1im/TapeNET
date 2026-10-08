@@ -1,8 +1,6 @@
 using TapeConNET.Infrastructure;
-
-using TapeLibNET.Tests.Helpers;
-
 using TapeConNET.Tests.Helpers;
+using TapeLibNET.Tests.Helpers;
 
 namespace TapeConNET.Tests;
 

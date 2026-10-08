@@ -1,17 +1,15 @@
 ﻿using System.Diagnostics;
 using System.IO.Hashing;
-
 using Microsoft.Extensions.Logging;
-using Windows.Win32.Foundation;
-
-using TapeLibNET.Streams;
-using TapeLibNET.Format;
-using TapeLibNET.Drive;
 using TapeLibNET.Compression;
+using TapeLibNET.Drive;
+using TapeLibNET.Format;
 using TapeLibNET.Headers;
-using TapeLibNET.Toc;
 using TapeLibNET.Legacy;
 using TapeLibNET.Media;
+using TapeLibNET.Streams;
+using TapeLibNET.Toc;
+using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Agents;
 

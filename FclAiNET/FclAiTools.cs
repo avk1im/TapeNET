@@ -1,9 +1,7 @@
 using System.ComponentModel;
 using System.Text;
-
-using Microsoft.Extensions.AI;
-
 using FclNET;
+using Microsoft.Extensions.AI;
 
 namespace FclAiNET;
 

@@ -1,8 +1,6 @@
 using System.Windows;
-
-using Xunit;
-
 using TapeWinNET.Help;
+using Xunit;
 
 namespace TapeWinNET.Tests;
 

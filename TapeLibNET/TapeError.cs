@@ -2,11 +2,9 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
-
 using Microsoft.Extensions.Logging;
-using Windows.Win32.Foundation;
-
 using TapeLibNET.Drive;
+using Windows.Win32.Foundation;
 
 namespace TapeLibNET;
 

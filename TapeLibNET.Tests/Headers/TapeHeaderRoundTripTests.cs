@@ -8,9 +8,10 @@ using TapeLibNET.Headers;
 using TapeLibNET.Toc;
 using TapeLibNET.Calibration;
 
+using TapeLibNET.Tests.Agents;
 using TapeLibNET.Tests.Helpers;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Headers;
 
 
 /// <summary>

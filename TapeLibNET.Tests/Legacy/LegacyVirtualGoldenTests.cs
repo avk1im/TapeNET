@@ -3,7 +3,7 @@ using TapeLibNET.Agents;
 
 using TapeLibNET.Tests.Helpers;
 
-namespace TapeLibNET.Tests;
+namespace TapeLibNET.Tests.Legacy;
 
 
 /// <summary>

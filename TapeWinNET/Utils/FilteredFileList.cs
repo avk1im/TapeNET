@@ -1,8 +1,7 @@
 using System.Collections;
 using System.ComponentModel;
-
-using TapeLibNET.Toc;
 using TapeLibNET.Agents;
+using TapeLibNET.Toc;
 
 namespace TapeWinNET.Utils;
 

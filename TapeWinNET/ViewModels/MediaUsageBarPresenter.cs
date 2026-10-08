@@ -1,12 +1,9 @@
 using System.Windows.Input;
-
-using Windows.Win32.System.SystemServices; // for Helpers
-
 using TapeLibNET.Toc;
-
 using TapeWinNET.Controls;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
+using Windows.Win32.System.SystemServices; // for Helpers
 
 namespace TapeWinNET.ViewModels;
 

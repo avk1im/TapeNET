@@ -1,7 +1,6 @@
-using Microsoft.Extensions.AI;
-
 using HelpNET.Content;
 using HelpNET.Retrieval;
+using Microsoft.Extensions.AI;
 
 namespace HelpNET.Embeddings;
 
