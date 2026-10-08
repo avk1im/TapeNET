@@ -3,18 +3,19 @@ using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+
 using FclNET;
+
 using TapeLibNET.Agents;
-using TapeLibNET.Compression;
 using TapeLibNET.Drive;
 using TapeLibNET.Services;
 using TapeLibNET.Toc;
 using TapeLibNET.Virtual;
+
 using TapeWinNET.Controls;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
 using TapeWinNET.Utils;
-using Windows.Win32.System.SystemServices; // for Helpers
 
 namespace TapeWinNET.ViewModels;
 
@@ -1563,6 +1564,24 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Renders a library property as a pane row. The writable-capacity row carries a fill ratio, which WPF turns into
+    ///  its own traffic-light warning highlight; every other row keeps the level the library assigned.
+    /// </summary>
+    private static PropertyItem ToPropertyItem(ServiceProperty p)
+        => new(p.Label, p.Value,
+            highlightLevel: p.Ratio is { } ratio ? WarningLevelHelper.Translate(ratio) : p.Level);
+
+    /// <summary>Appends <paramref name="properties"/> to <paramref name="target"/>.</summary>
+    private static void ShowProperties(ObservableCollection<PropertyItem> target, IEnumerable<ServiceProperty> properties)
+    {
+        foreach (var p in properties)
+            target.Add(ToPropertyItem(p));
+    }
+
+    /// <summary>
+    /// Populates Properties pane with drive identity and capacity properties from <see cref="TapeServiceBase.DescribeDrive"/>.
+    /// </summary>
     private void LoadDriveInfo()
     {
         PropertyList.Clear();
@@ -1573,80 +1592,19 @@ public partial class MainViewModel : ViewModelBase
         TableHeader = ""; // Not visible for drive
         UsageBar.Clear();
 
-        PropertyList.Add(new PropertyItem("Device Name", _tapeService.DeviceName));
-        string model = _tapeService.DeviceVendor;
-        if (!string.IsNullOrEmpty(_tapeService.DeviceProduct))
-            model += $" {_tapeService.DeviceProduct}";
-        if (!string.IsNullOrEmpty(_tapeService.DeviceRevision))
-            model += $" rev {_tapeService.DeviceRevision}";
-        if (!string.IsNullOrEmpty(model))
-            PropertyList.Add(new PropertyItem("Device Model", model));
-        PropertyList.Add(new PropertyItem("Drive Open", _tapeService.IsDriveOpen ? "Yes" : "No"));
-
-        if (_tapeService.IsDriveOpen)
-        {
-            PropertyList.Add(new PropertyItem("Supports Multiple Partitions", 
-                _tapeService.SupportsInitiatorPartition ? "Yes" : "No"));
-            PropertyList.Add(new PropertyItem("Supports Setmarks", 
-                _tapeService.SupportsSetmarks ? "Yes" : "No"));
-            PropertyList.Add(new PropertyItem("Supports Sequential Filemarks", 
-                _tapeService.SupportsSeqFilemarks ? "Yes" : "No"));
-            PropertyList.Add(new PropertyItem("Block Size (Min)", 
-                Helpers.BytesToString(_tapeService.MinimumBlockSize)));
-            PropertyList.Add(new PropertyItem("Block Size (Default)", 
-                Helpers.BytesToString(_tapeService.DefaultBlockSize)));
-            PropertyList.Add(new PropertyItem("Block Size (Max)", 
-                Helpers.BytesToString(_tapeService.MaximumBlockSize)));
-
-            PropertyList.Add(new PropertyItem("Media Loaded", 
-                _tapeService.IsMediaLoaded ? "Yes" : "No"));
-
-            if (_tapeService.IsMediaLoaded)
-            {
-                PropertyList.Add(new PropertyItem("Partition Count", 
-                    _tapeService.PartitionCount.ToString()));
-                AddCapacityProperties();
-            }
-        }
+        ShowProperties(PropertyList, _tapeService.DescribeDrive());
 
         StatusMessage = "Drive information displayed";
 
-        // Append remote connection calInfo section when a remote host is active (§2.6)
+        // Append remote connection info section when a remote host is active (§2.6)
         if (IsRemoteConnected)
             AppendRemoteConnectionInfo();
     }
 
     /// <summary>
-    /// Appends the shared capacity block to <see cref="PropertyList"/>, using the strict semantics of
-    ///  docs/Design-RemainingAndEw.md §5.1: the driver's optimistic REPORTED figures are shown beside our
-    ///  corrected ESTIMATES, and the WRITABLE space — the number the user actually spends — is called out
-    ///  on its own row, followed by the provenance of the estimate.
-    /// <para>
-    /// Reported and estimated are never mixed within one row's arithmetic; each is quoted on its own axis.
-    /// </para>
-    /// </summary>
-    private void AddCapacityProperties()
-    {
-        static string pair(long reported, long estimated)
-            => $"{Helpers.BytesToStringLong(reported)} / {Helpers.BytesToStringLong(estimated)}";
-
-        PropertyList.Add(new PropertyItem("Capacity reported / estimated",
-            pair(_tapeService.Capacity, _tapeService.EstimatedCapacity)));
-        PropertyList.Add(new PropertyItem("Remaining reported / estimated",
-            pair(_tapeService.ReportedContentRemaining, _tapeService.EstimatedContentRemaining)));
-        // The headline figure — highlighted because it is the one the user plans a backup against.
-        PropertyList.Add(new PropertyItem("Writable",
-            Helpers.BytesToStringLong(_tapeService.WritableRemaining),
-            highlightLevel: WarningLevelHelper.Translate(_tapeService.WritableRemaining / (double)_tapeService.EstimatedCapacity)));
-        PropertyList.Add(new PropertyItem("Estimation by", _tapeService.RemainingEstimationSource,
-            highlightLevel: _tapeService.IsEarlyWarning? WarningLevel.Warning : WarningLevel.None));
-    }
-
-    /// <summary>
-    /// Populates the calibration property pane for a Calibration Cartridge tree node, mirroring
-    ///  <see cref="TapeServiceBase.LogCalibrationInfo"/> — the identity/summary rows go into the
-    ///  upper Properties pane, and the plan/run details go into the lower <see cref="CalibrationPropertyList"/>
-    ///  pane (in place of the backup-set/file table).
+    /// Populates the Calibration panes for a Calibration Cartridge tree node: the drive / media context in the upper
+    ///  Properties pane, the run header and run trail in the lower <see cref="CalibrationPropertyList"/> pane (in place
+    ///  of the backup-set / file table). Both from the service's property sheets — the same rows the CLI lists.
     /// </summary>
     private void LoadCalibrationInfo()
     {
@@ -1659,70 +1617,26 @@ public partial class MainViewModel : ViewModelBase
         TableHeader = "Calibration Details";
         UsageBar.Clear();
 
-        if (_tapeService.CalibrationHeader is not { } calHeader)
+        if (_tapeService.CalibrationHeader is null)
         {
-            PropertyList.Add(new PropertyItem("Status", "No calibration data available"));
+            ShowProperties(PropertyList, _tapeService.DescribeCalibrationRun());   // the "no data" status row
             StatusMessage = "No calibration data available";
             return;
         }
 
-        // Upper pane: the same drive/media identity properties shown for any drive with media loaded
-        //  but no TOC — the calibration cartridge is, after all, just media without a backup TOC.
-        PropertyList.Add(new PropertyItem("Device Name", _tapeService.DeviceName));
-        string model = _tapeService.DeviceVendor;
-        if (!string.IsNullOrEmpty(_tapeService.DeviceProduct))
-            model += $" {_tapeService.DeviceProduct}";
-        if (!string.IsNullOrEmpty(_tapeService.DeviceRevision))
-            model += $" rev {_tapeService.DeviceRevision}";
-        if (!string.IsNullOrEmpty(model))
-            PropertyList.Add(new PropertyItem("Device Model", model));
-        PropertyList.Add(new PropertyItem("Media Loaded", _tapeService.IsMediaLoaded ? "Yes" : "No"));
-        if (_tapeService.IsMediaLoaded)
-        {
-            PropertyList.Add(new PropertyItem("Partition Count", _tapeService.PartitionCount.ToString()));
-            AddCapacityProperties();
-        }
+        // Upper pane: the drive as context — a calibration cartridge is media without a backup TOC.
+        ShowProperties(PropertyList, _tapeService.DescribeDrive(includeCapabilities: false));
 
-        // Lower pane: everything the calibration calHeader reveals (mirrors LogCalibrationInfo).
-        CalibrationPropertyList.Add(new PropertyItem("Status", "Calibration cartridge (no backup TOC)"));
-        CalibrationPropertyList.Add(new PropertyItem("Profile key", calHeader.ProfileKey));
-        CalibrationPropertyList.Add(new PropertyItem("Run id", calHeader.RunId.ToString("N")));
-        CalibrationPropertyList.Add(new PropertyItem("Started", calHeader.StartedUtc.ToString("u")));
-        CalibrationPropertyList.Add(new PropertyItem("Reported capacity at BOM",
-            Helpers.BytesToStringLong(calHeader.CapacityReportedAtBom)));
-
-        var plan = calHeader.Plan;
-        CalibrationPropertyList.Add(new PropertyItem("Planned samples",
-            $"{plan.SampleCount:N0} (body {plan.BodySampleCount:N0}, tail {plan.TailSampleCount:N0})"));
-        CalibrationPropertyList.Add(new PropertyItem("Planned checkpoints", plan.NumCheckpoints.ToString("N0")));
-        CalibrationPropertyList.Add(new PropertyItem("Run block size", Helpers.BytesToStringLong(calHeader.RunBlockSize)));
+        // Lower pane: the run header, and the run trail once "Inspect Media" has read it.
+        ShowProperties(CalibrationPropertyList, _tapeService.DescribeCalibrationRun());
 
         StatusMessage = "Calibration cartridge (no backup TOC)";
-
-        // Optional enrichment: the checkpoint-derived run state, present only after a modal Inspect.
-        if (_tapeService.CalibrationInfo is { } calInfo)
-        {
-            CalibrationPropertyList.Add(new PropertyItem("— Run trail —", string.Empty));
-            CalibrationPropertyList.Add(new PropertyItem("Resumable",
-                calInfo.IsResumable ? "Yes" : "No",
-                highlightLevel: calInfo.IsResumable ? WarningLevel.None : WarningLevel.Warning));
-            CalibrationPropertyList.Add(new PropertyItem("Appears complete",
-                calInfo.AppearsComplete ? "Yes" : "No"));
-            CalibrationPropertyList.Add(new PropertyItem("Checkpointed",
-                Helpers.BytesToStringLong(calInfo.CheckpointedBytes)));
-            CalibrationPropertyList.Add(new PropertyItem("Progress", $"{calInfo.ProgressFraction:P0}"));
-            // TODO verify the exact property name on TapeCalibrationMediaInfo for the EW-captured flag,
-            //  e.g. calInfo.EarlyWarningCaptured / calInfo.HasEarlyWarning — surfaced by InspectMedia().
-            // CalibrationPropertyList.Add(new PropertyItem("EW captured", calInfo.EarlyWarningCaptured ? "Yes" : "No"));
-        }
-        else
-        {
-            CalibrationPropertyList.Add(new PropertyItem("Run trail",
-                "Not loaded — use “Inspect Media” to read checkpoints",
-                highlightLevel: WarningLevel.Info));
-        }
     }
 
+    /// <summary>
+    /// Populates the Properties pane with media properties from <see cref="TapeServiceBase.DescribeMedia"/>,
+    ///  sets the <see cref="StatusMessage"/> and rebuilds the <see cref="UsageBar"/>.
+    /// </summary>
     private void LoadMediaInfo()
     {
         PropertyList.Clear();
@@ -1731,34 +1645,14 @@ public partial class MainViewModel : ViewModelBase
         ContentType = ContentPaneType.MediaInfo;
         PropertiesHeader = "Media Properties";
 
+        ShowProperties(PropertyList, _tapeService.DescribeMedia());
+
         if (_tapeService.TOC is not { } toc)
         {
-            PropertyList.Add(new PropertyItem("Status", "No TOC available"));
             TableHeader = "Backup Sets";
             StatusMessage = "No media information available";
             return;
         }
-
-        // Populate media properties
-        PropertyList.Add(new PropertyItem("Description", toc.Description ?? "(unnamed)"));
-        if (toc.MediaId != Guid.Empty)
-            PropertyList.Add(new PropertyItem("Media ID", toc.MediaId.ToString()));
-        PropertyList.Add(new PropertyItem("Created On", toc.CreationTime.ToLocalTime().ToString("G")));
-        PropertyList.Add(new PropertyItem("Last Saved", toc.LastSaveTime.ToLocalTime().ToString("G")));
-        PropertyList.Add(new PropertyItem("Backup Sets", toc.Count.ToString()));
-        PropertyList.Add(new PropertyItem("Used", Helpers.BytesToStringLong(_tapeService.Used)));
-        AddCapacityProperties();
-        PropertyList.Add(new PropertyItem("TOC Placement", 
-            _tapeService.TOCIsFrom is TOCSource.File
-                ? $"File: {_tapeService.TOCFilePath}"
-                : (_tapeService.HasInitiatorPartition ? "Partition" : "Set")
-                    + ((_tapeService.TOCIsFrom is TOCSource.Recovered) ? "(recovered TOC)" : string.Empty),
-            highlightLevel: _tapeService.TOCIsFrom is TOCSource.File or TOCSource.Recovered
-                ? WarningLevel.Warning
-                : WarningLevel.None));
-        PropertyList.Add(new PropertyItem("Volume", $"#{toc.Volume}"));
-        PropertyList.Add(new PropertyItem("Continued on Next Volume", 
-            toc.ContinuedOnNextVolume ? "Yes" : "No"));
 
         // Populate backup sets table (newest-first, with checked-state sync)
         _tocView ??= new TOCView(toc);
@@ -1766,7 +1660,7 @@ public partial class MainViewModel : ViewModelBase
         foreach (var item in _tocView.BuildBackupSetItemList())
             BackupSetList.Add(item);
 
-        // Refresh the calHeader "select all" checkbox — items may carry partial
+        // Refresh the header "select all" checkbox — items may carry partial
         //  (null) checked state from per-file selections in a previous visit.
         OnPropertyChanged(nameof(AreAllBackupSetsChecked));
 
@@ -1774,7 +1668,6 @@ public partial class MainViewModel : ViewModelBase
         StatusMessage = _tapeService.TOCIsFrom is TOCSource.File
             ? $"\u26a0 TOC: {Path.GetFileName(_tapeService.TOCFilePath)} | Media: {mediaName} - {toc.Count} backup set(s)"
             : $"Media: {mediaName} - {toc.Count} backup set(s)";
-
         if (_tapeService.TOCIsFrom is TOCSource.Recovered)
             StatusMessage += " (using recovered TOC)";
 
@@ -1782,6 +1675,11 @@ public partial class MainViewModel : ViewModelBase
         UsageBar.Rebuild();
     }
 
+    /// <summary>
+    /// Populates the Properties pane with backup-set properties from <see cref="TapeServiceBase.DescribeSet"/>,
+    ///  builds the <see cref="FileList"/> and updates the <see cref="StatusMessage"/>.
+    /// </summary>
+    /// <param name="setIndex">The index of the backup set to load.</param>
     private void LoadBackupSetInfo(int setIndex)
     {
         if (_tapeService.TOC is not { } toc || _tocView is null)
@@ -1792,39 +1690,16 @@ public partial class MainViewModel : ViewModelBase
         ClearFileFilter();
         FileList = [];
         ContentType = ContentPaneType.BackupSetInfo;
-        TableHeader = "Files"; // Reset early to avoid showing stale backup-set calHeader
+        TableHeader = "Files"; // Reset early to avoid showing stale backup-set header
         UsageBar.Clear();
 
         try
         {
-            toc.CurrentSetIndex = setIndex;
-            var setTOC = toc.CurrentSetTOC;
-            int totalSets = toc.Count;
             int altIndex = toc.SetIndexToAlt(setIndex);
-
             PropertiesHeader = $"Backup Set #{setIndex} | {altIndex} Properties";
 
-            // Populate backup set properties
-            PropertyList.Add(new PropertyItem("Description", setTOC.Description ?? "(unnamed)"));
-            PropertyList.Add(new PropertyItem("Set Index", $"#{setIndex} | {altIndex}"));
-            PropertyList.Add(new PropertyItem("Files", setTOC.Count.ToString("N0")));
-            PropertyList.Add(new PropertyItem("Total File Size",
-                Helpers.BytesToStringLong(setTOC.Sum(tfi => tfi.FileDescr.Length))));
-            PropertyList.Add(new PropertyItem("Total File Size on Media",
-                Helpers.BytesToStringLong(setTOC.ComputeTotalFileSizeOnTape(_tapeService.DefaultBlockSize))));
-            PropertyList.Add(new PropertyItem("Created On", setTOC.CreationTime.ToLocalTime().ToString("G")));
-            PropertyList.Add(new PropertyItem("Last Saved", setTOC.LastSaveTime.ToLocalTime().ToString("G")));
-            PropertyList.Add(new PropertyItem("Block Size", Helpers.BytesToStringLong(setTOC.BlockSize)));
-            PropertyList.Add(new PropertyItem("Hash Algorithm", setTOC.HashAlgorithm.ToString()));
-            PropertyList.Add(new PropertyItem("Compression",
-                CompressionPreset.DisplayName(setTOC.Compression, setTOC.CompressionLevel)));
-            PropertyList.Add(new PropertyItem("Incremental", setTOC.Incremental ? "Yes" : "No"));
-            PropertyList.Add(new PropertyItem("Volume", $"#{setTOC.Volume}"));
-            PropertyList.Add(new PropertyItem("Continued from Previous Volume", 
-                toc.IsCurrentSetContFromPrevVolume ? "Yes, directly" :
-                toc.IsCurrentSetContFromPrevVolumeInc ? "Yes, incrementally" : "No"));
-            PropertyList.Add(new PropertyItem("Continued on Next Volume", 
-                toc.IsCurrentSetContOnNextVolume ? "Yes" : "No"));
+            // Also makes setIndex the TOC's current set — the view below relies on that.
+            ShowProperties(PropertyList, _tapeService.DescribeSet(setIndex));
 
             // Get or create the BackupSetView (handles incremental file resolution,
             //  caching, and checked-state migration)
@@ -1833,7 +1708,6 @@ public partial class MainViewModel : ViewModelBase
 
             // Build the display list (creates FileListItem proxies as needed)
             FileList = setView.BuildFileItemList(ShowFullPathname);
-
             NotifyFilterPropertiesChanged();
 
             StatusMessage = $"Set #{setIndex} | #{altIndex}: {FileTotalCount} file(s)";

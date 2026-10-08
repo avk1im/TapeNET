@@ -261,7 +261,7 @@ public class ServiceMixedMediaTests : ServiceTestBase
             Assert.True(await svc.RenameMediaAsync("Upgraded"), svc.LastError);
             var list = await svc.ListContentsAsync(new ListRequest(Depth: ListDepth.DriveAndMedia));
             Assert.True(list.Success, list.Message);
-            Assert.True(host.ContainsMessage("TOC format: 2.1"), host.DumpReports());
+            Assert.True(host.ContainsMessage("TOC Format: 2.1"), host.DumpReports());
         }
     }
 

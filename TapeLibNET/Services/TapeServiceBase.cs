@@ -948,8 +948,12 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
     /// <summary>
     /// Logs drive/media capacity info after a successful media load.
-    /// Override in app subclasses to add app-specific formatting.
+    ///  Override in app subclasses to add app-specific formatting.
     /// </summary>
+    /// <remarks>
+    /// Just a short update upon loading -- as opposed to the detailed info provided
+    ///  by <see cref="LogMediaInfoFull"/>.
+    /// </remarks>
     protected virtual void LogMediaInfo()
     {
         if (_drive is null) return;
@@ -963,6 +967,10 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     ///  after a successful TOC load.
     /// Override in app subclasses to add app-specific formatting.
     /// </summary>
+    /// <remarks>
+    /// Just a short update upon loading -- as opposed to the detailed info provided
+    ///  by <see cref="LogMediaInfoFull"/>.
+    /// </remarks>
     protected virtual void LogTOCInfo()
     {
         if (_toc is null) return;
@@ -981,29 +989,6 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 (setTOC.Incremental ? " [Incremental]" : "") +
                 (setTOC.DataFormat == TapeDataFormat.Legacy ? " [Legacy]" : ""));
         }
-    }
-
-    /// <summary>
-    /// Logs everything the loaded calibration run header reveals — the CLI counterpart of the WPF
-    ///  calibration property pane. Uses only the BOM header (profile, capacity, plan), so it needs no
-    ///  checkpoint read; a richer, resumability-aware view is available via
-    ///  <see cref="InspectCalibrationForRecalibrationAsync"/>.
-    /// </summary>
-    protected virtual void LogCalibrationInfo()
-    {
-        if (_loadedHeader is not TapeCalibrationHeader cal)
-            return;
-
-        LogInfo("Calibration cartridge (no backup TOC)");
-        LogInfoSub($"Profile key: >{cal.ProfileKey}<");
-        LogInfoSub($"Run id: {cal.RunId:N}");
-        LogInfoSub($"Started: {cal.StartedUtc:u}");
-        LogInfoSub($"Reported capacity at BOM: {Helpers.BytesToStringLong(cal.CapacityReportedAtBom)}");
-
-        var plan = cal.Plan;
-        LogInfoSub($"Planned samples: {plan.SampleCount:N0} (body {plan.BodySampleCount:N0}, tail {plan.TailSampleCount:N0})");
-        LogInfoSub($"Planned checkpoints: {plan.NumCheckpoints:N0}");
-        LogInfoSub($"Run block size: {Helpers.BytesToStringLong(cal.RunBlockSize)}");
     }
 
     /// <summary>
