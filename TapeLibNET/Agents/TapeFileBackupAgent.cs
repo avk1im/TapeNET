@@ -1,5 +1,9 @@
 ﻿using System.Diagnostics;
+
 using Microsoft.Extensions.Logging;
+using Windows.Win32.Foundation;
+using Windows.Win32.System.SystemServices;
+
 using TapeLibNET.Compression;
 using TapeLibNET.Drive;
 using TapeLibNET.Headers;
@@ -7,8 +11,6 @@ using TapeLibNET.Media;
 using TapeLibNET.Packer;
 using TapeLibNET.Streams;
 using TapeLibNET.Toc;
-using Windows.Win32.Foundation;
-using Windows.Win32.System.SystemServices;
 
 namespace TapeLibNET.Agents;
 
@@ -492,6 +494,11 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         TOC.AddContinuationSetTOC(setParams,
             contFromPrevVolume: MultiVolumeContext.Value.prevVolumeHasFiles);
 
+        // A continuation set is created for the next volume; the emitter may differ here (mixed series).
+        //  Stamp it before anything is written.
+        if (!EnsureSetFormat(TOC.CurrentSetTOC))
+            return FailedOperationResult;
+
         return BackupFilesToCurrentSet(newSet: true) ? TapeResult.OK : FailedOperationResult;
     }
 
@@ -550,8 +557,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             var setTOC = TOC.CurrentSetTOC;
             var hasher = CreateHasher(setTOC.HashAlgorithm);
 
-            // Write the 2.1 header frame (with CRC-64); the codec byte follows with the body below.
-            TapeFileHeader.Write(wstream, setTOC.SetId, template);
+            // The per-file header (2.1 frame, or the 12-byte legacy header) — excluded from the hash.
+            RecordEmitter.WriteFileHeader(wstream, setTOC, template);
 
 #if DEBUG
             if (SimulateFileFailures.ShouldFailNow())
@@ -580,9 +587,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 var session = GetOrCreateCompressionSession();
                 using var probing = new ProbingCompressionStream(wstream, session, setTOC.CompressionLevel)
                 {
-                    EmitsCodecPrefix = true,
+                    EmitsCodecPrefix = RecordEmitter.WritesCodecPrefix,
                 };
                 using var srcFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
+                
                 if (hasher == null)
                 {
                     srcFileStream.CopyTo(probing);
@@ -593,6 +601,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                     hashingStream.CopyTo(probing);
                     hash = hasher.GetCurrentHash();
                 }
+
                 // Explicitly dispose here so that Commit() runs (sealing the ZSTD frame and
                 //  setting FinalCodec) before we read it. The using-var Dispose() below is a no-op
                 //  because ProbingCompressionStream guards against double-disposal via _disposed.
@@ -603,7 +612,9 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             {
                 // None / Hardware path — no software compression; the body is stored as is.
                 codec = TapeFileCodec.Stored;
-                TapeFileHeader.WriteCodec(wstream, codec);
+                if (RecordEmitter.WritesCodecPrefix)
+                    TapeFileHeader.WriteCodec(wstream, codec);
+
                 if (hasher == null)
                 {
                     using var srcFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
@@ -958,6 +969,45 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     }
 
     /// <summary>
+    /// Makes <paramref name="set"/> carry this agent's data format before its first file is written. An EMPTY set of
+    ///  another format is re-stamped (a trailing legacy slot, or a continuation after a format switch); a set that
+    ///  already holds files cannot change format — one set, one format (Design-Format-v2 §6.1).
+    /// </summary>
+    private bool EnsureSetFormat(TapeSetTOC set)
+    {
+        TapeDataFormat format = RecordEmitter.DataFormat;
+        if (set.DataFormat != format)
+        {
+            if (set.Count > 0)
+            {
+                SetError(WIN32_ERROR.ERROR_INVALID_STATE,
+                    $"Set #{TOC.CurrentSetIndex} holds {set.DataFormat} files — new files must be written in the same format");
+                LatchFailure();
+                return false;
+            }
+            if (format == TapeDataFormat.V2)
+                m_logger.LogInformation("Empty {Format} set #{Set} upgraded to format 2.1 before backup",
+                    set.DataFormat, TOC.CurrentSetIndex);
+            set.DataFormat = format;
+        }
+
+        // Identity follows the format: a V2 set needs one, a legacy set has none.
+        if (format == TapeDataFormat.V2 && set.SetId == Guid.Empty)
+            set.SetId = Guid.NewGuid();
+        else if (format == TapeDataFormat.Legacy)
+            set.SetId = Guid.Empty;
+
+        if (!RecordEmitter.WritesCodecPrefix && set.Compression == TapeCompression.Software)
+        {
+            SetError(WIN32_ERROR.ERROR_NOT_SUPPORTED,
+                "Software compression needs the 2.1 codec prefix; this set is written without one");
+            LatchFailure();
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>
     /// Backs up a pre-built file list to the current set.
     ///  Routes content writes through the shared-block packer; supports multi-volume continuation.
     /// </summary>
@@ -980,20 +1030,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         ResetLatchedFailure();
         MediaHeaderStamped = false; // reset for the new series (per-series, cross-volume artifact)
 
-        TapeSetTOC set = TOC.CurrentSetTOC;
-        if (set.DataFormat != TapeDataFormat.V2)
-        {
-            if (set.Count > 0)
-            {
-                SetError(WIN32_ERROR.ERROR_INVALID_STATE,
-                    $"Set #{TOC.CurrentSetIndex} is a legacy set holding files — new files can only go to a 2.1 set");
-                LatchFailure();
-                return FailedOperationResult;
-            }
-            set.DataFormat = TapeDataFormat.V2;
-            set.SetId = Guid.NewGuid();
-            m_logger.LogInformation("Empty legacy set #{Set} upgraded to format 2.1 before backup", TOC.CurrentSetIndex);
-        }
+        if (!EnsureSetFormat(TOC.CurrentSetTOC))
+            return FailedOperationResult;
 
         // Background estimation: source files can be scanned (stat'd) concurrently with the
         //  backup itself, progressively growing Statistics.BytesTotal as the scan proceeds.

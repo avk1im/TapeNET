@@ -5,209 +5,209 @@ using Microsoft.Extensions.Logging;
 using TapeLibNET.Drive;
 using TapeLibNET.Toc;
 
-namespace TapeLibNET.Agents
+namespace TapeLibNET.Agents;
+
+/// <summary>Policy for handling files that already exist at the restore target location.</summary>
+public enum TapeHowToHandleExisting
 {
-    /// <summary>Policy for handling files that already exist at the restore target location.</summary>
-    public enum TapeHowToHandleExisting
+    /// <summary>Do not restore; leave existing file untouched.</summary>
+    Skip,
+    /// <summary>Replace existing file with the tape version.</summary>
+    Overwrite,
+    /// <summary>Rename the restored file with a <c>(N)</c> suffix to keep both versions.</summary>
+    KeepBoth
+}
+
+/*
+public class TapeFileNotifiableCollection(params ITapeFileNotifiable[] first) : ITapeFileNotifiable
+{
+    protected readonly List<ITapeFileNotifiable> m_notifiables = new(first);
+
+    public void Add(ITapeFileNotifiable notifiable)
     {
-        /// <summary>Do not restore; leave existing file untouched.</summary>
-        Skip,
-        /// <summary>Replace existing file with the tape version.</summary>
-        Overwrite,
-        /// <summary>Rename the restored file with a <c>(N)</c> suffix to keep both versions.</summary>
-        KeepBoth
+        m_notifiables.Add(notifiable);
     }
 
-    /*
-    public class TapeFileNotifiableCollection(params ITapeFileNotifiable[] first) : ITapeFileNotifiable
+    public void Remove(ITapeFileNotifiable notifiable)
     {
-        protected readonly List<ITapeFileNotifiable> m_notifiables = new(first);
+        m_notifiables.Remove(notifiable);
+    }
 
-        public void Add(ITapeFileNotifiable notifiable)
-        {
-            m_notifiables.Add(notifiable);
-        }
-
-        public void Remove(ITapeFileNotifiable notifiable)
-        {
-            m_notifiables.Remove(notifiable);
-        }
-
-        public static TapeFileNotifiableCollection operator +(TapeFileNotifiableCollection coll, ITapeFileNotifiable notifiable)
-        {
-            coll.Add(notifiable);
-            return coll;
-        }
-
-        public static TapeFileNotifiableCollection operator -(TapeFileNotifiableCollection coll, ITapeFileNotifiable notifiable)
-        {
-            coll.Remove(notifiable);
-            return coll;
-        }
-
-        #region *** ITapeFileNotifiable implementation ***
-        // ITapeFileNotifiable implementation via delegation to m_notifiables
-
-        public void BatchEndStatistics(int set, int filesProcessed, int filesFailed, long bytesProcessed)
-        {
-            foreach (var notifiable in m_notifiables)
-                notifiable.BatchEndStatistics(set, filesProcessed, filesFailed, bytesProcessed);
-        }
-
-        public void BatchStartStatistics(int set, int filesFound)
-        {
-            foreach (var notifiable in m_notifiables)
-                notifiable.BatchStartStatistics(set, filesFound);
-        }
-
-        public FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex)
-        {
-            foreach (var notifiable in m_notifiables)
-                notifiable.OnFileFailed(fileDescr, ex);
-            // FIXME: the behavior of the loop & return value
-        }
-
-        public void OnFileSkipped(TapeFileDescriptor fileDescr)
-        {
-            foreach (var notifiable in m_notifiables)
-                notifiable.OnFileSkipped(fileDescr);
-        }
-
-        public bool PostProcessFile(ref TapeFileDescriptor fileDescr)
-        {
-            // if any of the notifiables returns false, return false
-            foreach (var notifiable in m_notifiables)
-            {
-                if (!notifiable.PostProcessFile(ref fileDescr))
-                    return false;
-            }
-            return true;
-        }
-
-        public bool PreProcessFile(ref TapeFileDescriptor fileDescr)
-        {
-            // if any of the notifiables returns false, call OnFileSkipped() for remaining ones and return false
-            bool result = true;
-            foreach (var notifiable in m_notifiables)
-            {
-                if (result)
-                {
-                    if (!notifiable.PreProcessFile(ref fileDescr))
-                        result = false;
-                }
-                else
-                {
-                    notifiable.OnFileSkipped(fileDescr);
-                }
-            }
-            return result;
-        }
-
-        #endregion // ITapeFileNotifiable implementation
-    } // class TapeFileNotifiableCollection
-    */
-
-    /// <summary>
-    /// Extended restore agent that redirects files to a <see cref="TargetDirectory"/>,
-    ///  optionally preserving subdirectory structure (<see cref="RecurseSubdirectories"/>),
-    ///  and applies an <see cref="HandleExisting"/> policy for collisions.
-    /// <para>Overrides <see cref="PreProcessFileInternal"/> to rewrite paths, create directories,
-    ///  and handle existing files before the base restore logic runs.</para>
-    /// </summary>
-    public class TapeFileRestoreAgentEx(TapeDrive drive,
-        string? targetDir, bool recurseSubdirs, TapeHowToHandleExisting handleExisting,
-        TapeTOC? legacyTOC = null) : TapeFileRestoreAgent(drive, legacyTOC)
+    public static TapeFileNotifiableCollection operator +(TapeFileNotifiableCollection coll, ITapeFileNotifiable notifiable)
     {
-        /// <summary>Target directory for restored files; <see langword="null"/> to restore to original paths.</summary>
-        public string? TargetDirectory { get; set; } = targetDir;
-        /// <summary>When <see langword="true"/>, preserves subdirectory structure under <see cref="TargetDirectory"/>.</summary>
-        public bool RecurseSubdirectories { get; set; } = recurseSubdirs;
-        /// <summary>Policy for files that already exist at the target path.</summary>
-        public TapeHowToHandleExisting HandleExisting { get; set; } = handleExisting;
+        coll.Add(notifiable);
+        return coll;
+    }
 
-        protected override bool PreProcessFileInternal(ref TapeFileDescriptor fileDescr)
+    public static TapeFileNotifiableCollection operator -(TapeFileNotifiableCollection coll, ITapeFileNotifiable notifiable)
+    {
+        coll.Remove(notifiable);
+        return coll;
+    }
+
+    #region *** ITapeFileNotifiable implementation ***
+    // ITapeFileNotifiable implementation via delegation to m_notifiables
+
+    public void BatchEndStatistics(int set, int filesProcessed, int filesFailed, long bytesProcessed)
+    {
+        foreach (var notifiable in m_notifiables)
+            notifiable.BatchEndStatistics(set, filesProcessed, filesFailed, bytesProcessed);
+    }
+
+    public void BatchStartStatistics(int set, int filesFound)
+    {
+        foreach (var notifiable in m_notifiables)
+            notifiable.BatchStartStatistics(set, filesFound);
+    }
+
+    public FileFailedAction OnFileFailed(TapeFileDescriptor fileDescr, Exception ex)
+    {
+        foreach (var notifiable in m_notifiables)
+            notifiable.OnFileFailed(fileDescr, ex);
+        // FIXME: the behavior of the loop & return value
+    }
+
+    public void OnFileSkipped(TapeFileDescriptor fileDescr)
+    {
+        foreach (var notifiable in m_notifiables)
+            notifiable.OnFileSkipped(fileDescr);
+    }
+
+    public bool PostProcessFile(ref TapeFileDescriptor fileDescr)
+    {
+        // if any of the notifiables returns false, return false
+        foreach (var notifiable in m_notifiables)
         {
-            if (!base.PreProcessFileInternal(ref fileDescr)) // first of all call base
+            if (!notifiable.PostProcessFile(ref fileDescr))
                 return false;
+        }
+        return true;
+    }
 
-            var orgName = fileDescr.FullName;
-
-            if (!string.IsNullOrEmpty(TargetDirectory))
+    public bool PreProcessFile(ref TapeFileDescriptor fileDescr)
+    {
+        // if any of the notifiables returns false, call OnFileSkipped() for remaining ones and return false
+        bool result = true;
+        foreach (var notifiable in m_notifiables)
+        {
+            if (result)
             {
-                if (RecurseSubdirectories)
-                {
-                    // replace the root of the fileDescr.FullName with TargetDirectory
-                    if (Path.IsPathRooted(fileDescr.FullName))
-                    {
-                        // fileDescr.FullName is an absolute path, replace the root with TargetDirectory
-                        fileDescr.FullName = Path.Combine(TargetDirectory, Path.GetRelativePath(Path.GetPathRoot(fileDescr.FullName)!, fileDescr.FullName));
-                    }
-                    else
-                    {
-                        // fileDescr.FullName is a relative path, just combine it with TargetDirectory
-                        fileDescr.FullName = Path.Combine(TargetDirectory, fileDescr.FullName);
-                    }
+                if (!notifiable.PreProcessFile(ref fileDescr))
+                    result = false;
+            }
+            else
+            {
+                notifiable.OnFileSkipped(fileDescr);
+            }
+        }
+        return result;
+    }
 
+    #endregion // ITapeFileNotifiable implementation
+} // class TapeFileNotifiableCollection
+*/
+
+/// <summary>
+/// Extended restore agent that redirects files to a <see cref="TargetDirectory"/>,
+///  optionally preserving subdirectory structure (<see cref="RecurseSubdirectories"/>),
+///  and applies an <see cref="HandleExisting"/> policy for collisions.
+/// <para>Overrides <see cref="PreProcessFileInternal"/> to rewrite paths, create directories,
+///  and handle existing files before the base restore logic runs.</para>
+/// </summary>
+public class TapeFileRestoreAgentEx(TapeDrive drive,
+    string? targetDir, bool recurseSubdirs, TapeHowToHandleExisting handleExisting,
+    TapeTOC? legacyTOC = null) : TapeFileRestoreAgent(drive, legacyTOC)
+{
+    /// <summary>Target directory for restored files; <see langword="null"/> to restore to original paths.</summary>
+    public string? TargetDirectory { get; set; } = targetDir;
+    /// <summary>When <see langword="true"/>, preserves subdirectory structure under <see cref="TargetDirectory"/>.</summary>
+    public bool RecurseSubdirectories { get; set; } = recurseSubdirs;
+    /// <summary>Policy for files that already exist at the target path.</summary>
+    public TapeHowToHandleExisting HandleExisting { get; set; } = handleExisting;
+
+    protected override bool PreProcessFileInternal(ref TapeFileDescriptor fileDescr)
+    {
+        if (!base.PreProcessFileInternal(ref fileDescr)) // first of all call base
+            return false;
+
+        var orgName = fileDescr.FullName;
+
+        if (!string.IsNullOrEmpty(TargetDirectory))
+        {
+            if (RecurseSubdirectories)
+            {
+                // replace the root of the fileDescr.FullName with TargetDirectory
+                if (Path.IsPathRooted(fileDescr.FullName))
+                {
+                    // fileDescr.FullName is an absolute path, replace the root with TargetDirectory
+                    fileDescr.FullName = Path.Combine(TargetDirectory, Path.GetRelativePath(Path.GetPathRoot(fileDescr.FullName)!, fileDescr.FullName));
                 }
                 else
                 {
-                    // replace the directory part of the fileDescr.FullName with TargetDirectory
-                    fileDescr.FullName = Path.Combine(TargetDirectory, Path.GetFileName(fileDescr.FullName));
+                    // fileDescr.FullName is a relative path, just combine it with TargetDirectory
+                    fileDescr.FullName = Path.Combine(TargetDirectory, fileDescr.FullName);
                 }
+
             }
-
-            // ensure that fileDescr.FullName is a fully qualified path name
-            fileDescr.FullName = Path.GetFullPath(fileDescr.FullName);
-
-            // create the directory if it doesn't exist
-            //  Since we have the full path name in fileDescr.FullName, we can assume Path.GetDirectoryName() is not null
-            string directoryName = Path.GetDirectoryName(fileDescr.FullName)!;
-            Debug.Assert(!string.IsNullOrEmpty(directoryName));
-
-            if (!Directory.Exists(directoryName))
+            else
             {
-                try
-                {
-                    Directory.CreateDirectory(directoryName);
-                }
-                catch (Exception ex)
-                {
-                    SetError(ex, $"Couldn't create directory >{directoryName}< for file >{orgName}<");
-
-                    m_logger.LogWarning(ex, "Couldn't create directory >{Directory}< for file >{File}<", directoryName, orgName);
-                    LatchFailure();
-                    return false;
-                }
+                // replace the directory part of the fileDescr.FullName with TargetDirectory
+                fileDescr.FullName = Path.Combine(TargetDirectory, Path.GetFileName(fileDescr.FullName));
             }
-
-            if (HandleExisting != TapeHowToHandleExisting.Overwrite && File.Exists(fileDescr.FullName))
-            {
-                switch (HandleExisting)
-                {
-                    case TapeHowToHandleExisting.Skip:
-                        m_logger.LogTrace("File >{File}< already exists -> SKIPPED", fileDescr.FullName);
-                        
-                        return false;
-
-                    case TapeHowToHandleExisting.KeepBoth:
-                        string newFileName;
-                        uint counter = 1;
-                        do
-                        {
-                            newFileName = Path.Combine(directoryName,
-                                Path.GetFileNameWithoutExtension(fileDescr.FullName) + $"({counter})" + Path.GetExtension(fileDescr.FullName));
-                            counter++;
-                        } while (File.Exists(newFileName));
-
-                        fileDescr.FullName = newFileName;
-                        break;
-                }
-            }
-
-            m_logger.LogTrace("Restoring file >{Org}< as >{File}<", orgName, fileDescr.FullName);
-
-            return true;
         }
-    } // class TapeFileRestoreAgentEx
 
-} // namespace TapeNET
+        // ensure that fileDescr.FullName is a fully qualified path name
+        fileDescr.FullName = Path.GetFullPath(fileDescr.FullName);
+
+        // create the directory if it doesn't exist
+        //  Since we have the full path name in fileDescr.FullName, we can assume Path.GetDirectoryName() is not null
+        string directoryName = Path.GetDirectoryName(fileDescr.FullName)!;
+        Debug.Assert(!string.IsNullOrEmpty(directoryName));
+
+        if (!Directory.Exists(directoryName))
+        {
+            try
+            {
+                Directory.CreateDirectory(directoryName);
+            }
+            catch (Exception ex)
+            {
+                SetError(ex, $"Couldn't create directory >{directoryName}< for file >{orgName}<");
+
+                m_logger.LogWarning(ex, "Couldn't create directory >{Directory}< for file >{File}<", directoryName, orgName);
+                LatchFailure();
+                return false;
+            }
+        }
+
+        if (HandleExisting != TapeHowToHandleExisting.Overwrite && File.Exists(fileDescr.FullName))
+        {
+            switch (HandleExisting)
+            {
+                case TapeHowToHandleExisting.Skip:
+                    m_logger.LogTrace("File >{File}< already exists -> SKIPPED", fileDescr.FullName);
+                    
+                    return false;
+
+                case TapeHowToHandleExisting.KeepBoth:
+                    string newFileName;
+                    uint counter = 1;
+                    do
+                    {
+                        newFileName = Path.Combine(directoryName,
+                            Path.GetFileNameWithoutExtension(fileDescr.FullName) + $"({counter})" + Path.GetExtension(fileDescr.FullName));
+                        counter++;
+                    } while (File.Exists(newFileName));
+
+                    fileDescr.FullName = newFileName;
+                    break;
+            }
+        }
+
+        m_logger.LogTrace("Restoring file >{Org}< as >{File}<", orgName, fileDescr.FullName);
+
+        return true;
+    }
+} // class TapeFileRestoreAgentEx
+
+// namespace TapeNET

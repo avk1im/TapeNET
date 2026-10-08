@@ -1,7 +1,7 @@
-using TapeLibNET.Virtual;
 using TapeLibNET.Agents;
-
 using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Toc;
+using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests.Legacy;
 
@@ -12,7 +12,7 @@ namespace TapeLibNET.Tests.Legacy;
 /// </summary>
 /// <remarks>
 /// Unlike <see cref="LegacyGoldenTests"/>, these are NOT byte-reproducible (real agents stamp GUIDs and timestamps),
-///  so they are generated once by <see cref="GenerateVirtualGoldens"/> and then only READ: each must still load,
+///  so they were generated once by <c>GenerateVirtualGoldens</c> and then only READ: each must still load,
 ///  yield its TOC, and restore the original files exactly.
 /// </remarks>
 public class LegacyVirtualGoldenTests
@@ -57,6 +57,9 @@ public class LegacyVirtualGoldenTests
 
     #region *** Generator ***
 
+#if DO_NOT_USE
+    // DO NOT USE! Post V2.1 transition, GenerateVirtualGoldens would today write 2.1 images under legacy names.
+    //  New legacy tapes are built inside the tests that need them, so nothing is checked in and nothing can drift.
     [Fact(Skip = "Manual: regenerates the frozen legacy virtual-media goldens. Remove Skip temporarily to run.")]
     public void GenerateVirtualGoldens()
     {
@@ -88,6 +91,20 @@ public class LegacyVirtualGoldenTests
             }
         }
         finally { TryDelete(src); }
+    }
+#endif
+
+    /// <summary>The golden images must hold legacy records — a 2.1 image under a legacy name would void
+    ///  every legacy test.</summary>
+    [Theory]
+    [MemberData(nameof(Profiles))]
+    public void VirtualImage_IsGenuinelyLegacy(DriveProfile profile)
+    {
+        byte[] content = File.ReadAllBytes(Img(ImageBase(profile) + ".vt"));
+        Assert.False(TapeLibNET.Format.TapeFormat.IsV2(content), "the image starts with a 2.1 record");
+
+        using var fx = LegacyVirtualImages.Load(profile);   // asserts LoadedFromLegacy
+        Assert.Equal(TapeDataFormat.Legacy, fx.TOC[1].DataFormat);
     }
 
     #endregion

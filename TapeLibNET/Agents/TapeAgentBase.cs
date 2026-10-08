@@ -31,10 +31,17 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     /// </summary>
     public TapeTocPlacement TOCPlacement =>
         Navigator is TapeNavigatorTOCInPartition ? TapeTocPlacement.InPartition : TapeTocPlacement.InSet;
+
     /// <summary>Stream manager providing state-guarded read/write stream provisioning.</summary>
     public TapeStreamManager Manager { get; init; }
     /// <summary>Shortcut to <see cref="Manager"/>.<see cref="TapeStreamManager.Navigator"/>.</summary>
     public TapeNavigator Navigator => Manager.Navigator;
+
+    /// <summary>
+    /// Turns records into bytes: per-file header, codec prefix, header blocks, TOC copies. Format 2.1 in the product;
+    ///  tests replace it to write genuine legacy media (<see cref="ITapeRecordEmitter"/>).
+    /// </summary>
+    internal ITapeRecordEmitter RecordEmitter { get; set; } = TapeRecordEmitter21.Instance;
 
     /// <summary>Cumulative bytes written to tape (content + TOC) during this agent's lifetime.</summary>
     public long BytesBackedup { get; protected set; } = 0L;
@@ -304,9 +311,8 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
             // NOTE: no ThrowIfAbortRequested here — TOC writing is a critical
             // data-integrity operation and must never be aborted.
 
-            // The TOC owns its format and integrity: a 2.1 record stream with its CRC-64 trailer (Design-Format-v2 §5.1).
-            //  SaveTo never disposes wstream.
-            TOC.SaveTo(wstream);
+            // The emitter owns the format and the integrity trailer; it never disposes wstream.
+            RecordEmitter.WriteToc(TOC, wstream);
 
             BytesBackedup += wstream.Length;
             return true;
@@ -391,8 +397,8 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
         if (!result1 && !result2)
             return FailedOperationResult;
 
-        // A 2.1 TOC now stands on tape: a legacy tape is upgraded (the service logs it, Design-Format-v2 §8.6)
-        TOC.LoadedFromLegacy = false;
+        // What now stands on tape: 2.1 in the product — a legacy tape is upgraded (the service logs it, §8.6).
+        TOC.LoadedFromLegacy = RecordEmitter.DataFormat == TapeDataFormat.Legacy;
         return TapeResult.OK;
     }
 

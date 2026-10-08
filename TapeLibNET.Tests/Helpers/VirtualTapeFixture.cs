@@ -116,6 +116,12 @@ public sealed class VirtualTapeFixture : IDisposable
     public VirtualTapeDriveCapabilities Capabilities { get; }
     public VirtualTapeDriveBackend Backend { get; }
 
+    /// <summary>
+    /// The record emitter used by the fixture's writing agents. Make sure to apply to every writing
+    ///  agent created by the fixture! Defaults to <see cref="TapeRecordEmitter21.Instance"/>.
+    /// </summary>
+    internal ITapeRecordEmitter RecordEmitter { get; set; }
+
     #endregion
 
     #region *** Media Header and Set Headers ***
@@ -168,7 +174,8 @@ public sealed class VirtualTapeFixture : IDisposable
         string mediaDescription = "Test Media",
         bool useMemoryMap = false,
         bool withMediaHeader = false,
-        bool withSetHeaders = false)
+        bool withSetHeaders = false,
+        ITapeRecordEmitter? recordEmitter = null)
     {
         if (withSetHeaders && !withMediaHeader) // cannot have set headers without a media header (SH-1)
             throw new ArgumentException("Set headers require a media header (SH-1)", nameof(withSetHeaders));
@@ -180,6 +187,10 @@ public sealed class VirtualTapeFixture : IDisposable
 
         long initCap = Capabilities.SupportsInitiatorPartition
             ? DefaultInitiatorCapacity : 0;
+
+        // Set before anything is written — the agent writing media header below
+        //  must already use RecordEmitter
+        RecordEmitter = recordEmitter ?? TapeRecordEmitter21.Instance;
 
         Backend = useMemoryMap
             ? VirtualTapeDriveBackend.CreateMemoryMapBacked(
@@ -203,7 +214,11 @@ public sealed class VirtualTapeFixture : IDisposable
         // Write header if requested (Notice some tests want to start with a blank tape)
         if (withMediaHeader)
         {
-            using var agent = new TapeAgentBase(Drive, TOC) { WritesSetHeaders = withSetHeaders };
+            using var agent = new TapeAgentBase(Drive, TOC)
+            {
+                WritesSetHeaders = withSetHeaders,
+                RecordEmitter = RecordEmitter,
+            };
             Assert.True(agent.WriteMediaHeader(), "Fixture: WriteMediaHeader failed");
         }
     }
@@ -232,6 +247,7 @@ public sealed class VirtualTapeFixture : IDisposable
         {
             WritesMediaHeader = WithMediaHeader,
             WritesSetHeaders = WithSetHeaders,
+            RecordEmitter = RecordEmitter,
         };
     }
 
@@ -267,7 +283,8 @@ public sealed class VirtualTapeFixture : IDisposable
     /// </summary>
     public void SaveTOC()
     {
-        using var agent = new TapeAgentBase(Drive, TOC);
+        using var agent = new TapeAgentBase(Drive, TOC)
+            { RecordEmitter = RecordEmitter };
         Assert.True(agent.BackupTOC(), "Failed to save TOC to tape");
     }
 

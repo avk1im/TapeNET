@@ -170,7 +170,17 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     {
         agent.WritesMediaHeader = ShouldHeadVolume(volumeNumber);
         agent.WritesSetHeaders = ShouldWriteSetHeaders(volumeNumber);
+        agent.RecordEmitter = EmitterFor(volumeNumber);   // the build that writes THIS volume
     }
+
+    /// <summary>
+    /// The record emitter per volume — e.g. legacy for volume 1 and 2.1 for the rest, a mixed series written by two
+    ///  builds (Design-Format-v2 §6.3). <see langword="null"/> = 2.1 everywhere.
+    /// </summary>
+    public Func<int, ITapeRecordEmitter>? EmitterForVolume { get; init; }
+
+    private ITapeRecordEmitter EmitterFor(int volumeNumber)
+        => EmitterForVolume?.Invoke(volumeNumber) ?? TapeRecordEmitter21.Instance;
 
     #endregion
 
@@ -339,7 +349,8 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// </summary>
     public void SaveTOC()
     {
-        using var agent = new TapeAgentBase(Drive, TOC);
+        using var agent = new TapeAgentBase(Drive, TOC)
+            { RecordEmitter = EmitterFor(_loadedVolume) };
         agent.Navigator.TOCCapacity = TOCCapacityOverride;
         if (!agent.BackupTOC())
             Assert.True(agent.BackupTOC(enforce: true), "Failed to save TOC to tape (even with enforce)");

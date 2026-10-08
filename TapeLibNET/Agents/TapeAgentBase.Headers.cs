@@ -28,7 +28,8 @@ public partial class TapeAgentBase
     {
         var header = TOC.CreateHeader(tocBlockSize: c_fixedTOCBlockSize, tapeTocPlacement: TOCPlacement,
             hasSetHeaders: WritesSetHeaders);
-        byte[]? block = TapeHeaderBlock.Frame(header);      // pack + size guard + pad, single-point
+        byte[]? block = RecordEmitter.FrameHeaderBlock(header);  // pack + size guard + pad, single-point
+        
         if (block is null)
         {
             m_logger.LogError("Media header frame exceeds the standard header block ({Bs} B)", TapeHeaderBlock.Size);
@@ -162,8 +163,8 @@ public partial class TapeAgentBase
     public TapeResult WriteSetHeader()
     {
         var header = TOC.CreateSetHeaderForCurrentSet();
-
-        byte[]? block = TapeHeaderBlock.Frame(header);      // pack + size guard + pad, single-point
+        byte[]? block = RecordEmitter.FrameHeaderBlock(header);  // pack + size guard + pad, single-point
+        
         if (block is null)
         {
             m_logger.LogError("Set header frame exceeds the standard header block ({Bs} B)", TapeHeaderBlock.Size);
