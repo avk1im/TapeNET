@@ -1,0 +1,74 @@
+<!--
+  tools/CheckTestFiles.targets — shared MSBuild guard for every test project in the solution.
+
+  Problem it solves:
+    A *Tests.cs file without a single [Fact] / [Theory] compiles, runs zero tests, and shows GREEN.
+    (BackupRestoreRoundTripTests.cs sat blank for months that way.)
+
+  What it does:
+    Before compilation, scans every compiled source file whose name ends in a test suffix and reports a
+    build warning (TAPETEST001) for each one that contains no test attribute. The warning appears in the
+    Error List with a clickable path.
+
+  How to use:
+    Nothing to do per project — Directory.Build.targets imports this file for every project whose
+    IsTestProject is true (set by Microsoft.NET.Test.Sdk). To opt one project out:
+        <PropertyGroup><CheckTestFiles>false</CheckTestFiles></PropertyGroup>
+
+  Tunables (set in a project or in Directory.Build.props):
+    CheckTestFiles               true | false               default: true
+    CheckTestFilesSuffix         file-name suffix            default: Tests
+    CheckTestFilesAttributes     |-separated attribute names default: Fact|Theory|SkippableFact|SkippableTheory|StaFact|StaTheory
+                                 Each name also matches namespace-qualified ([Xunit.Fact], [global::Xunit.Fact]),
+                                 with the Attribute suffix ([FactAttribute]), and inside an attribute list
+                                 ([Trait("Category", "X"), Fact]).
+    CheckTestFilesPattern        full regex; overrides the attribute list when set
+    CheckTestFilesTreatAsError   true | false               default: false  (warning only)
+	
+  See docs/Design-FolderLayout.md §9.4 and §12.
+-->
+<Project>
+
+    <PropertyGroup>
+	    <CheckTestFiles Condition="'$(CheckTestFiles)' == ''">true</CheckTestFiles>
+	    <CheckTestFilesSuffix Condition="'$(CheckTestFilesSuffix)' == ''">Tests</CheckTestFilesSuffix>
+	    <CheckTestFilesAttributes Condition="'$(CheckTestFilesAttributes)' == ''">Fact|Theory|SkippableFact|SkippableTheory|StaFact|StaTheory</CheckTestFilesAttributes>
+	    <!-- [ or , then optional spaces, optional global::, any namespace qualification, a listed name,
+            optional Attribute suffix, word boundary. Built from the list unless a full pattern is given. -->
+	    <CheckTestFilesPattern Condition="'$(CheckTestFilesPattern)' == ''">[\[,]\s*(?:global::)?(?:\w+\.)*(?:$(CheckTestFilesAttributes))(?:Attribute)?\b</CheckTestFilesPattern>
+	    <CheckTestFilesTreatAsError Condition="'$(CheckTestFilesTreatAsError)' == ''">false</CheckTestFilesTreatAsError>
+    </PropertyGroup>
+	
+  <Target Name="CheckTestFilesHaveTests"
+          BeforeTargets="CoreCompile"
+          Condition="'$(CheckTestFiles)' == 'true'">
+
+    <!-- Candidate files: compiled sources named *<Suffix>.cs, excluding generated files under obj\ -->
+    <ItemGroup>
+      <_CheckTestFile Include="@(Compile)"
+                      Condition="$([System.String]::Copy('%(Filename)').EndsWith('$(CheckTestFilesSuffix)'))
+                                 And !$([System.String]::Copy('%(FullPath)').Contains('$(BaseIntermediateOutputPath)'))" />
+    </ItemGroup>
+
+    <!-- Files without any test attribute -->
+    <ItemGroup>
+      <_EmptyTestFile Include="@(_CheckTestFile)"
+                      Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch(
+                                    $([System.IO.File]::ReadAllText('%(FullPath)')), '$(CheckTestFilesPattern)'))" />
+    </ItemGroup>
+
+    <Warning Condition="'$(CheckTestFilesTreatAsError)' != 'true' And '@(_EmptyTestFile)' != ''"
+             Code="CHKTEST001"
+             File="%(_EmptyTestFile.FullPath)"
+             Text="No test attribute in %(_EmptyTestFile.Filename)%(_EmptyTestFile.Extension) -- the file runs zero tests and reports green." />
+
+    <Error Condition="'$(CheckTestFilesTreatAsError)' == 'true' And '@(_EmptyTestFile)' != ''"
+           Code="CHKTEST001"
+           File="%(_EmptyTestFile.FullPath)"
+           Text="No test attribute in %(_EmptyTestFile.Filename)%(_EmptyTestFile.Extension) -- the file runs zero tests and reports green." />
+
+    <Message Importance="low"
+             Text="CheckTestFiles: $(MSBuildProjectName) -- @(_CheckTestFile->Count()) test file(s) checked, @(_EmptyTestFile->Count()) without tests." />
+  </Target>
+
+</Project>

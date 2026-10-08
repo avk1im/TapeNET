@@ -1,0 +1,13 @@
+<!--
+  Solution-wide MSBuild targets, imported automatically by every project below this folder (after its own
+  content, so properties such as IsTestProject are already known here).
+
+  If a Directory.Build.targets already exists at the solution root, add only the <Import> line to it.
+-->
+<Project>
+
+  <!-- Every test project: flag *Tests.cs files that contain no [Fact] / [Theory] (tools/CheckTestFiles.targets) -->
+  <Import Project="$(MSBuildThisFileDirectory)tools\CheckTestFiles.targets"
+          Condition="'$(IsTestProject)' == 'true' And Exists('$(MSBuildThisFileDirectory)tools\CheckTestFiles.targets')" />
+
+</Project>
