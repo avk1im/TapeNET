@@ -972,13 +972,14 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         LogInfoSub($"Created: {_toc.CreationTime.ToLocalTime()}");
         LogInfoSub($"Last saved: {_toc.LastSaveTime.ToLocalTime()}");
         LogInfoSub($"Volume: #{_toc.Volume}");
-
+        LogInfoSub($"TOC format: {DescribeTocFormat(_toc)}");
         for (int alt = 0; alt >= _toc.MinSetIndex; alt--)
         {
             int setIndex = _toc.SetIndexToAlt(alt);
             var setTOC = _toc[setIndex];
             LogInfoSub($"Set #{setIndex} | {alt}: {setTOC.Description} - {setTOC.Count} files" +
-                (setTOC.Incremental ? " [Incremental]" : ""));
+                (setTOC.Incremental ? " [Incremental]" : "") +
+                (setTOC.DataFormat == TapeDataFormat.Legacy ? " [Legacy]" : ""));
         }
     }
 
@@ -1710,7 +1711,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     }
 
     /// <summary>
-    /// Renames the media
+    /// Renames the media and writes the TOC back to tape using <see cref="SaveTocCore"/>.
+    ///  A legacy TOC is upgraded to 2.1 by that write.
     /// </summary>
     public async Task<bool> RenameMediaAsync(string newName)
     {
@@ -1729,8 +1731,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 LogInfo($"Renaming media to: {newName}");
                 _toc.Description = newName;
 
+                _agent?.Dispose();
                 _agent = new TapeAgentBase(_drive, _toc);
-                var tocResult = _agent.BackupTOC();
+                var tocResult = SaveTocCore(_agent);
                 if (!tocResult)
                 {
                     LastError = tocResult.ErrorMessage;
@@ -1778,7 +1781,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     }
 
     /// <summary>
-    /// Renames a backup set by updating the set TOC description and writing the TOC back to tape.
+    /// Renames a backup set by updating the set TOC description and writing the TOC
+    ///  back to tape using <see cref="SaveTocCore"/>. A legacy TOC is upgraded to 2.1
+    ///  by that write.
     /// </summary>
     public async Task<bool> RenameBackupSetAsync(int setIndex, string newName)
     {
@@ -1798,8 +1803,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 LogInfo($"Renaming backup set #{setIndex} to: {newName}");
                 setTOC.Description = newName;
 
+                _agent?.Dispose();
                 _agent = new TapeAgentBase(_drive, _toc);
-                var tocResult = _agent.BackupTOC();
+                var tocResult = SaveTocCore(_agent);
                 if (!tocResult)
                 {
                     LastError = tocResult.ErrorMessage;

@@ -273,7 +273,7 @@ public partial class TapeServiceBase
     ///  Called by <see cref="ListContentsAsync"/> when
     ///  <see cref="ListDepth.SetTable"/> is set without <see cref="ListDepth.FileDetails"/>.
     /// Each row contains the set's dual index, description, file count, total size,
-    ///  creation time, and flags (incremental, volume).
+    ///  creation time, and flags (incremental, volume, legacy data format).
     /// </summary>
     protected virtual void LogBackupSetsTable()
     {
@@ -281,11 +281,13 @@ public partial class TapeServiceBase
             return;
 
         LogInfo($"Backup sets ({toc.Count} total):");
+
         for (int alt = 0; alt >= toc.MinSetIndex; alt--)
         {
             int setIndex = toc.SetIndexToStd(alt); // convert alt (0/-1/-2...) → std (1..N)
             toc.CurrentSetIndex = setIndex;
             var setTOC = toc.CurrentSetTOC;
+
             var size = Helpers.BytesToStringLong(setTOC.ComputeTotalFileSizeOnTape(_drive.DefaultBlockSize));
             var flags = new System.Text.StringBuilder();
             if (setTOC.Incremental) flags.Append(" [Inc]");
@@ -293,6 +295,9 @@ public partial class TapeServiceBase
                 flags.Append(" [<Vol]");
             if (toc.IsCurrentSetContOnNextVolume)
                 flags.Append(" [Vol>]");
+            if (setTOC.DataFormat == TapeDataFormat.Legacy)
+                flags.Append(" [Legacy]");
+
             LogInfoSub($"#{setIndex,3} | {alt,3}  {setTOC.CreationTime.ToLocalTime(),20:G}  {setTOC.Count,6:N0} files  {size,14}  Vol #{setTOC.Volume}  {setTOC.Description}{flags}");
         }
     }
@@ -306,12 +311,14 @@ public partial class TapeServiceBase
     {
         if (_drive is null || _toc is not TapeTOC toc)
             return;
-
         LogInfoSub($"Name: >{toc.Description}<");
         if (toc.MediaId != Guid.Empty)
             LogInfoSub($"Media ID: {toc.MediaId}");
         LogInfoSub($"Created on: {toc.CreationTime.ToLocalTime()}");
         LogInfoSub($"Last saved: {toc.LastSaveTime.ToLocalTime()}");
+        LogInfoSub($"TOC format: {DescribeTocFormat(toc)}");
+        if (!string.IsNullOrEmpty(toc.WrittenBy))
+            LogInfoSub($"Written by: {toc.WrittenBy}");
         LogInfoSub($"Backup sets: {toc.Count}");
         LogInfoSub($"Capacity: {Helpers.BytesToStringLong(Capacity)}");
         LogInfoSub($"Used: {Helpers.BytesToStringLong(Used)}");
@@ -333,7 +340,6 @@ public partial class TapeServiceBase
     {
         if (_drive is null || _toc is not TapeTOC toc)
             return;
-
         var setTOC = toc.CurrentSetTOC;
         LogInfoSub($"Name: >{setTOC.Description}<");
         LogInfoSub($"Files: {setTOC.Count}");
@@ -342,6 +348,7 @@ public partial class TapeServiceBase
         LogInfoSub($"Last saved: {setTOC.LastSaveTime.ToLocalTime()}");
         LogInfoSub($"Block size: {Helpers.BytesToStringLong(setTOC.BlockSize)}");
         LogInfoSub($"Hash algorithm: {setTOC.HashAlgorithm}");
+        LogInfoSub($"Data format: {DescribeDataFormat(setTOC)}");
         LogInfoSub($"Incremental: {(setTOC.Incremental ? "Yes" : "No")}");
         LogInfoSub($"Volume: #{setTOC.Volume}");
         LogInfoSub($"Continued from previous volume: {(toc.IsCurrentSetContFromPrevVolume ? "Yes, directly" : toc.IsCurrentSetContFromPrevVolumeInc ? "Yes, incrementally" : "No")}");
