@@ -1,7 +1,7 @@
 # Design: TapeLibNET Folder and Namespace Layout
 
-**Status:** adopted. **Applies after:** Design-Format-v2 Phase 6. **Tooling:** `Move-TapeLibFolders.ps1`.
-**Last updated:** 2026-10-05
+**Status:** adopted — library and tests migrated. **Applies after:** Design-Format-v2 Phase 6.
+**Tooling:** `tools/` scripts (§12). **Last updated:** 2026-10-08
 
 ---
 
@@ -10,6 +10,9 @@
 TapeLibNET is organized by **layer**: each folder holds one layer, and **folder = namespace** throughout
 (`TapeLibNET/Headers/` ⇔ `TapeLibNET.Headers`). Only the shared vocabulary stays in the root namespace. A file's `using`
 list then documents what it depends on, and a dependency that points the wrong way stands out in review.
+
+**TapeLibNET.Tests mirrors the library** (§9): a test file lives in the folder of the layer it exercises, plus one
+`Scenarios/` folder for workflows that cross layers.
 
 ---
 
@@ -32,7 +35,7 @@ list then documents what it depends on, and a dependency that points the wrong w
 
 | Folder / namespace `TapeLibNET.…` | Files | Role |
 |---|---|---|
-| *(root)* `TapeLibNET` | `TapeResult`, `TapeError`, `TapeAddress`, `OnceLatch`, `CsWin32Extras` | shared vocabulary |
+| *(root)* `TapeLibNET` | `TapeResult`, `TapeError`, `TapeAddress`, `OnceLatch`, `CsWin32Extras`, `FailureSimulator` | shared vocabulary |
 | `Streams` | `TapeCRC` (HashingStream, ObserverStream, StreamHelpers), `KeyedStreamStore` | generic stream utilities |
 | `Format` | record / field writer & reader, schema, frames, CRC-64 envelope, primitives, coders, `TapeFrameStatus`, `TapeTextRules` | 2.1 wire grammar |
 | `Drive` | `TapeDrive`, `TapeDriveBackend`, `TapeDriveWin32Backend` (+ `.Lto`, `.lto-direct`), `TapeEarlyWarning`, `TapeStream`, `TapeStreamBuffer`, `TapeWriteBuffer`, `BufferedTapeStream` | physical drive, raw block I/O |
@@ -87,17 +90,25 @@ Services ─► Scan ─► Agents / Calibration ─► Media / Packer ─► He
 agent file is visible in review as a layering violation.
 
 **Apps and tests — explicit per file, too.** Both apps talk mostly to `Services` (the WPF view models also render the
-TOC); most test files exercise one class or group. A global set of usings would hide that focus and buy little.
+TOC); most test files exercise one class or group, and their usings now pinpoint that scope at a glance. Test projects
+keep a `GlobalUsings.cs` for test infrastructure only (xUnit) — never for TapeLibNET namespaces.
 
-**How to get there without editing ~100 files by hand:** inject every candidate, then let the analyzer prune.
+**Order** (`Sort-Usings.ps1`, §12): one blank line between groups, no comments —
 
-1. `Move-TapeLibFolders.ps1 -Phase Usings` inserts `using TapeLibNET.<Layer>;` for every new layer into each `.cs` file
-   that mentions `TapeLibNET` — library, tests and apps.
-2. `dotnet build` — must compile, because every type is now visible.
-3. `dotnet format style TapeNET.sln --diagnostics IDE0005 --severity info` removes each unused `using`, file by file.
+1. `System`, `System.*`
+2. `Microsoft.*`, `Windows.*` and other third-party namespaces
+3. the solution's other libraries (`FclNET`, `HelpNET`, `AiNET`, …)
+4. `TapeLibNET.*` in the canonical layer order of §4, bottom-up
+5. the owning project's own namespaces
 
-The same works interactively: *Analyze → Code Cleanup → Run Code Cleanup (Solution)* with "Remove unnecessary usings"
-in the profile.
+Within a group: plain usings, then `using static`, then aliases. Keep
+`dotnet_separate_import_directive_groups = false` (VS would otherwise split `Microsoft.*` from `Windows.*`), and remove
+"Sort usings" from the Code Cleanup profile (*Tools → Options → Text Editor → Code Cleanup*, per user) so the IDE does not
+undo the grouping.
+
+**Adding or pruning usings in bulk:** inject every candidate, then let the analyzer prune —
+`dotnet format style TapeNET.sln --diagnostics IDE0005 --severity info` removes each unused `using`, file by file. The
+same works interactively: *Analyze → Code Cleanup → Run Code Cleanup (Solution)* with "Remove unnecessary usings".
 
 ---
 
@@ -112,6 +123,8 @@ dotnet_style_namespace_match_folder = true
 dotnet_diagnostic.IDE0130.severity = warning
 # P8 — no stale usings
 dotnet_diagnostic.IDE0005.severity = warning
+# §5 — the grouping is ours, not the IDE's
+dotnet_separate_import_directive_groups = false
 ```
 
 `Directory.Build.props` (or each csproj) — IDE0005 reports during build and `dotnet format` only with documentation
@@ -128,40 +141,36 @@ If missing XML docs then flood the build with CS1591, add `<NoWarn>$(NoWarn);CS1
 
 ---
 
-## 7. Migration
+## 7. Migration (done — kept for reference)
 
 ### 7.1 Code commit — before the move
 
-1. **`TapeFrameStatus`:** move `TapeFramer.FrameStatus` to `Format/TapeFrameStatus.cs` as `public enum TapeFrameStatus`;
-   replace `TapeFramer.FrameStatus` → `TapeFrameStatus` solution-wide.
-2. **`TapeTextRules`:** move the class from `TapeTOC.Format.cs` to `Format/TapeTextRules.cs` (namespace
-   `TapeLibNET.Format`, still `internal`).
-3. **Optional:** delete `BufferedTapeStream.cs` if the compiler shows no caller (aligned-path leftover); remove it from
-   the script table too.
-
-Build, test, commit.
+1. **`TapeFrameStatus`:** moved `TapeFramer.FrameStatus` to `Format/TapeFrameStatus.cs`.
+2. **`TapeTextRules`:** moved from `TapeTOC.Format.cs` to `Format/TapeTextRules.cs`.
 
 ### 7.2 Move commit
 
 ```powershell
-.\Move-TapeLibFolders.ps1 -RepoRoot <repo> -Phase Move -DryRun   # review the plan
-.\Move-TapeLibFolders.ps1 -RepoRoot <repo> -Phase Move
-.\Move-TapeLibFolders.ps1 -RepoRoot <repo> -Phase Usings
+.\tools\Move-TapeLibFolders.ps1 -RepoRoot . -Phase Move -DryRun   # review the plan
+.\tools\Move-TapeLibFolders.ps1 -RepoRoot . -Phase Move
+.\tools\Move-TapeLibFolders.ps1 -RepoRoot . -Phase Usings
 dotnet build
 dotnet format style TapeNET.sln --diagnostics IDE0005 --severity info
 dotnet build; dotnet test
 ```
 
-Commit the move separately from any code change, so `git log --follow` and blame stay clean.
+Commit a move separately from any code change, so `git log --follow` and blame stay clean.
 
-### 7.3 Pitfalls the script reports or the build shows
+### 7.3 Pitfalls the scripts report or the build shows
 
 | Pitfall | Handling |
 |---|---|
 | `<include file='docs/…'>` in `TapeHeaderBlock*.cs` | Script lists every hit; fix the relative path |
 | csproj items naming a moved file (`DependentUpon`, `Compile Remove`) | Script warns per project |
 | Root `.cs` file not in the table | Script warns before moving — assign it |
-| Simple name resolving to a namespace (`Compression.X`, `Drive.X`, `Media.X`) | Members win over namespaces, so `Drive.Rewind()` in an agent still binds to the property; the build reports the rare real clash — qualify it |
+| Fully qualified names in other projects (`TapeLibNET.TapeAgentBase`) | A `using` cannot fix them; rewrite the qualifier to the new namespace |
+| A project missing from the usings pass (`TapeServiceNET`) | Build reports CS0246; rerun `-Phase Usings -Projects <name>` |
+| Simple name resolving to a namespace (`Compression.X`, `Drive.X`) | Members win over namespaces, so `Drive.Rewind()` still binds to the property; the build reports the rare real clash — qualify it |
 | XML `cref`s | Follow the usings; CS1574 lists broken ones |
 | Generated gRPC code | Namespace comes from the `.proto` `csharp_namespace` — unaffected |
 
@@ -174,4 +183,105 @@ Unaffected: the on-tape format, the remote wire protocol, `InternalsVisibleTo`.
 1. Find its layer by what it **does**, not who calls it (P2).
 2. Check §4: it may use lower layers only. If it needs a higher one, it belongs higher — or the dependency should be
    inverted through an interface in the lower layer.
-3. A new layer is a new folder **and** a row in §3 and in the script table.
+3. A new layer is a new folder **and** a row in §3, in §9, and in the scripts' tables (§12).
+
+---
+
+## 9. Test layout (TapeLibNET.Tests)
+
+### 9.1 Principles
+
+| # | Principle | Consequence |
+|---|---|---|
+| T1 | **A test lives with the layer it exercises** — the class whose methods it calls, not every class it touches | A set-header test that drives `agent.ClassifySetHeader` is an `Agents` test, though it builds headers |
+| T2 | **Pure record tests vs. behaviour on tape** | `Headers/` tests run without a tape; header behaviour through an agent lives in `Agents/` |
+| T3 | **Cross-layer workflows are a category, not an exception** | Whole backup → restore journeys go to `Scenarios/` |
+| T4 | **Folder = namespace** (P1 applies) | `TapeLibNET.Tests.<Folder>`; Test Explorer groups by layer |
+| T5 | **Shared helpers stay in `Helpers/`** | Child namespaces see `TapeLibNET.Tests` without a `using`; `Helpers` needs one |
+| T6 | **Infrastructure folders keep their purpose** | `Services/`, `Physical/`, `Golden/` are not layers of the library |
+
+### 9.2 Layout
+
+| Folder / namespace `TapeLibNET.Tests.…` | Holds |
+|---|---|
+| `Format` | record / field / schema / frame core tests |
+| `Headers` | file, media, set and calibration header records; block identification; set-header factory and block I/O |
+| `Toc` | TOC format, migration and round trips |
+| `Legacy` | legacy readers and golden-file tests, `GoldenGenerator` |
+| `Drive` | stream buffers, buffered tape streams |
+| `Virtual` | virtual drive and media, fault injection, state persistence, strict write position |
+| `Remote` | remote backend |
+| `Compression` | compression round trips |
+| `Media` | navigator, media layout, stream manager, set navigation recovery |
+| `Packer` | packer, pipelined reader, read / write backends |
+| `Agents` | backup / restore agents (aligned, packed, pipelined), set agent and deletion, set-header verification / write / correction, notifications, statistics, error handling |
+| `Calibration` | calibration, logical EW, calibration format and resume |
+| `Scan` | scanner, harvest, calibration scan |
+| `Scenarios` | backup / restore, incremental, multi-volume, large files, file edge cases, partitions vs setmarks |
+| `Services` | service-layer tests, local and remote |
+| `Physical` | tests on a real drive (opt-in) |
+| `Helpers` | fixtures, test hosts, legacy writers (`LegacyTocWriter`, `LegacyHeaderWriter`, `LegacyFileHeaderWriter`), `TapeSerializer`, `GoldenPaths` |
+| `Golden` | checked-in golden files (`Legacy/`, later `V21/`) — data, not code |
+
+### 9.3 Placing a new test
+
+1. **Which class's methods does it call?** That class's layer is the folder (T1). A test that only builds and parses a
+   record is a pure record test — the record's layer (T2).
+2. **Does it drive a whole workflow through several layers** (backup, then restore, then compare)? → `Scenarios/` (T3).
+3. **Service API or real hardware?** → `Services/` or `Physical/` (T6).
+4. **A helper used by more than one folder?** → `Helpers/`. A helper used by one test class stays in that class's file.
+
+### 9.4 Rules worth remembering
+
+- **Golden paths are anchored at the project, not the source file.** Use `GoldenPaths.Legacy` / `GoldenPaths.LegacyVirtual`
+  (`Helpers/GoldenPaths.cs`) — never `[CallerFilePath]` relative paths, which break when a test file moves.
+- **Test namespaces can shadow library namespaces.** Inside `TapeLibNET.Tests.*`, a partly qualified `Legacy.X` resolves
+  to `TapeLibNET.Tests.Legacy` first. Write `TapeLibNET.Legacy.X`, or rely on the `using`. Member access
+  (`fx.Drive.Rewind()`) is never affected.
+- **Test filters by fully qualified name** (`.runsettings`, CI) must follow a moved class: prefer `~ClassName` (contains)
+  over exact `FullyQualifiedName=` matches.
+- **Byte-exact comparisons across independent backups** must pin what 2.1 records carry by nature — `SetId` per set and
+  file last-access times (see `PartitionsVsSetmarksComparisonTests`).
+
+---
+
+## 10. Other projects
+
+`TapeWinNET`, `TapeConNET`, `TapeServiceNET`, `FclNET`, `HelpNET`, `AiNET` and the tools keep their own folder structures;
+they follow P1 (folder = namespace) and the usings order of §5. They reference TapeLibNET namespaces explicitly per file —
+mostly `Services`, plus `Toc` where a view model renders the catalog.
+
+---
+
+## 11. Housekeeping found during the migration
+
+- `TapeLibNET\TapeWinNET.csproj` — a stray project file in the library folder; remove it (it would claim every library file).
+- `tools\TapeLoc\*(1).*` — duplicate download leftovers; remove.
+- `Excluded Files\` folders are skipped by the scripts by design.
+
+---
+
+## 12. Tools (`tools/`)
+
+All scripts run from the solution root with `-RepoRoot .`, support `-DryRun`, keep each file's UTF-8 BOM state, and refuse
+to move files in a dirty working tree.
+
+| Script | Purpose | Phases / options |
+|---|---|---|
+| `Move-TapeLibFolders.ps1` | Library layout: `git mv` per the §3 table, namespace rewrite, candidate usings | `-Phase Move` · `-Phase Usings [-Projects …]` |
+| `Move-TestFolders.ps1` | Test layout: `git mv` per the §9.2 table, namespace rewrite, candidate test usings; reports `.runsettings` / csproj references and possible namespace shadowing | `-Phase Move` · `-Phase Usings` |
+| `Sort-Usings.ps1` | Groups and orders the usings of every `.cs` file per §5; idempotent; skips generated files, `global using`, `#if` among usings | `-Path <file or folder>` |
+
+**Typical future uses**
+
+- **A new layer or a re-homed type:** add it to the script table, then `-Phase Move -DryRun`, `-Phase Move`,
+  `-Phase Usings`, build, `dotnet format … IDE0005`, `Sort-Usings.ps1`, build and test — one move-only commit.
+- **Tidying usings after a large change:** `dotnet format style TapeNET.sln --diagnostics IDE0005 --severity info`, then
+  `.\tools\Sort-Usings.ps1 -RepoRoot .`.
+
+**Known script behaviour**
+
+- The shadowing check is text-based and case-sensitive; it lists candidates — only the build decides.
+- .NET file APIs resolve relative paths against the process directory, so the scripts resolve `-RepoRoot` to an absolute
+  path first.
+- Run them in PowerShell 7; Windows PowerShell 5.1 mis-reads non-ASCII characters in scripts saved without a BOM.
