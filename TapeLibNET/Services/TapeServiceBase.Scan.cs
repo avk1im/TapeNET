@@ -463,6 +463,11 @@ public partial class TapeServiceBase
 
         var details = new List<string>();
 
+        int headerless = map.Fragments.Count(f => f.Kind == FragmentKind.SetContent);
+        if (headerless > 0)
+            details.Add($"{headerless:N0} backup set(s) identified by their first file — written without set headers, " +
+                        "so their order and completeness cannot be checked from the tape alone, without TOC");
+
         if (map.LastSetUnclosed)
         {
             string? name = map.Fragments.LastOrDefault(f => f.Kind == FragmentKind.SetHeader)?.Description;
@@ -509,8 +514,27 @@ public partial class TapeServiceBase
         }
 
         if (map.SetCount == 0)
+        {
+            // On a backup tape whose sets carry no identifiable start, the recovered TOC is the better witness:
+            int listed = map.Fragments
+                .Where(f => f.HarvestedToc is not null)
+                .Select(f => f.HarvestedToc!.Count)
+                .DefaultIfEmpty(0).Max();
+            if (listed > 0)
+                return (damaged > 0 ? ServiceReportLevel.Warning : ServiceReportLevel.Completed,
+                        $"{listed:N0} backup set(s) per the recovered table of contents — they carry no headers to identify them by",
+                        details);
             return (damaged > 0 ? ServiceReportLevel.Warning : ServiceReportLevel.Completed,
                     "No backup sets found — the cartridge is formatted but empty", details);
+        }
+
+        // When sets are found but the recovered TOC lists more (e.g. a mixed cartridge: 1 identified, 2 listed), say so.
+        //  (This is not a defect by itself, hence doesn't influence needsAttention.)
+        int tocListed = map.Fragments.Where(f => f.HarvestedToc is not null)
+            .Select(f => f.HarvestedToc!.Count).DefaultIfEmpty(0).Max();
+        if (tocListed > map.SetCount)
+            details.Add($"{tocListed - map.SetCount:N0} more set(s) listed by the recovered table of contents " +
+                        "carry no headers to identify them by (legacy, or written without set headers)");
 
         bool needsAttention = map.LastSetUnclosed || map.SetIndexGaps.Count > 0 || mixed > 0 || damaged > 0;
 

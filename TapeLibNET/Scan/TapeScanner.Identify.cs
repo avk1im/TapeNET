@@ -49,8 +49,7 @@ public sealed partial class TapeScanner
     private TapeMediaFragment IdentifyBomFragment(out int bytesRead)
     {
         using var probe = new TapeAgentBase(Drive, new TapeTOC());
-
-        TapeHeader? header = probe.ReadBomHeader(out bytesRead);
+        TapeHeader? header = probe.ReadBomHeader(out bytesRead, out byte[] block);
 
         if (bytesRead <= 0)
         {
@@ -63,12 +62,16 @@ public sealed partial class TapeScanner
         if (header is not null)
             return HeaderFragment(ordinal: 0, startBlock: 0, header);
 
-        // A readable block that is not one of our headers: legacy content at block 0 is the common case,
-        //  and it is a legitimate finding rather than a fault.
-        m_logger.LogTrace("{Prefix}: Scan: block 0 holds no recognizable header (legacy or foreign)", LogPrefix);
-
+        // Not a header. A header-less 2.1 tape starts with set 1's first file header — identifiable by its CRC.
+        //  Otherwise legacy content (the common case) or foreign data: a legitimate finding, not a fault.
         ResetError();
-        return UnknownFragment(ordinal: 0, startBlock: 0, fingerprint: null);
+        if (SetContentFragment(ordinal: 0, startBlock: 0, block, bytesRead) is { } content)
+        {
+            m_logger.LogTrace("{Prefix}: Scan: block 0 starts a header-less 2.1 set ({SetId})", LogPrefix, content.Id);
+            return content;
+        }
+        m_logger.LogTrace("{Prefix}: Scan: block 0 holds no recognizable header (legacy or foreign)", LogPrefix);
+        return UnknownFragment(ordinal: 0, startBlock: 0, TapeMediaFragment.MakeFingerprint(block, bytesRead));
     }
 
     #endregion
@@ -154,19 +157,17 @@ public sealed partial class TapeScanner
         {
             HeaderBlockIdentity.Header when id.Header is not null
                 => HeaderFragment(ordinal, startBlock, id.Header),
-
             // Our header, damaged. The CRC says so; the fingerprint keeps the evidence.
             HeaderBlockIdentity.DamagedRecord
                 => DamagedRecordFragment(ordinal, startBlock, buffer, read, id.FrameStatus),
-
             HeaderBlockIdentity.TocCopy
                 => TocCopyFragment(ordinal, startBlock, id),
-
-            // Genuinely unidentified. The fingerprint lets a support report tell "random data" from "a
-            //  structure we do not parse yet".
-            _ => UnknownFragment(ordinal, startBlock, TapeMediaFragment.MakeFingerprint(buffer, read)),
+            // A header-less 2.1 set starts with its first file's header frame — identifiable by its own CRC.
+            //  Otherwise genuinely unidentified: the fingerprint tells "random data" from "a structure we do not parse".
+            _ => SetContentFragment(ordinal, startBlock, buffer, read)
+                 ?? UnknownFragment(ordinal, startBlock, TapeMediaFragment.MakeFingerprint(buffer, read)),
         };
-
+        
         return ReadOutcome.Fragment;
     }
 
@@ -329,6 +330,43 @@ public sealed partial class TapeScanner
         };
 
         return toc; // TOC recovery is a walk step — see TapeScanner.Harvest.cs
+    }
+
+    /// <summary>
+    /// The first block of a header-less 2.1 set: a CRC-verified file header frame at offset 0. Null for anything else —
+    ///  legacy content, foreign data, a damaged frame (which stays Unknown, as any unverifiable block does).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Only the FIRST block after a mark is read, so only a set's first file is seen — which is all a set count needs.
+    ///  Packed files inside a block are content, not fragments (SM-11).
+    /// </para>
+    /// <para>
+    /// A damaged frame is deliberately NOT reported as damage: a set's first block may be a file body that merely starts
+    ///  with the magic by chance. Unknown is the honest verdict for anything the CRC does not confirm.
+    /// </para>
+    /// </remarks>
+    private static TapeMediaFragment? SetContentFragment(int ordinal, long startBlock, byte[] buffer, int read)
+    {
+        if (!TapeFormat.IsV2(buffer.AsSpan(0, read)))
+            return null;
+        try
+        {
+            using var ms = new MemoryStream(buffer, 0, read, writable: false);
+            TapeFileHeader header = TapeFileHeader.Read(ms);
+            return new TapeMediaFragment
+            {
+                Ordinal = ordinal,
+                StartBlock = startBlock,
+                Kind = FragmentKind.SetContent,
+                Id = header.SetId,
+                Description = header.Name,
+            };
+        }
+        catch (TapeFormatException)
+        {
+            return null;
+        }
     }
 
     private static TapeMediaFragment UnknownFragment(int ordinal, long startBlock, string? fingerprint)

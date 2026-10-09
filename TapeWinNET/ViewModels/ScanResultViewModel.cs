@@ -12,16 +12,19 @@ namespace TapeWinNET.ViewModels;
 /// <summary>
 /// One read-only row of the Scan Media result list — a display rendering of a <see cref="TapeMediaFragment"/>.
 /// </summary>
-public sealed class ScanFragmentRow(TapeMediaFragment fragment)
+/// <param name="tocSetName">
+/// For a header-less set: its name from a recovered TOC with the same SetId — a view-side match, never part of the map.
+/// </param>
+public sealed class ScanFragmentRow(TapeMediaFragment fragment, string? tocSetName = null)
 {
     public TapeMediaFragment Fragment { get; } = fragment;
-
     public int Ordinal => Fragment.Ordinal;
     public string Block => Fragment.StartBlock.ToString("N0");
     public bool IsToc => Fragment.Kind == FragmentKind.TOC;
     public bool HasHarvestedToc => Fragment.HarvestedToc is not null;
 
     /// <summary>Warning (amber) rows: unclosed set, unrecovered TOC copy, unidentified data.</summary>
+    /// <remarks>A header-less set is NOT amber: the volume chose not to write set headers.</remarks>
     public bool IsWarning => Fragment.Kind switch
     {
         FragmentKind.SetHeader => !Fragment.ClosedBySeparator,
@@ -37,6 +40,7 @@ public sealed class ScanFragmentRow(TapeMediaFragment fragment)
     {
         FragmentKind.MediaHeader => "Media header",
         FragmentKind.SetHeader => "Backup set",
+        FragmentKind.SetContent => "Backup set (no header)",
         FragmentKind.TOC => "Table of contents",
         FragmentKind.TocMark => "TOC mark",
         FragmentKind.MarkRun => "Mark run",
@@ -48,6 +52,7 @@ public sealed class ScanFragmentRow(TapeMediaFragment fragment)
     {
         FragmentKind.MediaHeader => $"{(Fragment.Id is { } g ? g.ToString("N")[..8] : "?")} · vol {Fragment.Volume}",
         FragmentKind.SetHeader => $"#{Fragment.VolumeSetIndex + 1}",
+        FragmentKind.SetContent => Fragment.Id is { } s ? $"set {s.ToString("N")[..8]}" : "—",   // no index on tape
         FragmentKind.TOC => Fragment.TocVersion is { } v ? $"v{v:X4}" : "—",
         FragmentKind.CalibrationHeader => Fragment.Description ?? "—",
         _ => "—",
@@ -59,6 +64,9 @@ public sealed class ScanFragmentRow(TapeMediaFragment fragment)
         FragmentKind.SetHeader =>
             $"{Fragment.Description}{(Fragment.CreatedUtc is { } t ? $" · {t.ToLocalTime():g}" : "")}"
             + (Fragment.ClosedBySeparator ? string.Empty : " — never completed"),
+        FragmentKind.SetContent => tocSetName is { } n
+            ? $"{n} · first file: {Fragment.Description}"
+            : $"first file: {Fragment.Description}",
         FragmentKind.TOC => Fragment.HarvestedToc is { } toc ? $"recovered — {toc.Count} set(s)"
             : !Fragment.Diagnosis.Success ? $"not recovered: {Fragment.Diagnosis.ErrorMessage}"
             : "found",
@@ -96,8 +104,19 @@ public sealed class ScanResultViewModel : ViewModelBase
         _onTocAdopted = onTocAdopted;
         _mapPath = result.MapExportPath;
 
-        Rows = new ObservableCollection<ScanFragmentRow>(_map.Fragments.Select(f => new ScanFragmentRow(f)));
+        // Names for header-less sets, matched by SetId against any TOC this scan recovered.
+        var setNames = _map.Fragments
+            .Where(f => f.HarvestedToc is not null)
+            .SelectMany(f => f.HarvestedToc!)
+            .Where(s => s.SetId != Guid.Empty)
+            .GroupBy(s => s.SetId)
+            .ToDictionary(g => g.Key, g => g.First().Description);
+
+        Rows = new ObservableCollection<ScanFragmentRow>(_map.Fragments.Select(f => new ScanFragmentRow(f,
+            f.Kind == FragmentKind.SetContent && f.Id is { } id && setNames.TryGetValue(id, out var name) ? name : null)));
+        
         Details = [.. TapeServiceBase.VerbalizeScan(_map).Details];
+        
         // Advice is shown as static recommendation text, not as buttons: the TOC actions already
         //  sit on the selected TOC row, and the other advice has no in-dialog action to trigger.
         Advice = [.. result.Advice.Select(TapeServiceBase.ScanAdviceText)];

@@ -71,11 +71,23 @@ public partial class TapeAgentBase
     ///  do not recognize" are the same answer to <c>header is null</c>, but opposite findings for a media
     ///  survey. Added for Scan Media (SM-6); no existing caller changes.
     /// </remarks>
-    public TapeHeader? ReadBomHeader(out int bytesRead)
+    public TapeHeader? ReadBomHeader(out int bytesRead) => ReadBomHeader(out bytesRead, out _);
+
+    /// <summary>
+    /// As <see cref="ReadBomHeader(out int)"/>, additionally handing out the block itself — for a caller that must
+    ///  identify what stands at BOM when it is NOT a header (Scan Media: the first file header of a header-less set).
+    /// </summary>
+    /// <param name="block">
+    /// The block as read, <see cref="TapeHeaderBlock.Size"/> bytes long; only the first <paramref name="bytesRead"/>
+    ///  bytes are meaningful. Empty when nothing was read.
+    /// </param>
+    /// <remarks>
+    /// Same single read and the same navigator side effect as the other overloads — the bytes come for free.
+    /// </remarks>
+    public TapeHeader? ReadBomHeader(out int bytesRead, out byte[] block)
     {
         var buffer = new byte[TapeHeaderBlock.Size];
         bytesRead = Manager.ReadBomHeaderBlock(buffer);
-
         if (bytesRead <= 0)
         {
             // Reaching BOM and finding NO data is the blank / legacy / at-EOD case — a DEFINITIVE
@@ -84,9 +96,11 @@ public partial class TapeAgentBase
             //  (MoveToBeginOfContentFromBom rejects Unknown). Absent lets navigation proceed and
             //  skip nothing — exactly right for headerless media.
             Navigator.ResolveMediaHeaderPresence(TapeHeaderPresence.Absent);
+            block = [];
             return null;
         }
 
+        block = buffer;
         TapeHeader? header = TapeHeaderBlock.Classify(buffer, bytesRead);
 
         // A readable block that is NOT our media header (calibration / set / foreign / torn) is
@@ -100,8 +114,7 @@ public partial class TapeAgentBase
         if (header is not null)
             m_logger.LogTrace("BOM header read: {Header}", header);
         else
-            m_logger.LogTrace("BOM header read: none (legacy/blank/foreign)");
-
+            m_logger.LogTrace("BOM header read: none (legacy/blank/foreign/header-less content)");
         return header;
     }
 

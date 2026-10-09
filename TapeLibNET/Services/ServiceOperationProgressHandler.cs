@@ -711,7 +711,7 @@ public class ServiceScanProgressHandler(ITapeServiceHost host, TapeScanner scann
         {
             FragmentsFound++;
 
-            if (f.Kind == FragmentKind.SetHeader) SetsFound++;
+            if (f.Kind is FragmentKind.SetHeader or FragmentKind.SetContent) SetsFound++;
             if (f.Kind == FragmentKind.TOC) TocCopiesFound++;
             if (f.HarvestedToc is not null) TocsRecovered++;
 
@@ -730,33 +730,31 @@ public class ServiceScanProgressHandler(ITapeServiceHost host, TapeScanner scann
     {
         FragmentKind.MediaHeader =>
             (ServiceReportLevel.Info, $"Media header >{f.Description}< · volume {f.Volume}"),
-
         FragmentKind.SetHeader when !f.ClosedBySeparator =>
             (ServiceReportLevel.Warning, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< at block {f.StartBlock} — never completed"),
-
         FragmentKind.SetHeader =>
             (ServiceReportLevel.Info, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< at block {f.StartBlock}"),
-
+        // A set written without a set header, identified by its first file's 2.1 header frame. No index and no
+        //  description on tape — the SetId and the first file are what the tape itself can tell.
+        FragmentKind.SetContent =>
+            (ServiceReportLevel.Info, $"Backup set {ShortId(f.Id)} at block {f.StartBlock} — no set header, first file >{f.Description}<"),
         FragmentKind.CalibrationHeader =>
             (ServiceReportLevel.Info, $"Calibration run header, profile >{f.Description}<"),
-
         FragmentKind.TOC when f.HarvestedToc is { } toc =>
             (ServiceReportLevel.Info, $"Table of contents copy at block {f.StartBlock} — recovered, {toc.Count} set(s)"),
-
         FragmentKind.TOC when !f.Diagnosis.Success =>
             (ServiceReportLevel.Warning, $"Table of contents copy at block {f.StartBlock} — could not be recovered"),
-
         FragmentKind.TOC =>
             (ServiceReportLevel.Info, $"Table of contents copy at block {f.StartBlock}"),
-
         FragmentKind.Unknown when !f.Diagnosis.Success =>
             (ServiceReportLevel.Warning, $"Block {f.StartBlock}: {f.Diagnosis.ErrorMessage}"),
-
         FragmentKind.Unknown =>
             (ServiceReportLevel.None, $"Unidentified data at block {f.StartBlock}"),
-
         _ => null,
     };
+
+    /// <summary>The first 8 hex digits of an id — enough to tell sets apart in a log line.</summary>
+    private static string ShortId(Guid? id) => id is { } g ? g.ToString("N")[..8] : "?";
 
     private static string FormatPhase(string phase) => phase switch
     {

@@ -568,6 +568,7 @@ public class TapeMediaIdentifyTests
     [InlineData(FragmentKind.TOC, false)]
     [InlineData(FragmentKind.MarkRun, false)]
     [InlineData(FragmentKind.TocMark, false)]
+    [InlineData(FragmentKind.SetContent, false)]
     [InlineData(FragmentKind.Unknown, false)]
     public void Fragment_IsHeader_CoversExactlyTheThreeHeaderKinds(FragmentKind kind, bool expected)
     {
@@ -587,6 +588,7 @@ public class TapeMediaIdentifyTests
     [InlineData(FragmentKind.TOC)]
     [InlineData(FragmentKind.MarkRun)]
     [InlineData(FragmentKind.TocMark)]
+    [InlineData(FragmentKind.SetContent)]
     [InlineData(FragmentKind.Unknown)]
     public void Fragment_DisplayName_IsNeverBlank_EvenWithNoDescription(FragmentKind kind)
     {

@@ -338,7 +338,9 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
                 break;
             }
 
-            if (fragment.Kind is FragmentKind.SetHeader or FragmentKind.MediaHeader)
+            // Ours, positively: a header, a header-less set's first file, or a TOC copy.
+            if (fragment.Kind is FragmentKind.SetHeader or FragmentKind.MediaHeader
+                              or FragmentKind.SetContent or FragmentKind.TOC)
                 kind = ScannedMediaKind.Backup;
 
             crossClosingMark = true;
@@ -562,10 +564,12 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
     /// <summary>What the cartridge looks like, judged from block 0 alone.</summary>
     private static ScannedMediaKind KindFromFirstFragment(TapeMediaFragment first) => first.Kind switch
     {
-        FragmentKind.MediaHeader => ScannedMediaKind.Backup,
-        FragmentKind.SetHeader => ScannedMediaKind.Backup,      // headerless volume carrying set headers
-        FragmentKind.CalibrationHeader => ScannedMediaKind.CalibrationCartridge,
-        _ => ScannedMediaKind.Foreign,                          // refined by the walk if a header turns up
+        FragmentKind.MediaHeader        => ScannedMediaKind.Backup,
+        FragmentKind.SetHeader          => ScannedMediaKind.Backup,  // headerless volume carrying set headers
+        FragmentKind.SetContent         => ScannedMediaKind.Backup,  // header-less volume, 2.1 set
+        FragmentKind.TOC                => ScannedMediaKind.Backup,  // TOC in the beginning of partition
+        FragmentKind.CalibrationHeader  => ScannedMediaKind.CalibrationCartridge,
+        _                               => ScannedMediaKind.Foreign, // refined by the walk if one of ours turns up
     };
 
     #endregion

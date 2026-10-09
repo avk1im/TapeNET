@@ -314,8 +314,9 @@ Written before every file body; `SizeOnTape` covers frame + body.
 - **Not in the header:** `Hash`, `SizeOnTape`, `Codec` — unknown when the header is written; TOC-only.
 - **Body end.** A body is a `BackupRead` blob with no end marker. A TOC-less recovery reader finds the next
   file by searching forward for the next valid file-header frame with the same `SetId` and a higher `FileId`.
-  A per-file trailer (body length + hash) can be added later as a new skippable record kind — no format
-  change.
+  Scan Media identifies a header-less 2.1 set by its first file's header frame (`FragmentKind.SetContent`,
+  carrying the SetId). A per-file trailer (body length + hash) can be added later as a new skippable record
+  kind — no format change.
 
 ### 5.4 Block-framed headers — shared tags
 
@@ -529,8 +530,8 @@ The `#define LEGACY_TapeCalibrationRunHeader` block is deleted.
 
 The scanner parses nothing itself (it goes through `Classify` / `IdentifyBlock` / `RestoreTOCAt`), so it needs
 only: `TocVersion = 0x0201` for 2.1 copies; checkpoint blocks reported as calibration fragments; unknown kinds
-as "record from a newer TapeNET". Locating file headers mid-block (TOC-less file recovery) is out of scope —
-this design lays the on-tape groundwork.
+as "record from a newer TapeNET". Set starts are located by their first file header (whole-block reads only);
+locating packed files mid-block remains out of scope — this design lays the on-tape groundwork.
 
 ---
 

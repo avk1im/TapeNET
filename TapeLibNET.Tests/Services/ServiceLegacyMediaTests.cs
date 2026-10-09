@@ -126,8 +126,9 @@ public class ServiceLegacyMediaTests : ServiceTestBase
     #region *** Format_ScanMedia_BothFamilies ***
 
     /// <summary>
-    /// Scan Media on the untouched legacy cartridge: its TOC copies are recovered and flagged legacy, its set is found,
-    ///  and nothing reads as damaged — legacy records are ours, not foreign.
+    /// Scan Media on the untouched legacy cartridge: its TOC copies are recovered and flagged legacy, which makes the
+    ///  cartridge positively ours. The legacy set carries no header and no 2.1 frame, so the scan does not count it —
+    ///  the recovered TOC lists it. Nothing reads as damaged.
     /// </summary>
     [Theory]
     [MemberData(nameof(Images))]
@@ -141,17 +142,23 @@ public class ServiceLegacyMediaTests : ServiceTestBase
             Assert.True(result.Success, $"{result.Message}\n{host.DumpReports()}");
             MediaScanMap map = result.Map!;
 
-            Assert.Equal(1, result.SetsFound);
+            Assert.Equal(ScannedMediaKind.Backup, map.Kind);                  // a TOC copy of ours proves it
+            Assert.Equal(0, result.SetsFound);                                // legacy content is not identifiable
             var tocs = map.Fragments.Where(f => f.Kind == FragmentKind.TOC).ToList();
             Assert.NotEmpty(tocs);
-            Assert.All(tocs, f => Assert.True(f.HarvestedToc?.LoadedFromLegacy, $"TOC copy at {f.StartBlock} not legacy"));
+            Assert.All(tocs, f =>
+            {
+                Assert.True(f.HarvestedToc?.LoadedFromLegacy, $"TOC copy at {f.StartBlock} not legacy");
+                Assert.Equal(1, f.HarvestedToc!.Count);
+            });
             Assert.DoesNotContain(map.Fragments, f => f.Kind == FragmentKind.Unknown && !f.Diagnosis.Success);
+            Assert.Contains("per the recovered table of contents", result.Summary);
         }
     }
 
     /// <summary>
-    /// Scan Media on the same cartridge after a 2.1 append — one tape, both families: the legacy set and the 2.1 set are
-    ///  found, the TOC copies are 2.1 now (the append rewrote them), and still nothing reads as damaged.
+    /// Scan Media after a 2.1 append — one tape, both families: the 2.1 set is identified by its first file's header
+    ///  frame (with the SetId the TOC records), the legacy set is not, the TOC copies are 2.1 now and list both.
     /// </summary>
     [Theory]
     [MemberData(nameof(Images))]
@@ -161,11 +168,13 @@ public class ServiceLegacyMediaTests : ServiceTestBase
         using var tree = new TempFileTree(seed: 91);
         tree.AddFiles("mix", count: 3, minSize: 512, maxSize: 4 * 1024);
 
+        Guid newSetId;
         var (svc, host) = await ReopenAsync(media);
         using (svc)
         {
             Assert.True((await svc.ExecuteBackupAsync(MakeBackupRequest(svc, tree.RootPath, "2.1 set", append: true))).Success,
                 host.DumpReports());
+            newSetId = svc.TOC![2].SetId;
         }
 
         var (scan, scanHost) = await ReopenAsync(media);
@@ -175,11 +184,18 @@ public class ServiceLegacyMediaTests : ServiceTestBase
             Assert.True(result.Success, $"{result.Message}\n{scanHost.DumpReports()}");
             MediaScanMap map = result.Map!;
 
-            Assert.Equal(2, result.SetsFound);
+            Assert.Equal(ScannedMediaKind.Backup, map.Kind);
+            var content = Assert.Single(map.Fragments, f => f.Kind == FragmentKind.SetContent);
+            Assert.Equal(newSetId, content.Id);
+            Assert.Equal(1, result.SetsFound);
+
             var tocs = map.Fragments.Where(f => f.Kind == FragmentKind.TOC).ToList();
             Assert.NotEmpty(tocs);
-            Assert.All(tocs, f => Assert.False(f.HarvestedToc?.LoadedFromLegacy ?? true,
-                $"TOC copy at {f.StartBlock} should be 2.1 after the append"));
+            Assert.All(tocs, f =>
+            {
+                Assert.False(f.HarvestedToc?.LoadedFromLegacy ?? true, $"TOC copy at {f.StartBlock} should be 2.1");
+                Assert.Equal(2, f.HarvestedToc!.Count);
+            });
             Assert.DoesNotContain(map.Fragments, f => f.Kind == FragmentKind.Unknown && !f.Diagnosis.Success);
         }
     }

@@ -1,12 +1,12 @@
-using Windows.Win32.Foundation;
-
-using TapeLibNET.Drive;
-using TapeLibNET.Virtual;
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
 using TapeLibNET.Scan;
-
+using TapeLibNET.Services;
 using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Virtual;
+using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Tests.Scan;
 
@@ -371,6 +371,60 @@ public class TapeScannerTests
         {
             DisposeAll(trees);
         }
+    }
+
+    /// <summary>
+    /// A header-less 2.1 tape: every set start — block 0 included — is identified by its first file's header frame,
+    ///  carrying the SetId the TOC records. The scan counts the sets with no TOC and no set headers.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Scan_HeaderlessV21Sets_IdentifiedBySetContent(DriveProfile profile)
+    {
+        using var tree1 = new TempFileTree(seed: 1);
+        tree1.AddFiles("a", count: 3, minSize: 512, maxSize: 4 * 1024);
+        using var tree2 = new TempFileTree(seed: 2);
+        tree2.AddFiles("b", count: 3, minSize: 512, maxSize: 4 * 1024);
+
+        using var fx = new VirtualTapeFixture(profile);                       // no media header, no set headers
+        fx.BackupFiles(tree1.Files, description: "One");
+        fx.BackupFiles(tree2.Files, description: "Two");
+
+        MediaScanMap map = new TapeScanner(fx.Drive).Scan()!;
+
+        Assert.Equal(ScannedMediaKind.Backup, map.Kind);
+        var sets = map.Fragments.Where(f => f.Kind == FragmentKind.SetContent).ToList();
+        Assert.Equal(new[] { fx.TOC[1].SetId, fx.TOC[2].SetId }, sets.Select(f => f.Id!.Value).ToArray());
+        Assert.Equal(2, map.SetCount);
+    }
+
+    /// <summary>A block that starts with the 2.1 magic by chance is never a set: the CRC decides.</summary>
+    [Fact]
+    public void SetContent_RequiresAValidFrame()
+    {
+        var block = new byte[TapeHeaderBlock.Size];
+        "TpN#"u8.CopyTo(block);                                               // magic, then garbage
+        new Random(3).NextBytes(block.AsSpan(4));
+
+        Assert.Equal(HeaderBlockIdentity.Foreign, TapeHeaderBlock.IdentifyBlock(block, block.Length).Kind);
+    }
+
+    /// <summary>The live progress counter and the final map agree on header-less sets.</summary>
+    [Fact]
+    public void ScanProgress_CountsHeaderlessSets()
+    {
+        var f = new TapeMediaFragment
+        {
+            Ordinal = 0,
+            StartBlock = 0,
+            Kind = FragmentKind.SetContent,
+            Id = Guid.NewGuid(),
+            Description = @"C:\x.txt"
+        };
+        var line = ServiceScanProgressHandler.DescribeFragment(f);
+        Assert.NotNull(line);
+        Assert.Equal(ServiceReportLevel.Info, line!.Value.Level);
+        Assert.Contains("no set header", line.Value.Text);
     }
 
     #endregion

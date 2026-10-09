@@ -41,6 +41,12 @@ public enum FragmentKind
     /// </summary>
     TocMark,
 
+    /// <summary>
+    /// The first block of a set written without a set header: a 2.1 file header frame, CRC-verified. Carries the set's
+    ///  identity (<see cref="TapeMediaFragment.Id"/> = SetId) and the first file's name — enough to count and name the set
+    ///  with no TOC. Legacy content has no such frame and stays <see cref="Unknown"/>.
+    /// </summary>
+    SetContent,
 }
 
 /// <summary>
@@ -91,9 +97,9 @@ public sealed record TapeMediaFragment
 
     // ── Identity — populated for MediaHeader / SetHeader / CalibrationHeader ──────────────────────────
 
-    /// <summary>The header's identity: a media/series id, or a calibration run id.</summary>
+    /// <summary>The header's identity: a media/series id, set id, or a calibration run id.</summary>
     /// <remarks>
-    /// One slot for all three kinds, mirroring <see cref="TapeHeader.Id"/>, which each concrete header
+    /// One slot for all four kinds, mirroring <see cref="TapeHeader.Id"/>, which each concrete header
     ///  re-exposes under its own domain name. Splitting it here would only re-introduce the aliasing the
     ///  header hierarchy already resolved.
     /// </remarks>
@@ -108,7 +114,10 @@ public sealed record TapeMediaFragment
     /// <summary>Set index across the whole series, from a set header.</summary>
     public int? GlobalSetIndex { get; init; }
 
-    /// <summary>Media label, set description, or calibration profile key — whichever the kind carries.</summary>
+    /// <summary>
+    /// Media label, set description, calibration profile key, or, for SetContent, the first file's
+    ///  full path — whichever the kind carries.
+    /// </summary>
     public string? Description { get; init; }
 
     /// <summary>Creation time recorded in the header (UTC).</summary>
@@ -177,19 +186,23 @@ public sealed record TapeMediaFragment
             : Convert.ToHexString(block.AsSpan(0, Math.Min(FingerprintBytes, Math.Min(length, block.Length))));
 
     /// <summary>True for the three kinds that carry a parsed <see cref="TapeHeader"/>.</summary>
+    /// <remarks>
+    /// <see cref="FragmentKind.SetContent"/> is not a header and carries no <see cref="TapeHeader"/>.
+    /// </remarks>
     public bool IsHeader
         => Kind is FragmentKind.MediaHeader or FragmentKind.SetHeader or FragmentKind.CalibrationHeader;
 
     /// <summary>A never-empty, human-readable name for this fragment.</summary>
     public string DisplayName => Kind switch
     {
-        FragmentKind.MediaHeader       => Description ?? $"Media {Id:N} · vol {Volume}",
-        FragmentKind.SetHeader         => Description ?? $"Set #{VolumeSetIndex}",
-        FragmentKind.CalibrationHeader => $"Calibration run {Id:N}",
-        FragmentKind.TOC   => "Table of contents",
-        FragmentKind.MarkRun           => $"{MarkCount} consecutive mark(s)",
-        FragmentKind.TocMark => $"TOC mark (gap + {MarkCount + 1} filemarks)",
-        _ => "Unidentified",
+        FragmentKind.MediaHeader        => Description ?? $"Media {Id:N} · vol {Volume}",
+        FragmentKind.SetHeader          => Description ?? $"Set #{VolumeSetIndex}",
+        FragmentKind.CalibrationHeader  => $"Calibration run {Id:N}",
+        FragmentKind.TOC                => "Table of contents",
+        FragmentKind.MarkRun            => $"{MarkCount} consecutive mark(s)",
+        FragmentKind.TocMark            => $"TOC mark (gap + {MarkCount + 1} filemarks)",
+        FragmentKind.SetContent         => $"Set {Id:N} (first file {Description})",
+        _                               => "Unidentified",
     };
 
     /// <inheritdoc/>

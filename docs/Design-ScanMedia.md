@@ -251,7 +251,7 @@ A fragment's contents are opaque. `BlockSpan` is an upper bound including marks,
 
 ```csharp
 public enum FragmentKind                       // an OBSERVATION, never a verdict (SM-3)
-{ Unknown = 0, MediaHeader, SetHeader, CalibrationHeader, TOC, MarkRun, TocMark }
+{ Unknown = 0, MediaHeader, SetHeader, CalibrationHeader, TOC, MarkRun, TocMark, SetContent }
 
 public enum ScannedMediaKind { Blank = 0, Backup, CalibrationCartridge, Foreign }
 
@@ -300,6 +300,9 @@ public sealed record MediaScanMap
 **No "expected", "complete" or "lost"** — those are comparison verdicts. `LastSetUnclosed` looks at the last
 **set header**, not the last fragment. `MixedIdentityFragments` is empty without a media header.
 `SetIndexGaps` reports forward jumps only. `ToString` carries the diagnosis and a short fingerprint.
+
+> New `FragmentKind.SetContent`: `SetCount` counts it; a recovered TOC makes the cartridge `Backup`;
+  the WPF row matches its SetId to a recovered TOC (if any) for the name.
 
 ---
 

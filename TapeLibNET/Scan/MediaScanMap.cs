@@ -12,7 +12,9 @@ public enum ScannedMediaKind
     /// <summary>Nothing readable at all — EOD at block 0. A clean, successful finding, not a failure (SM-6).</summary>
     Blank = 0,
 
-    /// <summary>Carries backup content (a media header, set headers, or both).</summary>
+    /// <summary>
+    /// Carries backup content: a media header, set headers, header-less 2.1 sets, or a table-of-contents copy of ours.
+    /// </summary>
     Backup,
 
     /// <summary>Carries a calibration trail. Identified, then deliberately NOT walked (SM-7).</summary>
@@ -101,9 +103,13 @@ public sealed record MediaScanMap
     [JsonIgnore]
     public int? Volume => Fragments.FirstOrDefault(f => f.Kind == FragmentKind.MediaHeader)?.Volume;
 
-    /// <summary>Backup sets counted FROM THE TAPE — not from an index that may be wrong.</summary>
+    /// <summary>
+    /// Backup sets counted FROM THE TAPE — not from an index that may be wrong: by a set header,
+    ///  or — for sets written without one — by their first file's 2.1 header frame. Legacy sets without
+    ///  any headers are not counted; a recovered TOC lists them.
+    /// </summary>
     [JsonIgnore]
-    public int SetCount => Fragments.Count(f => f.Kind == FragmentKind.SetHeader);
+    public int SetCount => Fragments.Count(f => f.Kind is FragmentKind.SetHeader or FragmentKind.SetContent);
 
     /// <summary>TOC copies found, whether or not they were harvested.</summary>
     [JsonIgnore]
