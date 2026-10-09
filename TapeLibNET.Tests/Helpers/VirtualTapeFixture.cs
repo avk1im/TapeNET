@@ -100,8 +100,8 @@ public sealed class VirtualTapeFixture : IDisposable
 {
     #region *** Constants ***
 
-    /// <summary>Default content capacity: 200 MB — plenty for unit tests.</summary>
-    public const long DefaultContentCapacity = 200L * 1024 * 1024;
+    /// <summary>Default content capacity: 128 MB — plenty for unit tests.</summary>
+    public const long DefaultContentCapacity = 128L * 1024 * 1024;
 
     /// <summary>Default initiator partition capacity: 4 MB.</summary>
     public const long DefaultInitiatorCapacity = 4L * 1024 * 1024;

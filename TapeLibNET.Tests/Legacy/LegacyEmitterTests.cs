@@ -207,8 +207,11 @@ public class LegacyEmitterTests
                 Assert.NotEqual(Guid.Empty, toc[i].SetId);
             }
 
-            toc.CurrentSetIndex = 1;
-            fx.RestoreAllFilesFromCurrentSet(dir);
+            for (int i = 1; i <= toc.Count; i++)
+            {
+                toc.CurrentSetIndex = i;
+                fx.RestoreAllFilesFromCurrentSet(dir);
+            }
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files, RestoredRoot(dir, tree.RootPath));
         }
         finally

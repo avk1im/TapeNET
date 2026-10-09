@@ -846,14 +846,34 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
         if (m_hasMedia || m_contentStream != null)
             UnloadMedia();
 
-        m_contentStream = new MemoryStream(snapshot.ContentData, 0, snapshot.ContentData.Length, writable: true, publiclyVisible: true);
+        static int ChoseCapacity(int needed, long reserved)
+        {
+            // Ensure we don't exceed Int32.MaxValue for MemoryStream
+            if (reserved > Int32.MaxValue)
+                reserved = Int32.MaxValue;
+            return Math.Max(needed, (int)reserved);
+        }
+
+        static byte[] ChoseBuffer(byte[] supplied, long reserved)
+        {
+            int capacity = ChoseCapacity(supplied.Length, reserved);
+            if (supplied.Length >= capacity)
+                return supplied;
+            var buffer = new byte[capacity];
+            Array.Copy(supplied, buffer, supplied.Length);
+            return buffer;
+        }
+
+        byte[] buff = ChoseBuffer(snapshot.ContentData, snapshot.ContentCapacity);
+        m_contentStream = new MemoryStream(buff, 0, buff.Length, writable: true, publiclyVisible: true);
         m_contentMetadataStream = snapshot.ContentMetadata != null
             ? new MemoryStream(snapshot.ContentMetadata, 0, snapshot.ContentMetadata.Length, writable: true, publiclyVisible: true)
             : new MemoryStream();
 
         if (m_capabilities.SupportsInitiatorPartition && snapshot.InitiatorData != null)
         {
-            m_initiatorStream = new MemoryStream(snapshot.InitiatorData, 0, snapshot.InitiatorData.Length, writable: true, publiclyVisible: true);
+            buff = ChoseBuffer(snapshot.InitiatorData, snapshot.InitiatorCapacity);
+            m_initiatorStream = new MemoryStream(buff, 0, buff.Length, writable: true, publiclyVisible: true);
             m_initiatorMetadataStream = snapshot.InitiatorMetadata != null
                 ? new MemoryStream(snapshot.InitiatorMetadata, 0, snapshot.InitiatorMetadata.Length, writable: true, publiclyVisible: true)
                 : new MemoryStream();
