@@ -94,6 +94,17 @@ public static class ScanMapAssert
             $"  actual:   {string.Join(", ", actual)}\n{Describe(map)}");
     }
 
+    /// <summary>
+    /// Asserts the map contains exactly this many fragments of the given kind.
+    /// </summary>
+    public static int KindCount(MediaScanMap map, FragmentKind kind, int expected)
+    {
+        int actual = map.Fragments.Count(f => f.Kind == kind);
+        Assert.True(actual == expected,
+            $"Expected exactly {expected} fragments of kind {kind}, found {actual}.\n{Describe(map)}");
+        return actual;
+    }
+
     /// <summary>Asserts ordinals are 0-based and contiguous, and that blocks never move backwards.</summary>
     /// <remarks>
     /// A structural invariant of every map, healthy or not: the walk only ever moves forward, and a

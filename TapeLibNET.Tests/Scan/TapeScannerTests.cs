@@ -1,3 +1,4 @@
+using TapeLibNET.Format;
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
 using TapeLibNET.Drive;
@@ -6,6 +7,7 @@ using TapeLibNET.Scan;
 using TapeLibNET.Services;
 using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
+
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Tests.Scan;
@@ -394,19 +396,27 @@ public class TapeScannerTests
 
         Assert.Equal(ScannedMediaKind.Backup, map.Kind);
         var sets = map.Fragments.Where(f => f.Kind == FragmentKind.SetContent).ToList();
-        Assert.Equal(new[] { fx.TOC[1].SetId, fx.TOC[2].SetId }, sets.Select(f => f.Id!.Value).ToArray());
+        Assert.Equal([ fx.TOC[1].SetId, fx.TOC[2].SetId ], [ .. sets.Select(f => f.Id!.Value) ]);
         Assert.Equal(2, map.SetCount);
     }
 
-    /// <summary>A block that starts with the 2.1 magic by chance is never a set: the CRC decides.</summary>
+    /// <summary>
+    /// A block that starts with the 2.1 magic but does not verify is OURS, DAMAGED — never foreign data, and never a set.
+    ///  At a mark boundary on a 2.1 tape the magic is always one of our records, so damage behind it is reported as
+    ///  damage (Phase 5 rule); only a valid, CRC-checked file header frame makes a set start.
+    /// </summary>
     [Fact]
-    public void SetContent_RequiresAValidFrame()
+    public void MagicWithoutValidFrame_IsDamagedRecord_NeverASet()
     {
         var block = new byte[TapeHeaderBlock.Size];
         "TpN#"u8.CopyTo(block);                                               // magic, then garbage
         new Random(3).NextBytes(block.AsSpan(4));
 
-        Assert.Equal(HeaderBlockIdentity.Foreign, TapeHeaderBlock.IdentifyBlock(block, block.Length).Kind);
+        IdentifiedBlock id = TapeHeaderBlock.IdentifyBlock(block, block.Length);
+
+        Assert.Equal(HeaderBlockIdentity.DamagedRecord, id.Kind);
+        Assert.NotEqual(TapeFrameStatus.Ok, id.FrameStatus);
+        Assert.Null(id.Header);
     }
 
     /// <summary>The live progress counter and the final map agree on header-less sets.</summary>
@@ -621,6 +631,7 @@ public class TapeScannerTests
     /// <summary>
     /// Legacy media: content at block 0, no media header, no set headers. The block-0 read SUCCEEDS but
     ///  identifies nothing — which is a different finding from blank, and must stay different.
+    ///  The sets still identify as SetContent via their first file's header frames
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -640,7 +651,10 @@ public class TapeScannerTests
 
             // No headers were ever written, so nothing identifies itself — yet the separators still map.
             Assert.Null(ScanMapAssert.MediaHeader(map));
-            ScanMapAssert.SetCount(map, 0);
+
+            // The sets are still identified by their first file's header frame -- enough to count them.
+            ScanMapAssert.SetCount(map, 2);
+            ScanMapAssert.KindCount(map, FragmentKind.SetContent, 2); // SetContent, not SetHeader
         }
         finally
         {
