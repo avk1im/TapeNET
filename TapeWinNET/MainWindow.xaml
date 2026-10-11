@@ -123,14 +123,14 @@
                                 <DataTrigger Binding="{Binding ItemType}" Value="Tape">
                                     <Setter Property="FontWeight" Value="SemiBold" />
                                 </DataTrigger>
-                                <!-- In-memory info (blue) - listed before IsTOCFromFile so TOC warning takes precedence -->
+                                <!-- In-memory info (blue) - listed before IsTOCImported so TOC warning takes precedence -->
                                 <DataTrigger Binding="{Binding IsInMemory}" Value="True">
                                     <Setter Property="Foreground" Value="{StaticResource WarningFg.Info}" />
                                 </DataTrigger>
-                                <DataTrigger Binding="{Binding IsTOCFromFile}" Value="True">
+                                <DataTrigger Binding="{Binding IsTOCImported}" Value="True">
                                     <Setter Property="Foreground" Value="{StaticResource WarningFg.Failed}" />
                                 </DataTrigger>
-                                <!-- Remote drive (green) - last so it overrides IsInMemory/IsTOCFromFile -->
+                                <!-- Remote drive (green) - last so it overrides IsInMemory/IsTOCImported -->
                                 <DataTrigger Binding="{Binding IsRemote}" Value="True">
                                     <Setter Property="Foreground" Value="{StaticResource WarningFg.Completed}" />
                                 </DataTrigger>
