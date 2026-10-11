@@ -3,11 +3,11 @@ using System.Windows;
 using System.Windows.Input;
 
 using TapeLibNET.Agents;
+using TapeLibNET.Drive;
 using TapeLibNET.Scan;
 using TapeLibNET.Services;
 
 namespace TapeWinNET.ViewModels;
-
 
 /// <summary>
 /// One read-only row of the Scan Media result list — a display rendering of a <see cref="TapeMediaFragment"/>.
@@ -15,17 +15,22 @@ namespace TapeWinNET.ViewModels;
 /// <param name="tocSetName">
 /// For a header-less set: its name from a recovered TOC with the same SetId — a view-side match, never part of the map.
 /// </param>
-public sealed class ScanFragmentRow(TapeMediaFragment fragment, string? tocSetName = null)
+/// <param name="outOfPlace">The fragment stands in a partition the layout does not put it in (amber).</param>
+public sealed class ScanFragmentRow(TapeMediaFragment fragment, string? tocSetName = null, bool outOfPlace = false)
 {
     public TapeMediaFragment Fragment { get; } = fragment;
     public int Ordinal => Fragment.Ordinal;
     public string Block => Fragment.StartBlock.ToString("N0");
+
+    /// <summary>Which partition — the Block column is relative to it.</summary>
+    public string Location => Fragment.Partition == MediaPartition.Initiator ? "TOC" : "Content";
+
     public bool IsToc => Fragment.Kind == FragmentKind.TOC;
     public bool HasHarvestedToc => Fragment.HarvestedToc is not null;
 
-    /// <summary>Warning (amber) rows: unclosed set, unrecovered TOC copy, unidentified data.</summary>
+    /// <summary>Warning (amber) rows: unclosed set, unrecovered TOC copy, unidentified data, out of place.</summary>
     /// <remarks>A header-less set is NOT amber: the volume chose not to write set headers.</remarks>
-    public bool IsWarning => Fragment.Kind switch
+    public bool IsWarning => outOfPlace || Fragment.Kind switch
     {
         FragmentKind.SetHeader => !Fragment.ClosedBySeparator,
         FragmentKind.TOC => !HasHarvestedToc && !Fragment.Diagnosis.Success,
@@ -58,7 +63,7 @@ public sealed class ScanFragmentRow(TapeMediaFragment fragment, string? tocSetNa
         _ => "—",
     };
 
-    public string Detail => Fragment.Kind switch
+    public string Detail => (outOfPlace ? "out of place — " : string.Empty) + Fragment.Kind switch
     {
         FragmentKind.MediaHeader => Fragment.Description ?? string.Empty,
         FragmentKind.SetHeader =>
@@ -112,9 +117,11 @@ public sealed class ScanResultViewModel : ViewModelBase
             .GroupBy(s => s.SetId)
             .ToDictionary(g => g.Key, g => g.First().Description);
 
+        HashSet<int> outOfPlace = [.. _map.OutOfPlaceFragments.Select(f => f.Ordinal)];
         Rows = new ObservableCollection<ScanFragmentRow>(_map.Fragments.Select(f => new ScanFragmentRow(f,
-            f.Kind == FragmentKind.SetContent && f.Id is { } id && setNames.TryGetValue(id, out var name) ? name : null)));
-        
+            f.Kind == FragmentKind.SetContent && f.Id is { } id && setNames.TryGetValue(id, out var name) ? name : null,
+            outOfPlace.Contains(f.Ordinal))));
+
         Details = [.. TapeServiceBase.VerbalizeScan(_map).Details];
         
         // Advice is shown as static recommendation text, not as buttons: the TOC actions already
@@ -151,6 +158,11 @@ public sealed class ScanResultViewModel : ViewModelBase
 
     /// <summary>A calibration cartridge shows only banner + advice, not the list (SM-7).</summary>
     public bool ShowList => _result.MediaKind != ScannedMediaKind.CalibrationCartridge;
+
+    /// <summary>
+    /// Whether to show Partitions column (bound to <see cref="ScanFragmentRow.Location"/>
+    /// </summary>
+    public bool ShowPartitions => _map.Partitions.Count > 1;
 
     /// <summary>Recommendations from the scan, most useful first, as display text.</summary>
     public IReadOnlyList<string> Advice { get; }

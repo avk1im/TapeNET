@@ -61,6 +61,9 @@ public readonly record struct TapeScanProgress(
     /// <summary>Walking the medium, identifying fragments — the bulk of any scan.</summary>
     public const string PhaseScanning = "scanning";
 
+    /// <summary>Walking the initiator (TOC) partition.</summary>
+    public const string PhaseScanningInitiator = "scanning-initiator";
+
     /// <summary>Deserializing a table-of-contents copy.</summary>
     public const string PhaseHarvestingToc = "harvesting-toc";
 

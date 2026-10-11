@@ -1,5 +1,6 @@
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
+using TapeLibNET.Drive;
 using TapeLibNET.Headers;
 using TapeLibNET.Scan;
 using TapeLibNET.Toc;
@@ -723,35 +724,39 @@ public class ServiceScanProgressHandler(ITapeServiceHost host, TapeScanner scann
     }
 
     /// <summary>
-    /// One log line per fragment worth a user's attention; null for mark runs and the TOC mark, which say
-    ///  nothing about the content.
+    /// One log line per fragment worth a user's attention; null for mark runs and the TOC mark, which say nothing about
+    ///  the content. A fragment in the TOC partition says so — "block 0" alone would be ambiguous.
     /// </summary>
     public static (ServiceReportLevel Level, string Text)? DescribeFragment(TapeMediaFragment f) => f.Kind switch
     {
         FragmentKind.MediaHeader =>
-            (ServiceReportLevel.Info, $"Media header >{f.Description}< · volume {f.Volume}"),
+            (ServiceReportLevel.Info, $"Media header >{f.Description}< · volume {f.Volume}{InTocPartition(f)}"),
         FragmentKind.SetHeader when !f.ClosedBySeparator =>
-            (ServiceReportLevel.Warning, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< at block {f.StartBlock} — never completed"),
+            (ServiceReportLevel.Warning, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< {Where(f)} — never completed"),
         FragmentKind.SetHeader =>
-            (ServiceReportLevel.Info, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< at block {f.StartBlock}"),
-        // A set written without a set header, identified by its first file's 2.1 header frame. No index and no
-        //  description on tape — the SetId and the first file are what the tape itself can tell.
+            (ServiceReportLevel.Info, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< {Where(f)}"),
         FragmentKind.SetContent =>
-            (ServiceReportLevel.Info, $"Backup set {ShortId(f.Id)} at block {f.StartBlock} — no set header, first file >{f.Description}<"),
+            (ServiceReportLevel.Info, $"Backup set {ShortId(f.Id)} {Where(f)} — no set header, first file >{f.Description}<"),
         FragmentKind.CalibrationHeader =>
-            (ServiceReportLevel.Info, $"Calibration run header, profile >{f.Description}<"),
+            (ServiceReportLevel.Info, $"Calibration run header, profile >{f.Description}<{InTocPartition(f)}"),
         FragmentKind.TOC when f.HarvestedToc is { } toc =>
-            (ServiceReportLevel.Info, $"Table of contents copy at block {f.StartBlock} — recovered, {toc.Count} set(s)"),
+            (ServiceReportLevel.Info, $"Table of contents copy {Where(f)} — recovered, {toc.Count} set(s)"),
         FragmentKind.TOC when !f.Diagnosis.Success =>
-            (ServiceReportLevel.Warning, $"Table of contents copy at block {f.StartBlock} — could not be recovered"),
+            (ServiceReportLevel.Warning, $"Table of contents copy {Where(f)} — could not be recovered"),
         FragmentKind.TOC =>
-            (ServiceReportLevel.Info, $"Table of contents copy at block {f.StartBlock}"),
+            (ServiceReportLevel.Info, $"Table of contents copy {Where(f)}"),
         FragmentKind.Unknown when !f.Diagnosis.Success =>
-            (ServiceReportLevel.Warning, $"Block {f.StartBlock}: {f.Diagnosis.ErrorMessage}"),
+            (ServiceReportLevel.Warning, $"Block {f.StartBlock}{InTocPartition(f)}: {f.Diagnosis.ErrorMessage}"),
         FragmentKind.Unknown =>
-            (ServiceReportLevel.None, $"Unidentified data at block {f.StartBlock}"),
+            (ServiceReportLevel.None, $"Unidentified data {Where(f)}"),
         _ => null,
     };
+
+    /// <summary>"at block N", naming the TOC partition when that is where the fragment stands.</summary>
+    private static string Where(TapeMediaFragment f) => $"at block {f.StartBlock}{InTocPartition(f)}";
+
+    private static string InTocPartition(TapeMediaFragment f)
+        => f.Partition == MediaPartition.Initiator ? " of the TOC partition" : string.Empty;
 
     /// <summary>The first 8 hex digits of an id — enough to tell sets apart in a log line.</summary>
     private static string ShortId(Guid? id) => id is { } g ? g.ToString("N")[..8] : "?";
@@ -759,6 +764,7 @@ public class ServiceScanProgressHandler(ITapeServiceHost host, TapeScanner scann
     private static string FormatPhase(string phase) => phase switch
     {
         TapeScanProgress.PhaseScanning => "Scanning the cartridge",
+        TapeScanProgress.PhaseScanningInitiator => "Scanning the TOC partition",
         TapeScanProgress.PhaseHarvestingToc => "Recovering a table of contents",
         TapeScanProgress.PhaseInspectingCalibration => "Inspecting the calibration run",
         TapeScanProgress.PhaseCompleting => "Completing the scan",

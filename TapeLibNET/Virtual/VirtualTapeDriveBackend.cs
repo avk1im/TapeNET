@@ -959,6 +959,10 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
                 ownsMetadataStream: false,
                 name: NameFromStream(m_initiatorStream),
                 loggerFactory: LoggerFactory);
+
+#if DEBUG
+            ApplyFaultInjectorsToMedia();   // the fresh initiator medium needs its injectors too
+#endif
         }
         else
         {

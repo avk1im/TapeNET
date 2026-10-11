@@ -173,6 +173,8 @@ public class TapeScannerTests
         Assert.True(map.Fragments[0].Kind == FragmentKind.MediaHeader, ScanMapAssert.Describe(map));
         Assert.True(map.Fragments[0].ClosedBySeparator);
         Assert.True(ScannedMediaKind.Backup == map.Kind, ScanMapAssert.Describe(map));
+        // If the fixture writes an initial TOC on partitioned media, the scan now finds it there.
+        Assert.Single(map.FragmentsIn(MediaPartition.Content));
     }
 
     /// <summary>
@@ -243,10 +245,8 @@ public class TapeScannerTests
             Assert.NotNull(ScanMapAssert.MediaHeader(map));
             ScanMapAssert.NothingUnknown(map);
 
-            // The TOC lives in partition 0 on the partitioned layout, so the content walk rightly finds
-            //  none there — every other layout trails its copies behind the content.
-            if (!map.Layout.TocInPartition)
-                ScanMapAssert.FoundTocCopies(map);
+            // We should scan also the TOC partition now and find TOC.
+            ScanMapAssert.FoundTocCopies(map);
 
             // The TOC-mark layout names its marker rather than leaving an unidentified gap behind.
             if (map.Layout.HasTocMark)
@@ -523,12 +523,9 @@ public class TapeScannerTests
                 $"expected a CRC diagnosis\n{ScanMapAssert.Describe(map)}");
 
             // And the real copies are recognized as what they are — carrying this cartridge's identity.
-            if (!map.Layout.TocInPartition)
-            {
-                ScanMapAssert.FoundTocCopies(map, atLeast: 2);
-                Assert.All(ScanMapAssert.OfKind(map, FragmentKind.TOC),
-                    t => Assert.Equal(map.MediaId, t.Id));
-            }
+            ScanMapAssert.FoundTocCopies(map, atLeast: 2);
+            Assert.All(ScanMapAssert.OfKind(map, FragmentKind.TOC),
+                t => Assert.Equal(map.MediaId, t.Id));
         }
         finally
         {
@@ -602,6 +599,8 @@ public class TapeScannerTests
         ScanMapAssert.SetCount(map, 1);
         ScanMapAssert.SetHeaderAt(map, 0, description: "Orphaned");
         Assert.True(map.TocCopyCount == 0, ScanMapAssert.Describe(map));
+        // If the fixture writes an initial TOC on partitioned media, the scan now finds it there.
+        Assert.Single(map.FragmentsIn(MediaPartition.Content));
     }
 
     #endregion
@@ -626,6 +625,7 @@ public class TapeScannerTests
         Assert.Equal(0, map.SetCount);
         Assert.Null(map.MediaId);
         Assert.False(map.LastSetUnclosed);
+        Assert.All(map.Partitions, p => Assert.True(p.Blank));
     }
 
     /// <summary>
@@ -874,8 +874,10 @@ public class TapeScannerTests
 
             // Every reported fragment appears in the map, at the same block.
             foreach (TapeMediaFragment reported in sink.Fragments)
-                Assert.True(ScanMapAssert.AtBlock(map, reported.StartBlock) is not null,
-                    $"fragment reported at block {reported.StartBlock} is missing from the map\n" +
+                Assert.True(ScanMapAssert.AtBlock(map, reported.StartBlock, partition: MediaPartition.Content) is not null
+                        || ScanMapAssert.AtBlock(map, reported.StartBlock, partition: MediaPartition.Initiator) is not null,
+                    $"fragment reported at block {reported.StartBlock}{(reported.Partition is MediaPartition.Initiator
+                        ? " (initiator partition) " : string.Empty)} is missing from the map\n" +
                     ScanMapAssert.Describe(map));
         }
         finally

@@ -19,13 +19,21 @@ namespace TapeLibNET.Tests.Scan;
 ///  the fixture's <c>TOC</c> serves only as the EXPECTED value.
 /// </para>
 /// <para>
-/// In-set profiles only, unless stated: on the partitioned layout the TOC sits in the initiator
-///  partition, which the content walk never visits.
+/// On the partitioned layout the TOC sits in the initiator partition, which the content walk ALSO visits.
+///  A few tests specific to TOC-in-set placement are marked as such.
 /// </para>
 /// </remarks>
 public class TapeScannerHarvestTests
 {
     #region *** Test Data ***
+
+    public static TheoryData<DriveProfile> AllProfiles =>
+    [
+        DriveProfile.Setmarks,
+        DriveProfile.Partitions,
+        DriveProfile.SeqFilemarks,
+        DriveProfile.FilemarksOnly,
+    ];
 
     public static TheoryData<DriveProfile> InSetProfiles =>
     [
@@ -71,7 +79,7 @@ public class TapeScannerHarvestTests
     }
 
     /// <summary>The TOC copies' first blocks, found by a plain scan.</summary>
-    private static IReadOnlyList<long> TocBlocks(VirtualTapeFixture fixture)
+    private static List<long> TocBlocks(VirtualTapeFixture fixture)
     {
         MediaScanMap map = Scan(fixture, harvest: false);
         var blocks = ScanMapAssert.OfKind(map, FragmentKind.TOC).Select(f => f.StartBlock).ToList();
@@ -132,7 +140,7 @@ public class TapeScannerHarvestTests
 
     /// <summary>Each copy, read by its block, is the TOC that was written.</summary>
     [Theory]
-    [MemberData(nameof(InSetProfiles))]
+    [MemberData(nameof(AllProfiles))]
     public void RestoreTOCAt_EachCopy_MatchesTheTocThatWasWritten(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);
@@ -162,7 +170,7 @@ public class TapeScannerHarvestTests
     ///  can be wrong — a cartridge swapped since the scan — and the verb must say so, not misread.
     /// </summary>
     [Theory]
-    [MemberData(nameof(InSetProfiles))]
+    [MemberData(nameof(AllProfiles))]
     public void RestoreTOCAt_BlockWithoutAToc_FailsCleanly(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);
@@ -170,12 +178,14 @@ public class TapeScannerHarvestTests
 
         try
         {
-            long setHeaderBlock = ScanMapAssert.SetHeaders(Scan(fixture, harvest: false))[0].StartBlock;
+            var setHeader = ScanMapAssert.SetHeaders(Scan(fixture, harvest: false))[0];
+            long setHeaderBlock = setHeader.StartBlock;
+            var setHeaderPartition = setHeader.Partition;
 
             var toc = new TapeTOC("untouched");
             using var agent = new TapeAgentBase(fixture.Drive, toc);
 
-            TapeResult result = agent.RestoreTOCAt(setHeaderBlock);
+            TapeResult result = agent.RestoreTOCAt(setHeaderBlock, setHeaderPartition);
 
             Assert.False(result.Success);
             Assert.NotEqual(0u, result.ErrorCode);
@@ -201,7 +211,7 @@ public class TapeScannerHarvestTests
     ///  evidence the navigator cannot verify.
     /// </summary>
     [Theory]
-    [MemberData(nameof(InSetProfiles))]
+    [MemberData(nameof(AllProfiles))]
     public void RestoreTOCAt_LeavesNoBelievedPosition_AndAnIdleManager(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);
@@ -228,7 +238,7 @@ public class TapeScannerHarvestTests
     ///  locates and reads the TOC after a positional read — the new path left the old one intact.
     /// </summary>
     [Theory]
-    [MemberData(nameof(InSetProfiles))]
+    [MemberData(nameof(AllProfiles))]
     public void RestoreTOC_AfterRestoreTOCAt_StillWorks(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);
@@ -289,7 +299,7 @@ public class TapeScannerHarvestTests
     ///  a harvest that disturbed the walk would shift or lose fragments.
     /// </summary>
     [Theory]
-    [MemberData(nameof(InSetProfiles))]
+    [MemberData(nameof(AllProfiles))]
     public void Harvest_OnHealthyMedia_RecoversEveryCopy_AndTheMapIsUnchanged(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);
@@ -329,7 +339,7 @@ public class TapeScannerHarvestTests
     ///  still recovered. The damaged copy stays a TOC fragment, with the reason in its diagnosis (SM-8).
     /// </summary>
     [Theory]
-    [MemberData(nameof(InSetProfiles))]
+    [MemberData(nameof(AllProfiles))]
     public void FirstTocCopyDamaged_SecondIsStillRecovered(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);
@@ -341,15 +351,26 @@ public class TapeScannerHarvestTests
             //  stream still deserializes, and only the CRC can tell — the realistic shape of the fault.
             var sink = new ArmOnFirstHarvest(() =>
             {
-                fixture.Backend.ContentReadFaults.SkipN = 0;
-                fixture.Backend.ContentReadFaults.CorruptOnce(bits: 2, offset: 16);
+                if (profile is DriveProfile.Partitions)
+                {
+                    fixture.Backend.InitiatorReadFaults.SkipN = 0;
+                    fixture.Backend.InitiatorReadFaults.CorruptOnce(bits: 2, offset: 16);
+                }
+                else
+                {
+                    fixture.Backend.ContentReadFaults.SkipN = 0;
+                    fixture.Backend.ContentReadFaults.CorruptOnce(bits: 2, offset: 16);
+                }
             });
 
             var scanner = new TapeScanner(fixture.Drive) { Options = new ScanMediaOptions { HarvestTocCopies = true } };
             MediaScanMap map = scanner.Scan(sink)!;
             string describe = ScanMapAssert.Describe(map);
 
-            Assert.True(fixture.Backend.ContentReadFaults.Occurrences == 1, $"the fault never fired\n{describe}");
+            if (profile is DriveProfile.Partitions)
+                Assert.True(fixture.Backend.InitiatorReadFaults.Occurrences == 1, $"the fault in Initiator part. never fired\n{describe}");
+            else
+                Assert.True(fixture.Backend.ContentReadFaults.Occurrences == 1, $"the fault in Content part. never fired\n{describe}");
 
             var copies = ScanMapAssert.OfKind(map, FragmentKind.TOC);
             Assert.True(copies.Count >= 2, describe);
@@ -371,7 +392,7 @@ public class TapeScannerHarvestTests
 
     /// <summary>
     /// The scenario this phase exists for: a TOC the navigator cannot locate on its own, recovered from the
-    ///  scan's evidence.
+    ///  scan's evidence. <b>A filemark-specific text.</b>
     /// </summary>
     /// <remarks>
     /// Two junk files appended after <c>toc2</c> on the filemark layout. The navigator locates the TOC by
@@ -420,7 +441,7 @@ public class TapeScannerHarvestTests
 
     /// <summary>A harvesting scan writes nothing — content and virtual-block structure alike (SM-1).</summary>
     [Theory]
-    [MemberData(nameof(InSetProfiles))]
+    [MemberData(nameof(AllProfiles))]
     public void Harvest_NeverWrites(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);
@@ -445,7 +466,7 @@ public class TapeScannerHarvestTests
     ///  will use to refuse a leftover copy from another series.
     /// </summary>
     [Theory]
-    [MemberData(nameof(InSetProfiles))]
+    [MemberData(nameof(AllProfiles))]
     public void Harvest_RecoveredTocMatchesTheFragmentsIdentity(DriveProfile profile)
     {
         using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);

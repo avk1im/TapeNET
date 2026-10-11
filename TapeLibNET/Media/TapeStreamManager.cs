@@ -270,7 +270,11 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     /// Transitions to <see cref="TapeState.ReadingTOC"/> with the head at a TOC copy whose first block the
     ///  CALLER has located — bypassing the navigator's own search for the TOC.
     /// </summary>
-    /// <param name="block">The copy's first block.</param>
+    /// <param name="block">The copy's first block, relative to <paramref name="partition"/>.</param>
+    /// <param name="partition">
+    /// Where the copy stands. <see cref="MediaPartition.Current"/> means "where this layout keeps its TOC"; a scan passes
+    ///  the partition it FOUND the copy in.
+    /// </param>
     /// <remarks>
     /// <para>
     /// <b>Always ends the current session first</b>, even when already reading the TOC:
@@ -286,22 +290,21 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     ///  the stream where the head stands — no change needed there.
     /// </para>
     /// </remarks>
-    public bool BeginReadTOCAt(long block)
+    public bool BeginReadTOCAt(long block, MediaPartition partition = MediaPartition.Current)
     {
         ResetError();
-
         if (!EndReadWrite())
         {
             Navigator.ResetContentSet();          // teardown failed — position uncertain
             return false;
         }
 
-        bool ok = BeginReadWrite(TapeState.ReadingTOC, positioner: () => Navigator.MoveToTOCCopyAt(block));
+        bool ok = BeginReadWrite(TapeState.ReadingTOC,
+            positioner: () => Navigator.MoveToTOCCopyAt(block, partition));
 
         // The positioning error lives on the navigator; make sure the caller sees it here.
         if (!ok && WentOK)
             SyncErrorFrom(Navigator);
-
         return ok;
     }
 

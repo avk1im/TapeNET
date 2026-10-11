@@ -78,6 +78,143 @@ public class NullToVisibilityCollapsedConverter : IValueConverter
 }
 
 /// <summary>
+/// Converts a <see cref="bool"/> to one of two configurable <see cref="double"/> values.
+/// </summary>
+/// <returns>
+/// <see cref="TrueValue"/> for <see langword="true"/> and <see cref="FalseValue"/> for
+///  <see langword="false"/> or any non-<see langword="bool"/> input.
+/// </returns>
+/// <remarks>
+/// <para>
+/// Declare one converter instance per value pair as a resource. Set
+///  <see cref="TrueValue"/> and <see cref="FalseValue"/> as XAML attributes. The converter
+///  ignores <c>ConverterParameter</c>.
+/// </para>
+/// <para>
+/// The conversion works one way only. <see cref="ConvertBack"/> throws
+///  <see cref="NotSupportedException"/>.
+/// </para>
+/// </remarks>
+/// <para>
+/// The typical use is to show or hide a <c>GridViewColumn</c>. That type has no
+///  <c>Visibility</c> property, so the converter switches its <c>Width</c> between a
+///  visible width and zero. A <c>GridViewColumn</c> does not belong to the visual tree.
+///  Bind through a <see cref="BindingProxy"/> instead of <c>RelativeSource</c> or
+///  <c>ElementName</c>.
+/// </para>
+/// <example>
+/// Hide the "Partition" column when <c>ShowPartitions</c> is <c>false</c>:
+/// <code><![CDATA[
+/// <Window xmlns:converters="clr-namespace:TapeWinNET.Converters" ...>
+///     <Window.Resources>
+///         <converters:BoolToValuesConverter x:Key="PartitionWidthConverter"
+///                                           TrueValue="100"
+///                                           FalseValue="0" />
+///         <converters:BindingProxy x:Key="VmProxy" Data="{Binding}" />
+///     </Window.Resources>
+///
+///     <ListView ItemsSource="{Binding Items}">
+///         <ListView.View>
+///             <GridView>
+///                 <GridViewColumn Header="Partition"
+///                                 DisplayMemberBinding="{Binding Location}"
+///                                 Width="{Binding Data.ShowPartitions,
+///                                                 Source={StaticResource VmProxy},
+///                                                 Converter={StaticResource PartitionWidthConverter}}" />
+///             </GridView>
+///         </ListView.View>
+///     </ListView>
+/// </Window>
+/// ]]></code>
+/// </example>
+public sealed class BoolToValuesConverter : IValueConverter
+{
+    /// <summary>
+    /// The value returned when the bound value is <c>true</c>. Defaults to 1.0.
+    /// </summary>
+    public double TrueValue { get; set; } = 1.0;
+
+    /// <summary>
+    /// The value returned when the bound value is <see langword="true"/> or not
+    ///  a <see langword="bool"/>. Defaults to <c>0.0</c>.
+    /// </summary>
+    public double FalseValue { get; set; } = 0.0;
+
+    /// <summary>
+    /// Returns <see cref="TrueValue"/> if <paramref name="value"/> is <see langword="true"/>,
+    ///  otherwise <see cref="FalseValue"/>. The converter ignores all other parameters.
+    /// </summary>
+    public object Convert(object value, Type targetType,
+                            object parameter, CultureInfo culture)
+        => value is true ? TrueValue : FalseValue;
+
+    /// <summary>
+    /// Not supported. The conversion works one way only.
+    /// </summary>
+    /// <exception cref="NotSupportedException">Always thrown.</exception>
+    public object ConvertBack(object value, Type targetType,
+                                object parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+}
+
+/// <summary>
+/// Passes a <see cref="FrameworkElement.DataContext"/> (or any other object) to places
+///  outside the visual tree, where ordinary bindings fail.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Elements such as <c>GridViewColumn</c> and <c>DataGridColumn</c> do not belong to the
+///  visual or logical tree. They inherit no <c>DataContext</c>, and <c>RelativeSource</c>
+///  or <c>ElementName</c> bindings on them fail at runtime.
+/// </para>
+/// <para>
+/// A <see cref="Freezable"/> declared in a resource dictionary does inherit the
+///  <c>DataContext</c> of its resource scope. The proxy captures it in <see cref="Data"/>.
+///  Any binding can then reach it with <c>Source={StaticResource ...}</c>.
+/// </para>
+/// <para>
+/// Declare the proxy in the resources of the element whose <c>DataContext</c> you need.
+///  For the window's view model, use <c>Window.Resources</c>.
+/// </para>
+/// </remarks>
+/// <example>
+/// Declare the proxy, then bind a column property through it:
+/// <code><![CDATA[
+/// <Window.Resources>
+///     <converters:BindingProxy x:Key="VmProxy" Data="{Binding}" />
+/// </Window.Resources>
+///
+/// <GridViewColumn Header="Partition"
+///                 Width="{Binding Data.ShowPartitions,
+///                                 Source={StaticResource VmProxy},
+///                                 Converter={StaticResource PartitionWidthConverter}}" />
+/// ]]></code>
+/// The path <c>Data.ShowPartitions</c> reads <c>ShowPartitions</c> from the captured
+/// view model.
+/// </example>
+public class BindingProxy : Freezable
+{
+    /// <inheritdoc/>
+    protected override Freezable CreateInstanceCore() => new BindingProxy();
+
+    /// <summary>
+    /// The captured object, usually the <c>DataContext</c> set via <c>Data="{Binding}"</c>.
+    /// </summary>
+    public object? Data
+    {
+        get => GetValue(DataProperty);
+        set => SetValue(DataProperty, value);
+    }
+
+    /// <summary>
+    /// Identifies the <see cref="Data"/> dependency property.
+    /// </summary>
+    public static readonly DependencyProperty DataProperty =
+        DependencyProperty.Register(nameof(Data), typeof(object),
+                                    typeof(BindingProxy), new UIPropertyMetadata(null));
+}
+
+/// <summary>
 /// Converts bool to Gray/LightGray brush for enabled/disabled text styling.
 /// </summary>
 public class BoolToGrayBrushConverter : IValueConverter

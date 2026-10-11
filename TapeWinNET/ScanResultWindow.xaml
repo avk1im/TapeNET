@@ -18,6 +18,10 @@
 
     <Window.Resources>
         <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVis"/>
+        <converters:BoolToValuesConverter x:Key="PartitionWidthConverter"
+                                          TrueValue="100"
+                                          FalseValue="0"/>
+        <converters:BindingProxy x:Key="VmProxy" Data="{Binding}"/>
     </Window.Resources>
 
     <!-- Outer grid: column 0 = dialog content, column 1 = splitter, column 2 = help pane -->
@@ -74,7 +78,11 @@
                 <ListView.View>
                     <GridView>
                         <GridViewColumn Header="#" Width="45" DisplayMemberBinding="{Binding Ordinal}"/>
-                        <GridViewColumn Header="Block" Width="90" DisplayMemberBinding="{Binding Block}"/>
+                        <GridViewColumn Header="Partition"
+                                        DisplayMemberBinding="{Binding Location}"
+                                        Width="{Binding Data.ShowPartitions,
+                                                        Source={StaticResource VmProxy},
+                                              Converter={StaticResource PartitionWidthConverter}}"/>
                         <GridViewColumn Header="Kind" Width="130" DisplayMemberBinding="{Binding KindText}"/>
                         <GridViewColumn Header="Identity" Width="130" DisplayMemberBinding="{Binding Identity}"/>
                         <GridViewColumn Header="Detail" Width="360" DisplayMemberBinding="{Binding Detail}"/>

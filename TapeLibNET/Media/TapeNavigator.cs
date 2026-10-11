@@ -464,38 +464,32 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     protected abstract bool MoveToBeginOfTOCCore();
 
     /// <summary>
-    /// Positions the tape at the first block of a TOC copy the CALLER has already located — bypassing the
-    ///  layout's own search for the TOC.
+    /// Positions the tape at the first block of a TOC copy the CALLER has already located — bypassing the layout's own
+    ///  search for the TOC.
     /// </summary>
-    /// <param name="block">The copy's first block, in the partition the TOC lives in.</param>
+    /// <param name="block">The copy's first block, relative to <paramref name="partition"/>.</param>
+    /// <param name="partition">
+    /// Where the copy stands. <see cref="MediaPartition.Current"/> means "where this layout keeps its TOC"
+    ///  (<see cref="DefaultTocPartition"/>). A scan passes the partition it FOUND the copy in — which on a mixed-up
+    ///  cartridge need not be the layout's.
+    /// </param>
     /// <remarks>
     /// <para>
-    /// <b>Why not <see cref="MoveToBeginOfTOC"/>.</b> Its layout searches ("EOD, back 3 filemarks", "past
-    ///  the TOC mark") are exactly what fails on a tail-damaged cartridge — the case Scan Media exists
-    ///  for. The scanner has located the copy from evidence; letting the navigator search again would
-    ///  discard that evidence.
+    /// <b>Why not <see cref="MoveToBeginOfTOC"/>.</b> Its layout searches are exactly what fails on a tail-damaged
+    ///  cartridge — the case Scan Media exists for.
     /// </para>
     /// <para>
-    /// <b>Read-only by construction.</b> Only <see cref="TapeStreamManager.BeginReadTOCAt"/> calls this.
-    ///  <c>MoveToLocationFor</c>, which the WRITE path shares with the read path, never does — so a block
-    ///  located by a scan can never become the place a TOC is written.
+    /// <b>Read-only by construction.</b> Only <see cref="TapeStreamManager.BeginReadTOCAt"/> calls this; the write path
+    ///  never does, so a block located by a scan can never become the place a TOC is written.
     /// </para>
     /// <para>
-    /// Same template shape as <see cref="MoveToBeginOfTOC"/>: this wrapper owns the bookkeeping on both
-    ///  outcomes, <see cref="MoveToTOCCopyAtCore"/> does the move. No "already there" check here:
-    ///  <see cref="TapeDrive.MoveToBlock"/> already returns at once when the head stands on
-    ///  <paramref name="block"/>, and asks the DEVICE rather than the navigator's belief.
-    /// </para>
-    /// <para>
-    /// Sets <see cref="CurrentContentSet"/> to <see cref="InTOCSet"/> for the duration of the read, as the
-    ///  ordinary TOC path does. The caller is expected to reset it afterwards: the position rests on
-    ///  evidence this navigator cannot verify — see <see cref="TapeAgentBase.RestoreTOCAt"/>.
+    /// Same template shape as <see cref="MoveToBeginOfTOC"/>. Sets <see cref="CurrentContentSet"/> to
+    ///  <see cref="InTOCSet"/> for the read; the caller resets it afterwards (<see cref="TapeAgentBase.RestoreTOCAt"/>).
     /// </para>
     /// </remarks>
-    public bool MoveToTOCCopyAt(long block)
+    public bool MoveToTOCCopyAt(long block, MediaPartition partition = MediaPartition.Current)
     {
         ResetError();
-
         if (block < 0)
         {
             LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_PARAMETER;
@@ -504,32 +498,42 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
             return false;
         }
 
-        bool moved = MoveToTOCCopyAtCore(block);
-
+        MediaPartition target = partition == MediaPartition.Current ? DefaultTocPartition : partition;
+        bool moved = MoveToTOCCopyAtCore(block, target);
         if (moved && WentOK)
         {
             CurrentContentSet = InTOCSet;   // inside a TOC copy we are in NO content set at all
-            m_logger.LogTrace("Drive #{Drive}: Moved to the TOC copy at block {Block}", DriveNumber, block);
+            m_logger.LogTrace("Drive #{Drive}: Moved to the TOC copy at block {Block} of the {Partition} partition",
+                DriveNumber, block, target);
             return true;
         }
 
         ResetContentSet();                  // we do not know where we ended up
-        LogErrorAsDebug($"Failed to move to the TOC copy at block {block}");
+        LogErrorAsDebug($"Failed to move to the TOC copy at block {block} of the {target} partition");
         return false;
     }
 
+    /// <summary>The partition this layout keeps its TOC in. Content for every in-set layout.</summary>
+    protected virtual MediaPartition DefaultTocPartition => MediaPartition.Content;
+
     /// <summary>
-    /// Performs the layout-specific move to <paramref name="block"/>. Called only by
-    ///  <see cref="MoveToTOCCopyAt"/>, which owns the bookkeeping.
+    /// Moves to <paramref name="block"/> of <paramref name="partition"/>. Called only by <see cref="MoveToTOCCopyAt"/>.
     /// </summary>
     /// <remarks>
-    /// The base serves every TOC-in-set layout: the TOC shares the content partition, so an absolute block
-    ///  is all it takes. <see cref="TapeNavigatorTOCInPartition"/> overrides to address the initiator
-    ///  partition instead.
+    /// One combined locate on partitioned media; a plain block locate on single-partition media, where only the content
+    ///  partition exists.
     /// </remarks>
-    protected virtual bool MoveToTOCCopyAtCore(long block)
+    protected virtual bool MoveToTOCCopyAtCore(long block, MediaPartition partition)
     {
-        Drive.MoveToBlock(block);
+        if (Drive.HasInitiatorPartition)
+            Drive.MoveToPartition(partition, block);
+        else if (partition == MediaPartition.Content)
+            Drive.MoveToBlock(block);
+        else
+        {
+            LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_PARAMETER;   // no such partition on this medium
+            return false;
+        }
         return WentOK;
     }
 
@@ -1082,18 +1086,9 @@ public class TapeNavigatorTOCInPartition : TapeNavigator
     }
 
     /// <inheritdoc/>
-    /// <remarks>
-    /// The TOC lives in the initiator partition, so the block is addressed THERE — one combined locate, as
-    ///  <see cref="MoveToBeginOfTOCCore"/> does for block 0.
-    /// </remarks>
-    protected override bool MoveToTOCCopyAtCore(long block)
-    {
-        Drive.MoveToPartition(MediaPartition.Initiator, block);
-        return WentOK;
-    }
+    protected override MediaPartition DefaultTocPartition => MediaPartition.Initiator;
 
     #endregion // TOC positioning
-
 
     #region *** Content positioning ***
 

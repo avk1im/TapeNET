@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 
+using TapeLibNET.Drive;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
 
@@ -16,31 +17,24 @@ public enum FragmentKind
 {
     /// <summary>Could not be identified — random data, a foreign structure, or a torn record.</summary>
     Unknown = 0,
-
     /// <summary>A <see cref="TapeMediaHeader"/> — normally at block 0 of the content partition.</summary>
     MediaHeader,
-
     /// <summary>A <see cref="TapeSetHeader"/> at the front of a backup set.</summary>
     SetHeader,
-
     /// <summary>A <see cref="TapeCalibrationHeader"/> — this is a calibration cartridge (SM-7).</summary>
     CalibrationHeader,
-
     /// <summary>A table-of-contents copy. Signature-identified; deserialized only on request.</summary>
     TOC,
-
     /// <summary>
     /// Marks directly adjacent to the mark that closed the previous fragment, with no data between them —
     ///  an erased region, or a double-filemark end of data.
     /// </summary>
     MarkRun,
-
     /// <summary>
     /// The TOC mark of the sequential-filemark layout: a gap block followed by a run of filemarks, just
     ///  before the first TOC copy. Identified by its shape (see <c>TapeScanner.FoldMarkRun</c>).
     /// </summary>
     TocMark,
-
     /// <summary>
     /// The first block of a set written without a set header: a 2.1 file header frame, CRC-verified. Carries the set's
     ///  identity (<see cref="TapeMediaFragment.Id"/> = SetId) and the first file's name — enough to count and name the set
@@ -50,7 +44,7 @@ public enum FragmentKind
 }
 
 /// <summary>
-/// One identifiable object found on the medium: what it is, and where it begins. The atom of a
+/// One identifiable object found on the medium: what it is, and where it begins — partition and block. The atom of a
 ///  <see cref="MediaScanMap"/>.
 /// </summary>
 /// <remarks>
@@ -66,17 +60,23 @@ public enum FragmentKind
 /// </remarks>
 public sealed record TapeMediaFragment
 {
-    /// <summary>0-based position in the walk. Media order, always contiguous.</summary>
+    /// <summary>0-based position in the walk, contiguous across partitions: content first, then initiator.</summary>
     public required int Ordinal { get; init; }
 
-    /// <summary>Logical block where this fragment begins, as reported by the drive.</summary>
+    /// <summary>
+    /// The partition this fragment stands in; <see cref="StartBlock"/> is relative to it. Every partition is walked with
+    ///  the same identification (SM-14), so any kind may appear in any partition.
+    /// </summary>
+    public MediaPartition Partition { get; init; } = MediaPartition.Content;
+
+    /// <summary>Logical block where this fragment begins, within its <see cref="Partition"/>.</summary>
     public required long StartBlock { get; init; }
 
     /// <summary>What this fragment turned out to be.</summary>
     public required FragmentKind Kind { get; init; }
 
     /// <summary>
-    /// Blocks from here to the next fragment's start; -1 for the last fragment.
+    /// Blocks from here to the next fragment's start in the same partition; -1 for the last fragment of a partition.
     /// </summary>
     /// <remarks>
     /// <b>An upper bound INCLUDING marks — never a payload size (SM-11).</b> Nothing in the scan measures
@@ -95,13 +95,15 @@ public sealed record TapeMediaFragment
     /// </remarks>
     public bool ClosedBySeparator { get; init; }
 
-    // ── Identity — populated for MediaHeader / SetHeader / CalibrationHeader ──────────────────────────
+    // ── Identity — populated for MediaHeader / SetHeader / CalibrationHeader / SetContent ──────────────
 
-    /// <summary>The header's identity: a media/series id, set id, or a calibration run id.</summary>
+    /// <summary>
+    /// The identity this kind carries: a media/series id (media and set headers), a calibration run id, or — for
+    ///  <see cref="FragmentKind.SetContent"/> — the SET id.
+    /// </summary>
     /// <remarks>
-    /// One slot for all four kinds, mirroring <see cref="TapeHeader.Id"/>, which each concrete header
-    ///  re-exposes under its own domain name. Splitting it here would only re-introduce the aliasing the
-    ///  header hierarchy already resolved.
+    /// One slot for all kinds, mirroring <see cref="TapeHeader.Id"/>, which each concrete header re-exposes under its own
+    ///  domain name. Consumers that compare series identity must filter by kind (<see cref="MediaScanMap.MediaId"/> does).
     /// </remarks>
     public Guid? Id { get; init; }
 
@@ -143,7 +145,7 @@ public sealed record TapeMediaFragment
     [JsonIgnore]
     public TapeTOC? HarvestedToc { get; init; }
 
-    // ── MarkRun / Unknown / TrailingRegion ───────────────────────────────────────────────────────────
+    // ── MarkRun / Unknown ────────────────────────────────────────────────────────────────────────────
 
     /// <summary>
     /// Marks directly adjacent to this fragment's closing mark, i.e. BEYOND it — for
@@ -154,7 +156,6 @@ public sealed record TapeMediaFragment
     ///  depends on the exact figure. Hence no dependency on drive's reporting seq. tapemarks exactly.
     /// </remarks>
     public int MarkCount { get; init; }
-
 
     /// <summary>
     /// First bytes of an unidentified block, hex-encoded — so a support report can tell "random data"
@@ -192,6 +193,15 @@ public sealed record TapeMediaFragment
     public bool IsHeader
         => Kind is FragmentKind.MediaHeader or FragmentKind.SetHeader or FragmentKind.CalibrationHeader;
 
+    /// <summary>
+    /// "block N", plus "of the TOC partition" when the fragment stands there — "block 0" alone is ambiguous on
+    ///  partitioned media.
+    /// </summary>
+    [JsonIgnore]
+    public string Where => Partition == MediaPartition.Initiator
+        ? $"block {StartBlock} of the TOC partition"
+        : $"block {StartBlock}";
+
     /// <summary>A never-empty, human-readable name for this fragment.</summary>
     public string DisplayName => Kind switch
     {
@@ -207,11 +217,11 @@ public sealed record TapeMediaFragment
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Carries the diagnosis and a short fingerprint when present: a scan-test failure prints the whole map,
-    ///  and "Unknown — Unidentified" alone cannot tell a failed read from bytes we do not recognize.
+    /// Carries the partition, the diagnosis and a short fingerprint when present: a scan-test failure prints the whole
+    ///  map, and "Unknown — Unidentified" alone cannot tell a failed read from bytes we do not recognize.
     /// </remarks>
     public override string ToString()
-        => $"#{Ordinal} @ block {StartBlock}: {Kind} — {DisplayName}" +
+        => $"#{Ordinal} @ {(Partition == MediaPartition.Initiator ? "I:" : "")}{StartBlock}: {Kind} — {DisplayName}" +
            (ClosedBySeparator ? "" : " (not closed by a separator)") +
            (Diagnosis.Success ? "" : $" [{Diagnosis}]") +
            (Fingerprint is { Length: > 0 } fp ? $" <{fp[..Math.Min(16, fp.Length)]}…>" : "");

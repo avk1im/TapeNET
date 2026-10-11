@@ -592,12 +592,13 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     }
 
     /// <summary>Begins a TOC read at a caller-located copy. Mirrors <see cref="BeginReadTOC"/>.</summary>
-    private bool BeginReadTOCAt(long block)
+    private bool BeginReadTOCAt(long block, MediaPartition partition)
     {
         // Do NOT EnsureMediaHeaderResolved() here — positioning is absolute; header presence plays no part.
-        if (!Manager.BeginReadTOCAt(block))
+        if (!Manager.BeginReadTOCAt(block, partition))
         {
-            m_logger.LogWarning("Failed to begin reading the TOC copy at block {Block}", block);
+            m_logger.LogWarning("Failed to begin reading the TOC copy at block {Block} of the {Partition} partition",
+                block, partition);
             SyncErrorFrom(Manager);
             LatchFailure();
             return false;
@@ -608,12 +609,18 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     }
 
     /// <summary>
-    /// Reads the <see cref="TOC"/> from the single copy starting at <paramref name="block"/>, bypassing the
-    ///  navigator's own search for the TOC. On success, replaces the current <see cref="TOC"/> content.
+    /// Reads the <see cref="TOC"/> from the single copy starting at <paramref name="block"/> of
+    ///  <paramref name="partition"/>, bypassing the navigator's own search for the TOC. On success, replaces the current
+    ///  <see cref="TOC"/> content.
     /// </summary>
     /// <param name="block">
-    /// The copy's first block — typically a <see cref="Scan.FragmentKind.TOC"/> fragment's
-    ///  <c>StartBlock</c>. To read "where the head is", pass <c>Drive.CurrentBlock</c> explicitly.
+    /// The copy's first block — typically a <see cref="Scan.FragmentKind.TOC"/> fragment's <c>StartBlock</c>. To read
+    ///  "where the head is", pass <c>Drive.CurrentBlock</c> explicitly.
+    /// </param>
+    /// <param name="partition">
+    /// Where the copy stands — typically the fragment's <c>Partition</c>. <see cref="MediaPartition.Current"/> means "where
+    ///  this layout keeps its TOC". A scan passes where it FOUND the copy: on a mixed-up cartridge that need not be the
+    ///  layout's partition.
     /// </param>
     /// <remarks>
     /// <para>
@@ -640,22 +647,19 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     ///  caller one token and says what it means; <see cref="TapeDrive.MoveToBlock"/> makes it free.
     /// </para>
     /// </remarks>
-    public TapeResult RestoreTOCAt(long block)
+    public TapeResult RestoreTOCAt(long block, MediaPartition partition = MediaPartition.Current)
     {
         ResetLatchedFailure();
 #if DEBUG
         _tocCopyCounter = 0;
 #endif
-
-        m_logger.LogTrace("Restoring TOC from the copy at block {Block}", block);
-
+        m_logger.LogTrace("Restoring TOC from the copy at block {Block} of the {Partition} partition", block, partition);
         try
         {
-            if (!BeginReadTOCAt(block))
+            if (!BeginReadTOCAt(block, partition))
                 return FailedOperationResult;
 
             bool result = RestoreTOCCore();
-
             if (result)
                 m_logger.LogTrace("TOC restored from the copy at block {Block}", block);
             else
@@ -663,7 +667,6 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
 
             if (IsAbortRequested && WentOK)
                 SetError(WIN32_ERROR.ERROR_CANCELLED, "TOC loading aborted by user");
-
             return result ? TapeResult.OK : FailedOperationResult;
         }
         finally
