@@ -393,13 +393,13 @@ public class TapeScannerPartitionTests
         WriteRecord(fx, DamagedTocBytes(toc));
         WriteRecord(fx, TocBytes(toc));
 
-        MediaScanMap map = Scan(fx);
+        MediaScanMap map = Scan(fx, harvest: true);
         string d = ScanMapAssert.Describe(map);
         var init = map.FragmentsIn(MediaPartition.Initiator).ToList();
 
         Assert.True(init.Count == 2, d);
-        Assert.True(init[0].Kind == FragmentKind.Unknown && !init[0].Diagnosis.Success && init[0].ClosedBySeparator, d);
-        Assert.True(init[1].Kind == FragmentKind.TOC && init[1].HarvestedToc is not null, d);
+        Assert.True(init[0].Kind == FragmentKind.TOC && !init[0].Diagnosis.Success && init[0].ClosedBySeparator, d);
+        Assert.True(init[1].Kind == FragmentKind.TOC && init[1].Diagnosis.Success && init[1].HarvestedToc is not null, d);
         Assert.Equal(toc.MediaId, init[1].HarvestedToc!.MediaId);
     }
 
@@ -422,17 +422,18 @@ public class TapeScannerPartitionTests
         try
         {
             TapeTOC stray = NewToc("Behind the damage");
-            AppendRecord(fx, MediaPartition.Content, DamagedTocBytes(stray));
-            AppendRecord(fx, MediaPartition.Content, TocBytes(stray));
+            MediaPartition tocPart = profile is DriveProfile.Partitions ? MediaPartition.Initiator : MediaPartition.Content;
+            AppendRecord(fx, tocPart, DamagedTocBytes(stray));
+            AppendRecord(fx, tocPart, TocBytes(stray));
 
-            MediaScanMap map = Scan(fx);
+            MediaScanMap map = Scan(fx, harvest: true);
             string d = ScanMapAssert.Describe(map);
 
-            var damaged = Assert.Single(map.FragmentsIn(MediaPartition.Content),
-                f => f.Kind == FragmentKind.Unknown && !f.Diagnosis.Success);
+            var damaged = Assert.Single(map.FragmentsIn(tocPart),
+                f => f.Kind == FragmentKind.TOC && !f.Diagnosis.Success);
             Assert.True(damaged.ClosedBySeparator, $"the damaged copy must be closed by the filemark behind it\n{d}");
 
-            var recovered = map.FragmentsIn(MediaPartition.Content)
+            var recovered = map.FragmentsIn(tocPart)
                 .Where(f => f.Kind == FragmentKind.TOC && f.HarvestedToc?.MediaId == stray.MediaId).ToList();
             Assert.True(recovered.Count == 1, $"the good copy behind the damaged one must be found\n{d}");
             Assert.True(recovered[0].Ordinal > damaged.Ordinal, d);

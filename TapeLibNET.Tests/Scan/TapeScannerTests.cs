@@ -599,8 +599,7 @@ public class TapeScannerTests
         ScanMapAssert.SetCount(map, 1);
         ScanMapAssert.SetHeaderAt(map, 0, description: "Orphaned");
         Assert.True(map.TocCopyCount == 0, ScanMapAssert.Describe(map));
-        // If the fixture writes an initial TOC on partitioned media, the scan now finds it there.
-        Assert.Single(map.FragmentsIn(MediaPartition.Content));
+        ScanMapAssert.KindSequence(map, MediaPartition.Content, FragmentKind.MediaHeader, FragmentKind.SetHeader);
     }
 
     #endregion

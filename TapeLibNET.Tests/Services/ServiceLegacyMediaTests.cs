@@ -142,8 +142,8 @@ public class ServiceLegacyMediaTests : ServiceTestBase
             Assert.True(result.Success, $"{result.Message}\n{host.DumpReports()}");
             MediaScanMap map = result.Map!;
 
-            Assert.Equal(ScannedMediaKind.Backup, map.Kind);                  // a TOC copy of ours proves it
-            Assert.Equal(0, result.SetsFound);                                // legacy content is not identifiable
+            Assert.Equal(ScannedMediaKind.Backup, map.Kind); // a TOC copy of ours proves it
+            Assert.Equal(0, result.SetsFound);               // legacy content is not identifiable
             var tocs = map.Fragments.Where(f => f.Kind == FragmentKind.TOC).ToList();
             Assert.NotEmpty(tocs);
             Assert.All(tocs, f =>
@@ -152,7 +152,7 @@ public class ServiceLegacyMediaTests : ServiceTestBase
                 Assert.Equal(1, f.HarvestedToc!.Count);
             });
             Assert.DoesNotContain(map.Fragments, f => f.Kind == FragmentKind.Unknown && !f.Diagnosis.Success);
-            Assert.Contains("per the recovered table of contents", result.Summary);
+            Assert.Contains("per the recovered TOC", result.Summary);
         }
     }
 
