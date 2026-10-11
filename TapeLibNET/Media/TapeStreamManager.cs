@@ -986,6 +986,10 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     /// </summary>
     /// <param name="length">Expected file size for capacity check; negative to skip.</param>
     /// <param name="writtenSoFar">Bytes already written in the current set.</param>
+    /// <remarks>
+    /// <b>Not used in production</b> (only in tests) since transitioning to the packed-only path
+    ///  for content (removal of aligned one). <see cref="ProduceWriteTOCStream"/> is still in use.
+    /// </remarks>
     public TapeWriteStream? ProduceWriteContentStream(long length, long writtenSoFar)
     {
         if (IsStreamInUse)
@@ -1041,7 +1045,13 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         return (TapeReadStream)Stream;
     }
 
-    /// <summary>Produces a <see cref="TapeReadStream"/> for reading content data from the target set.</summary>
+    /// <summary>
+    /// Produces a <see cref="TapeReadStream"/> for reading content data from the target set.
+    /// </summary>
+    /// <remarks>
+    /// <b>Not used in production</b> (only in tests) since transitioning to the packed-only path
+    ///  for content (removal of aligned one). <see cref="ProduceReadTOCStream"/> is still in use.
+    /// </remarks>
     public TapeReadStream? ProduceReadContentStream(bool textFileMode = false, long lengthLimit = -1)
     {
         if (IsStreamInUse)
