@@ -25,6 +25,7 @@ public class GoldenV21Generator
     /// </para>
     /// </summary>
     [Fact(Skip = "Generator — run deliberately to add NEW goldens; it never overwrites existing ones.")]
+    //[Fact]
     [Trait("Category", "Golden")]
     public void GenerateMissingGoldens()
     {
