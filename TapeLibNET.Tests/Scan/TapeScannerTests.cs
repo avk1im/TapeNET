@@ -431,7 +431,7 @@ public class TapeScannerTests
             Id = Guid.NewGuid(),
             Description = @"C:\x.txt"
         };
-        var line = ServiceScanProgressHandler.DescribeFragment(f);
+        var line = ServiceScanProgressHandler.DescribeFragment(f, tocInPartition: false);
         Assert.NotNull(line);
         Assert.Equal(ServiceReportLevel.Info, line!.Value.Level);
         Assert.Contains("no set header", line.Value.Text);

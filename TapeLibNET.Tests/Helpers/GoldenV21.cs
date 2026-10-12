@@ -189,6 +189,26 @@ internal static class GoldenV21
         return toc;
     }
 
+    /// <summary>Two sets on a full TOC-in-partition volume: the last one ran to end-of-media (F32).</summary>
+    internal static TapeTOC BuildEomToc()
+    {
+        var toc = new TapeTOC("Golden 2.1 — full volume") { CreationTime = T0, MediaId = s_mediaId };
+        toc.AddNewSetTOC();
+        TapeSetTOC first = toc.CurrentSetTOC;
+        first.SetId = s_setIdA;
+        first.CreationTime = T0;
+        first.BlockSize = 64 * 1024;
+        first.Append(File(first, @"C:\Full\a.bin", 1_000, 3, 0));
+        toc.AddNewSetTOC();
+        TapeSetTOC last = toc.CurrentSetTOC;
+        last.SetId = s_setIdB;
+        last.CreationTime = T1;
+        last.BlockSize = 64 * 1024;
+        last.ClosedByEom = true;
+        last.Append(File(last, @"C:\Full\b.bin", 2_000, 9, 0));
+        return toc;
+    }
+
     /// <summary>
     /// Writes <paramref name="toc"/> deterministically — and stamps it, exactly as a real save does. The stamped instance
     ///  is therefore the expected value for the reader check.
@@ -233,6 +253,7 @@ internal static class GoldenV21
             Assert.Equal(e.CompressionLevel, a.CompressionLevel);
             Assert.Equal(e.Incremental, a.Incremental);
             Assert.Equal(e.ContinuedFromPrevVolume, a.ContinuedFromPrevVolume);
+            Assert.Equal(e.ClosedByEom, a.ClosedByEom);
             Assert.Equal(e.Count, a.Count);
             for (int f = 0; f < e.Count; f++)
             {
@@ -375,6 +396,9 @@ internal static class GoldenV21
         new("checkpoint-many.v21.bin",
             "checkpoint: 1,000 delta-coded samples at an LTO-9 cadence",
             () => TapeCalibrationFramer.Pack(Checkpoint("many")), b => AssertCheckpointReads(b, Checkpoint("many"))),
+        new("toc-closed-by-eom.v21.bin",
+            "TOC stream: a set closed by end-of-media (field 14, F32)",
+            () => WriteToc(BuildEomToc()), b => AssertTocReads(b, BuildEomToc)),
     ];
 
     #endregion

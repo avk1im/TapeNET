@@ -296,7 +296,8 @@ public partial class TapeSetTOC
     private readonly record struct PersistedState(
         Guid SetId, TapeDataFormat DataFormat, ulong NextFileId, int FileCount,
         string Description, DateTime CreationTime, uint BlockSize, TapeHashAlgorithm HashAlgorithm,
-        TapeCompression Compression, int CompressionLevel, bool Incremental, int Volume, bool ContinuedFromPrevVolume);
+        TapeCompression Compression, int CompressionLevel, bool Incremental, int Volume, bool ContinuedFromPrevVolume,
+        bool ClosedByEom);
 
     // The state as last saved or loaded; null for a set never persisted (a new set is always "modified").
     //  Copied by CopyFrom (TapeTOC.cs), so a loaded set copied into the live TOC stays unmodified.
@@ -304,7 +305,7 @@ public partial class TapeSetTOC
 
     private PersistedState CaptureState() => new(
         SetId, DataFormat, NextFileId, Count, Description, CreationTime, BlockSize, HashAlgorithm,
-        Compression, CompressionLevel, Incremental, Volume, ContinuedFromPrevVolume);
+        Compression, CompressionLevel, Incremental, Volume, ContinuedFromPrevVolume, ClosedByEom);
 
     /// <summary>
     /// Whether this set differs from what was last saved or loaded — a new set, appended files, a burned
@@ -338,6 +339,7 @@ public partial class TapeSetTOC
         public bool Incremental;
         public bool ContinuedFromPrevVolume;
         public int FileCount;
+        public bool ClosedByEom;
         public string Description = "";
 
         private static readonly TapeSchema<Wire> s_schema = new(TapeRecordKind.TocSet, validate: Validate)
@@ -356,6 +358,9 @@ public partial class TapeSetTOC
             { 11, w => w.Incremental,             (w, v) => w.Incremental = v },
             { 12, w => w.ContinuedFromPrevVolume, (w, v) => w.ContinuedFromPrevVolume = v },
             { 13, w => w.FileCount,               (w, v) => w.FileCount = v,               FieldFlags.Required },
+            // F32. Optional, NOT critical: a reader that drops it miscounts by one mark at the volume's tail — which the
+            //  set-header verification detects and repairs. Elided when false: every existing TOC stays byte-identical.
+            { 14, w => w.ClosedByEom,             (w, v) => w.ClosedByEom = v },
             // ── strings 32–47 ──
             { 32, w => w.Description,             (w, v) => w.Description = v },
         };
@@ -390,6 +395,7 @@ public partial class TapeSetTOC
             Incremental = set.Incremental,
             ContinuedFromPrevVolume = set.ContinuedFromPrevVolume,
             FileCount = set.Count,
+            ClosedByEom = set.ClosedByEom,
             Description = TapeTextRules.ClampWellFormed(set.Description, TapeFormat.MaxStringBytes),
         };
 
@@ -407,6 +413,7 @@ public partial class TapeSetTOC
             Compression = Compression,
             CompressionLevel = CompressionLevel,
             ContinuedFromPrevVolume = ContinuedFromPrevVolume,
+            ClosedByEom = ClosedByEom,
         };
     }
 

@@ -558,7 +558,7 @@ public class TapeScannerPartitionTests
             Ordinal = 5, StartBlock = 0, Partition = MediaPartition.Initiator, Kind = FragmentKind.TOC,
             HarvestedToc = new TapeTOC("x"),
         };
-        var line = ServiceScanProgressHandler.DescribeFragment(f);
+        var line = ServiceScanProgressHandler.DescribeFragment(f, tocInPartition: true);
         Assert.NotNull(line);
         Assert.Contains("TOC partition", line!.Value.Text);
     }

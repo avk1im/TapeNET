@@ -1,5 +1,4 @@
-﻿using System.Diagnostics;
-using System.IO.Hashing;
+﻿using System.IO.Hashing;
 using Microsoft.Extensions.Logging;
 using TapeLibNET.Drive;
 using TapeLibNET.Format;
@@ -122,47 +121,67 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
 #endif
 
     /// <summary>
+    /// Whether the mounted volume ends INSIDE its last set: that set was closed by end-of-media, not by a setmark (F32).
+    ///  Honoured on TOC-in-partition media only; a TOC claiming it for another layout is ignored rather than trusted.
+    /// </summary>
+    protected bool VolumeEndsInsideLastSet
+    {
+        get
+        {
+            if (Navigator is not TapeNavigatorTOCInPartition || TOC.Count == 0)
+                return false;
+            TapeSetTOC last = TOC[TOC.LastSetOnVolume];
+            return last.Volume == TOC.Volume && last.ClosedByEom;
+        }
+    }
+
+    /// <summary>
     /// Translates <see cref="TapeTOC.CurrentSetIndex"/> to a <see cref="TapeNavigator.TargetContentSet"/> value,
     ///  choosing the most efficient seek direction (from begin, end, or current position).
-    ///  <para>Used by both backup and restore agents.</para>
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// End-relative indices count setmarks back from end of content: −1 lies after the last setmark, −2 is the newest set,
+    ///  −3 the one before, …  On a volume whose last set ended at end-of-media (F32) no setmark follows that set, so the
+    ///  newest set is −1 and every end-relative index shifts by one. The navigator knows no TOC; this is the one place
+    ///  that translates.
+    /// </para>
+    /// <para>
+    /// The navigator's position is converted with the volume's OWN last set, not the TOC's: on an earlier volume of a
+    ///  series the TOC holds later sets that are not on this tape.
+    /// </para>
+    /// </remarks>
     protected int CurrentSetAsNavigatorContentSet(bool fromBeginOnly = false)
     {
         int toBegin = TOC.CurrentSetIndexOnVolume; // same as TOC.CurrentSetIndex - TOC.FirstSetOnVolume
-
         if (toBegin == 0)
             return 0; // the first content set on volume should always be accessed from the beginning
-
         if (fromBeginOnly)
             return toBegin;
 
-        // Optimization: consider Navigator's current position when chosing how to specify the content set for Navigator
-        int toCurr; // use to determine if current set is closer to Navigator's current position than to begin or end
+        int newest = VolumeEndsInsideLastSet ? -1 : -2;                // end-relative index of the volume's newest set
+        int lastOnVolume = TOC.LastSetOnVolume - TOC.FirstSetOnVolume;  // its on-volume index
+        int toEnd = lastOnVolume - toBegin;
+
+        // Optimization: consider Navigator's current position when choosing how to specify the content set
+        int toCurr = int.MaxValue;
         if (!Navigator.CurrentContentSetIsSentinel)
         {
-            // translate Navigator.CurrentContentSet to the index on volume
-            int navCurr = (Navigator.CurrentContentSet >= 0) ? Navigator.CurrentContentSet :
-                TOC.SetIndexToStd(Navigator.CurrentContentSet + 2) - TOC.FirstSetOnVolume; // consider (-2)-based index
-            Debug.Assert(navCurr >= 0);
-
-            toCurr = Math.Abs(navCurr - toBegin); // notice here toBegin == TOC.CurrentSetIndexOnVolume
+            int navCurr = (Navigator.CurrentContentSet >= 0)
+                ? Navigator.CurrentContentSet
+                : lastOnVolume - (newest - Navigator.CurrentContentSet);
+            if (navCurr >= 0)
+                toCurr = Math.Abs(navCurr - toBegin);
         }
-        else
-            toCurr = int.MaxValue;
-
-        int toEnd = TOC.LastSetOnVolume - TOC.CurrentSetIndex;
 
         if (toCurr <= toBegin && toCurr <= toEnd)
         {
-            // do NOT use toCurr directly, much rather retain the sign of Navigator.CurrentContentSet
-            //  to ensure that Navigator will move based on Navigator.CurrentContentSet:
-            //  if it was 0 or positive, continue counting from the beginning, if negative - from the end
-            return (Navigator.CurrentContentSet >= 0)? toBegin : -2 - toEnd; // remember (-2)-based index
+            // retain the sign of Navigator.CurrentContentSet: continue counting from the side it counted from
+            return (Navigator.CurrentContentSet >= 0) ? toBegin : newest - toEnd;
         }
 
-        // if current set is closer to end of content, return (-2)-based index (-1 means end of content)
-        return (toEnd < toBegin) ? -2 - toEnd : toBegin;
-}
+        return (toEnd < toBegin) ? newest - toEnd : toBegin;
+    }
 
     #endregion
 

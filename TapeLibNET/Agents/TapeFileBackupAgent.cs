@@ -134,6 +134,17 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     }
 
     /// <summary>
+    /// Whether the set before the current one on this volume ran to end-of-media (F32): nothing fits behind it,
+    ///  and "end of content" there is the START of that set — appending would overwrite it!
+    /// </summary>
+    private bool VolumeIsFullBeforeCurrentSet(bool newSet)
+        => newSet
+           && Navigator is TapeNavigatorTOCInPartition
+           && TOC.CurrentSetIndexOnVolume > 0
+           && TOC[TOC.CurrentSetIndex - 1] is { ClosedByEom: true } previous
+           && previous.Volume == TOC.Volume;
+
+    /// <summary>
     /// Prepares the <see cref="Drive"/>, <see cref="TapeAgentBase.Navigator"/>, and
     ///  <see cref="TapeAgentBase.Manager"/> for writing content to the current set, and leaves the head at
     ///  the set's first content block.
@@ -656,6 +667,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         if (bc.fileList.Count == 0)
         {
+            NotifySetEnd(bc.fileNotify);
             m_logger.LogWarning("No files found to backup in {Method}", nameof(BackupFilesToCurrentSet));
             return true;
         }
@@ -663,6 +675,25 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         // One Start per SET, matching the Ends below. The count is contributed only by the first set of
         //  the operation — see NotifySetStart.
         NotifySetStart(bc.fileNotify, filesAdded: bc.isContinuation ? 0 : bc.fileList.Count);
+
+        // F32: the previous set on this volume ran to end-of-media — the volume is full, and appending would overwrite
+        //  that set. Continue on the next volume straight away, exactly as an EOM on the first file would.
+        if (VolumeIsFullBeforeCurrentSet(newSet))
+        {
+            m_logger.LogInformation("{Method}: volume #{Volume} ends inside set #{Set} (closed by end-of-media) — " +
+                "the new set starts on the next volume", nameof(BackupFilesToCurrentSet), TOC.Volume, TOC.CurrentSetIndex - 1);
+            SetError(WIN32_ERROR.ERROR_END_OF_MEDIA, $"Volume #{TOC.Volume} is full");
+
+            bc.prevVolumeHasFiles = false;      // nothing of THIS set is on the full volume
+            bc.continuationSetParams = TOC.CurrentSetTOC.ToParams();
+            bc.isContinuation = true;           // files already counted by the NotifySetStart above
+            MultiVolumeContext = bc;
+
+            NotifySetEnd(bc.fileNotify);
+            TOC.ContinuedOnNextVolume = true;
+            Debug.Assert(CanResumeToNextVolume);
+            return false;                       // do NOT LatchFailure(): a continuation, not a fault
+        }
 
         if (!BeginWriteContentForCurrentSet(newSet, bc.fileNotify))
         {
@@ -910,6 +941,11 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             {
                 eomHandled = HandleEom(eomEx, bc.fileIndex, currentTemplate: null);
             }
+
+            // F32: record how the set ended — by its setmark, or by end-of-media on
+            //  a TOC-in-partition volume. flag survives the idempotent EndWriteContent
+            //  calls of the EOM path; only a new write session clears it.
+            TOC.CurrentSetTOC.ClosedByEom = Manager.LastSetClosedByEom;
 
             // Drain post-process for tail commits that arrived during EndWriteContent.
             //  If the caller throws a TapeAbortRequestedException during post-notify,

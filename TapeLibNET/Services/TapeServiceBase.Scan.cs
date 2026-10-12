@@ -158,7 +158,7 @@ public partial class TapeServiceBase
                 TocCopiesFound = map.TocCopyCount,
                 TocsRecovered = CountRecoveredTocs(map),
                 UnknownFragments = map.UnknownCount,
-                LastSetUnclosed = map.LastSetUnclosed,
+                LastSetUnclosed = map.LastSetUnclosed && !UnclosedLastSetEndsAtEom(map),
                 Advice = advice,
                 MapExportPath = exportPath,
                 Summary = headline,
@@ -453,6 +453,26 @@ public partial class TapeServiceBase
     #region *** Scan judgement & wording (pure) ***
 
     /// <summary>
+    /// Whether the unclosed last set the scan found ran to end-of-media on purpose (F32): a full TOC-in-partition volume,
+    ///  recorded as such by a recovered TOC — rather than a backup that died mid-set. The scan alone cannot tell; the TOC
+    ///  names the set, and its position on the volume must match the unclosed set header's.
+    /// </summary>
+    internal static bool UnclosedLastSetEndsAtEom(MediaScanMap map)
+    {
+        if (!map.Layout.TocInPartition || map.UnclosedLastSet is not { VolumeSetIndex: { } index } unclosed)
+            return false;
+
+        foreach (TapeTOC toc in map.Fragments.Where(f => f.HarvestedToc is not null).Select(f => f.HarvestedToc!))
+        {
+            int volume = unclosed.Volume ?? toc.Volume;
+            var onVolume = toc.Where(s => s.Volume == volume).ToList();
+            if (onVolume.Count == index + 1 && onVolume[^1].ClosedByEom)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Renders a scan map as a headline, its severity, and detail lines. Pure — the scan counterpart of
     ///  <see cref="VerbalizeFileOperation"/>.
     /// </summary>
@@ -470,6 +490,9 @@ public partial class TapeServiceBase
         int recovered = CountRecoveredTocs(map);
         int mixed = map.MixedIdentityFragments.Count;
 
+        bool unclosedEndsAtEom = map.LastSetUnclosed && UnclosedLastSetEndsAtEom(map);
+        bool unclosedIsFault = map.LastSetUnclosed && !unclosedEndsAtEom;
+
         var details = new List<string>();
 
         int headerless = map.Fragments.Count(f => f.Kind == FragmentKind.SetContent);
@@ -480,7 +503,10 @@ public partial class TapeServiceBase
         if (map.LastSetUnclosed)
         {
             string? name = map.UnclosedLastSet?.Description;
-            details.Add($"The last backup set{(name is null ? string.Empty : $" >{name}<")} was never completed");
+            string set = $"The last backup set{(name is null ? string.Empty : $" >{name}<")}";
+            details.Add(unclosedEndsAtEom
+                ? $"{set} runs to the end of the medium — the volume is full"
+                : $"{set} was never completed");
         }
 
         if (map.SetIndexGaps.Count > 0)
@@ -559,7 +585,7 @@ public partial class TapeServiceBase
             details.Add($"{tocListed - map.SetCount:N0} more set(s) listed by the recovered TOC " +
                         "carry no headers to identify them by (legacy, or written without set headers)");
 
-        bool needsAttention = map.LastSetUnclosed || map.SetIndexGaps.Count > 0 || mixed > 0 || damaged > 0
+        bool needsAttention = unclosedIsFault || map.SetIndexGaps.Count > 0 || mixed > 0 || damaged > 0
                            || outOfPlace > 0;
 
         return needsAttention
@@ -591,7 +617,7 @@ public partial class TapeServiceBase
         else if (map.TocCopyCount > 0)
             advice.Add(ScanAdvice.RecoverTocFromCopy);
 
-        if (map.LastSetUnclosed)
+        if (map.LastSetUnclosed && !UnclosedLastSetEndsAtEom(map))
             advice.Add(ScanAdvice.ReviewUnclosedSet);
 
         return advice;

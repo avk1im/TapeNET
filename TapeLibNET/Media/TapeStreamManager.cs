@@ -26,6 +26,13 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     /// <summary>Artificially enforced content capacity limit in bytes. Negative means no limit.</summary>
     public long ContentCapacityLimit { get; set; } = -1L;
 
+    /// <summary>
+    /// Whether the content set closed by the last <see cref="EndWriteContent"/> ended AT end-of-media without its closing
+    ///  setmark (F32). TOC-in-partition only; cleared when <see cref="BeginWriteContent"/> starts a new session — so it
+    ///  survives the idempotent second <see cref="EndWriteContent"/> call of the EOM path.
+    /// </summary>
+    public bool LastSetClosedByEom { get; private set; } = false;
+
     /// <summary>Currently active <see cref="TapeStream"/>, or <see langword="null"/> when idle.</summary>
     public TapeStream? Stream { get; private set; } = null;
     /// <summary>Whether a stream is currently checked out and in use.</summary>
@@ -315,28 +322,25 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     public bool BeginWriteContent(long remainingCapacity)
     {
         ResetError();
-
         if (State == TapeState.WritingContent)
             return true; // nothing to do
 
-        ContentWritten = false; // no content written yet in this session
+        ContentWritten = false;         // no content written yet in this session
+        LastSetClosedByEom = false;     // a fresh session decides afresh how its set ends (F32)
 
         BeginReadWrite(TapeState.WritingContent);
-
         if (WentOK)
             Navigator.OnBeginWriteContent();
-
         if (WentOK)
             BeginWriteContentSet(remainingCapacity);
-
         if (WentOK)
             EnsurePackerCreated();
-
         if (WentBad)
             Navigator.ResetContentSet(); // since we don't know where we ended up
 
         return WentOK;
     }
+
     /// <summary>
     /// Transitions to <see cref="TapeState.ReadingContent"/>, positioning tape at the target content set.
     /// <para>If already reading, navigates to a different set without leaving the reading state.</para>
@@ -394,7 +398,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         else
             LogErrorAsDebug("Failed to end writing TOC");
 
-        return true;
+        return WentOK;
     }
 
     public bool EndReadTOC()
@@ -419,43 +423,53 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         else
             LogErrorAsDebug("Failed to end reading TOC");
 
-        return true;
+        return WentOK;
     }
 
+    /// <summary>
+    /// Flushes the packer, closes the content set, and leaves <see cref="TapeState.WritingContent"/>.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when the set is closed — by its setmark, or by end-of-media on TOC-in-partition media (F32,
+    ///  <see cref="LastSetClosedByEom"/>); <see langword="false"/> when closing failed otherwise.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Always leaves <see cref="TapeState.WritingContent"/>.</b> The packer is gone by then, and a manager left in that
+    ///  state fails every later verb — including the TOC save that makes the backup reachable. A failed close is reported
+    ///  through the return value and the error, with the navigator reset.
+    /// </para>
+    /// <para>
+    /// <b>EOM during the final flush</b> is rethrown after the transition, so the agent can roll back the uncommitted tail
+    ///  and continue on the next volume. The set is still closed first — by its setmark if it fits, by EOM otherwise.
+    /// </para>
+    /// </remarks>
     public bool EndWriteContent()
     {
         ResetError();
-
         if (State == TapeState.MediaPrepared)
-            return true; // nothing to do
+            return true; // nothing to do — also the idempotent second call on the EOM path
 
         if (State != TapeState.WritingContent)
-            LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
-
-        // Flush + dispose the packer first so any tail-block writes complete before
-        //  the set is closed with a setmark. Errors are logged but do not abort the
-        //  state transition -- we still want to leave WritingContent cleanly.
-        //  EOM during the final flush is special: capture it, finish the state
-        //  transition, then rethrow so the agent can roll back uncommitted files
-        //  and continue on the next volume.
-        TapePackerEndOfMediaException? pendingEom = null;
-        if (WentOK)
         {
-            try { FlushAndDisposePacker(); }
-            catch (TapePackerEndOfMediaException eom)
-            {
-                pendingEom = eom;
-                LastErrorWin32 = WIN32_ERROR.ERROR_END_OF_MEDIA;
-            }
+            LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
+            LogErrorAsDebug("Failed to end writing content");
+            return false;
         }
 
-        // Always try to close the set + transition state, even on EOM, so the
-        //  manager is left in a consistent state for the multi-volume retry.
-        if (pendingEom is not null || WentOK)
-            EndWriteContentSet(); // will call Navigator.OnContentWritten()
+        TapePackerEndOfMediaException? pendingEom = null;
+        try
+        {
+            FlushAndDisposePacker();
+        }
+        catch (TapePackerEndOfMediaException eom)
+        {
+            pendingEom = eom;
+        }
 
-        if (pendingEom is not null || WentOK)
-            State.TransitionTo(TapeState.MediaPrepared);
+        bool closed = EndWriteContentSet();     // a setmark — or, on TOC-in-partition media, end-of-media itself
+
+        State.TransitionTo(TapeState.MediaPrepared);
 
         if (pendingEom is not null)
         {
@@ -463,41 +477,41 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
             throw pendingEom;
         }
 
-        if (WentOK)
-            m_logger.LogTrace("Drive #{Drive}: Content written", DriveNumber);
+        if (closed)
+            m_logger.LogTrace("Drive #{Drive}: Content written{Eom}", DriveNumber,
+                LastSetClosedByEom ? " — set closed by end-of-media" : string.Empty);
         else
             LogErrorAsDebug("Failed to end writing content");
-
-        return true;
+        return closed;
     }
 
+    /// <summary>
+    /// Disposes the read packer, moves past the set's closing mark, and leaves <see cref="TapeState.ReadingContent"/> —
+    ///  always, like <see cref="EndWriteContent"/>; a failure is reported through the return value.
+    /// </summary>
     public bool EndReadContent()
     {
         ResetError();
-
         if (State == TapeState.MediaPrepared)
             return true; // nothing to do
 
         if (State != TapeState.ReadingContent)
+        {
             LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
+            LogErrorAsDebug("Failed to end reading content");
+            return false;
+        }
 
-        // Tear down the read packer (if any) before leaving the read state so the
-        //  cached blocks and any open read slot are released cleanly.
-        if (WentOK)
-            DisposeReadPacker();
+        DisposeReadPacker();
+        bool ended = EndReadContentSet();   // advances Navigator.CurrentContentSet, or resets it
 
-        if (WentOK)
-            EndReadContentSet(); // will advance Navigator.CurrentContentSet
+        State.TransitionTo(TapeState.MediaPrepared);
 
-        if (WentOK)
-            State.TransitionTo(TapeState.MediaPrepared);
-
-        if (WentOK)
+        if (ended)
             m_logger.LogTrace("Drive #{Drive}: Content read", DriveNumber);
         else
             LogErrorAsDebug("Failed to end reading content");
-
-        return true;
+        return ended;
     }
 
     #endregion // State management operations
@@ -733,6 +747,18 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
     #region *** File and set state operations ***
 
+    /// <summary>The drive reports that the medium is full — no room for the write, not a fault.</summary>
+    private static bool IsEndOfMedia(WIN32_ERROR error) => error is
+        WIN32_ERROR.ERROR_END_OF_MEDIA
+        or WIN32_ERROR.ERROR_EOM_OVERFLOW
+        or WIN32_ERROR.ERROR_DISK_FULL
+        or WIN32_ERROR.ERROR_HANDLE_DISK_FULL;
+
+    /// <summary>The navigator ran past the last mark: no more data that way — not a fault.</summary>
+    private static bool IsPositionalEnd(WIN32_ERROR error) => error is
+        WIN32_ERROR.ERROR_NO_DATA_DETECTED
+        or WIN32_ERROR.ERROR_END_OF_MEDIA;
+
     private bool BeginReadFile()
     {
         ResetError();
@@ -825,22 +851,40 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         return WentOK;
     }
 
+    /// <summary>Moves past the closing mark of the set just read.</summary>
+    /// <remarks>
+    /// A set closed by end-of-media (F32) — or a tail a backup never closed — has no mark ahead. The READ is complete
+    ///  regardless, so running into end of data is not an error; only the position is unknown afterwards.
+    /// </remarks>
     private bool EndReadContentSet()
     {
         ResetError();
-
         if (State != TapeState.ReadingContent)
+        {
             LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
-
-        if (WentOK)
-            Navigator.MoveToNextContentSetmark();
-
-        if (WentOK)
-            m_logger.LogTrace("Drive #{Drive}: Ended reading set", DriveNumber);
-        else
             LogErrorAsDebug("Failed to end reading set");
+            return false;
+        }
 
-        return WentOK;
+        if (Navigator.MoveToNextContentSetmark())
+        {
+            m_logger.LogTrace("Drive #{Drive}: Ended reading set", DriveNumber);
+            return true;
+        }
+
+        SyncErrorFrom(Navigator);
+        Navigator.ResetContentSet();
+
+        if (IsPositionalEnd(LastErrorWin32))
+        {
+            m_logger.LogTrace("Drive #{Drive}: The set just read has no closing mark ahead ({Error})" +
+                " — it ends at end of data", DriveNumber, LastErrorWin32);
+            ResetError();
+            return true;
+        }
+
+        LogErrorAsDebug("Failed to end reading set");
+        return false;
     }
 
     // Coarse per-set capacity estimate, used only by the legacy aligned write path's
@@ -876,32 +920,58 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         return WentOK; // WriteSetmark(); -- we'll mark the end, not the beginning
     }
 
+    /// <summary>
+    /// Closes the content set with its setmark — or, on TOC-in-partition media where the setmark does not fit, declares
+    ///  it closed by end-of-media (F32).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// With the TOC in its own partition no early-warning reserve is kept: content is written to the very end. When the
+    ///  files fit and the mark does not, every committed file is on tape and the TOC lives elsewhere — the agent records
+    ///  the outcome in the TOC, and navigation counts one setmark fewer on that volume.
+    /// </para>
+    /// <para>
+    /// Never on TOC-in-set media: the early-warning reserve always leaves room for the mark there.
+    /// </para>
+    /// </remarks>
     private bool EndWriteContentSet()
     {
         ResetError();
-
         if (State != TapeState.WritingContent)
-            LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
-
-        if (WentOK)
         {
-            if (Navigator.WriteContentSetmark())
-                Navigator.OnContentWritten(); // we're surely at the end of the content!
-            
-            // A setmark is itself content data on the media. We set it in any case,
-            //  since even a failed WriteContentSetmark() might've written something
-            ContentWritten = true;
+            LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
+            LogErrorAsDebug("Failed to end writing set");
+            return false;
         }
 
-        if (WentOK)
-            CapacityForCurrentSet = -1; // reset
+        bool marked = Navigator.WriteContentSetmark();
 
-        if (WentOK)
+        // A setmark is itself content data; even a failed one may have written something.
+        ContentWritten = true;
+        CapacityForCurrentSet = -1;     // reset
+
+        if (marked)
+        {
+            Navigator.OnContentWritten();   // we're surely at the end of the content!
             m_logger.LogTrace("Drive #{Drive}: Ended writing set", DriveNumber);
-        else
-            LogErrorAsDebug("Failed to end writing set");
+            return true;
+        }
 
-        return WentOK;
+        SyncErrorFrom(Navigator);
+        Navigator.ResetContentSet();        // not after a setmark — position as good as unknown
+
+        if (Navigator is TapeNavigatorTOCInPartition && IsEndOfMedia(LastErrorWin32))
+        {
+            m_logger.LogInformation(
+                "Drive #{Drive}: The closing setmark did not fit ({Error}) — the set ends at end-of-media (F32)",
+                DriveNumber, LastErrorWin32);
+            LastSetClosedByEom = true;
+            ResetError();                   // a full volume is not a fault
+            return true;
+        }
+
+        LogErrorAsDebug("Failed to end writing set");
+        return false;
     }
 
     #endregion // File and set state operations

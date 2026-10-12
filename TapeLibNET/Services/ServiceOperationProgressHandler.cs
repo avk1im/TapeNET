@@ -2,6 +2,7 @@ using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
 using TapeLibNET.Drive;
 using TapeLibNET.Headers;
+using TapeLibNET.Media;
 using TapeLibNET.Scan;
 using TapeLibNET.Toc;
 using Windows.Win32.Foundation;
@@ -669,11 +670,14 @@ public class ServiceCalibrateProgressHandler(
 ///  the service's token registration, not from here.
 /// </para>
 /// </remarks>
-public class ServiceScanProgressHandler(ITapeServiceHost host, TapeScanner scanner)
-    : IProgress<TapeScanProgress>
+public class ServiceScanProgressHandler(ITapeServiceHost host, TapeScanner scanner) : IProgress<TapeScanProgress>
 {
     private readonly ITapeServiceHost _host = host;
     private bool _abortLogged;
+
+    // Whether this cartridge keeps its TOC in a partition (F32): only there may
+    //  a set end at end-of-media on purpose.
+    private readonly bool _tocInPartition = TapeMediaLayout.Predict(scanner.Drive).TocInPartition;
 
     /// <summary>The live scanner driving the operation.</summary>
     protected readonly TapeScanner Scanner = scanner;
@@ -716,7 +720,7 @@ public class ServiceScanProgressHandler(ITapeServiceHost host, TapeScanner scann
             if (f.Kind == FragmentKind.TOC) TocCopiesFound++;
             if (f.HarvestedToc is not null) TocsRecovered++;
 
-            if (DescribeFragment(f) is { } line)
+            if (DescribeFragment(f, _tocInPartition) is { } line)
                 _host.Report(line.Level, line.Text, isSubEntry: true);
         }
 
@@ -724,33 +728,40 @@ public class ServiceScanProgressHandler(ITapeServiceHost host, TapeScanner scann
     }
 
     /// <summary>
-    /// One log line per fragment worth a user's attention; null for mark runs and the TOC mark, which say nothing about
-    ///  the content. A fragment in the TOC partition says so — "block 0" alone would be ambiguous.
+    /// One log line per fragment worth a user's attention; null for mark runs and the TOC mark.
     /// </summary>
-    public static (ServiceReportLevel Level, string Text)? DescribeFragment(TapeMediaFragment f) => f.Kind switch
-    {
-        FragmentKind.MediaHeader =>
-            (ServiceReportLevel.Info, $"Media header >{f.Description}< · volume {f.Volume}{InTocPartition(f)}"),
-        FragmentKind.SetHeader when !f.ClosedBySeparator =>
-            (ServiceReportLevel.Warning, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< {Where(f)} — never completed"),
-        FragmentKind.SetHeader =>
-            (ServiceReportLevel.Info, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< {Where(f)}"),
-        FragmentKind.SetContent =>
-            (ServiceReportLevel.Info, $"Backup set {ShortId(f.Id)} {Where(f)} — no set header, first file >{f.Description}<"),
-        FragmentKind.CalibrationHeader =>
-            (ServiceReportLevel.Info, $"Calibration run header, profile >{f.Description}<{InTocPartition(f)}"),
-        FragmentKind.TOC when f.HarvestedToc is { } toc =>
-            (ServiceReportLevel.Info, $"Table of contents copy {Where(f)} — recovered, {toc.Count} set(s)"),
-        FragmentKind.TOC when !f.Diagnosis.Success =>
-            (ServiceReportLevel.Warning, $"Table of contents copy {Where(f)} — could not be recovered"),
-        FragmentKind.TOC =>
-            (ServiceReportLevel.Info, $"Table of contents copy {Where(f)}"),
-        FragmentKind.Unknown when !f.Diagnosis.Success =>
-            (ServiceReportLevel.Warning, $"Block {f.StartBlock}{InTocPartition(f)}: {f.Diagnosis.ErrorMessage}"),
-        FragmentKind.Unknown =>
-            (ServiceReportLevel.None, $"Unidentified data {Where(f)}"),
-        _ => null,
-    };
+    /// <param name="tocInPartition">
+    /// The cartridge keeps its TOC in a partition (F32): there a last set without a closing mark is the normal shape of a
+    ///  full volume, reported neutrally. The scan's headline confirms it once the TOC has been read.
+    /// </param>
+    public static (ServiceReportLevel Level, string Text)? DescribeFragment(TapeMediaFragment f, bool tocInPartition)
+        => f.Kind switch
+        {
+            FragmentKind.MediaHeader =>
+                (ServiceReportLevel.Info, $"Media header >{f.Description}< · volume {f.Volume} at {f.Where}"),
+            FragmentKind.SetHeader when !f.ClosedBySeparator && tocInPartition =>
+                (ServiceReportLevel.Info, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< at {f.Where} — runs to the " +
+                    "end of the medium (normal for a full volume)"),
+            FragmentKind.SetHeader when !f.ClosedBySeparator =>
+                (ServiceReportLevel.Warning, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< at {f.Where} — never completed"),
+            FragmentKind.SetHeader =>
+                (ServiceReportLevel.Info, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< at {f.Where}"),
+            FragmentKind.SetContent =>
+                (ServiceReportLevel.Info, $"Backup set {ShortId(f.Id)} at {f.Where} — no set header, first file >{f.Description}<"),
+            FragmentKind.CalibrationHeader =>
+                (ServiceReportLevel.Info, $"Calibration run header, profile >{f.Description}< at {f.Where}"),
+            FragmentKind.TOC when f.HarvestedToc is { } toc =>
+                (ServiceReportLevel.Info, $"Table of contents copy at {f.Where} — recovered, {toc.Count} set(s)"),
+            FragmentKind.TOC when !f.Diagnosis.Success =>
+                (ServiceReportLevel.Warning, $"Table of contents copy at {f.Where} — could not be recovered"),
+            FragmentKind.TOC =>
+                (ServiceReportLevel.Info, $"Table of contents copy at {f.Where}"),
+            FragmentKind.Unknown when !f.Diagnosis.Success =>
+                (ServiceReportLevel.Warning, $"Damaged record at {f.Where}: {f.Diagnosis.ErrorMessage}"),
+            FragmentKind.Unknown =>
+                (ServiceReportLevel.None, $"Unidentified data at {f.Where}"),
+            _ => null,
+        };
 
     /// <summary>"at block N", naming the TOC partition when that is where the fragment stands.</summary>
     private static string Where(TapeMediaFragment f) => $"at block {f.StartBlock}{InTocPartition(f)}";

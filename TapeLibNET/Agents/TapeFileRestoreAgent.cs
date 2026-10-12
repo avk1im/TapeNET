@@ -354,7 +354,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         ITapeFileNotifiable? fileNotify = null)
     {
         if (tfis == null) // null means restore all files
-            return RestoreAllFilesFromCurrentSetInt(ignoreFailures, fileNotify);
+            return RestoreAllFilesFromCurrentSetCore(ignoreFailures, fileNotify);
 
         NotifySetStart(fileNotify, tfis.Count);
 
@@ -431,12 +431,13 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 
 
     // Restore ALL files from the current set via the packer.
-    private bool RestoreAllFilesFromCurrentSetInt(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+    private bool RestoreAllFilesFromCurrentSetCore(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
     {
         NotifySetStart(fileNotify, TOC.CurrentSetTOC.Count);
 
         if (!BeginReadContentForCurrentSet(fileNotify))
         {
+            NotifySetEnd(fileNotify);
             m_logger.LogWarning("Failed to begin reading content in {Method}",
                 nameof(RestoreAllFilesFromCurrentSet));
             return false;
@@ -497,7 +498,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 
         NotifySetEnd(fileNotify);
 
-        m_logger.LogTrace("RestoreAllFilesFromCurrentSetInt exiting: overallSuccess={Success}", overallSuccess);
+        m_logger.LogTrace("RestoreAllFilesFromCurrentSetCore exiting: overallSuccess={Success}", overallSuccess);
         return overallSuccess;
     } // RestoreAllFilesFromCurrentSet()
 
@@ -658,7 +659,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 
             bool result = rc.filesSelected[rc.filesSelectedIdx] != null
                 ? RestoreFilesFromCurrentSet(rc.filesSelected[rc.filesSelectedIdx], ignoreFailures, fileNotify)
-                : RestoreAllFilesFromCurrentSetInt(ignoreFailures, fileNotify); // null means restore all files
+                : RestoreAllFilesFromCurrentSetCore(ignoreFailures, fileNotify); // null means restore all files
             if (!result)
             {
                 m_logger.LogWarning("{Method}: Inner restore returned false: filesSelectedIdx={Idx}, set #{Set}",

@@ -255,6 +255,17 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
     public bool ContinuedFromPrevVolume { get; init; } = false;
 
     /// <summary>
+    /// This set ends at end-of-media, without its closing setmark — the volume filled up inside it (F32). Only ever set on
+    ///  TOC-in-partition media, which writes to EOM; ignored on every other layout.
+    /// </summary>
+    /// <remarks>
+    /// End-relative set indices count setmarks back from end of content; a volume that ends inside its last set has one
+    ///  setmark fewer. A set that is later REPLACED keeps the trait until its replacement is written, because until then
+    ///  the tape still ends that way (<see cref="TapeTOC.ReplaceCurrentSetTOC"/>).
+    /// </remarks>
+    public bool ClosedByEom { get; internal set; } = false;
+
+    /// <summary>
     /// Snapshots this set's metadata (description, hash, block size, incremental, capacity)
     ///  into a <see cref="TapeSetTOCParams"/> bundle suitable for seeding a continuation
     ///  set on the next volume via <see cref="TapeTOC.AddContinuationSetTOC"/>.
@@ -288,6 +299,7 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
     {
         m_tapeFileInfos.Clear();
         m_tapeFileInfos.AddRange(toc.m_tapeFileInfos);
+
         Description = toc.Description;
         CreationTime = toc.CreationTime;
         BlockSize = toc.BlockSize;
@@ -300,6 +312,7 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
         SetId = toc.SetId;
         NextFileId = toc.NextFileId;
         DataFormat = toc.DataFormat;
+        ClosedByEom = toc.ClosedByEom;
         // ContinuedFromPrevVolume is init-only: the copy constructor carries it
         m_isPackedLayout = toc.m_isPackedLayout;
 
@@ -972,14 +985,21 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     }
 
     /// <summary>
-    /// Replaces the current set with a fresh empty <see cref="TapeSetTOC"/>,
-    ///  preserving the volume assignment. Guarantees a new object identity
-    ///  so that consumers can detect the replacement via reference equality.
+    /// Replaces the current set with a fresh empty <see cref="TapeSetTOC"/>, preserving the volume assignment. Guarantees a
+    ///  new object identity so that consumers can detect the replacement via reference equality.
     /// </summary>
+    /// <remarks>
+    /// Keeps <see cref="TapeSetTOC.ClosedByEom"/>: until the replacement is written, the TAPE still ends inside the old
+    ///  set, and the overwrite's own positioning must count marks as the tape stands (F32).
+    /// </remarks>
     public void ReplaceCurrentSetTOC(int capacity = 0, bool incremental = false)
     {
+        bool closedByEom = m_setTOCs[m_currSetInternal].ClosedByEom;
         m_setTOCs[m_currSetInternal] = new TapeSetTOC(Volume, capacity,
-            incremental && m_setTOCs.Count > 1); // the very first set shouldn't be incremental
+            incremental && m_setTOCs.Count > 1)     // the very first set shouldn't be incremental
+        {
+            ClosedByEom = closedByEom,
+        };
     }
 
     public bool RemoveLastEmptySet() // can only remove the last set, and only if it's empty
