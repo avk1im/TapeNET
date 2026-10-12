@@ -24,6 +24,9 @@ internal static class GoldenPaths
     /// <summary><c>Golden/Legacy/Virtual</c> in the source tree.</summary>
     public static string LegacyVirtual => Path.Combine(Legacy, "Virtual");
 
+    /// <summary><c>Golden/V21</c> in the source tree — format 2.1, frozen.</summary>
+    public static string V21 => Path.Combine(ProjectDir, "Golden", "V21");
+
     // Walks up from this file's folder to the one holding the .csproj — robust to moving this helper, too.
     private static string FindProjectDir([CallerFilePath] string thisFile = "")
     {
