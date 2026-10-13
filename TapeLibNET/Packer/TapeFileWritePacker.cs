@@ -428,9 +428,9 @@ internal sealed class TapeFileWritePacker : IDisposable
             HarvestNow();
     }
 
-    // Awaits any in-flight write, applies its result to packer state, releases the
-    //  returned buffer to the pool, fires FilesCommitted for newly-promoted tokens,
-    //  and surfaces hard errors / EOM as exceptions.
+    // Awaits any in-flight write, applies its result to packer state, releases the returned buffer to the pool, fires
+    //  FilesCommitted for newly-promoted tokens, and surfaces a write fault or EOM as a TapePackerException carrying the
+    //  files that did not make it.
     private void HarvestNow(bool suppressEomThrow = false)
     {
         var (result, returnedBuffer) = _backend.AwaitCompletion();
@@ -439,18 +439,18 @@ internal sealed class TapeFileWritePacker : IDisposable
         if (result.BlocksWritten == 0 && result.Exception is null && !result.EomEncountered)
             return;     // nothing to do (idempotent harvest)
 
-        long blocksWritten = result.BlocksWritten;
-        _committedTapeBlock += blocksWritten;
+        _committedTapeBlock += result.BlocksWritten;
         _inflightValidBytes = 0;
+
+        // Files whose bytes all made it are committed first — they are on tape whatever follows.
         TryPromoteCommittables();
 
         if (result.Exception is not null)
         {
-            // Hard error: the backend did not fully drain its handed-off buffer. The
-            //  unwritten suffix is gone; pending tokens beyond the committed boundary
-            //  are unrecoverable. Roll them back and surface the exception.
-            RollbackUncommittedPending();
-            throw new IOException("Media write failed.", result.Exception);
+            // Hard error: the unwritten suffix of the buffer is gone, and with it every pending file beyond the committed
+            //  boundary. Hand their tokens to the caller — each one is a file the user must hear about.
+            var lost = CollectAndRollbackUncommittedPending();
+            throw new TapePackerWriteFaultException(lost, result.Exception);
         }
 
         if (result.EomEncountered)
@@ -464,6 +464,7 @@ internal sealed class TapeFileWritePacker : IDisposable
     // -----------------------------------------------------------------------
     //  Promotion & post-EOM rollback bookkeeping
     // -----------------------------------------------------------------------
+
     private void TryPromoteCommittables()
     {
         if (_pending.Count == 0)
@@ -501,7 +502,7 @@ internal sealed class TapeFileWritePacker : IDisposable
             FilesCommitted?.Invoke(committed);
     }
 
-    // For EOM: roll back closed-but-unpromoted entries; collect their tokens.
+    // // For EOM and write faults: roll back closed-but-unpromoted entries; collect their tokens.
     private CommitToken[] CollectAndRollbackUncommittedPending()
     {
         if (_pending.Count == 0)
@@ -532,13 +533,10 @@ internal sealed class TapeFileWritePacker : IDisposable
         return [.. rolled];
     }
 
-    // For hard errors: same as EOM rollback but no separate token list returned.
-    private void RollbackUncommittedPending()
-        => CollectAndRollbackUncommittedPending();
-
     // -----------------------------------------------------------------------
     //  Disposal
     // -----------------------------------------------------------------------
+    // Rethrows EOM, swallows the rest
     public void Dispose()
     {
         if (_disposed)

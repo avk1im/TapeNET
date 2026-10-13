@@ -43,6 +43,17 @@ public class ErrorHandlingTests
         DriveProfile.Partitions,
     ];
 
+    public static TheoryData<DriveProfile, bool> AllProfilesTimesFileSizes()
+    {
+        var data = new TheoryData<DriveProfile, bool>();
+        foreach (var p in new[] { DriveProfile.Setmarks, DriveProfile.Partitions, DriveProfile.SeqFilemarks, DriveProfile.FilemarksOnly })
+        {
+            data.Add(p, false);
+            data.Add(p, true);
+        }
+        return data;
+    }
+
     #endregion
 
     #region *** Helpers ***
@@ -110,6 +121,31 @@ public class ErrorHandlingTests
         return agent.RestoreAllFilesFromCurrentSet(ignoreFailures, notifiable);
     }
 
+    /// <summary>Records what the agent started, what it prompted about, and what it reported lost.</summary>
+    private sealed class AccountingNotifiable : ITapeFileNotifiable
+    {
+        public List<string> Started { get; } = [];
+        public List<string> Prompted { get; } = [];
+        public List<string> Lost { get; } = [];
+
+        public void SetStart(int setIndex, in TapeFileStatistics stats) { }
+        public void SetEnd(int setIndex, in TapeFileStatistics stats) { }
+        public bool PreProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats)
+        {
+            Started.Add(fileInfo.FileDescr.FullName);
+            return true;
+        }
+        public bool PostProcessFile(TapeFileInfo fileInfo, in TapeFileStatistics stats) => true;
+        public FileFailedAction OnFileFailed(TapeFileInfo fileInfo, TapeResult result, in TapeFileStatistics stats)
+        {
+            Prompted.Add(fileInfo.FileDescr.FullName);
+            return FileFailedAction.Skip;
+        }
+        public void OnFileSkipped(TapeFileInfo fileInfo, in TapeFileStatistics stats) { }
+        public void OnFileLost(TapeFileInfo fileInfo, TapeResult reason, in TapeFileStatistics stats)
+            => Lost.Add(fileInfo.FileDescr.FullName);
+    }
+    
     #endregion
 
     #region *** (A) Backup IO Failure — Skip / Retry / Abort ***
@@ -1284,6 +1320,65 @@ public class ErrorHandlingTests
         Assert.NotEqual(0u, result.ErrorCode);
         Assert.False(string.IsNullOrWhiteSpace(result.ErrorMessage),
             "a medium-level write fault must carry a diagnosis");
+    }
+
+    /// <summary>
+    /// A media write fault ends the set and accounts for every file: each file the agent started is either in the TOC
+    ///  (committed before the fault) or reported LOST — never prompted about, never silently dropped.
+    /// </summary>
+    /// <param name="largeFiles">
+    /// Small files all sit in the pipeline until the final flush (fault surfaces in EndWriteContent); large files fill
+    ///  buffers mid-loop (fault surfaces while a later file is being written).
+    /// </param>
+    [Theory]
+    [MemberData(nameof(AllProfilesTimesFileSizes))]
+    public void Backup_MediaWriteFault_EndsTheSet_AndAccountsForEveryFile(DriveProfile profile, bool largeFiles)
+    {
+        using var tree = new TempFileTree();
+        if (largeFiles)
+            tree.AddFiles("lost", count: 8, minSize: 512 * 1024, maxSize: 1024 * 1024);
+        else
+            tree.AddFiles("lost", count: 10, minSize: 8 * 1024, maxSize: 32 * 1024);
+
+        var notifiable = new AccountingNotifiable();
+
+        using var fixture = new VirtualTapeFixture(profile);
+        fixture.TOC.AddNewSetTOC(0, incremental: false);
+        fixture.TOC.CurrentSetTOC.Description = "Write fault accounting";
+        fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
+
+        using var agent = fixture.CreateBackupAgent();
+        agent.WritesMediaHeader = false;    // the fault must hit the packer pipeline, not a header block
+        agent.WritesSetHeaders = false;
+
+        fixture.Backend.ContentWriteFaults.Enabled = true;
+        fixture.Backend.ContentWriteFaults.EveryNth = 1;
+
+        TapeResult result = agent.BackupFileListToCurrentSet(newSet: true, tree.Files, ignoreFailures: true, notifiable);
+
+        Assert.True(fixture.Backend.ContentWriteFaults.Occurrences > 0, "the injector must actually have fired");
+        fixture.Backend.ContentWriteFaults.Reset();
+
+        // A real diagnosis — the drive's own
+        Assert.False(result.Success);
+        Assert.NotEqual(0u, result.ErrorCode);
+        Assert.False(string.IsNullOrWhiteSpace(result.ErrorMessage));
+
+        // Media faults are reported, not asked about
+        Assert.Empty(notifiable.Prompted);
+        Assert.NotEmpty(notifiable.Lost);
+
+        // Every file started is accounted for: committed (in the TOC) or lost — nothing in between
+        Assert.True(notifiable.Started.Count > 0, "precondition: the agent must have started files");
+        var inToc = fixture.TOC.CurrentSetTOC.Select(f => f.FileDescr.FullName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var lost = notifiable.Lost.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Assert.Empty(inToc.Intersect(lost));
+        Assert.True(notifiable.Started.ToHashSet(StringComparer.OrdinalIgnoreCase)
+            .SetEquals(inToc.Union(lost, StringComparer.OrdinalIgnoreCase)));
+
+        // Statistics agree
+        Assert.Equal(inToc.Count, agent.Statistics.FilesSucceeded);
+        Assert.Equal(lost.Count, agent.Statistics.FilesFailed);
     }
 
     /// <summary>

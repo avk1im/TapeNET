@@ -5,7 +5,6 @@ using TapeLibNET.Services;
 using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Toc;
 using Windows.Win32.Foundation;
-using static Google.Protobuf.Compiler.CodeGeneratorResponse.Types;
 
 namespace TapeLibNET.Tests.Scenarios;
 

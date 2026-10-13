@@ -233,6 +233,14 @@ public interface ITapeFileNotifiable
     FileFailedAction OnFileFailed(TapeFileInfo fileInfo, TapeResult result, in TapeFileStatistics stats);
     /// <summary>Called when a file is skipped.</summary>
     void OnFileSkipped(TapeFileInfo fileInfo, in TapeFileStatistics stats);
+    /// <summary>
+    /// A file the tape lost after it was handed over: a media write fault took it with the buffer it was in. REPORTED,
+    ///  not asked about — there is nothing to retry or skip, and the set ends with the fault.
+    /// </summary>
+    /// <param name="fileInfo">The lost file (no tape address — it never got one).</param>
+    /// <param name="reason">The drive's error.</param>
+    /// <param name="stats">Statistics with this file already counted as failed.</param>
+    void OnFileLost(TapeFileInfo fileInfo, TapeResult reason, in TapeFileStatistics stats) { }
 
     // ── Set-level anomalies ──────────────────────────────────────────────
     //  Default implementations, so every existing implementer compiles untouched. The defaults are

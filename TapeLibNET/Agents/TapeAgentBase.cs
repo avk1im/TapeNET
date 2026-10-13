@@ -966,6 +966,36 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     }
 
     /// <summary>
+    /// Records a file lost to a media write fault — counted as failed, reported without asking (see
+    ///  <see cref="ITapeFileNotifiable.OnFileLost"/>). Mirrors <see cref="NotifyFileFailed"/>, minus the decision.
+    /// </summary>
+    protected void NotifyFileLost(ITapeFileNotifiable? fileNotify, TapeFileInfo fileInfo, TapeResult reason)
+    {
+        _stats.FilesProcessed++;
+        _stats.FilesFailed++;
+        RefreshBytesTotalEstimate();
+
+        m_logger.LogWarning("File >{File}< lost to a media write fault: {Reason}",
+            fileInfo.FileDescr.FullName, reason.ErrorMessage);
+
+        if (fileNotify is null)
+            return;
+        try
+        {
+            fileNotify.OnFileLost(fileInfo, reason, in _stats);
+        }
+        catch (TapeAbortRequestedException ex1)
+        {
+            m_logger.LogInformation("Abort requested while notifying a lost file: {Exception}", ex1);
+            IsAbortRequested = true;    // the set ends anyway; the flag makes the result say "aborted"
+        }
+        catch (Exception ex2)
+        {
+            m_logger.LogWarning("Exception {Exception} while notifying a lost file", ex2);
+        }
+    }
+
+    /// <summary>
     /// Undoes the last failure recorded by <see cref="NotifyFileFailed"/>.
     /// Call when a file will be retried (user chose Retry, or end-of-media → next volume).
     /// </summary>

@@ -204,6 +204,13 @@ public abstract class ServiceOperationProgressHandler(
             $"Skipped: {Path.GetFileName(fileInfo.FileDescr.FullName)}", isSubEntry: true);
     }
 
+    /// <summary>
+    /// A file lost to a media write fault — reported on the host channel, never prompted: there is nothing to decide.
+    /// </summary>
+    public virtual void OnFileLost(TapeFileInfo fileInfo, TapeResult reason, in TapeFileStatistics stats)
+        => _host.Report(ServiceReportLevel.Failed,
+            $"Lost to a tape write error: {fileInfo.FileDescr.FullName} — {reason.ErrorMessage}", isSubEntry: true);
+
     // ── Set-level statistics (written by Sync, read by the service afterwards) ──
 
     /// <summary>

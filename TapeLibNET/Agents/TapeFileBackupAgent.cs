@@ -780,9 +780,11 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                         nameof(BackupFilesToCurrentSet));
                 }
             }
-            catch (TapePackerEndOfMediaException secondEom)
+            catch (TapePackerException second)
             {
-                m_logger.LogDebug(secondEom, "Second EOM during EndWriteContent in EOM handler -- ignored");
+                // A second EOM — or a write fault on the remains — while closing after an EOM: the files are rolled
+                //  back already and continue on the next volume. Nothing more to account for here.
+                m_logger.LogDebug(second, "Packer exception during EndWriteContent in EOM handler -- ignored");
             }
 
             // Do NOT treat the reporting file as failed as it will be re-tried on the next volume
@@ -805,6 +807,29 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             Debug.Assert(CanResumeToNextVolume);
             return true;
         } // HandleEom()
+
+        // A media write fault ends the set: the drive already retried, and writing on behind the failed region would
+        //  scatter the next files over damaged tape. Every file the fault took is reported — with the drive's cause, with
+        //  no retry offered — and counted as failed; files committed before it stay in the TOC.
+        //  `ignoreFailures` does not apply: it governs SOURCE errors, which are per file.
+        void HandleWriteFault(TapePackerWriteFaultException wf, TapeFileInfo? openTemplate)
+        {
+            SetError(wf);
+            LatchFailure();             // the first failure wins: the drive's own diagnosis
+
+            List<TapeFileInfo> lost = tracker.TakeRolledBack(wf.RolledBackTokens);
+            if (openTemplate is not null)
+                lost.Add(openTemplate); // the file being written: discarded by BackupFile, never registered
+
+            m_logger.LogError("{Method}: media write fault — {Lost} file(s) lost, set #{Set} ends here: {Cause}",
+                nameof(BackupFilesToCurrentSet), lost.Count, TOC.CurrentSetIndex, wf.ErrorMessage);
+
+            var reason = TapeResult.Fail(wf);
+            foreach (TapeFileInfo tfi in lost)
+                NotifyFileLost(bc.fileNotify, tfi, reason);
+
+            bc.overallSuccess = false;
+        } // HandleWriteFault()
 
         try
         {
@@ -867,6 +892,14 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                     //  back the listed pending tokens. Delegate to the shared handler.
                     eomHandled = HandleEom(eomEx, bc.fileIndex, template);
                     // do NOT return here since we still need to go thru tracker.DrainPostProcess()!
+                    break;
+                }
+                catch (TapePackerWriteFaultException wfEx)
+                {
+                    // Surfaced while THIS file was being started or written — but the fault belongs to the buffer in
+                    //  flight, which held earlier files. Report them all; then end the set.
+                    HandleWriteFault(wfEx, template);
+                    // do NOT return here since we still need to close the set and go thru tracker.DrainPostProcess()!
                     break;
                 }
                 catch (Exception ex)
@@ -941,6 +974,16 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             {
                 eomHandled = HandleEom(eomEx, bc.fileIndex, currentTemplate: null);
             }
+            catch (TapePackerWriteFaultException wfEx)
+            {
+                // The common case with few files: they all sat in the pipeline until this final flush. The manager has
+                //  already closed the set; report the lost files.
+                HandleWriteFault(wfEx, openTemplate: null);
+            }
+
+            // And now the rest: after a fault the loop has stopped, the final EndWriteContent
+            //  closes the set (nothing left to flush), DrainPostProcess reports files committed
+            //  before the fault, and PendingCount is 0 — the lost files were taken out.
 
             // F32: record how the set ended — by its setmark, or by end-of-media on
             //  a TOC-in-partition volume. flag survives the idempotent EndWriteContent

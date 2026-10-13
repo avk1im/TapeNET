@@ -119,6 +119,21 @@ internal sealed class PackedCommitTracker(TapeSetTOC setTOC, ILogger logger)
     }
 
     /// <summary>
+    /// Removes the given rolled-back tokens from the pending map and returns their templates
+    ///  in file order — the files a write fault took with it, each to be reported.
+    /// </summary>
+    public List<TapeFileInfo> TakeRolledBack(IReadOnlyList<CommitToken> rolledBackTokens)
+    {
+        var lost = new List<(int Index, TapeFileInfo Template)>(rolledBackTokens.Count);
+        foreach (var token in rolledBackTokens)
+        {
+            if (_pending.Remove(token, out var entry))
+                lost.Add((entry.FileIndex, entry.Template));
+        }
+        return [.. lost.OrderBy(x => x.Index).Select(x => x.Template)];
+    }
+
+    /// <summary>
     /// Drains the awaiting-post-process queue, invoking <paramref name="notify"/> for each file.
     /// Returns <see langword="false"/> if and only if <paramref name="notify"/> threw
     ///  <see cref="TapeAbortRequestedException"/>; the dequeued file is considered processed (its TOC
