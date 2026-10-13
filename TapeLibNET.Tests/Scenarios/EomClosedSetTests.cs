@@ -1,12 +1,11 @@
-﻿using Windows.Win32.Foundation;
-
-using TapeLibNET.Drive;
+﻿using TapeLibNET.Drive;
 using TapeLibNET.Media;
 using TapeLibNET.Scan;
 using TapeLibNET.Services;
-using TapeLibNET.Toc;
-
 using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Toc;
+using Windows.Win32.Foundation;
+using static Google.Protobuf.Compiler.CodeGeneratorResponse.Types;
 
 namespace TapeLibNET.Tests.Scenarios;
 
@@ -221,11 +220,14 @@ public class EomClosedSetTests
                 "backend left room for it and the scenario is not reproduced");
             Assert.All(volume1.Take(volume1.Count - 1), s => Assert.False(s.ClosedByEom));
 
+            // Restore A
             toc.CurrentSetIndex = 1;
             fx.RestoreAllFilesFromCurrentSet(dirA);
             FileComparer.AssertFilesMatch(setA.RootPath, setA.Files, RestoredRoot(dirA, setA.RootPath));
 
-            toc.CurrentSetIndex = 2;
+            // Restore B
+            // For multi-volume restore, we need to position to the latest set
+            toc.MakeLastSetCurrent();
             var stats = fx.RestoreAllFilesFromCurrentSet(dirB);
             FileComparer.AssertFilesMatch(setB.RootPath, setB.Files, RestoredRoot(dirB, setB.RootPath));
 

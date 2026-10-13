@@ -1049,7 +1049,7 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
         // Sync error from media
         if (!m_currentMedia.WentOK)
         {
-            SetError(m_currentMedia.LastError);
+            SyncErrorFrom(m_currentMedia);
 
             if (m_currentMedia.LastErrorWin32 == WIN32_ERROR.ERROR_END_OF_MEDIA)
                 eom = true;

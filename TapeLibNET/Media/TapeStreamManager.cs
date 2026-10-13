@@ -430,18 +430,25 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     /// Flushes the packer, closes the content set, and leaves <see cref="TapeState.WritingContent"/>.
     /// </summary>
     /// <returns>
-    /// <see langword="true"/> when the set is closed — by its setmark, or by end-of-media on TOC-in-partition media (F32,
-    ///  <see cref="LastSetClosedByEom"/>); <see langword="false"/> when closing failed otherwise.
+    /// <see langword="true"/> when every buffered byte reached the tape and the set is closed — by its setmark, or by
+    ///  end-of-media on TOC-in-partition media (F32, <see cref="LastSetClosedByEom"/>). <see langword="false"/> on a write
+    ///  fault during the final flush, or when closing failed; the error then carries the cause.
     /// </returns>
     /// <remarks>
     /// <para>
     /// <b>Always leaves <see cref="TapeState.WritingContent"/>.</b> The packer is gone by then, and a manager left in that
-    ///  state fails every later verb — including the TOC save that makes the backup reachable. A failed close is reported
-    ///  through the return value and the error, with the navigator reset.
+    ///  state fails every later verb — including the TOC save that makes the backup reachable.
+    /// </para>
+    /// <para>
+    /// <b>A write fault still closes the set, best effort.</b> Files committed before the fault are in the TOC; without
+    ///  the closing mark a TOC-in-set layout would locate end-of-content one set early and write the TOC over them. A
+    ///  faulting drive may refuse the mark as well — then nothing is lost that was not lost already. The FAULT is what is
+    ///  reported, not the outcome of the mark: it is carried here as a value, because the close resets the error channel
+    ///  (the drive's included).
     /// </para>
     /// <para>
     /// <b>EOM during the final flush</b> is rethrown after the transition, so the agent can roll back the uncommitted tail
-    ///  and continue on the next volume. The set is still closed first — by its setmark if it fits, by EOM otherwise.
+    ///  and continue on the next volume.
     /// </para>
     /// </remarks>
     public bool EndWriteContent()
@@ -458,16 +465,17 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         }
 
         TapePackerEndOfMediaException? pendingEom = null;
+        Exception? writeFault = null;
         try
         {
-            FlushAndDisposePacker();
+            writeFault = FlushAndDisposePacker();
         }
         catch (TapePackerEndOfMediaException eom)
         {
             pendingEom = eom;
         }
 
-        bool closed = EndWriteContentSet();     // a setmark — or, on TOC-in-partition media, end-of-media itself
+        bool closed = EndWriteContentSet(); // a setmark — or, on TOC-in-partition media, can be the EOM itself
 
         State.TransitionTo(TapeState.MediaPrepared);
 
@@ -475,6 +483,16 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         {
             m_logger.LogTrace("Drive #{Drive}: EOM during final packer flush; surfacing to caller", DriveNumber);
             throw pendingEom;
+        }
+
+        if (writeFault is not null)
+        {
+            // The packer wraps the drive's TapeIOException (with its Win32 code) in an IOException: report the real cause.
+            //  The navigator is left as EndWriteContentSet() settled it: past the set's closing mark if that was written
+            //  (a write fault in the data says nothing against a mark written afterwards), reset if it was not.
+            SetError(writeFault.InnerException ?? writeFault);
+            LogErrorAsDebug($"Failed to end writing content: the final flush failed{(closed ? "" : " and the set is not closed")}");
+            return false;
         }
 
         if (closed)
@@ -1273,26 +1291,53 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
             DriveNumber, blockSize, PackerBlockMultiplier);
     }
 
-    // Drain and tear down the packer + backend. Idempotent.
-    //  Surfaces TapePackerEndOfMediaException raised during the final flush so the
-    //  caller (agent) can roll back uncommitted files and arrange a multi-volume
-    //  continuation. Backend disposal still happens in either case.
-    private void FlushAndDisposePacker()
+    /// <summary>
+    /// Drains and tears down the packer, backend and buffer pool. Idempotent.
+    /// </summary>
+    /// <returns>
+    /// The hard write fault of the final flush, or <see langword="null"/>. Returned as a VALUE, never left in shared drive
+    ///  state: the drive's error is set on the backend's worker thread and is wiped by the next reset on this one.
+    /// </returns>
+    /// <exception cref="TapePackerEndOfMediaException">
+    /// EOM during the final flush — surfaced after cleanup so the agent can roll back the uncommitted tail and continue on
+    ///  the next volume.
+    /// </exception>
+    /// <remarks>
+    /// <b>Why <c>Flush()</c> before <c>Dispose()</c>.</b> The packer's <c>Dispose</c> must not throw, so it swallows any
+    ///  non-EOM error of its internal flush. Flushing explicitly first is the one place that error can be taken. After a
+    ///  fault or an EOM the packer has rolled back its pending files and reset its fill buffer, so the flush inside
+    ///  <c>Dispose</c> finds nothing left to write.
+    /// </remarks>
+    private Exception? FlushAndDisposePacker()
     {
         if (m_packer is null)
-            return;
+            return null;
 
         TapePackerEndOfMediaException? pendingEom = null;
+        Exception? writeFault = null;
+
+        // Flush while still subscribed: the tail commits fire FilesCommitted from here.
         try
         {
-            // Dispose flushes the fill buffer, which fires FilesCommitted for the
-            //  tail commits. Unsubscribe AFTER disposal so those tail notifications
-            //  reach OnPackerFilesCommitted (and downstream subscribers).
-            m_packer.Dispose(); // calls Flush() internally
+            m_packer.Flush();
         }
         catch (TapePackerEndOfMediaException eom)
         {
             pendingEom = eom;
+        }
+        catch (Exception ex)
+        {
+            writeFault = ex;
+            m_logger.LogWarning(ex, "Drive #{Drive}: Write fault during the final packer flush", DriveNumber);
+        }
+
+        try
+        {
+            m_packer.Dispose();             // nothing left to flush; releases the fill buffer
+        }
+        catch (TapePackerEndOfMediaException eom)
+        {
+            pendingEom ??= eom;
         }
         catch (Exception ex)
         {
@@ -1334,6 +1379,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
         if (pendingEom is not null)
             throw pendingEom;
+        return writeFault;
     }
 
     /// <summary>
