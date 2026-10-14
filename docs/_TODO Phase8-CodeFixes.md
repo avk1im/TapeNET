@@ -180,6 +180,10 @@ Design-FormatV21.md | §11	row: A full partitioned volume shifts every end-relat
 Design-FormatV21.md | §12.1	the new golden toc-closed-by-eom.v21.bin
 Design-ScanMedia.md | §9.1	an unclosed last set that a recovered TOC records as closed by end-of-media (partitioned media) reads "runs to the end of the medium — the volume is full", with no review advice. The live line on partitioned media is neutral (Info) for any unclosed set.
 Design-SetHeader-VerifiedWrite.md | §13	On a full TOC-in-partition volume the last set has no closing setmark (F32); the agent's end-relative translation accounts for it, so no drift arises and no recovery runs.
+Design-FormatV21.md | §14	drop the row "TapeFrame.Pack allocates per call" — resolved
+Design-FormatV21.md | §7.2 table	add TapeFrameWriter — reusable Record ‖ CRC-64 builder; the static TapeFrame methods run through a temporary one
+Design-FormatV21.md | §7.5	"RecordEmitter defaults to the agent's own TapeRecordEmitter21, created and disposed with the agent; it owns a TapeFrameWriter and one file-header wire object, so writing a file header allocates nothing. Setting null returns to it; a borrowed emitter is never disposed."
+Design-TapeFilePacker.md | §7.1	One file: "the per-file header through the agent's own emitter — no allocation per file"
 
 ---
 
