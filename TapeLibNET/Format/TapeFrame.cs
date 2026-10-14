@@ -27,15 +27,14 @@ public static class TapeFrame
     }
 
     /// <summary>Builds the frame bytes <c>Record ‖ CRC-64</c> for <paramref name="record"/>.</summary>
+    /// <remarks>
+    /// One-off convenience: allocates a temporary <see cref="TapeFrameWriter"/>. Paths that write many frames own one
+    ///  (the agent's emitter does).
+    /// </remarks>
     public static byte[] Pack<T>(T record) where T : ITapeRecord<T>
     {
-#warning Consider reusing single instances of MemoryStream and TapeRecordWriter (per thread / session) for multiple calls to TapeFrame.Pack().
-        using var ms = new MemoryStream();
-        using (var writer = new TapeRecordWriter(ms))
-            writer.Write(record);
-
-        byte[] recordBytes = ms.ToArray();
-        return [.. recordBytes, .. ComputeCrc(recordBytes)];
+        using var writer = new TapeFrameWriter();
+        return writer.Pack(record);
     }
 
     /// <summary>Builds a block frame: <c>Record ‖ CRC-64</c> at offset 0, the rest of the block filled with <paramref name="padding"/> (or zeros).</summary>
@@ -54,11 +53,11 @@ public static class TapeFrame
     }
 
     /// <summary>Writes the inline frame of <paramref name="record"/> to <paramref name="stream"/>; returns the bytes written.</summary>
+    /// <remarks>One-off convenience — see <see cref="Pack{T}"/>; the per-file path uses <see cref="TapeFrameWriter"/>.</remarks>
     public static int WriteInline<T>(Stream stream, T record) where T : ITapeRecord<T>
     {
-        byte[] frame = Pack(record);
-        stream.Write(frame, 0, frame.Length);
-        return frame.Length;
+        using var writer = new TapeFrameWriter();
+        return writer.WriteInline(stream, record);
     }
 
     /// <summary>

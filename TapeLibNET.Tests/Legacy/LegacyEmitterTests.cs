@@ -1,5 +1,4 @@
 using TapeLibNET.Compression;
-using TapeLibNET.Agents;
 using TapeLibNET.Format;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
@@ -145,7 +144,7 @@ public class LegacyEmitterTests
             Assert.Equal(withSetHeaders, legacyHeader.HasSetHeaders);
 
             // The new build takes over
-            fx.RecordEmitter = TapeRecordEmitter21.Instance;
+            fx.RecordEmitter = null; // back to the agents' own 2.1 emitter
             fx.LoadTOC();
             Assert.True(fx.TOC.LoadedFromLegacy);
             fx.BackupFiles(newTree.Files, description: "2.1 set");
@@ -193,7 +192,7 @@ public class LegacyEmitterTests
         {
             using var fx = new MultiVolumeVirtualTapeFixture(profile, headerMode: VolumeHeaderMode.Mixed)
             {
-                EmitterForVolume = v => v == 1 ? LegacyRecordEmitter.Instance : TapeRecordEmitter21.Instance,
+                EmitterForVolume = v => v == 1 ? LegacyRecordEmitter.Instance : null, // null = use the agent's own 2.1 emitter
             };
             fx.BackupFiles(tree.Files, "Spanning");
             Assert.True(fx.TotalVolumes >= 2, $"the set must span (got {fx.TotalVolumes} volume(s))");

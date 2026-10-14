@@ -174,13 +174,14 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     }
 
     /// <summary>
-    /// The record emitter per volume — e.g. legacy for volume 1 and 2.1 for the rest, a mixed series written by two
-    ///  builds (Design-Format-v2 §6.3). <see langword="null"/> = 2.1 everywhere.
+    /// The record emitter per volume — e.g. legacy for volume 1 and 2.1 for the rest, a mixed series
+    ///  written by two builds (Design-FormatV21 §9.3). <see langword="null"/>, or a function returning
+    ///  <see langword="null"/>, = the agent's own V2.1 emitter.
     /// </summary>
-    public Func<int, ITapeRecordEmitter>? EmitterForVolume { get; init; }
+    public Func<int, ITapeRecordEmitter?>? EmitterForVolume { get; init; }
 
-    private ITapeRecordEmitter EmitterFor(int volumeNumber)
-        => EmitterForVolume?.Invoke(volumeNumber) ?? TapeRecordEmitter21.Instance;
+    private ITapeRecordEmitter? EmitterFor(int volumeNumber)
+        => EmitterForVolume?.Invoke(volumeNumber);
 
     #endregion
 

@@ -118,6 +118,32 @@ public abstract class TapeBackupAgentTestsBase
     #endregion
 
 
+    #region *** File Header Ermitter ***
+
+    /// <summary>Each agent owns its emitter; a borrowed one is used, never disposed; null returns to the own one.</summary>
+    [Fact]
+    public void Agent_OwnsItsEmitter_AndOnlyItsOwn()
+    {
+        using var fx = new VirtualTapeFixture(DriveProfile.Setmarks);
+        using var a = new TapeAgentBase(fx.Drive, fx.TOC);
+        using var b = new TapeAgentBase(fx.Drive, fx.TOC);
+
+        ITapeRecordEmitter ownA = a.RecordEmitter;
+        Assert.NotSame(ownA, b.RecordEmitter);                    // no shared state between agents
+
+        a.RecordEmitter = LegacyRecordEmitter.Instance;           // borrow
+        Assert.Same(LegacyRecordEmitter.Instance, a.RecordEmitter);
+        a.RecordEmitter = null;                                   // back to its own
+        Assert.Same(ownA, a.RecordEmitter);
+
+        a.RecordEmitter = LegacyRecordEmitter.Instance;
+        a.Dispose();                                              // must not dispose the borrowed emitter
+        Assert.Equal(TapeDataFormat.Legacy, LegacyRecordEmitter.Instance.DataFormat);
+    }
+
+    #endregion
+
+
     #region *** Single-File Backup ***
 
     [Theory]
@@ -649,6 +675,7 @@ public abstract class TapeBackupAgentTestsBase
 
     #endregion
 
+
     #region *** Soft Early Warning (TOC-in-set) ***
 
     [Fact]
@@ -682,6 +709,7 @@ public abstract class TapeBackupAgentTestsBase
 
     #endregion
 
+    
     #region *** Overwrite After Full (Write-Position Notification) ***
 
     // Reproduces the real-world "overwrite a full cartridge" scenario end-to-end through the backup agent.

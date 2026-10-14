@@ -55,7 +55,7 @@ internal sealed class TapeFileHeader : ITapeRecord<TapeFileHeader>
     public DateTime CreationTime;
     public DateTime LastWriteTime;
     public DateTime LastAccessTime;
-    public string FullName = "";
+    public string FullName = string.Empty;
     public byte[] NameUtf16 = [];
 
     private static readonly TapeSchema<TapeFileHeader> s_schema = new(TapeRecordKind.FileHeader, validate: Validate)
@@ -97,24 +97,33 @@ internal sealed class TapeFileHeader : ITapeRecord<TapeFileHeader>
     /// <summary>The full path, whichever form it travelled in.</summary>
     public string Name => NameUtf16.Length > 0 ? TapeTextRules.DecodeUtf16LE(NameUtf16) : FullName;
 
+    /// <summary>
+    /// Fills this header for <paramref name="file"/> in the set <paramref name="setId"/> — every field, every time,
+    ///  so one instance can serve a whole session (GC optimization) without leaking a value from the previous file.
+    /// </summary>
+    internal void Assign(Guid setId, TapeFileInfo file)
+    {
+        TapeFileDescriptor d = file.FileDescr;
+        string name = d.FullName ?? string.Empty;
+        bool wellFormed = TapeTextRules.IsWellFormedUtf16(name);
+
+        SetId = setId;
+        FileId = file.FileId;
+        Length = d.Length;
+        Attributes = d.Attributes;
+        CreationTime = d.CreationTime;          // UTC in memory (F20)
+        LastWriteTime = d.LastWriteTime;
+        LastAccessTime = d.LastAccessTime;
+        FullName = wellFormed ? name : string.Empty;
+        NameUtf16 = wellFormed ? [] : TapeTextRules.EncodeUtf16LE(name);    // [] is Array.Empty: no allocation
+    }
+
     /// <summary>Builds the header for <paramref name="file"/> in the set <paramref name="setId"/>.</summary>
     public static TapeFileHeader From(Guid setId, TapeFileInfo file)
     {
-        TapeFileDescriptor d = file.FileDescr;
-        string name = d.FullName ?? "";
-        bool wellFormed = TapeTextRules.IsWellFormedUtf16(name);
-        return new TapeFileHeader
-        {
-            SetId = setId,
-            FileId = file.FileId,
-            Length = d.Length,
-            Attributes = d.Attributes,
-            CreationTime = d.CreationTime,          // UTC in memory (§8.5)
-            LastWriteTime = d.LastWriteTime,
-            LastAccessTime = d.LastAccessTime,
-            FullName = wellFormed ? name : "",
-            NameUtf16 = wellFormed ? [] : TapeTextRules.EncodeUtf16LE(name),
-        };
+        var header = new TapeFileHeader();
+        header.Assign(setId, file);
+        return header;
     }
 
     #region *** Stream helpers ***

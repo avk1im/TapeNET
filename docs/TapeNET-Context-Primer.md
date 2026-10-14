@@ -396,6 +396,40 @@ disables a data-protection check rather than a prompt. WPF prompts through a
 `MediaMismatchDialog` naming both sets; the CLI splits unattended by stakes (a read-path
 recovery proceeds, a destructive one declines, both logged).
 
+#### On-tape format V2.1
+
+Complete design specification: docs/Design-FormatV21.md.
+
+Every record TapeNET writes — TOC, per-file headers, media / set / calibration headers, calibration checkpoints and
+virtual-media state — is **format V2.1**: a common `TpN#` magic at byte 0, a u16 record kind, a major / minor version
+and a varuint body length, followed by tagged fields (`(number << 1) | critical`, length, value). Unknown fields are
+skipped, unknown *critical* fields refuse the record, so a field can be added without a version bump. Framed records
+carry their own CRC-64; the TOC stream carries one trailing CRC-64. Times are UTC on tape and in memory.
+
+**Format core** (`TapeLibNET/Format/`): `TapeSchema<T>` declares each record as a table — one line per field, both
+directions, no reflection; the property's type picks the codec. Records implement `ITapeRecord<T>` (body only);
+`TapeRecordWriter` / `TapeRecordReader` own the prologue; `TapeFrame` (block or inline frame) and `TapeCrc64Envelope`
+(TOC stream) own the CRC. Immutable domain types serialize through small mutable wire DTOs.
+
+**Self-describing data.** Every 2.1 file starts with an inline file header frame (SetId, FileId, full path, length,
+attributes, UTC times) followed by a one-byte codec prefix; the TOC lists files in self-contained batches of up to
+4,096 entries with front-coded names. A file's identity is `SetId ‖ FileId`; FileIds are never reused. A header-less
+set is still identifiable from its first file — Scan Media uses this with no TOC.
+
+**Legacy, read forever.** The pre-2.1 `TF` records are read by the frozen, internal `TapeLibNET.Legacy` namespace and
+never written by the product. A legacy tape's TOC upgrades to 2.1 on its first write (one log warning, no prompt);
+legacy sets keep their 12-byte file headers and restore unchanged, and one tape or one multi-volume series may mix
+both. The legacy writers live in the test project only; through the agents' `ITapeRecordEmitter` seam they let the
+real agents write genuine legacy tapes for tests.
+
+**Frozen both ways.** Legacy records and the Phase 0 legacy virtual images are pinned by goldens in
+`TapeLibNET.Tests/Golden/Legacy/`; the 2.1 records by ten cases in `Golden/V21/`, read forever and checked against the
+writer byte for byte (`FormatGoldenV21Tests`). The 2.1 goldens are frozen at the 2.1 release; encryption adds its own
+cases.
+
+**Virtual media.** The `.vrt` metadata is a 2.1 record that stores only what cannot be derived and is cross-checked on
+load. Metadata that cannot be read fails the load instead of silently recreating — and wiping — the medium.
+
 ### Win32 BackupRead / BackupWrite file I/O (`TapeBackupStream`)
 
 Complete design specification: `docs/Design-BackupRead-BackupWrite.md`.

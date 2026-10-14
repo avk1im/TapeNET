@@ -1,5 +1,6 @@
-﻿using System.IO.Hashing;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
+using System.Diagnostics.CodeAnalysis;
+using System.IO.Hashing;
 using TapeLibNET.Drive;
 using TapeLibNET.Format;
 using TapeLibNET.Headers;
@@ -36,11 +37,29 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     /// <summary>Shortcut to <see cref="Manager"/>.<see cref="TapeStreamManager.Navigator"/>.</summary>
     public TapeNavigator Navigator => Manager.Navigator;
 
+    // The agent's own emitter: created with the agent, disposed with it.
+    private readonly TapeRecordEmitter21 m_emitterOwn = new();
+    // A borrowed emitter (tests: the legacy one), or null = use our own. Never disposed by the agent.
+    private ITapeRecordEmitter? m_emitterOverride;
     /// <summary>
-    /// Turns records into bytes: per-file header, codec prefix, header blocks, TOC copies. Format 2.1 in the product;
-    ///  tests replace it to write genuine legacy media (<see cref="ITapeRecordEmitter"/>).
+    /// Turns records into bytes: per-file header, codec prefix, header blocks, TOC copies. Format 2.1 in the product,
+    ///  through the agent's OWN emitter; tests set another to write genuine legacy media (<see cref="ITapeRecordEmitter"/>).
     /// </summary>
-    internal ITapeRecordEmitter RecordEmitter { get; set; } = TapeRecordEmitter21.Instance;
+    /// <remarks>
+    /// <para>
+    /// <b>Setting <see langword="null"/> returns to the agent's own emitter</b> — how a mixed-series fixture switches back
+    ///  from a legacy volume to 2.1 on the same agent.
+    /// </para>
+    /// <para>
+    /// <b>Ownership.</b> The agent disposes only its own emitter. An emitter set from outside belongs to whoever set it.
+    /// </para>
+    /// </remarks>
+    [AllowNull]
+    internal ITapeRecordEmitter RecordEmitter
+    {
+        get => m_emitterOverride ?? m_emitterOwn;
+        set => m_emitterOverride = ReferenceEquals(value, m_emitterOwn) ? null : value;
+    }
 
     /// <summary>Cumulative bytes written to tape (content + TOC) during this agent's lifetime.</summary>
     public long BytesBackedup { get; protected set; } = 0L;
@@ -207,17 +226,22 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
 
     public bool IsDisposed { get; private set; } = false;
 
-    // overridable IDisposable implementation via virtual Dispose(bool)
+    /// <summary>
+    /// Overridable <see cref="IDisposable"/> implementation via <c>virtual Dispose(bool)</c>.
+    /// </summary>
+    /// <param name="disposing"></param>
     protected virtual void Dispose(bool disposing)
     {
         if (!IsDisposed)
         {
             m_logger.LogTrace("Disposing TapeAgentBase with disposing parameter = {Parametr}", disposing);
-
             if (disposing)
             {
-                // dispose managed resources
+                // dispose managed resources: our own emitter returns its pooled scratch. A borrowed emitter belongs
+                //  to whoever lent it.
+                m_emitterOwn.Dispose();
             }
+
             // dispose unmanaged resources
             // no umanaged resources
 
