@@ -59,10 +59,10 @@ public class IncrementalBackupRestoreTests
     {
         var stats = new TapeFileStatistics[4];
 
-        // Create initial 8 files (1�8 KB each)
+        // Create initial 8 files (1–8 KB each)
         tree.AddFiles("data", count: InitialFileCount, minSize: 1024, maxSize: 8 * 1024);
 
-        // Wave 0: Full backup � all 8 files at version 0
+        // Wave 0: Full backup — all 8 files at version 0
         stats[0] = fixture.BackupFiles(tree.Files, "Full backup");
 
         // Wave 1: Modify files[0,1,2] to version 1 ? incremental
@@ -93,7 +93,7 @@ public class IncrementalBackupRestoreTests
 
     /// <summary>
     /// Expected file version after incremental restore from set 3 (wave 2).
-    /// Only the 8 original files � new file (added in wave 3) is absent.
+    /// Only the 8 original files — new file (added in wave 3) is absent.
     /// </summary>
     private static readonly int[] s_versionsAtWave2 = [1, 1, 1, 2, 2, 0, 0, 0];
 
@@ -121,7 +121,7 @@ public class IncrementalBackupRestoreTests
 
         var (stats, _) = SetupFourWaveChain(fixture, tree);
 
-        // Wave 0: Full backup � all 8 files backed up, none skipped
+        // Wave 0: Full backup — all 8 files backed up, none skipped
         Assert.Equal(InitialFileCount, stats[0].FilesTotal);
         Assert.Equal(InitialFileCount, stats[0].FilesSucceeded);
         Assert.Equal(0, stats[0].FilesSkipped);
@@ -192,7 +192,7 @@ public class IncrementalBackupRestoreTests
             Assert.Equal(tree.Files.Count, restoreAgent.Statistics.FilesSucceeded);
             Assert.Equal(0, restoreAgent.Statistics.FilesFailed);
 
-            // Source files on disk have the latest versions � FileComparer byte-for-byte works
+            // Source files on disk have the latest versions — FileComparer byte-for-byte works
             string restoreRoot = RestoreEquivalentRoot(restoreDir, tree.RootPath);
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files, restoreRoot);
 
@@ -207,7 +207,7 @@ public class IncrementalBackupRestoreTests
 
     /// <summary>
     /// Incremental restore from set 3 (wave 2) should yield file versions as of that wave:
-    /// files[0,1,2]=v1, files[3,4]=v2, files[5-7]=v0 � and NO new file from wave 3.
+    /// files[0,1,2]=v1, files[3,4]=v2, files[5-7]=v0 — and NO new file from wave 3.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -254,7 +254,7 @@ public class IncrementalBackupRestoreTests
 
     /// <summary>
     /// Incremental restore from set 2 (wave 1) should yield:
-    /// files[0,1,2]=v1, files[3-7]=v0 � the state after only the first incremental wave.
+    /// files[0,1,2]=v1, files[3-7]=v0 — the state after only the first incremental wave.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -293,7 +293,7 @@ public class IncrementalBackupRestoreTests
 
     /// <summary>
     /// Incremental restore from the full backup set (set 1, non-incremental) should
-    /// behave identically to a non-incremental restore � returning all 8 files at version 0.
+    /// behave identically to a non-incremental restore — returning all 8 files at version 0.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -338,7 +338,7 @@ public class IncrementalBackupRestoreTests
 
     /// <summary>
     /// Non-incremental restore from each incremental set should yield ONLY the files
-    /// that were actually backed up in that specific set � not the entire chain.
+    /// that were actually backed up in that specific set — not the entire chain.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -614,7 +614,7 @@ public class IncrementalBackupRestoreTests
 
         SetupFourWaveChain(fixture, tree);
 
-        // Save and reload TOC from tape � exercises serialization round-trip.
+        // Save and reload TOC from tape — exercises serialization round-trip.
         // For SeqFilemarks, BackupFiles already saves the TOC after each wave and
         // a standalone SaveTOC creates a duplicate TOC mark, so just reload.
         if (profile is DriveProfile.SeqFilemarks or DriveProfile.FilemarksOnly)
@@ -787,7 +787,7 @@ public class IncrementalBackupRestoreTests
         }
         catch
         {
-            // Best effort � temp directories may be locked
+            // Best effort — temp directories may be locked
         }
     }
 

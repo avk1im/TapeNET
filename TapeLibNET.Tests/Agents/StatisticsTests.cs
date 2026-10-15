@@ -8,7 +8,7 @@ namespace TapeLibNET.Tests.Agents;
 
 /// <summary>
 /// Validates <see cref="TapeFileStatistics"/> across the full agent lifecycle:
-/// backup, restore, validate, verify � including skip/failure injection and
+/// backup, restore, validate, verify — including skip/failure injection and
 /// monotonic-progress guarantees.
 /// <para>
 /// Every test asserts the fundamental invariant
@@ -572,7 +572,7 @@ public class StatisticsTests
 
     /// <summary>
     /// Asserts that <c>BytesProcessed</c> after restore matches the same
-    /// total as the backup � the restore agent should count the same logical bytes.
+    /// total as the backup — the restore agent should count the same logical bytes.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
