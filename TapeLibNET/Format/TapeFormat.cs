@@ -1,7 +1,7 @@
 namespace TapeLibNET.Format;
 
 /// <summary>
-/// Constants and small predicates of the on-tape format 2.1 (Design-Format-v2 §4).
+/// Constants and small predicates of the on-tape format 2.1 (Design-FormatV21 §4).
 /// </summary>
 public static class TapeFormat
 {

@@ -1,6 +1,6 @@
 # Design: TapeLibNET Folder and Namespace Layout
 
-**Status:** adopted — library and tests migrated. **Applies after:** Design-Format-v2 Phase 6.
+**Status:** adopted — library and tests migrated. **Applies after:** Design-FormatV21 Phase 6.
 **Tooling:** `tools/` scripts (§12). **Last updated:** 2026-10-08
 
 ---

@@ -44,7 +44,7 @@ namespace TapeLibNET.Headers;
 /// </code>
 /// <para>
 /// <b>The legacy wart, resolved for new media.</b> Legacy frames put the signature behind an int32 length, so "is this
-///  ours?" first had to trust an untrusted length. Format 2.1 puts the magic first (Design-Format-v2 §4.5). Legacy
+///  ours?" first had to trust an untrusted length. Format 2.1 puts the magic first (Design-FormatV21 §4.5). Legacy
 ///  headers stay readable through <see cref="Legacy.LegacyFramer"/> — every cartridge ever written keeps its layout.
 /// </para>
 /// </remarks>
@@ -62,7 +62,7 @@ public static partial class TapeHeaderBlock
 
     /// <summary>
     /// Frames <paramref name="header"/> into exactly <see cref="Size"/> bytes — a 2.1 block frame (<c>Record ‖ CRC-64</c>,
-    ///  magic first; the calibration header still legacy until Phase 6), remainder zero padding, ignored on read.
+    ///  magic first), remainder zero padding, ignored on read.
     ///  Returns <see langword="null"/> when the frame does not fit, which is a programming error rather than a media
     ///  condition.
     /// </summary>

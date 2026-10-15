@@ -10,7 +10,7 @@ using TapeLibNET.Legacy;
 namespace TapeLibNET.Tests.Helpers;
 
 
-/// <summary>Which legacy TOC set / file-entry layout to emit (Design-Format-v2 §7.2).</summary>
+/// <summary>Which legacy TOC set / file-entry layout to emit (Design-FormatV21 §7.2).</summary>
 public enum LegacyTocLayout
 {
     /// <summary>Pre-compression: set ends after ContinuedFromPrevVolume; file entry ends after SizeOnTape.</summary>
@@ -68,7 +68,7 @@ public sealed record LegacyCalibrationPlan(
 /// <summary>
 /// Test-project-only writer of the LEGACY on-tape format (<c>TF</c> + <c>0x01xx</c> family).
 /// Frozen copy of the pre-2.1 serialization code, so the shipping readers can be tested against
-/// legacy media after the product stops writing it (Design-Format-v2 §7.3). Self-contained:
+/// legacy media after the product stops writing it (Design-FormatV21 §7.3). Self-contained:
 /// uses nothing but primitives and public enums, so later production refactoring cannot change it.
 /// </summary>
 public static class LegacyFormatWriter

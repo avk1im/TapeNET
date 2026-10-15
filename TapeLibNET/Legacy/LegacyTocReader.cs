@@ -16,7 +16,7 @@ namespace TapeLibNET.Legacy;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Two layouts share one version number (Design-Format-v2 §7.2): <see cref="Layout.A"/> (pre-compression:
+/// Two layouts share one version number (Design-FormatV21 §8.2): <see cref="Layout.A"/> (pre-compression:
 ///  no per-set Compression / CompressionLevel, no per-file Codec) and <see cref="Layout.B"/> (current).
 ///  <see cref="Load"/> detects the layout: it buffers the copy, tries B then A, and accepts the layout whose
 ///  parse ends exactly where the CRC-64 of the consumed bytes equals the next 8 bytes.
@@ -37,7 +37,7 @@ internal static class LegacyTocReader
         B,
     }
 
-    /// <summary>Largest legacy TOC copy kept in memory; bigger ones spill to a temp file (R9).</summary>
+    /// <summary>Largest legacy TOC copy kept in memory; bigger ones spill to a temp file (F24).</summary>
     internal const long MaxInMemoryBytes = 256L * 1024 * 1024;
 
     private const int CrcLength = 8; // CRC-64 trailer
@@ -204,7 +204,7 @@ internal static class LegacyTocReader
         return true;
     }
 
-    // Buffers the copy: in memory up to MaxInMemoryBytes, beyond that in a delete-on-close temp file (R9)
+    // Buffers the copy: in memory up to MaxInMemoryBytes, beyond that in a delete-on-close temp file (F24)
     private static Stream Buffer(Stream source)
     {
         var memory = new MemoryStream();

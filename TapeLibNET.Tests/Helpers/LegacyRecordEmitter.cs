@@ -19,7 +19,7 @@ namespace TapeLibNET.Tests.Helpers;
 /// </para>
 /// <para>
 /// Software compression is refused by the agent with this emitter: a legacy body has no codec prefix, so a ZSTD body
-///  would be unreadable — and no legacy tape carries one (Design-Format-v2 §1).
+///  would be unreadable — and no legacy tape carries one (Design-FormatV21 §1).
 /// </para>
 /// </remarks>
 internal sealed class LegacyRecordEmitter : ITapeRecordEmitter

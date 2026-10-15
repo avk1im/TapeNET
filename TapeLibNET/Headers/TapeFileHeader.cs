@@ -1,4 +1,3 @@
-// Save as: TapeLibNET/TapeFileHeader.cs
 
 using System.Text;
 using TapeLibNET.Compression;
@@ -10,7 +9,7 @@ namespace TapeLibNET.Headers;
 
 /// <summary>
 /// The 2.1 per-file header (record kind <c>FileHeader</c>, 0x0201) written in front of every file body of a
-///  <see cref="TapeDataFormat.V2"/> set, as an inline frame <c>Record ‖ CRC-64</c> (Design-Format-v2 §4.5, §5.3).
+///  <see cref="TapeDataFormat.V2"/> set, as an inline frame <c>Record ‖ CRC-64</c> (Design-FormatV21 §4.5, §5.3).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,7 +20,7 @@ namespace TapeLibNET.Headers;
 /// <para>
 /// <b>Not front-coded</b>: one torn header must not break a chain of others. Names that are not well-formed UTF-16
 ///  (a lone surrogate — legal on NTFS) travel losslessly as raw UTF-16LE in field 33, with an empty field 32 —
-///  the same rule as the TOC file entry.
+///  the same rule as the TOC file entry (F21).
 /// </para>
 /// <para>
 /// <b>Not in the header</b>: <c>Hash</c>, <c>SizeOnTape</c> and the codec are unknown when it is written. The codec
@@ -73,7 +72,7 @@ internal sealed class TapeFileHeader : ITapeRecord<TapeFileHeader>
         { 33, h => h.NameUtf16,      (h, v) => h.NameUtf16 = v,      FieldFlags.Critical },     // ill-formed names only
     };
 
-    // Cross-field rules - run on write (programming error) and on read (CrossCheck), G11
+    // Cross-field rules - run on write (programming error) and on read (CrossCheck), G10
     private static string? Validate(TapeFileHeader h)
     {
         if (h.SetId == Guid.Empty)

@@ -10,7 +10,7 @@ namespace TapeLibNET.Toc;
 
 
 // ============================================================================================================
-//  Format 2.1 representation of the TOC (Design-Format-v2 §5.1, Appendix B §B.8).
+//  Format 2.1 representation of the TOC (Design-FormatV21 §5.1, §7.3).
 //
 //  TOC stream := TocHeader (TocSet TocFileBatch*)* TocEnd ‖ CRC-64
 //
@@ -24,7 +24,7 @@ namespace TapeLibNET.Toc;
 /// <summary>Wire form of the TOC header record — the first record of every 2.1 TOC stream.</summary>
 /// <remarks>
 /// Kept small and first: the TOC's first 16 KiB block always holds it whole, so <see cref="TapeTOC.TryPeek"/>
-///  identifies a TOC copy from that block alone (§5.9). Hence the clamps on the two strings.
+///  identifies a TOC copy from that block alone (§6, F17). Hence the clamps on the two strings.
 /// </remarks>
 internal sealed class TocHeaderWire : ITapeRecord<TocHeaderWire>
 {
@@ -124,7 +124,7 @@ internal sealed class TocEndWire : ITapeRecord<TocEndWire>
 /// </summary>
 /// <remarks>
 /// <para>
-/// ONE instance serves a whole TOC on write and on read (§B.8.4). Reuse on read is safe only because the schema
+/// ONE instance serves a whole TOC on write and on read (F31). Reuse on read is safe only because the schema
 ///  resets every absent optional field to its default (<see cref="ITapeField{T}.ApplyDefault"/>): a
 ///  <see cref="Hash"/> can never leak from one entry into the next.
 /// </para>
@@ -185,7 +185,7 @@ internal sealed class TocFileEntryWire
         SizeOnTape = file.SizeOnTape;
         Attributes = d.Attributes;
         Codec = file.Codec;
-        CreationTime = d.CreationTime;          // UTC in memory (§8.5)
+        CreationTime = d.CreationTime;          // UTC in memory (F20)
         LastWriteTime = d.LastWriteTime;
         LastAccessTime = d.LastAccessTime;
         Hash = file.Hash ?? [];
@@ -253,7 +253,7 @@ public partial class TapeFileInfo
     private const int c_tocEntryFixedMax = 120;
 
     /// <summary>
-    /// Conservative 2.1 TOC footprint of this entry (§9): assumes no shared name prefix and maximum varint widths.
+    /// Conservative 2.1 TOC footprint of this entry (§10.3): assumes no shared name prefix and maximum varint widths.
     /// </summary>
     public int EstimateSerializedSize()
     {
@@ -281,7 +281,7 @@ public partial class TapeSetTOC
     internal const int BatchFileField = 48;
 
     /// <summary>
-    /// Pre-allocation cap on load: a declared count never drives allocation beyond this (R5); the list grows
+    /// Pre-allocation cap on load: a declared count never drives allocation beyond this (F10); the list grows
     ///  as entries actually arrive.
     /// </summary>
     private const int c_maxPreallocFiles = 64 * 1024;
@@ -323,7 +323,7 @@ public partial class TapeSetTOC
 
     #endregion
 
-    /// <summary>Wire form of the set record (§5.1, §B.8.2).</summary>
+    /// <summary>Wire form of the set record (§5.1).</summary>
     internal sealed class Wire : ITapeRecord<Wire>
     {
         public Guid SetId;
@@ -365,7 +365,7 @@ public partial class TapeSetTOC
             { 32, w => w.Description,             (w, v) => w.Description = v },
         };
 
-        // Cross-field rules - run on write (programming error) and on read (CrossCheck), G11
+        // Cross-field rules - run on write (programming error) and on read (CrossCheck), G10
         private static string? Validate(Wire w)
         {
             if (w.DataFormat == TapeDataFormat.V2 && w.SetId == Guid.Empty)
@@ -444,7 +444,7 @@ public partial class TapeSetTOC
             }
             catch
             {
-                writer.AbandonRecord();     // keep the writer usable (same rule as F1)
+                writer.AbandonRecord();     // keep the writer usable (F13)
                 throw;
             }
             writer.EndRecord();
@@ -476,7 +476,7 @@ public partial class TapeSetTOC
             }
             catch (Exception ex) when (ex is ArgumentException or OverflowException)
             {
-                // Domain conversion refused the data (G8): report it as a format error with context
+                // Domain conversion refused the data (F14): report it as a format error with context
                 throw new TapeFormatException(FormatErrorKind.BadValue, $"file entry: {ex.Message}", ex)
                 {
                     Record = TapeRecordKind.TocFileBatch,
@@ -526,7 +526,7 @@ public partial class TapeTOC
     /// <summary>The newest legacy TOC version; legacy readers and probes accept nothing above it.</summary>
     public const ushort LegacyTocVersionMax = TocVersionWithMediaId;
 
-    /// <summary>Pre-allocation cap for the set list on load (R5).</summary>
+    /// <summary>Pre-allocation cap for the set list on load (F10).</summary>
     private const int c_maxPreallocSets = 1024;
 
     /// <summary>
@@ -697,7 +697,7 @@ public partial class TapeTOC
     /// <param name="mediaId">The series identity; <see cref="Guid.Empty"/> when the TOC carries none.</param>
     /// <remarks>
     /// A 2.1 copy is identified positively: magic, kind <c>TocHeader</c> as the FIRST record, supported major, and a
-    ///  <c>TocHeader</c> body that parses. A copy from a newer major is not recognized here (Phase 5 reports it as
+    ///  <c>TocHeader</c> body that parses. A copy from a newer major is not recognized here (Scan Media reports it as
     ///  "ours, from a newer TapeNET"). Anything without the magic goes to the legacy probe, unchanged.
     /// </remarks>
     public static bool TryPeek(byte[] block, int length, out ushort version, out Guid mediaId)

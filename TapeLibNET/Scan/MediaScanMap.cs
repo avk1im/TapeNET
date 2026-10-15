@@ -1,4 +1,3 @@
-// Save as: TapeLibNET/Scan/MediaScanMap.cs
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -241,7 +240,7 @@ public sealed record MediaScanMap
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
-    /// <summary>Serializes the map to indented JSON. Harvested TOCs are saved separately (§4.3).</summary>
+    /// <summary>Serializes the map to indented JSON. Harvested TOCs are saved separately (Design-ScanMedia §8.3).</summary>
     public string ToJson() => JsonSerializer.Serialize(this, s_json);
 
     /// <summary>Reads a map back from JSON. Returns null when the text is not a valid map.</summary>

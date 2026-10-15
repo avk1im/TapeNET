@@ -68,8 +68,7 @@ internal sealed class ZstdCodec : IDisposable
 /// <param name="codec"><see cref="ZstdCodec"/> whose <see cref="ZstdCodec.Options"/> are passed to the underlying <see cref="ZstdNet.CompressionStream"/>.</param>
 internal sealed class CompressionFilterStream(Stream inner, ZstdCodec codec) : Stream
 {
-    // ZstdNet.CompressionStream owns its write semantics; create lazily so the
-    //  instance is only allocated when the first byte is written.
+    // ZstdNet.CompressionStream owns its write semantics; created together with this stream.
     private readonly ZstdNet.CompressionStream _zstream = codec.Options != null
         ? new(inner, codec.Options)
         : new(inner);
@@ -267,7 +266,7 @@ internal sealed class ProbingCompressionStream : Stream
 
     /// <summary>
     /// When <see langword="true"/>, <c>Commit()</c> writes the chosen codec as ONE byte to <c>inner</c> before the
-    ///  body — the codec prefix of a 2.1 file body (Design-Format-v2 §5.3). Off by default, so standalone use
+    ///  body — the codec prefix of a 2.1 file body (Design-FormatV21 §5.3). Off by default, so standalone use
     ///  (tests, tools) keeps emitting a bare ZSTD frame or raw bytes.
     /// </summary>
     internal bool EmitsCodecPrefix { get; init; }

@@ -6,7 +6,7 @@ using TapeLibNET.Tests.Helpers;
 namespace TapeLibNET.Tests.Virtual;
 
 
-/// <summary>Appendix A §A.7: the 2.1 virtual media state record and the legacy metadata reader.</summary>
+/// <summary>Design-FormatV21 §5.6: the 2.1 virtual media state record and the legacy metadata reader.</summary>
 public class VirtualMediaStateTests
 {
     private const uint Min = 512, Max = 65536, Def = 1024;

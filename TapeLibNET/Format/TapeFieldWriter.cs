@@ -1,12 +1,12 @@
 namespace TapeLibNET.Format;
 
 /// <summary>
-/// Writes the fields of one record body (or one nested group) - Design-Format-v2 §4.2 / §4.4.
+/// Writes the fields of one record body (or one nested group) - Design-FormatV21 §4.2 / §4.4.
 /// Obtained from <see cref="TapeRecordWriter.BeginRecord"/> or <see cref="BeginGroup"/>.
 /// </summary>
 /// <remarks>
-/// Writers emit ascending tags (the <see cref="TapeSchema{T}"/> does so by construction); an InvalidOperationException enforces it.
-///  Every <c>critical</c> flag is part of the tag - emit it consistently per field number (R3).
+/// Writers emit ascending tags (the <see cref="TapeSchema{T}"/> does so by construction); an InvalidOperationException enforces it (G9).
+///  Every <c>critical</c> flag is part of the tag - emit it consistently per field number (F7).
 /// </remarks>
 public sealed class TapeFieldWriter
 {

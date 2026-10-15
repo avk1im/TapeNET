@@ -8,7 +8,7 @@ namespace TapeLibNET.Tests.Toc;
 
 
 /// <summary>
-/// Phase 3 (Design-Format-v2 §5.1, §5.2, Appendix B §B.8.6): the 2.1 TOC stream - <see cref="TapeTOC.SaveTo(Stream)"/>,
+/// Phase 3 (Design-FormatV21 §5.1, §5.2, §7.3): the 2.1 TOC stream - <see cref="TapeTOC.SaveTo(Stream)"/>,
 ///  <see cref="TapeTOC.LoadFrom"/>, batching, cross-checks, identity, per-set save stamps and <see cref="TapeTOC.TryPeek"/>.
 /// </summary>
 public class TapeTOCFormatTests

@@ -6,7 +6,7 @@ using TapeLibNET.Format;
 namespace TapeLibNET.Tests.Format;
 
 
-/// <summary>Phase 1 (Design-Format-v2 §11.2): the format core in <c>TapeLibNET/Format/</c>.</summary>
+/// <summary>Phase 1 (Design-FormatV21 §12): the format core in <c>TapeLibNET/Format/</c>.</summary>
 public class FormatCoreTests
 {
     private enum Mode : byte { Alpha = 0, Beta = 1 }
@@ -495,7 +495,7 @@ public class FormatCoreTests
         var schema = new TapeSchema<Sample>(TapeRecordKind.TocSet);
         schema.Add(1, s => s.Flag, (s, v) => s.Flag = v);
         schema.Add(1, s => s.Flag, (s, v) => s.Flag = v);
-        // Duplicates are detected when the schema freezes on first use (Appendix B §B.3.5)
+        // Duplicates are detected when the schema freezes on first use (§7.4)
         Assert.Throws<InvalidOperationException>(() => Bytes(w => w.Write(TapeRecordKind.TocSet, f => schema.Write(f, new Sample()))));
     }
 

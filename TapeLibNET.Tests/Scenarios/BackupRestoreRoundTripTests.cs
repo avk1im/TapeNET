@@ -411,7 +411,7 @@ public class BackupRestoreRoundTripTests
 
     /// <summary>
     /// Format 2.1 identity survives the trip to tape and back: a V2 set with a real <c>SetId</c>, and unique, non-zero
-    ///  <c>FileId</c>s below the set's <c>NextFileId</c> (Design-Format-v2 §5.2).
+    ///  <c>FileId</c>s below the set's <c>NextFileId</c> (Design-FormatV21 §5.2).
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]

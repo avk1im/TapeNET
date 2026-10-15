@@ -4,7 +4,7 @@ using System.Runtime.CompilerServices;
 namespace TapeLibNET.Format;
 
 
-/// <summary>Per-field behaviour in a <see cref="TapeSchema{T}"/> (Design-Format-v2 §4.4, Appendix B §B.3.1).</summary>
+/// <summary>Per-field behaviour in a <see cref="TapeSchema{T}"/> (Design-FormatV21 §4.4, §7.4).</summary>
 [Flags]
 public enum FieldFlags
 {
@@ -63,7 +63,7 @@ public interface ITapeField<in T>
 
 /// <summary>
 /// Declarative field table of a record or group: one line per field, both directions, no reflection
-///  (Design-Format-v2 §5.7, Appendix B §B.3.3).
+///  (Design-FormatV21 §7.4).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -169,7 +169,7 @@ public sealed class TapeSchema<T>(TapeRecordKind? kind = null,
             w.EndGroup(cw);
         }
 
-        public override void ApplyDefault(T target) => set(target, null);   // absent optional group: null, not the previous value
+        public override void ApplyDefault(T target) => set(target, null);   // absent optional group: null, not the previous value (F31)
 
         public override void Read(TapeFieldReader r, T target) => set(target, child.Read(r.ReadGroup(), new TChild()));
     }
@@ -565,7 +565,7 @@ public sealed class TapeSchema<T>(TapeRecordKind? kind = null,
                 continue;
             }
 
-            // A known number: the critical bit is irrelevant (R3)
+            // A known number: the critical bit is irrelevant (F7)
             ulong bit = 1UL << n;
             if ((seen & bit) != 0 && (field.Flags & FieldFlags.Repeated) == 0)
                 throw r.Error(FormatErrorKind.Duplicate, $"field {n} occurs more than once");

@@ -275,6 +275,8 @@ Encryption is uniform across a set: no probing, no fallback. The set-level flag 
 
 ## 7. Agent Integration
 
+> **Superseded:** this section is superseded by Design-FormatV21 §13.
+
 ### 7.1 Key access
 
 `TapeAgentBase` gains:

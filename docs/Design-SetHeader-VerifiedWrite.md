@@ -615,6 +615,7 @@ the existing **S11** probe.
 - **A header-less volume stays unprotected.** SH-1 makes presence a per-volume declaration; legacy
   cartridges declare nothing, and the load-time media check remains their sole guard.
 - **A fresh volume's first set is deliberately unverified** (§3.2).
+- **A full TOC-in-partition volume has no closing setmark on its last set** (F32). The agent's end-relative translation accounts for it, so no drift arises and no recovery runs.
 - **Damage at the head of the volume is unrecoverable by either stage.** Both assume the beginning of
   content is sound — the delta because it moves relative to a position reached through it, the re-navigation
   because it counts forward from there.

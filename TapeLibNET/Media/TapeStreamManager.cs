@@ -588,7 +588,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     ///  active read/write and positions at BOM first. Returns bytes read, or ≤ 0 on failure. The AGENT
     ///  unpacks the buffer and calls <see cref="TapeNavigator.ResolveMediaHeaderPresence"/> — the manager never parses.
     /// </summary>
-    public int ReadBomHeaderBlock(byte[] buffer)
+    public int ReadBomHeaderBlock(byte[] buffer, out TapeHeader? header)
     {
         ResetError();
 
@@ -596,19 +596,20 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         {
             SyncErrorFrom(this);
             Navigator.ResetContentSet();
+            header = null;
             return -1;
         }
 
         if (!Navigator.MoveToBomHeader(forWrite: false))
         {
             SyncErrorFrom(Navigator);
+            header = null; 
             return -1;
         }
 
-        // Raw bytes only — the AGENT classifies (INV-12). TapeHeaderBlock.Read also classifies, but the
-        //  manager deliberately discards that so parsing stays on the agent side.
-        int read = TapeHeaderBlock.Read(Drive, buffer, out _);
-        if (read != buffer.Length)
+        // Raw bytes plus classification by TapeHeaderBlock.Read, which classifies "for free" in the same step.
+        int read = TapeHeaderBlock.Read(Drive, buffer, out header);
+        if (read != TapeHeaderBlock.Size)
         {
             SyncErrorFrom(Drive);
             Navigator.ResetContentSet();          // half-read header — unknown position

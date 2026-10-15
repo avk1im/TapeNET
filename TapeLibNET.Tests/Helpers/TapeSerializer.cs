@@ -27,7 +27,7 @@ public interface ITapeSerializable
 /// Minimal binary serializer — no reflection, no JSON.
 /// <para>
 ///  <b>Legacy test use only.</b> Product uses removed by V2.1 Phases 4–6; past Phase 6 moved to TapeLibNET.Tests
-///  (s. Design-Format-v2 §7.3).
+///  (s. Design-FormatV21 §7.3).
 /// </para>
 /// <para>Works with any <see cref="Stream"/>; employs no buffering of its own
 ///  since <see cref="TapeStream"/> already buffers. Strings are UTF-8 with a 32-bit length prefix.</para>

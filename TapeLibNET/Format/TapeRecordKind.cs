@@ -1,7 +1,7 @@
 namespace TapeLibNET.Format;
 
 /// <summary>
-/// Kind registry (Design-Format-v2 §4.3). High byte = family: 01 TOC, 02 content, 03 headers, 0F host-side.
+/// Kind registry (Design-FormatV21 §4.3). High byte = family: 01 TOC, 02 content, 03 headers, 0F host-side.
 /// The top bit (<see cref="TapeFormat.SkippableKindBit"/>) is never set on a kind of this registry.
 /// </summary>
 public enum TapeRecordKind : ushort

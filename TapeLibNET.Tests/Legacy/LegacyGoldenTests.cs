@@ -11,7 +11,7 @@ namespace TapeLibNET.Tests.Legacy;
 
 
 /// <summary>
-/// Phase 0 legacy freeze (Design-Format-v2 §11.4): the checked-in goldens must (a) still be reproduced
+/// Phase 0 legacy freeze (Design-FormatV21 §12.1): the checked-in goldens must (a) still be reproduced
 /// byte for byte by <see cref="LegacyFormatWriter"/> and (b) be read correctly by the current readers.
 /// </summary>
 public class LegacyGoldenTests

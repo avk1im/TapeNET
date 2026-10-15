@@ -1,7 +1,7 @@
 namespace TapeLibNET.Format;
 
 /// <summary>
-/// Delta coding of calibration samples (Design-Format-v2 §5.5): <c>varuint count</c>, then per sample
+/// Delta coding of calibration samples (Design-FormatV21 §5.5): <c>varuint count</c>, then per sample
 ///  <c>varuint ΔActualWritten</c> (monotone) and <c>varint ΔReportedRemaining</c>, the first from <c>(0, 0)</c>.
 /// A few bytes per sample instead of 16.
 /// </summary>

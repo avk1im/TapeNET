@@ -1,7 +1,7 @@
 namespace TapeLibNET.Format;
 
 /// <summary>
-/// Read-only stream wrapper that peeks the first bytes of a stream and replays them (Design-Format-v2 §5.7), so a
+/// Read-only stream wrapper that peeks the first bytes of a stream and replays them (Design-FormatV21 §7.3), so a
 ///  loader can pick the 2.1 or legacy reader without a seekable source.
 /// </summary>
 public sealed class TapePeekStream : Stream

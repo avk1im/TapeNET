@@ -8,9 +8,9 @@ namespace TapeLibNET.Headers;
 ///  <see cref="Legacy.LegacyFramer"/> (legacy, read-only).
 /// </summary>
 /// <remarks>
-/// Headers are written as 2.1 block frames <c>Record ‖ CRC-64</c> with the magic at byte 0 (Design-Format-v2 §4.5) and
+/// Headers are written as 2.1 block frames <c>Record ‖ CRC-64</c> with the magic at byte 0 (Design-FormatV21 §4.5) and
 ///  read in either format, dispatched on the first bytes. Since Phase 6 nothing in the product writes a legacy frame.
-///  The move-only folder commit folds this class into <see cref="TapeFrame"/> and <see cref="TapeFrameStatus"/> into
+///  Kept as the header-specific façade over <see cref="TapeFrame"/>; <see cref="TapeFrameStatus"/> lives in
 ///  <c>Format/</c>.
 /// </remarks>
 public static class TapeFramer

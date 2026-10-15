@@ -6,7 +6,7 @@ namespace TapeLibNET.Format;
 /// <summary>What a field reader knows about its record - for error context and polymorphic dispatch.</summary>
 public readonly record struct TapeRecordInfo(TapeRecordKind Kind, byte Major, byte Minor);
 
-/// <summary>Why a record, frame or stream was refused (Design-Format-v2 §8.1).</summary>
+/// <summary>Why a record, frame or stream was refused (Design-FormatV21 §7.2).</summary>
 public enum FormatErrorKind
 {
     /// <summary>Written by a newer TapeNET: major version above <see cref="TapeFormat.Major"/>.</summary>

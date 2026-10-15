@@ -1,7 +1,7 @@
 namespace TapeLibNET.Format;
 
 /// <summary>
-/// A record as read from a stream or span: its prologue and the raw body (Design-Format-v2 §4.2).
+/// A record as read from a stream or span: its prologue and the raw body (Design-FormatV21 §4.2).
 /// The body is not interpreted until <see cref="Fields"/> / <see cref="Read{T}"/>.
 /// </summary>
 public sealed class TapeRecord(ushort rawKind, byte major, byte minor, ReadOnlyMemory<byte> body)
@@ -63,7 +63,7 @@ public sealed class TapeRecord(ushort rawKind, byte major, byte minor, ReadOnlyM
         }
         catch (Exception ex) when (ex is ArgumentException or OverflowException)
         {
-            // Domain conversion refused the data (ToRecord): report it as a format error (G8).
+            // Domain conversion refused the data (ToRecord): report it as a format error (F14).
             throw new TapeFormatException(FormatErrorKind.BadValue, $"{typeof(T).Name}: {ex.Message}", ex) { Record = Kind };
         }
     }

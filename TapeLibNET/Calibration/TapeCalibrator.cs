@@ -950,7 +950,7 @@ public sealed class TapeCalibrator : TapeDriveHolder<TapeCalibrator>
     #region *** Resume read helpers ***
 
     /// <summary>Reads one record block at the current position and unpacks+CRC-checks it as <typeparamref name="T"/>,
-    ///  in either format (Design-Format-v2 §6.5: a trail may mix legacy and 2.1 records).</summary>
+    ///  in either format (Design-FormatV21 §9.5: a trail may mix legacy and 2.1 records).</summary>
     private T? ReadRecord<T>(byte[] recordBuffer) where T : class, ITapeFramedRecord<T>
     {
         int read = Drive.ReadDirect(recordBuffer, 0, recordBuffer.Length, out _, out _);

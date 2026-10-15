@@ -545,7 +545,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     ///    <item><see cref="TapeAgentBase.NotifyPostProcessFile"/> is deferred until the file is committed.</item>
     /// </list>
     /// <para>
-    /// <b>On-tape layout</b> of a V2.1 file (Design-Format-v2 §5.3): self-describing, CRC-64 framed,
+    /// <b>On-tape layout</b> of a V2.1 file (Design-FormatV21 §5.3): self-describing, CRC-64 framed,
     ///  excluded from the hash, checked on restore against the set's <see cref="TapeSetTOC.SetId"/>
     ///  and the file's <see cref="TapeFileInfo.FileId"/>.
     ///  <code>
@@ -1050,7 +1050,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     /// <summary>
     /// Makes <paramref name="set"/> carry this agent's data format before its first file is written. An EMPTY set of
     ///  another format is re-stamped (a trailing legacy slot, or a continuation after a format switch); a set that
-    ///  already holds files cannot change format — one set, one format (Design-Format-v2 §6.1).
+    ///  already holds files cannot change format — one set, one format (F4).
     /// </summary>
     private bool EnsureSetFormat(TapeSetTOC set)
     {

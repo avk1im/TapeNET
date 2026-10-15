@@ -12,7 +12,7 @@ namespace TapeLibNET.Tests.Headers;
 
 
 /// <summary>
-/// Phase 4 (Design-Format-v2 §5.3, §5.8): the 2.1 per-file header, the codec prefix, the legacy header check, and the
+/// Phase 4 (Design-FormatV21 §5.3, §5.8): the 2.1 per-file header, the codec prefix, the legacy header check, and the
 ///  capacity estimates built on them. Pure — no tape.
 /// </summary>
 public class TapeFileHeaderTests

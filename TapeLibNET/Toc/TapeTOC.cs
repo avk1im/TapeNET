@@ -40,7 +40,7 @@ public enum TapeHashAlgorithm
 /// Lightweight mirror of <see cref="FileSystemInfo"/> properties, avoiding access to the actual file.
 /// <para>Used instead of <see cref="FileInfo"/> because setting properties on a <c>FileInfo</c>
 ///  instance would attempt to modify the real file on disk.</para>
-/// <para><b>All times are UTC</b> (Design-Format-v2 §8.5): captured with the <c>…Utc</c> getters and applied with
+/// <para><b>All times are UTC</b> (Design-FormatV21 §10.1, F20): captured with the <c>…Utc</c> getters and applied with
 ///  the <c>…Utc</c> setters, so a backup restored in another time zone or across a DST change keeps its times.
 ///  Displays convert with <c>ToLocalTime()</c>.</para>
 /// </summary>
@@ -678,8 +678,8 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     /// <remarks>
     /// Mints the <see cref="MediaId"/> if still unset (so header and TOC always share it), then
     ///  snapshots the current identity: id, creation time, volume, and a length-clamped name. Written
-    ///  once at format / on a fresh volume and never rewritten. Only ever produced for single-headerPartition
-    ///  (TOC-in-set) media, hence <see cref="TapeTocPlacement.InSet"/>.
+    ///  once at format / on a fresh volume and never rewritten. Placement and partition are supplied by the caller,
+    ///  which knows the layout — the TOC does not.
     /// </remarks>
     /// <param name="tocBlockSize">The block size to use for the TOC on tape (NOT the header itself!
     ///  This is always <see cref="TapeHeader.FixedHeaderBlockSize"/>).</param>
@@ -970,7 +970,7 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
         LoadedFromLegacy = toc.LoadedFromLegacy;
         WrittenBy = toc.WrittenBy;
 
-        // Preserve
+        // Preserve the series identity: every TOC load copies a
         // freshly deserialized TOC into the live one via CopyFrom, so dropping this line would
         // silently strip the id from every loaded TOC.
         MediaId = toc.MediaId;

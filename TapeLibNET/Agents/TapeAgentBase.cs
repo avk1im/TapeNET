@@ -13,14 +13,14 @@ namespace TapeLibNET.Agents;
 
 /// <summary>
 /// Base agent handling TOC backup/restore (dual-copy with CRC), TOC file I/O,
-///  set deletion, and the <see cref="ITapeFileNotifiable"/> notification wrappers.
-/// <para>Subclasses: <see cref="TapeFileBackupAgent"/> (backup), <see cref="TapeFileRestoreBaseAgent"/>
+///  media / set header I/O, set verification, and the <see cref="ITapeFileNotifiable"/> notification wrappers.
+/// <para>Subclasses: <see cref="TapeFileBackupAgent"/> (backup), <see cref="TapeSetAgent"/> (set deletion), <see cref="TapeFileRestoreBaseAgent"/>
 ///  (restore/verify). Owns a <see cref="TapeStreamManager"/> and a <see cref="TapeTOC"/>.</para>
 /// </summary>
 public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
 {
     /// <summary>BlockSize used for header and TOC read / write, fixed since it needs to be known upfront.</summary>
-    private const uint c_fixedTOCBlockSize = 16 * 1024; // 16 KiB
+    private const uint c_fixedTOCBlockSize = TapeHeader.FixedHeaderBlockSize; // 16 KiB — TOC and headers share one block size (§5.7)
 
     #region Properties
 
@@ -440,7 +440,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
         if (!result1 && !result2)
             return FailedOperationResult;
 
-        // What now stands on tape: 2.1 in the product — a legacy tape is upgraded (the service logs it, §8.6).
+        // What now stands on tape: 2.1 in the product — a legacy tape is upgraded (the service logs it, §9.2, F28).
         TOC.LoadedFromLegacy = RecordEmitter.DataFormat == TapeDataFormat.Legacy;
         return TapeResult.OK;
     }

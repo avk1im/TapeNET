@@ -30,7 +30,7 @@ public enum HeaderBlockIdentity
     /// <summary>The first block of a table-of-contents copy, verified structurally by <see cref="TapeTOC.TryPeek"/>.</summary>
     TocCopy,
     /// <summary>
-    /// A 2.1 calibration checkpoint block, identified by its record kind (Design-Format-v2 §5.9). Legacy checkpoints carry
+    /// A 2.1 calibration checkpoint block, identified by its record kind (Design-FormatV21 §6). Legacy checkpoints carry
     ///  no kind of their own and still identify as <see cref="DamagedRecord"/>, as they always did.
     /// </summary>
     CalibrationCheckpoint,
@@ -108,7 +108,7 @@ public static partial class TapeHeaderBlock
 
     /// <summary>
     /// Identifies one block positively: a TOC copy, an intact header, a calibration checkpoint, a damaged record — or
-    ///  none of them. Pure, total, TOC-free (Design-Format-v2 §5.9).
+    ///  none of them. Pure, total, TOC-free (Design-FormatV21 §6).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -132,7 +132,7 @@ public static partial class TapeHeaderBlock
     /// </para>
     /// <para>
     /// A record whose MAGIC is damaged cannot be told from foreign data, and is reported as
-    ///  <see cref="HeaderBlockIdentity.Foreign"/>. A record damaged BEHIND its magic is ours, damaged — never a phantom TOC.
+    ///  <see cref="HeaderBlockIdentity.Foreign"/>. A record damaged BEHIND its magic is ours, damaged — never a phantom TOC (F23).
     /// </para>
     /// </remarks>
     public static IdentifiedBlock IdentifyBlock(byte[] block, int length)

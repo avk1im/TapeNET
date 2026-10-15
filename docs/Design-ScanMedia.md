@@ -519,6 +519,8 @@ A recovered TOC is adopted exactly like an imported one: same identity verdict a
 
 ### 9.1 Scan
 
+An unclosed last set that a recovered TOC records as closed by end-of-media (partitioned media, F32) reads "runs to the end of the medium - the volume is full", with no review advice. The live line on partitioned media is neutral (Info) for any unclosed set.
+
 ```csharp
 public sealed record ScanMediaRequest : ServiceOperationRequest
 {

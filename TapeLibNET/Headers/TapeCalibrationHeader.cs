@@ -7,7 +7,7 @@ namespace TapeLibNET.Headers;
 
 
 /// <summary>
-/// Schema target for the run plan, nested as a group in the calibration header (Design-Format-v2 §5.4).
+/// Schema target for the run plan, nested as a group in the calibration header (Design-FormatV21 §5.4).
 /// </summary>
 /// <remarks>
 /// Wraps the immutable <see cref="TapeCalibrationPlan"/> and updates it field by field with <c>with</c>, so each schema
@@ -62,7 +62,7 @@ internal sealed class TapeCalibrationHeaderWire : TapeHeaderWire
 ///  Profile MATCHING against the current drive is deliberately NOT done here — that is the caller's responsibility.
 /// </para>
 /// <para>
-/// <b>Format 2.1</b> block frame (Design-Format-v2 §5.4): the shared tags 1–3 carry <see cref="RunId"/>,
+/// <b>Format 2.1</b> block frame (Design-FormatV21 §5.4): the shared tags 1–3 carry <see cref="RunId"/>,
 ///  <see cref="StartedUtc"/> and <see cref="RunBlockSize"/>; the plan travels as a nested group. Legacy run headers on
 ///  existing cartridges keep reading (<see cref="ConstructBody"/>), so Resume and Recalibrate of a legacy run still work.
 /// </para>

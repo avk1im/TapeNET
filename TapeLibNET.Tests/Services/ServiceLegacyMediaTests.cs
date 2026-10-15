@@ -9,7 +9,7 @@ namespace TapeLibNET.Tests.Services;
 
 
 /// <summary>
-/// Phase 7 (Design-Format-v2 §6, §11.5), service side, on a GENUINE legacy cartridge: identify, upgrade on append with one
+/// Phase 7 (Design-FormatV21 §6, §11.5), service side, on a GENUINE legacy cartridge: identify, upgrade on append with one
 ///  warning, and Scan Media before and after — <c>Format_ScanMedia_BothFamilies</c>.
 /// </summary>
 /// <remarks>

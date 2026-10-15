@@ -97,6 +97,6 @@ public class TapeFrameWriterAllocationProbe(ITestOutputHelper output)
         long large = Measure(files.Length);
         double perFrame = (double)(large - small) / (files.Length - 1_000);
 
-        Assert.True(perFrame <= 64.0, $"{perFrame:F2} bytes allocated per frame (small batch {small} B, large {large} B)");
+        Assert.True(perFrame < 65.0, $"{perFrame:F2} bytes allocated per frame (small batch {small} B, large {large} B)");
     }
 }

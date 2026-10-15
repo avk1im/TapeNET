@@ -318,7 +318,7 @@ public partial class TapeServiceBase
                 return Fail(WIN32_ERROR.ERROR_MEDIA_CHANGED,
                     "The loaded cartridge is not the one that was scanned — refusing to read its TOC");
 
-            LogInfo($"Recovering the TOC ${where}...");
+            LogInfo($"Recovering the TOC {where}...");
             OnStatusUpdate("Recovering TOC...");
 
             toc = new TapeTOC();
@@ -332,14 +332,14 @@ public partial class TapeServiceBase
             if (!read)
             {
                 LastError = read.ErrorMessage;
-                LogErr($"Couldn't recover the TOC ${where}: {read.ErrorMessage}");
+                LogErr($"Couldn't recover the TOC {where}: {read.ErrorMessage}");
                 return RecoverTocResult.Failed(read);
             }
 
             // Guard 2 — is what we read the copy the scan identified? Checked on the CRC-validated result.
             if (copy.Id is { } peekedId && toc.MediaId != peekedId)
                 return Fail(WIN32_ERROR.ERROR_MEDIA_CHANGED,
-                    $"The TOC ${where} belongs to a different series than the " +
+                    $"The TOC {where} belongs to a different series than the " +
                     "scanned copy — not recovered");
 
             fromMap = false;

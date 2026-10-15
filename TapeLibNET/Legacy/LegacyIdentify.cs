@@ -95,7 +95,7 @@ internal static class LegacyIdentify
     }
 
     /// <summary>
-    /// Identifies one LEGACY block (no 2.1 magic): a legacy TOC copy, an intact legacy header, a damaged legacy record �
+    /// Identifies one LEGACY block (no 2.1 magic): a legacy TOC copy, an intact legacy header, a damaged legacy record —
     ///  or foreign. Pure, total, TOC-free. Called by <see cref="TapeHeaderBlock.IdentifyBlock"/> for every block that
     ///  does not start with <c>TpN#</c>.
     /// </summary>

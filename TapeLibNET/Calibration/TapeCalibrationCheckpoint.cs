@@ -45,7 +45,7 @@ namespace TapeLibNET.Calibration;
 //  The FULL block is counted in bytesWritten, so the reported→actual mapping
 //  stays honest and even reflects real set-delimited overhead.
 //
-//  FORMAT (Design-Format-v2 §5.5): records are written as 2.1 block frames
+//  FORMAT (Design-FormatV21 §5.5): records are written as 2.1 block frames
 //  (Record ‖ CRC-64, magic first). Legacy frames ([len][payload][crc32]) of
 //  earlier runs keep reading, block by block — so a trail may mix both, and a
 //  legacy run resumes and recalibrates unchanged.

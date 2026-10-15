@@ -464,7 +464,7 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
                 out var contentProbe,
                 out var contentReason);
 
-            // Never create or truncate over metadata we cannot read
+            // Never create or truncate over metadata we cannot read (F26)
             if (contentProbe == VirtualMediaStateProbe.Unreadable)
             {
                 SetError(WIN32_ERROR.ERROR_FILE_CORRUPT, $"Content media: {contentReason}");

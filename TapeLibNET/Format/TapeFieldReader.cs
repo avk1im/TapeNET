@@ -1,12 +1,12 @@
 namespace TapeLibNET.Format;
 
 /// <summary>
-/// Reads the fields of one record body or nested group (Design-Format-v2 §4.2 / §4.4): field iteration with
+/// Reads the fields of one record body or nested group (Design-FormatV21 §4.2 / §4.4): field iteration with
 ///  bounds checks, typed value accessors, nested groups.
 /// </summary>
 /// <remarks>
 /// Usage: <c>while (f.MoveNext()) switch (f.Number) { case 1: x = f.ReadGuid(); break; ... }</c>. Readers accept any
-///  field order and ignore the critical bit when matching a known field (R3); deciding about UNKNOWN fields
+///  field order and ignore the critical bit when matching a known field (F7); deciding about UNKNOWN fields
 ///  (skip or refuse by <see cref="IsCritical"/>) is the caller's job - <see cref="TapeSchema{T}"/> does it.
 /// </remarks>
 public sealed class TapeFieldReader

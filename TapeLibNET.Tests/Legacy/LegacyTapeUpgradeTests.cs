@@ -7,7 +7,7 @@ namespace TapeLibNET.Tests.Legacy;
 
 
 /// <summary>
-/// Phase 7 (Design-Format-v2 §6, §11.5): a GENUINE legacy cartridge — the Phase 0 images, with 12-byte file headers and
+/// Phase 7 (Design-FormatV21 §6, §11.5): a GENUINE legacy cartridge — the Phase 0 images, with 12-byte file headers and
 ///  a legacy TOC — taking its first write from this build. The upgrade must be additive: the legacy set keeps restoring
 ///  exactly as before, the new set is 2.1, and the TOC on tape becomes 2.1.
 /// </summary>

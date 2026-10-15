@@ -34,7 +34,7 @@ public partial class TapeServiceBase
     /// </para>
     /// <para>
     /// The agent writes the TOC itself, so a legacy → 2.1 upgrade is reported here rather than through
-    ///  <see cref="SaveTocCore"/> (Design-Format-v2 §6.2).
+    ///  <see cref="SaveTocCore"/> (Design-FormatV21 §6.2).
     /// </para>
     /// </remarks>
     /// <param name="deleteFromSetIndex">Standard (1-based) index of the first set to delete.</param>

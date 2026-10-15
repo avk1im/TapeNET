@@ -11,7 +11,7 @@ namespace TapeLibNET.Tests.Services;
 
 
 /// <summary>
-/// Phase 7 (Design-Format-v2 §6, §8.6): the service side of mixed media — every TOC-writing verb upgrades a legacy TOC
+/// Phase 7 (Design-FormatV21 §6, §8.6): the service side of mixed media — every TOC-writing verb upgrades a legacy TOC
 ///  to 2.1 and says so exactly once; overwrites mint fresh set identities; a new tape carries only 2.1 records.
 /// </summary>
 /// <remarks>

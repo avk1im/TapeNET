@@ -6,7 +6,7 @@ namespace TapeLibNET.Legacy;
 /// <summary>
 /// Frozen, read-only reader of the pre-2.1 calibration records: the checkpoint body and the run plan shared with the
 ///  legacy calibration header. The oldest stand-alone run header (<c>TapeCalibrationRunHeader</c>) is no longer read —
-///  no such cartridges remain in the field (Design-Format-v2 §6.5).
+///  no such cartridges remain in the field (Design-FormatV21 §9.5).
 /// </summary>
 internal static class LegacyCheckpointReader
 {

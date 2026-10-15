@@ -5,7 +5,7 @@ namespace TapeLibNET.Virtual;
 
 /// <summary>
 /// Format 2.1 record 0x0F01 holding the persisted state of a <see cref="VirtualTapeMedia"/>
-///  (Design-Format-v2-AppendixA §A.4). Framed inline as <c>Record ‖ CRC-64</c>.
+///  (Design-FormatV21 §5.6, F27). Framed inline as <c>Record ‖ CRC-64</c>.
 /// Only what cannot be derived is stored per virtual block; positions are rebuilt and cross-checked on load.
 /// </summary>
 internal sealed class VirtualMediaStateRecord : ITapeRecord<VirtualMediaStateRecord>

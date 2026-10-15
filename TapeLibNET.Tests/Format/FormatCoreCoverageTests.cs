@@ -8,7 +8,7 @@ namespace TapeLibNET.Tests.Format;
 
 
 /// <summary>
-/// Appendix B (Revised) §B.4 R6: the format-core coverage <see cref="FormatCoreTests"/> does not reach - schema
+/// Design-FormatV21 §7.4: the format-core coverage <see cref="FormatCoreTests"/> does not reach - schema
 ///  validation, overload binding, defaults, inheritance, polymorphic records, frame details, forward-only streams,
 ///  the batch allocation budget, and regressions for review fixes F1-F7 (Format-Core-Review-R1-R5.md).
 /// </summary>
@@ -35,7 +35,7 @@ public class FormatCoreCoverageTests
         };
     }
 
-    // One property per supported CLR type: the property's type alone must pick the codec (§B.3.4)
+    // One property per supported CLR type: the property's type alone must pick the codec (§7.4)
     private sealed class Prim
     {
         public bool Bo;
@@ -108,7 +108,7 @@ public class FormatCoreCoverageTests
         public Child? C;
     }
 
-    // Shared header tags, inherited by a derived wire type (§B.3.6)
+    // Shared header tags, inherited by a derived wire type (§7.4)
     private class BaseWire
     {
         public Guid Id;
@@ -152,7 +152,7 @@ public class FormatCoreCoverageTests
         public static Ranged ReadBody(TapeFieldReader fields) => s_schema.Read(fields, new Ranged());
     }
 
-    // Polymorphic base over two kinds; subtypes re-expose the typed static members (§B.3.7)
+    // Polymorphic base over two kinds; subtypes re-expose the typed static members (§7.4)
     private abstract class Shape : ITapeRecord<Shape>
     {
         public string Label = "";
@@ -236,7 +236,7 @@ public class FormatCoreCoverageTests
         }
     }
 
-    // A TOC file entry stand-in for the allocation budget (§B.8.4)
+    // A TOC file entry stand-in for the allocation budget (§7.3)
     private sealed class Entry
     {
         public ulong Id;
@@ -397,7 +397,7 @@ public class FormatCoreCoverageTests
 
     #endregion
 
-    #region *** Schema: product schemas and validation (§B.3.5) ***
+    #region *** Schema: product schemas and validation (§7.4) ***
 
     [Fact]
     public void Schema_AllProductSchemas_Valid()
@@ -583,7 +583,7 @@ public class FormatCoreCoverageTests
 
     #endregion
 
-    #region *** Schema: defaults (§B.3.3, §B.8.4) ***
+    #region *** Schema: defaults (§7.4, §7.3) ***
 
     [Fact]
     public void Schema_OptionalDefaults_Elided()
@@ -608,7 +608,7 @@ public class FormatCoreCoverageTests
     [Fact]
     public void Schema_OptionalDefaults_ResetOnReusedTarget()
     {
-        // The §B.8.4 pattern: one wire object read again and again
+        // The §7.3 pattern: one wire object read again and again
         var target = new Defaults();
         Defaults.Schema.Read(FieldsOf(RecordWith(f => Defaults.Schema.Write(f, new Defaults { X = 5, S = "first", B = [9] }))), target);
         Assert.Equal(5U, target.X);
@@ -1066,7 +1066,7 @@ public class FormatCoreCoverageTests
 
     #endregion
 
-    #region *** Allocation budget (§B.8.4) ***
+    #region *** Allocation budget (§7.3) ***
 
     [Fact]
     public void Batch_WriteWithReusedWire_AllocatesNothingPerEntry()

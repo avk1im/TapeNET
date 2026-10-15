@@ -16,7 +16,7 @@ The **TapeNET** solution (`\TapeNET`) targets **.NET 8 / C# 12** and includes th
 | `TapeServiceNET` | ASP.NET Core service | Windows Service / console host exposing `TapeDriveGrpcService` over gRPC (port 50551) |
 | `FclAiNET.Test` | Console app | Interactive NL → FCL REPL for testing AI translation |
 
-**Test projects:** `FclNET.Tests` (xUnit, 469+ tests covering lexer, parser, validator, evaluator, formatter, pipeline). `TapeLibNET.Tests` (xUnit, 2,470+ tests covering virtual drives, navigation, streams, TOC serialization, backup/restore agents, incremental chains, multi-volume, error handling, service-layer round-trips, and gRPC remote-backend round-trips via `LocalHostBackendTests` / `RemoteHostBackendTests`). `TapeConNET.Tests` (xUnit, 56+ tests covering CLI parsing, lifecycle, FCL filtering, backup/restore round-trips, large/incremental stress scenarios, and the embedded-docs verb).
+**Test projects:** `FclNET.Tests` (xUnit, 469+ tests covering lexer, parser, validator, evaluator, formatter, pipeline). `TapeLibNET.Tests` (xUnit, ~5,000 tests covering virtual drives, navigation, streams, TOC serialization, backup/restore agents, incremental chains, multi-volume, error handling, service-layer round-trips, and gRPC remote-backend round-trips via `LocalHostBackendTests` / `RemoteHostBackendTests`). `TapeConNET.Tests` (xUnit, 56+ tests covering CLI parsing, lifecycle, FCL filtering, backup/restore round-trips, large/incremental stress scenarios, and the embedded-docs verb).
 
 **Dependencies:** The apps depend on the libraries. `TapeLibNET` remains independent of the other projects. `TapeServiceNET` depends on `TapeLibNET` only; proto-generated stubs are compiled in `TapeLibNET` (`GrpcServices="Both"`) and consumed via project reference. `FclNET` has no dependencies on other solution projects. `FclAiNET` depends on `FclNET`, `AiNET`. `TapeWinNET` depends on `FclNET` for file filtering in the MainWindow via the `FclTapeFileFilter` adapter (the restore pipeline uses a dictionary-based selection path — see below) and on `HelpNET` for interactive help. `TapeConNET` depends on `FclNET` for its `ITapeFileFilter`-based restore path. 
 
@@ -149,10 +149,6 @@ A console REPL that exercises the full pipeline: provider discovery → smoke te
 
 ## TapeLibNET — Library Architecture
 
-**NOTICE:** `TapeFileAgent` was renamed `TapeAgentBase` and split into three partials;
-the new `TapeSetAgent` owns the set-level verbs, so restore agents no longer inherit one
-that destroys data.
-
 ### Core class hierarchy
 
 ```
@@ -169,7 +165,8 @@ TapeTOC file selection (side-effect-free, dictionary-based):
   PickFilesByName(setFiles, selectedFiles) — name-based matching into a set
   CombineSelectedFiles(perSetLists) — merges per-set results into a flat list
 
-TapeFileAgent (base)              — TOC backup/restore, Notify* wrappers, TapeFileStatistics
+TapeAgentBase (base)              — TOC backup/restore, header I/O, set verification, Notify* wrappers
+  TapeSetAgent                    — set deletion (verified)
   TapeFileBackupAgent             — backup with multi-volume support (TapeBackupContext)
   TapeFileRestoreBaseAgent        — restore/validate/verify base
     TapeFileRestoreAgent          — writes files to disk
@@ -296,7 +293,7 @@ already-written media, and it never alters setmark or filemark counting.
 **One grammar, one block, mutual recognition.** All header kinds share the `TapeHeader` record base and
 `TapeFramer` framing, and both the media header and the calibration run header occupy the same standard
 block via `TapeHeaderBlock` — the single point that owns the block size, the size guard and the
-set-and-restore block-size discipline. One polymorphic read (`TapeFramer.Unpack<TapeHeader>`) therefore
+set-and-restore block-size discipline. One polymorphic read (`TapeFramer.TryUnpackHeader`) therefore
 classifies any cartridge as backup media, a calibration cartridge, or unidentified, which is what lets
 TapeCalibrator and the backup agent name each other's media ("this cartridge holds a backup" / "this is a
 calibration cartridge") instead of failing blankly. Each kind is built by the subsystem that owns its
@@ -338,12 +335,7 @@ auto-selects "Open existing", and warns specifically that calibration data would
 overrides to "Create new". TapeConNET renders the same report from `list` and `info` via a tolerant
 IdentifyMedia lifecycle step, while backup / restore / validate / verify keep the strict TOC requirement.
 
-**Watch-item:** the header carries no trailing filemark, so beginning-of-content is a mid-data write.
-Accepted on AIT-2 (isolated by the S10 mid-data vs. S11 post-mark conformance probes) and on DLT-V4,
-permissive on LTO by construction, and modeled by the virtual backend's strict-write mode so the hazard
-stays visible in the test suite. Should a strict drive ever appear, the fix is one filemark after the
-header plus a self-describing flag in the header so legacy headed media still navigates — cheapest applied
-before headers ship in the field.
+**Trailing filemark:** the media header is followed by one filemark, so beginning-of-content is a post-mark write position on every drive.
 
 ##### Backup set headers — verified set navigation and verified destructive writes
 
@@ -502,8 +494,7 @@ Key design points:
   CLI to avoid duplication.
 - **Multi-volume** — `TapeSetTOCParams` carries `Compression` + `CompressionLevel`;
   `CopyFrom` propagates both to continuation sets automatically.
-- **Forward-compatible serialization** — the codec byte is appended after existing
-  `TapeFileInfo` fields; older tapes without it are read back as `Stored` by default.
+- **Codec on tape** — 2.1 file bodies start with a one-byte codec prefix that must match the TOC's codec; legacy sets carry the codec in the TOC only (Design-FormatV21 §5.3).
 
 ### Remote backend (`TapeLibNET.Remote`)
 
@@ -533,11 +524,11 @@ Key design points:
 
 ## TapeLibNET.Tests
 
-xUnit test project with **2,470+ tests** across test classes covering the library core and service-layer round-trips, all running against memory-backed virtual tape drives (no hardware required). Parallel execution is disabled globally due to shared virtual drive state.
+xUnit test project with **~5,000 tests** across test classes covering the library core and service-layer round-trips, all running against memory-backed virtual tape drives (no hardware required). Parallel execution is disabled globally due to shared virtual drive state.
 
 ### Drive profiles
 
-Tests are parameterized via `[Theory]` + `[MemberData]` across three `DriveProfile` configurations: `Setmarks`, `Partitions`, `SeqFilemarks` — ensuring consistent behavior across all tape partitioning strategies.
+Tests are parameterized via `[Theory]` + `[MemberData]` across four `DriveProfile` configurations: `Setmarks`, `Partitions`, `SeqFilemarks`, `FilemarksOnly` — ensuring consistent behavior across all tape partitioning strategies.
 
 ### Test coverage areas
 
@@ -547,7 +538,6 @@ Tests are parameterized via `[Theory]` + `[MemberData]` across three `DriveProfi
 | `TapeNavigatorTests` | Tape positioning — partitions, filemarks, blocks |
 | `TapeStreamManagerTests` | Stream lifecycle, read/write coordination |
 | `TapeStreamBufferTests` | Low-level buffer packing/unpacking (pure unit tests) |
-| `BufferedTapeStreamTests` | Buffered stream read/write round-trips |
 | `TapeTOCRoundTripTests` | TOC serialization/deserialization fidelity |
 | `TapeBackupAgentTests` | Backup agent — single set, append, overwrite |
 | `TapeRestoreAgentTests` | Restore/validate/verify agents |
@@ -928,6 +918,7 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
   backup and calibration recognize each other's media. Shared `TapeHeaderBlock` primitive; mixed
   legacy/headed multi-volume series restore correctly. WPF calibration-cartridge pane + Inspect Media,
   calibration-aware virtual-drive probe, CLI list/info integration. Full design: `docs/Design-TapeHeader.md`.
+- ✅ On-tape format 2.1 — self-describing tagged records with CRC-64, legacy read-only forever, mixed media, Scan Media integration, 2.1 goldens. Full design: docs/Design-FormatV21.md.
 - ✅ Backup set headers — verified set navigation and verified destructive writes: a 16 KiB
   framed record at the head of every set carrying identity + indices, checked on every set
   access and self-corrected on recoverable drift; extended to the overwrite and delete paths

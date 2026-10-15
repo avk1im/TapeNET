@@ -65,7 +65,7 @@ public class LegacyTocWriterTests
 
 /// <summary>
 /// Phase 3, step 21: the migration properties of the 2.1 TOC — legacy → 2.1 → reload, the size gain, and time-zone
-///  independence (Design-Format-v2 §11.5: <c>Format_TocSize_Smaller</c>, <c>Format_TimeZoneShift</c>, and the
+///  independence (Design-FormatV21 §12.2: <c>Format_TocSize_Smaller</c>, <c>Format_TimeZoneShift</c>, and the
 ///  §11.4 round trip).
 /// </summary>
 public class TapeTOCFormatMigrationTests(ITestOutputHelper output)

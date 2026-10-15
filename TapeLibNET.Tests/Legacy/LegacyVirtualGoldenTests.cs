@@ -7,7 +7,7 @@ namespace TapeLibNET.Tests.Legacy;
 
 
 /// <summary>
-/// Phase 0 legacy freeze (Design-Format-v2 §11.1): checked-in legacy virtual-tape images (content + .vrt metadata,
+/// Phase 0 legacy freeze (Design-FormatV21 §12.1): checked-in legacy virtual-tape images (content + .vrt metadata,
 ///  and initiator partition for the Partitions profile) plus a legacy .tapetoc file.
 /// </summary>
 /// <remarks>

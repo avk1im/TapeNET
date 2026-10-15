@@ -1,5 +1,3 @@
-using System.Text;
-
 using TapeLibNET.Format;
 using TapeLibNET.Legacy;
 
@@ -7,7 +5,7 @@ namespace TapeLibNET.Headers;
 
 
 /// <summary>
-/// The kind of a <see cref="TapeHeader"/>. In format 2.1 the record kind carries it (Design-Format-v2 §5.4); legacy
+/// The kind of a <see cref="TapeHeader"/>. In format 2.1 the record kind carries it (Design-FormatV21 §5.4); legacy
 ///  records carry it as a byte after the signature. The in-memory enum serves both.
 /// </summary>
 public enum TapeHeaderKind : byte
@@ -23,7 +21,7 @@ public enum TapeHeaderKind : byte
 }
 
 /// <summary>
-/// Wire base of every 2.1 header record: the shared tags 1–3 (Design-Format-v2 §5.4), which mean the same in every
+/// Wire base of every 2.1 header record: the shared tags 1–3 (Design-FormatV21 §5.4), which mean the same in every
 ///  header kind, so identity reads without knowing the kind.
 /// </summary>
 internal abstract class TapeHeaderWire
@@ -47,7 +45,7 @@ internal abstract class TapeHeaderWire
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Format 2.1</b> (Design-Format-v2 §5.4): one block frame <c>Record ‖ CRC-64</c> at block offset 0. The record kind
+/// <b>Format 2.1</b> (Design-FormatV21 §5.4): one block frame <c>Record ‖ CRC-64</c> at block offset 0. The record kind
 ///  names the header kind; the shared tags 1–3 carry <see cref="Id"/>, <see cref="CreatedUtc"/> and
 ///  <see cref="BlockSize"/>. One read through <see cref="TapeFramer.TryUnpackHeader(byte[], int, out TapeHeader?)"/>
 ///  classifies any block as media, set, or calibration — in either format. The product writes 2.1 only.
@@ -80,7 +78,7 @@ public abstract record TapeHeader : ITapeFramedRecord<TapeHeader>
     /// </summary>
     protected Guid Id { get; init; }
 
-    /// <summary>When this header was created, UTC (§8.5).</summary>
+    /// <summary>When this header was created, UTC (F20).</summary>
     public DateTime CreatedUtc { get; init; }
 
     /// <summary>The header block size recorded at write time; usage defined by descendant classes.</summary>
@@ -129,15 +127,5 @@ public abstract record TapeHeader : ITapeFramedRecord<TapeHeader>
     ///  snapshots a name; each supplies its own budget.
     /// </summary>
     protected static string? ClampUtf8(string? name, int maxBytes)
-    {
-        if (string.IsNullOrEmpty(name))
-            return null;
-        if (Encoding.UTF8.GetByteCount(name) <= maxBytes)
-            return name;
-        // Trim by whole characters until it fits — simple and safe; names this long never occur in practice.
-        var span = name.AsSpan();
-        while (span.Length > 0 && Encoding.UTF8.GetByteCount(span) > maxBytes)
-            span = span[..^1];
-        return span.ToString();
-    }
+        => string.IsNullOrEmpty(name) ? null : TapePrimitives.ClampToUtf8Bytes(name, maxBytes);
 }

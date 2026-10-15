@@ -47,7 +47,7 @@ public class PartitionsVsSetmarksComparisonTests(ITestOutputHelper output)
     ///  Returns the fixture (caller must dispose).
     /// </summary>
     /// <remarks>
-    /// Every 2.1 file header is self-describing (Design-Format-v2 §5.3), so two independent backups of the same files
+    /// Every 2.1 file header is self-describing (Design-FormatV21 §5.3), so two independent backups of the same files
     ///  are byte-identical only if everything the header carries is identical. Two values are not by nature, and are
     ///  pinned here:
     /// <list type="bullet">

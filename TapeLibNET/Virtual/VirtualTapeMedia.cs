@@ -127,34 +127,6 @@ internal readonly record struct VirtualTapeBlock
         return StreamOffset + (logicalBlock - BeginAtBlock) * BlockSize;
     }
 
-    /*
-
-    /// <summary>Serializes this virtual block.</summary>
-    public void SerializeTo(TapeSerializer serializer)
-    {
-        serializer.Serialize(IsMark);
-        serializer.Serialize((byte)MarkType);
-        serializer.Serialize(BlockSize);
-        serializer.Serialize(BeginAtBlock);
-        serializer.Serialize(DataLength);
-        serializer.Serialize(StreamOffset);
-    }
-
-    /// <summary>Deserializes a virtual block.</summary>
-    public static ITapeSerializable? ConstructFrom(LegacyDeserializer deserializer)
-    {
-        return new VirtualTapeBlock
-        {
-            IsMark = deserializer.DeserializeBoolean(),
-            MarkType = (TapeMarkType)deserializer.DeserializeBytes(1)![0],
-            BlockSize = deserializer.DeserializeUInt32(),
-            BeginAtBlock = deserializer.DeserializeInt64(),
-            DataLength = deserializer.DeserializeInt64(),
-            StreamOffset = deserializer.DeserializeInt64()
-        };
-    }
-
-    */
 }
 
 /// <summary>
@@ -164,12 +136,6 @@ internal readonly record struct VirtualTapeBlock
 /// </summary>
 public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 {
-    #region *** Constants ***
-
-    private const ushort StateVersion = 0x0100;
-
-    #endregion
-
     #region *** Private Fields ***
 
     private readonly Stream m_stream;

@@ -8,7 +8,7 @@ namespace TapeLibNET.Tests.Legacy;
 
 
 /// <summary>
-/// Legacy time interpretation at the header readers (Design-Format-v2 §7.1, §8.5): media / set headers carried LOCAL
+/// Legacy time interpretation at the header readers (Design-FormatV21 §7.1, §8.5): media / set headers carried LOCAL
 ///  ticks (from <c>DateTime.Now</c>) despite the <c>CreatedUtc</c> name; calibration headers carried UTC ticks.
 /// </summary>
 public class LegacyTimeReaderTests

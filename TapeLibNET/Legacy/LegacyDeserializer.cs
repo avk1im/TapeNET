@@ -13,8 +13,8 @@ namespace TapeLibNET.Legacy;
 ///  for end of data), and a list item that fails to construct is an error.
 /// </summary>
 /// <param name="rstream">Source stream to read serialized data from.</param>
-/// <remarks><c>ITapeSerializable</c> not used, not offered past V2.1 Phase 6.</remarks>
-public class LegacyDeserializer(Stream rstream)
+/// <remarks>Read-only; the write half lives in the test project (F1).</remarks>
+internal class LegacyDeserializer(Stream rstream)
 {
     /// <summary>Reads exactly <paramref name="length"/> bytes; <see langword="null"/> if the stream ends first.</summary>
     public byte[]? DeserializeBytes(int length)
@@ -101,28 +101,4 @@ public class LegacyDeserializer(Stream rstream)
         version = DeserializeUInt16();
         return true;
     }
-
-    /*
-    // Not used past V2.1 Phase 6
-    public TClass? Deserialize<TClass>() where TClass : class, ITapeSerializable
-        => TClass.ConstructFrom(this) as TClass;
-
-    /// <exception cref="FormatException">An item failed to construct.</exception>
-    public TList Deserialize<TList, TValue>()
-        where TList : List<TValue>, new()
-        where TValue : ITapeSerializable
-    {
-        var list = new TList();
-        var count = DeserializeInt32();
-
-        for (int i = 0; i < count; i++)
-        {
-            var item = (TValue?)TValue.ConstructFrom(this)
-                ?? throw new FormatException($"Error deserializing {typeof(TValue).Name} list item {i} of {count}");
-            list.Add(item);
-        }
-
-        return list;
-    }
-    */
 }

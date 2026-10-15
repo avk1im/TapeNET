@@ -1,4 +1,3 @@
-// Save as: TapeLibNET/Legacy/LegacyTime.cs  (replaces the previous version: adds the zone-explicit overload)
 
 using TapeLibNET.Toc;
 
@@ -6,8 +5,8 @@ namespace TapeLibNET.Legacy;
 
 
 /// <summary>
-/// Interprets timestamps read from legacy (pre-2.1) records, so they enter the UTC in-memory model (Design-Format-v2
-///  §7.1, §8.5).
+/// Interprets timestamps read from legacy (pre-2.1) records, so they enter the UTC in-memory model (Design-FormatV21
+///  §8.1, F25).
 /// </summary>
 /// <remarks>
 /// <para>

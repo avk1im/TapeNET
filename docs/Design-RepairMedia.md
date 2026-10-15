@@ -207,6 +207,8 @@ needed.
 `TapeTOC`, by contrast, already owns a tolerant, independently versioned format (`TocVersionInitial` →
 `TocVersionWithMediaId`), and `MediaId` set the precedent exactly.
 
+**Resolved in format 2.1:** the strict `TapeSetTOC` signature problem no longer exists - every 2.1 record is tagged, skippable and refusable (Design-FormatV21 F5-F7).
+
 ```csharp
 public const ushort TocVersionWithUndescribedSets = 0x0103;     // NEW
 public const ushort TocVersion = TocVersionWithUndescribedSets;

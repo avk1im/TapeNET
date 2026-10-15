@@ -194,7 +194,7 @@ public partial class TapeAgentBase
         if (header.VolumeSetIndex != TOC.CurrentSetIndexOnVolume)
             return TapeSetHeaderVerdict.SetIndexDrift;
 
-        // Design-Format-v2 §5.4. Both ids must be known: legacy set headers and legacy TOC sets carry none.
+        // Design-FormatV21 §5.4. Both ids must be known: legacy set headers and legacy TOC sets carry none.
         TapeSetTOC expectedSet = TOC.CurrentSetTOC;
         if (header.SetId != Guid.Empty && expectedSet.SetId != Guid.Empty && expectedSet.Count > 0
             && header.SetId != expectedSet.SetId)

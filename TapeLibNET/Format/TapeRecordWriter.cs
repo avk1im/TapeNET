@@ -1,7 +1,7 @@
 namespace TapeLibNET.Format;
 
 /// <summary>
-/// Writes complete records - prologue + body - to a stream (Design-Format-v2 §4.2, §8.1).
+/// Writes complete records - prologue + body - to a stream (Design-FormatV21 §4.2, §7.2).
 /// </summary>
 /// <remarks>
 /// A record is built in a pooled buffer and written with ONE <see cref="Stream.Write(byte[], int, int)"/>:

@@ -392,7 +392,7 @@ target set; **block size before the session** (P2); hardware-compression interlo
 only); positioning, set-header verification and header writes (SH-4, SH-13, SH-15, SH-20); then
 `Manager.BeginWriteContent`, which creates the packer anchored after both headers.
 
-**One file (`BackupFile`).** `Manager.BeginPackedFile()` → the per-file header through `RecordEmitter.WriteFileHeader`
+**One file (`BackupFile`).** `Manager.BeginPackedFile()` → the per-file header through the agent's own emitter (`RecordEmitter.WriteFileHeader`) - no allocation per file
 (2.1 frame, or the legacy header on the test emitter) → the codec byte (software compression: `ProbingCompressionStream`
 decides and writes it; otherwise `Stored`) → the body via `TapeBackupSourceStream` (all NTFS streams, through `BackupRead`),
 hashed uncompressed → `Manager.EndPackedFile()` returns the token. On any exception: `Packer.DiscardOpenFile()` — never a

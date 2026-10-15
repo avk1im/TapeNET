@@ -12,7 +12,7 @@ namespace TapeLibNET.Tests.Calibration;
 
 
 /// <summary>
-/// Phase 6 (Design-Format-v2 §5.4, §5.5, §6.5): the calibration run header and checkpoint in format 2.1, reading their
+/// Phase 6 (Design-FormatV21 §5.4, §5.5, §6.5): the calibration run header and checkpoint in format 2.1, reading their
 ///  legacy forms, identification, the checkpoint size gain, and resuming a run whose trail mixes both formats.
 /// </summary>
 public class CalibrationFormatTests(ITestOutputHelper output)

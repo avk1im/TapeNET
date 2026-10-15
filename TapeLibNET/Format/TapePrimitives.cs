@@ -5,7 +5,7 @@ namespace TapeLibNET.Format;
 
 
 /// <summary>
-/// Span-based encode / decode of the format primitives (Design-Format-v2 §4.1).
+/// Span-based encode / decode of the format primitives (Design-FormatV21 §4.1).
 /// </summary>
 /// <remarks>
 /// Inside a field the field's own <c>Length</c> delimits a string or bytes value, so the <c>Decode*</c> helpers

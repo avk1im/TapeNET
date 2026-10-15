@@ -9,7 +9,7 @@ namespace TapeLibNET.Tests.Helpers;
 
 
 /// <summary>
-/// Deterministic definitions of the Phase 0 legacy goldens (Design-Format-v2 §11.1).
+/// Deterministic definitions of the Phase 0 legacy goldens (Design-FormatV21 §12.1).
 /// Shared by <c>GoldenGenerator</c> (writes them) and the legacy tests (compare against them).
 /// </summary>
 public static class GoldenData

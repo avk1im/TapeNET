@@ -4,7 +4,7 @@ namespace TapeLibNET.Format;
 
 
 /// <summary>
-/// Reads records - prologue + body - from a stream or a span (Design-Format-v2 §4.2, §8.1).
+/// Reads records - prologue + body - from a stream or a span (Design-FormatV21 §4.2, F11).
 /// </summary>
 /// <remarks>
 /// <b>Never reads ahead</b>: exactly the prologue and <c>BodyLength</c> bytes are consumed, so a CRC trailer or the

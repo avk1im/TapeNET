@@ -2,7 +2,7 @@
 
 /// <summary>
 /// Frozen, read-only reader of the pre-2.1 <c>VirtualTapeMedia</c> metadata layout
-///  (<c>TF</c> signature, version ≤ 0x0100; Design-Format-v2-AppendixA §A.5).
+///  (<c>TF</c> signature, version ≤ 0x0100; Design-FormatV21 §5.6).
 /// Normalizes to the 2.1 model: a layout that is not contiguous cannot be represented and is refused, never repaired.
 /// </summary>
 internal static class LegacyVirtualMediaState

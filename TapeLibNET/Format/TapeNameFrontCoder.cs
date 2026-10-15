@@ -1,7 +1,7 @@
 namespace TapeLibNET.Format;
 
 /// <summary>
-/// Front coding of file names within one TOC batch (Design-Format-v2 §5.1): each name stores the number of UTF-16
+/// Front coding of file names within one TOC batch (Design-FormatV21 §5.1): each name stores the number of UTF-16
 ///  chars it shares with the previous name plus the differing tail. Stateful; <see cref="Reset"/> at every batch
 ///  start so batches stay self-contained. One implementation serves writer and reader.
 /// </summary>

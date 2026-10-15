@@ -42,7 +42,7 @@ public sealed partial class TapeScanner
     ///  discarded with it — nothing the scanner does afterwards consults a navigator at all.
     /// </para>
     /// <para>
-    /// From the second fragment on the scanner reads raw (§4.2): those blocks sit at arbitrary positions
+    /// From the second fragment on the scanner reads raw (Design-ScanMedia §3.1): those blocks sit at arbitrary positions
     ///  the agent has no verb for, and no navigator state is wanted.
     /// </para>
     /// </remarks>
@@ -179,7 +179,7 @@ public sealed partial class TapeScanner
     /// <param name="eod">End-of-data: nothing was ever written here.</param>
     /// <remarks>
     /// <para>
-    /// <b>§4.2, and not optional.</b> <see cref="TapeHeaderBlock.IsSupportedBy"/> is false when the
+    /// <b>Design-ScanMedia §4.6, and not optional.</b> <see cref="TapeHeaderBlock.IsSupportedBy"/> is false when the
     ///  drive's maximum block is under 16 KiB — tiny virtual media, some pre-LTO drives — and without the
     ///  fallback every fragment on such a cartridge would map as <see cref="FragmentKind.Unknown"/>.
     /// </para>
@@ -384,7 +384,7 @@ public sealed partial class TapeScanner
 
     /// <summary>
     /// Enriches a calibration cartridge's entry with the checkpoint-derived run state, by CALLING the
-    ///  calibrator rather than duplicating its walk (§4.4).
+    ///  calibrator rather than duplicating its walk (Design-ScanMedia §4.5).
     /// </summary>
     /// <remarks>
     /// <para>

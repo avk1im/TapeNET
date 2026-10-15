@@ -87,7 +87,7 @@ public partial class TapeAgentBase
     public TapeHeader? ReadBomHeader(out int bytesRead, out byte[] block)
     {
         var buffer = new byte[TapeHeaderBlock.Size];
-        bytesRead = Manager.ReadBomHeaderBlock(buffer);
+        bytesRead = Manager.ReadBomHeaderBlock(buffer, out TapeHeader? header);
         if (bytesRead <= 0)
         {
             // Reaching BOM and finding NO data is the blank / legacy / at-EOD case — a DEFINITIVE
@@ -101,7 +101,7 @@ public partial class TapeAgentBase
         }
 
         block = buffer;
-        TapeHeader? header = TapeHeaderBlock.Classify(buffer, bytesRead);
+        //TapeHeader? header = TapeHeaderBlock.Classify(buffer, bytesRead); // done already
 
         // A readable block that is NOT our media header (calibration / set / foreign / torn) is
         //  likewise "no media header here" for navigation = Absent; the service still learns the

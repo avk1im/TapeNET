@@ -12,7 +12,7 @@ namespace TapeLibNET.Tests.Scenarios;
 
 
 /// <summary>
-/// Phase 7 (Design-Format-v2 §11.5): format 2.1 properties end to end, on all four drive profiles — self-describing
+/// Phase 7 (Design-FormatV21 §12.2): format 2.1 properties end to end, on all four drive profiles — self-describing
 ///  file headers, the codec byte, per-attempt FileIds, SetId across volumes, and the <c>.tapetoc</c> formats.
 /// </summary>
 /// <remarks>
@@ -123,7 +123,7 @@ public class FormatScenarioTests
 
     /// <summary>
     /// A failed attempt burns its <c>FileId</c>: the retry gets a fresh one, so the orphaned attempt that may remain
-    ///  on tape can never be mistaken for the committed file (Design-Format-v2 §5.2).
+    ///  on tape can never be mistaken for the committed file (Design-FormatV21 §5.2).
     /// </summary>
     /// <remarks>
     /// The failure is real, not simulated: the file is held open exclusively, so <c>BackupRead</c> cannot open it.
@@ -222,7 +222,7 @@ public class FormatScenarioTests
 
     /// <summary>
     /// Import reads both formats; export always writes 2.1 — and exporting upgrades nothing on tape, so a legacy TOC
-    ///  stays flagged legacy until a copy reaches the tape (Design-Format-v2 §6.4).
+    ///  stays flagged legacy until a copy reaches the tape (Design-FormatV21 §6.4).
     /// </summary>
     [Fact]
     public void Tapetoc_ImportsBothFormats_ExportsOnly21()

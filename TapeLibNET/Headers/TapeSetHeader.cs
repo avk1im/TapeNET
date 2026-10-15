@@ -40,13 +40,13 @@ public enum TapeSetHeaderVerdict
     SetIndexDrift,
     /// <summary>
     /// Right media, right volume, right position — but a DIFFERENT set stands there: both <c>SetId</c>s are known and
-    ///  differ (Design-Format-v2 §5.4). The TOC describes another set than the tape holds — a stale or foreign TOC.
+    ///  differ (Design-FormatV21 §5.4). The TOC describes another set than the tape holds — a stale or foreign TOC.
     ///  Not repairable by repositioning; terminal on every path, like <see cref="WrongVolume"/>.
     /// </summary>
     SetIdMismatch,
 }
 
-/// <summary>Wire form of the 2.1 set header (record kind <c>SetHeader</c>, Design-Format-v2 §5.4).</summary>
+/// <summary>Wire form of the 2.1 set header (record kind <c>SetHeader</c>, Design-FormatV21 §5.4).</summary>
 internal sealed class TapeSetHeaderWire : TapeHeaderWire
 {
     public int Volume;
@@ -195,7 +195,7 @@ public sealed record TapeSetHeader : TapeHeader
 
     #endregion
 
-    #region *** Legacy read — removed in Phase 6 ***
+    #region *** Legacy read ***
 
     /// <summary>
     /// Reads the set-specific fields after the shared preamble has been decoded. Called only by

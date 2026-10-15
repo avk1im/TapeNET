@@ -1,7 +1,7 @@
 namespace TapeLibNET.Format;
 
 /// <summary>
-/// A top-level format 2.1 record that writes itself and reads itself (Design-Format-v2 §8.1).
+/// A top-level format 2.1 record that writes itself and reads itself (Design-FormatV21 §7.2).
 /// Typically implemented with a <see cref="TapeSchema{T}"/> table.
 /// </summary>
 /// <typeparam name="TSelf">The implementing type.</typeparam>

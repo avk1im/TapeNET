@@ -13,7 +13,7 @@ namespace TapeLibNET.Tests.Headers;
 
 
 /// <summary>
-/// Phase 5 (Design-Format-v2 §4.5, §5.4, §5.9): 2.1 block-framed media and set headers, reading legacy headers, and the
+/// Phase 5 (Design-FormatV21 §4.5, §5.4, §5.9): 2.1 block-framed media and set headers, reading legacy headers, and the
 ///  dual-format block identification. Pure — no tape.
 /// </summary>
 public class TapeHeaderFormatTests

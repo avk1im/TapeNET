@@ -86,6 +86,7 @@ virtual-media state — is **format 2.1**. Legacy records (the `TF` + `0x01xx` f
 | **F29** | A change to the prologue layout or to CRC-64 is a new major. |
 | **F30** | A checked-in golden reads forever. From the release tag on, goldens are append-only (§12). |
 | **F31** | An absent optional field, group included, is reset to its schema default on read — so one wire object can be reused across records without leaking values. |
+| **F32** | On TOC-in-partition media the last set of a volume may end at end-of-media without its closing setmark; the TOC records it (`ClosedByEom`), and end-relative navigation on that volume counts one setmark fewer. Never written, and never honoured, on TOC-in-set media. |
 
 ### 3.2 Code rules (G) — the format core
 
@@ -258,6 +259,7 @@ TocHeader  (TocSet  TocFileBatch*)*  TocEnd  ‖ CRC-64 over every byte above
 | 11 | Incremental | bool | false |
 | 12 | ContinuedFromPrevVolume | bool | false |
 | 13 | FileCount | varuint | R |
+| 14 | ClosedByEom | bool | false — F32; optional, not critical |
 | 32 | Description | string | "" — clamped to `MaxStringBytes` |
 
 **TocFileBatch (`0x0103`)** — repeated field **48**, a group per file. Unknown fields in a batch body are skipped
@@ -513,6 +515,7 @@ Each layer knows only the one below; domain types never touch prologues, lengths
 | `TapeRecordWriter` | `Write(record)`, `BeginRecord` / `EndRecord` / `AbandonRecord`; one `Stream.Write` per record from a pooled buffer whose reserved front gap takes the prologue — no measuring pass |
 | `TapeRecordReader`, `TapeRecord` | `ReadRecord()` returns one bounded record (null only at a clean end), skipping unknown skippable kinds; `Read<T>` checks `Accepts`; span `Parse` / `ParsePrologue` |
 | `TapeFrame`, `TapeFrameStatus` | §4.5 |
+| `TapeFrameWriter` | reusable Record ‖ CRC-64 builder; the static `TapeFrame` methods run through a temporary one |
 | `TapeCrc64Envelope` | runs a writer / reader against a hashing wrapper, then writes / verifies the trailer |
 | `TapePeekStream` | peeks the magic and replays it, so a forward-only stream can be dispatched by format |
 | `TapeNameFrontCoder`, `TapeSampleCoder` | §5.1, §5.5 |
@@ -576,6 +579,8 @@ internal ITapeRecordEmitter RecordEmitter { get; set; } = TapeRecordEmitter21.In
 `WriteFileHeader`, `WriteToc`, `FrameHeaderBlock`. Positions, marks, packing and volume handling stay with the
 navigator and the packer. The product's emitter writes 2.1; the test project plugs in a legacy emitter (§8.4) — the
 seam exists for that alone.
+
+`RecordEmitter` defaults to the agent's own `TapeRecordEmitter21`, created and disposed with the agent; it owns a `TapeFrameWriter` and one file-header wire object, so writing a file header allocates nothing. Setting null returns to it; a borrowed emitter is never disposed.
 
 - `TapeFileBackupAgent.EnsureSetFormat` stamps a set with the emitter's format before its first file (F4), mints a
   SetId for V2 / clears it for legacy, and refuses software compression without a codec prefix (a legacy body has no
@@ -705,6 +710,20 @@ The scanner parses nothing itself: it goes through `IdentifyBlock`, `TryPeek` an
 records are therefore identified by the same walk; a recovered TOC copy of ours makes a cartridge a backup cartridge
 even when its legacy sets carry no identifiable start. Details: Design-ScanMedia.
 
+### 9.7 Full volumes on partitioned media
+
+On TOC-in-partition media a volume can fill up while its last set is still being written. The drive then reports
+end-of-media and the closing setmark cannot be written. The TOC records this on the set (ClosedByEom, F32) rather than
+recovering it later: the mark is not on the tape, and no scan can bring it back.
+
+- **Agent.** End-relative set indexes on such a volume shift by one setmark (-1); the agent translates, the navigator
+  never knows.
+- **Append.** A full-volume guard refuses to append behind a set closed by end-of-media; the series continues on the next
+  volume.
+- **Restore.** Reading tolerates end of data in place of the missing mark.
+- **Scan.** An unclosed last set that a recovered TOC records as closed by end-of-media is judged "runs to the end of the
+  medium - the volume is full", without review advice (Design-ScanMedia §9.1).
+
 ---
 
 ## 10. Behaviour Details
@@ -759,6 +778,7 @@ Informational only.
 | **Delete writes the TOC inside the agent.** | Hence the separate `ReportTocUpgrade` call instead of `SaveTocCore` (§9.2). |
 | **The v0x0102 legacy probe's `LegacyTocVersionMax` is not `TocVersion`.** | `TocVersion` is 0x0201; using it would open the frozen probe to versions no legacy build wrote. |
 | **An unreadable `.vrt` fails the load.** | Recreating the medium over it was the old behaviour — and silently destroyed the virtual cartridge (F26). |
+| **A full partitioned volume shifts every end-relative index by one.** | The agent translates; the navigator never knows (§9.7, F32). |
 
 ---
 
@@ -770,7 +790,7 @@ Informational only.
 |---|---|---|
 | `Golden/Legacy/` | 12 record goldens: TOC layouts A / B / pre-MediaId, media headers with / without flag, set headers with / without description, calibration headers (standard / run block), checkpoints (EW + many samples, no EW), legacy file header — each with `.expected.json` (length + SHA-256) | `LegacyGoldenTests`: the readers load them; the test writers reproduce them byte for byte |
 | `Golden/Legacy/Virtual/` | the Phase 0 virtual images (setmarks; partitions with initiator) and `legacy.tapetoc` — **frozen and irreplaceable**; their generator is removed | `LegacyVirtualGoldenTests`, `VirtualImage_IsGenuinelyLegacy`, `Emitter_MatchesPhase0Image` |
-| `Golden/V21/` | 10 cases (`GoldenV21`): TOC with four sets (full, incremental continuation, legacy-in-2.1, empty), TOC across the 4,096-file batch boundary, file header, media header rich / plain, set header, calibration header, checkpoints with EW 0 / without EW / 1,000 samples | `FormatGoldenV21Tests` |
+| `Golden/V21/` | 11 cases (`GoldenV21`): TOC with four sets (full, incremental continuation, legacy-in-2.1, empty), TOC across the 4,096-file batch boundary, file header, media header rich / plain, set header, calibration header, checkpoints with EW 0 / without EW / 1,000 samples, TOC with a set closed by end-of-media (`toc-closed-by-eom.v21.bin`) | `FormatGoldenV21Tests` |
 
 **Why 2.1 goldens.** A round trip proves that writer and reader agree with *each other*; change both the same way and
 every round trip stays green while every 2.1 tape already written becomes unreadable. Goldens pin the bytes.
@@ -818,7 +838,6 @@ Specified in Design-Encryption (its §7, an extension record, is superseded).
 
 | Item | Note |
 |---|---|
-| `TapeFrame.Pack` allocates per call | a `MemoryStream`, a writer and a rented buffer per file header. A session-owned inline-frame writer would remove it (`#warning` in the code). |
 | Legacy-shape calibration headers in the run block | identified by the calibrator's own probe; the scanner maps them as foreign. |
 | Per-file trailer | body length + hash after each body, for TOC-less recovery — a future skippable record kind, no format change. |
 | Mid-block file headers | locating packed files after a set's first needs a forward search inside blocks; whole-block reads only today. |

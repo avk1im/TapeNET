@@ -6,7 +6,7 @@ namespace TapeLibNET.Services;
 
 public partial class TapeServiceBase
 {
-    #region TOC persistence (Design-Format-v2 §6.2, §8.6)
+    #region TOC persistence (Design-FormatV21 §9.2, F28)
 
     // ── TOC persistence ───────────────────────────────────────────────────────
     //  Every verb that writes the TOC to tape goes through SaveTocCore (backup, rename media, rename set)
@@ -18,7 +18,7 @@ public partial class TapeServiceBase
     /// </summary>
     /// <remarks>
     /// <para>
-    /// A legacy tape's TOC upgrades to format 2.1 on its first write (Design-Format-v2 §6.2). From then on, earlier
+    /// A legacy tape's TOC upgrades to format 2.1 on its first write (Design-FormatV21 §9.2, F3). From then on, earlier
     ///  TapeNET builds can no longer read the tape's TOC — worth one warning, never a prompt: unattended runs must not
     ///  stall on it.
     /// </para>

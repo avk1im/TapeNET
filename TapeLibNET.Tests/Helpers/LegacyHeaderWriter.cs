@@ -8,7 +8,7 @@ namespace TapeLibNET.Tests.Helpers;
 
 /// <summary>
 /// TEST-ONLY writer of legacy (pre-2.1) media and set header frames — the mirror of <c>LegacyHeaderReader</c> and
-///  <c>LegacyFramer</c>. The product writes these headers in format 2.1 only (Design-Format-v2 §7.3).
+///  <c>LegacyFramer</c>. The product writes these headers in format 2.1 only (Design-FormatV21 §7.3).
 /// </summary>
 /// <remarks>
 /// <para>

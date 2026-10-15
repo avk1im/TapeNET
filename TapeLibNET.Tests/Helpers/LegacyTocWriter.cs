@@ -10,7 +10,7 @@ namespace TapeLibNET.Tests.Helpers;
 
 /// <summary>
 /// TEST-ONLY writer of legacy (pre-2.1) TOC records — the mirror of <see cref="LegacyTocReader"/>. Produces the legacy
-///  media the shipping legacy reader is tested against (Design-Format-v2 §7.3: the product reads legacy, never writes it).
+///  media the shipping legacy reader is tested against (Design-FormatV21 §7.3: the product reads legacy, never writes it).
 /// </summary>
 /// <remarks>
 /// <para>

@@ -6,7 +6,7 @@ namespace TapeLibNET.Format;
 
 
 /// <summary>
-/// <c>Record ‖ CRC-64(Record)</c> frames - block and inline (Design-Format-v2 §4.5, §8.1).
+/// <c>Record ‖ CRC-64(Record)</c> frames - block and inline (Design-FormatV21 §4.5, F12).
 /// </summary>
 /// <remarks>
 /// A frame holds exactly one record. The CRC covers prologue + body and is verified BEFORE the record is judged

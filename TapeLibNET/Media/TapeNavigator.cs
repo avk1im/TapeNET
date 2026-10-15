@@ -55,7 +55,6 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     #region *** Properties ***
 
     /// <summary>Default TOC capacity used when no override is specified.</summary>
-    /// <summary>Default TOC capacity used when no override is specified.</summary>
     /// <remarks>
     /// Scales with the media's physical <see cref="TapeDrive.Capacity"/> when known — TOC size
     /// tracks file count, which tracks capacity — clamped to a floor/ceiling. Falls back to
@@ -242,47 +241,6 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
 
             _ => new TapeNavigatorTOCInSetWithFmks(drive),
         };
-    }
-
-    /// <summary>
-    /// Creates the appropriate <see cref="TapeNavigator"/> subclass for the loaded media.
-    /// </summary>
-    /// <param name="drive">The tape drive with loaded media.</param>
-    /// <param name="useTOCMark">
-    /// When <see langword="true"/> (default) and the drive uses sequential filemarks (no setmarks,
-    ///  no initiator partition), a dedicated TOC marker sequence is written to help locate
-    ///  the TOC. Only affects the <see cref="TapeNavigatorTOCInSetWithFmksAndTOCMark"/>
-    ///  vs. <see cref="TapeNavigatorTOCInSetWithFmks"/> choice.
-    /// </param>
-    public static TapeNavigator? ProduceNavigator_OLD(TapeDrive drive, bool useTOCMark = true)
-    {
-        if (!drive.IsMediaLoaded)
-            return null;
-
-        if (drive.HasInitiatorPartition)
-        {
-            var nav = new TapeNavigatorTOCInPartition(drive)
-            {
-                UseSmks = drive.SupportsSetmarks, // use real setmarks by default if the drive supports them
-                // MediaHeaderPresence = TapeHeaderPresence.NotNeeded, // now partitioned media ALSO has header
-            };
-
-            return nav;
-        }
-
-        if (drive.SupportsSetmarks)
-        {
-            TapeNavigatorTOCInSetWithSmks nav = new(drive)
-            {
-                UseSmks = true // real setmarks available — use them by default
-            };
-            return nav;
-        }
-
-        if (drive.SupportsSeqFilemarks && useTOCMark)
-            return new TapeNavigatorTOCInSetWithFmksAndTOCMark(drive);
-
-        return new TapeNavigatorTOCInSetWithFmks(drive);
     }
 
     #endregion // Constructors and factories
@@ -1103,7 +1061,7 @@ public class TapeNavigatorTOCInPartition : TapeNavigator
         if (!forWrite && MediaHeaderPresence == TapeHeaderPresence.Absent)
         {
             LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_STATE;
-            LogErrorAsDebug($"MoveToMediaHeader(forWrite={forWrite}) invalid with MediaHeaderPresence={MediaHeaderPresence}");
+            LogErrorAsDebug($"MoveToBomHeader(forWrite={forWrite}) invalid with MediaHeaderPresence={MediaHeaderPresence}");
             return false;
         }
 

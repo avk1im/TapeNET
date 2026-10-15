@@ -343,7 +343,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     /// <summary>
     /// Restore the files specified by 'tfis' from the current set via the packer.
     ///  Uses <see cref="TapeAddress"/> positioning and the packed read façade.
-    ///  No <see cref="TapeDrive.MoveToBlock"/> is needed here -- thepacker seeks to the file's
+    ///  No <see cref="TapeDrive.MoveToBlock"/> is needed here -- the packer seeks to the file's
     ///  exact <c>(block, offset)</c> on <see cref="TapeStreamManager.BeginPackedFileRead"/> .
     /// </summary>
     /// <param name="tfis">The list of TapeFileInfo objects representing the files to restore.</param>
@@ -604,13 +604,13 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         {
             TOC.CopyFrom(orgTOC); // restore the original TOC
         }
-        // update the volme
+        // update the volume
         TOC.Volume = VolumeToResumeFrom;
         // Ok to proceed with the new volume. Notice: Keep our current TOC, since we're restoring the whole file series using it
 
         return RestoreFilesFromCurrentSetDownInt(null, MultiVolumeContext.Value.ignoreFailures, MultiVolumeContext.Value.fileNotify)
             ? TapeResult.OK : FailedOperationResult;
-    } // ResumeRestoreOnAnotherVolume()
+    } // ResumeRestoreFromAnotherVolume()
 
     private bool RestoreFilesFromCurrentSetDownInt(List<TapeFileInfo>?[]? filesSelected, bool ignoreFailures, ITapeFileNotifiable? fileNotify)
     {

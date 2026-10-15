@@ -1,4 +1,3 @@
-// Save as: TapeLibNET/TapeMediaHeader.cs
 
 using TapeLibNET.Drive;
 using TapeLibNET.Format;
@@ -17,7 +16,7 @@ public enum TapeTocPlacement : byte
     InPartition = 1,
 }
 
-/// <summary>Wire form of the 2.1 media header (record kind <c>MediaHeader</c>, Design-Format-v2 §5.4).</summary>
+/// <summary>Wire form of the 2.1 media header (record kind <c>MediaHeader</c>, Design-FormatV21 §5.4).</summary>
 internal sealed class TapeMediaHeaderWire : TapeHeaderWire
 {
     public int Volume = 1;
@@ -47,7 +46,7 @@ internal sealed class TapeMediaHeaderWire : TapeHeaderWire
 /// An immutable identity projection of the <see cref="TapeTOC"/>: it carries only values that never change once the
 ///  medium is formatted — the series <see cref="MediaId"/>, the immutable per-tape <see cref="Volume"/>, the creation
 ///  time, where the TOC lives (<see cref="TocPlacement"/>), and a creation-time snapshot of the name. Written once at
-///  format (and on a fresh continuation volume), never rewritten — a legacy media header stays legacy (§3.3).
+///  format (and on a fresh continuation volume), never rewritten — a legacy media header stays legacy (F3).
 /// </para>
 /// <para>
 /// The current, user-renameable media name is deliberately NOT stored here — renaming rewrites the TOC, not this
@@ -162,7 +161,7 @@ public sealed record TapeMediaHeader : TapeHeader
 
     #endregion
 
-    #region *** Legacy read — removed in Phase 6 ***
+    #region *** Legacy read ***
 
     // Reads the trailing set-header flag, tolerating its absence on media written before the field
     //  existed. Such a header's frame simply ends here, so the read may return null OR throw,
