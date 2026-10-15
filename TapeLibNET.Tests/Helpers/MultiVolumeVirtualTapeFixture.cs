@@ -178,7 +178,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     ///  written by two builds (Design-FormatV21 §9.3). <see langword="null"/>, or a function returning
     ///  <see langword="null"/>, = the agent's own V2.1 emitter.
     /// </summary>
-    public Func<int, ITapeRecordEmitter?>? EmitterForVolume { get; init; }
+    internal Func<int, ITapeRecordEmitter?>? EmitterForVolume { get; init; }
 
     private ITapeRecordEmitter? EmitterFor(int volumeNumber)
         => EmitterForVolume?.Invoke(volumeNumber);

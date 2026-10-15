@@ -1,5 +1,11 @@
 using Microsoft.Extensions.Logging;
 
+#if !DEBUG
+using System.Diagnostics; // Debugger
+
+using Microsoft.Extensions.Logging.Abstractions; // NullLoggerFactory
+#endif
+
 using TapeConNET.Ux;
 
 namespace TapeConNET.Logging;

@@ -3,6 +3,12 @@ using System.Windows.Media;
 
 using Microsoft.Extensions.Logging;
 
+#if !DEBUG
+using System.Diagnostics; // Debugger
+
+using Microsoft.Extensions.Logging.Abstractions; // NullLoggerFactory
+#endif
+
 using TapeWinNET.Services;
 using TapeWinNET.Utils;
 
