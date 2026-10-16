@@ -21,7 +21,7 @@
     <NoWarn>1701;1702;CS1591;CS1573;CS0419;</NoWarn>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU' Or '$(Configuration)|$(Platform)'=='ReleaseTest|AnyCPU'">
     <NoWarn>1701;1702;CS1591;CS1573;CS0419;</NoWarn>
   </PropertyGroup>
 

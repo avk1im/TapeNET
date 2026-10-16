@@ -361,7 +361,7 @@ public partial class TapeDriveWin32Backend
         eom = false;
         tapemark = false;
 
-#if DEBUG
+#if TEST_HOOKS
         if (SimulateIOFailures.ShouldFailNow())
         {
             SetError(WIN32_ERROR.ERROR_IO_DEVICE);

@@ -266,7 +266,7 @@ public class TapeSetHeaderCorrectionTests
             using var agent = fixture.CreateValidateAgent();
 
             // ADAPT: a persistent fault needs the simulator to survive the correction. If the production
-            //  knob stays one-shot, expose a DEBUG-only `SimulateSetMiscountPersistent` alongside it, or
+            //  knob stays one-shot, expose a TEST_HOOKS-only `SimulateSetMiscountPersistent` alongside it, or
             //  set the one-shot knob twice via the navigator's post-move hook. The assertion below is
             //  what matters and is independent of the mechanism.
             agent.Navigator.SimulateSetMiscount = +1;

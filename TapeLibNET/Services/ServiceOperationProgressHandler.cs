@@ -108,7 +108,7 @@ public abstract class ServiceOperationProgressHandler(
         _host.Report(ServiceReportLevel.Info,
             $"Set #{setIndex} | {toc.SetIndexToAlt(setIndex)}: starting {_operationName.ToLowerInvariant()}...");
         ReportProgress(stats);
-#if DEBUG
+#if TEST_HOOKS
         // Agent.SimulateFileFailures.Enabled = true; // Enable simulation of file failures for testing purposes here
 #endif
     }

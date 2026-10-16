@@ -1,9 +1,11 @@
+#if TEST_HOOKS
 using Windows.Win32.Foundation;
+#endif
 
 namespace TapeLibNET.Virtual;
 
 
-#if DEBUG
+#if TEST_HOOKS
 
 /// <summary>
 /// How an injected fault manifests at the medium.
@@ -61,7 +63,7 @@ public enum VirtualFaultMode
 /// <para>
 /// Mirrors the established <c>FailureSimulator</c> / <c>SimulateTOCFailureMask</c> pattern: instance-level
 ///  (so parallel tests never interfere), <c>Enabled</c>/<c>EveryNth</c>/<c>Counter</c> shaped, and
-///  <c>#if DEBUG</c>-only so it can never reach Release.
+///  <c>#if TEST_HOOKS</c>-only so it can never reach Release.
 /// </para>
 /// <para>
 /// Owned by <see cref="VirtualTapeDriveBackend"/> and shared BY REFERENCE with the medium, so settings
@@ -323,4 +325,4 @@ public sealed class VirtualMediaFaultInjector
     }
 }
 
-#endif // DEBUG
+#endif // TEST_HOOKS

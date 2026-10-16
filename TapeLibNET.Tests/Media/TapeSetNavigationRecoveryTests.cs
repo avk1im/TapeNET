@@ -113,7 +113,7 @@ public class TapeSetNavigationRecoveryTests
         }
     }
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// Layout-aware tail damage. Produces a cartridge whose own end-anchored counting primitive lands on
     ///  the WRONG set — which is a different physical fault on each layout, though the same logical one.
@@ -159,7 +159,7 @@ public class TapeSetNavigationRecoveryTests
 
     #region *** (A) The originating scenario ***
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// The feature's reason for existing, end to end: a cartridge whose tail was left mis-shapen by a
     ///  failed backup is brought back to a sound state by a delete that would previously have refused.
@@ -260,13 +260,13 @@ public class TapeSetNavigationRecoveryTests
             TryDeleteDirectory(restoreDir);
         }
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 
     #region *** (B) The recovery works for the RIGHT reason ***
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// SH-19, directly. Drives stage 1 to the case that does NOT self-reset — the delta MOVED
     ///  successfully but the re-verify still disagreed — then asserts that stage 2 performed real
@@ -441,13 +441,13 @@ public class TapeSetNavigationRecoveryTests
             DisposeAll(trees);
         }
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 
     #region *** (C) The terminal split, and the decision ***
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// <c>Unreadable</c> renavigates on BOTH paths — it is that verdict's only recovery — and only then
     ///  splits: the read proceeds unverified, the destructive write blocks.
@@ -588,7 +588,7 @@ public class TapeSetNavigationRecoveryTests
             DisposeAll(trees);
         }
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 
@@ -631,7 +631,7 @@ public class TapeSetNavigationRecoveryTests
         }
     }
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// A recovered operation leaves the agent sound: the next set, with no fault injected, proceeds
     ///  normally and reports clean.
@@ -667,7 +667,7 @@ public class TapeSetNavigationRecoveryTests
             DisposeAll(trees);
         }
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 
@@ -687,7 +687,7 @@ public class TapeSetNavigationRecoveryTests
     //   demand more marks than exist, which is precisely what a missing trailing mark does, and it works
     //   identically on every layout.
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// The feature: a backward count that fails outright is retried forward from begin-of-content, and
     ///  the set is reached after all.
@@ -1040,7 +1040,7 @@ public class TapeSetNavigationRecoveryTests
             TryDeleteDirectory(restoreDir);
         }
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 

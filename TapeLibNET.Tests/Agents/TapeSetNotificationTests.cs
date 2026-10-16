@@ -97,7 +97,7 @@ public class TapeSetNotificationTests
 
     #region *** (A) The payload ***
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// A prompt that cannot name the sets is not a prompt. The payload must carry BOTH descriptions —
     ///  what the TOC believes stands here, and what the tape actually says — plus the indices that make
@@ -192,13 +192,13 @@ public class TapeSetNotificationTests
             DisposeAll(trees);
         }
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 
     #region *** (B) The answer, and the abort channels ***
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// A blocked set reports the ANOMALY, not the cancellation. The user pressed abort and knows it;
     ///  what they need from the result is what provoked the prompt.
@@ -346,7 +346,7 @@ public class TapeSetNotificationTests
             DisposeAll(trees);
         }
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 
@@ -446,7 +446,7 @@ public class TapeSetNotificationTests
 
     //  What Step 6 will put in front of the user. A wrong count here becomes a wrong summary there.
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// A blocked destructive write records exactly one anomaly, sets the blocked flag, and does NOT
     ///  count the set as a success.
@@ -665,7 +665,7 @@ public class TapeSetNotificationTests
             DisposeAll(trees);
         }
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 }

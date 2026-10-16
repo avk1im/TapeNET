@@ -1,4 +1,4 @@
-﻿#if DEBUG
+﻿#if TEST_HOOKS
 
 using Xunit.Abstractions;
 

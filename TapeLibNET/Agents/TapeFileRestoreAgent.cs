@@ -194,7 +194,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             CheckFileHeader(rstream, setTOC, tfi);
             TapeFileCodec codec = ReadBodyCodec(rstream, setTOC, tfi);
 
-#if DEBUG
+#if TEST_HOOKS
             if (SimulateFileFailures.ShouldFailNow())
             {
                 throw new TapeIOException((uint)WIN32_ERROR.ERROR_UNHANDLED_EXCEPTION,

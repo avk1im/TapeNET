@@ -116,7 +116,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     /// </remarks>
     public bool IsAbortRequested { get; set; }
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// Simulates file operation failures for testing error handling.
     /// Instance-level so concurrent agents (or parallel tests) don't interfere.
@@ -345,7 +345,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
             if (wstream == null)
                 return false;
 
-#if DEBUG
+#if TEST_HOOKS
             // Simulate TOC copy failure based on bitmask
             if (SimulateTOCFailureMask != 0 && (SimulateTOCFailureMask & (1 << _tocCopyCounter++)) != 0)
                 throw new IOException("Simulated TOC backup failure");
@@ -395,7 +395,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
         //  Both TOC copies serialize the same value, since we mint into the in-memory TOC here.
         TOC.EnsureMediaId();
 
-#if DEBUG
+#if TEST_HOOKS
         _tocCopyCounter = 0;
 #endif
 
@@ -524,7 +524,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
                 return false;
             }
 
-#if DEBUG
+#if TEST_HOOKS
             // Simulate TOC copy failure based on bitmask
             if (SimulateTOCFailureMask != 0 && (SimulateTOCFailureMask & (1 << _tocCopyCounter++)) != 0)
                 throw new IOException("Simulated TOC restore failure");
@@ -579,7 +579,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     {
         ResetLatchedFailure();
 
-#if DEBUG
+#if TEST_HOOKS
         _tocCopyCounter = 0;
 #endif
         // Since TOC is stored twice, if the first attempt fails, try again
@@ -693,7 +693,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     public TapeResult RestoreTOCAt(long block, MediaPartition partition = MediaPartition.Current)
     {
         ResetLatchedFailure();
-#if DEBUG
+#if TEST_HOOKS
         _tocCopyCounter = 0;
 #endif
         m_logger.LogTrace("Restoring TOC from the copy at block {Block} of the {Partition} partition", block, partition);

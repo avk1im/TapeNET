@@ -1,11 +1,13 @@
+#if TEST_HOOKS
 using Windows.Win32.Foundation;
+#endif
 
 namespace TapeLibNET.Virtual;
 
 
 public partial class VirtualTapeDriveBackend
 {
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// Block-level write faults injected into the CONTENT medium. Owned here rather than by the medium so
     ///  the settings survive <see cref="LoadMedia"/>, which builds a fresh medium on every load and every

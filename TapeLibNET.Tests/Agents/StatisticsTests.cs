@@ -259,7 +259,7 @@ public class StatisticsTests
 
     #region *** Simulated Failures ***
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// Enables <see cref="TapeAgentBase.SimulateFileFailures"/> so that every Nth file
     /// throws during backup. Asserts that <c>FilesFailed</c> increments and the

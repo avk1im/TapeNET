@@ -1842,12 +1842,14 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
     #endregion // TOC operations
 
-    #region Test and Debug mechanisms
-    // ── Test and Debug mechanisms ───────────────────────────────────────────
+#region Test and Debug mechanisms
+// ── Test and Debug mechanisms ───────────────────────────────────────────
 
+#if TEST_HOOKS
     internal VirtualTapeDriveBackend? VirtualBackend => _drive?.Backend as VirtualTapeDriveBackend;
+#endif
 
-    #endregion
+#endregion
 
 }
 

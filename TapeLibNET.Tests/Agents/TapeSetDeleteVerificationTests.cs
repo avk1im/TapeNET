@@ -124,7 +124,7 @@ public class TapeSetDeleteVerificationTests
 
     #region *** (A) The trailing branch ***
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// The originating scenario in miniature: navigation to the set to delete typically counts BACKWARD
     ///  from end-of-content, across the very region a failed backup would have damaged. A miscount there
@@ -225,7 +225,7 @@ public class TapeSetDeleteVerificationTests
             DisposeAll(trees);
         }
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     /// <summary>
     /// The happy path must stay exactly as it was: the named sets go, the retained ones restore
@@ -295,7 +295,7 @@ public class TapeSetDeleteVerificationTests
         }
     }
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// The opt-out disables the CHECK, not a prompt — which is exactly why it exists. Repairing a
     ///  cartridge whose set headers are themselves damaged needs the delete to proceed at a position the
@@ -330,7 +330,7 @@ public class TapeSetDeleteVerificationTests
             DisposeAll(trees);
         }
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 
@@ -383,7 +383,7 @@ public class TapeSetDeleteVerificationTests
         }
     }
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// The branch that must never write a TOC over the media header. If the block at begin-of-content
     ///  cannot be confirmed as this volume's first set header, the head's position is not established —
@@ -427,7 +427,7 @@ public class TapeSetDeleteVerificationTests
             DisposeAll(trees);
         }
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 }

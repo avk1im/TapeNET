@@ -1,8 +1,8 @@
-#if DEBUG
+#if TEST_HOOKS
 namespace TapeLibNET;
 
 /// <summary>
-/// Reusable DEBUG-only failure simulator. Tracks a call counter and triggers a
+/// Reusable TEST_HOOKS-only failure simulator. Tracks a call counter and triggers a
 /// simulated failure every <see cref="EveryNth"/> invocation when <see cref="Enabled"/>.
 /// <para>
 /// Shared across agent-level (file backup/restore) and backend-level (I/O, timeout)

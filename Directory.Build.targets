@@ -10,4 +10,17 @@
   <Import Project="$(MSBuildThisFileDirectory)tools\CheckTestFiles.targets"
           Condition="'$(IsTestProject)' == 'true' And Exists('$(MSBuildThisFileDirectory)tools\CheckTestFiles.targets')" />
 
+  <!--
+    Test projects are NOT built in the shipping Release configuration: they need the TEST_HOOKS constant,
+    which only Debug and ReleaseTest define. Replacing the Build pipeline (instead of just the solution
+    mapping) also covers `dotnet build <test project> -c Release`.
+  -->
+  <PropertyGroup Condition="'$(IsTestProject)' == 'true' And '$(Configuration)' == 'Release'">
+    <BuildDependsOn>_SkipTestProjectInRelease</BuildDependsOn>
+  </PropertyGroup>
+
+  <Target Name="_SkipTestProjectInRelease">
+    <Message Importance="high" Text="Skipping test project $(MSBuildProjectName): test projects are built only in Debug and ReleaseTest." />
+  </Target>
+
 </Project>

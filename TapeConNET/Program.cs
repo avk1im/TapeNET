@@ -15,7 +15,7 @@ try
 
     using var cancellation = new CancellationHooks();
 
-    IConsoleUx ux = new SpectreConsoleUx();
+    var ux = new SpectreConsoleUx();
 
     // Pre-scan args for --quiet / --no-color so the banner and any startup
     //  diagnostics already honor them. System.CommandLine will also bind these

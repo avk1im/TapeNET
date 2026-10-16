@@ -357,7 +357,7 @@ public class TapeSetHeaderBlockIoTests
     //  Step 3a addendum to TapeSetHeaderBlockIoTests.cs
     // ═══════════════════════════════════════════════════════════════════════════
 
-#if DEBUG
+#if TEST_HOOKS
 
     /// <summary>
     /// SH-6 against a GENUINE torn write — the case the size-rejection test can only approximate. Bytes
@@ -503,7 +503,7 @@ public class TapeSetHeaderBlockIoTests
         Assert.IsType<TapeSetHeader>(TapeHeaderBlock.Classify(buffer, TapeHeaderBlock.Size));
     }
 
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 
@@ -708,7 +708,7 @@ public class TapeSetHeaderBlockIoTests
         Assert.Equal(TapeHeaderBlock.Size, agent.Manager.ReadSetHeaderBlock(new byte[TapeHeaderBlock.Size]));
     }
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// §8.3's <c>finally</c>, which is the property this whole design leans on and the one that only
     ///  shows up on the failure path. A faulted read must still restore the drive's block size —
@@ -738,7 +738,7 @@ public class TapeSetHeaderBlockIoTests
         Assert.Equal(before, fixture.Drive.BlockSize);                       // the finally did its job
         Assert.Equal(TapeNavigator.UnknownSet, agent.Navigator.CurrentContentSet);   // SH-6 still applies
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 }

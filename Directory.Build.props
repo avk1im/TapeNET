@@ -1,0 +1,36 @@
+<!--
+  Solution-wide MSBuild properties, imported automatically by every project below this folder.
+
+  Configurations:
+	Debug       DEBUG + TEST_HOOKS, unoptimized  - development
+	ReleaseTest TEST_HOOKS only, optimized       - CI and automated tests, near-shipping
+	Release     neither, optimized               - shipping; test projects are NOT built (see TapeNET.sln)
+
+  TEST_HOOKS guards fault injection, error simulation and test-only state exposure; DEBUG is reserved for
+  genuine debugging aids. TRACE is left at the SDK default in every configuration.
+-->
+<Project>
+
+  <!-- \Tools\ CLI projects (tools\*, HelpNET\Tools\*) keep the existing Debug and Release configurations only -->
+  <PropertyGroup>
+	<_RelProjectPath>\$([MSBuild]::MakeRelative('$(MSBuildThisFileDirectory)', '$(MSBuildProjectFullPath)'))</_RelProjectPath>
+	<IsToolsCliProject Condition="$(_RelProjectPath.ToLowerInvariant().Contains('\tools\'))">true</IsToolsCliProject>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(IsToolsCliProject)' != 'true'">
+	<Configurations>Debug;Release;ReleaseTest</Configurations>
+  </PropertyGroup>
+
+  <!-- Appends to (never replaces) the SDK-provided constants. An empty Configuration means the SDK default, Debug. -->
+  <PropertyGroup Condition="'$(Configuration)' == '' Or '$(Configuration)' == 'Debug' Or '$(Configuration)' == 'ReleaseTest'">
+	<DefineConstants>$(DefineConstants);TEST_HOOKS</DefineConstants>
+  </PropertyGroup>
+
+  <!-- ReleaseTest: near-shipping optimized build; portable PDBs keep line numbers in CI stack traces -->
+  <PropertyGroup Condition="'$(Configuration)' == 'ReleaseTest'">
+	<Optimize>true</Optimize>
+	<DebugType>portable</DebugType>
+	<DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+
+</Project>

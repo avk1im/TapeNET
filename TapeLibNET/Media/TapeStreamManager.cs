@@ -1455,7 +1455,9 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         return m_packer.EndFile();
     }
 
-    internal TapeFileWritePacker? WritePacker_FORTESTINGONLY => m_packer;
+    #if TEST_HOOKS
+        internal TapeFileWritePacker? WritePacker_FORTESTINGONLY => m_packer;
+    #endif
 
     #endregion // Packer-backed content writing (Phase 2)
 
@@ -1608,7 +1610,9 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         m_readPacker?.EndRead();
     }
 
-    internal TapeFilePipelinedReader? ReadPacker_FORTESTINGONLY => m_readPacker;
+    #if TEST_HOOKS
+        internal TapeFilePipelinedReader? ReadPacker_FORTESTINGONLY => m_readPacker;
+    #endif
 
     #endregion // Packer-backed content reading (Phase 2 Step E)
 

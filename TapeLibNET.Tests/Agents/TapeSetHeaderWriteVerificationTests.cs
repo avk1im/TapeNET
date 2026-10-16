@@ -308,7 +308,7 @@ public class TapeSetHeaderWriteVerificationTests
         }
     }
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// The inverted golden rule (§4.3): on the write side an unclassifiable block at the set start is
     ///  the miscount's signature, not a lost safety net — so it BLOCKS, where the read path proceeds.
@@ -344,7 +344,7 @@ public class TapeSetHeaderWriteVerificationTests
             DisposeAll(trees);
         }
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 
@@ -399,7 +399,7 @@ public class TapeSetHeaderWriteVerificationTests
         }
     }
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// §3's performance claim, asserted rather than assumed: appending at end-of-data reads NOTHING.
     ///  There is no predecessor record where the append will write, so verification must not arm — and
@@ -432,7 +432,7 @@ public class TapeSetHeaderWriteVerificationTests
             DisposeAll(trees);
         }
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     /// <summary>
     /// SH-1's write-side half: a legacy volume declares no set headers, so there is nothing to verify

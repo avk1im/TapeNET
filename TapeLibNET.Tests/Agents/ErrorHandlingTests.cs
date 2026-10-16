@@ -15,7 +15,7 @@ namespace TapeLibNET.Tests.Agents;
 /// copy resilience mechanism.
 /// <para>
 /// All tests that use <c>SimulateFileFailures</c> or <c>SimulateTOCFailureMask</c>
-/// are <c>#if DEBUG</c>-only because those fields exist only in Debug builds.
+/// are <c>#if TEST_HOOKS</c>-only because those fields exist only in Debug and ReleaseTest builds.
 /// </para>
 /// </summary>
 public class ErrorHandlingTests
@@ -150,7 +150,7 @@ public class ErrorHandlingTests
 
     #region *** (A) Backup IO Failure — Skip / Retry / Abort ***
 
-#if DEBUG
+#if TEST_HOOKS
 
     /// <summary>
     /// Simulates file backup failures with <see cref="FileFailedAction.Skip"/>.
@@ -480,13 +480,13 @@ public class ErrorHandlingTests
         }
     }
 
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 
     #region *** (B) Backup Empty Set — All Files Fail / All Files Skipped ***
 
-#if DEBUG
+#if TEST_HOOKS
 
     /// <summary>
     /// When all files in a backup set fail, the set ends up empty.
@@ -520,7 +520,7 @@ public class ErrorHandlingTests
         Assert.True(fixture.TOC.RemoveLastEmptySet(), "Empty set should be removable");
     }
 
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     /// <summary>
     /// When all files are skipped via <see cref="TestNotifiable.FilesToSkip"/>,
@@ -692,7 +692,7 @@ public class ErrorHandlingTests
 
     #region *** (D) Restore IO Failure — Skip / Retry / Abort ***
 
-#if DEBUG
+#if TEST_HOOKS
 
     /// <summary>
     /// Backs up files cleanly, then simulates restore failures with Skip.
@@ -847,7 +847,7 @@ public class ErrorHandlingTests
         }
     }
 
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 
@@ -901,7 +901,7 @@ public class ErrorHandlingTests
 
     #region *** (F) TOC Dual-Copy Backup Resilience ***
 
-#if DEBUG
+#if TEST_HOOKS
 
     /// <summary>
     /// When the 1st TOC copy fails but the 2nd succeeds, <see cref="TapeAgentBase.BackupTOC"/>
@@ -964,13 +964,13 @@ public class ErrorHandlingTests
         Assert.False(tocWriteOk, "BackupTOC should fail when both copies fail");
     }
 
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 
     #region *** (G) TOC Dual-Copy Restore Resilience ***
 
-#if DEBUG
+#if TEST_HOOKS
 
     /// <summary>
     /// Writes a valid dual TOC, then simulates the 1st copy failing during restore.
@@ -1024,7 +1024,7 @@ public class ErrorHandlingTests
         Assert.False(tocReadOk, "RestoreTOC should fail when all copies fail");
     }
 
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 
@@ -1039,7 +1039,7 @@ public class ErrorHandlingTests
 
     #region *** (H) Failure diagnosis survives the operation ***
 
-#if DEBUG
+#if TEST_HOOKS
 
     /// <summary>
     /// The core latch property: a failure on an early file must still be reported after LATER files
@@ -1271,13 +1271,13 @@ public class ErrorHandlingTests
             "a total TOC failure must explain itself");
     }
 
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 
     #region *** (I) Medium-level faults — the injector as a real drive error ***
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// A genuine drive-level write fault, injected below the agent. Unlike <c>SimulateFileFailures</c>
     ///  — which fabricates an exception inside the agent — this is an error the MEDIUM produces, so it
@@ -1466,7 +1466,7 @@ public class ErrorHandlingTests
         Assert.True(stats.FilesFailed >= 1, "at least the corrupted file must fail");
     }
 
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 
@@ -1607,7 +1607,7 @@ public class ErrorHandlingTests
                 // The only callback with a return value — NotifyFileFailed maps Abort onto the flag.
                 //  Needs a failure to respond to, hence the simulator.
                 notifiable.FailedAction = FileFailedAction.Abort;
-#if DEBUG
+#if TEST_HOOKS
                 agent.SimulateFileFailures.Enabled = true;
                 agent.SimulateFileFailures.EveryNth = abortAfter;
 #endif
@@ -1695,7 +1695,7 @@ public class ErrorHandlingTests
 
                 case AbortChannel.FailedAction:
                     notifiable.FailedAction = FileFailedAction.Abort;
-#if DEBUG
+#if TEST_HOOKS
                     agent.SimulateFileFailures.Enabled = true;
                     agent.SimulateFileFailures.EveryNth = abortAfter;
 #endif
@@ -1759,7 +1759,7 @@ public class ErrorHandlingTests
                 break;
             case AbortChannel.FailedAction:
                 notifiable.FailedAction = FileFailedAction.Abort;
-#if DEBUG
+#if TEST_HOOKS
                 agent.SimulateFileFailures.Enabled = true;
                 agent.SimulateFileFailures.EveryNth = 2;
 #endif
@@ -1791,7 +1791,7 @@ public class ErrorHandlingTests
     [MemberData(nameof(AllProfiles))]
     public void Abort_AfterAGenuineFailure_ReportsTheFailureNotTheAbort(DriveProfile profile)
     {
-#if DEBUG
+#if TEST_HOOKS
         using var tree = new TempFileTree();
         tree.AddFiles("abortlatch", count: 10, minSize: 512, maxSize: 4 * 1024);
 

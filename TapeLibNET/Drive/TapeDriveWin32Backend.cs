@@ -83,7 +83,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
 
     #endregion
 
-#if DEBUG
+#if TEST_HOOKS
     #region *** Failure Simulation ***
 
     /// <summary>
@@ -505,7 +505,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         tapemark = false;
         eof = false;
 
-#if DEBUG
+#if TEST_HOOKS
         if (SimulateIOFailures.ShouldFailNow())
         {
             SetError(WIN32_ERROR.ERROR_IO_DEVICE);
@@ -571,7 +571,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
         ew = false;
         eom = false;
 
-#if DEBUG
+#if TEST_HOOKS
         if (SimulateIOFailures.ShouldFailNow())
         {
             SetError(WIN32_ERROR.ERROR_IO_DEVICE);
@@ -940,7 +940,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
     /// </summary>
     private bool PollForCompletion()
     {
-#if DEBUG
+#if TEST_HOOKS
         if (SimulateTimeoutFailures.ShouldFailNow())
         {
             SetError(Helpers.WIN32_ERROR_WAIT_TIMEOUT);

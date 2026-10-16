@@ -1,3 +1,4 @@
+#if TEST_HOOKS
 using Microsoft.Extensions.Logging;
 
 namespace TapeLibNET.Virtual;
@@ -389,12 +390,13 @@ public partial class VirtualTapeMedia
     #endregion
 
 
-    #region *** Fault Injection (DEBUG) ***
+    #region *** Fault Injection (TEST_HOOKS) ***
 
-#if DEBUG
+#if TEST_HOOKS // Redundant since the whole file is under TEST_HOOKS, but harmless.
+               //  Keeping uniform with other fault injection sites.
 
     /// <summary>
-    /// Optional block-level fault injectors, owned by <see cref="VirtualTapeDriveBackend"/> and shared by
+    /// Block-level fault injectors, owned by <see cref="VirtualTapeDriveBackend"/> and shared by
     ///  reference so settings survive media reload. Null when nothing is injected.
     /// </summary>
     internal VirtualMediaFaultInjector? WriteFaults { get; set; }
@@ -709,3 +711,4 @@ public partial class VirtualTapeMedia
     #endregion
 
 }
+#endif

@@ -571,7 +571,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             // The per-file header (2.1 frame, or the 12-byte legacy header) — excluded from the hash.
             RecordEmitter.WriteFileHeader(wstream, setTOC, template);
 
-#if DEBUG
+#if TEST_HOOKS
             if (SimulateFileFailures.ShouldFailNow())
             {
                 m_logger.LogWarning("SIMULATED failure for file #{Counter} >{File}<",

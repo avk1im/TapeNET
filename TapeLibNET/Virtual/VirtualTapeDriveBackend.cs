@@ -604,7 +604,7 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
         // Apply the configured early-warning emulation profile to the (re)loaded content media.
         ApplyEwProfileToMedia();
 
-#if DEBUG
+#if TEST_HOOKS
         // Re-wire the block-level fault injectors, since the medium object is new.
         ApplyFaultInjectorsToMedia();
 #endif
@@ -960,7 +960,7 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
                 name: NameFromStream(m_initiatorStream),
                 loggerFactory: LoggerFactory);
 
-#if DEBUG
+#if TEST_HOOKS
             ApplyFaultInjectorsToMedia();   // the fresh initiator medium needs its injectors too
 #endif
         }

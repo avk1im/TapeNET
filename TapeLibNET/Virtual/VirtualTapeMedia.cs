@@ -459,7 +459,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
                 return 0;
         }
 
-#if DEBUG
+#if TEST_HOOKS
         // Evaluated AFTER validation, truncation and the capacity check, so an injected fault models a
         //  genuine MEDIUM fault rather than a rejected request — and so the caller meets exactly the
         //  error path a real drive would produce. Note the truncation has already happened by here: a
@@ -626,7 +626,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
             return 0;
         }
 
-#if DEBUG
+#if TEST_HOOKS
         // After the EOD check, so an injected read fault is a MEDIUM fault, never a disguised EOD.
         if (ReadFaults is { } rf && rf.ShouldInjectNow())
             return ApplyInjectedReadFault(rf, buffer, offset, count);

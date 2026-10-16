@@ -622,7 +622,7 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
 
         ResetError();
 
-#if DEBUG
+#if TEST_HOOKS
         // Simulate failures for testing error handling
         if (SimulateNavigationFailures.ShouldFailNow())
         {
@@ -857,12 +857,12 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
 
         int physical = count;
 
-#if DEBUG
-        physical += TakeSimulatedMiscount(); // DEBUG: simulate a miscount offset injected by a test
+#if TEST_HOOKS
+        physical += TakeSimulatedMiscount(); // TEST_HOOKS: simulate a miscount offset injected by a test
 
         if (physical == 0)
         {
-            // DEBUG: The injected offset cancelled the move exactly. Skip the transport op,
+            // TEST_HOOKS: The injected offset cancelled the move exactly. Skip the transport op,
             //  but still record the believed arrival, which is the whole point of the simulation.
             ResetError();
         }
@@ -874,7 +874,7 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
             Drive.MoveToNextFilemark(physical);
 
         if (WentOK && !CurrentContentSetIsSentinel)
-            CurrentContentSet += count;   // DEBUG: the LIE: the navigator believes it moved by `count`
+            CurrentContentSet += count;   // TEST_HOOKS: the LIE: the navigator believes it moved by `count`
 
         if (WentOK)
             m_logger.LogTrace("Drive #{Drive}: Moved by {Count} content setmarks -> CurrentContentSet = {Set}",
@@ -936,7 +936,7 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
 
     #region Error simulation
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// Offset injected into the NEXT content-set positioning, so the navigator lands this many sets away
     ///  from its target while still believing it arrived. Drives the set-header drift tests.
@@ -949,7 +949,7 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     /// </para>
     /// <para>
     /// Instance-level, like <c>SimulateFileFailures</c> and <c>SimulateTOCFailureMask</c>, so parallel
-    ///  tests never interfere. <c>#if DEBUG</c> so it can never reach Release (§15.4).
+    ///  tests never interfere. <c>#if TEST_HOOKS</c> so it can never reach Release (§15.4).
     /// </para>
     /// </remarks>
     public int SimulateSetMiscount { get; set; } = 0;
@@ -1251,7 +1251,7 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
 
         ResetError();
 
-#if DEBUG
+#if TEST_HOOKS
         // Simulate failures for testing error handling
         if (SimulateNavigationFailures.ShouldFailNow())
         {
@@ -1281,16 +1281,16 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
             //  Unknown presence is treated as Absent — the legacy-safe default used everywhere (INV-3).
             int filemarks = TargetContentSet
                 + (MediaHeaderPresence == TapeHeaderPresence.Present ? 1 : 0);
-#if DEBUG
+#if TEST_HOOKS
             // For error simulation, we need a separate treatment here since we skip the base
-            filemarks += TakeSimulatedMiscount(); // DEBUG: simulate a miscount offset injected by a test
+            filemarks += TakeSimulatedMiscount(); // TEST_HOOKS: simulate a miscount offset injected by a test
 #endif
 
             if (WentOK && filemarks > 0)
                 Drive.MoveToNextFilemark(filemarks);
 
             if (WentOK)
-                CurrentContentSet = TargetContentSet; // DEBUG: the LIE: the navigator believes it moved by `filemarks`
+                CurrentContentSet = TargetContentSet; // TEST_HOOKS: the LIE: the navigator believes it moved by `filemarks`
             else
                 ResetContentSet();   // position uncertain
 
@@ -1386,7 +1386,7 @@ public class TapeNavigatorTOCInSetWithSmks : TapeNavigatorTOCInSet
 
         ResetError();
 
-#if DEBUG
+#if TEST_HOOKS
         // Simulate failures for testing error handling
         if (SimulateNavigationFailures.ShouldFailNow())
         {

@@ -7,7 +7,7 @@ using TapeLibNET.Tests.Helpers;
 namespace TapeLibNET.Tests.Virtual;
 
 
-#if DEBUG
+#if TEST_HOOKS
 
 /// <summary>
 /// Proves the block-level fault injector itself, independently of any feature that uses it.
@@ -678,4 +678,4 @@ public class VirtualMediaFaultInjectionTests
     #endregion
 }
 
-#endif // DEBUG
+#endif // TEST_HOOKS
