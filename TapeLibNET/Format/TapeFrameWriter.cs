@@ -62,10 +62,14 @@ public sealed class TapeFrameWriter : IDisposable
     /// <remarks>
     /// A record whose writer throws (e.g. its validate hook) is abandoned by <see cref="TapeRecordWriter"/> and leaves the
     ///  scratch empty; the next call starts clean (F13).
-    /// <patra>
+    /// <para>
     /// The CRC goes through the STATIC <see cref="Crc64.Hash(ReadOnlySpan{byte}, Span{byte})"/> into a stack buffer —
     ///  never <see cref="TapeFrame.ComputeCrc"/>, which allocates a hasher and an 8-byte array (64 B per frame).
-    /// </patra>
+    /// </para>
+    /// <para>
+    /// <see cref="Crc64.Hash(ReadOnlySpan{byte}, Span{byte})"/> proved to allocate 64 bytes per call in its internal
+    ///  implementation. We live with it rather than risking an own, potentially divergent, CRC64 implementation.
+    /// </para>
     /// </remarks>
     private int Build<T>(T record) where T : ITapeRecord<T>
     {

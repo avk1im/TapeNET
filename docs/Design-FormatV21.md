@@ -571,16 +571,16 @@ private static readonly TapeSchema<Wire> s_schema = new(TapeRecordKind.TocSet, v
 
 ### 7.5 The record emitter
 
-```csharp
-internal ITapeRecordEmitter RecordEmitter { get; set; } = TapeRecordEmitter21.Instance;   // TapeAgentBase
-```
-
 `ITapeRecordEmitter` is the one place an agent turns a record into bytes: `DataFormat`, `WritesCodecPrefix`,
 `WriteFileHeader`, `WriteToc`, `FrameHeaderBlock`. Positions, marks, packing and volume handling stay with the
 navigator and the packer. The product's emitter writes 2.1; the test project plugs in a legacy emitter (§8.4) — the
 seam exists for that alone.
 
-`RecordEmitter` defaults to the agent's own `TapeRecordEmitter21`, created and disposed with the agent; it owns a `TapeFrameWriter` and one file-header wire object, so writing a file header allocates nothing. Setting null returns to it; a borrowed emitter is never disposed.
+`RecordEmitter` defaults to the agent's own `TapeRecordEmitter21`, created and disposed with the agent; it owns
+a `TapeFrameWriter` and one file-header wire object, so writing a file header allocates nothing. (Using the standard
+`Crc64` hash computing methods proved to allocate 64 bytes per call. Decision is to live with it rather than creating
+an own CRC64 implementation and risking divergence from the standard one.) Setting null returns to it; a borrowed
+emitter is never disposed.
 
 - `TapeFileBackupAgent.EnsureSetFormat` stamps a set with the emitter's format before its first file (F4), mints a
   SetId for V2 / clears it for legacy, and refuses software compression without a codec prefix (a legacy body has no

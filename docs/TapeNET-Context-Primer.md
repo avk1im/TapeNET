@@ -415,7 +415,7 @@ both. The legacy writers live in the test project only; through the agents' `ITa
 real agents write genuine legacy tapes for tests.
 
 **Frozen both ways.** Legacy records and the Phase 0 legacy virtual images are pinned by goldens in
-`TapeLibNET.Tests/Golden/Legacy/`; the 2.1 records by ten cases in `Golden/V21/`, read forever and checked against the
+`TapeLibNET.Tests/Golden/Legacy/`; the 2.1 records by 11 cases in `Golden/V21/`, read forever and checked against the
 writer byte for byte (`FormatGoldenV21Tests`). The 2.1 goldens are frozen at the 2.1 release; encryption adds its own
 cases.
 
