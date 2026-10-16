@@ -1,8 +1,15 @@
-﻿#if DEBUG
-using TapeLibNET.Tests.Helpers;
+﻿#if TEST_HOOKS
+
 using Xunit.Abstractions;
 
+using TapeLibNET.Drive;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
+
+using TapeLibNET.Tests.Helpers;
+
 namespace TapeLibNET.Tests.Physical;
+
 
 /// <summary>
 /// Layer 4 — ErrorException resilience tests on physical hardware.

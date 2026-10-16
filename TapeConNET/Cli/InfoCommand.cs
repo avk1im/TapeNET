@@ -1,10 +1,10 @@
 using System.CommandLine;
-
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
 using TapeLibNET.Services;
 
 namespace TapeConNET.Cli;
+
 
 /// <summary>
 /// <c>tapecon info</c> — opens the selected drive and prints information at the

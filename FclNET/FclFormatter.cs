@@ -4,6 +4,7 @@ using FclNET.Ast;
 
 namespace FclNET;
 
+
 /// <summary>
 /// Controls how <see cref="FclFormatter"/> renders an FCL expression tree
 /// back to source text.

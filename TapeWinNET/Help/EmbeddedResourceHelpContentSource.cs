@@ -7,6 +7,7 @@ using HelpNET.Content;
 
 namespace TapeWinNET.Help;
 
+
 /// <summary>
 /// <see cref="IHelpContentSource"/> that reads help documents from embedded
 /// resources in the TapeWinNET assembly under the logical path prefix
@@ -139,7 +140,7 @@ public sealed class EmbeddedResourceHelpContentSource : IHelpContentSource
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Converts a bare resource suffix (after the <see cref="ResourcePrefix"/>) to a
+    /// Converts a bare resource suffix (after the <c>ResourcePrefix</c>) to a
     /// human-readable logical path.  The SDK replaces path separators with dots and
     /// hyphens in filenames with underscores, so we reverse that transformation.
     /// </summary>

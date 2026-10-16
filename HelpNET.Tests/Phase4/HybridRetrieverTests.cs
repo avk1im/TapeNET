@@ -5,6 +5,7 @@ using Xunit;
 
 namespace HelpNET.Tests.Phase4;
 
+
 /// <summary>
 /// Tests for <see cref="HybridRetriever"/> — score blending, candidate merging,
 /// and result ordering.

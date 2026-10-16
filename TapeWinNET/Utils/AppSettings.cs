@@ -1,18 +1,14 @@
-using AiNET;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
-using System.ComponentModel;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-
-using System.Windows;
-using System.Windows.Input;
-using System.Windows.Media.TextFormatting;
-
-using TapeLibNET; // for TapeCalibrationStore
+using AiNET;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using TapeLibNET.Calibration;
+using TapeLibNET.Streams;
 
 namespace TapeWinNET.Utils;
+
 
 /// <summary>
 /// Persisted application settings (window layout, last drive, etc.).

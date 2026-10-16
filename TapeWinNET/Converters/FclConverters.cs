@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Windows;
 using System.Windows.Data;
 
 using FclNET;
@@ -7,6 +6,7 @@ using FclNET;
 using TapeWinNET.ViewModels;
 
 namespace TapeWinNET.Converters;
+
 
 /// <summary>
 /// Converts a nullable <see cref="DateTime"/> (assumed UTC, e.g. a calibration's <c>MeasuredUtc</c>)

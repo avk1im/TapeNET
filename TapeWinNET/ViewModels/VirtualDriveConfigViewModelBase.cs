@@ -1,12 +1,11 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
-
+using TapeLibNET.Calibration;
+using TapeLibNET.Virtual;
 using Windows.Win32.System.SystemServices; // for Helpers
 
-using TapeLibNET;
-using TapeLibNET.Virtual;
-
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// Abstract base that encapsulates the shared "Create new virtual media" configuration surface:

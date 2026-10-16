@@ -2,6 +2,7 @@ using AiNET;
 
 namespace FclAiNET.Test;
 
+
 /// <summary>
 /// Console-based implementation of <see cref="IAiInteraction"/>.
 /// Displays provider discovery status and prompts for credentials

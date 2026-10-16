@@ -2,6 +2,7 @@ using HelpNET.Content;
 
 namespace HelpNET.Indexing;
 
+
 /// <summary>
 /// Interface for the lexical help index.  Enables testing with a stub.
 /// </summary>

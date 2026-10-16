@@ -5,6 +5,7 @@ using Xunit;
 
 namespace HelpNET.Tests;
 
+
 /// <summary>
 /// Tests for <see cref="HelpSession"/> navigation history state machine and
 /// conversation lifetime.

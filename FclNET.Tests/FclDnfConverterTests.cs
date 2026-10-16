@@ -2,6 +2,7 @@ using FclNET.Ast;
 
 namespace FclNET.Tests;
 
+
 /// <summary>
 /// Tests for <see cref="FclDnfConverter"/> via the public
 /// <see cref="FclPipeline"/> DNF API: IsDnf, ToDnf, ExtractDnfGroups.

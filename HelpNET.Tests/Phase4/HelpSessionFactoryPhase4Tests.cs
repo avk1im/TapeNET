@@ -1,11 +1,11 @@
 using AiNET;
 using HelpNET.Assistants;
-using HelpNET.Content;
 using HelpNET.Session;
 using Microsoft.Extensions.AI;
 using Xunit;
 
 namespace HelpNET.Tests.Phase4;
+
 
 /// <summary>
 /// Tests for <see cref="HelpSessionFactory"/> Phase 4 mode-selection matrix.

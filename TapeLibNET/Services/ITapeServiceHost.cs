@@ -1,4 +1,7 @@
+using TapeLibNET.Agents;
+
 namespace TapeLibNET.Services;
+
 
 // ── ServiceStateChange ────────────────────────────────────────────────────────
 

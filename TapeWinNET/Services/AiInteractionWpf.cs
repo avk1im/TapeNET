@@ -7,6 +7,7 @@ using TapeWinNET.ViewModels;
 
 namespace TapeWinNET.Services;
 
+
 /// <summary>
 /// WPF implementation of <see cref="IAiInteraction"/>.
 /// Uses <see cref="AskDialog"/> and <see cref="SelectDialog"/> for user input

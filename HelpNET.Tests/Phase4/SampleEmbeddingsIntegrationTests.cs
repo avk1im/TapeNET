@@ -2,12 +2,11 @@
 using System.Text.Json;
 using HelpNET.Content;
 using HelpNET.Embeddings;
-using HelpNET.Indexing;
-using HelpNET.Retrieval;
 using Xunit;
 using Xunit.Abstractions;
 
 namespace HelpNET.Tests.Phase4;
+
 
 /// <summary>
 /// End-to-end integration tests that exercise the full sample-corpus embedding

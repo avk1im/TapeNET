@@ -1,19 +1,16 @@
-﻿using System.Collections.Concurrent;
-using System.Globalization;
+﻿using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using System.Windows.Media.TextFormatting;
 using TapeWinNET.Models;
 using TapeWinNET.Utils;
 using Windows.Win32;
-using Windows.Win32.System.SystemServices;
 using Windows.Win32.UI.Shell;
 
-
 namespace TapeWinNET;
+
 
 internal static class IconLoader
 {
@@ -315,7 +312,7 @@ internal static class IconComposer
     /// <param name="overlayFraction">Fraction of the canvas size used for the overlay (default 0.5).</param>
     /// <param name="outputSize">
     ///  Pixel dimensions of the output bitmap (default 32). Rendering at 2× the display size
-    ///  (the <see cref="Image"/> element will use <c>Width/Height=16</c>) gives WPF enough
+    ///  (the <c>Image</c> element will use <c>Width/Height=16</c>) gives WPF enough
     ///  pixels to downscale both the main icon and the overlay badge sharply.
     /// </param>
     /// <returns>

@@ -1,8 +1,12 @@
-using System.IO;
+using TapeLibNET.Agents;
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
 using TapeLibNET.Scan;
+using TapeLibNET.Toc;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Services;
+
 
 public partial class TapeServiceBase
 {
@@ -10,7 +14,7 @@ public partial class TapeServiceBase
 
     /// <summary>
     /// Surveys the loaded cartridge from BOM to EOD with no TOC assumed, and — by default — recovers every
-    ///  table-of-contents copy it finds. READ-ONLY: nothing on the tape changes.
+    ///  TOC copy it finds. READ-ONLY: nothing on the tape changes.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -154,7 +158,7 @@ public partial class TapeServiceBase
                 TocCopiesFound = map.TocCopyCount,
                 TocsRecovered = CountRecoveredTocs(map),
                 UnknownFragments = map.UnknownCount,
-                LastSetUnclosed = map.LastSetUnclosed,
+                LastSetUnclosed = map.LastSetUnclosed && !UnclosedLastSetEndsAtEom(map),
                 Advice = advice,
                 MapExportPath = exportPath,
                 Summary = headline,
@@ -212,7 +216,7 @@ public partial class TapeServiceBase
     #region *** Recover TOC ***
 
     /// <summary>
-    /// Recovers the table of contents from one TOC-copy fragment of a scan map, and optionally saves it
+    /// Recovers the TOC from one TOC-copy fragment of a scan map, and optionally saves it
     ///  and/or adopts it as the current <see cref="TOC"/>.
     /// </summary>
     /// <remarks>
@@ -278,18 +282,20 @@ public partial class TapeServiceBase
             || map.Fragments[request.FragmentOrdinal] is not { Kind: FragmentKind.TOC } copy)
         {
             return Fail(WIN32_ERROR.ERROR_INVALID_PARAMETER,
-                $"Fragment #{request.FragmentOrdinal} is not a table-of-contents copy");
+                $"Fragment #{request.FragmentOrdinal} is not a TOC copy");
         }
 
         TapeTOC toc;
         bool fromMap;
+        string where = $"at block {copy.StartBlock}{(copy.Partition == MediaPartition.Initiator
+            ? " of the TOC partition" : string.Empty)}";
 
         if (copy.HarvestedToc is { } harvested)
         {
             // A private copy: adopting must not alias the map's object, which the caller still holds.
             toc = new TapeTOC(harvested);
             fromMap = true;
-            LogInfo($"Using the table of contents recovered by the scan at block {copy.StartBlock}");
+            LogInfo($"Using the TOC recovered by the scan {where}");
         }
         else
         {
@@ -299,14 +305,20 @@ public partial class TapeServiceBase
             if (!_drive.PrepareMedia())
                 return Fail(WIN32_ERROR.ERROR_NOT_READY, $"Couldn't prepare media: {_drive.LastErrorMessage}");
 
+            // Guard 0 — the copy's partition must exist on the loaded cartridge. A map of a partitioned cartridge
+            //  never reads "block N of the TOC partition" off a single-partition one.
+            if (copy.Partition == MediaPartition.Initiator && !_drive.HasInitiatorPartition)
+                return Fail(WIN32_ERROR.ERROR_MEDIA_CHANGED,
+                    "The scanned cartridge had a TOC partition; the loaded one has none — refusing to read");
+
             // Guard 1 — is this the scanned cartridge? Cheap: one BOM block, no content read.
             RefreshLoadedHeader();
 
             if (map.MediaId is { } scannedId && LoadedMediaHeader?.MediaId != scannedId)
                 return Fail(WIN32_ERROR.ERROR_MEDIA_CHANGED,
-                    "The loaded cartridge is not the one that was scanned — refusing to read its table of contents");
+                    "The loaded cartridge is not the one that was scanned — refusing to read its TOC");
 
-            LogInfo($"Recovering the table of contents at block {copy.StartBlock}...");
+            LogInfo($"Recovering the TOC {where}...");
             OnStatusUpdate("Recovering TOC...");
 
             toc = new TapeTOC();
@@ -315,25 +327,25 @@ public partial class TapeServiceBase
             using var ctReg = OperationCancellationToken.Register(() => probe.IsAbortRequested = true);
             using var reqReg = request.Cancellation.Register(() => probe.IsAbortRequested = true);
 
-            TapeResult read = probe.RestoreTOCAt(copy.StartBlock);
+            TapeResult read = probe.RestoreTOCAt(copy.StartBlock, copy.Partition);
 
             if (!read)
             {
                 LastError = read.ErrorMessage;
-                LogErr($"Couldn't recover the table of contents at block {copy.StartBlock}: {read.ErrorMessage}");
+                LogErr($"Couldn't recover the TOC {where}: {read.ErrorMessage}");
                 return RecoverTocResult.Failed(read);
             }
 
             // Guard 2 — is what we read the copy the scan identified? Checked on the CRC-validated result.
             if (copy.Id is { } peekedId && toc.MediaId != peekedId)
                 return Fail(WIN32_ERROR.ERROR_MEDIA_CHANGED,
-                    $"The table of contents at block {copy.StartBlock} belongs to a different series than the " +
+                    $"The TOC {where} belongs to a different series than the " +
                     "scanned copy — not recovered");
 
             fromMap = false;
         }
 
-        LogOk($"Table of contents recovered: {toc.Count} backup set(s)");
+        LogOk($"TOC recovered: {toc.Count} backup set(s)");
 
         // ── Save (best-effort: the recovery itself already succeeded) ──
         string? savedPath = null;
@@ -368,7 +380,7 @@ public partial class TapeServiceBase
         bool adopted = request.Adopt && AdoptRecoveredToc(toc, request.ProceedOnMediaMismatch, savedPath);
 
         if (request.Adopt && !adopted)
-            LogWarn("The recovered table of contents was NOT adopted");
+            LogWarn("The recovered TOC was NOT adopted");
 
         OnStatusUpdate(adopted ? $"TOC recovered: {toc.Count} backup set(s)" : "TOC recovered");
 
@@ -425,7 +437,7 @@ public partial class TapeServiceBase
         TOCIsFrom = TOCSource.Recovered;
         TOCFilePath = savedPath;
 
-        LogOk($"Recovered table of contents adopted: {toc.Count} backup set(s)");
+        LogOk($"Recovered TOC adopted: {toc.Count} backup set(s)");
         LogTOCInfo();
 
         LogWarn("Using recovered TOC - on-tape TOC may be missing or corrupt");
@@ -439,6 +451,26 @@ public partial class TapeServiceBase
     #endregion
 
     #region *** Scan judgement & wording (pure) ***
+
+    /// <summary>
+    /// Whether the unclosed last set the scan found ran to end-of-media on purpose (F32): a full TOC-in-partition volume,
+    ///  recorded as such by a recovered TOC — rather than a backup that died mid-set. The scan alone cannot tell; the TOC
+    ///  names the set, and its position on the volume must match the unclosed set header's.
+    /// </summary>
+    internal static bool UnclosedLastSetEndsAtEom(MediaScanMap map)
+    {
+        if (!map.Layout.TocInPartition || map.UnclosedLastSet is not { VolumeSetIndex: { } index } unclosed)
+            return false;
+
+        foreach (TapeTOC toc in map.Fragments.Where(f => f.HarvestedToc is not null).Select(f => f.HarvestedToc!))
+        {
+            int volume = unclosed.Volume ?? toc.Volume;
+            var onVolume = toc.Where(s => s.Volume == volume).ToList();
+            if (onVolume.Count == index + 1 && onVolume[^1].ClosedByEom)
+                return true;
+        }
+        return false;
+    }
 
     /// <summary>
     /// Renders a scan map as a headline, its severity, and detail lines. Pure — the scan counterpart of
@@ -458,12 +490,23 @@ public partial class TapeServiceBase
         int recovered = CountRecoveredTocs(map);
         int mixed = map.MixedIdentityFragments.Count;
 
+        bool unclosedEndsAtEom = map.LastSetUnclosed && UnclosedLastSetEndsAtEom(map);
+        bool unclosedIsFault = map.LastSetUnclosed && !unclosedEndsAtEom;
+
         var details = new List<string>();
+
+        int headerless = map.Fragments.Count(f => f.Kind == FragmentKind.SetContent);
+        if (headerless > 0)
+            details.Add($"{headerless:N0} backup set(s) identified by their first file — written without set headers, " +
+                        "so their order and completeness cannot be checked from the tape alone, without TOC");
 
         if (map.LastSetUnclosed)
         {
-            string? name = map.Fragments.LastOrDefault(f => f.Kind == FragmentKind.SetHeader)?.Description;
-            details.Add($"The last backup set{(name is null ? "" : $" >{name}<")} was never completed");
+            string? name = map.UnclosedLastSet?.Description;
+            string set = $"The last backup set{(name is null ? string.Empty : $" >{name}<")}";
+            details.Add(unclosedEndsAtEom
+                ? $"{set} runs to the end of the medium — the volume is full"
+                : $"{set} was never completed");
         }
 
         if (map.SetIndexGaps.Count > 0)
@@ -479,8 +522,22 @@ public partial class TapeServiceBase
             details.Add($"{unidentified:N0} block(s) of unidentified data");
 
         if (map.TocCopyCount > 0)
-            details.Add($"{map.TocCopyCount:N0} table-of-contents copy/copies found" +
-                        (recovered > 0 ? $", {recovered:N0} recovered" : ""));
+            details.Add($"{map.TocCopyCount:N0} TOC copy/copies found" +
+                        (recovered > 0 ? $", {recovered:N0} recovered" : string.Empty));
+
+        // The TOC partition, reported for what it is — empty and unscanned must never read the same.
+        if (map.Partitions.FirstOrDefault(p => p.Partition == MediaPartition.Initiator) is { } tocPart)
+        {
+            if (tocPart.Blank)
+                details.Add("The TOC partition is empty — no TOC was written there");
+            else if (tocPart.Truncated && tocPart.FragmentCount == 0)
+                details.Add("The TOC partition was not scanned");
+        }
+
+        int outOfPlace = map.OutOfPlaceFragments.Count;
+        if (outOfPlace > 0)
+            details.Add($"{outOfPlace:N0} fragment(s) stand in a partition this cartridge's layout does not put them in " +
+                        "— the partitions may have been mixed up");
 
         // ── Headline ──
         if (map.Truncated)
@@ -506,10 +563,30 @@ public partial class TapeServiceBase
         }
 
         if (map.SetCount == 0)
+        {
+            // On a backup tape whose sets carry no identifiable start, the recovered TOC is the better witness:
+            int listed = map.Fragments
+                .Where(f => f.HarvestedToc is not null)
+                .Select(f => f.HarvestedToc!.Count)
+                .DefaultIfEmpty(0).Max();
+            if (listed > 0)
+                return (damaged > 0 ? ServiceReportLevel.Warning : ServiceReportLevel.Completed,
+                        $"{listed:N0} backup set(s) per the recovered TOC — they carry no headers to identify them by",
+                        details);
             return (damaged > 0 ? ServiceReportLevel.Warning : ServiceReportLevel.Completed,
                     "No backup sets found — the cartridge is formatted but empty", details);
+        }
 
-        bool needsAttention = map.LastSetUnclosed || map.SetIndexGaps.Count > 0 || mixed > 0 || damaged > 0;
+        // When sets are found but the recovered TOC lists more (e.g. a mixed cartridge: 1 identified, 2 listed), say so.
+        //  (This is not a defect by itself, hence doesn't influence needsAttention.)
+        int tocListed = map.Fragments.Where(f => f.HarvestedToc is not null)
+            .Select(f => f.HarvestedToc!.Count).DefaultIfEmpty(0).Max();
+        if (tocListed > map.SetCount)
+            details.Add($"{tocListed - map.SetCount:N0} more set(s) listed by the recovered TOC " +
+                        "carry no headers to identify them by (legacy, or written without set headers)");
+
+        bool needsAttention = unclosedIsFault || map.SetIndexGaps.Count > 0 || mixed > 0 || damaged > 0
+                           || outOfPlace > 0;
 
         return needsAttention
             ? (ServiceReportLevel.Warning, $"{map.SetCount:N0} backup set(s) found — the cartridge needs attention", details)
@@ -540,7 +617,7 @@ public partial class TapeServiceBase
         else if (map.TocCopyCount > 0)
             advice.Add(ScanAdvice.RecoverTocFromCopy);
 
-        if (map.LastSetUnclosed)
+        if (map.LastSetUnclosed && !UnclosedLastSetEndsAtEom(map))
             advice.Add(ScanAdvice.ReviewUnclosedSet);
 
         return advice;
@@ -552,7 +629,7 @@ public partial class TapeServiceBase
         ScanAdvice.InspectCalibrationCartridge =>
             "Use Calibrate | Inspect Media to see this calibration run's state",
         ScanAdvice.AdoptRecoveredToc =>
-            "A table of contents was recovered from the tape — it can be adopted or saved as a file",
+            "A TOC was recovered from the tape — it can be adopted or saved as a file",
         ScanAdvice.RecoverTocFromCopy =>
             "Table-of-contents copies were found but not recovered — try recovering one",
         ScanAdvice.ReviewUnclosedSet =>

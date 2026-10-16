@@ -5,6 +5,7 @@ using Microsoft.ML.Tokenizers;
 
 namespace AiNET.Providers;
 
+
 /// <summary>
 /// Generates embeddings in-process using an ONNX model loaded from disk.
 /// Intended for BERT-family sentence-encoder models such as

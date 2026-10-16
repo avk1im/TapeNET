@@ -2,6 +2,7 @@ using TapeLoc.Validation;
 
 namespace TapeLoc.Tests;
 
+
 // Tests for CSharpValidator — the gate that ensures a translated C# file still
 //  compiles and leaves identifiers, placeholders, codes, and protected literals
 //  untouched (docs/Design-TapeLoc.md §9).

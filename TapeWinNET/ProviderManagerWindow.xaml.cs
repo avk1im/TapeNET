@@ -3,9 +3,11 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
+
 using AiNET;
 
 namespace TapeWinNET;
+
 
 /// <summary>
 /// Management dialog for the AI provider list: add, edit, remove, enable,

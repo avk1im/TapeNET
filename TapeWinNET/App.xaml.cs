@@ -1,14 +1,19 @@
-﻿using System.Diagnostics;
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Media;
 
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
+
+#if !DEBUG
+using System.Diagnostics; // Debugger
+
+using Microsoft.Extensions.Logging.Abstractions; // NullLoggerFactory
+#endif
 
 using TapeWinNET.Services;
 using TapeWinNET.Utils;
 
 namespace TapeWinNET;
+
 
 /// <summary>
 /// Interaction logic for App.xaml

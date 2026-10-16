@@ -1,9 +1,11 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+
 using HelpNET.Content;
 using HelpNET.Indexing;
 
 namespace HelpNET.Embeddings;
+
 
 /// <summary>
 /// Maps a chunk's position in the precomputed embedding blob back to its topic

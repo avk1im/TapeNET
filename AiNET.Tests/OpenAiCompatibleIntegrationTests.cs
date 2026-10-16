@@ -1,11 +1,10 @@
 using AiNET.Providers;
 using AiNET.Tests.Helpers;
-
 using Microsoft.Extensions.AI;
-
 using Xunit;
 
 namespace AiNET.Tests;
+
 
 /// <summary>
 /// Integration tests for <see cref="OpenAiCompatibleProvider"/> against a

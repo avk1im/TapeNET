@@ -1,11 +1,10 @@
 using System.CommandLine;
 
-using TapeLibNET;
-
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
 
 namespace TapeConNET.Cli;
+
 
 /// <summary>
 /// <c>tapecon format</c> — formats the loaded media (optionally creating an

@@ -1,9 +1,12 @@
 ﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using TapeLibNET;
-using Xunit.Abstractions;
+
+using TapeLibNET.Drive;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
 
 namespace TapeLibNET.Tests.Helpers;
+
 
 /// <summary>
 /// Environment variable names for physical tape test configuration.
@@ -316,7 +319,7 @@ public sealed class PhysicalTapeFixture : IDisposable
     /// Formats the tape according to <see cref="UsesPartition"/> by default: creates a 4 MB initiator partition when
     ///  enabled, plain format otherwise.
     ///  <para>
-    ///  Pass <paramref name="forceSinglePartition"/> = <see langword="true"> to format single-partition (TOC-in-set) FOR THIS
+    ///  Pass <paramref name="forceSinglePartition"/> = <see langword="true"/> to format single-partition (TOC-in-set) FOR THIS
     ///  FORMAT ONLY, e.g. to exercise the content-partition header path on a partition-capable
     ///  drive without changing the whole session's mode.
     ///  </para>

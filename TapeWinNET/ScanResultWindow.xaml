@@ -18,6 +18,10 @@
 
     <Window.Resources>
         <converters:BoolToVisibilityCollapsedConverter x:Key="BoolToVis"/>
+        <converters:BoolToValuesConverter x:Key="PartitionWidthConverter"
+                                          TrueValue="100"
+                                          FalseValue="0"/>
+        <converters:BindingProxy x:Key="VmProxy" Data="{Binding}"/>
     </Window.Resources>
 
     <!-- Outer grid: column 0 = dialog content, column 1 = splitter, column 2 = help pane -->
@@ -74,7 +78,11 @@
                 <ListView.View>
                     <GridView>
                         <GridViewColumn Header="#" Width="45" DisplayMemberBinding="{Binding Ordinal}"/>
-                        <GridViewColumn Header="Block" Width="90" DisplayMemberBinding="{Binding Block}"/>
+                        <GridViewColumn Header="Partition"
+                                        DisplayMemberBinding="{Binding Location}"
+                                        Width="{Binding Data.ShowPartitions,
+                                                        Source={StaticResource VmProxy},
+                                              Converter={StaticResource PartitionWidthConverter}}"/>
                         <GridViewColumn Header="Kind" Width="130" DisplayMemberBinding="{Binding KindText}"/>
                         <GridViewColumn Header="Identity" Width="130" DisplayMemberBinding="{Binding Identity}"/>
                         <GridViewColumn Header="Detail" Width="360" DisplayMemberBinding="{Binding Detail}"/>
@@ -97,12 +105,6 @@
             <StackPanel Grid.Row="4" Margin="0,8,0,0">
                 <ItemsControl ItemsSource="{Binding Advice}"
                               help:HelpControlNameAttachedProperty.ControlName="Advice">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <TextBlock Text="{Binding}" Style="{StaticResource HintTextStyle}"
-                                       Margin="0,0,0,4"/>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
                 </ItemsControl>
                 <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                 <TextBlock Text="{Binding MapPathText}" TextWrapping="Wrap" Margin="0,4,0,0"/>

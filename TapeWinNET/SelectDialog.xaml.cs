@@ -3,6 +3,7 @@ using System.Windows.Input;
 
 namespace TapeWinNET;
 
+
 /// <summary>
 /// Minimal selection dialog presenting a list of string choices.
 /// Returns the chosen index via <see cref="SelectedIndex"/> when

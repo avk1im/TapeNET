@@ -1,9 +1,10 @@
 using System.Collections;
 using System.ComponentModel;
-
-using TapeLibNET;
+using TapeLibNET.Agents;
+using TapeLibNET.Toc;
 
 namespace TapeWinNET.Utils;
+
 
 /// <summary>
 /// Wraps an immutable <see cref="IReadOnlyList{TapeFileInfo}"/> source and exposes
@@ -354,7 +355,7 @@ public sealed class FilteredFileList(IReadOnlyList<TapeFileInfo> source) : IRead
 
     /// <summary>Fired when an individual file's checked state changes via
     ///  <see cref="SetChecked(TapeFileInfo, bool)"/>. Not fired for bulk operations
-    ///  (<see cref="SetChecked(IEnumerable{TapeFileInfo}, bool)"/>,
+    ///  (<see cref="SetChecked(IEnumerable{TapeFileInfo}, bool, bool)"/>,
     ///  <see cref="SetFilteredChecked"/>, <see cref="SetAllChecked"/>,
     ///  <see cref="ClearChecked"/>). The parameter is the affected file.</summary>
     public event Action<TapeFileInfo>? CheckedChanged;

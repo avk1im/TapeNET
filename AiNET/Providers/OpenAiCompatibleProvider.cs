@@ -3,10 +3,10 @@ using System.Diagnostics;
 using System.Text.Json;
 
 using Microsoft.Extensions.AI;
-
 using OpenAI;
 
 namespace AiNET.Providers;
+
 
 /// <summary>
 /// Provider adapter for any <b>generic OpenAI-compatible</b> endpoint

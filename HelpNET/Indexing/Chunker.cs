@@ -1,8 +1,10 @@
 using System.Text;
 using System.Text.RegularExpressions;
+
 using HelpNET.Content;
 
 namespace HelpNET.Indexing;
+
 
 /// <summary>
 /// Splits <see cref="HelpTopic"/> bodies into overlapping text chunks suitable

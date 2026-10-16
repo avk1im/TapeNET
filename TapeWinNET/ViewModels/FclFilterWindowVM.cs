@@ -2,11 +2,11 @@ using System.Collections.ObjectModel;
 using System.Windows.Input;
 
 using FclAiNET;
-
 using FclNET;
 using FclNET.Ast;
 
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// ViewModel for the <see cref="TapeWinNET.FclFilterWindow"/> modal dialog.
@@ -88,8 +88,8 @@ public class FclFilterWindowVM : ViewModelBase
     /// <summary>
     /// Creates the filter window VM with AI-assisted FCL generation enabled.
     /// </summary>
-    /// <param name="onApply">See <see cref="FclFilterWindowVM(Action{FclExpression?}, Action)"/>.</param>
-    /// <param name="onCancel">See <see cref="FclFilterWindowVM(Action{FclExpression?}, Action)"/>.</param>
+    /// <param name="onApply">See <see cref="FclFilterWindowVM(Action{FclExpression?, bool}, Action)"/>.</param>
+    /// <param name="onCancel">See <see cref="FclFilterWindowVM(Action{FclExpression?, bool}, Action)"/>.</param>
     /// <param name="translatorFactory">
     /// Lazily provides an <see cref="FclAiTranslator"/> bound to the shared AI
     /// session (the same provider the Help system uses). Returns <c>null</c>

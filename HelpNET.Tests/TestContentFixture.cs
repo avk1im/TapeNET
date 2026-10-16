@@ -2,6 +2,7 @@ using HelpNET.Content;
 
 namespace HelpNET.Tests;
 
+
 /// <summary>
 /// A small in-memory help corpus (~10 topics) shared across Phase 3 test suites.
 /// </summary>

@@ -4,6 +4,7 @@ using System.Windows.Media;
 
 namespace TapeWinNET.Help;
 
+
 /// <summary>
 /// App-level F1 handler.  When F1 is pressed, walks the visual tree upward
 /// from the currently focused element to find the nearest ancestor (or self)

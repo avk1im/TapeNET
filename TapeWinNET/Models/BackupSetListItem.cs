@@ -1,10 +1,11 @@
 ﻿using System.ComponentModel;
 using System.Windows.Media.Imaging;
+using TapeLibNET.Compression;
+using TapeLibNET.Toc;
 using Windows.Win32.System.SystemServices; // for Helpers
 
-using TapeLibNET;
-
 namespace TapeWinNET.Models;
+
 
 /// <summary>
 /// Represents a backup set item for display in the backup sets ListView.
@@ -134,9 +135,9 @@ public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bo
         ? $"{_setTOC.Count:N0} \u2192 {filtered:N0}" /* right arrow */
         : _setTOC.Count.ToString("N0");
 
-    public DateTime CreatedOn => _setTOC.CreationTime;
+    public DateTime CreatedOn => _setTOC.CreationTime.ToLocalTime();
 
-    public string CreatedOnFormatted => _setTOC.CreationTime.ToString("G");
+    public string CreatedOnFormatted => _setTOC.CreationTime.ToLocalTime().ToString("G");
 
     public bool IsIncremental => _setTOC.Incremental;
 

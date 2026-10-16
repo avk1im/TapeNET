@@ -3,8 +3,6 @@
 //  the parsed command, and translates any TapeConException into the
 //  appropriate TapeConExitCode for the OS.
 
-using System.CommandLine;
-
 using TapeConNET.Cli;
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
@@ -17,7 +15,7 @@ try
 
     using var cancellation = new CancellationHooks();
 
-    IConsoleUx ux = new SpectreConsoleUx();
+    var ux = new SpectreConsoleUx();
 
     // Pre-scan args for --quiet / --no-color so the banner and any startup
     //  diagnostics already honor them. System.CommandLine will also bind these

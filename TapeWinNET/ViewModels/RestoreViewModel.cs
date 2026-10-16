@@ -1,15 +1,13 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
-
+using TapeLibNET.Agents;
+using TapeLibNET.Services;
+using TapeLibNET.Toc;
+using TapeWinNET.Models;
 using Windows.Win32.System.SystemServices; // for Helpers
 
-using TapeLibNET;
-using TapeLibNET.Services;
-using TapeWinNET.Converters;
-using TapeWinNET.Models;
-using TapeWinNET.Services;
-
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// Request data gathered by the RestoreWindow for executing a restore/validate/verify operation.

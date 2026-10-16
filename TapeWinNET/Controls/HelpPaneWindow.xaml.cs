@@ -4,6 +4,7 @@ using TapeWinNET.ViewModels;
 
 namespace TapeWinNET.Controls;
 
+
 /// <summary>
 /// Lightweight tool window that hosts a <see cref="HelpPane"/> for dialogs
 /// that use <see cref="Help.HelpPaneHostMode.Adjacent"/> mode.

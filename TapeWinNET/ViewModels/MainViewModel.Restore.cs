@@ -1,15 +1,12 @@
 using System.Windows;
 using System.Windows.Input;
-
-using TapeLibNET;
 using TapeLibNET.Services;
-using TapeWinNET.Converters;
+using TapeLibNET.Toc;
 using TapeWinNET.Models;
-using TapeWinNET.Services;
 using TapeWinNET.Utils;
-using System.Diagnostics;
 
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// Partial class containing restore/validate/verify functionality for MainViewModel.

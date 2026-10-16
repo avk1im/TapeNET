@@ -3,6 +3,7 @@ using Xunit;
 
 namespace HelpNET.Tests;
 
+
 /// <summary>
 /// Tests for <see cref="HelpUri"/> parsing.
 /// </summary>

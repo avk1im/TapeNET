@@ -4,6 +4,7 @@ using TapeConNET.Ux;
 
 namespace TapeConNET.Logging;
 
+
 /// <summary>
 /// <see cref="ILoggerProvider"/> that forwards every emitted log entry to an
 /// <see cref="IConsoleUx"/> instance. Used by

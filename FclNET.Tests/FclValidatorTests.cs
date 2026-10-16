@@ -2,6 +2,7 @@ using FclNET.Ast;
 
 namespace FclNET.Tests;
 
+
 /// <summary>
 /// Tests for <see cref="FclValidator"/> — semantic validation of the AST.
 /// </summary>

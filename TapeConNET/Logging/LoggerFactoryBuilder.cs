@@ -1,11 +1,15 @@
-using System.Diagnostics;
-
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
+
+#if !DEBUG
+using System.Diagnostics; // Debugger
+
+using Microsoft.Extensions.Logging.Abstractions; // NullLoggerFactory
+#endif
 
 using TapeConNET.Ux;
 
 namespace TapeConNET.Logging;
+
 
 /// <summary>
 /// Builds the <see cref="ILoggerFactory"/> used by <c>TapeService</c> and

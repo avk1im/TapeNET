@@ -4,6 +4,7 @@ using TapeConNET.Ux;
 
 namespace TapeConNET.Cli;
 
+
 /// <summary>
 /// Composes the tapecon verb tree. Phase 1 produces a root command that only
 /// supports <c>--help</c> / <c>--version</c> and a single placeholder

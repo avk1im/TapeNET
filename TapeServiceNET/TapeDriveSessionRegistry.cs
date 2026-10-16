@@ -1,11 +1,11 @@
 using System.Collections.Concurrent;
-using System.IO;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
+
 using Microsoft.Extensions.Options;
-using TapeLibNET;
+
+using TapeLibNET.Drive;
 
 namespace TapeServiceNET;
+
 
 /// <summary>
 /// One entry in the per-session named-volume catalog.

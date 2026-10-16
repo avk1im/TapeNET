@@ -1,10 +1,9 @@
 using System.Windows;
-
 using TapeWinNET.Help;
-
 using Xunit;
 
 namespace TapeWinNET.Tests;
+
 
 /// <summary>
 /// Unit tests for <see cref="HelpPaneLayoutCoordinator.OpenAdjacent"/>.

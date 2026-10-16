@@ -4,6 +4,7 @@ using HelpNET.Indexing;
 
 namespace HelpNET.Retrieval;
 
+
 /// <summary>
 /// Blends BM25 lexical scores with ONNX-based semantic (cosine) scores to
 /// produce a single ranked list of <see cref="HelpExcerpt"/>s.

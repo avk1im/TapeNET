@@ -1,14 +1,12 @@
 using System.ComponentModel;
 using System.IO;
 using System.Windows.Media.Imaging;
-
+using TapeLibNET.Toc;
+using TapeWinNET.Utils;
 using Windows.Win32.System.SystemServices;
 
-using TapeLibNET;
-using TapeWinNET.Utils;
-
-
 namespace TapeWinNET.Models;
+
 
 /// <summary>
 /// Thin WPF binding proxy for a single file row. When an <see cref="Owner"/> is
@@ -69,7 +67,7 @@ public class FileListItem(FilteredFileList? owner, TapeFileInfo fileInfo, bool s
 
     public string SizeFormatted => Helpers.BytesToString(_fileInfo.FileDescr.Length);
 
-    public DateTime LastModified => _fileInfo.FileDescr.LastWriteTime;
+    public DateTime LastModified => _fileInfo.FileDescr.LastWriteTime.ToLocalTime();
 
     public string AddressFormatted => _fileInfo.Address.ToString();
 

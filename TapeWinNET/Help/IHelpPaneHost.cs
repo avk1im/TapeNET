@@ -2,6 +2,7 @@ using System.Windows;
 
 namespace TapeWinNET.Help;
 
+
 /// <summary>
 /// Implemented by windows that host a <see cref="Controls.HelpPane"/>.
 /// MainWindow uses <see cref="HelpPaneHostMode.Embedded"/>; dialogs use

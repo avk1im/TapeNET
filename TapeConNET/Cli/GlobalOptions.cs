@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 
 namespace TapeConNET.Cli;
 
+
 /// <summary>
 /// Drive-selection and logging options shared by every verb that needs an
 /// open <c>TapeService</c>. Adding the same <see cref="Option{T}"/> instances

@@ -1,14 +1,13 @@
-using System;
-using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using TapeLibNET.Calibration;
 using Windows.Win32.System.SystemServices; // Helpers.BytesToString
-using TapeLibNET;
 
 namespace TapeWinNET.Controls;
+
 
 /// <summary>
 /// Plots the calibrated <c>ReportedRemaining → ActualRemaining</c> curve.

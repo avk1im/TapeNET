@@ -1,11 +1,13 @@
-using System.IO;
-using TapeLibNET;
-using TapeLibNET.Services;
-using TapeLibNET.Tests.Helpers;
-using TapeLibNET.Virtual;
 using Windows.Win32.Foundation;
 
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
+using TapeLibNET.Services;
+
+using TapeLibNET.Tests.Helpers;
+
 namespace TapeLibNET.Tests.Services;
+
 
 /// <summary>
 /// Step 6 — the set-level channel reaches the user.
@@ -179,7 +181,7 @@ public class ServiceSetAnomalyTests : ServiceTestBase
 
     #region *** (B) The read path — the handler no longer aborts ***
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// The Step 6 fix, end to end. Before it, the service handler inherited the interface's <c>Abort</c>
     ///  default, so a drift Step 5 can repair instead terminated the operation — and reported it as a
@@ -235,7 +237,7 @@ public class ServiceSetAnomalyTests : ServiceTestBase
             DisposeAll(trees);
         }
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     /// <summary>
     /// Provable silence. An advice channel that fires on a clean cartridge would train users to ignore
@@ -279,7 +281,7 @@ public class ServiceSetAnomalyTests : ServiceTestBase
 
     #region *** (C) The delete path — the verb this feature exists for ***
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// The second Step 6 fix: the delete can now authorize its own recovery, so a cartridge whose tail
     ///  no longer matches its TOC can be repaired from the UI.
@@ -453,13 +455,13 @@ public class ServiceSetAnomalyTests : ServiceTestBase
             DisposeAll(trees);
         }
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 
     #region *** (D) The write path — the verdict that outranks NothingProcessed ***
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// A refused overwrite processes no files, so every counter-based verdict would describe it as
     ///  "nothing happened". <c>SetVerificationBlocked</c> exists to name the cause instead.
@@ -576,13 +578,13 @@ public class ServiceSetAnomalyTests : ServiceTestBase
             DisposeAll(trees);
         }
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 
     #region *** (E) The join ***
 
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// The agent's counters must arrive intact in <see cref="ServiceOperationResult.Sets"/> — the
     ///  boundary where Step 4's statistics become something a UI can render.
@@ -675,7 +677,7 @@ public class ServiceSetAnomalyTests : ServiceTestBase
             DisposeAll(trees);
         }
     }
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 }

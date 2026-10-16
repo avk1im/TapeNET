@@ -1,8 +1,10 @@
 using System.Windows;
 using System.Windows.Media;
+
 using TapeLibNET.Services;
 
 namespace TapeWinNET;
+
 
 /// <summary>
 /// Severity of a media-identity prompt, driving the detail pane's colour and glyph. Distinct from the

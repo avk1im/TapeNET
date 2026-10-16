@@ -1,8 +1,7 @@
 using System.Windows;
 
-using TapeWinNET;
-
 namespace TapeWinNET.Help;
+
 
 /// <summary>
 /// Routes <c>help://action/&lt;actionId&gt;</c> URIs to registered

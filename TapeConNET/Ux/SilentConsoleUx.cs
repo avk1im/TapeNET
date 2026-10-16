@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 
 namespace TapeConNET.Ux;
 
+
 /// <summary>
 /// No-color, no-prompt <see cref="IConsoleUx"/> implementation. Captures every
 /// log entry into <see cref="Entries"/> and writes a plain-text rendering to

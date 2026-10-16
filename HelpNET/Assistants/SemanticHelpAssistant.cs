@@ -1,9 +1,11 @@
 using System.Text;
+
 using HelpNET.Content;
 using HelpNET.Embeddings;
 using HelpNET.Retrieval;
 
 namespace HelpNET.Assistants;
+
 
 /// <summary>
 /// An assistant that ranks results using semantic (vector) search but does not

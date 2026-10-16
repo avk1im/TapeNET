@@ -1,7 +1,9 @@
 using TapeConNET.Infrastructure;
+
 using TapeConNET.Tests.Helpers;
 
 namespace TapeConNET.Tests;
+
 
 /// <summary>
 /// Phase 8 — verifies that <c>tapecon docs</c> renders the embedded markdown

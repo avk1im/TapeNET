@@ -4,6 +4,7 @@ using Xunit;
 
 namespace HelpNET.Tests;
 
+
 /// <summary>
 /// Tests for <see cref="IHelpSession.TryGetControlHelp"/> — the façade that
 /// exposes per-topic <c>## Controls</c> definitions to the WPF Reveal overlay.

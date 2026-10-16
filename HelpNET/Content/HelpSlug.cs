@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace HelpNET.Content;
 
+
 /// <summary>
 /// Shared slug-generation rule: lowercase the display name and collapse
 /// whitespace, slashes, and parentheses to hyphens.

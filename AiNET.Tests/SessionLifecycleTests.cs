@@ -1,8 +1,8 @@
 using Microsoft.Extensions.AI;
-
 using Xunit;
 
 namespace AiNET.Tests;
+
 
 /// <summary>
 /// Tests for <see cref="AiSession"/> and <see cref="AiProviderCatalog"/> —

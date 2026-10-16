@@ -4,6 +4,7 @@ using System.Windows.Media;
 
 namespace TapeWinNET.Utils;
 
+
 /// <summary>
 /// Provides Segoe MDL2 Assets glyph constants and a factory for toolbar icon elements.
 /// All toolbar button icons are defined here to keep icon definitions out of XAML.

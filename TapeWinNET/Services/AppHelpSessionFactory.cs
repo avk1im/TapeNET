@@ -5,6 +5,7 @@ using TapeWinNET.Help;
 
 namespace TapeWinNET.Services;
 
+
 /// <summary>
 /// Creates one <see cref="IHelpSession"/> per <see cref="IHelpPaneHost"/> instance.
 /// Internally resolves the process-wide content source and AI session.

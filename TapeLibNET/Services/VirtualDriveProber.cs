@@ -1,11 +1,11 @@
-using System.IO;
-
 using Microsoft.Extensions.Logging.Abstractions;
-
-using TapeLibNET;
+using TapeLibNET.Agents;
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
 using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Services;
+
 
 /// <summary>What a virtual-media probe found on the cartridge.</summary>
 public enum VirtualMediaKind

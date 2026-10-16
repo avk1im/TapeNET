@@ -1,14 +1,16 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using TapeLibNET.Agents;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Services;
 
+
 public partial class TapeServiceBase
 {
+    /// <summary>
+    /// Creates the notifiable for a SET-level operation (currently delete). Override to add a progress
+    ///  display; the base returns a handler that logs through <see cref="_host"/> and routes set
+    ///  anomalies to its prompt.
+    /// </summary>
     protected virtual ServiceSetProgressHandler CreateSetProgressHandler(
             TapeAgentBase agent, string operationName)
         => new(_host, agent, skipAllErrors: false, operationName);
@@ -30,6 +32,10 @@ public partial class TapeServiceBase
     ///  no-notifiable policy declines every destructive recovery (SH-18), so a damaged cartridge could
     ///  never be repaired from the UI.
     /// </para>
+    /// <para>
+    /// The agent writes the TOC itself, so a legacy → 2.1 upgrade is reported here rather than through
+    ///  <see cref="SaveTocCore"/> (Design-FormatV21 §6.2).
+    /// </para>
     /// </remarks>
     /// <param name="deleteFromSetIndex">Standard (1-based) index of the first set to delete.</param>
     public async Task<DeleteSetsResult> DeleteBackupSetsExAsync(int deleteFromSetIndex)
@@ -42,14 +48,11 @@ public partial class TapeServiceBase
         }
 
         _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
-
         return await Task.Run(async () =>
         {
             await _operationLock.WaitAsync().ConfigureAwait(false);
-
             ServiceSetProgressHandler? progressHandler = null;
             int setsToDelete = 0;
-
             try
             {
                 var toc = _toc;
@@ -77,11 +80,16 @@ public partial class TapeServiceBase
                     var a = _agent; if (a is not null) a.IsAbortRequested = true;
                 });
 
+                // Captured before the agent writes the TOC — the upgrade is judged by the flag's change.
+                bool wasLegacy = toc.LoadedFromLegacy;
+
                 // navigateFromBegin when the TOC came from a file: its mark arithmetic describes a tape
                 //  we have not verified, so the forced forward count is the safer anchor from the outset.
                 var result = agent.DeleteSetsFromCurrentSetUp(
                     navigateFromBegin: TOCIsFrom is TOCSource.File or TOCSource.Recovered,
                     fileNotify: progressHandler);
+
+                ReportTocUpgrade(wasLegacy, toc);   // silent unless the TOC really reached the tape as 2.1
 
                 var sets = agent.Statistics.Sets;
 
@@ -114,7 +122,6 @@ public partial class TapeServiceBase
 
                 LogOk($"Deleted {setsToDelete} backup set(s) — TOC saved");
                 ReportSetAnomalyOutcome(sets);   // silent unless something was actually met
-
                 OnStatusUpdate($"Deleted {setsToDelete} backup set(s)");
                 _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
 
@@ -148,19 +155,4 @@ public partial class TapeServiceBase
         });
     }
 
-    /// <summary>
-    /// Backwards-compatible shim for callers that only need success/failure.
-    /// </summary>
-    /// <remarks>
-    /// Prefer <see cref="DeleteBackupSetsExAsync"/>: a bare bool cannot express "refused, tape
-    ///  unchanged" versus "failed part-way", nor carry the set-anomaly advice.
-    /// </remarks>
-    public async Task<bool> DeleteBackupSetsAsync(int deleteFromSetIndex)
-        => (await DeleteBackupSetsExAsync(deleteFromSetIndex)).Success;
-
-    /// <summary>
-    /// Creates the notifiable for a SET-level operation (currently delete). Override to add a progress
-    ///  display; the base returns a handler that logs through <see cref="_host"/> and routes set
-    ///  anomalies to its prompt.
-    /// </summary>
 }

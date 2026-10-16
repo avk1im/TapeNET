@@ -3,6 +3,7 @@ using TapeLibNET.Services;
 
 namespace TapeWinNET.Services;
 
+
 /// <summary>
 /// Partial class — Scan Media factory override for <see cref="TapeService"/>.
 /// All scan logic lives in <see cref="TapeServiceBase"/>; this partial only adds the

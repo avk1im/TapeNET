@@ -2,6 +2,7 @@ using System.Windows.Controls;
 
 namespace TapeWinNET.Controls;
 
+
 /// <summary>
 /// A single FCL condition row in the visual filter editor.
 /// Bound to <see cref="ViewModels.FclConditionRowVM"/> via DataContext.

@@ -5,6 +5,7 @@ using Xunit;
 
 namespace HelpNET.Tests;
 
+
 /// <summary>
 /// Tests for <see cref="HelpSessionFactory"/> — mode selection and session wiring.
 /// </summary>

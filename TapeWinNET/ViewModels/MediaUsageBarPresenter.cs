@@ -1,21 +1,19 @@
 using System.Windows.Input;
-
-using Windows.Win32.System.SystemServices; // for Helpers
-
-using TapeLibNET;
-
+using TapeLibNET.Toc;
 using TapeWinNET.Controls;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
+using Windows.Win32.System.SystemServices; // for Helpers
 
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// Owns the segment list and capacity for a <see cref="MediaUsageBarControl"/>
 ///  and lives for the entire lifetime of the host view model.
 /// <para>
 /// Encapsulates the logic that builds <see cref="UsageSegment"/>s from the
-///  current <see cref="TapeService.TOC"/>, manages the highlight, and dispatches
+///  current <c>TapeService.TOC</c>, manages the highlight, and dispatches
 ///  segment clicks. The base implementation reproduces what
 ///  <c>MainViewModel</c> used to do directly; derived classes override
 ///  <see cref="AddContentSegments"/> (and optionally

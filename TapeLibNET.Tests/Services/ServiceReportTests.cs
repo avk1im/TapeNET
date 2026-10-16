@@ -1,11 +1,15 @@
-using System.IO;
-using TapeLibNET;
-using TapeLibNET.Services;
-using TapeLibNET.Tests.Helpers;
-using TapeLibNET.Virtual;
 using Windows.Win32.Foundation;
 
+using TapeLibNET.Virtual;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
+using TapeLibNET.Calibration;
+using TapeLibNET.Services;
+
+using TapeLibNET.Tests.Helpers;
+
 namespace TapeLibNET.Tests.Services;
+
 
 /// <summary>
 /// Step 9.0 coverage: the agent's diagnosis must SURVIVE to the user.
@@ -150,7 +154,7 @@ public class ServiceReportTests : ServiceTestBase
 
     // ── Backup: the agent's diagnosis reaches the user ────────────────────────
 
-#if DEBUG
+#if TEST_HOOKS
 
     /// <summary>
     /// Several injected file failures. The counters alone would say "3 failed"; the REASON only exists in
@@ -285,11 +289,11 @@ public class ServiceReportTests : ServiceTestBase
         AssertNoMediaPrompts(host);
     }
 
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     // ── Media-level faults: the injector reaches the service layer ────────────
 
-#if DEBUG
+#if TEST_HOOKS
 
     /// <summary>
     /// A drive-level read fault, injected below the agent entirely — the closest thing the suite has to
@@ -354,7 +358,7 @@ public class ServiceReportTests : ServiceTestBase
         }
     }
 
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  Calibration diagnosis — append as a region to ServiceReportTests.cs
@@ -387,7 +391,7 @@ public class ServiceReportTests : ServiceTestBase
             ProceedOnMediaMismatch = skipMediaHeaderCheck,
         };
 
-#if DEBUG
+#if TEST_HOOKS
 
     // ── The latch: a diagnosis survives the tolerated steps ──────────────
 
@@ -690,7 +694,7 @@ public class ServiceReportTests : ServiceTestBase
         Assert.Equal((uint)WIN32_ERROR.ERROR_WRITE_FAULT, tagged.ErrorCode);
     }
 
-#endif // DEBUG
+#endif // TEST_HOOKS
 
     #endregion
 

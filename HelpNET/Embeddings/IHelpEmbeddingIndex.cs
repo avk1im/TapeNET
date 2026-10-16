@@ -2,6 +2,7 @@ using HelpNET.Retrieval;
 
 namespace HelpNET.Embeddings;
 
+
 /// <summary>
 /// Semantic search index backed by precomputed or on-the-fly embedding vectors.
 /// </summary>

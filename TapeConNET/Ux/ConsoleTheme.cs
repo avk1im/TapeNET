@@ -2,6 +2,7 @@ using Spectre.Console;
 
 namespace TapeConNET.Ux;
 
+
 /// <summary>
 /// Single source of truth for mapping <see cref="WarningLevel"/> to
 /// Spectre.Console <see cref="Style"/> and to a short text icon shown in

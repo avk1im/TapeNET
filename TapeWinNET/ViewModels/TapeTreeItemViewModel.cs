@@ -1,9 +1,11 @@
 using System.Collections.ObjectModel;
 using System.Windows.Media.Imaging;
 
-using TapeLibNET;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
 
 namespace TapeWinNET.ViewModels;
+
 
 public enum TreeItemType
 {
@@ -31,7 +33,7 @@ public class TapeTreeItemViewModel : ViewModelBase
     private TreeItemType _itemType;
     private int _tag;
     private bool _isOnCurrentVolume = true;
-    private bool _isTOCFromFile;
+    private bool _isTOCImported;
     private bool _isInMemory;
     private bool _isRemote;
     private string? _remoteHost;
@@ -127,8 +129,8 @@ public class TapeTreeItemViewModel : ViewModelBase
     /// </summary>
     public bool IsTOCImported
     {
-        get => _isTOCFromFile;
-        set => SetProperty(ref _isTOCFromFile, value);
+        get => _isTOCImported;
+        set => SetProperty(ref _isTOCImported, value);
     }
 
     /// <summary>

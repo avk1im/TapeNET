@@ -5,6 +5,7 @@ using Xunit;
 
 namespace HelpNET.Tests;
 
+
 /// <summary>
 /// Tests for <see cref="HelpSlug.From"/> slug-generation rules.
 /// </summary>

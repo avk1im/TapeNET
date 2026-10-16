@@ -4,6 +4,7 @@ using Xunit;
 
 namespace HelpNET.Tests.Phase4;
 
+
 /// <summary>
 /// Tests for <see cref="HelpEmbeddingIndex"/> — semantic search over a
 /// fake precomputed bundle using <see cref="FakeEmbeddingGenerator"/>.

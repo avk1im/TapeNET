@@ -1,11 +1,10 @@
-using System.IO;
 using Microsoft.Extensions.Logging;
 
-using TapeLibNET;
-using TapeLibNET.Services;
 using TapeLibNET.Virtual;
+using TapeLibNET.Services;
 
 namespace TapeLibNET.Tests.Helpers;
+
 
 /// <summary>
 /// An <see cref="ITapeServiceHost"/> for remote multi-volume service-layer tests.
@@ -88,7 +87,7 @@ public sealed class RemoteMultiVolumeServiceHost(
     /// <inheritdoc/>
     /// <remarks>
     /// Re-inserts a previously written volume (<paramref name="volumeNeeded"/> is
-    ///  1-based) from the pre-provided <see cref="volumes"/> list.
+    ///  1-based) from the <c>volumes</c> list provided to the class c'tor.
     /// Returns <see langword="false"/> if the requested volume index is out of range.
     /// </remarks>
     public override bool OnInsertMediaConfirm(int volumeNeeded, RestoreMode mode)

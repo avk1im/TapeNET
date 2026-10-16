@@ -1,11 +1,11 @@
-using System.IO;
-
+using System.Diagnostics; // TapeTOC, TapeFileInfo, ITapeFileFilter
+using TapeLibNET.Agents;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
 using Windows.Win32.System.SystemServices; // Helpers
 
-using TapeLibNET;
-using System.Diagnostics; // TapeTOC, TapeFileInfo, ITapeFileFilter
-
 namespace TapeLibNET.Services;
+
 
 public partial class TapeServiceBase
 {
@@ -230,62 +230,71 @@ public partial class TapeServiceBase
     // ── Protected virtual hooks — list output ─────────────────────────────────
 
     /// <summary>
-    /// Logs drive hardware properties (device identity, capabilities, block sizes).
-    ///  Called by <see cref="ListContentsAsync"/> when
-    ///  <see cref="ListDepth.Drive"/> is set.
-    /// Base implementation mirrors the information shown by
-    ///  <c>MainViewModel.LoadDriveInfo</c> in TapeWinNET.
+    /// Logs drive hardware properties (device identity, capabilities, block sizes). Called by
+    ///  <see cref="ListContentsAsync"/> when <see cref="ListDepth.Drive"/> is set. Content from
+    ///  <see cref="DescribeDrive"/> — the same rows <c>TapeWinNET</c> shows in its drive pane.
     /// </summary>
     protected virtual void LogDriveInfo()
     {
         if (_drive is null) return;
-
-        LogInfoSub($"Device name: {DeviceName}");
-        string model = DeviceVendor;
-        if (!string.IsNullOrEmpty(DeviceProduct))
-            model += $" {DeviceProduct}";
-        if (!string.IsNullOrEmpty(DeviceRevision))
-            model += $" rev {DeviceRevision}";
-        if (!string.IsNullOrEmpty(model))
-            LogInfoSub($"Device model: {model}");
-        LogInfoSub($"Drive open: Yes");
-        LogInfoSub($"Supports multiple partitions: {(SupportsInitiatorPartition ? "Yes" : "No")}");
-        LogInfoSub($"Supports setmarks: {(SupportsSetmarks ? "Yes" : "No")}");
-        LogInfoSub($"Supports sequential filemarks: {(SupportsSeqFilemarks ? "Yes" : "No")}");
-        LogInfoSub($"Block size (min): {Helpers.BytesToString(MinimumBlockSize)}");
-        LogInfoSub($"Block size (default): {Helpers.BytesToString(DefaultBlockSize)}");
-        LogInfoSub($"Block size (max): {Helpers.BytesToString(MaximumBlockSize)}");
-        LogInfoSub($"Media loaded: {(IsMediaLoaded ? "Yes" : "No")}");
-
-        if (IsMediaLoaded)
-        {
-            LogInfoSub($"Partition count: {PartitionCount}");
-            LogInfoSub($"Capacity: {Helpers.BytesToStringLong(Capacity)}");
-            LogInfoSub($"Remaining (reported): {Helpers.BytesToStringLong(ReportedContentRemaining)}");
-            LogInfoSub($"Remaining (estimated): {Helpers.BytesToStringLong(EstimatedContentRemaining)}");
-            LogInfoSub($"Writable: {Helpers.BytesToStringLong(WritableRemaining)}");
-            LogInfoSub($"Estimation by: {RemainingEstimationSource}");
-        }
+        LogProperties(DescribeDrive());
     }
 
     /// <summary>
-    /// Logs a compact table of all backup sets in <paramref name="toc"/>.
+    /// Logs full media information during <see cref="ListContentsAsync"/>. Content from
+    ///  <see cref="DescribeMedia"/> — the same rows <c>TapeWinNET</c> shows in its media pane.
+    /// </summary>
+    protected virtual void LogMediaInfoFull()
+    {
+        if (_drive is null || _toc is null) return;
+        LogProperties(DescribeMedia());
+    }
+
+    /// <summary>
+    /// Logs per-set detail during <see cref="ListContentsAsync"/>. Content from <see cref="DescribeSet"/> — the same
+    ///  rows <c>TapeWinNET</c> shows in its backup-set pane.
+    /// </summary>
+    protected virtual void LogCurrentSetInfo()
+    {
+        if (_drive is null || _toc is not TapeTOC toc) return;
+        LogProperties(DescribeSet(toc.CurrentSetIndex));
+    }
+
+    /// <summary>
+    /// Logs everything the loaded calibration run header reveals — and the run trail once an Inspect has read it.
+    ///  Content from <see cref="DescribeCalibrationRun"/>, the same rows as <c>TapeWinNET</c>'s calibration pane.
+    /// </summary>
+    protected virtual void LogCalibrationInfo()
+    {
+        if (_loadedHeader is not TapeCalibrationHeader)
+            return;
+        LogProperties(DescribeCalibrationRun());
+    }
+
+    /// <summary>
+    /// Logs a compact table of all backup sets in <see cref="_toc"/>.
     ///  Called by <see cref="ListContentsAsync"/> when
     ///  <see cref="ListDepth.SetTable"/> is set without <see cref="ListDepth.FileDetails"/>.
     /// Each row contains the set's dual index, description, file count, total size,
-    ///  creation time, and flags (incremental, volume).
+    ///  creation time, and flags (incremental, volume, legacy data format).
     /// </summary>
+    /// <remarks>
+    /// Doesn't follow <see cref="LogProperties"/> model since a fixed-width text table is
+    ///  CLI-specific (<c>TapeWinNET</c> has its <c>BackupSetListItem</c> grid).
+    /// </remarks>
     protected virtual void LogBackupSetsTable()
     {
         if (_drive is null || _toc is not TapeTOC toc)
             return;
 
         LogInfo($"Backup sets ({toc.Count} total):");
+
         for (int alt = 0; alt >= toc.MinSetIndex; alt--)
         {
             int setIndex = toc.SetIndexToStd(alt); // convert alt (0/-1/-2...) → std (1..N)
             toc.CurrentSetIndex = setIndex;
             var setTOC = toc.CurrentSetTOC;
+
             var size = Helpers.BytesToStringLong(setTOC.ComputeTotalFileSizeOnTape(_drive.DefaultBlockSize));
             var flags = new System.Text.StringBuilder();
             if (setTOC.Incremental) flags.Append(" [Inc]");
@@ -293,59 +302,11 @@ public partial class TapeServiceBase
                 flags.Append(" [<Vol]");
             if (toc.IsCurrentSetContOnNextVolume)
                 flags.Append(" [Vol>]");
-            LogInfoSub($"#{setIndex,3} | {alt,3}  {setTOC.CreationTime,20:G}  {setTOC.Count,6:N0} files  {size,14}  Vol #{setTOC.Volume}  {setTOC.Description}{flags}");
+            if (setTOC.DataFormat == TapeDataFormat.Legacy)
+                flags.Append(" [Legacy]");
+
+            LogInfoSub($"#{setIndex,3} | {alt,3}  {setTOC.CreationTime.ToLocalTime(),20:G}  {setTOC.Count,6:N0} files  {size,14}  Vol #{setTOC.Volume}  {setTOC.Description}{flags}");
         }
-    }
-
-    /// <summary>
-    /// Logs full drive/media information during <see cref="ListContentsAsync"/>.
-    /// Base implementation logs the core media fields; subclasses may override to
-    ///  add or reformat entries.
-    /// </summary>
-    protected virtual void LogMediaInfoFull()
-    {
-        if (_drive is null || _toc is not TapeTOC toc)
-            return;
-
-        LogInfoSub($"Name: >{toc.Description}<");
-        if (toc.MediaId != Guid.Empty)
-            LogInfoSub($"Media ID: {toc.MediaId}");
-        LogInfoSub($"Created on: {toc.CreationTime}");
-        LogInfoSub($"Last saved: {toc.LastSaveTime}");
-        LogInfoSub($"Backup sets: {toc.Count}");
-        LogInfoSub($"Capacity: {Helpers.BytesToStringLong(Capacity)}");
-        LogInfoSub($"Used: {Helpers.BytesToStringLong(Used)}");
-        LogInfoSub($"Remaining (reported): {Helpers.BytesToStringLong(ReportedContentRemaining)}");
-        LogInfoSub($"Remaining (estimated): {Helpers.BytesToStringLong(EstimatedContentRemaining)}");
-        LogInfoSub($"Writable: {Helpers.BytesToStringLong(WritableRemaining)}");
-        LogInfoSub($"Estimation by: {RemainingEstimationSource}");
-        LogInfoSub($"TOC placement: {(HasInitiatorPartition ? "partition" : "set")}");
-        LogInfoSub($"Volume: #{toc.Volume}");
-        LogInfoSub($"Continued on next volume: {(toc.ContinuedOnNextVolume ? "Yes" : "No")}");
-    }
-
-    /// <summary>
-    /// Logs per-set detail during <see cref="ListContentsAsync"/>.
-    /// Base implementation logs the full set fields; subclasses may override to
-    ///  customise the output.
-    /// </summary>
-    protected virtual void LogCurrentSetInfo()
-    {
-        if (_drive is null || _toc is not TapeTOC toc)
-            return;
-
-        var setTOC = toc.CurrentSetTOC;
-        LogInfoSub($"Name: >{setTOC.Description}<");
-        LogInfoSub($"Files: {setTOC.Count}");
-        LogInfoSub($"Total file size on tape: {Helpers.BytesToStringLong(setTOC.ComputeTotalFileSizeOnTape(_drive.DefaultBlockSize))}");
-        LogInfoSub($"Created on: {setTOC.CreationTime}");
-        LogInfoSub($"Last saved: {setTOC.LastSaveTime}");
-        LogInfoSub($"Block size: {Helpers.BytesToStringLong(setTOC.BlockSize)}");
-        LogInfoSub($"Hash algorithm: {setTOC.HashAlgorithm}");
-        LogInfoSub($"Incremental: {(setTOC.Incremental ? "Yes" : "No")}");
-        LogInfoSub($"Volume: #{setTOC.Volume}");
-        LogInfoSub($"Continued from previous volume: {(toc.IsCurrentSetContFromPrevVolume ? "Yes, directly" : toc.IsCurrentSetContFromPrevVolumeInc ? "Yes, incrementally" : "No")}");
-        LogInfoSub($"Continued on next volume: {(toc.IsCurrentSetContOnNextVolume ? "Yes" : "No")}");
     }
 
     #endregion
@@ -357,7 +318,7 @@ public partial class TapeServiceBase
     {
         var fileDescr = tfi.FileDescr;
         var name = fullPath ? fileDescr.FullName : Path.GetFileName(fileDescr.FullName);
-        return $"{tfi.Address,10}: {fileDescr.LastWriteTime,24:G} {fileDescr.Length,16:N0}\t{name}";
+        return $"{tfi.Address,10}: {fileDescr.LastWriteTime.ToLocalTime(),24:G} {fileDescr.Length,16:N0}\t{name}";
     }
 
     #endregion

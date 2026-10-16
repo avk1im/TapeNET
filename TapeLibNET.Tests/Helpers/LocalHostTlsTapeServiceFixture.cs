@@ -1,3 +1,5 @@
+using System.Security.Cryptography.X509Certificates;
+
 using Grpc.Net.Client;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -6,10 +8,11 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using System.Security.Cryptography.X509Certificates;
+
 using TapeServiceNET;
 
 namespace TapeLibNET.Tests.Helpers;
+
 
 /// <summary>
 /// xUnit fixture that hosts a <see cref="TapeDriveGrpcService"/> in-process on localhost

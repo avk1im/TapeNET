@@ -1,0 +1,81 @@
+namespace TapeLibNET.Packer;
+
+/// <summary>
+/// Minimal abstraction the <see cref="TapeReadStreamFacade"/> uses to push reads back to
+///  whichever reader owns the open per-file slot. Implemented by <see cref="TapeFilePipelinedReader"/>
+///  (worker-thread prefetch ring buffer).
+/// </summary>
+internal interface ITapeReadStreamHost
+{
+    /// <summary>Read up to <paramref name="count"/> bytes from the open file into <paramref name="buffer"/>.</summary>
+    int ReadIntoOpenFile(byte[] buffer, int offset, int count);
+
+    /// <summary>Signals the host that the consumer is done with the open file.</summary>
+    void EndRead();
+}
+
+/// <summary>
+/// Thin <see cref="Stream"/> façade returned by <see cref="ITapeFileReader.BeginRead"/>.
+/// Forwards <see cref="Read(byte[], int, int)"/> calls to the owning host; becomes inert
+/// after the corresponding <see cref="ITapeReadStreamHost.EndRead"/> or host disposal.
+/// </summary>
+internal sealed class TapeReadStreamFacade : Stream
+{
+    private readonly ITapeReadStreamHost _host;
+    private readonly long _length;
+    private long _position;
+    private bool _closed;
+
+    internal TapeReadStreamFacade(ITapeReadStreamHost host, long length)
+    {
+        _host = host;
+        _length = length;
+    }
+
+    /// <summary>Marks the façade closed (called by the packer); further reads throw.</summary>
+    internal void MarkClosed() => _closed = true;
+
+    public override bool CanRead => !_closed;
+    public override bool CanWrite => false;
+    public override bool CanSeek => false;
+
+    public override long Length => _length;
+    public override long Position
+    {
+        get => _position;
+        set => throw new NotSupportedException();
+    }
+
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+        if (offset < 0 || count < 0 || offset + count > buffer.Length)
+            throw new ArgumentOutOfRangeException(nameof(count));
+        ObjectDisposedException.ThrowIf(_closed, nameof(TapeReadStreamFacade));
+        if (count == 0)
+            return 0;
+
+        int read = _host.ReadIntoOpenFile(buffer, offset, count);
+        _position += read;
+        return read;
+    }
+
+    public override void Flush() { /* intentional no-op */ }
+
+    public override void Write(byte[] buffer, int offset, int count)
+        => throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin)
+        => throw new NotSupportedException();
+    public override void SetLength(long value)
+        => throw new NotSupportedException();
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && !_closed)
+        {
+            // Closing the stream signals end-of-read; tell the host to release the slot.
+            _host.EndRead();
+        }
+        base.Dispose(disposing);
+    }
+}

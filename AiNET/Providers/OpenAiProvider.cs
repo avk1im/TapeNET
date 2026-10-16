@@ -1,12 +1,10 @@
 using System.ClientModel;
-
 using AiNET.Internal;
-
 using Microsoft.Extensions.AI;
-
 using OpenAI;
 
 namespace AiNET.Providers;
+
 
 /// <summary>
 /// Provider adapter for the <b>OpenAI</b> cloud API

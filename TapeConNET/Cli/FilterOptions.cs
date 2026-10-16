@@ -2,6 +2,7 @@ using System.CommandLine;
 
 namespace TapeConNET.Cli;
 
+
 /// <summary>
 /// Selection-filter options shared by <c>backup</c>, <c>restore</c>,
 /// <c>validate</c>, <c>verify</c>, and <c>list</c>. Both options accept FCL

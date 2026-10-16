@@ -3,6 +3,7 @@ using System.Text;
 
 namespace TapeLoc.Cache;
 
+
 // Content-hash cache (docs/Design-TapeLoc.md §10). A file is skipped when its
 //  canonical content, target culture, and rulesVersion all match a prior run.
 //  The cache stores one marker file per (relative path) keyed entry under

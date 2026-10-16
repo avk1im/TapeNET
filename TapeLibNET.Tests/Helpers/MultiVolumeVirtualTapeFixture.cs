@@ -1,10 +1,14 @@
 ﻿using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
-using System.Security.Cryptography.Xml;
-using TapeLibNET;
+
+using TapeLibNET.Drive;
 using TapeLibNET.Virtual;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Media;
+using TapeLibNET.Agents;
 
 namespace TapeLibNET.Tests.Helpers;
+
 
 #region *** Media Header ***
 
@@ -70,10 +74,12 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
     /// <summary>
     /// Default TOC capacity override for tests — small enough to keep
-    /// <c>CapacityForCurrentSet</c> positive on small volumes so the library's
-    /// software capacity check (<see cref="TapeStreamManager.CheckContentCapacity"/>)
-    /// triggers volume transitions before the tape physically fills.
-    /// 32 KB ≈ 2 blocks at 16 KB block size, plenty for the test TOC.
+    ///  <c>CapacityForCurrentSet</c> positive on small volumes so the library's
+    ///  software capacity check triggers volume transitions before the tape physically
+    ///  fills.
+    /// <para>
+    ///  32 KB ≈ 2 blocks at 16 KB block size, plenty for the test TOC.
+    /// </para>
     /// </summary>
     public const long DefaultTOCCapacity = 32L * 1024;
 
@@ -164,7 +170,18 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     {
         agent.WritesMediaHeader = ShouldHeadVolume(volumeNumber);
         agent.WritesSetHeaders = ShouldWriteSetHeaders(volumeNumber);
+        agent.RecordEmitter = EmitterFor(volumeNumber);   // the build that writes THIS volume
     }
+
+    /// <summary>
+    /// The record emitter per volume — e.g. legacy for volume 1 and 2.1 for the rest, a mixed series
+    ///  written by two builds (Design-FormatV21 §9.3). <see langword="null"/>, or a function returning
+    ///  <see langword="null"/>, = the agent's own V2.1 emitter.
+    /// </summary>
+    internal Func<int, ITapeRecordEmitter?>? EmitterForVolume { get; init; }
+
+    private ITapeRecordEmitter? EmitterFor(int volumeNumber)
+        => EmitterForVolume?.Invoke(volumeNumber);
 
     #endregion
 
@@ -333,7 +350,8 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// </summary>
     public void SaveTOC()
     {
-        using var agent = new TapeAgentBase(Drive, TOC);
+        using var agent = new TapeAgentBase(Drive, TOC)
+            { RecordEmitter = EmitterFor(_loadedVolume) };
         agent.Navigator.TOCCapacity = TOCCapacityOverride;
         if (!agent.BackupTOC())
             Assert.True(agent.BackupTOC(enforce: true), "Failed to save TOC to tape (even with enforce)");

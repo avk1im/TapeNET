@@ -17,7 +17,7 @@ TapeLibNET is organized in four layers, from hardware to application:
 ├─────────────────────────────────────────────────────────────────┤
 │  Base Layer — Streams, Buffers, Serialization                   │
 │  TapeStream · BufferedTapeStream · TapeStreamBuffer ·           │
-│  TapeSerializer · TapeDeserializer · FilterStream               │
+│  Format/ (schemas) · ObserverStream                             │
 ├─────────────────────────────────────────────────────────────────┤
 │  Hardware Layer — Drive & Backend                                │
 │  TapeDrive · TapeDriveBackend · TapeDriveWin32Backend ·         │

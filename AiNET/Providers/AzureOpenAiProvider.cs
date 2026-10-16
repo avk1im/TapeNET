@@ -1,12 +1,10 @@
 using System.ClientModel;
-
 using AiNET.Internal;
-
 using Azure.AI.OpenAI;
-
 using Microsoft.Extensions.AI;
 
 namespace AiNET.Providers;
+
 
 /// <summary>
 /// Provider adapter for <b>Azure OpenAI Service</b> (user-supplied

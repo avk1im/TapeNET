@@ -6,6 +6,7 @@ using Xunit;
 
 namespace HelpNET.Tests.Phase4;
 
+
 /// <summary>
 /// Tests for <see cref="PrecomputedEmbeddingStore"/> — bundle loading, validation,
 /// and vector access.

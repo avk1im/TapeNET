@@ -8,6 +8,7 @@ using Microsoft.Extensions.AI;
 
 namespace HelpNET.Session;
 
+
 /// <summary>
 /// Creates <see cref="IHelpSession"/> instances and wires them to the appropriate
 /// <see cref="IHelpAssistant"/> based on the available AI capabilities and content.

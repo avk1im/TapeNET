@@ -1,9 +1,11 @@
+﻿using System.Diagnostics;
+
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using System.Diagnostics;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Virtual;
+
 
 /// <summary>
 /// Represents a tape mark type.
@@ -16,17 +18,23 @@ public enum TapeMarkType : byte
     EndOfData = 3  // Used as return value only, never stored in virtual blocks
 }
 
-// Semantics:
-//  "logical block" -- a data block visible to the caller. "Block" names mean logical block
-//  "virtual block" -- our internal implementation, never exposed to caller.
-//                     Always called out in names "VirtualBlock"
+/// <summary>Outcome of probing a virtual media metadata stream.</summary>
+public enum VirtualMediaStateProbe { Absent, Loaded, Unreadable }
 
 /// <summary>
 /// A virtual block on virtual tape - represents either a contiguous range of logical data blocks or a tapemark.
-/// For data: spans multiple logical blocks of the same BlockSize.
-/// For marks: occupies exactly one logical block position.
+///  For data: spans multiple logical blocks of the same BlockSize.
+///  For marks: occupies exactly one logical block position.
 /// </summary>
-internal readonly record struct VirtualTapeBlock : ITapeSerializable
+/// <remarks>
+/// Semantics:
+/// <list type="bullet">
+///  <item><b>"logical block"</b> -- a data block visible to the caller. "Block" names mean logical block.</item>
+///  <item><b>"virtual block"</b> -- our internal implementation, never exposed to caller.
+///                     Always called out in names "VirtualBlock".</item>
+/// </list>
+/// </remarks>
+internal readonly record struct VirtualTapeBlock
 {
     /// <summary>True if this is a tape mark, false if data.</summary>
     public bool IsMark { get; init; }
@@ -119,49 +127,15 @@ internal readonly record struct VirtualTapeBlock : ITapeSerializable
         return StreamOffset + (logicalBlock - BeginAtBlock) * BlockSize;
     }
 
-    #region *** ITapeSerializable ***
-
-    /// <summary>Serializes this virtual block.</summary>
-    public void SerializeTo(TapeSerializer serializer)
-    {
-        serializer.Serialize(IsMark);
-        serializer.Serialize((byte)MarkType);
-        serializer.Serialize(BlockSize);
-        serializer.Serialize(BeginAtBlock);
-        serializer.Serialize(DataLength);
-        serializer.Serialize(StreamOffset);
-    }
-
-    /// <summary>Deserializes a virtual block.</summary>
-    public static ITapeSerializable? ConstructFrom(TapeDeserializer deserializer)
-    {
-        return new VirtualTapeBlock
-        {
-            IsMark = deserializer.DeserializeBoolean(),
-            MarkType = (TapeMarkType)deserializer.DeserializeBytes(1)![0],
-            BlockSize = deserializer.DeserializeUInt32(),
-            BeginAtBlock = deserializer.DeserializeInt64(),
-            DataLength = deserializer.DeserializeInt64(),
-            StreamOffset = deserializer.DeserializeInt64()
-        };
-    }
-
-    #endregion
 }
 
 /// <summary>
-/// Simulates tape media backed by a Stream.
-/// Handles block-based I/O and tapemark tracking.
-/// Enforces real tape behavior: block-aligned reads/writes, tapemark handling.
+/// Simulates tape media backed by a <see cref="Stream"/>.
+///  Handles block-based I/O and tapemark tracking.
+///  Enforces real tape behavior: block-aligned reads/writes, tapemark handling.
 /// </summary>
 public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 {
-    #region *** Constants ***
-
-    private const ushort StateVersion = 0x0100;
-
-    #endregion
-
     #region *** Private Fields ***
 
     private readonly Stream m_stream;
@@ -249,41 +223,52 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
         // Load full state from metadata
         metadataStream.Position = 0;
-        var deserializer = new TapeDeserializer(metadataStream);
 
-        // Read and validate header
-        if (!deserializer.ValidateSignature(out ushort version) || version > StateVersion)
-            throw new FormatException($"Invalid state signature or unsupported version {version} (max: {StateVersion})");
+        // Dispatch on the first bytes: format 2.1 record, else the legacy serializer layout
+        Span<byte> head = stackalloc byte[4];
+        int headRead = metadataStream.Read(head);
+        metadataStream.Position = 0;
+        VirtualMediaStateRecord state;
+        bool legacy = false;
+        if (headRead == head.Length && Format.TapeFormat.IsV2(head))
+        {
+            try
+            {
+                state = Format.TapeFrame.ReadInline<VirtualMediaStateRecord>(metadataStream);
+            }
+            catch (Format.TapeFormatException ex)
+            {
+                throw new FormatException(ex.Message, ex);
+            }
+        }
+        else if (Legacy.LegacyVirtualMediaState.IsLegacy(head))
+        {
+            state = Legacy.LegacyVirtualMediaState.Read(metadataStream);
+            legacy = true;
+        }
+        else
+            throw new FormatException("Unrecognized virtual media metadata signature");
 
-        // Load configuration
-        m_minBlockSize = deserializer.DeserializeUInt32();
-        m_maxBlockSize = deserializer.DeserializeUInt32();
-        m_defaultBlockSize = deserializer.DeserializeUInt32();
-        m_capacity = deserializer.DeserializeInt64();
-        m_name = deserializer.DeserializeString();
+        {
 
-        // Validate deserialized values
-        if (m_minBlockSize == 0)
-            throw new FormatException("Invalid minBlockSize (0) in saved state");
-        if (m_maxBlockSize < m_minBlockSize)
-            throw new FormatException($"Invalid block size range in saved state: max {m_maxBlockSize} < min {m_minBlockSize}");
-        if (m_defaultBlockSize < m_minBlockSize || m_defaultBlockSize > m_maxBlockSize)
-            throw new FormatException($"Invalid defaultBlockSize {m_defaultBlockSize} not in range [{m_minBlockSize}..{m_maxBlockSize}]");
+            m_minBlockSize = state.MinBlockSize;
+            m_maxBlockSize = state.MaxBlockSize;
+            m_defaultBlockSize = state.DefaultBlockSize;
+            m_blockSize = state.DefaultBlockSize;
+            m_virtualBlocks.AddRange(state.Rebuild(stream.Length));   // validates ranges and cross-checks
+            m_capacity = (long)state.Capacity;
+            m_name = state.Name;
+            m_bytesWritten = (long)state.BytesWritten;
 
-        m_blockSize = m_defaultBlockSize;
+            m_currentBlock = 0;
+            m_currentVirtualBlockIndex = 0;
+            m_stateDirty = false;   // legacy metadata is upgraded lazily, on the first save
 
-        // Load data state
-        m_bytesWritten = deserializer.DeserializeInt64();
-        var virtualBlocks = deserializer.Deserialize<List<VirtualTapeBlock>, VirtualTapeBlock>();
-        if (virtualBlocks != null)
-            m_virtualBlocks.AddRange(virtualBlocks);
-
-        m_currentBlock = 0;
-        m_currentVirtualBlockIndex = 0;
-        m_stateDirty = false;
-
-        m_logger.LogTrace("{Prefix}: Loaded state with {Count} virtual blocks, {Bytes} bytes written",
-            LogPrefix, m_virtualBlocks.Count, m_bytesWritten);
+            if (legacy)
+                m_logger.LogInformation("Virtual media '{Name}': legacy metadata - will be saved in format 2.1 on the next change.", m_name);
+            m_logger.LogTrace("{Prefix}: Loaded state with {Count} virtual blocks, {Bytes} bytes written",
+                LogPrefix, m_virtualBlocks.Count, m_bytesWritten);
+        }
     }
 
     /// <summary>
@@ -296,16 +281,38 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         Stream? metadataStream,
         bool ownsMetadataStream = true,
         ILoggerFactory? loggerFactory = null)
+        => TryCreateFromState(stream, ownsStream, metadataStream, ownsMetadataStream, loggerFactory, out _, out _);
+
+    /// <summary>
+    /// Probing variant: distinguishes absent metadata from unreadable metadata, so callers never
+    ///  mistake a corrupt or newer-format state for "no state" and wipe the medium.
+    /// </summary>
+    public static VirtualTapeMedia? TryCreateFromState(
+        Stream stream,
+        bool ownsStream,
+        Stream? metadataStream,
+        bool ownsMetadataStream,
+        ILoggerFactory? loggerFactory,
+        out VirtualMediaStateProbe probe,
+        out string? reason)
     {
+        reason = null;
         if (metadataStream == null || metadataStream.Length == 0)
+        {
+            probe = VirtualMediaStateProbe.Absent;
             return null;
+        }
 
         try
         {
-            return new VirtualTapeMedia(stream, ownsStream, metadataStream, ownsMetadataStream, loggerFactory);
+            var media = new VirtualTapeMedia(stream, ownsStream, metadataStream, ownsMetadataStream, loggerFactory);
+            probe = VirtualMediaStateProbe.Loaded;
+            return media;
         }
-        catch
+        catch (Exception ex)
         {
+            probe = VirtualMediaStateProbe.Unreadable;
+            reason = $"virtual media metadata unreadable: {ex.Message}";
             return null;
         }
     }
@@ -452,7 +459,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
                 return 0;
         }
 
-#if DEBUG
+#if TEST_HOOKS
         // Evaluated AFTER validation, truncation and the capacity check, so an injected fault models a
         //  genuine MEDIUM fault rather than a rejected request — and so the caller meets exactly the
         //  error path a real drive would produce. Note the truncation has already happened by here: a
@@ -619,7 +626,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
             return 0;
         }
 
-#if DEBUG
+#if TEST_HOOKS
         // After the EOD check, so an injected read fault is a MEDIUM fault, never a disguised EOD.
         if (ReadFaults is { } rf && rf.ShouldInjectNow())
             return ApplyInjectedReadFault(rf, buffer, offset, count);
@@ -737,8 +744,10 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
     /// <summary>
     /// Spaces over tape marks of the specified type.
-    /// Forward (count > 0): ends AFTER the last mark passed.
-    /// Backward (count < 0): ends AT (before) the last mark passed.
+    /// <list type="bullet">
+    ///  <item>Forward (count &gt; 0): ends AFTER the last mark passed.</item>
+    ///  <item>Backward (count &lt; 0): ends AT (before) the last mark passed.</item>
+    /// </list>
     /// </summary>
     public int SpaceMarks(TapeMarkType markType, int count)
     {
@@ -965,21 +974,9 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         try
         {
             m_metadataStream.Position = 0;
-            var serializer = new TapeSerializer(m_metadataStream);
-
-            // Signature and version
-            serializer.SerializeSignature(StateVersion);
-
-            // Configuration
-            serializer.Serialize(m_minBlockSize);
-            serializer.Serialize(m_maxBlockSize);
-            serializer.Serialize(m_defaultBlockSize);
-            serializer.Serialize(m_capacity);
-            serializer.Serialize(m_name);
-
-            // Data state
-            serializer.Serialize(m_bytesWritten);
-            serializer.Serialize<List<VirtualTapeBlock>, VirtualTapeBlock>(m_virtualBlocks);
+            var state = VirtualMediaStateRecord.Create(m_minBlockSize, m_maxBlockSize, m_defaultBlockSize,
+                m_capacity, m_bytesWritten, TotalBlockCount, m_name, m_virtualBlocks);
+            Format.TapeFrame.WriteInline(m_metadataStream, state);
 
             m_metadataStream.Flush();
             m_metadataStream.SetLength(m_metadataStream.Position);

@@ -4,6 +4,7 @@ using System.Text;
 
 namespace FclNET.Ast;
 
+
 /// <summary>
 /// Base class for all FCL Abstract Syntax Tree nodes.
 /// Every node carries a <see cref="Span"/> referencing its position in the original source text.

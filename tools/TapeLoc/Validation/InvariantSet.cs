@@ -4,6 +4,7 @@ using TapeLoc.Configuration;
 
 namespace TapeLoc.Validation;
 
+
 // Extracts invariant token sets from source/target so the validators can assert
 //  equality (docs/Design-TapeLoc.md §9). All extraction is purely textual so it
 //  works uniformly for C# and XAML.

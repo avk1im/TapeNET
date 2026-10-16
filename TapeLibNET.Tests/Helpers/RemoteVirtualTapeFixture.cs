@@ -1,10 +1,15 @@
 ﻿using Grpc.Net.Client;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using TapeLibNET.Remote;
+
+using TapeLibNET.Drive;
 using TapeLibNET.Virtual;
+using TapeLibNET.Remote;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
 
 namespace TapeLibNET.Tests.Helpers;
+
 
 /// <summary>
 /// Test fixture that mirrors <see cref="VirtualTapeFixture"/> but creates the
@@ -48,7 +53,7 @@ public sealed class RemoteVirtualTapeFixture : IDisposable
     /// Creates a fully ready remote fixture: virtual drive created on the server,
     /// media loaded and prepared, TOC initialized.
     /// </summary>
-    /// <param name="channel">gRPC channel from <see cref="RemoteTapeServiceFixture"/>.</param>
+    /// <param name="channel">gRPC channel from <see cref="ITapeServiceFixture.Channel"/>.</param>
     /// <param name="profile">Drive capability profile to emulate.</param>
     /// <param name="contentCapacity">Content partition capacity in bytes.</param>
     /// <param name="loggerFactory">Optional logger factory (defaults to <see cref="NullLoggerFactory"/>).</param>

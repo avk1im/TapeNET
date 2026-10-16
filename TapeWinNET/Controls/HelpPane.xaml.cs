@@ -1,18 +1,17 @@
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
-using System.Windows.Media;
 using System.Windows.Threading;
 
 using HelpNET.Content;
-using HelpNET.Indexing;
+
 using TapeWinNET.Help;
 using TapeWinNET.Help.Overlays;
 using TapeWinNET.ViewModels;
 
 namespace TapeWinNET.Controls;
+
 
 /// <summary>
 /// Interaction logic for HelpPane.xaml.

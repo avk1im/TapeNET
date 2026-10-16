@@ -8,6 +8,7 @@ using TapeLoc.Configuration;
 
 namespace TapeLoc.Ai;
 
+
 // OpenAI-compatible chat-completions client (docs/Design-TapeLoc.md §7).
 //  Reads the API key from the configured environment variable, applies
 //  exponential backoff on transient/429/5xx responses, and returns the model's

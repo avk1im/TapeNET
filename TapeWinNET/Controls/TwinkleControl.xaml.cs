@@ -6,6 +6,7 @@ using System.Windows.Threading;
 
 namespace TapeWinNET.Controls;
 
+
 /// <summary>
 /// Interaction logic for TwinkleControl.xaml
 /// </summary>

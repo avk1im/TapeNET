@@ -1,12 +1,11 @@
 using System.CommandLine;
-
+using TapeConNET.Infrastructure;
+using TapeConNET.Ux;
 using TapeLibNET.Scan;
 using TapeLibNET.Services;
 
-using TapeConNET.Infrastructure;
-using TapeConNET.Ux;
-
 namespace TapeConNET.Cli;
+
 
 /// <summary>
 /// <c>tapecon scan-media</c> — surveys the loaded media from BOM to EOD with no TOC assumed and prints the

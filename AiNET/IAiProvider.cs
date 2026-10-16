@@ -2,6 +2,7 @@ using Microsoft.Extensions.AI;
 
 namespace AiNET;
 
+
 /// <summary>
 /// Implemented by each provider adapter. Describes the provider and can
 /// probe a given endpoint, then construct live clients from a validated

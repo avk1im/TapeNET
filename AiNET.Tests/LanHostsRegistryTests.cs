@@ -2,6 +2,7 @@ using Xunit;
 
 namespace AiNET.Tests;
 
+
 /// <summary>
 /// Tests for <see cref="LanHostsRegistry"/> — JSON persistence round-trip
 /// and concurrent add/remove behaviour.

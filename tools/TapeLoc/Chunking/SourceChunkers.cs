@@ -6,6 +6,7 @@ using TapeLoc.Configuration;
 
 namespace TapeLoc.Chunking;
 
+
 // Splits oversized source into translatable chunks on safe boundaries and
 //  reassembles them losslessly (docs/Design-TapeLoc.md §5). Files at or under
 //  the threshold are returned as a single chunk so most files translate whole.

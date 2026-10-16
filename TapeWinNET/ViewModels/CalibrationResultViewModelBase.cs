@@ -1,11 +1,10 @@
 using System.Windows.Input;
-
+using TapeLibNET.Calibration;
+using TapeLibNET.Services;
 using Windows.Win32.System.SystemServices; // Helpers.BytesToStringLong
 
-using TapeLibNET;
-using TapeLibNET.Services;
-
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// Shared display surface for a calibration result: the measured figures (profile key, reported vs.

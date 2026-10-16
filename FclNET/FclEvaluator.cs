@@ -6,6 +6,7 @@ using FclNET.Ast;
 
 namespace FclNET;
 
+
 /// <summary>
 /// Evaluates a validated FCL expression tree against <see cref="IFclFileInfo"/> instances.
 /// <para>

@@ -1,19 +1,13 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Logging;
-using System.Diagnostics;
-using System.Reflection;
+#if TEST_HOOKS
 using Windows.Win32.Foundation;
-
+#endif
 
 namespace TapeLibNET.Virtual;
 
+
 public partial class VirtualTapeDriveBackend
 {
-#if DEBUG
+#if TEST_HOOKS
     /// <summary>
     /// Block-level write faults injected into the CONTENT medium. Owned here rather than by the medium so
     ///  the settings survive <see cref="LoadMedia"/>, which builds a fresh medium on every load and every
@@ -26,7 +20,24 @@ public partial class VirtualTapeDriveBackend
     public VirtualMediaFaultInjector ContentReadFaults { get; } =
         new() { ErrorWin32 = WIN32_ERROR.ERROR_READ_FAULT };
 
-    /// <summary>Wires the injectors into the currently loaded media. Mirrors <c>ApplyEwProfileToMedia</c>.</summary>
+    /// <summary>
+    /// Block-level write faults injected into the INITIATOR (TOC) medium — the counterpart of
+    ///  <see cref="ContentWriteFaults"/> for partitioned media.
+    /// </summary>
+    public VirtualMediaFaultInjector InitiatorWriteFaults { get; } =
+        new() { ErrorWin32 = WIN32_ERROR.ERROR_WRITE_FAULT };
+
+    /// <summary>
+    /// Block-level read faults injected into the INITIATOR (TOC) medium — e.g. a damaged first TOC copy on a
+    ///  partitioned cartridge.
+    /// </summary>
+    public VirtualMediaFaultInjector InitiatorReadFaults { get; } =
+        new() { ErrorWin32 = WIN32_ERROR.ERROR_READ_FAULT };
+
+    /// <summary>
+    /// Wires the injectors into the currently loaded media. Mirrors <c>ApplyEwProfileToMedia</c>. Called on every load
+    ///  AND after <see cref="FormatMedia"/>, which builds a fresh initiator medium.
+    /// </summary>
     private void ApplyFaultInjectorsToMedia()
     {
         if (m_contentMedia is not null)
@@ -34,7 +45,11 @@ public partial class VirtualTapeDriveBackend
             m_contentMedia.WriteFaults = ContentWriteFaults;
             m_contentMedia.ReadFaults = ContentReadFaults;
         }
+        if (m_initiatorMedia is not null)
+        {
+            m_initiatorMedia.WriteFaults = InitiatorWriteFaults;
+            m_initiatorMedia.ReadFaults = InitiatorReadFaults;
+        }
     }
 #endif
-
 }

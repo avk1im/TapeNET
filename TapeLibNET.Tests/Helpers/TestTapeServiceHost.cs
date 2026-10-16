@@ -1,10 +1,12 @@
 using System.Collections.Concurrent;
+
 using Microsoft.Extensions.Logging;
 
-using TapeLibNET;
+using TapeLibNET.Agents;
 using TapeLibNET.Services;
 
 namespace TapeLibNET.Tests.Helpers;
+
 
 /// <summary>
 /// In-memory <see cref="ITapeServiceHost"/> for integration tests.
@@ -49,20 +51,20 @@ public class TestTapeServiceHost(ILogger? logger = null) : ITapeServiceHost
 
     /// <summary>
     /// Queued <see cref="bool"/> answers consumed one-by-one by
-    ///  <see cref="Confirm"/>. When empty, <paramref name="defaultAnswer"/> is
+    ///  <see cref="Confirm"/>. When empty, <c>defaultAnswer</c> is
     ///  returned (non-interactive / safe-default behaviour).
     /// </summary>
     public Queue<bool> ConfirmAnswers { get; } = new();
 
     /// <summary>
     /// Queued index answers consumed one-by-one by <see cref="Select"/>.
-    /// When empty, <paramref name="defaultIndex"/> is returned.
+    /// When empty, <c>defaultIndex</c> is returned.
     /// </summary>
     public Queue<int> SelectAnswers { get; } = new();
 
     /// <summary>
     /// Queued string answers consumed one-by-one by <see cref="Ask"/>.
-    /// When empty, <paramref name="defaultValue"/> is returned.
+    /// When empty, <c>defaultValue</c> is returned.
     /// </summary>
     public Queue<string?> AskAnswers { get; } = new();
 

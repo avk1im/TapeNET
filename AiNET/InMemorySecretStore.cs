@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 
 namespace AiNET;
 
+
 /// <summary>
 /// Non-persistent <see cref="IAiSecretStore"/> keeping secrets in memory for
 /// the lifetime of the process only.

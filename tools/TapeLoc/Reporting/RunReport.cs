@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace TapeLoc.Reporting;
 
+
 internal enum FileOutcome { Translated, Skipped, Failed, DryRun }
 
 internal sealed record FileResult(

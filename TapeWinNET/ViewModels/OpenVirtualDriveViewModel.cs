@@ -1,16 +1,12 @@
-﻿using System.Collections.ObjectModel;
-using System.IO;
+﻿using System.IO;
 using System.Windows.Input;
 using Microsoft.Win32;
-
-using TapeLibNET;
-using TapeLibNET.Virtual;
+using TapeLibNET.Calibration;
 using TapeLibNET.Services;
-using TapeWinNET.Converters;
-using TapeWinNET.Models;
-using TapeWinNET.Services;
+using TapeLibNET.Virtual;
 
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// Represents a block size option for the ComboBox.

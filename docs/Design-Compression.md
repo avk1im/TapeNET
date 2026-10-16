@@ -54,7 +54,7 @@ ZSTD was chosen over alternatives (LZ4, Brotli, Deflate) for its combination of:
 
 ## 3. Compression Modes and Levels
 
-### `TapeCompression` enum (`TapeLibNET/TapeCompression.cs`)
+### `TapeCompression` enum (`TapeLibNET/Compression/TapeCompression.cs`)
 
 ```
 None      — no software processing; HW compression is disabled
@@ -79,7 +79,7 @@ disables hardware compression (§7). Hardware mode leaves the drive's own compre
 
 ### `CompressionPreset` helper
 
-A shared static helper (`TapeLibNET/TapeCompression.cs`) translates between the human-readable
+A shared static helper (`TapeLibNET/Compression/TapeCompression.cs`) translates between the human-readable
 strings used by the CLI and WPF and the `(TapeCompression, level)` pair stored in the TOC:
 
 | Specifier | Mode | Level |
@@ -98,16 +98,15 @@ full round-trip without duplication between the two app front-ends.
 
 ## 4. Per-Set Metadata (`TapeSetTOC`)
 
-Two fields added to `TapeSetTOC` (`TapeLibNET/TapeTOC.cs`):
+Two fields added to `TapeSetTOC` (`TapeLibNET/Toc/TapeTOC.cs`):
 
 ```csharp
 public TapeCompression Compression     { get; set; } = TapeCompression.None;
 public int             CompressionLevel{ get; set; } = ZstdLevel.Default;
 ```
 
-Both are serialized as consecutive `int32` fields in `SerializeTo` / `ConstructFrom`, appended
-after the existing fields so older tapes (missing these bytes) are read back as `None`/`5` by
-the default-value path.
+two int32 values in layout B,
+and layout-A TOCs (written before compression) read back as None / Default.
 
 `CopyFrom` propagates both to continuation sets, so a multi-volume backup inherits the
 original set's compression configuration automatically.
@@ -124,22 +123,18 @@ Auto store-fallback (§6) means a single set may contain a mix of `Stored` and `
 Restore must therefore know per-file which codec was used:
 
 ```csharp
-// TapeLibNET/TapeCompressionStream.cs
+// TapeLibNET/Compression/TapeCompressionStream.cs
 public enum TapeFileCodec : byte
 {
 	Stored = 0,   // uncompressed (None/Hardware path, or auto-fallback)
 	Zstd   = 1,   // ZSTD-compressed body
 }
 
-// TapeLibNET/TapeTOC.cs — TapeFileInfo
+// TapeLibNET/Toc/TapeTOC.cs — TapeFileInfo
 internal TapeFileCodec Codec { get; set; } = TapeFileCodec.Stored;
 ```
 
-`TapeFileInfo.SerializeTo` appends `(byte)Codec` after `SizeOnTape`. `ConstructFrom`
-reads it with `DeserializeBytes(1)` and defaults to `Stored` when the byte is absent
-(forward-compatibility with tapes written before compression support was added).
-
-`EstimateSerializedSize` adds 1 byte for this field.
+Codec is TOC file-entry field 7 (critical) in format 2.1, and is also written as the first byte of every 2.1 file body (Design-FormatV21 §5.3).
 
 ---
 
@@ -151,7 +146,7 @@ Naïvely, detecting whether compression wins requires compressing the whole file
 multi-gigabyte files this is prohibitive. The solution is a **probe window**: compress the
 first 128 KiB (= `ZSTD_BLOCKSIZE_MAX`, one ZSTD block), compare sizes, then decide.
 
-### `ProbingCompressionStream` (`TapeLibNET/TapeCompressionStream.cs`)
+### `ProbingCompressionStream` (`TapeLibNET/Compression/TapeCompressionStream.cs`)
 
 A write-only `Stream` that wraps the packer write façade (`wstream`):
 
@@ -247,7 +242,7 @@ wstream (packer write façade)
 ```
 
 Header serialization is **always uncompressed** (written directly to `wstream` before the
-compression stream is opened), so `TapeFileInfo.DeserializeAndCheckHeaderFrom` on restore
+compression stream is opened), so the 2.1 file header frame on restore
 can read the header without knowing the codec.
 
 Hash coverage is deliberately **codec-independent**: `HashingStream` wraps the source
@@ -294,15 +289,14 @@ software-compressed sets bypass it.
 Per file, in write order:
 
 ```
-[raw file header — always uncompressed]
-[file body — Stored or ZSTD-compressed]
+[2.1 file header frame][codec u8][file body — Stored or ZSTD]
 ```
 
 For a compressed file the body is one or two ZSTD frames:
 - Files ≤ 128 KiB: one probe frame (complete).
 - Files > 128 KiB: probe frame + live frame (concatenated; transparent to libzstd).
 
-`SizeOnTape` (set by the packer on commit) covers header + compressed body + ZSTD frame
+`SizeOnTape` (set by the packer on commit) covers all three: the header frame, the codec byte and the (compressed) body incl. ZSTD frame
 overhead. `TapeFileInfo.FileDescr.Length` always holds the original logical file size.
 `tfi.Codec` tells restore which one to decompress.
 
@@ -476,11 +470,11 @@ formatted via `CompressionPreset.DisplayName`.
 
 | File | Role |
 |------|------|
-| `TapeLibNET/TapeCompression.cs` | `TapeCompression` enum, `ZstdLevel` constants, `CompressionPreset` parse/format helper |
-| `TapeLibNET/TapeCompressionStream.cs` | `TapeFileCodec` enum, `ZstdCodec`, `CompressionFilterStream`, `ProbingCompressionStream` (+ `Session`), `DecompressionFilterStream` |
-| `TapeLibNET/TapeTOC.cs` | `TapeSetTOC.Compression` / `CompressionLevel`; `TapeFileInfo.Codec` / `SizeOnTape`; serialization; `TapeSetTOCParams` |
-| `TapeLibNET/TapeBackupAgent.cs` | Hardware interlock on write; `ProbingCompressionStream` usage in `BackupFile`; session lifecycle in `Dispose(bool)` |
-| `TapeLibNET/TapeRestoreAgent.cs` | Hardware interlock on read; `DecompressionFilterStream` wrapping in `RestoreNextFile` |
+| `TapeLibNET/Compression/TapeCompression.cs` | `TapeCompression` enum, `ZstdLevel` constants, `CompressionPreset` parse/format helper |
+| `TapeLibNET/Compression/TapeCompressionStream.cs` | `TapeFileCodec` enum, `ZstdCodec`, `CompressionFilterStream`, `ProbingCompressionStream` (+ `Session`), `DecompressionFilterStream` |
+| `TapeLibNET/Toc/TapeTOC.cs` | `TapeSetTOC.Compression` / `CompressionLevel`; `TapeFileInfo.Codec` / `SizeOnTape`; serialization; `TapeSetTOCParams` |
+| `TapeLibNET/Agents/TapeFileBackupAgent.cs` | Hardware interlock on write; `ProbingCompressionStream` usage in `BackupFile`; session lifecycle in `Dispose(bool)` |
+| `TapeLibNET/Agents/TapeFileRestoreAgent.cs` | Hardware interlock on read; `DecompressionFilterStream` wrapping in `RestoreNextFile` |
 | `TapeLibNET/TapeFilePacker/PackedCommitTracker.cs` | `PendingEntry.Codec`; codec propagation through `Register` → `OnCommitted` → TOC |
 | `TapeLibNET/TapeDrive.cs` | `SetHardwareCompression(bool)` |
 | `TapeLibNET.Tests/CompressionRoundTripTests.cs` | Focused compression test suite (5 × 4 profiles = 20 tests) |

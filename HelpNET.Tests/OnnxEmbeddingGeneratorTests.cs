@@ -1,8 +1,8 @@
 using HelpNET.Embeddings;
-using System.Xml.XPath;
 using Xunit;
 
 namespace HelpNET.Tests;
+
 
 /// <summary>
 /// Integration tests for <see cref="HelpOnnxEmbeddingGenerator"/> — the HelpNET-internal

@@ -6,6 +6,7 @@ using FclNET.Ast;
 
 namespace TapeWinNET.ViewModels;
 
+
 /// <summary>
 /// ViewModel for a group of AND-connected FCL conditions in the visual
 /// filter editor. Each group corresponds to one conjunctive clause in

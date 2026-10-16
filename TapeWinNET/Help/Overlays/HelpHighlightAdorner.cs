@@ -4,6 +4,7 @@ using System.Windows.Media;
 
 namespace TapeWinNET.Help.Overlays;
 
+
 /// <summary>
 /// Visual-only adorner that draws an "informational" highlight (thick rounded blue
 /// border) around a set of target rectangles in the adorned element's coordinate space.

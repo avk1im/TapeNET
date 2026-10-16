@@ -1,9 +1,9 @@
-﻿using System.Numerics;
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 
 namespace TapeWinNET;
+
 
 /// <summary>
 /// Interaction logic for SimpleBox.xaml

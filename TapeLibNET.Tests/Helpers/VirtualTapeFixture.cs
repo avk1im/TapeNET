@@ -1,9 +1,15 @@
 ﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using TapeLibNET;
+
+using TapeLibNET.Drive;
 using TapeLibNET.Virtual;
+using TapeLibNET.Compression;
+using TapeLibNET.Headers;
+using TapeLibNET.Toc;
+using TapeLibNET.Agents;
 
 namespace TapeLibNET.Tests.Helpers;
+
 
 /// <summary>
 /// Reusable test fixture that creates a virtual tape media object only (no drive).
@@ -94,8 +100,8 @@ public sealed class VirtualTapeFixture : IDisposable
 {
     #region *** Constants ***
 
-    /// <summary>Default content capacity: 200 MB — plenty for unit tests.</summary>
-    public const long DefaultContentCapacity = 200L * 1024 * 1024;
+    /// <summary>Default content capacity: 128 MB — plenty for unit tests.</summary>
+    public const long DefaultContentCapacity = 128L * 1024 * 1024;
 
     /// <summary>Default initiator partition capacity: 4 MB.</summary>
     public const long DefaultInitiatorCapacity = 4L * 1024 * 1024;
@@ -109,6 +115,12 @@ public sealed class VirtualTapeFixture : IDisposable
     public ILoggerFactory LoggerFactory { get; }
     public VirtualTapeDriveCapabilities Capabilities { get; }
     public VirtualTapeDriveBackend Backend { get; }
+
+    /// <summary>
+    /// The record emitter the fixture's writing agents BORROW, or <see langword="null"/> = each agent's own V2.1 emitter.
+    ///  Set it only to write another format than V2.1 (e.g. <c>LegacyRecordEmitter.Instance</c>).
+    /// </summary>
+    internal ITapeRecordEmitter? RecordEmitter { get; set; }
 
     #endregion
 
@@ -162,7 +174,8 @@ public sealed class VirtualTapeFixture : IDisposable
         string mediaDescription = "Test Media",
         bool useMemoryMap = false,
         bool withMediaHeader = false,
-        bool withSetHeaders = false)
+        bool withSetHeaders = false,
+        ITapeRecordEmitter? recordEmitter = null) // null = use the agents' own 2.1 emitter
     {
         if (withSetHeaders && !withMediaHeader) // cannot have set headers without a media header (SH-1)
             throw new ArgumentException("Set headers require a media header (SH-1)", nameof(withSetHeaders));
@@ -174,6 +187,10 @@ public sealed class VirtualTapeFixture : IDisposable
 
         long initCap = Capabilities.SupportsInitiatorPartition
             ? DefaultInitiatorCapacity : 0;
+
+        // Set before anything is written — the agent writing media header below
+        //  must already use RecordEmitter
+        RecordEmitter = recordEmitter;  // null = use the agents' own 2.1 emitter
 
         Backend = useMemoryMap
             ? VirtualTapeDriveBackend.CreateMemoryMapBacked(
@@ -197,7 +214,11 @@ public sealed class VirtualTapeFixture : IDisposable
         // Write header if requested (Notice some tests want to start with a blank tape)
         if (withMediaHeader)
         {
-            using var agent = new TapeAgentBase(Drive, TOC) { WritesSetHeaders = withSetHeaders };
+            using var agent = new TapeAgentBase(Drive, TOC)
+            {
+                WritesSetHeaders = withSetHeaders,
+                RecordEmitter = RecordEmitter, // null = use the agents' own 2.1 emitter
+            };
             Assert.True(agent.WriteMediaHeader(), "Fixture: WriteMediaHeader failed");
         }
     }
@@ -226,6 +247,7 @@ public sealed class VirtualTapeFixture : IDisposable
         {
             WritesMediaHeader = WithMediaHeader,
             WritesSetHeaders = WithSetHeaders,
+            RecordEmitter = RecordEmitter, // null = use the agent's own 2.1 emitter
         };
     }
 
@@ -261,7 +283,8 @@ public sealed class VirtualTapeFixture : IDisposable
     /// </summary>
     public void SaveTOC()
     {
-        using var agent = new TapeAgentBase(Drive, TOC);
+        using var agent = new TapeAgentBase(Drive, TOC)
+            { RecordEmitter = RecordEmitter };  // null = use the agent's own 2.1 emitter
         Assert.True(agent.BackupTOC(), "Failed to save TOC to tape");
     }
 
@@ -303,6 +326,10 @@ public sealed class VirtualTapeFixture : IDisposable
     /// <param name="notifiable">Optional callback handler.</param>
     /// <param name="compression">Software compression mode (default <see cref="TapeCompression.None"/>).</param>
     /// <param name="compressionLevel">ZSTD level; only used when <paramref name="compression"/> is <see cref="TapeCompression.Software"/>.</param>
+    /// <param name="setId">
+    /// Pins the new set's <see cref="TapeSetTOC.SetId"/> — for tests that compare the bytes of two independent backups.
+    ///  <see langword="null"/> keeps the freshly minted id.
+    /// </param>
     /// <returns>Statistics snapshot after backup completes.</returns>
     public TapeFileStatistics BackupFiles(
         List<string> fileList,
@@ -311,9 +338,9 @@ public sealed class VirtualTapeFixture : IDisposable
         TapeHashAlgorithm hashAlgorithm = TapeHashAlgorithm.Crc64,
         uint blockSize = 0,
         ITapeFileNotifiable? notifiable = null,
-        bool useAligned = false,
         TapeCompression compression = TapeCompression.None,
-        int compressionLevel = ZstdLevel.Default)
+        int compressionLevel = ZstdLevel.Default,
+        Guid? setId = null)
     {
         // Configure the set
         TOC.AddNewSetTOC(0, incremental);
@@ -323,21 +350,16 @@ public sealed class VirtualTapeFixture : IDisposable
         TOC.CurrentSetTOC.Compression = compression;
         TOC.CurrentSetTOC.CompressionLevel = compressionLevel;
 
+        if (setId is { } id)
+            TOC.CurrentSetTOC.SetId = id;
+
         using var agent = CreateBackupAgent();
 
-#pragma warning disable CS0618 // Type or member is obsolete -- We test the legacy aligned case as well, also as a comparison to the packed variety
-        bool success = useAligned
-            ? agent.BackupFileListToCurrentSetAligned(
-                newSet: true,
-                fileList,
-                ignoreFailures: true,
-                fileNotify: notifiable)
-            : agent.BackupFileListToCurrentSet(
-                newSet: true,
-                fileList,
-                ignoreFailures: true,
-                fileNotify: notifiable);
-#pragma warning restore CS0618 // Type or member is obsolete
+        bool success = agent.BackupFileListToCurrentSet(
+            newSet: true,
+            fileList,
+            ignoreFailures: true,
+            fileNotify: notifiable);
 
         Assert.True(success, "Backup failed");
 

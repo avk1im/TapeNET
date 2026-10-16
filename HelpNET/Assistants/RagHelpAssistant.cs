@@ -7,6 +7,7 @@ using Microsoft.Extensions.AI;
 
 namespace HelpNET.Assistants;
 
+
 /// <summary>
 /// RAG (Retrieval-Augmented Generation) assistant that combines hybrid retrieval
 /// with LLM-based answer synthesis.

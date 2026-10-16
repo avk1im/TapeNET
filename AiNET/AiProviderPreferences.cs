@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace AiNET;
 
+
 /// <summary>
 /// User preferences for AI provider selection, persisted as JSON.
 /// Does <b>not</b> store API keys (those go into a DPAPI-protected blob —

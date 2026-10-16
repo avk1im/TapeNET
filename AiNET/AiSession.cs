@@ -2,6 +2,7 @@ using Microsoft.Extensions.AI;
 
 namespace AiNET;
 
+
 /// <summary>
 /// Concrete implementation of <see cref="IAiSession"/>.
 /// Holds the currently active <see cref="IChatClient"/> and

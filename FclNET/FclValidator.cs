@@ -4,6 +4,7 @@ using FclNET.Ast;
 
 namespace FclNET;
 
+
 /// <summary>
 /// Walks the AST produced by the parser and reports semantic errors
 /// (field/operator mismatches, field/value type mismatches, invalid regex patterns, etc.).

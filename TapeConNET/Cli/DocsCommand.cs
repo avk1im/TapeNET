@@ -1,10 +1,10 @@
 using System.CommandLine;
-using System.Reflection;
 
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
 
 namespace TapeConNET.Cli;
+
 
 /// <summary>
 /// <c>tapecon docs [topic]</c> — renders one of the embedded markdown topics

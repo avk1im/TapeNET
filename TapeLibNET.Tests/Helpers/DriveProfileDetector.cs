@@ -1,6 +1,7 @@
-using TapeLibNET;
+using TapeLibNET.Drive;
 
 namespace TapeLibNET.Tests.Helpers;
+
 
 /// <summary>
 /// Maps physical <see cref="DriveCapabilities"/> to one or more <see cref="DriveProfile"/>

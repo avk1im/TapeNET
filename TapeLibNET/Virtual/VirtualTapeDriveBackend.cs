@@ -1,9 +1,11 @@
-using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Reflection;
+using Microsoft.Extensions.Logging;
+using TapeLibNET.Drive;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Virtual;
+
 
 /// <summary>
 /// Configuration for virtual tape drive capabilities.
@@ -458,7 +460,17 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
                 ownsStream: false,
                 m_contentMetadataStream,
                 ownsMetadataStream: false,
-                LoggerFactory);
+                LoggerFactory,
+                out var contentProbe,
+                out var contentReason);
+
+            // Never create or truncate over metadata we cannot read (F26)
+            if (contentProbe == VirtualMediaStateProbe.Unreadable)
+            {
+                SetError(WIN32_ERROR.ERROR_FILE_CORRUPT, $"Content media: {contentReason}");
+                m_logger.LogWarning("{Prefix}: LoadMedia failed - content media: {Reason}", LogPrefix, contentReason);
+                return false;
+            }
         }
 
         if (m_contentMedia != null)
@@ -525,7 +537,18 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
                     ownsStream: false,
                     m_initiatorMetadataStream,
                     ownsMetadataStream: false,
-                    LoggerFactory);
+                    LoggerFactory,
+                    out var initiatorProbe,
+                    out var initiatorReason);
+
+                if (initiatorProbe == VirtualMediaStateProbe.Unreadable)
+                {
+                    m_contentMedia?.Dispose();
+                    m_contentMedia = null;
+                    SetError(WIN32_ERROR.ERROR_FILE_CORRUPT, $"Initiator media: {initiatorReason}");
+                    m_logger.LogWarning("{Prefix}: LoadMedia failed - initiator media: {Reason}", LogPrefix, initiatorReason);
+                    return false;
+                }
             }
 
             if (m_initiatorMedia != null)
@@ -581,7 +604,7 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
         // Apply the configured early-warning emulation profile to the (re)loaded content media.
         ApplyEwProfileToMedia();
 
-#if DEBUG
+#if TEST_HOOKS
         // Re-wire the block-level fault injectors, since the medium object is new.
         ApplyFaultInjectorsToMedia();
 #endif
@@ -823,14 +846,34 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
         if (m_hasMedia || m_contentStream != null)
             UnloadMedia();
 
-        m_contentStream = new MemoryStream(snapshot.ContentData, 0, snapshot.ContentData.Length, writable: true, publiclyVisible: true);
+        static int ChoseCapacity(int needed, long reserved)
+        {
+            // Ensure we don't exceed Int32.MaxValue for MemoryStream
+            if (reserved > Int32.MaxValue)
+                reserved = Int32.MaxValue;
+            return Math.Max(needed, (int)reserved);
+        }
+
+        static byte[] ChoseBuffer(byte[] supplied, long reserved)
+        {
+            int capacity = ChoseCapacity(supplied.Length, reserved);
+            if (supplied.Length >= capacity)
+                return supplied;
+            var buffer = new byte[capacity];
+            Array.Copy(supplied, buffer, supplied.Length);
+            return buffer;
+        }
+
+        byte[] buff = ChoseBuffer(snapshot.ContentData, snapshot.ContentCapacity);
+        m_contentStream = new MemoryStream(buff, 0, buff.Length, writable: true, publiclyVisible: true);
         m_contentMetadataStream = snapshot.ContentMetadata != null
             ? new MemoryStream(snapshot.ContentMetadata, 0, snapshot.ContentMetadata.Length, writable: true, publiclyVisible: true)
             : new MemoryStream();
 
         if (m_capabilities.SupportsInitiatorPartition && snapshot.InitiatorData != null)
         {
-            m_initiatorStream = new MemoryStream(snapshot.InitiatorData, 0, snapshot.InitiatorData.Length, writable: true, publiclyVisible: true);
+            buff = ChoseBuffer(snapshot.InitiatorData, snapshot.InitiatorCapacity);
+            m_initiatorStream = new MemoryStream(buff, 0, buff.Length, writable: true, publiclyVisible: true);
             m_initiatorMetadataStream = snapshot.InitiatorMetadata != null
                 ? new MemoryStream(snapshot.InitiatorMetadata, 0, snapshot.InitiatorMetadata.Length, writable: true, publiclyVisible: true)
                 : new MemoryStream();
@@ -916,6 +959,10 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
                 ownsMetadataStream: false,
                 name: NameFromStream(m_initiatorStream),
                 loggerFactory: LoggerFactory);
+
+#if TEST_HOOKS
+            ApplyFaultInjectorsToMedia();   // the fresh initiator medium needs its injectors too
+#endif
         }
         else
         {
@@ -1002,7 +1049,7 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
         // Sync error from media
         if (!m_currentMedia.WentOK)
         {
-            SetError(m_currentMedia.LastError);
+            SyncErrorFrom(m_currentMedia);
 
             if (m_currentMedia.LastErrorWin32 == WIN32_ERROR.ERROR_END_OF_MEDIA)
                 eom = true;

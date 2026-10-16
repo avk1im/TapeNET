@@ -1,11 +1,8 @@
 using AiNET;
-
 using FclAiNET;
 using FclAiNET.Test;
-
-using Microsoft.Extensions.Logging;
-
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 
 // ─────────────────────────────────────────────────────
 //  FclAiNET Test App — interactive NL → FCL console

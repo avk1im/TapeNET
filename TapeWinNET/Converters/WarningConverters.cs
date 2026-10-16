@@ -2,9 +2,11 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Media;
+
 using TapeWinNET.Models;
 
 namespace TapeWinNET.Converters;
+
 
 /// <summary>
 /// Converts a <see cref="WarningLevel"/> enum value to its standard icon character.

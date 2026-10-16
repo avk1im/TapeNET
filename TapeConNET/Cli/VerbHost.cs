@@ -1,18 +1,13 @@
 using System.CommandLine;
-using System.IO;
-
-using Microsoft.Extensions.Logging;
-
-using TapeLibNET;
-using TapeLibNET.Virtual;
-using TapeLibNET.Services;
-
 using TapeConNET.Infrastructure;
 using TapeConNET.Logging;
 using TapeConNET.Services;
 using TapeConNET.Ux;
+using TapeLibNET.Services;
+using TapeLibNET.Virtual;
 
 namespace TapeConNET.Cli;
+
 
 /// <summary>
 /// Thin convenience wrapper that every verb uses to build a configured

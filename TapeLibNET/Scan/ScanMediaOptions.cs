@@ -1,4 +1,9 @@
+using TapeLibNET.Agents;
+using TapeLibNET.Calibration;
+using TapeLibNET.Drive;
+
 namespace TapeLibNET.Scan;
+
 
 /// <summary>
 /// Tuning for a Scan Media pass. All defaults are safe on an unknown, possibly damaged cartridge.
@@ -8,10 +13,10 @@ public sealed record ScanMediaOptions
     /// <summary>Guard against a runaway walk when the caller left <see cref="MaxFragments"/> unset.</summary>
     public const int DefaultMaxFragments = 1_000;
 
-    /// <summary>Deserialize TOC copies, not merely detect them. See §4.3. Default <see langword="false"/></summary>
+    /// <summary>Deserialize TOC copies, not merely detect them. See Design-ScanMedia §8.3. Default <see langword="false"/></summary>
     public bool HarvestTocCopies { get; init; } = false;
 
-    /// <summary>Enrich a calibration cartridge's entry with its checkpoint-derived run state (§4.4).
+    /// <summary>Enrich a calibration cartridge's entry with its checkpoint-derived run state (Design-ScanMedia §4.5).
     ///  Default <see langword="false"/></summary>
     public bool InspectCalibrationTrail { get; init; } = false;
 
@@ -55,6 +60,9 @@ public readonly record struct TapeScanProgress(
 {
     /// <summary>Walking the medium, identifying fragments — the bulk of any scan.</summary>
     public const string PhaseScanning = "scanning";
+
+    /// <summary>Walking the initiator (TOC) partition.</summary>
+    public const string PhaseScanningInitiator = "scanning-initiator";
 
     /// <summary>Deserializing a table-of-contents copy.</summary>
     public const string PhaseHarvestingToc = "harvesting-toc";

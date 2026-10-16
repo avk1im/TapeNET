@@ -6,6 +6,7 @@ using Windows.Win32.Security.Credentials;
 
 namespace AiNET;
 
+
 /// <summary>
 /// <see cref="IAiSecretStore"/> backed by the <b>Windows Credential Manager</b>
 /// (generic credentials, <c>CRED_PERSIST_LOCAL_MACHINE</c> scoped to the

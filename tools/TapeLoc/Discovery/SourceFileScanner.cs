@@ -4,6 +4,7 @@ using TapeLoc.Configuration;
 
 namespace TapeLoc.Discovery;
 
+
 // Enumerates the canonical source files to translate, honoring include/exclude
 //  globs from loc-rules.json. Paths are returned relative to the source root so
 //  the output variant can mirror the tree (required by the LocSourceDir build

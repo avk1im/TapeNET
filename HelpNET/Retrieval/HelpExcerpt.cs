@@ -2,6 +2,7 @@ using HelpNET.Content;
 
 namespace HelpNET.Retrieval;
 
+
 /// <summary>
 /// A scored chunk excerpt returned by a retriever.
 /// </summary>

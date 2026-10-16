@@ -1,12 +1,17 @@
 ﻿using Grpc.Core;
 using Microsoft.Extensions.Logging;
-using System.IO;
+using TapeLibNET.Agents;
+using TapeLibNET.Calibration;
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
+using TapeLibNET.Media;
 using TapeLibNET.Remote;
+using TapeLibNET.Toc;
 using TapeLibNET.Virtual;
-using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices; // Helpers.BytesToStringLong
 
 namespace TapeLibNET.Services;
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Naming vocabulary — one verb per lifecycle stage (keep new names consistent!)
@@ -34,13 +39,13 @@ namespace TapeLibNET.Services;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
-/// Outcome of <see cref="RestoreTOCOrCalibrationAsync"/> — lets the app react to each recognized
+/// Outcome of <see cref="TapeServiceBase.IdentifyMediaAsync"/> — lets the app react to each recognized
 ///  media kind explicitly (show the TOC, show a calibration pane, or flag unidentified media)
 ///  without conflating them into a single success/failure bool.
 /// </summary>
 public enum IdentifyMediaOutcome
 {
-    /// <summary>Backup media identified (or the user opted to search): the TOC was read into <see cref="TOC"/>.</summary>
+    /// <summary>Backup media identified (or the user opted to search): the TOC was read.</summary>
     TocLoaded,
 
     /// <summary>A calibration cartridge — no TOC exists; its details were surfaced instead.</summary>
@@ -78,7 +83,7 @@ public enum TOCSource
 /// Threading model: one <see cref="SemaphoreSlim"/> (1,1) guards every mutating
 ///  operation. Callers must never re-enter the service from the UI thread while the
 ///  semaphore is held (deadlock risk). All long-running methods run via
-///  <see cref="Task.Run"/> so the UI thread is never blocked.
+///  <see cref="Task.Run(System.Action)"/> so the UI thread is never blocked.
 /// </para>
 /// <para>
 /// Subclasses (the per-app <c>TapeService</c>) may override the protected virtual
@@ -161,7 +166,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// <summary>True when the current TOC was loaded from a file rather than from tape.</summary>
     public TOCSource TOCIsFrom { get; protected set; } = TOCSource.Media;
 
-    /// <summary>Full path of the TOC file when <see cref="TOCIsFrom"/> is <see cref="TOCSource.File">;
+    /// <summary>Full path of the TOC file when <see cref="TOCIsFrom"/> is <see cref="TOCSource.File"/>;
     ///  <see langword="null"/> otherwise.</summary>
     public string? TOCFilePath { get; protected set; }
 
@@ -943,8 +948,12 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
     /// <summary>
     /// Logs drive/media capacity info after a successful media load.
-    /// Override in app subclasses to add app-specific formatting.
+    ///  Override in app subclasses to add app-specific formatting.
     /// </summary>
+    /// <remarks>
+    /// Just a short update upon loading -- as opposed to the detailed info provided
+    ///  by <see cref="LogMediaInfoFull"/>.
+    /// </remarks>
     protected virtual void LogMediaInfo()
     {
         if (_drive is null) return;
@@ -958,46 +967,28 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     ///  after a successful TOC load.
     /// Override in app subclasses to add app-specific formatting.
     /// </summary>
+    /// <remarks>
+    /// Just a short update upon loading -- as opposed to the detailed info provided
+    ///  by <see cref="LogMediaInfoFull"/>.
+    /// </remarks>
     protected virtual void LogTOCInfo()
     {
         if (_toc is null) return;
         LogInfoSub($"Media name: {_toc.Description}");
         if (_toc.MediaId != Guid.Empty)
             LogInfoSub($"Media ID: {_toc.MediaId}");
-        LogInfoSub($"Created: {_toc.CreationTime}");
-        LogInfoSub($"Last saved: {_toc.LastSaveTime}");
+        LogInfoSub($"Created: {_toc.CreationTime.ToLocalTime()}");
+        LogInfoSub($"Last saved: {_toc.LastSaveTime.ToLocalTime()}");
         LogInfoSub($"Volume: #{_toc.Volume}");
-
+        LogInfoSub($"TOC format: {DescribeTocFormat(_toc)}");
         for (int alt = 0; alt >= _toc.MinSetIndex; alt--)
         {
             int setIndex = _toc.SetIndexToAlt(alt);
             var setTOC = _toc[setIndex];
             LogInfoSub($"Set #{setIndex} | {alt}: {setTOC.Description} - {setTOC.Count} files" +
-                (setTOC.Incremental ? " [Incremental]" : ""));
+                (setTOC.Incremental ? " [Incremental]" : "") +
+                (setTOC.DataFormat == TapeDataFormat.Legacy ? " [Legacy]" : ""));
         }
-    }
-
-    /// <summary>
-    /// Logs everything the loaded calibration run header reveals — the CLI counterpart of the WPF
-    ///  calibration property pane. Uses only the BOM header (profile, capacity, plan), so it needs no
-    ///  checkpoint read; a richer, resumability-aware view is available via
-    ///  <see cref="InspectCalibrationForRecalibrationAsync"/>.
-    /// </summary>
-    protected virtual void LogCalibrationInfo()
-    {
-        if (_loadedHeader is not TapeCalibrationHeader cal)
-            return;
-
-        LogInfo("Calibration cartridge (no backup TOC)");
-        LogInfoSub($"Profile key: >{cal.ProfileKey}<");
-        LogInfoSub($"Run id: {cal.RunId:N}");
-        LogInfoSub($"Started: {cal.StartedUtc:u}");
-        LogInfoSub($"Reported capacity at BOM: {Helpers.BytesToStringLong(cal.CapacityReportedAtBom)}");
-
-        var plan = cal.Plan;
-        LogInfoSub($"Planned samples: {plan.SampleCount:N0} (body {plan.BodySampleCount:N0}, tail {plan.TailSampleCount:N0})");
-        LogInfoSub($"Planned checkpoints: {plan.NumCheckpoints:N0}");
-        LogInfoSub($"Run block size: {Helpers.BytesToStringLong(cal.RunBlockSize)}");
     }
 
     /// <summary>
@@ -1395,13 +1386,13 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     ///  <see cref="TapeMediaVerdict.Match"/> and <see cref="TapeMediaVerdict.Unidentified"/> are benign
     ///  (never prompted); the three positive mismatches are surfaced.
     /// </summary>
-    /// <param name="expectedSeriesId"\>The <c>MediaId</c> we expect, or <see langword="null"/> or <see cref="Guid.Empty"/>
+    /// <param name="expectedSeriesId">The <c>MediaId</c> we expect, or <see langword="null"/> or <see cref="Guid.Empty"/>
     /// to skip the series check.</param>
     /// <remarks>
     /// <b><see cref="Guid.Empty"/> means "no expectation", not "expect zero".</b> Treating it as a value to match would
     /// report <see cref="TapeMediaVerdict.MediaIdMismatch"/> against every legitimately identified
     /// cartridge, prompting the user about a mismatch that exists only because we had nothing to
-    /// compare. Mirrors the same guard in <see cref="TapeFileRestoreBaseAgent.ClassifySetHeader"/>.
+    /// compare. Mirrors the same guard in <see cref="TapeAgentBase.ClassifySetHeader"/>.
     /// </remarks>
     /// <param name="expectedVolume">The volume number we expect, or null to skip the volume check.</param>
     /// <param name="expectNoSets">
@@ -1705,7 +1696,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     }
 
     /// <summary>
-    /// Renames the media
+    /// Renames the media and writes the TOC back to tape using <see cref="SaveTocCore"/>.
+    ///  A legacy TOC is upgraded to 2.1 by that write.
     /// </summary>
     public async Task<bool> RenameMediaAsync(string newName)
     {
@@ -1724,8 +1716,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 LogInfo($"Renaming media to: {newName}");
                 _toc.Description = newName;
 
+                _agent?.Dispose();
                 _agent = new TapeAgentBase(_drive, _toc);
-                var tocResult = _agent.BackupTOC();
+                var tocResult = SaveTocCore(_agent);
                 if (!tocResult)
                 {
                     LastError = tocResult.ErrorMessage;
@@ -1773,7 +1766,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     }
 
     /// <summary>
-    /// Renames a backup set by updating the set TOC description and writing the TOC back to tape.
+    /// Renames a backup set by updating the set TOC description and writing the TOC
+    ///  back to tape using <see cref="SaveTocCore"/>. A legacy TOC is upgraded to 2.1
+    ///  by that write.
     /// </summary>
     public async Task<bool> RenameBackupSetAsync(int setIndex, string newName)
     {
@@ -1793,8 +1788,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 LogInfo($"Renaming backup set #{setIndex} to: {newName}");
                 setTOC.Description = newName;
 
+                _agent?.Dispose();
                 _agent = new TapeAgentBase(_drive, _toc);
-                var tocResult = _agent.BackupTOC();
+                var tocResult = SaveTocCore(_agent);
                 if (!tocResult)
                 {
                     LastError = tocResult.ErrorMessage;
@@ -1846,12 +1842,14 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
     #endregion // TOC operations
 
-    #region Test and Debug mechanisms
-    // ── Test and Debug mechanisms ───────────────────────────────────────────
+#region Test and Debug mechanisms
+// ── Test and Debug mechanisms ───────────────────────────────────────────
 
+#if TEST_HOOKS
     internal VirtualTapeDriveBackend? VirtualBackend => _drive?.Backend as VirtualTapeDriveBackend;
+#endif
 
-    #endregion
+#endregion
 
 }
 

@@ -7,6 +7,7 @@ using Windows.Win32.Foundation;
 
 namespace TapeWinNET.Utils;
 
+
 /// <summary>
 /// Supports drag-to-Explorer by detecting which Explorer folder window
 /// is under the cursor after a DoDragDrop operation completes.

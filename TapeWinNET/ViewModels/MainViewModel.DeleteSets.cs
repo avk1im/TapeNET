@@ -1,12 +1,9 @@
-using System.Linq;
 using System.Windows;
-using System.Windows.Input;
-
-using TapeWinNET.Services;
 
 using TapeLibNET.Services;
 
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// Partial class containing delete-backup-sets functionality for MainViewModel.

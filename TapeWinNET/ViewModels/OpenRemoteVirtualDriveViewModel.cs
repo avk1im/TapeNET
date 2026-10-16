@@ -1,12 +1,11 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
-
 using TapeLibNET.Remote;
 using TapeLibNET.Services;
 using TapeLibNET.Virtual;
-using TapeWinNET.Models;
 
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>
 /// View model for the "Open Remote Virtual Drive" dialog.

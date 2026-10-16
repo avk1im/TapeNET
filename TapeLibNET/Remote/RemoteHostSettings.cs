@@ -1,7 +1,9 @@
-using System.Net.Http;
 using Grpc.Net.Client;
 
+using TapeLibNET.Drive;
+
 namespace TapeLibNET.Remote;
+
 
 /// <summary>
 /// Connection parameters for a remote tape service.

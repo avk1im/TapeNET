@@ -1,10 +1,9 @@
 using AiNET.Providers;
-
 using Microsoft.Extensions.AI;
-
 using Xunit;
 
 namespace AiNET.Tests;
+
 
 /// <summary>
 /// Integration tests that exercise <see cref="OllamaProvider"/> against a

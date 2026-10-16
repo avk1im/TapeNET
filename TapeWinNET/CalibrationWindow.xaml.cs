@@ -1,4 +1,3 @@
-using Microsoft.Extensions.AI;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
@@ -7,6 +6,7 @@ using TapeWinNET.Help;
 using TapeWinNET.ViewModels;
 
 namespace TapeWinNET;
+
 
 public partial class CalibrationWindow : Window, IHelpPaneHost
 {

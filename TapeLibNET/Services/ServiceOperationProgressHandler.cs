@@ -1,11 +1,15 @@
-using System.IO;
-using System.Linq;
-using TapeLibNET;
+using TapeLibNET.Agents;
+using TapeLibNET.Calibration;
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
+using TapeLibNET.Media;
 using TapeLibNET.Scan;
+using TapeLibNET.Toc;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.SystemServices; // Helpers.BytesToString
 
 namespace TapeLibNET.Services;
+
 
 // ── Base ─────────────────────────────────────────────────────────────────────
 
@@ -104,7 +108,7 @@ public abstract class ServiceOperationProgressHandler(
         _host.Report(ServiceReportLevel.Info,
             $"Set #{setIndex} | {toc.SetIndexToAlt(setIndex)}: starting {_operationName.ToLowerInvariant()}...");
         ReportProgress(stats);
-#if DEBUG
+#if TEST_HOOKS
         // Agent.SimulateFileFailures.Enabled = true; // Enable simulation of file failures for testing purposes here
 #endif
     }
@@ -199,6 +203,13 @@ public abstract class ServiceOperationProgressHandler(
         _host.Report(ServiceReportLevel.None,
             $"Skipped: {Path.GetFileName(fileInfo.FileDescr.FullName)}", isSubEntry: true);
     }
+
+    /// <summary>
+    /// A file lost to a media write fault — reported on the host channel, never prompted: there is nothing to decide.
+    /// </summary>
+    public virtual void OnFileLost(TapeFileInfo fileInfo, TapeResult reason, in TapeFileStatistics stats)
+        => _host.Report(ServiceReportLevel.Failed,
+            $"Lost to a tape write error: {fileInfo.FileDescr.FullName} — {reason.ErrorMessage}", isSubEntry: true);
 
     // ── Set-level statistics (written by Sync, read by the service afterwards) ──
 
@@ -367,6 +378,7 @@ public abstract class ServiceOperationProgressHandler(
         TapeSetHeaderVerdict.Unreadable => "set marker unreadable",
         TapeSetHeaderVerdict.WrongMedia => "different cartridge",
         TapeSetHeaderVerdict.WrongVolume => "different volume",
+        TapeSetHeaderVerdict.SetIdMismatch => "set ID mismatch (stale or foreign TOC?)",
         _ => verdict.ToString(),
     };
 }
@@ -665,11 +677,14 @@ public class ServiceCalibrateProgressHandler(
 ///  the service's token registration, not from here.
 /// </para>
 /// </remarks>
-public class ServiceScanProgressHandler(ITapeServiceHost host, TapeScanner scanner)
-    : IProgress<TapeScanProgress>
+public class ServiceScanProgressHandler(ITapeServiceHost host, TapeScanner scanner) : IProgress<TapeScanProgress>
 {
     private readonly ITapeServiceHost _host = host;
     private bool _abortLogged;
+
+    // Whether this cartridge keeps its TOC in a partition (F32): only there may
+    //  a set end at end-of-media on purpose.
+    private readonly bool _tocInPartition = TapeMediaLayout.Predict(scanner.Drive).TocInPartition;
 
     /// <summary>The live scanner driving the operation.</summary>
     protected readonly TapeScanner Scanner = scanner;
@@ -708,11 +723,11 @@ public class ServiceScanProgressHandler(ITapeServiceHost host, TapeScanner scann
         {
             FragmentsFound++;
 
-            if (f.Kind == FragmentKind.SetHeader) SetsFound++;
+            if (f.Kind is FragmentKind.SetHeader or FragmentKind.SetContent) SetsFound++;
             if (f.Kind == FragmentKind.TOC) TocCopiesFound++;
             if (f.HarvestedToc is not null) TocsRecovered++;
 
-            if (DescribeFragment(f) is { } line)
+            if (DescribeFragment(f, _tocInPartition) is { } line)
                 _host.Report(line.Level, line.Text, isSubEntry: true);
         }
 
@@ -720,44 +735,54 @@ public class ServiceScanProgressHandler(ITapeServiceHost host, TapeScanner scann
     }
 
     /// <summary>
-    /// One log line per fragment worth a user's attention; null for mark runs and the TOC mark, which say
-    ///  nothing about the content.
+    /// One log line per fragment worth a user's attention; null for mark runs and the TOC mark.
     /// </summary>
-    public static (ServiceReportLevel Level, string Text)? DescribeFragment(TapeMediaFragment f) => f.Kind switch
-    {
-        FragmentKind.MediaHeader =>
-            (ServiceReportLevel.Info, $"Media header >{f.Description}< · volume {f.Volume}"),
+    /// <param name="tocInPartition">
+    /// The cartridge keeps its TOC in a partition (F32): there a last set without a closing mark is the normal shape of a
+    ///  full volume, reported neutrally. The scan's headline confirms it once the TOC has been read.
+    /// </param>
+    public static (ServiceReportLevel Level, string Text)? DescribeFragment(TapeMediaFragment f, bool tocInPartition)
+        => f.Kind switch
+        {
+            FragmentKind.MediaHeader =>
+                (ServiceReportLevel.Info, $"Media header >{f.Description}< · volume {f.Volume} at {f.Where}"),
+            FragmentKind.SetHeader when !f.ClosedBySeparator && tocInPartition =>
+                (ServiceReportLevel.Info, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< at {f.Where} — runs to the " +
+                    "end of the medium (normal for a full volume)"),
+            FragmentKind.SetHeader when !f.ClosedBySeparator =>
+                (ServiceReportLevel.Warning, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< at {f.Where} — never completed"),
+            FragmentKind.SetHeader =>
+                (ServiceReportLevel.Info, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< at {f.Where}"),
+            FragmentKind.SetContent =>
+                (ServiceReportLevel.Info, $"Backup set {ShortId(f.Id)} at {f.Where} — no set header, first file >{f.Description}<"),
+            FragmentKind.CalibrationHeader =>
+                (ServiceReportLevel.Info, $"Calibration run header, profile >{f.Description}< at {f.Where}"),
+            FragmentKind.TOC when f.HarvestedToc is { } toc =>
+                (ServiceReportLevel.Info, $"Table of contents copy at {f.Where} — recovered, {toc.Count} set(s)"),
+            FragmentKind.TOC when !f.Diagnosis.Success =>
+                (ServiceReportLevel.Warning, $"Table of contents copy at {f.Where} — could not be recovered"),
+            FragmentKind.TOC =>
+                (ServiceReportLevel.Info, $"Table of contents copy at {f.Where}"),
+            FragmentKind.Unknown when !f.Diagnosis.Success =>
+                (ServiceReportLevel.Warning, $"Damaged record at {f.Where}: {f.Diagnosis.ErrorMessage}"),
+            FragmentKind.Unknown =>
+                (ServiceReportLevel.None, $"Unidentified data at {f.Where}"),
+            _ => null,
+        };
 
-        FragmentKind.SetHeader when !f.ClosedBySeparator =>
-            (ServiceReportLevel.Warning, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< at block {f.StartBlock} — never completed"),
+    /// <summary>"at block N", naming the TOC partition when that is where the fragment stands.</summary>
+    private static string Where(TapeMediaFragment f) => $"at block {f.StartBlock}{InTocPartition(f)}";
 
-        FragmentKind.SetHeader =>
-            (ServiceReportLevel.Info, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< at block {f.StartBlock}"),
+    private static string InTocPartition(TapeMediaFragment f)
+        => f.Partition == MediaPartition.Initiator ? " of the TOC partition" : string.Empty;
 
-        FragmentKind.CalibrationHeader =>
-            (ServiceReportLevel.Info, $"Calibration run header, profile >{f.Description}<"),
-
-        FragmentKind.TOC when f.HarvestedToc is { } toc =>
-            (ServiceReportLevel.Info, $"Table of contents copy at block {f.StartBlock} — recovered, {toc.Count} set(s)"),
-
-        FragmentKind.TOC when !f.Diagnosis.Success =>
-            (ServiceReportLevel.Warning, $"Table of contents copy at block {f.StartBlock} — could not be recovered"),
-
-        FragmentKind.TOC =>
-            (ServiceReportLevel.Info, $"Table of contents copy at block {f.StartBlock}"),
-
-        FragmentKind.Unknown when !f.Diagnosis.Success =>
-            (ServiceReportLevel.Warning, $"Block {f.StartBlock}: {f.Diagnosis.ErrorMessage}"),
-
-        FragmentKind.Unknown =>
-            (ServiceReportLevel.None, $"Unidentified data at block {f.StartBlock}"),
-
-        _ => null,
-    };
+    /// <summary>The first 8 hex digits of an id — enough to tell sets apart in a log line.</summary>
+    private static string ShortId(Guid? id) => id is { } g ? g.ToString("N")[..8] : "?";
 
     private static string FormatPhase(string phase) => phase switch
     {
         TapeScanProgress.PhaseScanning => "Scanning the cartridge",
+        TapeScanProgress.PhaseScanningInitiator => "Scanning the TOC partition",
         TapeScanProgress.PhaseHarvestingToc => "Recovering a table of contents",
         TapeScanProgress.PhaseInspectingCalibration => "Inspecting the calibration run",
         TapeScanProgress.PhaseCompleting => "Completing the scan",

@@ -8,6 +8,7 @@ using TapeWinNET.ViewModels;
 
 namespace TapeWinNET.Help;
 
+
 /// <summary>
 /// Encapsulates the boilerplate required to host an embedded <see cref="Controls.HelpPane"/>
 /// inside a dialog window in <see cref="HelpPaneHostMode.Adjacent"/> mode: the window expands

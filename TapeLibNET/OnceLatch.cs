@@ -1,8 +1,8 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
-using System.Threading;
 
 namespace TapeLibNET;
+
 
 /// <summary>
 /// A one-shot latch: permits a guarded side effect to run exactly ONCE per armed cycle, then stays closed

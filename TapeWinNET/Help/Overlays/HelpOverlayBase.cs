@@ -1,9 +1,10 @@
+using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Documents;
 using System.Windows.Input;
-using System.Collections.ObjectModel;
 
 namespace TapeWinNET.Help.Overlays;
+
 
 /// <summary>
 /// Base class for help overlays (Reveal, Walkthrough).

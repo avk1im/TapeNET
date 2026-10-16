@@ -8,6 +8,7 @@ using Microsoft.Extensions.AI;
 
 namespace HelpIndexBuilder;
 
+
 /// <summary>
 /// Build-time console tool that produces a precomputed embedding bundle
 /// (<c>embeddings.bin</c> + <c>embeddings.meta.json</c>) from a directory of

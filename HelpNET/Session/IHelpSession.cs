@@ -3,6 +3,7 @@ using HelpNET.Content;
 
 namespace HelpNET.Session;
 
+
 /// <summary>
 /// Stateful façade that the UI binds against.  Owns navigation history,
 /// conversation state, and delegates retrieval/synthesis to the current
