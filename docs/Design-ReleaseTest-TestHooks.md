@@ -18,6 +18,15 @@ Approach: introduce a dedicated `TEST_HOOKS` conditional-compilation symbol, ind
 
 `TRACE` and other SDK-provided constants are untouched (`TEST_HOOKS` is appended, never replaces).
 
+### 0.1 Adding a hook: Instruction to contributors and maintainers
+
+Guard every test-only member and every call site with `#if TEST_HOOKS` — never `#if DEBUG`, never unconditionally.
+
+Test code that uses a hook carries the same `#if TEST_HOOKS` guard. Run the `Release` hook-absence search after adding one.
+
+`DEBUG` stays reserved for debugger diagnostics (`Debug.Assert`, `[Conditional("DEBUG")]`).
+
+
 ## 1. Configuration and build-file changes
 
 | File | Change |
