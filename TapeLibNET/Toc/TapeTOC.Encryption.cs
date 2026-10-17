@@ -212,6 +212,25 @@ public partial class TapeSetTOC : ITapeLockableSet
     /// </summary>
     public long SizeOnTapeTotal => IsLocked ? m_sealedSizeOnTape : ComputeTotalFileSizeOnTape(0, withSetHeader: false);
 
+    /// <summary>Shown for a locked set's name — never the hidden description.</summary>
+    public const string LockedDisplayName = "[encrypted set]";
+
+    /// <summary>Shown for a locked set's file count — never the hidden count.</summary>
+    public const string LockedDisplayCount = "locked";
+
+    /// <summary>
+    /// No files: an empty set, or a locked set whose stub records no size on tape — every 2.1 file costs at least a
+    ///  header frame, so 0 bytes means 0 files (Design-Encryption §6.1). Never throws.
+    /// </summary>
+    public bool IsVacant => IsLocked ? m_sealedSizeOnTape == 0 : m_tapeFileInfos.Count == 0;
+
+    /// <summary>The set's name for logs, prompts and anomalies: its description, or <see cref="LockedDisplayName"/>.
+    ///  Never throws.</summary>
+    public string DisplayName => IsLocked ? LockedDisplayName : m_description;
+
+    /// <summary>The set's file count for logs and listings, or <see cref="LockedDisplayCount"/>. Never throws.</summary>
+    public string DisplayCount => IsLocked ? LockedDisplayCount : m_tapeFileInfos.Count.ToString();
+
     /// <summary>The chain key while unlocked; owned by the key ring, never serialized.</summary>
     internal TapeSetKey? Key { get; private set; }
 
@@ -337,13 +356,13 @@ public partial class TapeSetTOC : ITapeLockableSet
             ContinuedFromPrevVolume = stub.ContinuedFromPrevVolume,
             SetId = stub.SetId,
             DataFormat = TapeDataFormat.V2,
-            ClosedByEom = stub.ClosedByEom,
-            m_encryption = (TapeEncryption)stub.Encryption,
-            Envelope = stub.Envelope!.ToEnvelope(),
-            m_sealedSizeOnTape = stub.SizeOnTapeTotal,
-            m_acceptsFiles = false,                     // E14
+            ClosedByEom = stub.ClosedByEom
         };
         set.ResetHiddenMetadata();
+        set.m_encryption = (TapeEncryption)stub.Encryption;       // from here on the set is locked
+        set.Envelope = stub.Envelope!.ToEnvelope();
+        set.m_sealedSizeOnTape = stub.SizeOnTapeTotal;
+        set.m_acceptsFiles = false;                                // E14
         return set;
     }
 
@@ -435,38 +454,41 @@ public partial class TapeSetTOC : ITapeLockableSet
         return inner;
     }
 
-    /// <summary>Takes over the files and the hidden metadata of a freshly parsed set; identity and stub stay.</summary>
+    /// <summary>
+    /// Takes over the files and the hidden metadata of a freshly parsed (plain) set; identity and stub stay. Runs while
+    ///  this set is still locked — hence the fields.
+    /// </summary>
     private void AdoptUnsealed(TapeSetTOC inner)
     {
         m_tapeFileInfos.Clear();
         m_tapeFileInfos.AddRange(inner.m_tapeFileInfos);
         InvalidateLayoutCache();
-        Description = inner.Description;
-        CreationTime = inner.CreationTime;
-        LastSaveTime = inner.LastSaveTime;
-        BlockSize = inner.BlockSize;
-        HashAlgorithm = inner.HashAlgorithm;
-        Compression = inner.Compression;
-        CompressionLevel = inner.CompressionLevel;
-        Incremental = inner.Incremental;
-        NextFileId = inner.NextFileId;
+        m_description = inner.m_description;
+        m_creationTime = inner.m_creationTime;
+        m_lastSaveTime = inner.m_lastSaveTime;
+        m_blockSize = inner.m_blockSize;
+        m_hashAlgorithm = inner.m_hashAlgorithm;
+        m_compression = inner.m_compression;
+        m_compressionLevel = inner.m_compressionLevel;
+        m_incremental = inner.m_incremental;
+        m_nextFileId = inner.m_nextFileId;
     }
 
     /// <summary>
-    /// Neutral values for everything a locked set hides. Phase 2 turns reading them into a
-    ///  <see cref="TapeSetLockedException"/>; until then they read as "nothing known".
+    /// Neutral values for everything a locked set hides — never readable while locked (E6); they only keep stale
+    ///  content from surviving a <see cref="Lock"/>.
     /// </summary>
     private void ResetHiddenMetadata()
     {
-        Description = string.Empty;
-        CreationTime = TapePrimitives.MinUtc;
-        LastSaveTime = TapePrimitives.MinUtc;
-        BlockSize = 0;
-        HashAlgorithm = TapeHashAlgorithm.Crc32;
-        Compression = TapeCompression.None;
-        CompressionLevel = ZstdLevel.Default;
-        Incremental = false;
-        NextFileId = 1UL;
+        m_description = string.Empty;
+        m_creationTime = TapePrimitives.MinUtc;
+        m_lastSaveTime = TapePrimitives.MinUtc;
+        m_blockSize = 0;
+        m_hashAlgorithm = TapeHashAlgorithm.Crc32;
+        m_compression = TapeCompression.None;
+        m_compressionLevel = ZstdLevel.Default;
+        m_incremental = false;
+        m_nextFileId = 1UL;
     }
 
     #endregion

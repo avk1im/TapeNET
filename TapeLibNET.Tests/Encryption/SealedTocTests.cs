@@ -255,11 +255,13 @@ public class SealedTocTests
         set.Lock();
 
         Assert.True(set.IsLocked);
-        Assert.Empty(set);
-        Assert.Equal("", set.Description);
+        // once locked, accessing non-exposed fields throws
+        Assert.Throws<TapeSetLockedException>(() => set.Count);
+        Assert.Throws<TapeSetLockedException>(() => set.Description);
         Assert.Equal(size, set.SizeOnTapeTotal);
         Assert.True(set.TryUnlock(key));
         Assert.Equal(3, set.Count);
+        Assert.Equal("Secret", set.Description);
     }
 
     [Fact]

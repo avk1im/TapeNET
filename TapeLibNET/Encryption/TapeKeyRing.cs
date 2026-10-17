@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using TapeLibNET.Toc;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Encryption;
@@ -261,6 +262,43 @@ public sealed class TapeKeyRing(ILogger? logger = null)
 
     #endregion
 
+    #region *** TOC overloads (§7.1) ***
+
+    /// <summary>Offers every held key to every locked, unlockable set of <paramref name="toc"/> — no KDF.</summary>
+    /// <returns>How many sets were unlocked.</returns>
+    public int UnlockAll(TapeTOC toc)
+    {
+        ArgumentNullException.ThrowIfNull(toc);
+        return UnlockAll((IEnumerable<ITapeLockableSet>)toc);
+    }
+
+    /// <summary>
+    /// Unlocks the set at <paramref name="setIndex"/> (standard or alternative form) — with a held key if one fits,
+    ///  otherwise with <paramref name="password"/> — and every other set of <paramref name="toc"/> the key opens (E13).
+    /// </summary>
+    public TapeResult Unlock(TapeTOC toc, int setIndex, ReadOnlySpan<char> password)
+    {
+        ArgumentNullException.ThrowIfNull(toc);
+        return Unlock(toc, toc[setIndex], password);
+    }
+
+    /// <summary>Locks every set of <paramref name="toc"/> <paramref name="key"/> opened, then zeroes the key (§7.3).</summary>
+    /// <exception cref="InvalidOperationException">A set has unsaved changes (E12) — save the TOC first.</exception>
+    public void Withdraw(TapeSetKey key, TapeTOC toc)
+    {
+        ArgumentNullException.ThrowIfNull(toc);
+        Withdraw(key, (IEnumerable<ITapeLockableSet>)toc);
+    }
+
+    /// <summary>
+    /// Locks every set of <paramref name="toc"/> opened by a held key, then zeroes and drops all keys (§10.1). With a
+    ///  <see langword="null"/> TOC, only the keys go.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">A set has unsaved changes (E12) — save the TOC first.</exception>
+    public void Clear(TapeTOC? toc) => Clear((IEnumerable<ITapeLockableSet>?)toc);
+
+    #endregion
+
     #region *** Disposal ***
 
     /// <summary>Zeroes every held key. Sets still referencing them fail loudly on next use.</summary>
@@ -268,7 +306,7 @@ public sealed class TapeKeyRing(ILogger? logger = null)
     {
         if (m_disposed)
             return;
-        Clear(null);
+        Clear((IEnumerable<ITapeLockableSet>?)null); // disambiguate overloaded Clear(?) methods
         m_disposed = true;
     }
 

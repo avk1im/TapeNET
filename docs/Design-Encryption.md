@@ -1287,3 +1287,12 @@ should report that distinct condition (v2: a typed error mapped from the DATA PR
 | §6.4 | Unlocking parses the opened content with today's `Wire` / `ReadBatch` / `FinishLoading` and cross-checks SetId, Volume, DataFormat, ClosedByEom and ContinuedFromPrevVolume against the stub. A parse failure after authentication returns `false` (the ring then reports `ERROR_INVALID_DATA`). |
 | §17 | Add `TapeLibNET/Toc/TapeTOC.Encryption.cs` (wires + `TapeSetTOC` encryption partial). |
 | §5.2 | Re-emission "verbatim" re-serializes the stub from its stored values and re-emits the stored chunks unchanged. An unknown non-critical stub field from a future build would be dropped on a rewrite — as for `TocSet` today. |
+
+### 20.2 From Phase 2
+
+| § | Change |
+|---|---|
+| §6.1 | Setters of hidden members throw on a locked set too, as do `Append`, `GenerateFileId`, `MarkIncremental`, `IndexOf`, `SelectFilesAsLinkedList`. Add `DisplayCount` (`"locked"` or the count) and the constants `LockedDisplayName` / `LockedDisplayCount` to the shape. `ComputeTotalFileSizeOnTape` of a vacant locked set is 0 without header, like an empty plain set. |
+| §6.2 | `LastNonIncSetInternal`: a locked set is its own chain start — then the continuation walk applies as for any chain start. |
+| §7.1 | `TapeKeyRing`'s public TOC overloads exist as listed; `Clear(TapeTOC?)` with `null` drops keys only. |
+| §8.3 | `AddContinuationSetTOC` refuses an encrypted `TapeSetTOCParams` without envelope or key (`ArgumentException`). |
