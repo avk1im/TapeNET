@@ -1258,3 +1258,32 @@ should report that distinct condition (v2: a typed error mapped from the DATA PR
 3. A key set via SPTI applies to the very next `WRITE(6)` and to `ReadFile` reads on the same handle.
 4. The exact sense / Win32 error for "wrong or no key" on `ReadFile`, for §19.4-2 and §19.5.
 5. CKOD clears the key on eject; a bus reset clears it too (verify E16 recovers from a crash mid-set).
+
+---
+
+## 20 Implementation updates
+
+### 20.0 From Phase 0
+
+1. File split: the types are spread over six files by responsibility instead of mostly in `TapeEncryption.cs`. Phase 0 includes neither the cipher seam (Phase 3) nor the sealed payload (Phase 1).
+2. Byte layouts are now exact, and tests pin them:
+   - HKDF salt is the SetId in `Guid.TryWriteBytes` layout.
+   - The file key's info is `"TapeNET file v1"` followed by FileId as u64 big-endian.
+   - The wrap's associated data is `"TapeNET env v1" ‖ Kdf (u8) ‖ Iterations (u32 BE) ‖ Salt`.
+   - Readers refuse envelopes with more than 50 million iterations, so a tampered envelope can't stall an unlock.
+3. Disposing the encrypting stream does nothing while it's open. ZstdNet may dispose its inner stream. If that sealed the record, a failed file could get a valid-looking final chunk; if it abandoned it, every compressed file would lose its final chunk. Only `Complete()` or `Abandon()` end a record. In Phase 3, still check what ZstdNet's `Dispose` actually does to the packer façade.
+4. Key-ring signatures: in Phase 0 the ring works on an internal `ITapeLockableSet` interface. Phase 2 adds the public `TapeTOC` overloads as thin wrappers, once `TapeSetTOC` implements that interface. I also added `Add(TapeSetKey)`, which keeps one key object per data key.
+5. Allocations: each encrypted file allocates one `AesGcm` and one small stream object, not just the `AesGcm` as the doc says. The chunk buffer comes from the session.
+
+### 20.1 From Phase 1
+
+| § | Change |
+|---|---|
+| §5.3 | Field 3 `DataFormat`: default V2, Critical (not Required) — as in `TocSet`; validate enforces V2. Field 48 group is optional in the schema; the validator requires it (`sealed set without key envelope`). Field 4 `Encryption` is Required, validated `1 … int.MaxValue`. |
+| §5.4 | `Ciphertext` sits at field 48 as bulk bytes (allowed in the group range). Chunk **structure** is checked at load (`CrossCheck`): middle chunks exactly 1 MiB + 16, the final one 16 … 1 MiB + 15. Plaintext framing (padding granule, zero padding) is checked on unlock. |
+| §5.5 | **`Kdf` is NOT critical and travels by value** (was: C, R). An unknown KDF must not refuse the TOC; the set stays locked (`ERROR_NOT_SUPPORTED` from `TryUnwrap`) — the E15 rule applied to the KDF. Sizes are not validated on load: a malformed envelope is carried and refuses every password. |
+| §6.1 | `IsLocked` is `IsEncrypted && Key is null`. `IsUnlockable` is `Encryption == Software` in v1. `SizeOnTapeTotal` excludes the set header block. The locked set's hidden metadata reads neutral in Phase 1; the getters throw from Phase 2 on. |
+| §6.3 | `PersistedState` gains `Encryption` and `Envelope`; `IsModified` is false for a locked set; `MarkSaved` is a no-op on a locked set and runs after a successful unlock. |
+| §6.4 | Unlocking parses the opened content with today's `Wire` / `ReadBatch` / `FinishLoading` and cross-checks SetId, Volume, DataFormat, ClosedByEom and ContinuedFromPrevVolume against the stub. A parse failure after authentication returns `false` (the ring then reports `ERROR_INVALID_DATA`). |
+| §17 | Add `TapeLibNET/Toc/TapeTOC.Encryption.cs` (wires + `TapeSetTOC` encryption partial). |
+| §5.2 | Re-emission "verbatim" re-serializes the stub from its stored values and re-emits the stored chunks unchanged. An unknown non-critical stub field from a future build would be dropped on a rewrite — as for `TocSet` today. |

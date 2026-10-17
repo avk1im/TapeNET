@@ -1,12 +1,12 @@
 using TapeLibNET.Calibration;
 using TapeLibNET.Compression;
 using TapeLibNET.Drive;
+using TapeLibNET.Encryption;
 using TapeLibNET.Format;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
 
 namespace TapeLibNET.Tests.Helpers;
-
 
 /// <summary>
 /// The format 2.1 golden cases: deterministic inputs, how today's writer turns them into bytes, and how today's reader
@@ -18,6 +18,11 @@ namespace TapeLibNET.Tests.Helpers;
 ///  machine or a random number is not a golden. The TOC is written through the deterministic
 ///  <see cref="TapeTOC.SaveTo(System.IO.Stream, System.DateTime, string)"/>, which stamps the given time and writer
 ///  instead of now / the running build.
+/// </para>
+/// <para>
+/// <b>Encrypted cases</b> run inside <see cref="Deterministic{T}"/>: a seeded random source for keys, salts and nonce
+///  prefixes, and a low PBKDF2 work factor (Design-Encryption §15.7). The reader checks never depend on the seed — they
+///  unlock with the fixed password, whatever the envelope records.
 /// </para>
 /// <para>
 /// <b>Frames, not blocks.</b> Header and checkpoint goldens hold the frame (<c>Record ‖ CRC-64</c>) only: the zero padding
@@ -38,6 +43,7 @@ internal static class GoldenV21
     private static readonly Guid s_setIdA = new("6a2f1c00-0021-4e0b-9d5c-0000000000a1");
     private static readonly Guid s_setIdB = new("6a2f1c00-0021-4e0b-9d5c-0000000000b2");
     private static readonly Guid s_setIdC = new("6a2f1c00-0021-4e0b-9d5c-0000000000c3");
+    private static readonly Guid s_setIdD = new("6a2f1c00-0021-4e0b-9d5c-0000000000d4");
     private static readonly Guid s_runId = new("6a2f1c00-0021-4e0b-9d5c-0000000000ca");
 
     private static readonly DateTime T0 = new(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);
@@ -48,6 +54,15 @@ internal static class GoldenV21
     private static readonly DateTime SaveTime = T2;
 
     private const string WrittenBy = "TapeNET golden generator / TapeLibNET 2.1";
+
+    /// <summary>The password of every encrypted golden.</summary>
+    internal const string SealedPassword = "TapeNET golden password — Ünïcødé";
+
+    /// <summary>Seed of the deterministic random source behind every encrypted golden.</summary>
+    private const int SealedSeed = 2121;
+
+    /// <summary>PBKDF2 work factor recorded in the encrypted goldens — low, so the reader check stays fast.</summary>
+    private const int SealedIterations = 1_000;
 
     private static TapeFileDescriptor Descr(string path, long length, FileAttributes attributes = FileAttributes.Archive)
         => new(path)
@@ -73,6 +88,14 @@ internal static class GoldenV21
         var bytes = new byte[length];
         new Random(seed).NextBytes(bytes);      // seeded: deterministic across runs and machines
         return bytes;
+    }
+
+    /// <summary>Runs <paramref name="body"/> with the seeded random source and the low work factor of the goldens.</summary>
+    private static T Deterministic<T>(Func<T> body, int seed = SealedSeed)
+    {
+        using var random = TapeCrypto.UseDeterministicRandom(seed);
+        using var iterations = TapeCrypto.UseIterations(SealedIterations);
+        return body();
     }
 
     private static TapeCalibrationPlan Plan() => new(
@@ -193,12 +216,14 @@ internal static class GoldenV21
     internal static TapeTOC BuildEomToc()
     {
         var toc = new TapeTOC("Golden 2.1 — full volume") { CreationTime = T0, MediaId = s_mediaId };
+
         toc.AddNewSetTOC();
         TapeSetTOC first = toc.CurrentSetTOC;
         first.SetId = s_setIdA;
         first.CreationTime = T0;
         first.BlockSize = 64 * 1024;
         first.Append(File(first, @"C:\Full\a.bin", 1_000, 3, 0));
+
         toc.AddNewSetTOC();
         TapeSetTOC last = toc.CurrentSetTOC;
         last.SetId = s_setIdB;
@@ -206,6 +231,67 @@ internal static class GoldenV21
         last.BlockSize = 64 * 1024;
         last.ClosedByEom = true;
         last.Append(File(last, @"C:\Full\b.bin", 2_000, 9, 0));
+
+        return toc;
+    }
+
+    /// <summary>
+    /// Four sets for Design-Encryption §5: a plain set, a Software-encrypted base, its encrypted incremental (same DEK,
+    ///  fresh envelope), and a set of the reserved <see cref="TapeEncryption.Hardware"/> scheme — which this build
+    ///  carries but never opens (E15). Call inside <see cref="Deterministic{T}"/>.
+    /// </summary>
+    /// <remarks>Every set holds files: <c>AddNewSetTOC</c> would replace a trailing empty one.</remarks>
+    internal static TapeTOC BuildSealedToc()
+    {
+        var toc = new TapeTOC("Golden 2.1 — sealed sets") { CreationTime = T0, MediaId = s_mediaId };
+
+        // Set 1 — plain
+        toc.AddNewSetTOC();
+        TapeSetTOC plain = toc.CurrentSetTOC;
+        plain.SetId = s_setIdA;
+        plain.Description = "Plain";
+        plain.CreationTime = T0;
+        plain.BlockSize = 64 * 1024;
+        plain.Append(File(plain, @"C:\Public\notes.txt", 2_000, 3, 0, hash: Hash(11, 4)));
+
+        // Set 2 — Software-encrypted base: a new chain
+        var (envelope, key) = TapeSetEncryption.CreateChain(SealedPassword);
+        toc.AddNewSetTOC();
+        TapeSetTOC secret = toc.CurrentSetTOC;
+        secret.SetId = s_setIdB;
+        secret.Description = "Secret — Ünïcødé";
+        secret.CreationTime = T1;
+        secret.BlockSize = 64 * 1024;
+        secret.HashAlgorithm = TapeHashAlgorithm.XxHash3;
+        secret.Compression = TapeCompression.Software;
+        secret.EnableEncryption(TapeEncryption.Software, envelope, key);
+        secret.Append(File(secret, @"C:\Secret\Βήτα\plan.docx", 50_000, 9, 0, TapeFileCodec.Zstd, Hash(12, 8)));
+        secret.Append(File(secret, @"C:\Secret\Βήτα\日本語.xlsx", 70_000, 9, 4_000, TapeFileCodec.Stored, Hash(13, 8),
+            FileAttributes.Archive | FileAttributes.ReadOnly));
+
+        // Set 3 — its incremental: same DEK, a fresh envelope around it (§8.2)
+        toc.AddNewSetTOC(0, incremental: true);
+        TapeSetTOC increment = toc.CurrentSetTOC;
+        increment.SetId = s_setIdC;
+        increment.Description = "Secret — increment";
+        increment.CreationTime = T2;
+        increment.BlockSize = 64 * 1024;
+        increment.HashAlgorithm = TapeHashAlgorithm.XxHash3;
+        increment.EnableEncryption(TapeEncryption.Software, TapeSetEncryption.Wrap(key, SealedPassword), key);
+        increment.Append(File(increment, @"C:\Secret\Βήτα\plan.docx", 51_000, 20, 0, hash: Hash(14, 8)));
+
+        // Set 4 — the reserved Hardware scheme (v2): its own chain; this build carries it, never opens it
+        var (hwEnvelope, hwKey) = TapeSetEncryption.CreateChain(SealedPassword);
+        toc.AddNewSetTOC();
+        TapeSetTOC drive = toc.CurrentSetTOC;
+        drive.SetId = s_setIdD;
+        drive.Description = "Drive-encrypted";
+        drive.CreationTime = T2;
+        drive.BlockSize = 256 * 1024;
+        drive.Compression = TapeCompression.Hardware;
+        drive.EnableEncryption(TapeEncryption.Hardware, hwEnvelope, hwKey);
+        drive.Append(File(drive, @"C:\Vault\archive.bin", 1_000_000, 30, 0));
+
         return toc;
     }
 
@@ -225,8 +311,61 @@ internal static class GoldenV21
     {
         TapeTOC expected = build();
         WriteToc(expected);                     // apply the same stamps the golden carries
+
         TapeTOC actual = TapeTOC.LoadFrom(new MemoryStream(bytes));
 
+        AssertTocHeaderReads(expected, actual);
+        for (int s = 1; s <= expected.Count; s++)
+            AssertSetReads(expected[s], actual[s]);
+    }
+
+    /// <summary>The sealed TOC: plain set as usual; sealed sets locked, then opened with the fixed password.</summary>
+    private static void AssertSealedTocReads(byte[] bytes)
+    {
+        TapeTOC expected = Deterministic(() =>
+        {
+            TapeTOC toc = BuildSealedToc();
+            WriteToc(toc);                      // the same stamps the golden carries
+            return toc;
+        });
+
+        TapeTOC actual = TapeTOC.LoadFrom(new MemoryStream(bytes));
+
+        AssertTocHeaderReads(expected, actual);
+        AssertSetReads(expected[1], actual[1]);
+
+        // Sealed sets load LOCKED: only the stub is known (§5.3)
+        for (int s = 2; s <= expected.Count; s++)
+        {
+            TapeSetTOC e = expected[s], a = actual[s];
+            Assert.True(a.IsLocked);
+            Assert.Equal(e.Encryption, a.Encryption);
+            Assert.Equal(e.SetId, a.SetId);
+            Assert.Equal(e.Volume, a.Volume);
+            Assert.Equal(e.ClosedByEom, a.ClosedByEom);
+            Assert.Equal(e.ContinuedFromPrevVolume, a.ContinuedFromPrevVolume);
+            Assert.Equal(e.SizeOnTapeTotal, a.SizeOnTapeTotal);
+            Assert.True(a.Envelope!.IsWellFormed);
+        }
+
+        // One password unwraps the chain's DEK; the same key opens base AND incremental (E13)
+        TapeSetTOC secret = actual[2], increment = actual[3], drive = actual[4];
+        TapeResult unwrap = TapeSetEncryption.TryUnwrap(increment.Envelope!, SealedPassword, out TapeSetKey? key);
+        Assert.True(unwrap.Success, unwrap.ErrorMessage);
+        Assert.True(secret.TryUnlock(key!));
+        Assert.True(increment.TryUnlock(key!));
+        AssertSetReads(expected[2], secret);
+        AssertSetReads(expected[3], increment);
+
+        // The Hardware set: its envelope opens, yet this build never opens the set (E15)
+        Assert.False(drive.IsUnlockable);
+        Assert.True(TapeSetEncryption.TryUnwrap(drive.Envelope!, SealedPassword, out TapeSetKey? hwKey).Success);
+        Assert.False(drive.TryUnlock(hwKey!));
+        Assert.True(drive.IsLocked);
+    }
+
+    private static void AssertTocHeaderReads(TapeTOC expected, TapeTOC actual)
+    {
         Assert.False(actual.LoadedFromLegacy);
         Assert.Equal(expected.Description, actual.Description);
         Assert.Equal(expected.MediaId, actual.MediaId);
@@ -236,40 +375,40 @@ internal static class GoldenV21
         Assert.Equal(expected.ContinuedOnNextVolume, actual.ContinuedOnNextVolume);
         Assert.Equal(expected.WrittenBy, actual.WrittenBy);
         Assert.Equal(expected.Count, actual.Count);
+    }
 
-        for (int s = 1; s <= expected.Count; s++)
+    private static void AssertSetReads(TapeSetTOC e, TapeSetTOC a)
+    {
+        Assert.Equal(e.SetId, a.SetId);
+        Assert.Equal(e.DataFormat, a.DataFormat);
+        Assert.Equal(e.Encryption, a.Encryption);
+        Assert.Equal(e.Description, a.Description);
+        Assert.Equal(e.CreationTime, a.CreationTime);
+        Assert.Equal(e.LastSaveTime, a.LastSaveTime);
+        Assert.Equal(e.BlockSize, a.BlockSize);
+        Assert.Equal(e.Volume, a.Volume);
+        Assert.Equal(e.NextFileId, a.NextFileId);
+        Assert.Equal(e.HashAlgorithm, a.HashAlgorithm);
+        Assert.Equal(e.Compression, a.Compression);
+        Assert.Equal(e.CompressionLevel, a.CompressionLevel);
+        Assert.Equal(e.Incremental, a.Incremental);
+        Assert.Equal(e.ContinuedFromPrevVolume, a.ContinuedFromPrevVolume);
+        Assert.Equal(e.ClosedByEom, a.ClosedByEom);
+        Assert.Equal(e.Count, a.Count);
+        for (int f = 0; f < e.Count; f++)
         {
-            TapeSetTOC e = expected[s], a = actual[s];
-            Assert.Equal(e.SetId, a.SetId);
-            Assert.Equal(e.DataFormat, a.DataFormat);
-            Assert.Equal(e.Description, a.Description);
-            Assert.Equal(e.CreationTime, a.CreationTime);
-            Assert.Equal(e.LastSaveTime, a.LastSaveTime);
-            Assert.Equal(e.BlockSize, a.BlockSize);
-            Assert.Equal(e.Volume, a.Volume);
-            Assert.Equal(e.NextFileId, a.NextFileId);
-            Assert.Equal(e.HashAlgorithm, a.HashAlgorithm);
-            Assert.Equal(e.Compression, a.Compression);
-            Assert.Equal(e.CompressionLevel, a.CompressionLevel);
-            Assert.Equal(e.Incremental, a.Incremental);
-            Assert.Equal(e.ContinuedFromPrevVolume, a.ContinuedFromPrevVolume);
-            Assert.Equal(e.ClosedByEom, a.ClosedByEom);
-            Assert.Equal(e.Count, a.Count);
-            for (int f = 0; f < e.Count; f++)
-            {
-                TapeFileInfo ef = e[f], af = a[f];
-                Assert.Equal(ef.FileId, af.FileId);
-                Assert.Equal(ef.Address, af.Address);
-                Assert.Equal(ef.FileDescr.FullName, af.FileDescr.FullName);
-                Assert.Equal(ef.FileDescr.Length, af.FileDescr.Length);
-                Assert.Equal(ef.FileDescr.Attributes, af.FileDescr.Attributes);
-                Assert.Equal(ef.FileDescr.CreationTime, af.FileDescr.CreationTime);
-                Assert.Equal(ef.FileDescr.LastWriteTime, af.FileDescr.LastWriteTime);
-                Assert.Equal(ef.FileDescr.LastAccessTime, af.FileDescr.LastAccessTime);
-                Assert.Equal(ef.SizeOnTape, af.SizeOnTape);
-                Assert.Equal(ef.Codec, af.Codec);
-                Assert.Equal(ef.Hash ?? [], af.Hash ?? []);
-            }
+            TapeFileInfo ef = e[f], af = a[f];
+            Assert.Equal(ef.FileId, af.FileId);
+            Assert.Equal(ef.Address, af.Address);
+            Assert.Equal(ef.FileDescr.FullName, af.FileDescr.FullName);
+            Assert.Equal(ef.FileDescr.Length, af.FileDescr.Length);
+            Assert.Equal(ef.FileDescr.Attributes, af.FileDescr.Attributes);
+            Assert.Equal(ef.FileDescr.CreationTime, af.FileDescr.CreationTime);
+            Assert.Equal(ef.FileDescr.LastWriteTime, af.FileDescr.LastWriteTime);
+            Assert.Equal(ef.FileDescr.LastAccessTime, af.FileDescr.LastAccessTime);
+            Assert.Equal(ef.SizeOnTape, af.SizeOnTape);
+            Assert.Equal(ef.Codec, af.Codec);
+            Assert.Equal(ef.Hash ?? [], af.Hash ?? []);
         }
     }
 
@@ -299,6 +438,19 @@ internal static class GoldenV21
         VolumeSetIndex = 1,
         GlobalSetIndex = 5,
         Description = "Full",
+    };
+
+    /// <summary>The set header of an encrypted set: identity and position only (Design-Encryption §5.6).</summary>
+    private static TapeSetHeader EncryptedSetHeader() => new()
+    {
+        MediaId = s_mediaId,
+        SetId = s_setIdB,
+        CreatedUtc = TapePrimitives.MinUtc,
+        SetBlockSize = 0,
+        Volume = 2,
+        VolumeSetIndex = 1,
+        GlobalSetIndex = 6,
+        Encryption = TapeEncryption.Software,
     };
 
     private static TapeCalibrationHeader CalibrationHeader()
@@ -361,6 +513,64 @@ internal static class GoldenV21
 
     #endregion
 
+    #region *** Encrypted file record ***
+
+    /// <summary>Body of the encrypted record: three file chunks — two full, one short final.</summary>
+    private const int EncryptedBodyLength = 150_000;
+
+    /// <summary>The chain key of the encrypted record — a seeded DEK.</summary>
+    private static TapeSetKey RecordKey() => Deterministic(TapeSetKey.Generate, seed: SealedSeed + 1);
+
+    private static (Guid SetId, TapeFileInfo File, byte[] Body) EncryptedRecordInput()
+    {
+        var (setId, file) = FileHeaderInput();
+        return (setId, file, Hash(21, EncryptedBodyLength));
+    }
+
+    /// <summary>
+    /// <c>ChunkedAead(K_file, [0x0201 frame][codec u8][body])</c> — the on-tape record of a Software-encrypted file
+    ///  (Design-Encryption §5.7), exactly as the Phase 3 backup pipeline will write it.
+    /// </summary>
+    private static byte[] WriteEncryptedFileRecord()
+    {
+        var (setId, file, body) = EncryptedRecordInput();
+        using TapeSetKey key = RecordKey();
+        var fileKey = new byte[TapeSetKey.Size];
+        key.DeriveFileKey(setId, file.FileId, fileKey);
+
+        using var ms = new MemoryStream();
+        var encrypting = new EncryptingStream(ms, fileKey, TapeAead.ZeroPrefix, TapeAead.FileChunkSize);
+        TapeFileHeader.Write(encrypting, setId, file);
+        TapeFileHeader.WriteCodec(encrypting, TapeFileCodec.Stored);
+        encrypting.Write(body);
+        encrypting.Complete();
+        return ms.ToArray();
+    }
+
+    private static void AssertEncryptedFileRecordReads(byte[] bytes)
+    {
+        var (setId, file, body) = EncryptedRecordInput();
+        using TapeSetKey key = RecordKey();
+        var fileKey = new byte[TapeSetKey.Size];
+        key.DeriveFileKey(setId, file.FileId, fileKey);
+
+        using var decrypting = new DecryptingStream(new MemoryStream(bytes), fileKey, TapeAead.ZeroPrefix,
+            TapeAead.FileChunkSize);
+        TapeFileHeader header = TapeFileHeader.Read(decrypting);
+        Assert.Equal(setId, header.SetId);
+        Assert.Equal(file.FileId, header.FileId);
+        Assert.Equal(file.FileDescr.FullName, header.Name);
+        Assert.Equal(TapeFileCodec.Stored, TapeFileHeader.ReadCodec(decrypting));
+
+        var back = new byte[EncryptedBodyLength];
+        decrypting.ReadExactly(back);
+        Assert.Equal(body, back);
+        decrypting.VerifyToEnd();
+        Assert.True(decrypting.IsAtVerifiedEnd);
+    }
+
+    #endregion
+
     #region *** The catalog ***
 
     /// <summary>Every 2.1 golden. Append only — never rename or edit a case whose golden is checked in.</summary>
@@ -399,6 +609,15 @@ internal static class GoldenV21
         new("toc-closed-by-eom.v21.bin",
             "TOC stream: a set closed by end-of-media (field 14, F32)",
             () => WriteToc(BuildEomToc()), b => AssertTocReads(b, BuildEomToc)),
+        new("toc-sealed.v21.bin",
+            "TOC stream: plain set, Software-encrypted base and incremental, reserved Hardware scheme (Design-Encryption §5)",
+            () => Deterministic(() => WriteToc(BuildSealedToc())), AssertSealedTocReads),
+        new("set-header-encrypted.v21.bin",
+            "set header frame of an encrypted set: identity and position only, field 8 (Design-Encryption §5.6)",
+            () => TapeFramer.PackHeader(EncryptedSetHeader()), b => AssertHeaderReads(b, EncryptedSetHeader())),
+        new("file-record-encrypted.v21.bin",
+            "Software-encrypted file record: header frame, codec byte and body as one chunked AEAD stream (§5.7)",
+            WriteEncryptedFileRecord, AssertEncryptedFileRecordReads),
     ];
 
     #endregion

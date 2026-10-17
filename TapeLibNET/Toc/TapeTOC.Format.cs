@@ -1,10 +1,12 @@
 using System.Buffers.Binary;
 using System.Reflection;
 using System.Text;
+
 using TapeLibNET.Agents;
 using TapeLibNET.Compression;
 using TapeLibNET.Format;
 using TapeLibNET.Legacy;
+using TapeLibNET.Encryption;
 
 namespace TapeLibNET.Toc;
 
@@ -12,7 +14,8 @@ namespace TapeLibNET.Toc;
 // ============================================================================================================
 //  Format 2.1 representation of the TOC (Design-FormatV21 §5.1, §7.3).
 //
-//  TOC stream := TocHeader (TocSet TocFileBatch*)* TocEnd ‖ CRC-64
+//  TOC stream := TocHeader ( TocSet TocFileBatch* | TocSealedSet TocSealedChunk+ )* TocEnd ‖ CRC-64
+//   (sealed sets: Design-Encryption §5, wires in TapeTOC.Encryption.cs)
 //
 //  The domain types (TapeTOC, TapeSetTOC, TapeFileInfo) stay free of wire concerns: each record has a small
 //   mutable wire DTO with a schema table (G4). This file holds the DTOs, the TOC's SaveTo / LoadFrom / TryPeek,
@@ -291,13 +294,14 @@ public partial class TapeSetTOC
     /// <summary>
     /// Everything about a set that is persisted, except <see cref="LastSaveTime"/> itself. Files are append-only
     ///  and every attempt burns a <see cref="NextFileId"/>, so the file count plus the id counter capture any
-    ///  change to the file list.
+    ///  change to the file list. For an encrypted set, the scheme and the envelope count too: a new envelope (a
+    ///  password change) re-seals the set (Design-Encryption §6.3).
     /// </summary>
     private readonly record struct PersistedState(
         Guid SetId, TapeDataFormat DataFormat, ulong NextFileId, int FileCount,
         string Description, DateTime CreationTime, uint BlockSize, TapeHashAlgorithm HashAlgorithm,
         TapeCompression Compression, int CompressionLevel, bool Incremental, int Volume, bool ContinuedFromPrevVolume,
-        bool ClosedByEom);
+        bool ClosedByEom, TapeEncryption Encryption, TapeKeyEnvelope? Envelope);
 
     // The state as last saved or loaded; null for a set never persisted (a new set is always "modified").
     //  Copied by CopyFrom (TapeTOC.cs), so a loaded set copied into the live TOC stays unmodified.
@@ -305,21 +309,34 @@ public partial class TapeSetTOC
 
     private PersistedState CaptureState() => new(
         SetId, DataFormat, NextFileId, Count, Description, CreationTime, BlockSize, HashAlgorithm,
-        Compression, CompressionLevel, Incremental, Volume, ContinuedFromPrevVolume, ClosedByEom);
+        Compression, CompressionLevel, Incremental, Volume, ContinuedFromPrevVolume, ClosedByEom,
+        Encryption, Envelope);
 
     /// <summary>
     /// Whether this set differs from what was last saved or loaded — a new set, appended files, a burned
     ///  <see cref="TapeFileInfo.FileId"/>, or any changed attribute. Only modified sets get a fresh
-    ///  <see cref="LastSaveTime"/> on save.
+    ///  <see cref="LastSaveTime"/> on save, and only modified encrypted sets are re-sealed.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Compares a snapshot rather than tracking setters: no property can be forgotten, and the domain class needs
     ///  no change notifications. The cost is one small struct comparison per set and save.
+    /// </para>
+    /// <para>
+    /// <b>A locked set is never modified</b>: nothing in it can change without unlocking it first (E7).
+    /// </para>
     /// </remarks>
-    internal bool IsModified => m_savedState != CaptureState();
+    internal bool IsModified => !IsLocked && m_savedState != CaptureState();
 
-    /// <summary>Records the current state as persisted: after a successful save, and after a load.</summary>
-    internal void MarkSaved() => m_savedState = CaptureState();
+    /// <summary>
+    /// Records the current state as persisted: after a successful save, after a load, and after an unlock.
+    ///  A no-op on a locked set, whose last known state stays recorded.
+    /// </summary>
+    internal void MarkSaved()
+    {
+        if (!IsLocked)
+            m_savedState = CaptureState();
+    }
 
     #endregion
 
@@ -594,6 +611,13 @@ public partial class TapeTOC
         long totalFiles = 0;
         foreach (TapeSetTOC set in m_setTOCs)
         {
+            if (set.IsEncrypted)
+            {
+                // Stub + chunks: verbatim when locked or unchanged, re-sealed otherwise (E7). Its files count nowhere
+                //  in the clear (§5.2).
+                set.WriteSealed(writer);
+                continue;
+            }
             writer.Write(TapeSetTOC.Wire.From(set));
             set.WriteBatches(writer, entry, coder);
             totalFiles += set.Count;
@@ -637,8 +661,9 @@ public partial class TapeTOC
         var sets = new List<TapeSetTOC>(Math.Min(header.SetCount, c_maxPreallocSets));
         var entry = new TocFileEntryWire();
         var coder = new TapeNameFrontCoder();
-        TapeSetTOC? set = null;
+        TapeSetTOC? set = null;                 // the plain set whose batches are arriving
         int declaredFiles = 0;
+        SealedSetLoader? sealedSet = null;      // the sealed set whose chunks are arriving
 
         while (true)
         {
@@ -649,7 +674,7 @@ public partial class TapeTOC
             switch (record.Kind)
             {
                 case TapeRecordKind.TocSet:
-                    set?.FinishLoading(declaredFiles);
+                    CloseCurrentSet();
                     if (sets.Count == header.SetCount)
                         throw CrossCheck(TapeRecordKind.TocSet, $"more sets than the header declares ({header.SetCount})");
                     TapeSetTOC.Wire wire = record.Read<TapeSetTOC.Wire>();
@@ -660,16 +685,33 @@ public partial class TapeTOC
 
                 case TapeRecordKind.TocFileBatch:
                     if (set is null)
-                        throw record.Fields.Error(FormatErrorKind.UnexpectedKind, "file batch before any set");
+                        throw record.Fields.Error(FormatErrorKind.UnexpectedKind, "file batch outside a plain set");
                     set.ReadBatch(record.Fields, entry, coder, declaredFiles);
                     break;
 
+                case TapeRecordKind.TocSealedSet:
+                    CloseCurrentSet();
+                    if (sets.Count == header.SetCount)
+                        throw CrossCheck(TapeRecordKind.TocSealedSet, $"more sets than the header declares ({header.SetCount})");
+                    sealedSet = new SealedSetLoader(record.Read<TocSealedSetWire>());
+                    sets.Add(sealedSet.Set);
+                    break;
+
+                case TapeRecordKind.TocSealedChunk:
+                    if (sealedSet is null)
+                        throw record.Fields.Error(FormatErrorKind.UnexpectedKind, "sealed chunk outside a sealed set");
+                    sealedSet.Add(record.Read<TocSealedChunkWire>());
+                    break;
+
                 case TapeRecordKind.TocEnd:
-                    set?.FinishLoading(declaredFiles);
+                    CloseCurrentSet();
                     TocEndWire end = record.Read<TocEndWire>();
                     long totalFiles = 0;
                     foreach (TapeSetTOC s in sets)
-                        totalFiles += s.Count;
+                    {
+                        if (!s.IsEncrypted)
+                            totalFiles += s.Count;      // a sealed set's count is hidden (§5.2)
+                    }
                     if (end.SetCount != sets.Count || header.SetCount != sets.Count)
                         throw CrossCheck(TapeRecordKind.TocEnd,
                             $"set count mismatch: header {header.SetCount}, end {end.SetCount}, read {sets.Count}");
@@ -683,8 +725,52 @@ public partial class TapeTOC
             }
         }
 
+        // Completes whichever set is open before the next set record or TocEnd.
+        void CloseCurrentSet()
+        {
+            set?.FinishLoading(declaredFiles);
+            set = null;
+            sealedSet?.Complete();
+            sealedSet = null;
+        }
+
         static TapeFormatException CrossCheck(TapeRecordKind kind, string message)
             => new(FormatErrorKind.CrossCheck, message) { Record = kind };
+    }
+
+    /// <summary>
+    /// Collects the chunk records that follow a <see cref="TocSealedSetWire"/> <paramref name="stub"/>:
+    ///  exactly <see cref="TocSealedSetWire.ChunkCount"/> of them, indices in order,
+    ///  <see cref="TocSealedChunkWire.Final"/> on the last one only (Design-Encryption §5.2). No decryption on load.
+    /// </summary>
+    private sealed class SealedSetLoader(TocSealedSetWire stub)
+    {
+        private readonly List<byte[]> m_chunks = new(Math.Min(stub.ChunkCount, 64));
+
+        /// <summary>The locked set, already in the TOC's set list; its sealed bytes attach on <see cref="Complete"/>.</summary>
+        public TapeSetTOC Set { get; } = TapeSetTOC.CreateLocked(stub);
+
+        public void Add(TocSealedChunkWire chunk)
+        {
+            int index = m_chunks.Count;
+            if (index >= stub.ChunkCount)
+                throw Bad($"more sealed chunks than the stub declares ({stub.ChunkCount})");
+            if (chunk.Index != (uint)index)
+                throw Bad($"sealed chunk {chunk.Index} where chunk {index} belongs");
+            if (chunk.Final != (index == stub.ChunkCount - 1))
+                throw Bad($"sealed chunk {index} {(chunk.Final ? "claims" : "lacks")} the final flag");
+            m_chunks.Add(chunk.Ciphertext);
+        }
+
+        public void Complete()
+        {
+            if (m_chunks.Count != stub.ChunkCount)
+                throw Bad($"sealed set holds {m_chunks.Count} of its {stub.ChunkCount} chunks");
+            Set.AttachSealed(TapeSealedPayload.FromStored(stub.SealNoncePrefix, m_chunks));
+        }
+
+        private static TapeFormatException Bad(string message)
+            => new(FormatErrorKind.CrossCheck, message) { Record = TapeRecordKind.TocSealedChunk };
     }
 
     /// <summary>

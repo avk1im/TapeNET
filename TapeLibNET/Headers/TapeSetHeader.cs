@@ -1,9 +1,9 @@
+using TapeLibNET.Encryption;
 using TapeLibNET.Format;
 using TapeLibNET.Legacy;
 using TapeLibNET.Toc;
 
 namespace TapeLibNET.Headers;
-
 
 /// <summary>
 /// Outcome of verifying a set header against the TOC's expectation for the set just positioned at.
@@ -17,27 +17,33 @@ public enum TapeSetHeaderVerdict
 {
     /// <summary>Media identity, volume, on-volume index and set identity all agree. The overwhelmingly common case.</summary>
     Match,
+
     /// <summary>Header-less volume — no set header was expected, so none was read (SH-1).</summary>
     NotExpected,
+
     /// <summary>
     /// A set header was expected but the block did not classify as one (torn write, host-path corruption, or a read
     ///  fault). Warn and proceed: an unverifiable record removes a safety net, not the tape's data.
     /// </summary>
     Unreadable,
+
     /// <summary>
     /// The media id differs — a cartridge swapped mid-operation. Every in-memory assumption is void, including the
     ///  TOC; nothing is correctable.
     /// </summary>
     WrongMedia,
+
     /// <summary>
     /// Right series, wrong cartridge. File addresses are physical-per-volume, so every address in the TOC would
     ///  resolve to garbage on this volume.
     /// </summary>
     WrongVolume,
+
     /// <summary>
     /// Identity confirmed, on-volume index differs — a recoverable navigation miscount. Repaired in place (SH-10).
     /// </summary>
     SetIndexDrift,
+
     /// <summary>
     /// Right media, right volume, right position — but a DIFFERENT set stands there: both <c>SetId</c>s are known and
     ///  differ (Design-FormatV21 §5.4). The TOC describes another set than the tape holds — a stale or foreign TOC.
@@ -53,6 +59,7 @@ internal sealed class TapeSetHeaderWire : TapeHeaderWire
     public int VolumeSetIndex;
     public int GlobalSetIndex;
     public Guid SetId;
+    public uint Encryption;
     public string Description = "";
 
     public static readonly TapeSchema<TapeSetHeaderWire> Schema = new(TapeRecordKind.SetHeader, inherits: Shared)
@@ -62,6 +69,9 @@ internal sealed class TapeSetHeaderWire : TapeHeaderWire
         { 5,  w => w.VolumeSetIndex, (w, v) => w.VolumeSetIndex = v },
         { 6,  w => w.GlobalSetIndex, (w, v) => w.GlobalSetIndex = v, FieldFlags.Required },
         { 7,  w => w.SetId,          (w, v) => w.SetId = v },        // optional: empty for headers built without a set
+        // Design-Encryption §5.6. Optional, NOT critical, by value: an older reader that ignores it still navigates — every
+        //  positional field is intact. Elided at 0 (plain set): every existing set header stays byte-identical (E2).
+        { 8,  w => w.Encryption,     (w, v) => w.Encryption = v },
         // ── strings 32–47 ──
         { 32, w => w.Description,    (w, v) => w.Description = v },
     };
@@ -82,6 +92,12 @@ internal sealed class TapeSetHeaderWire : TapeHeaderWire
 /// Unlike the media header, the set header carries <b>no tapemark</b> (SH-2): it is always the first thing written at
 ///  an already-legal position, and the write itself truncates, so everything after it is a sequential append. It
 ///  therefore contributes no mark and never alters setmark/filemark arithmetic (SH-3).
+/// </para>
+/// <para>
+/// <b>Encrypted sets (Design-Encryption §5.6)</b> keep every positional and identity field and nothing else: no
+///  description, <see cref="TapeHeader.CreatedUtc"/> at <see cref="TapePrimitives.MinUtc"/>, <see cref="SetBlockSize"/>
+///  0, and <see cref="Encryption"/> naming the scheme. The header is always written in plain — in both schemes — so
+///  set-header verification and Scan Media work on locked sets.
 /// </para>
 /// <para>
 /// Build one only via <see cref="TapeTOC.CreateSetHeader(int)"/> / <see cref="TapeTOC.CreateSetHeaderForCurrentSet"/> —
@@ -120,7 +136,7 @@ public sealed record TapeSetHeader : TapeHeader
     /// <summary>This set's on-tape block size — reinterprets the base <see cref="TapeHeader.BlockSize"/> slot.</summary>
     /// <remarks>
     /// <b>Advisory only (SH-11).</b> The TOC stays authoritative for every set parameter; a disagreement is logged, never
-    ///  acted on.
+    ///  acted on. 0 for an encrypted set, whose block size is hidden.
     /// </remarks>
     public uint SetBlockSize
     {
@@ -141,19 +157,26 @@ public sealed record TapeSetHeader : TapeHeader
     public required int GlobalSetIndex { get; init; }
 
     /// <summary>
+    /// The set's encryption scheme; <see cref="TapeEncryption.None"/> for a plain set and for every legacy header. Carried
+    ///  by value: a scheme this build does not know reads as its number (E15).
+    /// </summary>
+    public TapeEncryption Encryption { get; init; }
+
+    /// <summary>
     /// Creation-time snapshot of the set's description, kept for diagnostics only; may be <see langword="null"/> when
-    ///  none was recorded (<see cref="DisplayName"/> then synthesizes one). NOT the live value.
+    ///  none was recorded (<see cref="DisplayName"/> then synthesizes one). NOT the live value. Always
+    ///  <see langword="null"/> for an encrypted set.
     /// </summary>
     public string? Description { get; init; }
 
     /// <summary>
     /// A never-empty, human-readable name: the recorded <see cref="Description"/> when present, otherwise one
-    ///  synthesized from the set's indices.
+    ///  synthesized from the set's indices — without the (meaningless) time for an encrypted set.
     /// </summary>
     public string DisplayName =>
-        !string.IsNullOrWhiteSpace(Description)
-            ? Description!
-            : $"Set #{GlobalSetIndex} · vol {Volume} · {CreatedUtc:yyyy-MM-dd HH:mm}";
+        !string.IsNullOrWhiteSpace(Description) ? Description!
+        : Encryption != TapeEncryption.None ? $"Set #{GlobalSetIndex} · vol {Volume} (encrypted)"
+        : $"Set #{GlobalSetIndex} · vol {Volume} · {CreatedUtc:yyyy-MM-dd HH:mm}";
 
     /// <summary>
     /// Clamps a candidate description to the header's UTF-8 byte budget so the framed record always fits one
@@ -173,6 +196,7 @@ public sealed record TapeSetHeader : TapeHeader
         VolumeSetIndex = VolumeSetIndex,
         GlobalSetIndex = GlobalSetIndex,
         SetId = SetId,
+        Encryption = (uint)Encryption,            // 0 is elided: plain headers stay byte-identical
         Description = Description ?? "",          // "" is elided; read back as null
     });
 
@@ -189,6 +213,7 @@ public sealed record TapeSetHeader : TapeHeader
             VolumeSetIndex = w.VolumeSetIndex,
             GlobalSetIndex = w.GlobalSetIndex,
             SetId = w.SetId,
+            Encryption = (TapeEncryption)w.Encryption,
             Description = string.IsNullOrEmpty(w.Description) ? null : w.Description,
         };
     }
@@ -226,5 +251,8 @@ public sealed record TapeSetHeader : TapeHeader
     public override string ToString() =>
         $"Set header — set #{GlobalSetIndex} (volume {Volume}, #{VolumeSetIndex} on volume), " +
         $"set id {(SetId == Guid.Empty ? "—" : SetId.ToString("N"))}, media id {MediaId:N}, " +
-        $"created {CreatedUtc:u}, name \"{DisplayName}\"";
+        (Encryption != TapeEncryption.None
+            ? $"encrypted ({EncryptionPreset.DisplayName(Encryption)}), "
+            : $"created {CreatedUtc:u}, ") +
+        $"name \"{DisplayName}\"";
 }

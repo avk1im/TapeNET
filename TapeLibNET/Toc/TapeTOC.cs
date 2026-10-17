@@ -299,7 +299,6 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
     {
         m_tapeFileInfos.Clear();
         m_tapeFileInfos.AddRange(toc.m_tapeFileInfos);
-
         Description = toc.Description;
         CreationTime = toc.CreationTime;
         BlockSize = toc.BlockSize;
@@ -315,6 +314,15 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
         ClosedByEom = toc.ClosedByEom;
         // ContinuedFromPrevVolume is init-only: the copy constructor carries it
         m_isPackedLayout = toc.m_isPackedLayout;
+
+        // Encryption (Design-Encryption §6.3). The key is shared by reference — the key ring owns it; the envelope and
+        //  the sealed bytes are immutable, so sharing them keeps a locked copy byte-identical on its next save (E7).
+        m_encryption = toc.m_encryption;
+        Envelope = toc.Envelope;
+        Key = toc.Key;
+        Sealed = toc.Sealed;
+        m_sealedSizeOnTape = toc.m_sealedSizeOnTape;
+        m_acceptsFiles = toc.m_acceptsFiles;
 
         // A copy is exactly as persisted as its source: a set loaded from tape and copied into the live TOC
         //  (TapeTOC.CopyFrom) must not count as modified, or its LastSaveTime would be restamped on the next save.
@@ -690,7 +698,6 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     ///  agent's <see cref="TapeAgentBase.WritesSetHeaders"/> — the TOC cannot know it, exactly as it
     ///  cannot know its own <paramref name="tapeTocPlacement"/>.
     /// </param>
-
     public TapeMediaHeader CreateHeader(uint tocBlockSize,
             TapeTocPlacement tapeTocPlacement,
             MediaPartition headerPartition = MediaPartition.Content,
@@ -721,6 +728,11 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     /// Carries <b>a-priori facts only</b> (SH-5): every value is known before the set's first file is
     ///  written. Nothing post-hoc — no file count, no totals — may ever be added.
     /// </para>
+    /// <para>
+    /// <b>An encrypted set's header carries identity and position only</b> (Design-Encryption §5.6): no description,
+    ///  creation time at <c>MinUtc</c>, block size 0, and the scheme. Built from stub fields alone, so it works on a
+    ///  locked set too.
+    /// </para>
     /// </remarks>
     /// <param name="setIndex">
     /// Index of the set to describe, in standard (1..N) or alternative (≤ 0) form — normalized
@@ -737,16 +749,19 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
                 $"Set index {setIndex} is outside {MinSetIndex}..{MaxSetIndex}");
 
         var setTOC = m_setTOCs[setInternal];
+        bool encrypted = setTOC.IsEncrypted;
         return new TapeSetHeader
         {
             MediaId = EnsureMediaId(),         // idempotent — the same id the media header carries
             SetId = setTOC.SetId,              // the set's own identity — the same id its file headers carry
-            CreatedUtc = setTOC.CreationTime,  // the SET's own creation moment
-            SetBlockSize = setTOC.BlockSize,   // advisory (SH-11); the TOC stays authoritative
+            // the SET's own creation moment — hidden for an encrypted set
+            CreatedUtc = encrypted ? Format.TapePrimitives.MinUtc : setTOC.CreationTime,
+            SetBlockSize = encrypted ? 0 : setTOC.BlockSize,   // advisory (SH-11); the TOC stays authoritative
             Volume = setTOC.Volume,
             VolumeSetIndex = setInternal - FirstSetInternalOfVolume(setTOC.Volume),
             GlobalSetIndex = InternalToSetIndex(setInternal),   // ALWAYS standard, whatever form came in
-            Description = TapeSetHeader.ClampName(setTOC.Description),
+            Encryption = setTOC.Encryption,
+            Description = encrypted ? null : TapeSetHeader.ClampName(setTOC.Description),
         };
     }
 
