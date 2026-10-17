@@ -1,0 +1,5 @@
+{
+  "Length": 150177,
+  "Sha256": "5561B20396EA2EBEBF46CD908FEB8B4BDA15453F21B546DF03640B783985CB88",
+  "Describes": "Software-encrypted file record: header frame, codec byte and body as one chunked AEAD stream (\u00A75.7)"
+}
