@@ -11,6 +11,7 @@ using TapeLibNET.Media;
 using TapeLibNET.Packer;
 using TapeLibNET.Streams;
 using TapeLibNET.Toc;
+using TapeLibNET.Encryption;
 
 namespace TapeLibNET.Agents;
 
@@ -237,8 +238,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         TOC.CurrentSetTOC.BlockSize = Drive.BlockSize; // in any case, ensure the set has what the manager has
 
         // Hardware compression interlock: disable HW compression for Software/None sets so the
-        //  drive doesn't double-compress or interfere; leave it enabled for Hardware sets.
-        Drive.SetHardwareCompression(TOC.CurrentSetTOC.Compression == TapeCompression.Hardware);
+        //  drive doesn't double-compress or interfere; leave it enabled for Hardware sets — unless the set's
+        //  encryption scheme rules it out (software-encrypted data does not compress, §9.1).
+        Drive.SetHardwareCompression(TOC.CurrentSetTOC.Compression == TapeCompression.Hardware
+            && CipherFor(TOC.CurrentSetTOC).AllowsHardwareCompression);
 
         // Phase 3: arm the drive's logical early warning to reserve room for the TOC when it is
         //  co-located with content (TOC-in-set). The drive selects the best available mechanism
@@ -338,13 +341,18 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             }
         }
 
-        long remainingCapacity = ComputeRemainingCapacity();
+        // The set's encryption session (Design-Encryption §9.1, E16): AFTER the set header — a drive key (v2) must
+        //  never apply to it — and BEFORE the first content byte. Closed again below if the content session fails.
+        if (!BeginSetEncryption(forWrite: true))
+            return false;   // BeginSetEncryption set and latched the error; nothing written past the header
 
+        long remainingCapacity = ComputeRemainingCapacity();
         if (!Manager.BeginWriteContent(remainingCapacity))
         {
             m_logger.LogWarning("Failed to transition to writing content in {Method}",
                 nameof(BeginWriteContentForCurrentSet));
             SyncErrorFrom(Manager);
+            EndSetEncryption();
             return false;
         }
 
@@ -560,16 +568,23 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         var wstream = Manager.BeginPackedFile() ??
             throw new TapeIOException(this, this, $"failed to open packed write stream for >{template.FileDescr.FullName}<");
+
         CommitToken token = wstream.CommitToken;
         hash = null;
         codec = TapeFileCodec.Stored;
+
+        // The record's sink: the packer façade itself (plain, drive-encrypted), or the cipher's stream over it
+        //  (software-encrypted) — Design-Encryption §9.3. Opened INSIDE the try, so a failure discards the packer slot.
+        ITapeSetCipher cipher = ActiveSetCipher;
+        Stream? sink = null;
         try
         {
             var setTOC = TOC.CurrentSetTOC;
+            sink = cipher.OpenWrite(wstream, setTOC, template);
             var hasher = CreateHasher(setTOC.HashAlgorithm);
 
             // The per-file header (2.1 frame, or the 12-byte legacy header) — excluded from the hash.
-            RecordEmitter.WriteFileHeader(wstream, setTOC, template);
+            RecordEmitter.WriteFileHeader(sink, setTOC, template);
 
 #if TEST_HOOKS
             if (SimulateFileFailures.ShouldFailNow())
@@ -583,6 +598,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
             // No BufferedTapeWriteStream needed: the packer's worker-thread backend
             //  already overlaps reads and writes.
+
             // Use TapeBackupSourceStream to capture all NTFS streams (ACL, ADS, EA, etc.)
             //  via BackupRead as an opaque blob.
             var fileInfo = template.FileDescr.CreateFileInfo();
@@ -592,16 +608,15 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 // Software-ZSTD path via ProbingCompressionStream:
                 //  - Probes the first 128 KiB (one ZSTD block) to decide compress vs store.
                 //  - Writes the decision as the body's codec prefix (EmitsCodecPrefix), then the body.
-                //  - Remainder is piped directly to wstream without any intermediate buffer.
+                //  - Remainder is piped directly to the sink without any intermediate buffer.
                 //  - Session (codec + probe buffers) is created once and reused across files.
                 //  - Hashing always covers the uncompressed bytes (codec-independent hash).
                 var session = GetOrCreateCompressionSession();
-                using var probing = new ProbingCompressionStream(wstream, session, setTOC.CompressionLevel)
+                using var probing = new ProbingCompressionStream(sink, session, setTOC.CompressionLevel)
                 {
                     EmitsCodecPrefix = RecordEmitter.WritesCodecPrefix,
                 };
                 using var srcFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
-                
                 if (hasher == null)
                 {
                     srcFileStream.CopyTo(probing);
@@ -616,6 +631,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 // Explicitly dispose here so that Commit() runs (sealing the ZSTD frame and
                 //  setting FinalCodec) before we read it. The using-var Dispose() below is a no-op
                 //  because ProbingCompressionStream guards against double-disposal via _disposed.
+                //  Should it dispose its inner stream, the encrypting sink ignores that: only
+                //  CompleteWrite / AbandonWrite end a record.
                 probing.Dispose();
                 codec = probing.FinalCodec;
             }
@@ -624,32 +641,41 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 // None / Hardware path — no software compression; the body is stored as is.
                 codec = TapeFileCodec.Stored;
                 if (RecordEmitter.WritesCodecPrefix)
-                    TapeFileHeader.WriteCodec(wstream, codec);
-
+                    TapeFileHeader.WriteCodec(sink, codec);
                 if (hasher == null)
                 {
                     using var srcFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
-                    srcFileStream.CopyTo(wstream);
+                    srcFileStream.CopyTo(sink);
                 }
                 else
                 {
                     var srcFileStream = TapeBackupSourceStream.Open(fileInfo, m_logger);
                     using var hashingStream = new HashingStream(srcFileStream, hasher, ownInner: true);
-                    hashingStream.CopyTo(wstream);
+                    hashingStream.CopyTo(sink);
                     hash = hasher.GetCurrentHash();
                 }
             }
 
+            // Seal the record (software: the final AEAD chunk) BEFORE counting: the façade's length is then complete.
+            cipher.CompleteWrite(sink);
             BytesBackedup += wstream.Length;
 
             // Close the packer file slot. The actual TapeAddress will be reported
             //  later via Manager.FilesCommitted, keyed by the returned token.
             Manager.EndPackedFile();
+
             m_logger.LogTrace("File >{File}< handed off to packer ok", template.FileDescr.FullName);
             return token;
         }
         catch
         {
+            // Never a valid-looking end for a failed record: the software cipher writes no final chunk.
+            if (sink is not null)
+            {
+                try { cipher.AbandonWrite(sink); }
+                catch (Exception aex) { m_logger.LogDebug(aex, "AbandonWrite threw"); }
+            }
+
             // Discard the open file from the packer. NoRollback mode (the default)
             //  truncates the still-buffered tail; bytes already flushed remain as
             //  on-tape garbage but earlier files in the same fill buffer survive.
@@ -1008,10 +1034,11 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 bc.overallSuccess = false;
                 LatchFailure();
             }
-        }
+        } // try around the file loop
         finally
         {
             Manager.FilesCommitted -= OnCommitted;
+            EndSetEncryption();     // E16: on success, EOM, write fault and abort alike — before any TOC write
         }
 
         if (eomHandled)
@@ -1052,8 +1079,28 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     ///  another format is re-stamped (a trailing legacy slot, or a continuation after a format switch); a set that
     ///  already holds files cannot change format — one set, one format (F4).
     /// </summary>
+    /// <summary>
+    /// Makes <paramref name="set"/> carry this agent's data format before its first file is written. An EMPTY set of
+    ///  another format is re-stamped (a trailing legacy slot, or a continuation after a format switch); a set that
+    ///  already holds files cannot change format — one set, one format (F4).
+    /// </summary>
+    /// <remarks>
+    /// Runs before ANY tape movement, so it is also where encryption refuses (E9, E14): first the scheme — a locked set
+    ///  answers nothing else — then an incremental's chain, which the up-to-date check must be able to read.
+    /// </remarks>
     private bool EnsureSetFormat(TapeSetTOC set)
     {
+        if (!ValidateSetEncryption(forWrite: true))
+            return false;   // set and latched
+
+        if (TOC.IsIncrementalBaseLocked)
+        {
+            SetError(WIN32_ERROR.ERROR_INVALID_PASSWORD,
+                $"Set #{TOC.CurrentSetIndex} is incremental, but its base is locked — unlock the chain first");
+            LatchFailure();
+            return false;
+        }
+
         TapeDataFormat format = RecordEmitter.DataFormat;
         if (set.DataFormat != format)
         {
@@ -1064,6 +1111,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 LatchFailure();
                 return false;
             }
+
             if (format == TapeDataFormat.V2)
                 m_logger.LogInformation("Empty {Format} set #{Set} upgraded to format 2.1 before backup",
                     set.DataFormat, TOC.CurrentSetIndex);
@@ -1083,6 +1131,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             LatchFailure();
             return false;
         }
+
         return true;
     }
 

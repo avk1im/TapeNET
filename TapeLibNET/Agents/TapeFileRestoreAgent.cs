@@ -1,6 +1,9 @@
 ﻿using System.Diagnostics;
 using System.IO.Hashing;
+
 using Microsoft.Extensions.Logging;
+using Windows.Win32.Foundation;
+
 using TapeLibNET.Compression;
 using TapeLibNET.Drive;
 using TapeLibNET.Format;
@@ -9,7 +12,7 @@ using TapeLibNET.Legacy;
 using TapeLibNET.Media;
 using TapeLibNET.Streams;
 using TapeLibNET.Toc;
-using Windows.Win32.Foundation;
+using TapeLibNET.Encryption;
 
 namespace TapeLibNET.Agents;
 
@@ -103,7 +106,13 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         // Hardware compression interlock: match the drive's HW compression state to what was
         //  used when this set was written. HW sets need compression on; SW/None sets must have
         //  it off so the drive doesn't attempt to decompress already-decompressed bytes.
-        Drive.SetHardwareCompression(TOC.CurrentSetTOC.Compression == TapeCompression.Hardware);
+        Drive.SetHardwareCompression(TOC.CurrentSetTOC.Compression == TapeCompression.Hardware
+            && CipherFor(TOC.CurrentSetTOC).AllowsHardwareCompression);
+
+        // The set's encryption session (Design-Encryption §9.1, E16): AFTER the set header was read — it is never
+        //  encrypted — and before the first file byte. Closed at the end of the set.
+        if (!BeginSetEncryption(forWrite: false))
+            return false;   // set and latched
 
         // Success
         ResetError();
@@ -166,10 +175,15 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             }
 
             TapeSetTOC setTOC = TOC.CurrentSetTOC;
+            ITapeSetCipher cipher = ActiveSetCipher;
 
             // The packer needs the file's exact tape position and length to bound its
             //  read window. Use SizeOnTape (set during packed backup) when available;
-            //  fall back to an estimate in the set's own data format otherwise.
+            //  fall back to an estimate in the set's own data format otherwise — unless the scheme needs the exact
+            //  end of the record (software encryption: the final chunk, Design-Encryption §5.7).
+            if (tfi.SizeOnTape <= 0 && !cipher.AllowsEstimatedSize)
+                throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                    $"No recorded size on tape for encrypted file >{tfi.FileDescr.FullName}< — it cannot be bounded");
             long totalBytes = (tfi.SizeOnTape > 0)
                 ? tfi.SizeOnTape
                 : setTOC.EstimateFileOverhead(tfi) + tfi.FileDescr.Length;
@@ -190,65 +204,85 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 return false;
             }
 
-            // Validate the file header (per data format) and read the body's codec, before delivering the body.
-            CheckFileHeader(rstream, setTOC, tfi);
-            TapeFileCodec codec = ReadBodyCodec(rstream, setTOC, tfi);
+            // The record as written: the façade itself, or the cipher's decrypting stream over it.
+            Stream src = cipher.OpenRead(rstream, setTOC, tfi);
+            using (ReferenceEquals(src, rstream) ? null : src)      // dispose only what the cipher created
+            {
+                // Validate the file header (per data format) and read the body's codec, before delivering the body.
+                CheckFileHeader(src, setTOC, tfi);
+                TapeFileCodec codec = ReadBodyCodec(src, setTOC, tfi);
 
 #if TEST_HOOKS
-            if (SimulateFileFailures.ShouldFailNow())
-            {
-                throw new TapeIOException((uint)WIN32_ERROR.ERROR_UNHANDLED_EXCEPTION,
-                    $"Simulated restore failure for file >{tfi.FileDescr.FullName}< (#{SimulateFileFailures.Counter})");
-            }
-#endif
-
-            var hasher = CreateHasher(setTOC.HashAlgorithm);
-            var fileDescr = tfi.FileDescr;
-            if (!PreProcessFileInternal(ref fileDescr) || !NotifyPreProcessFile(fileNotify, tfi))
-            {
-                FileSkippedInternal(tfi.FileDescr);
-                NotifyFileSkipped(fileNotify, tfi);
-                m_logger.LogTrace("Skipping (packed) file >{File}< per pre-processor request", tfi.FileDescr.FullName);
-                return true;
-            }
-
-            FileInfo fileInfo = fileDescr.CreateFileInfo();
-
-            // Wrap rstream with a decompressor when the file was ZSTD-compressed at backup time.
-            //  The hasher inside RestoreFileCore always sees decompressed bytes (codec-independent hash).
-            //  For Stored files, bodyStream == rstream (no allocation, no copy).
-            ZstdCodec? zstdCodec = codec == TapeFileCodec.Zstd ? new ZstdCodec() : null;
-            using (zstdCodec)
-            {
-                Stream bodyStream = zstdCodec != null
-                    ? new DecompressionFilterStream(rstream)
-                    : rstream;
-                using (zstdCodec != null ? bodyStream : null) // only dispose when we own it
+                if (SimulateFileFailures.ShouldFailNow())
                 {
-                    if (!RestoreFileCore(fileInfo, bodyStream, hasher))
+                    throw new TapeIOException((uint)WIN32_ERROR.ERROR_UNHANDLED_EXCEPTION,
+                        $"Simulated restore failure for file >{tfi.FileDescr.FullName}< (#{SimulateFileFailures.Counter})");
+                }
+#endif
+                var hasher = CreateHasher(setTOC.HashAlgorithm);
+                var fileDescr = tfi.FileDescr;
+
+                if (!PreProcessFileInternal(ref fileDescr) || !NotifyPreProcessFile(fileNotify, tfi))
+                {
+                    FileSkippedInternal(tfi.FileDescr);
+                    NotifyFileSkipped(fileNotify, tfi);
+                    m_logger.LogTrace("Skipping (packed) file >{File}< per pre-processor request", tfi.FileDescr.FullName);
+                    return true;
+                }
+
+                FileInfo fileInfo = fileDescr.CreateFileInfo();
+
+                // Wrap src with a decompressor when the file was ZSTD-compressed at backup time.
+                //  The hasher inside RestoreFileCore always sees decompressed bytes (codec-independent hash).
+                //  For Stored files, bodyStream == src (no allocation, no copy).
+                ZstdCodec? zstdCodec = codec == TapeFileCodec.Zstd ? new ZstdCodec() : null;
+                using (zstdCodec)
+                {
+                    Stream bodyStream = zstdCodec != null
+                        ? new DecompressionFilterStream(src)
+                        : src;
+                    using (zstdCodec != null ? bodyStream : null) // only dispose when we own it
                     {
-                        throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
-                            $"Processing failed for file >{tfi.FileDescr.FullName}<");
+                        if (!RestoreFileCore(fileInfo, bodyStream, hasher))
+                        {
+                            throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                                $"Processing failed for file >{tfi.FileDescr.FullName}<");
+                        }
+
+                        // E5: ZSTD stops at its frame end, Verify stops when the disk file ends — authenticate the rest
+                        //  of the record, up to and including its final chunk, while the streams are still open.
+                        try
+                        {
+                            cipher.CompleteRead(src);
+                        }
+                        catch (TapeIOException ex)
+                        {
+                            throw new TapeIOException(ex.Error,
+                                $"Authentication failed for file >{tfi.FileDescr.FullName}<: {ex.ErrorMessage}", ex);
+                        }
                     }
                 }
-            }
 
-            if (hasher != null)
-            {
-                if (tfi.Hash == null)
-                    throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
-                        $"Hash missing in file info for file >{tfi.FileDescr.FullName}<");
-                if (!tfi.Hash.SequenceEqual(hasher.GetCurrentHash()))
+                if (hasher != null)
                 {
-                    throw new TapeIOException((uint)WIN32_ERROR.ERROR_CRC,
-                        $"CRC check failed for file >{tfi.FileDescr.FullName}<. Hasher: {setTOC.HashAlgorithm}");
-                }
-            }
+                    if (tfi.Hash == null)
+                        throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                            $"Hash missing in file info for file >{tfi.FileDescr.FullName}<");
 
-            BytesRestored += tfi.FileDescr.Length;
-            if (NotifyPostProcessFile(fileNotify, tfi))
-                return PostProcessFileInternal(fileDescr, fileInfo);
-            return true;
+                    if (!tfi.Hash.SequenceEqual(hasher.GetCurrentHash()))
+                    {
+                        throw new TapeIOException((uint)WIN32_ERROR.ERROR_CRC,
+                            $"CRC check failed for file >{tfi.FileDescr.FullName}<. Hasher: {setTOC.HashAlgorithm}");
+                    }
+                }
+
+                BytesRestored += tfi.FileDescr.Length;
+
+                if (NotifyPostProcessFile(fileNotify, tfi))
+                    return PostProcessFileInternal(fileDescr, fileInfo);
+
+                return true;
+            }
         }
         catch (TapeAbortRequestedException)
         {
@@ -423,6 +457,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 break;
         }
 
+        EndSetEncryption();     // E16
         NotifySetEnd(fileNotify);
 
         m_logger.LogTrace("RestoreFilesFromCurrentSet(tfis) exiting: overallSuccess={Success}", overallSuccess);
@@ -496,44 +531,12 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 break;
         }
 
+        EndSetEncryption();     // E16
         NotifySetEnd(fileNotify);
 
         m_logger.LogTrace("RestoreAllFilesFromCurrentSetCore exiting: overallSuccess={Success}", overallSuccess);
         return overallSuccess;
-    } // RestoreAllFilesFromCurrentSet()
-
-
-    /// <summary>
-    ///  Routes content reads through the shared-block read packer; supports multi-volume continuation.
-    /// </summary>
-    public TapeResult RestoreFilesFromCurrentSet(ITapeFileFilter? fileFilter,
-        bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
-    {
-        m_logger.LogTrace("Starting restoring (packed) files from current set #{Set}",
-            TOC.CurrentSetIndex);
-
-        _stats.Reset();
-        _setAnomalies.Clear();
-        ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, fileFilter), ignoreFailures, fileNotify)
-            ? TapeResult.OK : FailedOperationResult;
-    }
-
-    /// <summary>
-    ///  Supports multi-volume continuation.
-    /// </summary>
-    public TapeResult RestoreAllFilesFromCurrentSet(
-        bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
-    {
-        m_logger.LogTrace("Starting restoring (packed) all files from current set #{Set}",
-            TOC.CurrentSetIndex);
-
-        _stats.Reset();
-        _setAnomalies.Clear();
-        ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filter: null), ignoreFailures, fileNotify)
-            ? TapeResult.OK : FailedOperationResult;
-    }
+    } // RestoreAllFilesFromCurrentSetCore()
 
 
     // The context with which we can resume restore on the previous volume
@@ -553,6 +556,17 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     public bool CanResumeFromAnotherVolume => MultiVolumeContext is not null;
     /// <summary>Volume number to load next; valid only when <see cref="CanResumeFromAnotherVolume"/> is <see langword="true"/>.</summary>
     public int VolumeToResumeFrom { get; private set; } = -1;
+
+    /// <summary>
+    /// Whether <paramref name="onVolume"/> (freshly loaded — encrypted sets locked) describes the same set as
+    ///  <paramref name="expected"/>: by file count for plain sets, by identity, scheme and size on tape for encrypted ones.
+    /// </summary>
+    private static bool SameSetOnTape(TapeSetTOC onVolume, TapeSetTOC expected)
+        => onVolume.IsEncrypted || expected.IsEncrypted
+            ? onVolume.SetId == expected.SetId
+              && onVolume.Encryption == expected.Encryption
+              && onVolume.SizeOnTapeTotal == expected.SizeOnTapeTotal
+            : onVolume.Count == expected.Count;
 
     /// <summary>
     /// Continues the restore from a different volume after the caller has loaded the requested media.
@@ -586,17 +600,20 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 LogErrorAsWarning("Failed to restore TOC for new volume");
                 return FailedOperationResult;
             }
+
             // Check if the new volume has the right volume number
             if (TOC.Volume != VolumeToResumeFrom)
             {
                 LogErrorAsWarning("Volume mismatch for new volume");
                 return FailedOperationResult;
             }
-            // As the final test, check the size of the next backup set to restore
+
+            // As the final test, check the next backup set to restore is the same on the new volume. The freshly loaded
+            //  TOC has its encrypted sets LOCKED — compare what a stub can tell (Design-Encryption §9.5).
             int setIdx = MultiVolumeContext.Value.initialCurrSetIdx - MultiVolumeContext.Value.filesSelectedIdx;
-            if (TOC[setIdx].Count != orgTOC[setIdx].Count)
+            if (!SameSetOnTape(TOC[setIdx], orgTOC[setIdx]))
             {
-                LogErrorAsWarning($"Set size mismatch on new volume for set #{setIdx}");
+                LogErrorAsWarning($"Set mismatch on new volume for set #{setIdx}");
                 return FailedOperationResult;
             }
         }
@@ -608,11 +625,11 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         TOC.Volume = VolumeToResumeFrom;
         // Ok to proceed with the new volume. Notice: Keep our current TOC, since we're restoring the whole file series using it
 
-        return RestoreFilesFromCurrentSetDownInt(null, MultiVolumeContext.Value.ignoreFailures, MultiVolumeContext.Value.fileNotify)
+        return RestoreFilesFromCurrentSetDownCore(null, MultiVolumeContext.Value.ignoreFailures, MultiVolumeContext.Value.fileNotify)
             ? TapeResult.OK : FailedOperationResult;
     } // ResumeRestoreFromAnotherVolume()
 
-    private bool RestoreFilesFromCurrentSetDownInt(List<TapeFileInfo>?[]? filesSelected, bool ignoreFailures, ITapeFileNotifiable? fileNotify)
+    private bool RestoreFilesFromCurrentSetDownCore(List<TapeFileInfo>?[]? filesSelected, bool ignoreFailures, ITapeFileNotifiable? fileNotify)
     {
         m_logger.LogTrace("Starting restoring files from current set #{Set} down", TOC.CurrentSetIndex);
 
@@ -624,15 +641,15 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         // Total file size is fully known upfront from the TOC (unlike backup, where source
         //  files must be scanned in the background) — compute it synchronously, once, on a
         //  fresh start. Resumes reuse the estimate already stored in _stats.
+        //  Locked sets count nothing: they are refused below, before they start.
         if (!CanResumeFromAnotherVolume)
-            _stats.BytesTotal = TOC.GetTotalFileSize(filesSelected!, TOC.CurrentSetIndex);
+            _stats.BytesTotal = SelectedBytesTotal(filesSelected!, TOC.CurrentSetIndex);
 
         m_logger.LogTrace("{Method}: incoming rc.overallSuccess={Success}, filesSelectedIdx={Idx}, initialCurrSetIdx={Init}, isResume={Resume}",
-            nameof(RestoreFilesFromCurrentSetDownInt), rc.overallSuccess, rc.filesSelectedIdx, rc.initialCurrSetIdx, CanResumeFromAnotherVolume);
-
-        for (int s = 0; s < TOC.Count; s++)
+            nameof(RestoreFilesFromCurrentSetDownCore), rc.overallSuccess, rc.filesSelectedIdx, rc.initialCurrSetIdx, CanResumeFromAnotherVolume);
+        for (int s = 1; s <= TOC.Count; s++)
             m_logger.LogTrace("  TOC set #{Idx}: Volume={Vol}, ContFromPrev={CFP}, Count={Count}",
-                s, TOC[s].Volume, TOC[s].ContinuedFromPrevVolume, TOC[s].Count);
+                s, TOC[s].Volume, TOC[s].ContinuedFromPrevVolume, TOC[s].DisplayCount);
 
         // start from the oldest set, so that we only move tape forward
         for (; rc.filesSelectedIdx >= 0; rc.filesSelectedIdx--)
@@ -641,6 +658,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 continue; // optimization: don't bother with sets from which we restore no files
 
             TOC.CurrentSetIndex = rc.initialCurrSetIdx - rc.filesSelectedIdx;
+
             // check if the current set is present on this volume
             if (!TOC.IsCurrentSetOnVolume)
             {
@@ -657,21 +675,30 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 return false;
             }
 
+            // E9: a locked set, or a scheme this build / drive cannot read, fails HERE — before NotifySetStart, before
+            //  the tape moves. The other sets of the selection carry on as ignoreFailures says.
+            if (!ValidateSetEncryption(forWrite: false))
+            {
+                rc.overallSuccess = false;      // set and latched
+                if (!ignoreFailures || IsAbortRequested)
+                    break;
+                continue;
+            }
+
             bool result = rc.filesSelected[rc.filesSelectedIdx] != null
                 ? RestoreFilesFromCurrentSet(rc.filesSelected[rc.filesSelectedIdx], ignoreFailures, fileNotify)
                 : RestoreAllFilesFromCurrentSetCore(ignoreFailures, fileNotify); // null means restore all files
+
             if (!result)
             {
                 m_logger.LogWarning("{Method}: Inner restore returned false: filesSelectedIdx={Idx}, set #{Set}",
-                    nameof(RestoreFilesFromCurrentSetDownInt), rc.filesSelectedIdx, TOC.CurrentSetIndex);
-
+                    nameof(RestoreFilesFromCurrentSetDownCore), rc.filesSelectedIdx, TOC.CurrentSetIndex);
                 rc.overallSuccess = false;
                 // Latch only a REAL fault.
                 //  A media-full-please-swap isn't a failure, nor is a user-requested abort.
                 //  Latching is indempotent, hence it won't hurt if the original error has already been latched.
                 if (!CanResumeFromAnotherVolume && WentBad)
                     LatchFailure(); // latch on the ORIGINAL error if one occured
-
                 if (!ignoreFailures || IsAbortRequested)
                     break;
             }
@@ -686,9 +713,27 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         TOC.CurrentSetIndex = rc.initialCurrSetIdx; // restore the initial current set index
 
         m_logger.LogTrace("{Method} exiting: overallSuccess={Success}, filesSelectedIdx={Idx}, MultiVolumeContext set={Pending}",
-            nameof(RestoreFilesFromCurrentSetDownInt), rc.overallSuccess, rc.filesSelectedIdx, MultiVolumeContext != null);
+            nameof(RestoreFilesFromCurrentSetDownCore), rc.overallSuccess, rc.filesSelectedIdx, MultiVolumeContext != null);
+
         return rc.overallSuccess;
-    } // RestoreFilesFromCurrentSetDownInt(List<string>)
+    } // RestoreFilesFromCurrentSetDownCore(List<string>)
+
+    /// <summary>
+    /// <see cref="TapeTOC.GetTotalFileSize"/> that skips LOCKED sets instead of throwing: they contribute nothing, and
+    ///  are refused before they start.
+    /// </summary>
+    private long SelectedBytesTotal(List<TapeFileInfo>?[] combined, int newestSetIndex)
+    {
+        long total = 0;
+        for (int i = 0; i < combined.Length; i++)
+        {
+            TapeSetTOC set = TOC[newestSetIndex - i];
+            if (set.IsLocked)
+                continue;
+            total += combined[i]?.Sum(f => f.FileDescr.Length) ?? set.TotalFileSize;
+        }
+        return total;
+    }
 
 
     /// <summary>
@@ -703,10 +748,43 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         _stats.Reset();
         _setAnomalies.Clear();
         ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(filesSelected, ignoreFailures, fileNotify)
+        return RestoreFilesFromCurrentSetDownCore(filesSelected, ignoreFailures, fileNotify)
             ? TapeResult.OK : FailedOperationResult;
     }
 
+
+#if _
+    /// <summary>
+    ///  Routes content reads through the shared-block read packer; supports multi-volume continuation.
+    /// </summary>
+    public TapeResult RestoreFilesFromCurrentSet(ITapeFileFilter? fileFilter,
+        bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+    {
+        m_logger.LogTrace("Starting restoring (packed) files from current set #{Set}",
+            TOC.CurrentSetIndex);
+
+        _stats.Reset();
+        _setAnomalies.Clear();
+        ResetLatchedFailure();
+        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, fileFilter), ignoreFailures, fileNotify)
+            ? TapeResult.OK : FailedOperationResult;
+    }
+
+    /// <summary>
+    ///  Supports multi-volume continuation.
+    /// </summary>
+    public TapeResult RestoreAllFilesFromCurrentSet(
+        bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+    {
+        m_logger.LogTrace("Starting restoring (packed) all files from current set #{Set}",
+            TOC.CurrentSetIndex);
+
+        _stats.Reset();
+        _setAnomalies.Clear();
+        ResetLatchedFailure();
+        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filter: null), ignoreFailures, fileNotify)
+            ? TapeResult.OK : FailedOperationResult;
+    }
 
     /// <summary>Restores filtered files from the current set and its incremental chain.</summary>
     public TapeResult RestoreFilesFromCurrentSetInc(ITapeFileFilter? fileFilter, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
@@ -729,6 +807,97 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         _setAnomalies.Clear();
         ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, filter: null), ignoreFailures, fileNotify)
+            ? TapeResult.OK : FailedOperationResult;
+    }
+#endif
+
+    /// <summary>
+    /// Runs a file selection; a LOCKED set in it (E6) becomes <c>ERROR_INVALID_PASSWORD</c>, set and latched, before
+    ///  anything moves.
+    /// </summary>
+    private bool TrySelectFiles(Func<List<TapeFileInfo>?[]> select, out List<TapeFileInfo>?[] selected)
+    {
+        try
+        {
+            selected = select();
+            return true;
+        }
+        catch (TapeSetLockedException ex)
+        {
+            SetError(WIN32_ERROR.ERROR_INVALID_PASSWORD,
+                $"Backup set {ex.SetId:N} is encrypted and locked — its password has not been supplied");
+            LatchFailure();
+            m_logger.LogWarning("Restore refused before moving the tape: a selected set is locked ({SetId:N})", ex.SetId);
+            selected = [];
+            return false;
+        }
+    }
+
+    /// <summary>
+    ///  Routes content reads through the shared-block read packer; supports multi-volume continuation.
+    /// </summary>
+    public TapeResult RestoreFilesFromCurrentSet(ITapeFileFilter? fileFilter,
+        bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+    {
+        m_logger.LogTrace("Starting restoring (packed) files from current set #{Set}",
+            TOC.CurrentSetIndex);
+
+        _stats.Reset();
+        _setAnomalies.Clear();
+        ResetLatchedFailure();
+
+        if (!TrySelectFiles(() => TOC.SelectFiles(incremental: false, fileFilter), out var selected))
+            return FailedOperationResult;
+        return RestoreFilesFromCurrentSetDownCore(selected, ignoreFailures, fileNotify)
+            ? TapeResult.OK : FailedOperationResult;
+    }
+
+    /// <summary>
+    ///  Supports multi-volume continuation.
+    /// </summary>
+    public TapeResult RestoreAllFilesFromCurrentSet(
+        bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+    {
+        m_logger.LogTrace("Starting restoring (packed) all files from current set #{Set}",
+            TOC.CurrentSetIndex);
+
+        _stats.Reset();
+        _setAnomalies.Clear();
+        ResetLatchedFailure();
+
+        if (!TrySelectFiles(() => TOC.SelectFiles(incremental: false, filter: null), out var selected))
+            return FailedOperationResult;
+        return RestoreFilesFromCurrentSetDownCore(selected, ignoreFailures, fileNotify)
+            ? TapeResult.OK : FailedOperationResult;
+    }
+
+    /// <summary>Restores filtered files from the current set and its incremental chain.</summary>
+    public TapeResult RestoreFilesFromCurrentSetInc(ITapeFileFilter? fileFilter, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+    {
+        m_logger.LogTrace("Starting incrementally restoring (packed) files from current set #{Set}", TOC.CurrentSetIndex);
+
+        _stats.Reset();
+        _setAnomalies.Clear();
+        ResetLatchedFailure();
+
+        if (!TrySelectFiles(() => TOC.SelectFiles(incremental: true, fileFilter), out var selected))
+            return FailedOperationResult;
+        return RestoreFilesFromCurrentSetDownCore(selected, ignoreFailures, fileNotify)
+            ? TapeResult.OK : FailedOperationResult;
+    }
+
+    /// <summary>Restores filtered files from the current set and its incremental chain.</summary>
+    public TapeResult RestoreAllFilesFromCurrentSetInc(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+    {
+        m_logger.LogTrace("Starting incrementally restoring (packed) all files from current set #{Set}", TOC.CurrentSetIndex);
+
+        _stats.Reset();
+        _setAnomalies.Clear();
+        ResetLatchedFailure();
+
+        if (!TrySelectFiles(() => TOC.SelectFiles(incremental: true, filter: null), out var selected))
+            return FailedOperationResult;
+        return RestoreFilesFromCurrentSetDownCore(selected, ignoreFailures, fileNotify)
             ? TapeResult.OK : FailedOperationResult;
     }
 
@@ -762,32 +931,31 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             setIndexes.Count, string.Join(", ", setIndexes.Select(i => $"#{i}")));
 
         var checkedFilesBySet = new Dictionary<int, IReadOnlyList<TapeFileInfo>?>(setIndexes.Count);
-        foreach (int idx in setIndexes)
+        int newestIdx = 0;
+        bool selectedOk = TrySelectFiles(() =>
         {
-            int stdIdx = TOC.SetIndexToStd(idx);
-            if (checkedFilesBySet.ContainsKey(stdIdx))
-                continue; // deduplicate
-
-            if (fileFilter is null)
+            foreach (int idx in setIndexes)
             {
-                checkedFilesBySet[stdIdx] = null; // all files
-            }
-            else
-            {
-                var setTOC = TOC[stdIdx];
-                var matching = setTOC.SelectFiles(fileFilter);
-                checkedFilesBySet[stdIdx] = matching;
-            }
-        }
+                int stdIdx = TOC.SetIndexToStd(idx);
+                if (checkedFilesBySet.ContainsKey(stdIdx))
+                    continue; // deduplicate
 
-        var combined = TOC.SelectFilesFromSets(incremental, checkedFilesBySet);
+                // null = all files; a filter selects (throws on a locked set — turned into a clean refusal)
+                checkedFilesBySet[stdIdx] = fileFilter is null ? null : TOC[stdIdx].SelectFiles(fileFilter);
+            }
 
-        int newestIdx = checkedFilesBySet.Keys.Select(TOC.SetIndexToStd).Max();
+            var combinedSel = TOC.SelectFilesFromSets(incremental, checkedFilesBySet);
+            newestIdx = checkedFilesBySet.Keys.Select(TOC.SetIndexToStd).Max();
+            return combinedSel;
+        }, out var combined);
+        if (!selectedOk)
+            return FailedOperationResult;
+
         TOC.CurrentSetIndex = newestIdx;
         return RestoreFilesFromCurrentSetDown(combined, ignoreFailures, fileNotify);
     }
 
-}
+} // class TapeFileRestoreBaseAgent
 
 
 /// <summary>

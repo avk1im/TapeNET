@@ -14,7 +14,8 @@ namespace TapeLibNET.Encryption;
 /// </para>
 /// <para>
 /// <b>Plaintext layout</b> (before chunking): <c>PayloadLength (varuint) ‖ content ‖ zero padding</c>, padded to a
-///  multiple of <see cref="PadUnit"/> (at least one unit), so the sealed size reveals the file count only coarsely.
+///  multiple of the writer's pad unit — <see cref="PadUnit"/> in production — so the sealed size reveals the file count
+///  only coarsely. Readers accept any padding length; padding bytes must be zero.
 /// </para>
 /// <para>
 /// <b>Bound to its set.</b> Keyed by <c>K_meta = HKDF(DEK, SetId)</c>; the associated data of every chunk is
@@ -103,15 +104,18 @@ internal sealed class TapeSealedPayload
 
     /// <summary>
     /// Seals <paramref name="content"/> for the set <paramref name="setId"/> on <paramref name="volume"/> under the chain
-    ///  key <paramref name="key"/>, with a fresh nonce prefix (E3).
+    ///  key <paramref name="key"/>, with a fresh nonce prefix (E3), padded to a multiple of <paramref name="padUnit"/>
+    ///  (at least one unit). <see cref="PadUnit"/> in production; 1 = no padding (TEST_HOOKS fixtures).
     /// </summary>
-    public static TapeSealedPayload Seal(ReadOnlySpan<byte> content, TapeSetKey key, Guid setId, int volume)
+    public static TapeSealedPayload Seal(ReadOnlySpan<byte> content, TapeSetKey key, Guid setId, int volume,
+        int padUnit = PadUnit)
     {
         ArgumentNullException.ThrowIfNull(key);
+        ArgumentOutOfRangeException.ThrowIfLessThan(padUnit, 1);
 
         int lengthBytes = TapePrimitives.VarUIntSize((ulong)content.Length);
         long framed = lengthBytes + (long)content.Length;
-        long padded = Math.Max(PadUnit, (framed + PadUnit - 1) / PadUnit * PadUnit);
+        long padded = Math.Max(padUnit, (framed + padUnit - 1) / padUnit * padUnit);
 
         var plain = new byte[checked((int)padded)];
         var prefix = new byte[TapeAead.PrefixSize];
@@ -205,12 +209,12 @@ internal sealed class TapeSealedPayload
 
     #region *** Helpers ***
 
-    /// <summary>The content of an authenticated plaintext — or null when its framing or padding is broken.</summary>
+    /// <summary>
+    /// The content of an authenticated plaintext — or null when its framing or padding is broken. Any padding length is
+    ///  accepted (the writer chooses its pad unit); padding bytes must be zero.
+    /// </summary>
     private static byte[]? Unframe(byte[] plain)
     {
-        if (plain.Length < PadUnit || plain.Length % PadUnit != 0)
-            return null;
-
         ulong length;
         int consumed;
         try

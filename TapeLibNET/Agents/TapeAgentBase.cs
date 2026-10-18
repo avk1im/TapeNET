@@ -237,14 +237,13 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
             m_logger.LogTrace("Disposing TapeAgentBase with disposing parameter = {Parametr}", disposing);
             if (disposing)
             {
-                // dispose managed resources: our own emitter returns its pooled scratch. A borrowed emitter belongs
-                //  to whoever lent it.
+                // Dispose managed resources: our own emitter returns its pooled scratch.
+                //  A borrowed emitter belongs to whoever lent it. The ciphers zero their chunk buffers.
                 m_emitterOwn.Dispose();
+                DisposeEncryption();
             }
-
-            // dispose unmanaged resources
-            // no umanaged resources
-
+            // Dispose unmanaged resources
+            //  (no unmanaged resources)
             IsDisposed = true;
         }
     }
@@ -1159,8 +1158,9 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
             SetIndex: TOC.CurrentSetIndex,
             ExpectedVolumeSetIndex: TOC.CurrentSetIndexOnVolume,
             ActualVolumeSetIndex: header?.VolumeSetIndex ?? -1,
-            ExpectedDescription: string.IsNullOrWhiteSpace(TOC.CurrentSetTOC.Description)
-                ? $"Set #{TOC.CurrentSetIndex}" : TOC.CurrentSetTOC.Description,
+            // DisplayName never throws: a locked set reads "[encrypted set]" (Design-Encryption §6.2)
+            ExpectedDescription: string.IsNullOrWhiteSpace(TOC.CurrentSetTOC.DisplayName)
+                ? $"Set #{TOC.CurrentSetIndex}" : TOC.CurrentSetTOC.DisplayName,
             ActualDescription: header?.DisplayName ?? "(unreadable)",
             ExpectedVolume: TOC.Volume,
             ActualVolume: header?.Volume ?? TOC.Volume,

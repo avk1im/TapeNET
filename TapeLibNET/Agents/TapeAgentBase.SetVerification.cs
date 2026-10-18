@@ -195,8 +195,9 @@ public partial class TapeAgentBase
             return TapeSetHeaderVerdict.SetIndexDrift;
 
         // Design-FormatV21 §5.4. Both ids must be known: legacy set headers and legacy TOC sets carry none.
+        //  IsVacant, not Count: a delete verifies LOCKED sets, whose count is hidden (Design-Encryption §6.2).
         TapeSetTOC expectedSet = TOC.CurrentSetTOC;
-        if (header.SetId != Guid.Empty && expectedSet.SetId != Guid.Empty && expectedSet.Count > 0
+        if (header.SetId != Guid.Empty && expectedSet.SetId != Guid.Empty && !expectedSet.IsVacant
             && header.SetId != expectedSet.SetId)
             return TapeSetHeaderVerdict.SetIdMismatch;
 
@@ -422,11 +423,14 @@ public partial class TapeAgentBase
                         "Advisory only — attribution can legitimately shift after a TOC import",
                         TOC.CurrentSetIndex, header.GlobalSetIndex);
 
-                if (header.SetBlockSize != TOC.CurrentSetTOC.BlockSize)
+                // An encrypted set hides its block size: the header carries 0, a locked set throws (§5.6, E6).
+                if (header.Encryption == Encryption.TapeEncryption.None && !TOC.CurrentSetTOC.IsLocked
+                    && header.SetBlockSize != TOC.CurrentSetTOC.BlockSize)
                     m_logger.LogWarning(
                         "Set header block size differs for set #{Set}: header says {Actual} B, TOC says {Expected} B. " +
                         "Advisory only — the TOC stays authoritative",
                         TOC.CurrentSetIndex, header.SetBlockSize, TOC.CurrentSetTOC.BlockSize);
+
                 return SetVerdictOutcome.Proceed;
 
             case TapeSetHeaderVerdict.Unreadable:

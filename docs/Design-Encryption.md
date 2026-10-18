@@ -1296,3 +1296,14 @@ should report that distinct condition (v2: a typed error mapped from the DATA PR
 | §6.2 | `LastNonIncSetInternal`: a locked set is its own chain start — then the continuation walk applies as for any chain start. |
 | §7.1 | `TapeKeyRing`'s public TOC overloads exist as listed; `Clear(TapeTOC?)` with `null` drops keys only. |
 | §8.3 | `AddContinuationSetTOC` refuses an encrypted `TapeSetTOCParams` without envelope or key (`ArgumentException`). |
+
+### 20.3 From Phase 3
+
+| § | Change |
+|---|---|
+| §5.4 | Padding granule 64 KiB in production. Readers accept any padding length; padding bytes must be zero. TEST_HOOKS builds may lower the writer's unit per TOC (`TapeTOC.SealPadUnit`); there is no production switch. The a-priori TOC reserve (≥ 32 MiB) absorbs the padding of hundreds of encrypted sets. |
+| §9.1 | The interface as built: `Validate(set, drive, writesCodecPrefix, forWrite)`, plus `BindsDrive` (the agent ends the read session before `EndSet`). The agent helpers live in `TapeAgentBase.Encryption.cs`. An unknown scheme gets `UnsupportedSetCipher` (`Validate` → `ERROR_NOT_SUPPORTED`). |
+| §9.1 call sites | Backup: `EndSet` in the `finally` of `BackupFilesToCurrentSet`, and on a failed `Manager.BeginWriteContent`. Restore: `EndSet` at the end of both per-set loops. |
+| §9.2 | `EnsureSetFormat` validates the scheme FIRST, then refuses an incremental whose chain is locked (`IsIncrementalBaseLocked`). A restore selection that touches a locked set fails as `ERROR_INVALID_PASSWORD` before the tape moves (`TrySelectFiles`); the per-set E9 check catches a pre-selected `null` entry. |
+| §9.4 | `CompleteRead` runs inside the decompressor's `using`, right after `RestoreFileCore`. Authentication failures are re-wrapped with the file name. |
+| §5.7 | `EstimateFileOverhead` adds `TapeSetCiphers.RecordOverhead(scheme, header + length)`. |

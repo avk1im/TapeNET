@@ -605,12 +605,17 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
     public long TotalFileSize => Hidden(m_tapeFileInfos).Sum(tfi => tfi.FileDescr.Length);
 
     /// <summary>
-    /// What a file of this set occupies on tape in front of its body, for size estimates when
-    ///  <see cref="TapeFileInfo.SizeOnTape"/> is unknown: the legacy 12-byte header, or a 2.1 header frame plus codec byte.
+    /// What a file of this set occupies on tape beyond its body, for size estimates when
+    ///  <see cref="TapeFileInfo.SizeOnTape"/> is unknown: the legacy 12-byte header, or a 2.1 header frame plus codec byte —
+    ///  plus what the set's encryption scheme adds to the record (Design-Encryption §5.7).
     /// </summary>
-    internal long EstimateFileOverhead(TapeFileInfo tfi) => DataFormat == TapeDataFormat.Legacy
-        ? LegacyFileHeader.Size
-        : TapeFileHeader.EstimateOverhead(tfi.FileDescr.FullName);
+    internal long EstimateFileOverhead(TapeFileInfo tfi)
+    {
+        if (DataFormat == TapeDataFormat.Legacy)
+            return LegacyFileHeader.Size;
+        long header = TapeFileHeader.EstimateOverhead(tfi.FileDescr.FullName);
+        return header + TapeSetCiphers.RecordOverhead(m_encryption, header + tfi.FileDescr.Length);
+    }
 
     // Cached dynamic detection of packed vs aligned layout, derived from file addresses.
     //  null = not yet determined; true = at least one file has Address.Offset != 0;
@@ -766,6 +771,20 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     ///  informational only, empty for legacy TOCs.
     /// </summary>
     public string WrittenBy { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Pad unit for sealing encrypted sets (Design-Encryption §5.4): <see cref="TapeSealedPayload.PadUnit"/>. TEST_HOOKS
+    ///  builds may lower it — to 1 = no padding — so that small virtual volumes hold encrypted TOCs. Production cannot.
+    /// </summary>
+    internal int SealPadUnit
+    {
+        get;
+#if TEST_HOOKS
+        set;
+#else
+        private set;
+#endif
+    } = TapeSealedPayload.PadUnit;
 
     public string Description { get; set; } = string.Empty;
     /// <summary>
@@ -1152,6 +1171,7 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
 
         LoadedFromLegacy = toc.LoadedFromLegacy;
         WrittenBy = toc.WrittenBy;
+        SealPadUnit = toc.SealPadUnit;
 
         // Preserve the series identity: every TOC load copies a
         // freshly deserialized TOC into the live one via CopyFrom, so dropping this line would
@@ -1278,6 +1298,28 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
                 }
             }
             return 0; // if all sets are marked incremental, use the oldest set
+        }
+    }
+
+    /// <summary>
+    /// Whether the current set is incremental and a set of its chain — down to its base — is LOCKED. The up-to-date
+    ///  check cannot read such a chain; a backup refuses before moving the tape (Design-Encryption §8.2).
+    /// </summary>
+    internal bool IsIncrementalBaseLocked
+    {
+        get
+        {
+            if (m_setTOCs.Count == 0 || !m_setTOCs[m_currSetInternal].Incremental)
+                return false;
+            for (int i = m_currSetInternal - 1; i >= 0; i--)
+            {
+                TapeSetTOC set = m_setTOCs[i];
+                if (set.IsLocked)
+                    return true;
+                if (!set.Incremental)
+                    return false;
+            }
+            return false;
         }
     }
 

@@ -371,6 +371,40 @@ public partial class VirtualTapeMedia
     }
 
     /// <summary>
+    /// Every data byte on this medium, in tape order, marks skipped — what a raw read of the cartridge would yield. For
+    ///  "no plaintext on tape" assertions (Design-Encryption §15.4). Restores the stream position.
+    /// </summary>
+    internal byte[] DumpData()
+    {
+        long total = 0;
+        foreach (var vb in m_virtualBlocks)
+        {
+            if (!vb.IsMark)
+                total += vb.DataLength;
+        }
+
+        var all = new byte[checked((int)total)];
+        long saved = m_stream.Position;
+        try
+        {
+            int pos = 0;
+            foreach (var vb in m_virtualBlocks)
+            {
+                if (vb.IsMark)
+                    continue;
+                m_stream.Position = vb.StreamOffset;
+                m_stream.ReadExactly(all, pos, (int)vb.DataLength);
+                pos += (int)vb.DataLength;
+            }
+        }
+        finally
+        {
+            m_stream.Position = saved;
+        }
+        return all;
+    }
+
+    /// <summary>
     /// Formats a hex dump of bytes from <paramref name="startIdx"/> to <paramref name="endIdx"/> (inclusive),
     /// marking the byte at <paramref name="diffIdx"/> with square brackets.
     /// </summary>

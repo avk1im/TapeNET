@@ -375,12 +375,13 @@ public partial class TapeSetTOC : ITapeLockableSet
 
     /// <summary>
     /// Writes this encrypted set as <c>TocSealedSet TocSealedChunk+</c>. A locked set, and an unlocked one unchanged since
-    ///  it was last saved or unlocked, re-emit their sealed bytes verbatim (E7); a new or changed set is sealed afresh.
+    ///  it was last saved or unlocked, re-emit their sealed bytes verbatim (E7) — with whatever padding they were sealed
+    ///  with; a new or changed set is sealed afresh, padded to <paramref name="padUnit"/>.
     /// </summary>
-    internal void WriteSealed(TapeRecordWriter writer)
+    internal void WriteSealed(TapeRecordWriter writer, int padUnit = TapeSealedPayload.PadUnit)
     {
         if (!IsLocked && (Sealed is null || IsModified))
-            Reseal();
+            Reseal(padUnit);
 
         TapeSealedPayload payload = Sealed!;
         writer.Write(TocSealedSetWire.From(this));
@@ -396,12 +397,12 @@ public partial class TapeSetTOC : ITapeLockableSet
     }
 
     /// <summary>Seals the set's current records under its key — with a fresh nonce prefix (E3).</summary>
-    private void Reseal()
+    private void Reseal(int padUnit)
     {
         byte[] content = SerializeContent();
         try
         {
-            Sealed = TapeSealedPayload.Seal(content, Key!, SetId, Volume);
+            Sealed = TapeSealedPayload.Seal(content, Key!, SetId, Volume, padUnit);
             m_sealedSizeOnTape = ComputeTotalFileSizeOnTape(0, withSetHeader: false);
         }
         finally

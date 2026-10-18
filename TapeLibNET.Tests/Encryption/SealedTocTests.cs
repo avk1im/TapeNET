@@ -184,6 +184,25 @@ public class SealedTocTests
         Assert.True(payload.PlaintextLength >= TapeSealedPayload.PadUnit);
     }
 
+    /// <summary>
+    /// An unpadded seal is small, round-trips, and reads in any build — readers accept any padding.
+    /// </summary>
+    [Fact]
+    public void Unpadded_Seal_IsSmall_AndRoundTrips()
+    {
+        var (padded, _) = BuildToc();
+        var (unpadded, _) = BuildToc();
+        unpadded.SealPadUnit = 1;
+
+        byte[] small = Save(unpadded, T1);
+        Assert.True(Save(padded, T1).Length - small.Length > TapeSealedPayload.PadUnit / 2);
+
+        TapeTOC loaded = Load(small);
+        Assert.True(loaded[2].Sealed!.PlaintextLength < TapeSealedPayload.PadUnit);
+        Assert.True(loaded[2].TryUnlock(KeyOf(loaded[2])));
+        Assert.Equal(3, loaded[2].Count);
+    }
+
     #endregion
 
     #region *** E7: carried verbatim, re-sealed only when changed ***

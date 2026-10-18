@@ -615,7 +615,7 @@ public partial class TapeTOC
             {
                 // Stub + chunks: verbatim when locked or unchanged, re-sealed otherwise (E7). Its files count nowhere
                 //  in the clear (§5.2).
-                set.WriteSealed(writer);
+                set.WriteSealed(writer, SealPadUnit);
                 continue;
             }
             writer.Write(TapeSetTOC.Wire.From(set));

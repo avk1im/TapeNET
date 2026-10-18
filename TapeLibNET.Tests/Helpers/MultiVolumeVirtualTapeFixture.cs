@@ -1,11 +1,11 @@
 ﻿using Microsoft.Extensions.Logging;
-
-using TapeLibNET.Drive;
-using TapeLibNET.Virtual;
-using TapeLibNET.Headers;
-using TapeLibNET.Toc;
-using TapeLibNET.Media;
 using TapeLibNET.Agents;
+using TapeLibNET.Drive;
+using TapeLibNET.Encryption;
+using TapeLibNET.Headers;
+using TapeLibNET.Media;
+using TapeLibNET.Toc;
+using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests.Helpers;
 
@@ -273,25 +273,29 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
     /// <summary>
     /// Creates a multi-volume fixture with a small content capacity to trigger
-    /// volume boundaries. The first volume is already loaded and prepared.
+    ///  volume boundaries. The first volume is already loaded and prepared.
     /// </summary>
     /// <param name="profile">Drive capability profile to emulate.</param>
     /// <param name="contentCapacity">Content partition capacity per volume.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     /// <param name="mediaDescription">Description for the initial TOC.</param>
     /// <param name="headerMode">How the volumes of the series receive media and set headers.</param>
+    /// <param name="sealPadding">
+    /// Whether encrypted sets are sealed with production padding (64 KiB units, Design-Encryption §5.4). Off by default:
+    ///  the small volumes here could not hold a padded TOC within <see cref="DefaultTOCCapacity"/>.
+    /// </param>
     public MultiVolumeVirtualTapeFixture(
         DriveProfile profile = DriveProfile.Setmarks,
         long contentCapacity = DefaultContentCapacity,
         ILoggerFactory? loggerFactory = null,
         string mediaDescription = "Multi-Volume Test Media",
-        VolumeHeaderMode headerMode = VolumeHeaderMode.None)
+        VolumeHeaderMode headerMode = VolumeHeaderMode.None,
+        bool sealPadding = false)
     {
         ContentCapacity = contentCapacity;
         LoggerFactory = loggerFactory ?? TestLoggerFactory.Default;
         Capabilities = VirtualTapeFixture.ProfileToCapabilities(profile);
         HeaderMode = headerMode;
-
         long initCap = Capabilities.SupportsInitiatorPartition
             ? DefaultInitiatorCapacity : 0;
 
@@ -315,6 +319,10 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
         // Create initial TOC — volume 1
         TOC = new TapeTOC(mediaDescription);
+#if TEST_HOOKS
+        if (!sealPadding)
+            TOC.SealPadUnit = 1;    // small virtual volumes: an unpadded sealed set costs about what a plain one does
+#endif
     }
 
     #endregion
@@ -384,8 +392,8 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
     /// <summary>
     /// Backs up files with automatic multi-volume handling.
-    /// When the current volume fills up, the method saves the TOC, swaps to a new
-    /// volume, and resumes the backup — mirroring the real-world console app flow.
+    ///  When the current volume fills up, the method saves the TOC, swaps to a new
+    ///  volume, and resumes the backup — mirroring the real-world console app flow.
     /// </summary>
     /// <param name="fileList">Full paths to back up.</param>
     /// <param name="description">Backup set description.</param>
@@ -393,23 +401,34 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// <param name="hashAlgorithm">Hash algorithm for integrity checking.</param>
     /// <param name="blockSize">Block size (0 = drive default).</param>
     /// <param name="notifiable">Optional callback handler.</param>
-    /// <returns>Statistics snapshot after the entire backup completes (across all volumes).</returns>
+    /// <param name="password">
+    /// Encrypts the set (Design-Encryption §15.7): a new chain — or, for an incremental on
+    ///  an encrypted previous set, that chain's key. <see langword="null"/> = a plain set.
+    ///  Continuation parts inherit it.
+    /// </param>
+    /// <param name="encryption">The scheme, when <paramref name="password"/> is given.</param>
+    /// <returns>
+    /// Statistics snapshot after the entire backup completes (across all volumes).
+    /// </returns>
     public TapeFileStatistics BackupFiles(
         List<string> fileList,
         string description = "Test Set",
         bool incremental = false,
         TapeHashAlgorithm hashAlgorithm = TapeHashAlgorithm.Crc64,
         uint blockSize = 0,
-        ITapeFileNotifiable? notifiable = null)
+        ITapeFileNotifiable? notifiable = null,
+        string? password = null,
+        TapeEncryption encryption = TapeEncryption.Software)
     {
         // Configure the set
         TOC.AddNewSetTOC(0, incremental);
         TOC.CurrentSetTOC.Description = description;
         TOC.CurrentSetTOC.HashAlgorithm = hashAlgorithm;
         TOC.CurrentSetTOC.BlockSize = blockSize == 0 ? Drive.DefaultBlockSize : blockSize;
+        if (password is not null)
+            EncryptCurrentSet(password, encryption);
 
         using var agent = CreateBackupAgent();
-
         bool success = agent.BackupFileListToCurrentSet(
             newSet: true,
             fileList,
@@ -513,11 +532,63 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
     #endregion
 
+    #region *** Encryption ***
+
+    /// <summary>PBKDF2 work factor of every set the fixture encrypts — low, so the suite stays fast.</summary>
+    public const int TestIterations = 1_000;
+
+    // The fixture's key ring: holds every chain key it created or unwrapped; disposed with the fixture.
+    private readonly TapeKeyRing m_ring = new();
+
+    /// <summary>
+    /// Unlocks every locked set of <see cref="TOC"/> — by trial with the keys already held, else with
+    ///  <paramref name="password"/> (asserted). Returns how many sets were unlocked.
+    /// </summary>
+    public int UnlockAll(string password)
+    {
+        int lockedBefore = TOC.Count(s => s.IsLocked);
+        m_ring.UnlockAll(TOC);
+        for (int i = 1; i <= TOC.Count; i++)
+        {
+            if (!TOC[i].IsLocked || !TOC[i].IsUnlockable)
+                continue;
+            TapeResult result = m_ring.Unlock(TOC, i, password);
+            Assert.True(result.Success, $"Fixture: unlocking set #{i} failed: {result.ErrorMessage}");
+        }
+        return lockedBefore - TOC.Count(s => s.IsLocked);
+    }
+
+    /// <summary>
+    /// Makes the CURRENT (new, empty) set encrypted: a new chain, or — for an incremental on an encrypted previous set —
+    ///  the previous set's key under a fresh envelope (Design-Encryption §8.2). Continuation parts on later volumes
+    ///  inherit scheme, envelope and key through <c>ToParams</c> (§8.3) — nothing to do here.
+    /// </summary>
+    public void EncryptCurrentSet(string password, TapeEncryption encryption = TapeEncryption.Software)
+    {
+        using var _ = TapeCrypto.UseIterations(TestIterations);
+        TapeSetTOC set = TOC.CurrentSetTOC;
+        TapeSetTOC? previous = TOC.CurrentSetIndex > 1 ? TOC[TOC.CurrentSetIndex - 1] : null;
+
+        if (set.Incremental && previous is { IsEncrypted: true })
+        {
+            TapeSetKey key = previous.Key
+                ?? throw new InvalidOperationException("Fixture: the incremental's base is locked — UnlockAll first");
+            set.EnableEncryption(previous.Encryption, TapeSetEncryption.Wrap(key, password), key);
+            return;
+        }
+
+        var (envelope, fresh) = TapeSetEncryption.CreateChain(password);
+        set.EnableEncryption(encryption, envelope, m_ring.Add(fresh));
+    }
+
+    #endregion
+
     #region *** Dispose ***
 
     public void Dispose()
     {
         Drive.Dispose();
+        m_ring.Dispose();
     }
 
     #endregion
