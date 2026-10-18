@@ -610,6 +610,12 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_volumeRejected = false;
         m_logger.LogTrace("Resuming multi-volume restore from new volume #{Volume}", volume);
 
+        // The live error that brought us here — END_OF_MEDIA, or the previous attempt's rejection — was a signal TO THE
+        //  CALLER, and the caller has acted on it by calling us. Consume it: unlike restore, nothing on a successful
+        //  backup resume clears the live error again, so it would otherwise outlive the retry and surface in LastResult.
+        //  Only the latched failure crosses the volume boundary (next code block).
+        ResetError();
+
         // Identifying the cartridge reads its TOC through RestoreTOC(), a public verb that resets the failure latch:
         //  save the latch and put it back afterwards. Only the LATCH — NOT the live error, which here is the previous
         //  attempt's volume request or rejection. So a genuine failure from an earlier volume survives the check, while a

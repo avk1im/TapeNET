@@ -513,6 +513,21 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     ///  cartridge, and the caller may retry with another one — or end, with the previous volume's TOC already saved.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Continues the backup onto a new volume after the caller has loaded fresh media.
+    /// <para>Renews the navigator, increments the volume number, creates a fresh
+    ///  continuation set TOC seeded from the metadata captured at EOM time, and resumes
+    ///  from the file that triggered end-of-media.</para>
+    /// <para>No cloning of the previous-volume set is performed: per policy, the previous
+    ///  volume's TOC may have had its trailing empty set removed before being saved, so
+    ///  there may not be a suitable set to clone. Instead the metadata
+    ///  (<see cref="TapeSetTOCParams"/>) is carried over via the multi-volume context.</para>
+    /// <para>
+    /// Anything that fails BEFORE the first content byte reaches the new cartridge REJECTS it
+    ///  (<see cref="IsVolumeRejected"/>): the continuation set and the volume number are rolled back, nothing is on the
+    ///  cartridge, and the caller may retry with another one — or end, with the previous volume's TOC already saved.
+    /// </para>
+    /// </summary>
     public TapeResult ResumeBackupToNextVolume()
     {
         // A multi-volume backup is ONE operation: the failure latched before the volume change must survive it. The
@@ -523,7 +538,13 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         if (MultiVolumeContext is not { continuationSetParams: not null } context)
             return FailedOperationResult;
 
+        // The live error that brought us here — END_OF_MEDIA, or the previous attempt's rejection — was a signal TO THE
+        //  CALLER, and the caller has acted on it by calling us. Consume it: unlike restore, nothing on a successful
+        //  backup resume clears the live error again, so it would otherwise outlive the retry and surface in LastResult.
+        //  Only the latched failure crosses the volume boundary.
+        ResetError();
         RestoreLatchedFailure(m_carriedFailure);
+
         int volume = TOC.Volume + 1;
         m_volumeRejected = false;
         m_logger.LogTrace("Resuming multi-volume backup for volume #{Volume}", volume);
