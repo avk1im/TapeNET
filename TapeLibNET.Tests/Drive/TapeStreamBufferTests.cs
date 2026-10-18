@@ -1,4 +1,4 @@
-using TapeLibNET.Drive;
+using TapeLibNET.Streams;
 
 namespace TapeLibNET.Tests.Drive;
 

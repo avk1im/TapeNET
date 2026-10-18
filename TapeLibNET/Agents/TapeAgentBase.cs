@@ -5,6 +5,7 @@ using TapeLibNET.Drive;
 using TapeLibNET.Format;
 using TapeLibNET.Headers;
 using TapeLibNET.Media;
+using TapeLibNET.Streams;
 using TapeLibNET.Toc;
 using Windows.Win32.Foundation;
 

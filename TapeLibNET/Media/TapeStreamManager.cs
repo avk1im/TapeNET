@@ -1,9 +1,12 @@
 ﻿using System.Diagnostics;
+
 using Microsoft.Extensions.Logging;
+using Windows.Win32.Foundation;
+
 using TapeLibNET.Drive;
+using TapeLibNET.Streams;
 using TapeLibNET.Headers;
 using TapeLibNET.Packer;
-using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Media;
 
@@ -130,10 +133,15 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     /// Replaces the current navigator with a fresh one for the loaded media
     ///  (e.g. after a volume change). Preserves <see cref="TapeNavigator.TOCCapacity"/>.
     /// </summary>
+    /// <remarks>
+    /// Drops whatever session the previous cartridge left open first (<see cref="AbandonReadWrite"/>) — without any
+    ///  I/O: nothing that belonged to that cartridge may reach this one.
+    /// </remarks>
     public bool RenewNavigator() // call e.g. if drive media changed
     {
-        var navigator = TapeNavigator.ProduceNavigator(Drive);
+        AbandonReadWrite();
 
+        var navigator = TapeNavigator.ProduceNavigator(Drive);
         if (navigator == null)
         {
             LogErrorAsDebug("Failed to renew navigator");
@@ -146,7 +154,6 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         Navigator = navigator;
 
         m_logger.LogTrace("Drive #{Drive}: Created new Navigator of type {Type}", DriveNumber, Navigator.GetType());
-
         return true;
     }
 
@@ -178,6 +185,43 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
         return EndReadWriteBeforeTransitionTo(TapeState.MediaPrepared) &&
             State.TryTransitionTo(TapeState.MediaPrepared);
+    }
+
+    /// <summary>
+    /// Leaves any read/write session WITHOUT tape I/O — for a media change, where the session belongs to the previous
+    ///  cartridge: a stream still in use is abandoned (no flush, no filemark), the read packer released, and the state
+    ///  forced back to <see cref="TapeState.MediaPrepared"/>.
+    /// </summary>
+    /// <remarks>
+    /// Defence in depth: a stream that fails on disposal signs out regardless, so normally nothing is left here. Every
+    ///  branch logs a warning — if one fires, a session leaked across a volume change.
+    /// </remarks>
+    private void AbandonReadWrite()
+    {
+        if (Stream is { } stale)
+        {
+            m_logger.LogWarning("Drive #{Drive}: Media change with a {Type} still in use — abandoning it without I/O",
+                DriveNumber, stale.GetType().Name);
+            stale.Abandon();
+            Stream = null;
+        }
+
+        DisposeReadPacker();
+
+        if (m_packer is not null)
+        {
+            // EndWriteContent always tears the write packer down; reaching here is a programming error. Do NOT flush it:
+            //  its bytes belong to the previous cartridge.
+            m_logger.LogError("Drive #{Drive}: Media change with an active write packer — leaving it untouched", DriveNumber);
+            Debug.Fail("Media change with an active write packer");
+        }
+
+        if (State != TapeState.MediaPrepared)
+        {
+            m_logger.LogWarning("Drive #{Drive}: Media change in state {State} — reset to {Prepared}",
+                DriveNumber, (TapeState)State, TapeState.MediaPrepared);
+            State.TransitionTo(TapeState.MediaPrepared);
+        }
     }
 
     private bool EndReadWriteBeforeTransitionTo(TapeState nextState)

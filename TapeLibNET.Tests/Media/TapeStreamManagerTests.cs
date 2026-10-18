@@ -1,4 +1,3 @@
-using TapeLibNET.Drive;
 using TapeLibNET.Media;
 
 using TapeLibNET.Tests.Helpers;
@@ -8,7 +7,8 @@ namespace TapeLibNET.Tests.Media;
 
 /// <summary>
 /// Unit tests for <see cref="TapeStreamManager"/> — stream provisioning, state machine,
-/// and tape file stream (<see cref="TapeWriteStream"/> / <see cref="TapeReadStream"/>) behavior.
+///  and tape file stream (<see cref="Streams.TapeWriteStream"/> /
+///  <see cref="Streams.TapeReadStream"/>) behavior.
 /// <para>
 /// These tests exercise:
 /// <list type="bullet">

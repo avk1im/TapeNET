@@ -16,7 +16,7 @@ namespace TapeLibNET.Packer;
 /// <para>
 /// Single-threaded usage: the packer's public methods are not safe to call concurrently.
 /// Concurrency with the underlying tape is hidden inside the backend; from the agent's
-/// point of view <see cref="TapeWriteStream.Write"/> is synchronous.
+/// point of view <see cref="Streams.TapeWriteStream.Write"/> is synchronous.
 /// </para>
 /// <para>
 /// At most one file is "open" at any time (between <see cref="BeginFile"/> and
@@ -151,7 +151,7 @@ internal sealed class TapeFileWritePacker : IDisposable
     // -----------------------------------------------------------------------
     /// <summary>
     /// Fired (synchronously, on the calling thread) whenever one or more files cross the
-    /// commit boundary as a side effect of <see cref="TapeWriteStream.Write"/>,
+    /// commit boundary as a side effect of <see cref="Streams.TapeWriteStream.Write"/>,
     /// <see cref="EndFile"/>, <see cref="Flush"/>, or <see cref="Dispose"/>.
     /// </summary>
     public event Action<IReadOnlyList<CommittedFile>>? FilesCommitted;

@@ -1,7 +1,7 @@
 ﻿using System.Buffers;
 using System.Diagnostics;
 
-namespace TapeLibNET.Drive;
+namespace TapeLibNET.Streams;
 
 
 // Wrapper around ArrayPool<byte> that exposes the logical Capacity
@@ -200,7 +200,7 @@ public class TapeByteBuffer(int capacity) : IDisposable
 /// <summary>
 /// <see cref="TapeByteBuffer"/> subclass that routes owner I/O to
 /// <see cref="TapeReadStream.ReadDirect"/> or <see cref="TapeWriteStream.WriteDirect"/>,
-/// bridging the buffer to the underlying <see cref="TapeDrive"/>.
+/// bridging the buffer to the underlying <see cref="Drive.TapeDrive"/>.
 /// </summary>
 public class TapeStreamBuffer(TapeStream owner, int capacity) : TapeByteBuffer(capacity)
 {
