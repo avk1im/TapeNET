@@ -175,13 +175,50 @@ public class TestTapeServiceHost(ILogger? logger = null) : ITapeServiceHost
 
     // ── ITapeServiceHost — Structured operation prompts ───────────────────────
 
+    // ── Volume prompts ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Queued answers for <see cref="OnVolumeContinueSelect"/>. When empty, the legacy behaviour applies:
+    ///  a queued <see cref="ConfirmAnswers"/> <see langword="true"/> means Insert, otherwise End.
+    /// </summary>
+    public Queue<VolumeAction> VolumeContinueAnswers { get; } = new();
+
+    /// <summary>Queued answers for <see cref="OnVolumeErrorSelect"/>. When empty: End (never loops).</summary>
+    public Queue<VolumeAction> VolumeErrorAnswers { get; } = new();
+
+    /// <summary>One recorded volume-error prompt.</summary>
+    public readonly record struct VolumeErrorPrompt(int Volume, string ErrorMessage, string OperationName, bool AllowSkip);
+
+    /// <summary>Every volume-error prompt raised, in order. A clean run must leave this empty.</summary>
+    public List<VolumeErrorPrompt> VolumeErrorPrompts { get; } = [];
+
+    /// <summary>
+    /// Called with every volume-error prompt, BEFORE the queued answer is taken — lets a test change the world at the
+    ///  moment the user would act (e.g. lift an injected fault: "the cartridge was cleaned").
+    /// </summary>
+    public Action<VolumeErrorPrompt>? OnVolumeErrorPrompted { get; set; }
+
     /// <inheritdoc/>
     /// <remarks>
-    /// Dequeues from <see cref="ConfirmAnswers"/>; returns <see langword="false"/>
-    ///  when the queue is empty (safe default: do not continue multi-volume).
+    /// Dequeues from <see cref="VolumeContinueAnswers"/>, then from <see cref="ConfirmAnswers"/>;
+    ///  returns <see cref="VolumeAction.End"/> when both queues are empty (safe default).
+    ///  For <see cref="ConfirmAnswers"/>, translates <see langword="true"/> to <see cref="VolumeAction.Insert"/>
+    ///  and <see langword="false"/> to <see cref="VolumeAction.End"/>.
     /// </remarks>
-    public virtual bool OnVolumeContinueConfirm(int volumeNeeded, RestoreMode mode)
-        => ConfirmAnswers.Count > 0 && ConfirmAnswers.Dequeue();
+    /// 
+    public virtual VolumeAction OnVolumeContinueSelect(int volumeNeeded, RestoreMode mode)
+        => VolumeContinueAnswers.Count > 0 ? VolumeContinueAnswers.Dequeue()
+            : ConfirmAnswers.Count > 0 && ConfirmAnswers.Dequeue() ? VolumeAction.Insert
+            : VolumeAction.End;
+
+    /// <inheritdoc/>
+    public virtual VolumeAction OnVolumeErrorSelect(int volume, string errorMessage, string operationName, bool allowSkip)
+    {
+        var prompt = new VolumeErrorPrompt(volume, errorMessage, operationName, allowSkip);
+        VolumeErrorPrompts.Add(prompt);
+        OnVolumeErrorPrompted?.Invoke(prompt);
+        return VolumeErrorAnswers.Count > 0 ? VolumeErrorAnswers.Dequeue() : VolumeAction.End;
+    }
 
     /// <inheritdoc/>
     /// <remarks>
@@ -339,6 +376,10 @@ public class TestTapeServiceHost(ILogger? logger = null) : ITapeServiceHost
         MediaMismatchAnswers.Clear();
 
         SetAnomalyPrompts.Clear();
+
+        VolumeContinueAnswers.Clear();
+        VolumeErrorAnswers.Clear();
+        VolumeErrorPrompts.Clear();
     }
 
     // ── Inner types ───────────────────────────────────────────────────────────

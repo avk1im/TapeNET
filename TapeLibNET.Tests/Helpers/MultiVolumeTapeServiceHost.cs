@@ -17,7 +17,7 @@ namespace TapeLibNET.Tests.Helpers;
 /// <list type="bullet">
 ///  <item><see cref="OnVolumeFullConfirm"/> / <see cref="OnInsertNewMediaConfirm"/>
 ///   — used during backup; inserts the next blank volume.</item>
-///  <item><see cref="OnVolumeContinueConfirm"/> / <see cref="OnInsertMediaConfirm"/>
+///  <item><see cref="OnVolumeContinueSelect"/> / <see cref="OnInsertMediaConfirm"/>
 ///   — used during restore; re-inserts a previously written volume.</item>
 /// </list>
 /// </para>
@@ -53,6 +53,13 @@ public sealed class MultiVolumeTapeServiceHost(
     /// </summary>
     public int VolumesInserted { get; private set; }
 
+    /// <summary>
+    /// Called after a volume was inserted successfully, with its 1-based number — for both backup
+    ///  (<see cref="OnInsertNewMediaConfirm"/>) and restore (<see cref="OnInsertMediaConfirm"/>). Lets a test arm a fault
+    ///  on exactly that cartridge.
+    /// </summary>
+    public Action<int>? AfterMediaInserted { get; set; }
+
     // ── Volume-swap callbacks ─────────────────────────────────────────────────
 
     /// <inheritdoc/>
@@ -80,17 +87,22 @@ public sealed class MultiVolumeTapeServiceHost(
             return false;
 
         bool ok = Service.InsertVirtualMedia(MakeDescriptor(volumes[idx]), FileMode.Create);
-        if (ok) VolumesInserted++;
+        if (ok)
+        {
+            VolumesInserted++;
+            AfterMediaInserted?.Invoke(nextVolume);
+        }
         return ok;
     }
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Always agrees to continue — the actual media swap happens in
-    ///  <see cref="OnInsertMediaConfirm"/> after the service ejects the current volume.
+    /// Inserts by default — the actual media swap happens in <see cref="OnInsertMediaConfirm"/>
+    ///  after the service ejects the current volume.
+    ///  Queue <see cref="TestTapeServiceHost.VolumeContinueAnswers"/> to skip or end instead.
     /// </remarks>
-    public override bool OnVolumeContinueConfirm(int volumeNeeded, RestoreMode mode)
-        => true;
+    public override VolumeAction OnVolumeContinueSelect(int volumeNeeded, RestoreMode mode)
+        => VolumeContinueAnswers.Count > 0 ? VolumeContinueAnswers.Dequeue() : VolumeAction.Insert;
 
     /// <inheritdoc/>
     /// <remarks>
@@ -105,7 +117,11 @@ public sealed class MultiVolumeTapeServiceHost(
             return false;
 
         bool ok = Service.InsertVirtualMedia(MakeDescriptor(volumes[idx]), FileMode.Open);
-        if (ok) VolumesInserted++;
+        if (ok)
+        {
+            VolumesInserted++;
+            AfterMediaInserted?.Invoke(volumeNeeded);
+        }
         return ok;
     }
 

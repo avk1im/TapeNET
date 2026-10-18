@@ -79,6 +79,12 @@ public abstract class ServiceOperationProgressHandler(
         SetStats       = stats.Sets; // ← ensure the set-level counters ride along
     }
 
+    /// <summary>
+    /// Brings the public statistics up to date from <paramref name="stats"/> outside any agent callback — after the
+    ///  service skipped a volume, whose files never pass through a file callback.
+    /// </summary>
+    internal void SyncStatistics(in TapeFileStatistics stats) => Sync(stats);
+
     /// <summary>Reports current progress to the host. Override to add custom progress display.</summary>
     protected virtual void ReportProgress(in TapeFileStatistics stats, string? currentFile = null) { }
 

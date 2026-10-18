@@ -70,8 +70,57 @@ public sealed class ConsoleUxServiceHost(IConsoleUx ux) : ITapeServiceHost
     // ── ITapeServiceHost — Structured operation prompts ───────────────────────
 
     /// <inheritdoc/>
-    public bool OnVolumeContinueConfirm(int volumeNeeded, RestoreMode mode)
-        => ux.Confirm($"Continue {mode.ToVerb().ToLowerInvariant()} on Volume #{volumeNeeded}?", defaultAnswer: false);
+    /// <remarks>
+    /// Three choices; the default — and the unattended answer — is End, as with the former yes/no prompt.
+    /// </remarks>
+    public VolumeAction OnVolumeContinueSelect(int volumeNeeded, RestoreMode mode)
+    {
+        string verb = mode.ToVerb();
+        int idx = Select(
+            "Volume change",
+            $"{verb} requires volume #{volumeNeeded} to continue.\nChoose action",
+            [$"Insert volume #{volumeNeeded} and continue",
+             $"Skip volume #{volumeNeeded} (its files are not processed)",
+             $"End {verb.ToLowerInvariant()}"],
+            defaultIndex: 2);
+        return idx switch
+        {
+            0 => VolumeAction.Insert,
+            1 => VolumeAction.Skip,
+            _ => VolumeAction.End,
+        };
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Unattended: End, logged — a retry would fail again and a skip would silently give up data.
+    /// </remarks>
+    public VolumeAction OnVolumeErrorSelect(int volume, string errorMessage, string operationName, bool allowSkip)
+    {
+        if (ux.NonInteractive || ux.QuietMode)
+        {
+            ux.Log(WarningLevel.Warning,
+                $"Volume #{volume} cannot be used — auto-End (non-interactive): {errorMessage}");
+            return VolumeAction.End;
+        }
+
+        var choices = new List<string> { $"Insert volume #{volume} again (or another copy)" };
+        var mapping = new List<VolumeAction> { VolumeAction.Insert };
+        if (allowSkip)
+        {
+            choices.Add($"Skip volume #{volume} (its files are not processed)");
+            mapping.Add(VolumeAction.Skip);
+        }
+        choices.Add($"End {operationName.ToLowerInvariant()}");
+        mapping.Add(VolumeAction.End);
+
+        int idx = Select(
+            "Volume cannot be used",
+            $"Volume #{volume} was loaded but cannot be used.\nError: {errorMessage}\nChoose action",
+            choices,
+            defaultIndex: mapping.Count - 1);
+        return idx >= 0 && idx < mapping.Count ? mapping[idx] : VolumeAction.End;
+    }
 
     /// <inheritdoc/>
     public bool OnInsertMediaConfirm(int volumeNeeded, RestoreMode mode)

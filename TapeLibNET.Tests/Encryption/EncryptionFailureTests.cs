@@ -1,5 +1,4 @@
 using TapeLibNET.Agents;
-using TapeLibNET.Encryption;
 using TapeLibNET.Toc;
 using TapeLibNET.Tests.Helpers;
 

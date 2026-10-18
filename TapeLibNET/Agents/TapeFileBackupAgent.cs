@@ -204,9 +204,19 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         bool deferMediaHeaderWrite = headsVolume && !newSet;
 
         if (headsVolume && !deferMediaHeaderWrite)
-            MediaHeaderStamped = WriteMediaHeader();   // sets presence Present, positions at block 1
+        {
+            bool stamped = WriteMediaHeader();      // sets presence Present, positions at block 1
+            MediaHeaderStamped |= stamped;          // operation-scoped: never reset by a later volume
+            if (!stamped)
+            {
+                // A volume whose header could not be written must not receive content: nothing could identify it
+                m_logger.LogWarning("Failed to write the media header in {Method}",
+                    nameof(BeginWriteContentForCurrentSet));
+                return false;   // WriteMediaHeader has already set the error
+            }
+        }
         else
-            EnsureMediaHeaderResolved();               // existing / headerless / deferred: probe → Present or Absent
+            EnsureMediaHeaderResolved();            // existing / headerless / deferred: probe → Present or Absent
 
         // If we were reading or writing, end it first - before setting the new set's parameters
         if (!Manager.EndReadWrite())
@@ -318,12 +328,13 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         {
             // Now safe: verification is done. WriteMediaHeader rewinds to BOM, writes, and leaves the
             //  head at begin-of-content -- which IS the target set here (CurrentSetIndexOnVolume == 0).
-            MediaHeaderStamped = WriteMediaHeader();
-            if (!MediaHeaderStamped)
+            bool stamped = WriteMediaHeader();
+            MediaHeaderStamped |= stamped;
+            if (!stamped)
             {
                 m_logger.LogWarning("Failed to write the media header in {Method}",
                     nameof(BeginWriteContentForCurrentSet));
-                return false;   // WriteMediaHeader already set the error
+                return false;   // WriteMediaHeader has already set the error
             }
         }
 
@@ -460,9 +471,32 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         /// </summary>
         internal TapeSetTOCParams? continuationSetParams = null;
     }
+
     private TapeBackupContext? MultiVolumeContext { get; set; } = null;
-    /// <summary>Whether a multi-volume continuation context is available (end-of-media was hit during backup).</summary>
-    public bool CanResumeToNextVolume => MultiVolumeContext is not null;
+
+    // The fresh cartridge offered for the continuation could not be written — see IsVolumeRejected.
+    private bool m_volumeRejected;
+
+    // The operation's diagnosis when it stopped for a volume change. The caller saves the full volume's TOC with the
+    //  public BackupTOC(), which resets the latch; the resume restores it, so an earlier failure survives the swap.
+    private TapeResult m_carriedFailure = TapeResult.OK;
+
+    /// <summary>
+    /// Whether the agent ASKS for a fresh volume: save the TOC, load one, then call <see cref="ResumeBackupToNextVolume"/>.
+    ///  <see langword="false"/> while the offered cartridge is rejected — so a caller looping on this property ends
+    ///  instead of saving a TOC onto the refused cartridge and asking for yet another.
+    /// </summary>
+    public bool CanResumeToNextVolume => MultiVolumeContext is not null && !m_volumeRejected;
+
+    /// <summary>
+    /// Whether the fresh cartridge offered for the continuation could not be written. Nothing of the backup is on it;
+    ///  the TOC is rolled back to the previous volume, whose TOC is already saved. The caller decides: load another
+    ///  cartridge and call <see cref="ResumeBackupToNextVolume"/> again, or end — never save the TOC now.
+    /// </summary>
+    public bool IsVolumeRejected => MultiVolumeContext is not null && m_volumeRejected;
+
+    /// <summary>Whether a multi-volume backup is pending — asking for a volume, or with a rejected one.</summary>
+    public bool IsMultiVolumePending => MultiVolumeContext is not null;
 
     /// <summary>
     /// Continues the backup onto a new volume after the caller has loaded fresh media.
@@ -473,30 +507,33 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     ///  volume's TOC may have had its trailing empty set removed before being saved, so
     ///  there may not be a suitable set to clone. Instead the metadata
     ///  (<see cref="TapeSetTOCParams"/>) is carried over via the multi-volume context.</para>
+    /// <para>
+    /// Anything that fails BEFORE the first content byte reaches the new cartridge REJECTS it
+    ///  (<see cref="IsVolumeRejected"/>): the continuation set and the volume number are rolled back, nothing is on the
+    ///  cartridge, and the caller may retry with another one — or end, with the previous volume's TOC already saved.
+    /// </para>
     /// </summary>
     public TapeResult ResumeBackupToNextVolume()
     {
-        // Deliberately NO ResetLatchedFailure(): a multi-volume backup is ONE operation. A per-file
-        //  failure on an earlier volume must still surface in the final result, and the EOM stop that
-        //  brought us here does not latch (it is not a fault) — so the only thing carried across the
-        //  swap is a genuine failure. Mirrors _stats, which likewise never resets between volumes.
-        // NO ResetLatchedFailure();
-        // NO MediaHeaderStamped = false; // likewise: the header is a series-level artifact, not per-volume
+        // A multi-volume backup is ONE operation: the failure latched before the volume change must survive it. The
+        //  caller's BackupTOC() between the volumes reset the latch — put it back.
+        // NO MediaHeaderStamped = false; // the header is a series-level artifact, not per-volume
 
-        if (!CanResumeToNextVolume)
+        // IsMultiVolumePending, not CanResumeToNextVolume: a retry after a rejection resumes too
+        if (MultiVolumeContext is not { continuationSetParams: not null } context)
             return FailedOperationResult;
 
-        m_logger.LogTrace("Resuming multi-volume backup for volume #{Volume}", TOC.Volume + 1);
+        RestoreLatchedFailure(m_carriedFailure);
+        int volume = TOC.Volume + 1;
+        m_volumeRejected = false;
+        m_logger.LogTrace("Resuming multi-volume backup for volume #{Volume}", volume);
 
         // since we're on the new media volume, renew Navigator
         if (!Manager.RenewNavigator())
         {
-            LogErrorAsDebug("Failed to renew Navigator");
-            return FailedOperationResult;
+            SyncErrorFrom(Manager);
+            return RejectVolume(volume, $"the drive could not be prepared for the cartridge ({LastErrorMessage})");
         }
-
-        Debug.Assert(MultiVolumeContext != null);
-        Debug.Assert(MultiVolumeContext.Value.continuationSetParams != null);
 
         TOC.Volume++;
         TOC.ContinuedOnNextVolume = false;
@@ -505,20 +542,59 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         //  contFromPrevVolume is true only when the set on the previous volume actually
         //  had files written -- otherwise the trailing empty set was (or should be)
         //  removed and the new set is logically a fresh start, not a continuation.
-        var setParams = MultiVolumeContext.Value.continuationSetParams! with
+        var setParams = context.continuationSetParams with
         {
-            Description = MultiVolumeContext.Value.continuationSetParams!.Description + $" ({TOC.Volume})",
-            Incremental = MultiVolumeContext.Value.incremental,
+            Description = context.continuationSetParams.Description + $" ({TOC.Volume})",
+            Incremental = context.incremental,
         };
         TOC.AddContinuationSetTOC(setParams,
-            contFromPrevVolume: MultiVolumeContext.Value.prevVolumeHasFiles);
+            contFromPrevVolume: context.prevVolumeHasFiles);
 
         // A continuation set is created for the next volume; the emitter may differ here (mixed series).
-        //  Stamp it before anything is written.
+        //  Stamp it before anything is written. A refusal here writes nothing either: reject, so the caller never saves
+        //  a TOC onto the new cartridge.
         if (!EnsureSetFormat(TOC.CurrentSetTOC))
-            return FailedOperationResult;
+        {
+            UndoContinuationSet();
+            return RejectVolume(volume, LastErrorMessage);
+        }
 
-        return BackupFilesToCurrentSet(newSet: true) ? TapeResult.OK : FailedOperationResult;
+        if (BackupFilesToCurrentSet(newSet: true))
+            return TapeResult.OK;
+
+        if (m_volumeRejected)
+        {
+            // The cartridge refused the first write (BackupFilesToCurrentSet kept the context): nothing of the backup
+            //  is on it. Back to the state before this call, so a retry starts clean.
+            UndoContinuationSet();
+            return RejectVolume(volume, LastErrorMessage);
+        }
+
+        return FailedOperationResult;
+    }
+
+    /// <summary>Removes the (empty) continuation set of a failed resume and returns to the previous volume.</summary>
+    private void UndoContinuationSet()
+    {
+        TOC.RemoveLastEmptySet();
+        TOC.Volume--;
+        TOC.ContinuedOnNextVolume = true;   // as saved on the previous volume
+    }
+
+    /// <summary>
+    /// Marks <paramref name="volume"/> rejected and returns why. The latch goes back to the carried failure: a rejected
+    ///  cartridge is no part of the operation's diagnosis — unless the caller gives up, in which case the returned
+    ///  result is it.
+    /// </summary>
+    private TapeResult RejectVolume(int volume, string reason)
+    {
+        m_volumeRejected = true;
+        uint code = WentBad ? LastError : (uint)WIN32_ERROR.ERROR_NOT_READY;
+        string message = $"Volume #{volume} cannot be written: {reason}";
+        RestoreLatchedFailure(m_carriedFailure);
+        SetError(code, message);
+        m_logger.LogWarning("{Message}", message);
+        return TapeResult.Fail(code, message);
     }
 
     // =====================================================================
@@ -718,18 +794,30 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             NotifySetEnd(bc.fileNotify);
             TOC.ContinuedOnNextVolume = true;
             Debug.Assert(CanResumeToNextVolume);
-            return false;                       // do NOT LatchFailure(): a continuation, not a fault
+
+            m_carriedFailure = LastResult;      // survives the caller's BackupTOC() between the volumes
+            return false;                       // do NOT LatchFailure(): this is a continuation, not a fault
         }
 
         if (!BeginWriteContentForCurrentSet(newSet, bc.fileNotify))
         {
-            LatchFailure();
             NotifySetEnd(bc.fileNotify);
-            m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSet));
 
+            if (bc.isContinuation && !IsAbortRequested)
+            {
+                // A FRESH continuation cartridge refused the first write (write-protected, damaged, not ours to write):
+                //  nothing of this backup is on it. Keep the context untouched — the caller may offer another cartridge
+                //  (IsVolumeRejected), and the retry starts this set again, so it is not counted now.
+                StatsUndoSet();
+                m_volumeRejected = true;
+                m_logger.LogWarning("Failed to begin writing content on continuation volume #{Volume}", TOC.Volume);
+                return false;
+            }
+
+            LatchFailure();
+            m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSet));
             // We MUST clear MultiVolumeContext to NOT indicate multivolume continuation!
             MultiVolumeContext = null;
-
             return false;
         }
 
@@ -1045,11 +1133,13 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         {
             Debug.Assert(CanResumeToNextVolume);
             bc.overallSuccess = false;
+
             // do NOT LatchFailure(): we can continue to the next volume, hence no hard failure
 
+            m_carriedFailure = LastResult;      // survives the caller's BackupTOC() between the volumes
+            
             m_logger.LogTrace("{Method}: EOM was encountered & handled during backup; MultiVolumeContext set up",
                 nameof(BackupFilesToCurrentSet));
-            
             return false;
         }
 
@@ -1156,7 +1246,11 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         _stats.Reset();
         _setAnomalies.Clear();
         ResetLatchedFailure();
+
         MediaHeaderStamped = false; // reset for the new series (per-series, cross-volume artifact)
+        
+        m_carriedFailure = TapeResult.OK;
+        m_volumeRejected = false;
 
         if (!EnsureSetFormat(TOC.CurrentSetTOC))
             return FailedOperationResult;

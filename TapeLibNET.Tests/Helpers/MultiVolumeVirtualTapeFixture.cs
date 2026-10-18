@@ -429,14 +429,15 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
             EncryptCurrentSet(password, encryption);
 
         using var agent = CreateBackupAgent();
-        bool success = agent.BackupFileListToCurrentSet(
+        TapeResult result = agent.BackupFileListToCurrentSet(
             newSet: true,
             fileList,
             ignoreFailures: true,
             fileNotify: notifiable);
 
-        // Multi-volume loop: backup → TOC → swap → resume
-        while (!success && agent.CanResumeToNextVolume)
+        // Multi-volume loop: backup → TOC → swap → resume. A REJECTED continuation cartridge makes
+        //  CanResumeToNextVolume false: the loop ends and the assertion reports why.
+        while (!result.Success && agent.CanResumeToNextVolume)
         {
             // If the empty continuation set has no files, clean it up
             if (TOC.CurrentSetTOC.Count == 0)
@@ -454,10 +455,12 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
             ApplyHeaderFlagsForVolume(agent, newVolume);
 
             // Resume backup on the new volume
-            success = agent.ResumeBackupToNextVolume();
+            result = agent.ResumeBackupToNextVolume();
         }
 
-        Assert.True(success, "Multi-volume backup failed");
+        Assert.True(result.Success, $"Multi-volume backup failed: {result.ErrorMessage}" +
+            (agent.IsVolumeRejected
+                ? $" (continuation volume #{TOC.Volume + 1} rejected)" : string.Empty));
 
         // Save TOC on the final volume
         if (!agent.BackupTOC())
@@ -485,18 +488,20 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     {
         using var agent = CreateRestoreAgent(restoreDir);
 
-        bool success = agent.RestoreAllFilesFromCurrentSet(
+        TapeResult result = agent.RestoreAllFilesFromCurrentSet(
             ignoreFailures: true, fileNotify: notifiable);
 
-        // Multi-volume loop
-        while (!success && agent.CanResumeFromAnotherVolume)
+        // Multi-volume loop. A REJECTED volume (e.g. its TOC unreadable) makes CanResumeFromAnotherVolume false:
+        //  the loop ends and the assertion reports why, instead of re-offering the same cartridge forever.
+        while (!result.Success && agent.CanResumeFromAnotherVolume)
         {
             int volumeNeeded = agent.VolumeToResumeFrom;
             SwapToVolume(volumeNeeded);
-            success = agent.ResumeRestoreFromAnotherVolume();
+            result = agent.ResumeRestoreFromAnotherVolume();
         }
 
-        Assert.True(success, "Multi-volume restore failed");
+        Assert.True(result.Success, $"Multi-volume restore failed: {result.ErrorMessage}" +
+            (agent.IsVolumeRejected ? $" (volume #{agent.VolumeToResumeFrom} rejected)" : ""));
 
         return agent.Statistics;
     }
@@ -514,18 +519,19 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     {
         using var agent = CreateRestoreAgent(restoreDir);
 
-        bool success = agent.RestoreFilesFromCurrentSetInc(
+        TapeResult result = agent.RestoreFilesFromCurrentSetInc(
             null, ignoreFailures: true, fileNotify: notifiable);
 
-        // Multi-volume loop
-        while (!success && agent.CanResumeFromAnotherVolume)
+        // Multi-volume loop — see RestoreAllFilesFromCurrentSet
+        while (!result.Success && agent.CanResumeFromAnotherVolume)
         {
             int volumeNeeded = agent.VolumeToResumeFrom;
             SwapToVolume(volumeNeeded);
-            success = agent.ResumeRestoreFromAnotherVolume();
+            result = agent.ResumeRestoreFromAnotherVolume();
         }
 
-        Assert.True(success, "Multi-volume incremental restore failed");
+        Assert.True(result.Success, $"Multi-volume incremental restore failed: {result.ErrorMessage}" +
+            (agent.IsVolumeRejected ? $" (volume #{agent.VolumeToResumeFrom} rejected)" : ""));
 
         return agent.Statistics;
     }

@@ -100,6 +100,7 @@ public abstract class ServiceTestBase : IDisposable
             {
                 Assert.Empty(host.MediaMismatchPrompts);   // happy-path hosts: provably silent
                 Assert.Empty(host.SetAnomalyPrompts);
+                Assert.Empty(host.VolumeErrorPrompts);
             }
 
         GC.SuppressFinalize(this);

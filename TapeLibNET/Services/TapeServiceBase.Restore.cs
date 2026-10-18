@@ -1,10 +1,9 @@
-﻿using TapeLibNET.Agents;
+using TapeLibNET.Agents;
 using TapeLibNET.Toc;
 using Windows.Win32.System.SystemServices; // Helpers, Stopwatch
 using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
 
 namespace TapeLibNET.Services;
-
 
 public partial class TapeServiceBase
 {
@@ -26,6 +25,7 @@ public partial class TapeServiceBase
     public Task<RestoreResult> ExecuteRestoreAsync(RestoreRequest request)
     {
         _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
+
         return Task.Run(async () =>
         {
             // 1. Wait for the semaphore
@@ -84,16 +84,13 @@ public partial class TapeServiceBase
             => new()
             {
                 Diagnosis       = diagnosis ?? agentResult,
-
                 FilesTotal      = progressHandler?.FilesTotal ?? 0,
                 FilesProcessed  = progressHandler?.FilesProcessed ?? 0,
                 FilesSucceeded  = progressHandler?.FilesSucceeded ?? 0,
                 FilesFailed     = progressHandler?.FilesFailed ?? 0,
                 FilesSkipped    = progressHandler?.FilesSkipped ?? 0,
-
                 BytesTotal      = progressHandler?.BytesTotal ?? 0,
                 BytesProcessed  = progressHandler?.BytesProcessed ?? 0,
-
                 WasAborted      = aborted,
                 HasFailed       = failed,
                 Success         = !failed,
@@ -149,9 +146,11 @@ public partial class TapeServiceBase
             {
                 LogInfo("Restoring TOC from tape...");
                 OnStatusUpdate("Reading TOC...");
+
                 var tocResult = agent.RestoreTOC();
                 if (!tocResult)
                     throw new InvalidOperationException($"Couldn't restore TOC: {tocResult.ErrorMessage}");
+
                 _toc = toc;
                 LogOk($"TOC restored with {toc.Count} backup set(s)");
             }
@@ -223,11 +222,12 @@ public partial class TapeServiceBase
 
                 // Remove all set indexes outside of [oldestIdex..newestIdx] from setIndexes, as they won't be processed
                 setIndexes = [..setIndexes.Where(i => i >= oldestIdx && i <= newestIdx)];
+
             } // if no-multivolume
 
             toc.CurrentSetIndex = newestIdx;
-
             var (totalFiles, totalBytes, perSet) = toc.GetFileCounts(combined, newestIdx);
+
             LogInfo($"{modeName} {totalFiles:N0} file(s) ({Helpers.BytesToStringLong(totalBytes)}) from {perSet.Count} set(s)");
             foreach (var setIndex in setIndexes)
             {
@@ -236,8 +236,10 @@ public partial class TapeServiceBase
                 LogInfoSub($"From set #{setIndex} | {toc.SetIndexToAlt(setIndex)}: " +
                            $"{toc.CurrentSetTOC.Description}: {count:N0} file(s) ({Helpers.BytesToStringLong(bytes)})");
             }
+
             if (request.Mode == RestoreMode.Restore && !string.IsNullOrEmpty(request.TargetDirectory))
                 LogInfoSub($"Target folder: {request.TargetDirectory}");
+
             toc.CurrentSetIndex = newestIdx; // restore after iterating
 
             // Create progress handler via the overridable factory
@@ -260,6 +262,7 @@ public partial class TapeServiceBase
             dataTimer.Stop();
             dataElapsedUs += dataTimer.ElapsedMicroseconds;
             dataIoElapsedUs += _drive.IoTimeCounterUs;
+
             bool success = (bool)agentResult;
 
             // The agent catches TapeAbortRequestedException internally and returns false,
@@ -267,21 +270,49 @@ public partial class TapeServiceBase
             bool wasAborted = agent.IsAbortRequested;
 
             // If the caller opted out of multi-volume, end here after the current volume
-            if (!wasAborted && !success && agent.CanResumeFromAnotherVolume && request.NoMultivolume)
+            if (!wasAborted && !success && agent.IsMultiVolumePending && request.NoMultivolume)
                 LogInfo("Multi-volume continuation skipped (no-multivolume mode)");
 
             // ── Multi-volume continuation loop ────────────────────────────────
-            
-            while (!wasAborted && !success && agent.CanResumeFromAnotherVolume && !request.NoMultivolume)
+            //  Two states keep it going, told apart deliberately:
+            //   - CanResumeFromAnotherVolume: the agent ASKS for a volume — the normal continuation.
+            //   - IsVolumeRejected: the volume was loaded and identified, but cannot be READ (its TOC is unreadable or
+            //     undecryptable, or it does not hold the set the TOC describes). Never re-offered blindly: the user
+            //     decides — insert it (again, or another copy), skip it, or end.
+            //  Skipping is offered in both states: the files on that volume are given up, the rest goes on.
+            while (!wasAborted && !success && agent.IsMultiVolumePending && !request.NoMultivolume)
             {
                 int volumeNeeded = agent.VolumeToResumeFrom;
-                LogInfo($"{modeName} requires Volume #{volumeNeeded} to continue");
 
-                // Step 1: Ask user whether to continue on the next volume
-                if (!_host.OnVolumeContinueConfirm(volumeNeeded, request.Mode))
+                // Step 1: Ask the user — continue with the volume, skip it, or end
+                VolumeAction action;
+                if (agent.IsVolumeRejected)
+                {
+                    LogErr($"Volume #{volumeNeeded} cannot be used: {agentResult.ErrorMessage}");
+                    action = _host.OnVolumeErrorSelect(volumeNeeded, agentResult.ErrorMessage, modeName, allowSkip: true);
+                }
+                else
+                {
+                    LogInfo($"{modeName} requires Volume #{volumeNeeded} to continue");
+                    action = _host.OnVolumeContinueSelect(volumeNeeded, request.Mode);
+                }
+
+                if (action == VolumeAction.End)
                 {
                     LogInfo($"User chose to end multi-volume {modeName.ToLowerInvariant()}");
                     break;
+                }
+
+                if (action == VolumeAction.Skip)
+                {
+                    // Give up the sets on this volume; the agent then asks for the next volume — or is done
+                    agentResult = agent.SkipRequestedVolume(out int setsSkipped, out int filesSkipped);
+                    success = (bool)agentResult;
+                    wasAborted = agent.IsAbortRequested;
+                    progressHandler.SyncStatistics(agent.Statistics);   // no file callback fires for skipped files
+                    LogWarn($"Volume #{volumeNeeded} skipped — {setsSkipped:N0} set(s), {filesSkipped:N0} file(s) " +
+                            "not processed");
+                    continue;
                 }
 
                 // Steps 2–5: eject, insert, load, verify identity. Retry re-runs the cycle.
@@ -291,8 +322,10 @@ public partial class TapeServiceBase
                     // Step 2: Eject the current volume
                     LogInfo("Ejecting media...");
                     OnStatusUpdate("Ejecting media...");
+
                     if (!_drive.UnloadMedia())
                         throw new InvalidOperationException($"Couldn't eject media: {_drive.LastErrorMessage}");
+
                     LogOk($"Volume #{toc.Volume} ejected");
 
                     // Step 3: Ask user to insert the required volume
@@ -306,17 +339,20 @@ public partial class TapeServiceBase
                     // Step 4: Load and prepare the new media (with load-retry)
                     LogInfo("Loading media...");
                     OnStatusUpdate("Loading media...");
+
                     const int maxLoadAttempts = 2;
                     bool mediaLoaded = false;
                     for (int attempt = 1; attempt <= maxLoadAttempts && !mediaLoaded; attempt++)
                     {
                         bool loadOk = _drive.ReloadMedia();
                         string loadErr = _drive.LastErrorMessage;
+
                         if (loadOk && !_drive.PrepareMedia())
                         {
                             loadOk = false;
                             loadErr = _drive.LastErrorMessage;
                         }
+
                         if (loadOk)
                         {
                             mediaLoaded = true;
@@ -324,10 +360,13 @@ public partial class TapeServiceBase
                         else
                         {
                             LogErr($"Couldn't load media: {loadErr}");
+
                             bool retryLoad = attempt < maxLoadAttempts
                                 && _host.OnMediaLoadRetryConfirm(loadErr, attempt > 1);
+
                             if (!retryLoad)
                                 throw new InvalidOperationException($"Couldn't load media: {loadErr}");
+
                             LogInfo("Retrying media load...");
                             OnStatusUpdate("Loading media...");
                         }
@@ -339,19 +378,19 @@ public partial class TapeServiceBase
                     var cvChoice = PresentVerdict(
                         EvaluateLoadedHeader(expectedSeriesId: toc.MediaId, expectedVolume: volumeNeeded),
                         MediaPromptContext.VerifyRestore, suppress, allowRetry: true);
-
                     if (cvChoice == MediaMismatchChoice.Abort) { cancelled = true; break; }
                     if (cvChoice == MediaMismatchChoice.Retry) continue;
                     if (cvChoice == MediaMismatchChoice.ProceedAlways) suppress = true;
                     break;
                 } while (true);
+
                 if (cancelled)
                     break; // exit the multi-volume continuation loop
 
                 LogOk($"Media loaded, continuing {modeName.ToLowerInvariant()}...");
                 OnStatusUpdate($"{modeName} files...");
 
-                // Step 6: Resume restore on the new volume
+                // Step 6: Resume on the new volume — or learn that it cannot be read (IsVolumeRejected)
                 // ── Agent invocation ────────────────────────────────
                 _drive.IoTimeCounterUs = 0; // reset I/O time counter for this volume
                 dataTimer.Restart();
@@ -360,10 +399,9 @@ public partial class TapeServiceBase
                 dataTimer.Stop();
                 dataElapsedUs += dataTimer.ElapsedMicroseconds;
                 dataIoElapsedUs += _drive.IoTimeCounterUs;
+
                 wasAborted = agent.IsAbortRequested;
-            
             } // multi-volume continuation while-loop
-            
             // ─────────────────────────────────────────────────────────────────
 
             var result = progressHandler.GenerateResult() with
@@ -372,30 +410,29 @@ public partial class TapeServiceBase
                 // Sets = progressHandler.SetStats, // done already in GenerateResults()
             };
 
+            // Ended on a volume that could not be used: no file counter shows it (nothing of that volume was
+            //  started), yet the operation did not complete — say so, with the volume error as the diagnosis.
+            if (!wasAborted && agent.IsVolumeRejected)
+                result = result with { HasFailed = true, Success = false };
+
             // Handle abort path first
             if (wasAborted)
             {
                 // BytesProcessed from progressHandler may be 0 if SetEnd wasn't called
                 result = result with { WasAborted = true,
                     BytesProcessed = long.Max(result.BytesProcessed, agent.BytesRestored) };
-
                 ReportFileOperationOutcome(result, modeName, agentResult);
                 ReportFileOperationStats(result, secsTotal: dataElapsedUs / 1e6, secsIo: dataIoElapsedUs / 1e6);
-
                 OnStatusUpdate($"{modeName} aborted");
-
                 return result;
             }
 
             ReportFileOperationOutcome(result, modeName,
-                pendingContinuation: agent.CanResumeFromAnotherVolume);
+                pendingContinuation: agent.IsMultiVolumePending);
             ReportFileOperationStats(result, secsTotal: dataElapsedUs / 1e6, secsIo: dataIoElapsedUs / 1e6);
             ReportSetAnomalyOutcome(progressHandler.SetStats);
-
             OnStatusUpdate($"{modeName} complete");
-
             return result;
-
         }
         catch (Exception ex)
         {

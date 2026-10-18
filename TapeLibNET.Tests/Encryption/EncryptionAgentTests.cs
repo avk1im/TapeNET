@@ -300,7 +300,7 @@ public abstract class EncryptionAgentTestsBase
         Assert.False(result.Success);
         Assert.Equal(ErrorNotSupported, result.ErrorCode);
         Assert.Equal(before, fixture.Drive.CurrentBlock);
-        Assert.Equal(0, fixture.TOC.CurrentSetTOC.Count);
+        Assert.Empty(fixture.TOC.CurrentSetTOC);
     }
 
     [Theory]
@@ -540,10 +540,14 @@ public abstract class EncryptionAgentTestsBase
         public long RecordOverhead(long plainRecordLength) => 0;
     }
 
+    private static readonly string[] WriteStringes = [ "OpenWrite", "CompleteWrite" ];
+    private static readonly string[] ReadStringes = ["OpenRead", "CompleteRead"];
+
     [Theory]
     [MemberData(nameof(AllProfiles))]
     public void CipherBracket_BackupAndRestore(DriveProfile profile)
     {
+
         using var tree = new TempFileTree();
         tree.AddFiles("bracket", count: 3, minSize: 100, maxSize: 4 * 1024);
         using var fixture = CreateFixture(profile);
@@ -553,7 +557,7 @@ public abstract class EncryptionAgentTestsBase
             fixture.BackupFiles(tree.Files, description: "Bracket");
 
         string[] write = ["Validate(write)", "BeginSet(write)",
-            .. Enumerable.Range(0, 3).SelectMany(_ => new[] { "OpenWrite", "CompleteWrite" }), "EndSet"];
+            .. Enumerable.Range(0, 3).SelectMany(_ => WriteStringes), "EndSet"];
         Assert.Equal(write, cipher.Calls);
         if (WithSetHeaders)
             Assert.Equal(fixture.FirstFileBlock, cipher.BlockAtBeginSet);       // past the set header, never on it
@@ -570,7 +574,7 @@ public abstract class EncryptionAgentTestsBase
             }
 
             string[] read = ["Validate(read)", "BeginSet(read)",
-                .. Enumerable.Range(0, 3).SelectMany(_ => new[] { "OpenRead", "CompleteRead" }), "EndSet"];
+                .. Enumerable.Range(0, 3).SelectMany(_ => ReadStringes), "EndSet"];
             Assert.Equal(read, cipher.Calls);
             Assert.Equal(fixture.FirstFileBlock, cipher.BlockAtBeginSet);
         }

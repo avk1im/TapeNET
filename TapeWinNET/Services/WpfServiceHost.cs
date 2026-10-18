@@ -124,7 +124,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                 : 0.0;
 
             _viewModel.ScanProgressText =
-                $"Block {currentBlock:N0} · {setsFound:N0} set(s) · {tocCopiesFound:N0} TOC copy(ies) found";
+                $"Block {currentBlock:N0} · {fragmentsFound:N0} fragment(s) · {setsFound:N0} set(s) · {tocCopiesFound:N0} TOC copy(ies) found";
         });
     }
 
@@ -378,6 +378,29 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
     public TapeServiceBase? ServiceRef { get; set; }
 
     /// <inheritdoc/>
+    /// <inheritdoc/>
+    public VolumeAction OnVolumeContinueSelect(int volumeNeeded, RestoreMode mode)
+    {
+#warning TODO: Replace the standard Select dialog with a custom dialog based on MediaChangeDialog
+
+        string name = mode.ToDisplayName();
+        int idx = Select(
+            $"{name}: Volume Change Required",
+            $"{name} requires Volume #{volumeNeeded} to continue.\n\n" +
+            $"Insert it to continue, or skip it if it is not available — its files will not be processed.",
+            [$"Eject and insert Volume #{volumeNeeded}",
+             $"Skip Volume #{volumeNeeded}",
+             $"End {name}"],
+            defaultIndex: 0);
+        return idx switch
+        {
+            0 => VolumeAction.Insert,
+            1 => VolumeAction.Skip,
+            _ => VolumeAction.End,
+        };
+    }
+
+    /* // Old version as an example of MediaChangeDialog usage!
     public bool OnVolumeContinueConfirm(int volumeNeeded, RestoreMode mode)
     {
         bool result = false;
@@ -395,6 +418,30 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                 result = dialog.ContinueBackup;
         });
         return result;
+    }
+    */
+
+    /// <inheritdoc/>
+    public VolumeAction OnVolumeErrorSelect(int volume, string errorMessage, string operationName, bool allowSkip)
+    {
+#warning TODO: Replace the standard Select dialog with a custom dialog based on MediaChangeDialog
+
+        var choices = new List<string> { $"Insert Volume #{volume} again (or another copy)" };
+        var mapping = new List<VolumeAction> { VolumeAction.Insert };
+        if (allowSkip)
+        {
+            choices.Add($"Skip Volume #{volume} — its files will not be processed");
+            mapping.Add(VolumeAction.Skip);
+        }
+        choices.Add($"End {operationName}");
+        mapping.Add(VolumeAction.End);
+
+        int idx = Select(
+            "Volume Cannot Be Used",
+            $"Volume #{volume} was loaded and identified, but it cannot be used.\n\nError: {errorMessage}",
+            choices,
+            defaultIndex: mapping.Count - 1);
+        return idx >= 0 && idx < mapping.Count ? mapping[idx] : VolumeAction.End;
     }
 
     /// <inheritdoc/>

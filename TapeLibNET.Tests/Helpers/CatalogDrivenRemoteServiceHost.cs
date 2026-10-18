@@ -88,9 +88,11 @@ public sealed class CatalogDrivenRemoteServiceHost(
     // ── Restore callbacks ─────────────────────────────────────────────────────
 
     /// <inheritdoc/>
-    /// <remarks>Always agrees — the actual swap happens in <see cref="OnInsertMediaConfirm"/>.</remarks>
-    public override bool OnVolumeContinueConfirm(int volumeNeeded, RestoreMode mode)
-        => true;
+    /// <remarks>
+    /// Always agrees to insert and continue — the actual swap happens in <see cref="OnInsertMediaConfirm"/>.
+    /// </remarks>
+    public override VolumeAction OnVolumeContinueSelect(int volumeNeeded, RestoreMode mode)
+        => VolumeAction.Insert;
 
     /// <inheritdoc/>
     /// <remarks>

@@ -545,16 +545,39 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         internal List<TapeFileInfo>[] filesSelected = filesSelected;
         internal readonly bool ignoreFailures = ignoreFailures;
         internal readonly ITapeFileNotifiable? fileNotify = fileNotify;
-
         internal int initialCurrSetIdx = currSetIdx;
         internal int filesSelectedIdx = filesSelected.Length - 1; // we'll be counting down
-
         internal bool overallSuccess = true;
     }
+
     private TapeRestoreContext? MultiVolumeContext { get; set; } = null;
-    /// <summary>Whether a multi-volume continuation context is pending (earlier volume needed).</summary>
-    public bool CanResumeFromAnotherVolume => MultiVolumeContext is not null;
-    /// <summary>Volume number to load next; valid only when <see cref="CanResumeFromAnotherVolume"/> is <see langword="true"/>.</summary>
+
+    // The volume loaded for the pending continuation cannot be used — see IsVolumeRejected.
+    private bool m_volumeRejected;
+
+    // Why not; carried into the diagnosis when the caller skips the volume.
+    private TapeResult m_volumeRejection = TapeResult.OK;
+
+    /// <summary>
+    /// Whether the agent ASKS for another volume: load <see cref="VolumeToResumeFrom"/>, then call
+    ///  <see cref="ResumeRestoreFromAnotherVolume"/> — or give it up with <see cref="SkipRequestedVolume"/>.
+    ///  <see langword="false"/> while the loaded volume is rejected — so a caller looping on this property ends instead
+    ///  of re-offering the same cartridge forever.
+    /// </summary>
+    public bool CanResumeFromAnotherVolume => MultiVolumeContext is not null && !m_volumeRejected;
+
+    /// <summary>
+    /// Whether the volume loaded for the continuation CANNOT be used — its TOC unreadable (or undecryptable), another
+    ///  series, the wrong volume number, or not holding the set the TOC describes. The restore is still pending
+    ///  (<see cref="VolumeToResumeFrom"/> is still needed). The caller decides: load a cartridge and call
+    ///  <see cref="ResumeRestoreFromAnotherVolume"/> again, <see cref="SkipRequestedVolume"/>, or end.
+    /// </summary>
+    public bool IsVolumeRejected => MultiVolumeContext is not null && m_volumeRejected;
+
+    /// <summary>Whether a multi-volume restore is pending — asking for a volume, or with a rejected one.</summary>
+    public bool IsMultiVolumePending => MultiVolumeContext is not null;
+
+    /// <summary>Volume number needed next; valid while <see cref="IsMultiVolumePending"/>.</summary>
     public int VolumeToResumeFrom { get; private set; } = -1;
 
     /// <summary>
@@ -570,83 +593,196 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 
     /// <summary>
     /// Continues the restore from a different volume after the caller has loaded the requested media.
-    /// <para>Validates the new volume's TOC (volume number and set sizes) before proceeding.
-    ///  Preserves the original TOC for consistent file addressing across volumes.</para>
+    /// <para>
+    /// Identifies the cartridge first — its own TOC must read, belong to this series, carry the requested volume number
+    ///  and the next set as the TOC describes it. A cartridge that fails any of these is REJECTED
+    ///  (<see cref="IsVolumeRejected"/>): nothing has been restored from it, and the caller may retry, skip the volume,
+    ///  or end.
+    /// </para>
+    /// <para>The original TOC is kept: it addresses the whole series.</para>
     /// </summary>
     public TapeResult ResumeRestoreFromAnotherVolume()
     {
-        if (!CanResumeFromAnotherVolume)
+        if (MultiVolumeContext is not { } context)
             return FailedOperationResult;
 
-        m_logger.LogTrace("Resuming multi-volume restore from new volume #{Volume}", VolumeToResumeFrom);
+        int volume = VolumeToResumeFrom;
+        m_volumeRejected = false;
+        m_logger.LogTrace("Resuming multi-volume restore from new volume #{Volume}", volume);
 
-        Debug.Assert(MultiVolumeContext != null);
-        Debug.Assert(VolumeToResumeFrom >= 0);
+        // Identifying the cartridge reads its TOC through RestoreTOC(), a public verb that resets the failure latch.
+        //  The operation's earliest failure must survive it — and a cartridge that a retry replaces must leave no trace.
+        TapeResult earliest = LastResult;
+        TapeResult check = CheckVolumeToResumeFrom(volume);
+        RestoreLatchedFailure(earliest);
 
+        if (!check)
+        {
+            if (IsAbortRequested)
+            {
+                MultiVolumeContext = null;      // an abort ends the operation: no volume is pending any more
+                VolumeToResumeFrom = -1;
+                return FailedOperationResult;
+            }
+
+            m_volumeRejected = true;
+            m_volumeRejection = check;
+            m_logger.LogWarning("Volume #{Volume} rejected for the continuation: {Reason}", volume, check.ErrorMessage);
+            return check;
+        }
+
+        // update the volume
+        TOC.Volume = volume;
+
+        // Ok to proceed with the new volume. Notice: Keep our current TOC, since we're restoring the whole file series using it
+        return RestoreFilesFromCurrentSetDownCore(null, context.ignoreFailures, context.fileNotify)
+            ? TapeResult.OK : FailedOperationResult;
+    } // ResumeRestoreFromAnotherVolume()
+
+    /// <summary>
+    /// Identifies the loaded cartridge as <paramref name="volume"/> of this series, holding the next set to restore.
+    ///  Leaves <see cref="TapeAgentBase.TOC"/> as it was.
+    /// </summary>
+    private TapeResult CheckVolumeToResumeFrom(int volume)
+    {
         // since we're on the new media volume, renew Navigator
         if (!Manager.RenewNavigator())
         {
-            LogErrorAsDebug("Failed to renew Navigator");
-            return FailedOperationResult;
+            SyncErrorFrom(Manager);
+            return RejectVolume($"Volume #{volume}: the drive could not be prepared for the cartridge ({LastErrorMessage})");
         }
 
-        // Check if the newly provided volume is the right one by analyzing its TOC
-        //  Save the current TOC as it contains more sets than the one we're restoring
+        // Read the cartridge's own TOC to identify it — then put ours back: it contains more sets than this volume's
         var orgTOC = new TapeTOC(TOC);
         try
-        {           
+        {
             if (!RestoreTOC())
-            {
-                LogErrorAsWarning("Failed to restore TOC for new volume");
-                return FailedOperationResult;
-            }
+                return RejectVolume($"Volume #{volume}: its table of contents could not be read ({LastErrorMessage})");
 
-            // Check if the new volume has the right volume number
-            if (TOC.Volume != VolumeToResumeFrom)
-            {
-                LogErrorAsWarning("Volume mismatch for new volume");
-                return FailedOperationResult;
-            }
+            if (orgTOC.MediaId != Guid.Empty && TOC.MediaId != Guid.Empty && TOC.MediaId != orgTOC.MediaId)
+                return RejectVolume("The inserted cartridge belongs to another backup series", WIN32_ERROR.ERROR_WRONG_DISK);
+
+            if (TOC.Volume != volume)
+                return RejectVolume($"The inserted cartridge is volume #{TOC.Volume}, not volume #{volume}",
+                    WIN32_ERROR.ERROR_WRONG_DISK);
 
             // As the final test, check the next backup set to restore is the same on the new volume. The freshly loaded
             //  TOC has its encrypted sets LOCKED — compare what a stub can tell (Design-Encryption §9.5).
-            int setIdx = MultiVolumeContext.Value.initialCurrSetIdx - MultiVolumeContext.Value.filesSelectedIdx;
-            if (!SameSetOnTape(TOC[setIdx], orgTOC[setIdx]))
-            {
-                LogErrorAsWarning($"Set mismatch on new volume for set #{setIdx}");
-                return FailedOperationResult;
-            }
+            int setIdx = MultiVolumeContext!.Value.initialCurrSetIdx - MultiVolumeContext.Value.filesSelectedIdx;
+            if (setIdx > TOC.Count || !SameSetOnTape(TOC[setIdx], orgTOC[setIdx]))
+                return RejectVolume($"Volume #{volume} does not hold set #{setIdx} as the table of contents describes it",
+                    WIN32_ERROR.ERROR_WRONG_DISK);
+
+            return TapeResult.OK;
         }
         finally
         {
             TOC.CopyFrom(orgTOC); // restore the original TOC
         }
-        // update the volume
-        TOC.Volume = VolumeToResumeFrom;
-        // Ok to proceed with the new volume. Notice: Keep our current TOC, since we're restoring the whole file series using it
+    }
 
-        return RestoreFilesFromCurrentSetDownCore(null, MultiVolumeContext.Value.ignoreFailures, MultiVolumeContext.Value.fileNotify)
-            ? TapeResult.OK : FailedOperationResult;
-    } // ResumeRestoreFromAnotherVolume()
+    /// <summary>Sets and returns a rejection: <paramref name="error"/>, else the current error, else invalid data.</summary>
+    private TapeResult RejectVolume(string message, WIN32_ERROR? error = null)
+    {
+        uint code = error is { } e ? (uint)e : WentBad ? LastError : (uint)WIN32_ERROR.ERROR_INVALID_DATA;
+        SetError(code, message);
+        return TapeResult.Fail(code, message);
+    }
+
+    /// <summary>
+    /// Gives up the sets on <see cref="VolumeToResumeFrom"/> — after a rejection (the user puts up with the loss) or
+    ///  voluntarily (the cartridge is not at hand). Their selected files are not processed.
+    /// </summary>
+    /// <param name="setsSkipped">How many sets of the work package were given up.</param>
+    /// <param name="filesSkipped">How many selected files they hold (a locked set counts none — it was never readable).</param>
+    /// <returns>
+    /// Afterwards the agent either asks for the next volume (<see cref="CanResumeFromAnotherVolume"/>, result: failure, as
+    ///  on any volume request) or is done (result: the operation's outcome).
+    /// </returns>
+    /// <remarks>
+    /// <b>Voluntary vs. after an error.</b> A voluntary skip counts the files as SKIPPED and is no fault. A skip after a
+    ///  rejection counts them as FAILED and latches the rejection, named with the volume — the error did happen.
+    /// </remarks>
+    public TapeResult SkipRequestedVolume(out int setsSkipped, out int filesSkipped)
+    {
+        setsSkipped = 0;
+        filesSkipped = 0;
+        if (MultiVolumeContext is not { } rc)
+            return FailedOperationResult;
+
+        int skipped = VolumeToResumeFrom;
+        bool afterError = m_volumeRejected;
+
+        while (rc.filesSelectedIdx >= 0)
+        {
+            List<TapeFileInfo>? selected = rc.filesSelected[rc.filesSelectedIdx];
+            TapeSetTOC set = TOC[rc.initialCurrSetIdx - rc.filesSelectedIdx];
+            if (selected?.Count != 0)       // null = all files of the set
+            {
+                if (set.Volume != skipped)
+                    break;                  // the first set beyond the skipped volume
+                setsSkipped++;
+                filesSkipped += selected?.Count ?? (set.IsLocked ? 0 : set.Count);
+            }
+            rc.filesSelectedIdx--;
+        }
+
+        StatsAddUnprocessed(filesSkipped, asFailed: afterError);
+        if (afterError)
+        {
+            uint code = m_volumeRejection.Success ? (uint)WIN32_ERROR.ERROR_WRONG_DISK : m_volumeRejection.ErrorCode;
+            SetError(code, $"Volume #{skipped} skipped — {setsSkipped} set(s), {filesSkipped} file(s) not processed: " +
+                m_volumeRejection.ErrorMessage);
+            LatchFailure();
+            rc.overallSuccess = false;
+        }
+        m_logger.LogWarning("Volume #{Volume} skipped ({How}): {Sets} set(s), {Files} file(s) not processed",
+            skipped, afterError ? "after an error" : "on request", setsSkipped, filesSkipped);
+
+        m_volumeRejected = false;
+        m_volumeRejection = TapeResult.OK;
+
+        if (rc.filesSelectedIdx < 0)
+        {
+            MultiVolumeContext = null;      // nothing left — the operation is over
+            VolumeToResumeFrom = -1;
+            TOC.CurrentSetIndex = rc.initialCurrSetIdx;
+            return rc.overallSuccess ? TapeResult.OK : FailedOperationResult;
+        }
+
+        // Ask for the volume of the next set — even if it is the one the TOC believes loaded: what is in the drive is
+        //  not to be trusted after a skip (a rejected cartridge, or none the user meant to use).
+        MultiVolumeContext = rc;
+        VolumeToResumeFrom = TOC[rc.initialCurrSetIdx - rc.filesSelectedIdx].Volume;
+        return FailedOperationResult;
+    }
 
     private bool RestoreFilesFromCurrentSetDownCore(List<TapeFileInfo>?[]? filesSelected, bool ignoreFailures, ITapeFileNotifiable? fileNotify)
     {
         m_logger.LogTrace("Starting restoring files from current set #{Set} down", TOC.CurrentSetIndex);
 
-        Debug.Assert(CanResumeFromAnotherVolume || filesSelected != null); // either resuming or restoring from a specified list
+        bool resuming = MultiVolumeContext is not null;
+        Debug.Assert(resuming || filesSelected != null); // either resuming or restoring from a specified list
 
-        TapeRestoreContext rc = CanResumeFromAnotherVolume ? MultiVolumeContext!.Value :
+        TapeRestoreContext rc = resuming ? MultiVolumeContext!.Value :
             new(filesSelected!, TOC.CurrentSetIndex, ignoreFailures, fileNotify);
+
+        // From here on THIS call owns the context: no volume is pending while it runs. A volume request below
+        //  re-establishes it; every other exit — the end, an abort, a failure with !ignoreFailures — leaves none.
+        //  (It also makes the failure latch below work on resumed volumes: it used to be gated on "no context".)
+        MultiVolumeContext = null;
+        VolumeToResumeFrom = -1;
+        m_volumeRejected = false;
 
         // Total file size is fully known upfront from the TOC (unlike backup, where source
         //  files must be scanned in the background) — compute it synchronously, once, on a
         //  fresh start. Resumes reuse the estimate already stored in _stats.
         //  Locked sets count nothing: they are refused below, before they start.
-        if (!CanResumeFromAnotherVolume)
+        if (!resuming)
             _stats.BytesTotal = SelectedBytesTotal(filesSelected!, TOC.CurrentSetIndex);
 
         m_logger.LogTrace("{Method}: incoming rc.overallSuccess={Success}, filesSelectedIdx={Idx}, initialCurrSetIdx={Init}, isResume={Resume}",
-            nameof(RestoreFilesFromCurrentSetDownCore), rc.overallSuccess, rc.filesSelectedIdx, rc.initialCurrSetIdx, CanResumeFromAnotherVolume);
+            nameof(RestoreFilesFromCurrentSetDownCore), rc.overallSuccess, rc.filesSelectedIdx, rc.initialCurrSetIdx, resuming);
         for (int s = 1; s <= TOC.Count; s++)
             m_logger.LogTrace("  TOC set #{Idx}: Volume={Vol}, ContFromPrev={CFP}, Count={Count}",
                 s, TOC[s].Volume, TOC[s].ContinuedFromPrevVolume, TOC[s].DisplayCount);
@@ -694,26 +830,20 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 m_logger.LogWarning("{Method}: Inner restore returned false: filesSelectedIdx={Idx}, set #{Set}",
                     nameof(RestoreFilesFromCurrentSetDownCore), rc.filesSelectedIdx, TOC.CurrentSetIndex);
                 rc.overallSuccess = false;
-                // Latch only a REAL fault.
-                //  A media-full-please-swap isn't a failure, nor is a user-requested abort.
-                //  Latching is indempotent, hence it won't hurt if the original error has already been latched.
-                if (!CanResumeFromAnotherVolume && WentBad)
+                // Latch only a REAL fault — a user-requested abort is none. Latching is idempotent, hence it won't hurt
+                //  if the original error has already been latched. (No volume request can be pending here: that path
+                //  returns above.)
+                if (WentBad)
                     LatchFailure(); // latch on the ORIGINAL error if one occured
                 if (!ignoreFailures || IsAbortRequested)
                     break;
             }
         }
 
-        if (rc.filesSelectedIdx < 0)
-        {
-            MultiVolumeContext = null; // we're done with [multi-volume] restore -> clear multi-volume context
-            VolumeToResumeFrom = -1;
-        }
-
         TOC.CurrentSetIndex = rc.initialCurrSetIdx; // restore the initial current set index
 
-        m_logger.LogTrace("{Method} exiting: overallSuccess={Success}, filesSelectedIdx={Idx}, MultiVolumeContext set={Pending}",
-            nameof(RestoreFilesFromCurrentSetDownCore), rc.overallSuccess, rc.filesSelectedIdx, MultiVolumeContext != null);
+        m_logger.LogTrace("{Method} exiting: overallSuccess={Success}, filesSelectedIdx={Idx}",
+            nameof(RestoreFilesFromCurrentSetDownCore), rc.overallSuccess, rc.filesSelectedIdx);
 
         return rc.overallSuccess;
     } // RestoreFilesFromCurrentSetDownCore(List<string>)
