@@ -441,9 +441,11 @@ public abstract class EncryptionAgentTestsBase
         {
             using var agent = fixture.CreateRestoreAgent(restoreDir);
             fixture.TOC.CurrentSetIndex = 1;
-            if (WithSetHeaders)
-                agent.ReadBomHeader();      // resolve the BOM header first, so the injector lands on CONTENT
+
+            // Corrupt the first block of content: either set header if present, or the first file
             fixture.Backend.ContentReadFaults.CorruptOnce(bits: 2, offset: WithSetHeaders ? 48 : 200);
+            fixture.Backend.ContentReadFaults.SkipN = 1; // skip the media header load (attempt)
+
             var notifiable = new TestNotifiable();
 
             var result = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: true, fileNotify: notifiable);

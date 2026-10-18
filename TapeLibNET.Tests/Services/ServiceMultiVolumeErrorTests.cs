@@ -230,9 +230,8 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
                     .WaitAsync(NoHang);
 
                 var prompt = TakeSingleVolumeErrorPrompt(host);
-#warning Examine prompt
-                //Assert.Equal(1, prompt.Volume);
-                //Assert.True(prompt.AllowSkip, "a restore may skip a volume");
+                Assert.Equal(1, prompt.Volume);
+                Assert.True(prompt.AllowSkip, "a restore may skip a volume");
                 Assert.True(result.Success, $"{result.Message}\n{host.DumpReports()}");
                 Assert.True(result.Diagnosis.Success, "the rejected attempt must not linger in the diagnosis");
                 Assert.Equal(FileCount, result.FilesSucceeded);
@@ -275,7 +274,8 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
                 var result = await svc.ExecuteRestoreAsync(MakeRestoreRequest(setIdx, restoreDir)).WaitAsync(NoHang);
 
                 var prompt = TakeSingleVolumeErrorPrompt(host);
-#warning Examine prompt
+                Assert.Equal(1, prompt.Volume);
+                Assert.True(prompt.AllowSkip, "a restore may skip a volume");
                 Assert.False(result.Success);
                 Assert.Equal(onVol1.Count, result.FilesFailed);
                 Assert.Equal(onVol2.Count, result.FilesSucceeded);
@@ -391,7 +391,9 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
                 var result = await svc.ExecuteBackupAsync(MakeBackupRequest(svc, tree.RootPath, "MV-Retried"))
                     .WaitAsync(NoHang);
 
-                Assert.Single(host.VolumeErrorPrompts);
+                var prompt = TakeSingleVolumeErrorPrompt(host);
+                Assert.Equal(2, prompt.Volume);
+                Assert.False(prompt.AllowSkip, "a backup cannot skip a volume");
                 Assert.True(result.Success, $"{result.Message}\n{host.DumpReports()}");
                 Assert.True(result.Diagnosis.Success, "the refused cartridge must not linger in the diagnosis");
                 Assert.Equal(FileCount, result.FilesSucceeded);
