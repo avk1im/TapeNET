@@ -795,7 +795,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             TOC.ContinuedOnNextVolume = true;
             Debug.Assert(CanResumeToNextVolume);
 
-            m_carriedFailure = LastResult;      // survives the caller's BackupTOC() between the volumes
+            m_carriedFailure = LatchedFailure;  // survives the caller's BackupTOC() between the volumes --
+                                                //  but the latch only: the live EOM is a continuation, not a fault!
             return false;                       // do NOT LatchFailure(): this is a continuation, not a fault
         }
 
@@ -1136,7 +1137,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
             // do NOT LatchFailure(): we can continue to the next volume, hence no hard failure
 
-            m_carriedFailure = LastResult;      // survives the caller's BackupTOC() between the volumes
+            m_carriedFailure = LatchedFailure;  // survives the caller's BackupTOC() between the volumes --
+                                                //  but the latch only: the live EOM is a continuation, not a fault!
             
             m_logger.LogTrace("{Method}: EOM was encountered & handled during backup; MultiVolumeContext set up",
                 nameof(BackupFilesToCurrentSet));

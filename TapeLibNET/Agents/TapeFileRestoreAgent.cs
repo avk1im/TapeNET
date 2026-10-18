@@ -610,9 +610,11 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_volumeRejected = false;
         m_logger.LogTrace("Resuming multi-volume restore from new volume #{Volume}", volume);
 
-        // Identifying the cartridge reads its TOC through RestoreTOC(), a public verb that resets the failure latch.
-        //  The operation's earliest failure must survive it — and a cartridge that a retry replaces must leave no trace.
-        TapeResult earliest = LastResult;
+        // Identifying the cartridge reads its TOC through RestoreTOC(), a public verb that resets the failure latch:
+        //  save the latch and put it back afterwards. Only the LATCH — NOT the live error, which here is the previous
+        //  attempt's volume request or rejection. So a genuine failure from an earlier volume survives the check, while a
+        //  rejected cartridge that this retry replaces leaves no trace.
+        TapeResult earliest = LatchedFailure;
         TapeResult check = CheckVolumeToResumeFrom(volume);
         RestoreLatchedFailure(earliest);
 

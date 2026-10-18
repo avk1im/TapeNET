@@ -299,6 +299,16 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     /// </remarks>
     public TapeResult LastResult => _resultBuilder.Result;
 
+    /// <summary>
+    /// The LATCHED failure only — the operation's earliest genuine fault — ignoring the live error.
+    /// </summary>
+    /// <remarks>
+    ///  <see cref="LastResult"/> falls back to the live error when nothing is latched; across a volume
+    ///  change that live error is a mere continuation signal (end-of-media, a volume request) or
+    ///  a rejected cartridge, and must never be promoted into the latch. Leaves the live error untouched.
+    /// </remarks>
+    protected TapeResult LatchedFailure => _resultBuilder.FirstFailure;
+
     #endregion
 
     #region *** TOC Backup ***
