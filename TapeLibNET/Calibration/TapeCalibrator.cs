@@ -844,10 +844,18 @@ public sealed class TapeCalibrator : TapeDriveHolder<TapeCalibrator>
         // Position at BOM of the content partition FIRST, so the new block size applies to it.
         if (!Drive.MoveToPartition(MediaPartition.Content) || !Drive.Rewind())
         {
-            SyncErrorFrom(Drive);
-            LatchFailure();
-            LogErrorAsDebug("Calibration: failed to rewind content partition");
-            return false;
+            if (Drive.LastErrorWin32 == WIN32_ERROR.ERROR_NO_DATA_DETECTED) // blank cartridge is ok
+            {
+                LogErrorAsInfo("Calibration: blank cartridge detected; proceeding");
+                ResetError();
+            }
+            else
+            {
+                SyncErrorFrom(Drive);
+                LatchFailure();
+                LogErrorAsDebug("Calibration: failed to rewind content partition");
+                return false;
+            }
         }
 
         if (!Drive.SetBlockSize(plan.BlockSize))
