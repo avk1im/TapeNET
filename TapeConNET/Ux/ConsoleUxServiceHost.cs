@@ -296,6 +296,11 @@ public sealed class ConsoleUxServiceHost(IConsoleUx ux) : ITapeServiceHost
         => ux.Confirm($"Insert blank media for volume #{nextVolume} and continue?", defaultAnswer: true);
 
     /// <inheritdoc/>
+    public bool OnInsertScratchMediaConfirm()
+        => ux.Confirm("Insert a SCRATCH cartridge for calibration — everything on it will be erased. Continue?",
+            defaultAnswer: false);
+
+    /// <inheritdoc/>
     /// <remarks>
     /// Uses <see cref="IConsoleUx.Ask"/> to prompt for a file path, matching the
     ///  CLI behaviour in the pre-migration <c>TryEmergencyTocExport</c> helper.

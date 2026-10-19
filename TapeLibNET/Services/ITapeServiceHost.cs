@@ -291,6 +291,21 @@ public interface ITapeServiceHost
     bool OnInsertNewMediaConfirm(int nextVolume);
 
     /// <summary>
+    /// Invoked by a destructive calibration after a cartridge holding a backup was ejected: the host prompts the user to
+    ///  insert a SCRATCH cartridge — one that will be erased. Returns <see langword="true"/> when it is ready,
+    ///  <see langword="false"/> to cancel the calibration.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Distinct from <see cref="OnInsertMediaConfirm"/> (a specific volume, to be read) and
+    ///  <see cref="OnInsertNewMediaConfirm"/> (the next backup volume): the host must warn that the cartridge will be
+    ///  erased, and — for virtual drives — must not suggest the file just ejected.
+    /// </para>
+    /// <para>HOST GUIDANCE: a non-interactive host should return <see langword="false"/>.</para>
+    /// </remarks>
+    bool OnInsertScratchMediaConfirm();
+
+    /// <summary>
     /// Invoked when both the primary and the enforced TOC-save to tape have failed.
     /// The host may offer the user a chance to export the in-memory TOC to a file as
     ///  a last-resort recovery mechanism; returns the chosen export path, or

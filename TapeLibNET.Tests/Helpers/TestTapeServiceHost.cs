@@ -333,6 +333,14 @@ public class TestTapeServiceHost(ILogger? logger = null) : ITapeServiceHost
 
     /// <inheritdoc/>
     /// <remarks>
+    /// Dequeues from <see cref="ConfirmAnswers"/>; returns <see langword="false"/> when the queue is empty
+    ///  (safe default: no scratch cartridge — the calibration is cancelled).
+    /// </remarks>
+    public virtual bool OnInsertScratchMediaConfirm()
+        => ConfirmAnswers.Count > 0 && ConfirmAnswers.Dequeue();
+
+    /// <inheritdoc/>
+    /// <remarks>
     /// Dequeues from <see cref="AskAnswers"/>; returns <see langword="null"/> when
     ///  the queue is empty (safe default: decline emergency export).
     /// </remarks>

@@ -198,6 +198,11 @@ Callers never track their own counters — they just read the snapshot. `StatsUn
 - **Backup**: `BackupFileListToCurrentSet` → `BackupFilesToCurrentSet` (loop) → on end-of-media: saves `TapeBackupContext`, returns `false` with `CanResumeToNextVolume == true` → caller ejects/inserts media → `ResumeBackupToNextVolume`.
 - **Restore**: `RestoreFilesFromCurrentSetDownInt` iterates sets oldest-to-newest → if a set is on another volume: saves `TapeRestoreContext`, returns `false` with `CanResumeFromAnotherVolume == true` → caller ejects/inserts media → `ResumeRestoreFromAnotherVolume`.
 
+A backup spans cartridges by writing continuation parts of the same logical set (shared `SetId` and `FileId` sequence);
+the last volume's TOC describes the whole series. Restore starts from it and asks for earlier volumes as needed.
+A cartridge that cannot be used is rejected rather than re-offered; the user may insert it again, skip the volume (restore only) or end.
+See `Design-MultiVolume.md`.
+
 ### Virtual drive support
 
 `VirtualTapeDriveBackend` provides file-backed virtual tape drives for testing without hardware. Created via `VirtualTapeDriveBackend.CreateFileBacked(...)` with configurable capabilities (`WithPartitions` / `WithSetmarks`), capacity, and IO speed simulation.
