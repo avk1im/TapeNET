@@ -42,8 +42,8 @@ public abstract class MultiVolumeEncryptionTestsBase
 
     private const string Password = "multi-volume — Ünïcødé password";
 
-    protected MultiVolumeVirtualTapeFixture CreateFixture(DriveProfile profile)
-        => new(profile, VolumeCapacity, headerMode: HeaderMode);
+    protected MultiVolumeVirtualTapeFixture CreateFixture(DriveProfile profile, long capacity = VolumeCapacity)
+        => new(profile, capacity, headerMode: HeaderMode);
 
     public static TheoryData<DriveProfile> AllProfiles =>
     [
@@ -278,7 +278,7 @@ public abstract class MultiVolumeEncryptionTestsBase
     public void EncryptedIncremental_AfterSpanningBase_RestoresNewestVersions(DriveProfile profile)
     {
         using var tree = SpanningTree();
-        using var fixture = CreateFixture(profile);
+        using var fixture = CreateFixture(profile);  // CreateFixture(profile, VolumeCapacity + 64); -- to leave space for TOCmark gap file
         fixture.BackupFiles(tree.Files, "Full spanning", password: Password);
         int baseParts = PartsOf(fixture.TOC, fixture.TOC.Count).Count;
 
