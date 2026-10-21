@@ -113,7 +113,8 @@ public class TapeIOException : IOException
     #region *** Error Classification ***
 
     /// <summary>True when the error indicates end-of-media (tape full or no more data).</summary>
-    public bool IsEOM => ErrorWin32 is WIN32_ERROR.ERROR_END_OF_MEDIA or WIN32_ERROR.ERROR_NO_DATA_DETECTED;
+    public bool IsEOM => ErrorManageableBase.IsEOM(ErrorWin32);
+    public bool IsEOMorEOD => ErrorManageableBase.IsEOMorEOD(ErrorWin32);
 
     /// <summary>True when the error indicates invalid or corrupted data.</summary>
     public bool IsInvalidData => ErrorWin32 is WIN32_ERROR.ERROR_INVALID_DATA;
@@ -288,8 +289,15 @@ public abstract class ErrorManageableBase(ILogger logger) : IErrorManageable
     /// <summary><see langword="true"/> when an error is recorded.</summary>
     public virtual bool WentBad => !WentOK;
 
+    internal static bool IsEOM(WIN32_ERROR error) => error is WIN32_ERROR.ERROR_END_OF_MEDIA;
+    internal static bool IsEOMorEOD(WIN32_ERROR error) => error is WIN32_ERROR.ERROR_END_OF_MEDIA or WIN32_ERROR.ERROR_NO_DATA_DETECTED;
+
+    public static bool IsEOM(uint error) => IsEOM((WIN32_ERROR)error);
+    public static bool IsEOMorEOD(uint error) => IsEOMorEOD((WIN32_ERROR)error);
+
     /// <summary>True when the current error indicates end-of-media (tape full or no more data).</summary>
-    public bool IsEOM => m_errorOwn is WIN32_ERROR.ERROR_END_OF_MEDIA or WIN32_ERROR.ERROR_NO_DATA_DETECTED;
+    public bool RanToEOM => IsEOM(m_errorOwn);
+    public bool RanToEOMorEOD => IsEOMorEOD(m_errorOwn);
 
     internal void SetError(WIN32_ERROR error, string? message = null)
     {

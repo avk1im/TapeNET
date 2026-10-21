@@ -1,10 +1,9 @@
+using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
-
-using Microsoft.Extensions.Logging;
-
 using TapeLibNET.Media;
+using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Streams;
 
@@ -450,15 +449,33 @@ public class TapeWriteStream : TapeStream
         m_buffer.Reset();
     }
 
+    /// <summary>
+    /// The error for bytes the drive did not take: its own error if it reported one; else end-of-media if the write
+    ///  itself signalled it (early warning / EOM); else a write fault — never a silent success (Design-TocLocation TL-7).
+    /// </summary>
+    private TapeIOException ShortWriteError(int notAccepted, string what)
+    {
+        if (WentBad)
+            return new TapeIOException(m_mgr, this, what);
+        uint code = EOFEncountered
+            ? (uint)WIN32_ERROR.ERROR_END_OF_MEDIA
+            : (uint)WIN32_ERROR.ERROR_WRITE_FAULT;
+        return new TapeIOException(code,
+            $"{what}: the drive accepted {notAccepted:N0} byte(s) fewer than offered without reporting an error");
+    }
+
     internal int WriteDirect(byte[] buffer, int offset, int count)
     {
-        var result = m_mgr.Drive.WriteDirect(buffer, offset, count, out bool tapemark, out bool ew, out bool eom);
+        // When writing a content set with the TOC co-located (TOC-in-set), a logical early warning means
+        //  "stop content, leave room for the TOC" -- surfaced here as end-of-media so the caller wraps up
+        //  exactly as it does for a hard EOM. While writing the TOC itself we ignore EW (only a real EOM
+        //  counts) and the drive must not clamp the write to the reserve: the reserve IS the TOC's room
+        //  (Design-TocLocation F2). An Initiator partition needs no reserve.
+        bool contentWrite = m_mgr.ShouldStopContentOnEarlyWarning;
+        var result = m_mgr.Drive.WriteDirect(buffer, offset, count, honorEwReserve: contentWrite,
+            out bool tapemark, out bool ew, out bool eom);
         TapemarkEncountered = tapemark;
-        // Phase 3: when writing a content set with the TOC co-located (TOC-in-set), a logical early
-        //  warning means "stop content, leave room for the TOC" -- surfaced here as end-of-media so
-        //  the caller wraps up exactly as it does for a hard EOM. While writing the TOC itself we
-        //  ignore EW (the TOC path reacts only to a real EOM); an Initiator partition needs no reserve.
-        bool ewStop = ew && m_mgr.ShouldStopContentOnEarlyWarning;
+        bool ewStop = ew && contentWrite;
         EOFEncountered = eom || ewStop;
         return result;
     }
@@ -480,7 +497,16 @@ public class TapeWriteStream : TapeStream
         throw new NotImplementedException(nameof(Read));
     }
 
-    // Override Write and WriteAsync methods
+    /// <inheritdoc/>
+    /// <remarks>Large writes can be sent directly to the device when the internal buffer is empty. Any failed
+    ///  or short write faults the stream and prevents further writes.</remarks>
+    /// <param name="buffer">The source byte array containing data to write.</param>
+    /// <param name="offset">The zero-based byte offset in <paramref name="buffer"/> at which to begin copying data.
+    /// </param>
+    /// <param name="count">The number of bytes to write from <paramref name="buffer"/>.</param>
+    /// <exception cref="TapeIOException">
+    /// The stream is faulted, a write operation fails, or the underlying device accepts fewer bytes than required.
+    /// </exception>
     public override void Write(byte[] buffer, int offset, int count)
     {
         CheckForRW(buffer, offset, count);
@@ -492,21 +518,25 @@ public class TapeWriteStream : TapeStream
         while (count > 0)
         {
             if (m_buffer.IsFull)
-                Flush();    // faults the stream itself on failure
+                Flush();    // faults the stream itself on failure — including a short spill (F1)
 
             if (m_buffer.IsEmpty && count >= m_buffer.Capacity)
             {
                 // Optimization: if count >= m_buffer.Capacity, write directly to tape from 'buffer' without using m_buffer
                 int written = WriteDirect(buffer, offset, count);
-                if (WentBad)
+                Debug.Assert(written <= count);
+
+                // A failed write — or one the drive accepted nothing of: without this check the loop would spin
+                //  forever on a 0-byte write that reported no error (F5).
+                if (WentBad || written == 0)
                 {
-                    m_logger.LogDebug("Media stream WriteDirect error 0x{Error:X8} in {Method}", LastError, nameof(Write));
-                    var ex = new TapeIOException(m_mgr, this, "write failed");
+                    m_logger.LogDebug("Media stream WriteDirect error 0x{Error:X8} ({Written} of {Count} B) in {Method}",
+                        LastError, written, count, nameof(Write));
+                    var ex = ShortWriteError(count - written, "write failed");
                     Fault();
                     throw ex;
                 }
 
-                Debug.Assert(written <= count);
                 offset += written;
                 count -= written;
                 m_accLength += written;
@@ -516,9 +546,11 @@ public class TapeWriteStream : TapeStream
                 // If m_buffer has content or it's larger than count, we have to first fill up the buffer
                 int buffered = m_buffer.FillFrom(buffer, offset, count);
                 Debug.Assert(buffered <= count);
+
                 offset += buffered;
                 count -= buffered;
                 m_accLength += buffered;
+
                 if (WentBad)
                 {
                     var ex = new TapeIOException(m_mgr, this, "write failed");
@@ -529,9 +561,14 @@ public class TapeWriteStream : TapeStream
         }
     }
 
+    /// <inheritdoc/>
+    /// <exception cref="TapeIOException">
+    /// The stream is faulted, a write operation fails, or the underlying device accepts fewer bytes than remained.
+    /// </exception>
     public override void Flush()
     {
         CheckForRW();
+
         if (m_buffer.IsEmpty)
             return;
 
@@ -539,16 +576,19 @@ public class TapeWriteStream : TapeStream
         if (WentOK && m_buffer.IsNonEmpty) // need to flush the rest, as a chunk of BlockSize
             m_buffer.SpillZeroPaddedToOwner((int)BlockSize);
 
-        if (WentBad)
+        // Anything left in the buffer was NOT written — whether or not the drive said why. Reporting success here
+        //  sealed an empty TOC copy with a filemark (F1); faulting the stream suppresses that filemark.
+        if (WentBad || m_buffer.IsNonEmpty)
         {
-            m_logger.LogError("Media stream flush error 0x{Error:X8} in {Method}", LastError, nameof(Flush));
-            var ex = new TapeIOException(m_mgr, this, "flush failed");     // capture the drive's error first
+            m_logger.LogError("Media stream flush error 0x{Error:X8}, {Left} B unwritten in {Method}",
+                LastError, m_buffer.ContentSize, nameof(Flush));
+            var ex = ShortWriteError(m_buffer.ContentSize, "flush incomplete");    // capture the error first
             Fault();
             throw ex;
         }
 
-        // Notice: Here in Flush() we do not update Writte, as it counts only bytes that have been ingested by Write()
-        //  and not the bytes actually witten out to the tape
+        // Notice: Here in Flush() we do not update the accumulated length, as it counts only bytes ingested by Write()
+        //  and not the bytes actually written out to the tape
     }
 
     // Override Seek method

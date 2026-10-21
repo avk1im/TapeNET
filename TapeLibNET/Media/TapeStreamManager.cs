@@ -817,17 +817,8 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
     #region *** File and set state operations ***
 
-    /// <summary>The drive reports that the medium is full — no room for the write, not a fault.</summary>
-    private static bool IsEndOfMedia(WIN32_ERROR error) => error is
-        WIN32_ERROR.ERROR_END_OF_MEDIA
-        or WIN32_ERROR.ERROR_EOM_OVERFLOW
-        or WIN32_ERROR.ERROR_DISK_FULL
-        or WIN32_ERROR.ERROR_HANDLE_DISK_FULL;
-
     /// <summary>The navigator ran past the last mark: no more data that way — not a fault.</summary>
-    private static bool IsPositionalEnd(WIN32_ERROR error) => error is
-        WIN32_ERROR.ERROR_NO_DATA_DETECTED
-        or WIN32_ERROR.ERROR_END_OF_MEDIA;
+    private static bool IsPositionalEnd(WIN32_ERROR error) => IsEOM(error);
 
     private bool BeginReadFile()
     {
@@ -1030,7 +1021,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         SyncErrorFrom(Navigator);
         Navigator.ResetContentSet();        // not after a setmark — position as good as unknown
 
-        if (Navigator is TapeNavigatorTOCInPartition && IsEndOfMedia(LastErrorWin32))
+        if (Navigator is TapeNavigatorTOCInPartition && RanToEOM)
         {
             m_logger.LogInformation(
                 "Drive #{Drive}: The closing setmark did not fit ({Error}) — the set ends at end-of-media (F32)",
@@ -1286,7 +1277,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
                 return new WriteResult(blocks, EomEncountered: eom || ewStop, Exception: null);
             }
 
-            if (Drive.LastErrorWin32 == WIN32_ERROR.ERROR_END_OF_MEDIA)
+            if (Drive.RanToEOM)
                 return new WriteResult(blocks, EomEncountered: true, Exception: null);
 
             return new WriteResult(

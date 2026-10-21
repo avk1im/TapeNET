@@ -1,3 +1,5 @@
+using Windows.Win32.System.SystemServices; // Helpers.BytesToString
+
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
 using TapeLibNET.Drive;
@@ -5,8 +7,6 @@ using TapeLibNET.Headers;
 using TapeLibNET.Media;
 using TapeLibNET.Scan;
 using TapeLibNET.Toc;
-using Windows.Win32.Foundation;
-using Windows.Win32.System.SystemServices; // Helpers.BytesToString
 
 namespace TapeLibNET.Services;
 
@@ -165,8 +165,7 @@ public abstract class ServiceOperationProgressHandler(
         ThrowIfAbortRequested();
 
         // End-of-media errors are handled by the multi-volume loop; always skip silently.
-        if (result.ErrorCode == (uint)WIN32_ERROR.ERROR_END_OF_MEDIA ||
-            result.ErrorCode == (uint)WIN32_ERROR.ERROR_NO_DATA_DETECTED)
+        if (ErrorManageableBase.IsEOMorEOD(result.ErrorCode))
         {
             return FileFailedAction.Skip;
         }

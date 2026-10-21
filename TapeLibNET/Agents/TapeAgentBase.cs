@@ -64,6 +64,10 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
 
     /// <summary>Cumulative bytes written to tape (content + TOC) during this agent's lifetime.</summary>
     public long BytesBackedup { get; protected set; } = 0L;
+    /// <summary>
+    /// Bytes of the last TOC copy written by <see cref="BackupTOC"/>; 0 before any. For the F4 footprint check
+    /// .</summary>
+    public long LastTOCCopyBytes { get; private set; }
     /// <summary>Cumulative bytes read from tape (content + TOC) during this agent's lifetime.</summary>
     public long BytesRestored { get; protected set; } = 0L;
 
@@ -347,6 +351,10 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
         return Manager.ProduceWriteTOCStream();
     }
 
+    /// <summary>
+    /// Writes a single TOC copy to the tape.
+    /// </summary>
+    /// <returns><see langword="true"/> only if every byte reached the tape.</returns>
     private bool BackupTOCCore()
     {
         try
@@ -365,8 +373,8 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
             // data-integrity operation and must never be aborted.
 
             // The emitter owns the format and the integrity trailer; it never disposes wstream.
-            RecordEmitter.WriteToc(TOC, wstream);
-
+            RecordEmitter.WriteTOC(TOC, wstream);
+            LastTOCCopyBytes = wstream.Length;
             BytesBackedup += wstream.Length;
             return true;
         }
@@ -386,6 +394,10 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     ///  strategy ensures TOC recoverability even with partial media damage.
     /// </para>
     /// <para>
+    /// The 2nd copy is not attempted when the 1st ran into end-of-media — its data or its closing filemark: it cannot fit,
+    ///  and the attempt would only leave a stray partial block (Design-TocLocation W1).
+    /// </para>
+    /// <para>
     /// On success, clears <see cref="TapeTOC.LoadedFromLegacy"/>: from here on the tape carries a 2.1 TOC.
     /// </para>
     /// <para>
@@ -398,6 +410,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     public TapeResult BackupTOC(bool enforce = false)
     {
         ResetLatchedFailure();
+        LastTOCCopyBytes = 0;
 
         // We stamp a stable media identity before the first durable write. New media (just
         //  formatted) and legacy Guid-less media (just loaded) both reach here with an empty
@@ -433,22 +446,55 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
 
         // To ensure TOC integrity, backup TOC twice
         bool result1 = BackupTOCCore();
-        if (result1)
+
+        // W1: did the 1st copy run into end-of-media — its data (result1 false), or only its closing filemark (the
+        //  manager's error after the stream signed out)?
+        bool copy1HitEom = result1
+            ? Manager.RanToEOM
+            : RanToEOM;
+
+        if (result1 && !copy1HitEom)
             m_logger.LogTrace("TOC 1st copy backed up ok");
+        else if (result1)
+            m_logger.LogWarning("TOC 1st copy written, but its closing filemark did not fit (end-of-media)");
         else
             m_logger.LogWarning("TOC 1st copy backup failed");
 
-        m_logger.LogTrace("Backing up TOC, 2nd copy");
-        ResetError();
-        ResetLatchedFailure(); // if the 2nd copy succeeds, we treat it as the overall success
-        bool result2 = BackupTOCCore();
-        if (result2)
-            m_logger.LogTrace("TOC 2nd copy backed up ok");
+        bool result2 = false;
+        if (copy1HitEom)
+        {
+            m_logger.LogWarning("TOC 2nd copy skipped: the volume is full — only {Copies} copy on tape",
+                result1 ? "one" : "no");
+        }
         else
-            m_logger.LogWarning("TOC 2nd copy backup failed");
+        {
+            m_logger.LogTrace("Backing up TOC, 2nd copy");
+            ResetError();
+            if (result1)
+                ResetLatchedFailure(); // copy 1 is on tape: a failing copy 2 is no failure of the operation
+            result2 = BackupTOCCore();
+            if (result2)
+                m_logger.LogTrace("TOC 2nd copy backed up ok");
+            else
+                m_logger.LogWarning("TOC 2nd copy backup failed");
+        }
+
+        // F4: does this layout's full TOC footprint fit the reserve armed for content? A TOC that outgrew it loses its
+        //  2nd copy on a full volume. (TOC-in-set only: with an initiator partition there is no reserve.)
+        if (Navigator is TapeNavigatorTOCInSet && LastTOCCopyBytes > 0)
+        {
+            long footprint = Navigator.TOCFootprint(LastTOCCopyBytes);
+            if (footprint > Navigator.TOCCapacity)
+                m_logger.LogWarning(
+                    "The TOC ({Bytes:N0} B) needs {Footprint:N0} B in this layout, more than its reserve of {Reserve:N0} B — " +
+                    "on a full volume only one copy may fit", LastTOCCopyBytes, footprint, Navigator.TOCCapacity);
+        }
 
         if (!result1 && !result2)
             return FailedOperationResult;
+
+        if (!result1)
+            ResetLatchedFailure(); // copy 2 is on tape: succeed (Phase 2 will report the missing copy as an anomaly)
 
         // What now stands on tape: 2.1 in the product — a legacy tape is upgraded (the service logs it, §9.2, F28).
         TOC.LoadedFromLegacy = RecordEmitter.DataFormat == TapeDataFormat.Legacy;

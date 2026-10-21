@@ -1051,7 +1051,7 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
         {
             SyncErrorFrom(m_currentMedia);
 
-            if (m_currentMedia.LastErrorWin32 == WIN32_ERROR.ERROR_END_OF_MEDIA)
+            if (m_currentMedia.RanToEOM)
                 eom = true;
         }
         else

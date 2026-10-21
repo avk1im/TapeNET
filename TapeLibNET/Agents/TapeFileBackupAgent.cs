@@ -262,14 +262,20 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         // Overwriting existing content (not appending at EOD) leaves the drive reporting capacity−EOD,
         //  which would trip a premature early warning and clamp the set to zero bytes. Anchor the EW
-        //  logic at the approximate write position until the first write resets EOD. Mirrors the target
-        //  resolution above: newSet + already-have-sets-on-volume ⇒ append at EOD (no notification);
-        //  newSet as first-on-volume ⇒ from BOM (offset 0); !newSet ⇒ overwrite the current set.
+        //  logic at the approximate write position until the first write resets EOD:
+        //   - newSet after other sets on this volume ⇒ append at EOD: the drive's figure is right (no anchor);
+        //   - newSet heading the volume, header JUST written ⇒ the header write reset EOD: no anchor either;
+        //   - newSet as first-on-volume otherwise ⇒ from begin-of-content: the media header (if any) lies behind
+        //     the head and is NOT available to the TOC (Design-TocLocation F3 — a flat 0 forgot it);
+        //   - !newSet ⇒ overwrite the current set (the TOC's sum already counts the header block).
         //  Irrelevant with an Initiator partition (no TOC reserve), so skip it there.
         if (!Drive.HasInitiatorPartition)
         {
+            long headerFootprint = Navigator.MediaHeaderPresence == TapeHeaderPresence.Present
+                ? TapeHeaderBlock.Size : 0L;
+            bool headerJustWritten = headsVolume && !deferMediaHeaderWrite;
             long approxWritten = newSet
-                ? (TOC.CurrentSetIndexOnVolume > 0 ? -1L : 0L)
+                ? (TOC.CurrentSetIndexOnVolume > 0 || headerJustWritten ? -1L : headerFootprint)
                 : TOC.ComputeContentSizeOnTapeBeforeCurrentSet(Drive.BlockSize,
                     withSetHeaders: Navigator.SetHeadersExpected); // by now the header presence has
                                                                    //  already been resolved

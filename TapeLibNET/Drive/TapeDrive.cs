@@ -406,16 +406,29 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     #region *** Direct Read/Write ***
 
     /// <summary>Writes raw blocks to tape. Returns bytes written;
-    /// sets <paramref name="tapemark"/>/<paramref name="ew"/>/<paramref name="eom"/> on boundary conditions.</summary>
+    /// sets <paramref name="tapemark"/>/<paramref name="ew"/>/<paramref name="eom"/> on boundary conditions.
+    /// </summary>
     public int WriteDirect(byte[] buffer, int offset, int count,
+        out bool tapemark, out bool ew, out bool eom)
+        => WriteDirect(buffer, offset, count, honorEwReserve: true, out tapemark, out ew, out eom);
+
+    /// <summary>
+    /// Writes raw blocks to tape. With <paramref name="honorEwReserve"/> <see langword="false"/> the early-warning
+    ///  reserve does not CLAMP the write: the reserve exists for the TOC, so the TOC area itself must be allowed
+    ///  to use it (Design-TocLocation TL-8). Early-warning tracking and reporting are unaffected.
+    /// </summary>
+    internal int WriteDirect(byte[] buffer, int offset, int count, bool honorEwReserve,
         out bool tapemark, out bool ew, out bool eom)
     {
         m_backend.CheckForRW(buffer, offset, count);
+
         int blocksToWrite = count / (int)BlockSize;
         int toWrite = blocksToWrite * (int)BlockSize;
+
         tapemark = false;
         ew = false;
         eom = false;
+
         if (toWrite == 0)
             return 0;
 
@@ -423,8 +436,9 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         //  "you have already crossed the line". That is harmless while a single write is small
         //  relative to the reserve, but a write comparable to (or larger than) the reserve can
         //  consume the whole reserve -- and the room meant for the TOC -- in one go. Guard that
-        //  case by clamping the write to what still fits ahead of the reserve.
-        bool ewClamped = ClampWriteToEarlyWarning(ref toWrite);
+        //  case by clamping the write to what still fits ahead of the reserve. Never for the TOC
+        //  area itself: the reserve is ITS room.
+        bool ewClamped = honorEwReserve && ClampWriteToEarlyWarning(ref toWrite);
         if (toWrite == 0)
         {
             // Nothing fits ahead of the reserve: report EW without writing so the caller
@@ -452,7 +466,6 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         //  PEW stays an internal detail (phase-2 anchor); EW anchor drives the precise tail estimate.
         //  We ALWAYS track the physical EW/PEW landmark: cheap (anchor set once), and required by
         //  EstimateActualRemaining()'s precise tail path even when NO logical reserve was requested
-
         IsProgrammableEarlyWarning = pew;
         CapturePhysicalEarlyWarning(physicalEw);
 
@@ -466,7 +479,6 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         IsEarlyWarning = logicalEw;
         ew = m_desiredEarlyWarning > 0L && logicalEw; // only report to caller if desired
 
-
         if (WentBad)
         {
             if (tapemark)
@@ -478,7 +490,6 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         }
 
         m_byteCounter += written;
-
         return written;
     }
 
@@ -1319,23 +1330,35 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         return true;
     }
 
-    /// <summary>Writes a short dummy file (≥ <see cref="MinimumBlockSize"/> bytes) used as a gap before TOC marks.</summary>
-    public bool WriteGapFile()
+    /// <summary>Length of the gap file written before the TOC mark: at least one minimum-size block.</summary>
+    internal int GapFileLength => Math.Max((int)MinimumBlockSize, c_gapFileLength);
+
+    /// <summary>
+    /// Writes a short dummy file (≥ <see cref="MinimumBlockSize"/> bytes) used as a gap before TOC marks.
+    /// </summary>
+    /// <remarks>
+    /// Part of the TOC area, so by default it sets <paramref name="honorEwReserve"/> to <see langword="false"/>
+    ///  (do NOT honour the early-warning reserve, Design-TocLocation F2):
+    ///  a clamped gap would fail the whole TOC write on exactly the nearly full volume the reserve exists for.
+    /// </remarks>
+    public bool WriteGapFile(bool honorEwReserve = false)
     {
         if (!IsMediaLoaded)
             return false;
 
-        int length = Math.Max((int)MinimumBlockSize, c_gapFileLength);
+        int length = GapFileLength;
         byte[] buffer = new byte[length];
+
         uint blockSize = BlockSize;
         SetBlockSize((uint)length);
-        int result = WriteDirect(buffer, 0, length);
+        int result = WriteDirect(buffer, 0, length, honorEwReserve: honorEwReserve, out _, out _, out _);
         SetBlockSize(blockSize);
 
         if (WentOK && result == length)
             m_logger.LogTrace("{Prefix}: Wrote gap file: {Bytes} bytes", LogPrefix, length);
         else
             LogErrorAsDebug("Failed to write gap file");
+
         return WentOK && result == length;
     }
 

@@ -31,7 +31,7 @@ public interface ITapeRecordEmitter
     void WriteFileHeader(Stream stream, TapeSetTOC set, TapeFileInfo file);
 
     /// <summary>Writes one complete TOC copy, integrity trailer included.</summary>
-    void WriteToc(TapeTOC toc, Stream stream);
+    void WriteTOC(TapeTOC toc, Stream stream);
 
     /// <summary>
     /// Frames <paramref name="header"/> into one standard header block, or returns <see langword="null"/> when it does
@@ -71,7 +71,7 @@ internal sealed class TapeRecordEmitter21 : ITapeRecordEmitter, IDisposable
         m_frames.WriteInline(stream, m_fileHeader);
     }
 
-    public void WriteToc(TapeTOC toc, Stream stream) => toc.SaveTo(stream);
+    public void WriteTOC(TapeTOC toc, Stream stream) => toc.SaveTo(stream);
 
     // Rare (one per volume / set) and the 16 KiB block array is inherent — no gain from the frame writer here.
     public byte[]? FrameHeaderBlock(TapeHeader header) => TapeHeaderBlock.Frame(header);
