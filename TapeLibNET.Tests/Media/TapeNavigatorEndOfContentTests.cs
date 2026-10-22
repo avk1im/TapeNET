@@ -1,7 +1,7 @@
-using Windows.Win32.Foundation;
-
 using TapeLibNET.Agents;
+using TapeLibNET.Media;
 using TapeLibNET.Tests.Helpers;
+using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Tests.Media;
 
@@ -43,7 +43,17 @@ public class TapeNavigatorEndOfContentTests
         agent.Navigator.ResetContentSet();
 
         Assert.False(agent.Navigator.MoveToEndOfContent(), "content without marks must not be taken for blank media");
-        Assert.Equal(WIN32_ERROR.ERROR_INVALID_DATA, agent.Navigator.LastErrorWin32);
+
+        // R2's promise: refused, and settled NOWHERE. The error is either INVALID_DATA, or — when the mark-based locate
+        //  failed positionally — that positional error, kept so the agent's ladder can retry from begin-of-content.
+        Assert.Equal(TapeNavigator.UnknownSet, agent.Navigator.CurrentContentSet);
+        Assert.Contains(agent.Navigator.LastErrorWin32, new[]
+        {
+            WIN32_ERROR.ERROR_INVALID_DATA,
+            WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA,
+            WIN32_ERROR.ERROR_NO_DATA_DETECTED,
+            WIN32_ERROR.ERROR_END_OF_MEDIA,
+        });
     }
 
     /// <summary>Blank media (headed or not): end-of-content IS begin-of-content, at its exact block.</summary>
