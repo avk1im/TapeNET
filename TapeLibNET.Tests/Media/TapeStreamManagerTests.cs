@@ -1,6 +1,7 @@
 using TapeLibNET.Media;
 
 using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Toc;
 
 namespace TapeLibNET.Tests.Media;
 
@@ -76,13 +77,31 @@ public class TapeStreamManagerTests
     }
 
     /// <summary>
+    /// TOC-stream payload a reader can IDENTIFY: a real serialized TOC (empty media), padded with deterministic filler
+    ///  to <paramref name="length"/>. TOC-in-set navigators identify the block at begin-of-content before treating a tape
+    ///  without content marks as TOC-only (Design-TocLocation R2) — arbitrary bytes are indistinguishable from content.
+    /// </summary>
+    private static byte[] GenerateTOCData(int length)
+    {
+        using var ms = new MemoryStream();
+        new TapeTOC("Test Media").SaveTo(ms);     // ← the serializer TapeAgentBase.BackupTOCCore / TapeRecordEmitter21 use
+        byte[] toc = ms.ToArray();
+
+        var data = new byte[Math.Max(length, toc.Length)];
+        toc.CopyTo(data, 0);
+        for (int i = toc.Length; i < data.Length; i++)
+            data[i] = (byte)(0xCC ^ (i & 0xFF));
+        return data;
+    }
+
+    /// <summary>
     /// Writes a complete TOC round-trip: two copies of data separated by filemarks,
     /// using TapeStreamManager's TOC stream provisioning.
     /// Returns the data written for verification.
     /// </summary>
     private static byte[] WriteTOCViaManager(TapeStreamManager mgr, int dataLength = 1024)
     {
-        var tocData = GenerateTestData(dataLength, 0xCC);
+        var tocData = GenerateTOCData(dataLength);
 
         EnsureReadyForTOCWrite(mgr);
 

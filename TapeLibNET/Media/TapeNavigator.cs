@@ -1341,7 +1341,15 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
             return false;           // transport error: no evidence either way — the drive's error stands
 
         ResetError();
-        if (!MoveToBeginOfContentFromBom(rewindFirst: true))
+        if (!Drive.Rewind())
+            return false;
+
+        // Begin-of-content by EVIDENCE, not by cached presence: a media header at BOM is skipped with its mark.
+        var block = new byte[TapeHeaderBlock.Size];
+        int read = TapeHeaderBlock.Read(Drive, block, out TapeHeader? header);
+        ResetError();
+        bool headed = read > 0 && header is TapeMediaHeader;
+        if (!Drive.Rewind() || (headed && !Drive.MoveToNextFilemark(1)))
             return false;
         long bocBlock = Drive.CurrentBlock;
 
@@ -1353,9 +1361,8 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
             return true;
         }
 
-        // (2) Zero content sets: the TOC itself stands at begin-of-content. Identify the block, then return to it.
-        var block = new byte[TapeHeaderBlock.Size];
-        int read = TapeHeaderBlock.Read(Drive, block, out _);
+        // (2) Zero content sets: the TOC itself stands at begin-of-content.
+        read = TapeHeaderBlock.Read(Drive, block, out _);
         bool tocAtBoc = read > 0 && TapeTOC.TryPeek(block, read, out _, out _);
         ResetError();
         if (!Drive.MoveToBlock(bocBlock))
