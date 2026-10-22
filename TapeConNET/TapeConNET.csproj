@@ -52,11 +52,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="8.0.0" />
-    <PackageReference Include="Spectre.Console" Version="0.55.2" />
-    <PackageReference Include="System.CommandLine" Version="2.0.7" />
-    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.106">
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.13" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.13" />
+    <PackageReference Include="Spectre.Console" Version="0.57.2" />
+    <PackageReference Include="System.CommandLine" Version="2.0.13" />
+    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.367">
       <!-- <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets> -->
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>

@@ -447,11 +447,10 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
         // To ensure TOC integrity, backup TOC twice
         bool result1 = BackupTOCCore();
 
-        // W1: did the 1st copy run into end-of-media — its data (result1 false), or only its closing filemark (the
-        //  manager's error after the stream signed out)?
-        bool copy1HitEom = result1
-            ? Manager.RanToEOM
-            : RanToEOM;
+        // W1: did the 1st copy run into end-of-media — its data (result1 false: the agent's own error, set by
+        //  BackupTOCCore from the stream's exception), or only its closing filemark (the drive's error, left by the
+        //  failed WriteFilemark after the stream signed out)?
+        bool copy1HitEom = result1 ? Drive.RanToEOM : this.RanToEOM;
 
         if (result1 && !copy1HitEom)
             m_logger.LogTrace("TOC 1st copy backed up ok");

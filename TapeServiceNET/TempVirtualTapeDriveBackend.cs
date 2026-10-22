@@ -1,3 +1,5 @@
+using Windows.Win32.Foundation;
+
 using TapeLibNET.Drive;
 using TapeLibNET.Virtual;
 
@@ -22,15 +24,12 @@ internal sealed class TempVirtualTapeDriveBackend(
     private readonly string _contentFilePath = contentFilePath;
     private readonly string? _initiatorFilePath = initiatorFilePath;
 
-    // ── ErrorException state: delegate to inner so CaptureError() on the wrapper sees ─
-    //    the correct error code after any inner backend operation.           ──
-    //    Without this, CaptureError(wrapper) always returns 0 because the   ──
-    //    wrapper's own m_errorOwn is never set.                              ──
+    // ── Error state: delegate to inner so CaptureError() on the wrapper sees ──
+    //    the correct error after any inner backend operation. LastError, WentOK,
+    //    WentBad, RanToEOM… all derive from LastErrorWin32 — one override covers them.
 
-    public override uint LastError => _inner.LastError;
+    internal override WIN32_ERROR LastErrorWin32 => _inner.LastErrorWin32;
     public override string LastErrorMessage => _inner.LastErrorMessage;
-    public override bool WentOK => _inner.WentOK;
-    public override bool WentBad => _inner.WentBad;
 
     // ── Forward all backend members to the inner backend ────────────────────
 

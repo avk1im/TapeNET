@@ -79,4 +79,19 @@ public class TapeNavigatorEndOfContentTests
         Assert.Equal(2, fixture.TOC.Count);
         Assert.Equal(tree1.Files.Count, fixture.TOC[1].Count);
     }
+
+    /// <summary>A tape holding only a TOC (zero content sets): end-of-content is begin-of-content, and the TOC reloads.</summary>
+    [Theory]
+    [MemberData(nameof(InSetProfilesAndHeaders))]
+    public void TocOnly_ZeroSets_EndOfContentIsBeginOfContent(DriveProfile profile, bool headed)
+    {
+        using var fixture = new VirtualTapeFixture(profile, withMediaHeader: headed);
+        fixture.SaveAndReloadTOC();
+
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
+        agent.EnsureMediaHeaderResolved();
+        agent.Navigator.ResetContentSet();
+        Assert.True(agent.Navigator.MoveToEndOfContent(), agent.Navigator.LastErrorMessage);
+        Assert.Equal(fixture.FirstContentBlock, fixture.Drive.CurrentBlock);
+    }
 }

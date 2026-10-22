@@ -1,10 +1,12 @@
-﻿using System.ComponentModel;
+﻿using Microsoft.Extensions.Logging;
+
+using Windows.Win32.Foundation;
+
+using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
-using Microsoft.Extensions.Logging;
 using TapeLibNET.Drive;
-using Windows.Win32.Foundation;
 
 namespace TapeLibNET;
 
@@ -246,6 +248,24 @@ public class TapeIOException : IOException
 /// <summary>
 /// Base class providing common error handling and logging for tape-related classes.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>One source of truth.</b> <see cref="LastErrorWin32"/> is the EFFECTIVE error and the only virtual error accessor:
+///  a derived class that adds a fallback (<see cref="TapeDriveHolder{T}"/>: the drive's error) overrides it, and every
+///  other view — <see cref="LastError"/>, <see cref="WentOK"/>, <see cref="WentBad"/>, <see cref="RanToEOM"/>,
+///  <see cref="RanToEOMorEOD"/> — follows. A check can no longer see one error through one member and another through
+///  the next.
+/// </para>
+/// <para>
+/// <b>Win32 types stay internal.</b> The typed members are <see langword="internal"/>; the public surface exposes
+///  <see langword="uint"/> casts of them (<see cref="IErrorManageable"/>).
+/// </para>
+/// <para>
+/// <b>Reading vs. writing.</b> Reads see the effective error; writes (<see cref="SetError(WIN32_ERROR, string?)"/>, the
+///  <see cref="LastErrorWin32"/> setter) always set this object's OWN error. <see cref="OwnErrorWin32"/> reads the own
+///  error alone, for the rare check that must not see a fallback.
+/// </para>
+/// </remarks>
 public abstract class ErrorManageableBase(ILogger logger) : IErrorManageable
 {
     #region *** Private Fields ***
@@ -261,11 +281,37 @@ public abstract class ErrorManageableBase(ILogger logger) : IErrorManageable
 
     #endregion
 
-    #region *** IErrorManageable Implementation ***
+    #region *** Effective error — the virtual core (internal: Win32 types) ***
 
-    public virtual uint LastError => (uint)LastErrorWin32;
+    /// <summary>
+    /// The EFFECTIVE last error: this object's own, or whatever fallback a derived class adds. The getter is the one
+    ///  virtual error accessor; the setter always sets this object's OWN error.
+    /// </summary>
+    internal virtual WIN32_ERROR LastErrorWin32
+    {
+        get => m_errorOwn;
+        set => SetError(value);
+    }
+
+    /// <summary>This object's OWN error only, ignoring any fallback.</summary>
+    internal WIN32_ERROR OwnErrorWin32 => m_errorOwn;
+
+    /// <summary>This object's OWN error message only, ignoring any fallback.</summary>
+    protected string OwnErrorMessage => m_errorMessageOwn;
+
+    #endregion
+
+    #region *** IErrorManageable Implementation — public casts ***
+
+    /// <inheritdoc/>
+    /// <remarks>The effective error (<see cref="LastErrorWin32"/>) as a <see langword="uint"/>.</remarks>
+    public uint LastError => (uint)LastErrorWin32;
+
+    /// <inheritdoc/>
+    /// <remarks>Virtual: a derived class with a fallback returns the message that belongs to the effective error.</remarks>
     public virtual string LastErrorMessage => m_errorMessageOwn;
 
+    /// <inheritdoc/>
     public virtual void ResetError()
     {
         m_errorOwn = WIN32_ERROR.NO_ERROR;
@@ -274,30 +320,34 @@ public abstract class ErrorManageableBase(ILogger logger) : IErrorManageable
 
     #endregion
 
-    #region *** Error Helpers ***
+    #region *** Outcome shortcuts — derived from the effective error ***
 
-    /// <summary>Typed accessor for the last error (internal use).</summary>
-    internal WIN32_ERROR LastErrorWin32
-    {
-        get => m_errorOwn;
-        set => SetError(value);
-    }
+    /// <summary><see langword="true"/> when no error is in effect.</summary>
+    public bool WentOK => LastErrorWin32 == WIN32_ERROR.NO_ERROR;
 
-    /// <summary><see langword="true"/> when no error is recorded.</summary>
-    public virtual bool WentOK => m_errorOwn == WIN32_ERROR.NO_ERROR;
+    /// <summary><see langword="true"/> when an error is in effect.</summary>
+    public bool WentBad => !WentOK;
 
-    /// <summary><see langword="true"/> when an error is recorded.</summary>
-    public virtual bool WentBad => !WentOK;
+    /// <summary>True when the effective error indicates end-of-media (tape full).</summary>
+    public bool RanToEOM => IsEOM(LastErrorWin32);
+
+    /// <summary>True when the effective error indicates end-of-media or end-of-data.</summary>
+    public bool RanToEOMorEOD => IsEOMorEOD(LastErrorWin32);
+
+    #endregion
+
+    #region *** Error classification ***
 
     internal static bool IsEOM(WIN32_ERROR error) => error is WIN32_ERROR.ERROR_END_OF_MEDIA;
-    internal static bool IsEOMorEOD(WIN32_ERROR error) => error is WIN32_ERROR.ERROR_END_OF_MEDIA or WIN32_ERROR.ERROR_NO_DATA_DETECTED;
+    internal static bool IsEOMorEOD(WIN32_ERROR error) =>
+        error is WIN32_ERROR.ERROR_END_OF_MEDIA or WIN32_ERROR.ERROR_NO_DATA_DETECTED;
 
     public static bool IsEOM(uint error) => IsEOM((WIN32_ERROR)error);
     public static bool IsEOMorEOD(uint error) => IsEOMorEOD((WIN32_ERROR)error);
 
-    /// <summary>True when the current error indicates end-of-media (tape full or no more data).</summary>
-    public bool RanToEOM => IsEOM(m_errorOwn);
-    public bool RanToEOMorEOD => IsEOMorEOD(m_errorOwn);
+    #endregion
+
+    #region *** Setting errors — always this object's OWN ***
 
     internal void SetError(WIN32_ERROR error, string? message = null)
     {
@@ -327,7 +377,7 @@ public abstract class ErrorManageableBase(ILogger logger) : IErrorManageable
     protected void SetErrorFromPInvoke() =>
         SetError((uint)Marshal.GetLastWin32Error());
 
-    /// <summary>Copies error state from another error source.</summary>
+    /// <summary>Copies the EFFECTIVE error of <paramref name="source"/> into this object's OWN error.</summary>
     protected void SyncErrorFrom(IErrorManageable source) =>
         SetError(source.LastError, source.LastErrorMessage);
 
@@ -411,14 +461,13 @@ public class TapeDriveHolder<T>(TapeDrive drive)
 
     #region *** Error Handling — Own + Drive Fallback ***
 
-    /// <summary>Own error if set, otherwise Drive error.</summary>
-    public override uint LastError => base.LastError != 0 ? base.LastError : Drive.LastError;
+    /// <summary>Own error if set, otherwise the Drive's — the effective error every other view derives from.</summary>
+    internal override WIN32_ERROR LastErrorWin32 =>
+        OwnErrorWin32 != WIN32_ERROR.NO_ERROR ? OwnErrorWin32 : Drive.LastErrorWin32;
 
-    /// <summary>Own error message if own error is set, otherwise Drive error message.</summary>
-    public override string LastErrorMessage => base.LastError != 0 ? base.LastErrorMessage : Drive.LastErrorMessage;
-
-    public override bool WentOK => LastError == 0;
-    public override bool WentBad => !WentOK;
+    /// <summary>Own error message if own error is set, otherwise the Drive's — matches <see cref="LastErrorWin32"/>.</summary>
+    public override string LastErrorMessage =>
+        OwnErrorWin32 != WIN32_ERROR.NO_ERROR ? OwnErrorMessage : Drive.LastErrorMessage;
 
     /// <summary>Resets own error and Drive error state.</summary>
     public override void ResetError()

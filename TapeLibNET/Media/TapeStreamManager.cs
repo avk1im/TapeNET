@@ -817,9 +817,6 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
     #region *** File and set state operations ***
 
-    /// <summary>The navigator ran past the last mark: no more data that way — not a fault.</summary>
-    private static bool IsPositionalEnd(WIN32_ERROR error) => IsEOM(error);
-
     private bool BeginReadFile()
     {
         ResetError();
@@ -936,7 +933,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         SyncErrorFrom(Navigator);
         Navigator.ResetContentSet();
 
-        if (IsPositionalEnd(LastErrorWin32))
+        if (RanToEOMorEOD) // ran to the end -- not a error
         {
             m_logger.LogTrace("Drive #{Drive}: The set just read has no closing mark ahead ({Error})" +
                 " — it ends at end of data", DriveNumber, LastErrorWin32);

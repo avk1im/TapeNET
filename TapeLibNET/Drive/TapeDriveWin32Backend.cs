@@ -94,7 +94,7 @@ public partial class TapeDriveWin32Backend(ILoggerFactory loggerFactory) : TapeD
 
     /// <summary>
     /// When enabled, simulates timeout failures in <see cref="PollForCompletion"/>
-    /// by returning <see cref="Helpers.WIN32_ERROR_WAIT_TIMEOUT"/> immediately
+    /// by returning <c>Helpers.WIN32_ERROR_WAIT_TIMEOUT</c> immediately
     /// instead of actually polling the drive.
     /// </summary>
     public FailureSimulator SimulateTimeoutFailures { get; } = new();
