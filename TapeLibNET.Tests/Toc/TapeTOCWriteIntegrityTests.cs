@@ -94,8 +94,14 @@ public class TapeTOCWriteIntegrityTests
         fixture.TOC.CurrentSetTOC.BlockSize = fixture.Drive.DefaultBlockSize;
         using (var agent = fixture.CreateBackupAgent())
         {
-            Assert.True(agent.BackupFileListToCurrentSet(newSet: true, tree.Files, ignoreFailures: false));
+            // The backup arms the reserve from Navigator.TOCCapacity (floor 32 MiB) — larger than this cartridge, so
+            //  content would clamp to 0 B before the TOC is ever reached. Give the CONTENT phase a reserve that fits.
+            agent.Navigator.TOCCapacity = 128 * 1024;
+            Assert.True(agent.BackupFileListToCurrentSet(newSet: true, tree.Files, ignoreFailures: false),
+                agent.LastErrorMessage);
 
+            // Now the case under test: a reserve beyond the whole cartridge. Every reserve-honouring write would clamp
+            //  to 0 B — the TOC and the TOC mark's gap file must not.
             Assert.True(fixture.Drive.SetEarlyWarning(SmallCapacity * 2));
             Assert.True(agent.BackupTOC(), $"the TOC must be written despite the reserve: {agent.LastErrorMessage}");
         }

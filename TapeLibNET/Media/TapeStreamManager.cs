@@ -281,7 +281,12 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
         // If the caller supplied a location, REPLACE the layout's own (do NOT supplement it!)
         if (!(positioner?.Invoke() ?? MoveToLocationFor(nextState)))
+        {
+            // The positioning error lives on the navigator; make sure every caller sees it here.
+            if (WentOK)
+                SyncErrorFrom(Navigator);
             return false;
+        }
 
         State.TransitionTo(nextState);
         Drive.ByteCounter = 0;
@@ -350,13 +355,10 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
             return false;
         }
 
-        bool ok = BeginReadWrite(TapeState.ReadingTOC,
+        // In case of failure, BeginReadWrite() will ensure setting the error from Navigator
+        //  -> we don't need to worry about it here
+        return BeginReadWrite(TapeState.ReadingTOC,
             positioner: () => Navigator.MoveToTOCCopyAt(block, partition));
-
-        // The positioning error lives on the navigator; make sure the caller sees it here.
-        if (!ok && WentOK)
-            SyncErrorFrom(Navigator);
-        return ok;
     }
 
     /// <summary>

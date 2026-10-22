@@ -1562,14 +1562,65 @@ public class TapeNavigatorTOCInSetWithFmks : TapeNavigatorTOCInSet
 
         // First move to the end of the data in the partition. Notice the following will produce an error if TOC hasn't been written yet
         Drive.FastforwardToEnd(partition: MediaPartition.Content); // CommonPartition
+        long eodBlock = WentOK ? Drive.CurrentBlock : -1;
+
         // Next move to before the filemark before first TOC file
         if (WentOK)
             Drive.MoveToNextFilemark(-3); // this will bring us to right before the filemark before first TOC file
         // Finally advance 1 filemark forward to after the filemark -- the beginning of TOC data == of the to-be-written content data
         if (WentOK)
             Drive.MoveToNextFilemark(1);
-        else
+        else if (eodBlock < 0 || !LocateTOCByIdentification(eodBlock))
             SettleAtBeginOfContentIfBlank();    // R2: blank only on positive evidence
+    }
+
+    /// <summary>
+    /// The fallback when counting 3 filemarks back from end-of-data failed. Two tapes do that:
+    /// <list type="bullet">
+    /// <item>a COMPLETE tail with too few filemarks — zero content sets, <c>[toc1][FM][toc2][FM]</c>: left to
+    ///  <see cref="TapeNavigatorTOCInSet.SettleAtBeginOfContentIfBlank"/>, which identifies the TOC at begin-of-content;</item>
+    /// <item>a tail WITHOUT its closing filemark — the TOC write ran into end-of-media (TL-W1),
+    ///  <c>[..][FM][toc1][FM][toc2]</c> or <c>[..][FM][toc1]</c>: copy 1 starts after the 2nd or the 1st filemark back;
+    ///  accept only a position that IS a TOC copy.</item>
+    /// </list>
+    /// </summary>
+    /// <remarks>Runs only on a tape the regular count could not read, so a healthy tape pays nothing.</remarks>
+    private bool LocateTOCByIdentification(long eodBlock)
+    {
+        // Does end-of-data directly follow a filemark? Then the tail is complete: not this fallback's case.
+        ResetError();
+        if (!Drive.MoveToBlock(eodBlock))
+            return false;
+        if (Drive.MoveToNextFilemark(-1) && Drive.MoveToNextFilemark(1) && Drive.CurrentBlock == eodBlock)
+            return false;                               // complete tail, too few marks: zero sets, or damage
+
+        foreach (int back in (ReadOnlySpan<int>)[2, 1])
+        {
+            ResetError();
+            if (!Drive.MoveToBlock(eodBlock) || !Drive.MoveToNextFilemark(-back))
+                continue;                               // fewer marks than this candidate needs
+            if (!Drive.MoveToNextFilemark(1))
+                return false;
+            if (IsTOCAtCurrentBlock())
+            {
+                m_logger.LogWarning("Drive #{Drive}: The tail lacks its closing filemark — TOC copy 1 identified at " +
+                    "block {Block}", DriveNumber, Drive.CurrentBlock);
+                return true;
+            }
+        }
+        return false;
+    }
+
+#warning "In Design-TocLocation Phase 1, replace with a call to the shared classifier!"
+    /// <summary>Whether the block at the head is a TOC copy's first block. Reads it and returns to it.</summary>
+    protected bool IsTOCAtCurrentBlock()
+    {
+        long block = Drive.CurrentBlock;
+        var buffer = new byte[TapeHeaderBlock.Size];
+        int read = TapeHeaderBlock.Read(Drive, buffer, out _);
+        bool isToc = read > 0 && TapeTOC.TryPeek(buffer, read, out _, out _);
+        ResetError();
+        return Drive.MoveToBlock(block) && isToc;
     }
 
     /// <inheritdoc/>
